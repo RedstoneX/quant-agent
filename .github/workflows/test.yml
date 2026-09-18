@@ -23,15 +23,14 @@ jobs:
   # `scripts/ci_shard.py` does the splitting; it slices by test FILE, so a
   # module is never divided and within-module ordering is unchanged.
   #
-  # Why three and not more. Measured: one test
-  # (test_rehearsal_reproduces_cost_ceiling.py) takes 160s on its own, 31% of
-  # the whole serial suite, because it is asserting a wall-clock ceiling. No
-  # split can finish before that test does, so ~160s plus ~25s of runner setup
-  # is the floor however many shards there are. Three reaches that floor with
-  # the other two shards at roughly 40s each; a fourth shard cannot beat 160s
-  # and only consumes more of the free concurrency budget that six or seven
-  # simultaneous pull requests are already competing for. The way to go faster
-  # from here is that one test, not more runners.
+  # Why three and not more. Measured on the runners: the suite is 758.7s of
+  # test time, and test_one_definition_per_quantity.py is 230.9s of that on its
+  # own -- five whole-repo static scans at roughly 46s each. A file is never
+  # divided, so whichever shard holds it cannot finish before those five do,
+  # which is about 92s once its own four cores are busy. Three shards reach
+  # that floor. A fourth cannot beat it and only takes another runner from the
+  # six or seven pull requests already competing for the free concurrency
+  # budget. Going faster from here means those scans, not more runners.
   #
   # To change the shard count, edit this list and nothing else: the script is
   # told how many shards there are via `strategy.job-total`, so the two cannot

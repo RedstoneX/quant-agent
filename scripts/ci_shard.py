@@ -18,32 +18,42 @@ sharding flaky; we do not do it.
 
 Balance comes from a greedy longest-processing-time assignment over an
 *estimated runtime* in seconds, not over a test count. Test count is a bad
-proxy here, because this suite's cost is concentrated rather than spread. Full
-serial run, 6,618 tests in 507.7s, measured 2026-09-18 at commit 3bec45b6:
+proxy here, because this suite's cost is concentrated rather than spread. The
+first attempt split by count, gave four shards 1,409 tests each, and they took
+22s, 24s, 92s and 160s.
 
-    160.0s  test_rehearsal_reproduces_cost_ceiling.py  (ONE test)
-     60.0s  test_tech_analyst.py                       (ONE test)
-     16.9s  test_ops_scripts_importable.py             (ONE test)
-    ~ 11s   each, four separate one-definition guard tests
-    < 7s    everything else, and the tail is flat
+Measured on a real runner (``--durations=0`` across every shard, 2026-09-18,
+run 35301604006) the whole suite is 758.7s of test time, and where it goes is
+extremely lopsided:
 
-Two tests are 43% of the suite. Both are wall-clock assertions -- they exist to
-prove a deadline or a retry budget holds -- so their cost is waiting, not
-computing: of the 507.7s total only 219.5s was CPU. That is why ``SLOW_FILES``
-below carries measured seconds for the handful of files that matter, and why
-every other file is estimated as its test count times ``SECONDS_PER_TEST``,
-the measured mean over the flat tail.
+    230.9s  test_one_definition_per_quantity.py   30% of the suite, 5 tests
+     85.0s  test_ops_scripts_importable.py        one test is 70.9s of it
+     60.2s  test_tech_analyst.py                  one test is 60.0s of it
+     32.0s  test_pipeline.py
+     30.2s  test_cost_circuit.py
+    151.3s  the other 195 files, 4,454 tests, essentially flat
 
-Getting this weighting right is not about tidiness. If the 160s file and the
-60s file land in the same shard, that shard alone takes 220s and sets the
-whole run's wall-clock. Weighting by count put them in different shards by
-luck; weighting by seconds does it on purpose.
+Three files are just over half the suite. They are wall-clock assertions and
+whole-repo static scans -- they prove a deadline holds, or that a quantity has
+exactly one definition anywhere in the tree -- so they cost roughly the same
+however many other tests are around them.
+
+That shape is why ``SLOW_FILES`` below carries a measured second count for the
+files that matter and everything else is estimated as its test count times
+``SECONDS_PER_TEST``, the measured mean over the flat tail. Get this wrong and
+the run gets slower, not just untidier: a count-weighted split put two of the
+three heavy files in one shard and that shard alone set a 160s wall-clock.
+
+Measure on the runner, not on a developer box. A local serial run disagreed
+badly with the numbers above -- it made one file look like 160s that is under
+5s in CI, and understated test_ops_scripts_importable fourfold -- because host
+load and Python version move these particular tests a lot.
 
 Keeping ``SLOW_FILES`` current is optional maintenance, not a correctness
 requirement. A stale entry costs some balance and nothing else: a new file
 simply gets the tail estimate, and ``--check`` still proves the split is a
 complete partition of the suite. Each shard job prints ``--durations``, so the
-numbers to refresh it with are in the job log.
+numbers to refresh it with are already in the job log.
 
 Determinism
 -----------
@@ -72,26 +82,44 @@ TEST_DEF = re.compile(r"^\s*(?:async\s+)?def\s+test_", re.MULTILINE)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
-# Measured serial runtime, in seconds, for the files whose cost is not
-# proportional to how many tests they hold. From `pytest --durations` on a full
-# serial run, 2026-09-18, commit 3bec45b6. Refresh from any shard job's log.
-# Files absent from here are estimated from their test count; see the module
-# docstring for why a stale entry is a balance problem and never a correctness
-# one.
+# Measured test time, in seconds, for the files whose cost is not proportional
+# to how many tests they hold. Summed per file from `pytest --durations=0` on
+# GitHub's own runners, 2026-09-18, run 35301604006. Refresh from any shard
+# job's log -- but from a CI log, not a local one; see the module docstring.
+# Files absent from here are estimated from their test count, and a stale entry
+# is a balance problem, never a correctness one.
 SLOW_FILES: dict[str, float] = {
-    "test_rehearsal_reproduces_cost_ceiling.py": 160.0,
-    "test_tech_analyst.py": 61.0,
-    "test_ops_scripts_importable.py": 17.0,
-    "test_one_definition_per_quantity.py": 35.0,
-    "test_one_definition_guard.py": 24.0,
-    "test_event_risk_calendar.py": 12.0,
-    "test_news.py": 14.0,
-    "test_market_data.py": 8.0,
+    "test_one_definition_per_quantity.py": 230.9,
+    "test_tech_analyst.py": 120.4,
+    "test_ops_scripts_importable.py": 85.0,
+    "test_pipeline.py": 32.0,
+    "test_cost_circuit.py": 30.2,
+    "test_one_definition_guard.py": 29.1,
+    "test_event_risk_calendar.py": 25.5,
+    "test_news.py": 22.5,
+    "test_status_board.py": 18.1,
+    "test_credential_outage_fail_closed.py": 16.7,
+    "test_db.py": 14.6,
+    "test_order_fill_stream.py": 13.5,
+    "test_market_data.py": 10.0,
+    "test_agent_log_attribution.py": 8.6,
+    "test_desk_reset.py": 8.5,
+    "test_rehearsal_report_verdict.py": 8.0,
+    "test_atr_is_wilder_everywhere.py": 7.7,
+    "test_stop_writeback.py": 7.3,
+    "test_alert_watchdog.py": 7.3,
+    "test_api_contract.py": 6.8,
+    "test_blocked_proposals.py": 6.8,
+    "test_risk_based_sizing.py": 6.7,
+    "test_fill_reconciliation.py": 6.6,
+    "test_broker.py": 5.7,
+    "test_provider_attempt_budget.py": 5.6,
+    "test_bugfixes.py": 5.5,
 }
 
-# Mean measured seconds per test over the flat tail: (507.7s total minus the
-# 331s accounted for above) divided by the tests outside those files.
-SECONDS_PER_TEST = 0.0275
+# Mean measured seconds per test over the flat tail: 151.3s spread across the
+# 4,454 tests in the 195 files not named above.
+SECONDS_PER_TEST = 0.034
 
 
 def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
