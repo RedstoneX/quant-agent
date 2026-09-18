@@ -65,6 +65,28 @@ websocket out of its reach:
   asyncio and sync clients only — not the legacy implementation the SDK uses. So
   the socket would not traverse the gateway even if a gateway could help.
 
+Both bullets re-verified 2026-09-18 against the installed packages:
+`alpaca/trading/stream.py` imports `websockets.legacy.client`, and that
+client's `connect` takes no proxy argument (websockets 17.0.1).
+
+**What that in-band payload now is.** Alpaca's authorization reply to
+alpaca-py's frame says the `{"action":"authenticate","data":{...}}` form is
+being deprecated in favour of `{"action":"auth","key":K,"secret":K}`. The
+vendor still builds the deprecated form in its newest release (0.44.0,
+checked 2026-09-18), so the desk sends the current frame itself, on a
+per-instance wrapper, and falls back to the vendor's frame on a fresh socket
+if the current one is refused. Both were measured `authorized` against the
+live paper broker on 2026-09-18. See the auth-format block at the top of
+`src/execution/broker.py`.
+
+**One consequence worth stating once.** Because the socket authenticates
+in-band with the key pair and cannot traverse the gateway, the socket's
+identity is whatever account that key pair belongs to — it CANNOT be pointed
+at a second account that is selected by a gateway agent token. Measured
+2026-09-18: the key pair in `/home/qamc/credentials` reads back account
+`PA3DFXH9FF5V`. A fill-notification test on any gateway-selected account is
+therefore not possible on this box.
+
 The consequence is the thing that cost this project most: **order placement
 works on a placeholder credential, and the websocket cannot ever authenticate
 on one.** The two failure modes look nothing alike from the outside, which is

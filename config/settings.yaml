@@ -394,7 +394,10 @@ execution:
   # `trade_updates authentication REJECTED by broker` — that line now
   # carries Alpaca's own message and the key's LENGTH and first two
   # characters (never the value, never the secret). Success prints
-  # `trade_updates websocket authenticated`.
+  # `trade_updates websocket authenticated`, preceded by
+  # `trade_updates authenticated with the CURRENT auth format` once per
+  # process — see the auth-format block in src/execution/broker.py for why
+  # the desk sends that frame itself and what the fallback costs.
   fill_stream_enabled: true
 
 risk:
