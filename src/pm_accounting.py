@@ -1,6 +1,6 @@
 """Make the portfolio manager account for every candidate it was shown.
 
-THE DEFECT THIS CLOSES (board item 118, 2026-09-18)
+THE DEFECT THIS CLOSES (board item 119, 2026-09-18)
 ------------------------------------------------------------------------
 The seat returned a list of TARGETS and nothing else. `DecisionStage` then
 recorded every analysed candidate absent from that list as

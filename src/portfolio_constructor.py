@@ -661,8 +661,12 @@ class ConstructorConfig:
         ("risk-on", 0.95),
     )
     # Widening a stop lowers reward:risk, because the target does not move.
-    # Below this the trade only ever looked good on a stop too tight to
-    # survive, so it is rejected rather than taken at a worse payoff.
+    # **Retired as a gate (owner 2026-09-17): rejects nothing and caps
+    # nothing.** No code in this class reads
+    # `self.min_reward_risk_after_widening` — grep confirms it. Kept only
+    # as the default of a historical settings key so a silent rename
+    # cannot drop a deployed threshold; see `src/risk/constants.py`
+    # (`REWARD_RISK_FLOOR`) for the full history. Do not re-arm it.
     min_reward_risk_after_widening: float = 1.5
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,

@@ -326,11 +326,12 @@ def test_the_only_holding_having_no_price_history_falls_back():
 
 def test_a_holding_with_no_history_is_dropped_not_allowed_to_void_the_rest():
     """A fresh listing next to three measurable holdings must not disable
-    the alarms for the whole book. It is dropped and NAMED, which makes the
-    measured volatility a LOWER bound — so the threshold comes out tighter,
-    the alarm fires sooner not later, and the arithmetic is identical to
-    that holding simply not being deployed (which is the deployment-scaling
-    behaviour this design already wants)."""
+    the alarms for the whole book, and must not silently make the book look
+    calmer than it is either (item 92). It is NAMED in `unmeasured_symbols`,
+    but its weight still counts: it is assumed to move like the measured
+    peers' median that session, so a book where every holding moves
+    identically measures the SAME volatility whether or not the fourth
+    holding's own history happens to be usable."""
     bars = {
         "A": _steady(1.0), "B": _steady(1.0), "C": _steady(1.0),
         "NEWCO": _steady(1.0, sessions=3),
@@ -342,13 +343,50 @@ def test_a_holding_with_no_history_is_dropped_not_allowed_to_void_the_rest():
     assert estimate.unmeasured_symbols == ("NEWCO",)
     assert estimate.measured_weight_pct == pytest.approx(75.0)
     assert estimate.book_weight_pct == pytest.approx(100.0)
-    # Strictly tighter than the same book with NEWCO measurable — the safe
-    # direction for a brake.
+    # Every holding here moves identically, so imputing NEWCO's session
+    # return from its peers' median reproduces the fully-measurable case
+    # almost exactly (up to the peer median vs. the single true series).
     full = measure_portfolio_daily_vol(
         _held(A=25, B=25, C=25, NEWCO=25),
         {**bars, "NEWCO": _steady(1.0)},
     )
-    assert estimate.daily_vol_pct < full.daily_vol_pct
+    assert estimate.daily_vol_pct == pytest.approx(full.daily_vol_pct, rel=0.03)
+
+
+def test_dropping_an_unmeasurable_holding_would_have_tightened_the_limit():
+    """item 92's reproduction. Before the fix, `NEWCO`'s weight was
+    excluded from the basket entirely (contributing zero), which made a
+    book that actually moves 1%/session measure as if it only moved 0.75%
+    — three of its four equal holdings' worth. That understated volatility
+    feeds `vol_relative_drawdown_threshold_pct` directly, so the daily-loss
+    limit came out tighter than the book's real behaviour justifies, making
+    the halt more likely to fire on an ordinary day. Simulating the OLD
+    (drop-entirely) arithmetic here, without touching the shipped function,
+    pins the number the fix must not reproduce."""
+    bars = {
+        "A": _steady(1.0), "B": _steady(1.0), "C": _steady(1.0),
+        "NEWCO": _steady(1.0, sessions=3),
+    }
+    fixed = measure_portfolio_daily_vol(
+        _held(A=25, B=25, C=25, NEWCO=25), bars,
+    )
+    # The old behaviour: NEWCO's 25% weight contributes nothing.
+    old_dropped_returns = []
+    for i in range(1, REALIZED_VOL_WINDOW_SESSIONS + 1):
+        old_dropped_returns.append(0.75 if i % 2 else -0.75)
+    import statistics as _stats
+    old_sigma = _stats.stdev(old_dropped_returns)
+    assert old_sigma < fixed.daily_vol_pct
+    old_limit = vol_relative_drawdown_threshold_pct(
+        daily_vol_pct=old_sigma, window_sessions=1, sensitivity=3.0,
+        fallback_pct=-6.7,
+    )
+    fixed_limit = vol_relative_drawdown_threshold_pct(
+        daily_vol_pct=fixed.daily_vol_pct, window_sessions=1, sensitivity=3.0,
+        fallback_pct=-6.7,
+    )
+    # A smaller (tighter) magnitude limit under the old, defective arithmetic.
+    assert abs(old_limit) < abs(fixed_limit)
 
 
 def test_unusable_bars_and_junk_inputs_never_crash():

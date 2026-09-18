@@ -494,3 +494,10 @@ decision at all.
 **Plain language —** The automated check that watches the size of this very file sometimes fails for a reason that has nothing to do with the file — it cannot get enough git history to compare against on some CI runs. A related problem, where three tests failed depending on what minute the clock read, has already been fixed.
 **Why it matters —** this automated check is the only gate that has to pass before a change can merge. A gate that fails for reasons unrelated to the actual change trains people to route around it instead of trusting it.
 **Recommendation —** Give the CI job enough git history up front so it never needs to guess, or make the check fail open (skip, not block) when it genuinely cannot read a baseline.
+
+## item 118
+
+**Plain language —** When the desk gets far enough below its high-water mark, it is supposed to automatically sell some of what it owns. The sell order it places says "sell, but only at 1% below today's price or better". On a calm day that sells fine. On the kind of day that would actually trigger it — everything falling at once — prices are already well past that, so the order just sits there unsold. After 15 seconds the desk gives up, cancels its own order and puts the original safety nets back.
+**Why it matters —** the desk deleted an almost identical mechanism in September for precisely this reason, and this one is described on the board as the last automatic seller left. If it cannot sell on the only day it would ever be asked to, that description is wrong and the desk is less protected than the board says.
+**What was NOT found —** the desk is not silent about it: a separate alert already tells the owner when a de-lever ran and the book is still over its limit. So this is a "the tool may not work" problem, not a "nobody would know" problem.
+**Recommendation —** measure it before touching it. Find out from real fill data whether a limit 1% through the market fills on a gap day. Changing the order type is an owner decision after an adversary run, not a code tidy-up — the deleted predecessor is the proof that guessing here is expensive.

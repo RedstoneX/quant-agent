@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-18 — the desk could say it refused every idea, but never why (item 118)
+### 2026-09-18 — the desk could say it refused every idea, but never why (item 119)
 
 **In plain words.** The owner got an alarm saying the desk had turned down
 every idea it looked at, two sessions running, for one unchanging reason.
@@ -11422,3 +11422,103 @@ no write-up in these docs at all before this entry.
 floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
 to be. The `0.0` sentinel.
 
+
+---
+
+## The de-levering ladder was reading a shallower drawdown than the account really had, and an erased equity curve read as a book at record highs (2026-09-18)
+
+**In plain language.** The desk automatically reduces how much it owns once it
+falls far enough below its best-ever value. To do that it has to know what its
+best-ever value was. It was reading that from a table with a hole in it, so it
+thought the account was 1.3% below its high when it was really 2.7% below — and
+the error can only ever go that way, because a missing row can only make the
+"best ever" look smaller than it was. Worse: if that table were ever emptied
+completely, the desk reported 0.0% — no drawdown at all — which looks exactly
+like a book at record highs, holds the loosest possible limit, and says nothing
+to anybody. Losing the records and doing brilliantly produced identical output.
+
+**The one-directional error.** `peak_to_trough_pct` (`src/risk/rules.py`) takes
+`max()` over the stored `daily_pnl` history plus today's equity, and
+`resolve_gross_ceiling` reads the result. A missing row can only lower the peak,
+never raise it, so a hole in the table always produces a SHALLOWER drawdown and
+a LOOSER exposure ceiling than the ratified ladder intends. That is a safety
+error, not noise.
+
+**What was actually missing, and where it came from.** The live `daily_pnl`
+table held four rows, earliest 2026-09-02 at 9862.74. The desk reset of
+2026-09-02 (`data/resets/20260902T181859Z/`) deleted 13 rows **by design** — its
+own `reset_manifest.json` records `{"table": "daily_pnl", "rows": 13,
+"deleting": 13}` — and took a full database snapshot beside the manifest first.
+Those 13 rows run 2026-08-14 to 2026-09-01 and peak at **10005.68 on
+2026-08-20**. The account was not restarted by that reset: it flattened
+positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+`book_before.json` and `book_after.json`), with equity running 9870.37 (08-27
+close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74 (09-02
+close) and no capital added or removed. A high-water mark is a property of the
+account's capital, not of the strategy record the reset discarded, so 10005.68
+is this account's real high.
+
+**Correction to the brief that raised this.** The obvious restore source looked
+like `data/quant_agent.db.bak-20260828T151630`, which holds 10 of those rows.
+The reset's own snapshot holds all 13, including 2026-08-28, 2026-08-31 and
+2026-09-01, which the 08-28 backup predates. Restoring from the backup would
+have left a three-day hole. The snapshot was used instead.
+
+**What was restored.** All 13 rows, by `scripts/restore_daily_pnl_history.py`
+— dry run by default, idempotent (`INSERT OR IGNORE` on the `date` primary
+key), and it copies the target database before writing so the change is
+reversible. **Nothing was invented.** 2026-09-03 and the 2026-09-04..09-14 desk
+pause have no row in either database and were left absent: `daily_pnl` is
+written only by an evening run, `llm_budget_sessions` shows no desk activity
+across that window, and interpolating a row would fabricate an equity reading.
+
+**Measured effect.** Against the last stored equity (9734.50, 2026-09-17 close)
+the ladder read **-1.30%** before and reads **-2.71%** after. The resolved
+ceiling is 2.0x in both cases — the first rung is -8% — so **no trading
+behaviour changed today.** What changed is that the ladder is now measuring
+against the account's real high instead of a truncated one.
+
+**The worse half, and the fix.** With no usable prior reading at all,
+`peak_to_trough_pct` used to leave today's equity alone in the list, make it its
+own high-water mark, and return a confident `0.0`. `resolve_gross_ceiling` reads
+`0.0` as "inside the no-de-levering band" and holds the standing cap, so a
+data-loss event silently disabled the desk's only automatic seller while every
+log line and owner-facing message reported a healthy book. `peak_to_trough_pct`
+now returns UNMEASURABLE (`None`) when there is no usable PRIOR reading — empty
+history, or a history whose every entry was dropped as non-finite — and warns.
+`resolve_gross_ceiling`'s unknown branch now sets `alert_owner=True`.
+
+**Why the ceiling in that state was NOT tightened.** Following the precedent
+already in this area: `apply_gross_ceiling` marks an unreadable book
+UNMEASURABLE and trims nothing. Tightening to a rung would be picking a number
+for a state in which, by definition, nothing has been measured, and would
+force-liquidate the genuinely-fresh-account case `resolve_gross_ceiling`'s
+docstring exists to protect. Holding the loosest cap was never the defect;
+doing it in silence was.
+
+**Why the boundary is zero prior readings and not N days.** Zero is the line
+between measured and unmeasured — it is not a number anyone picked. Whether a
+short-but-non-empty curve (two or three days after a reset) is long enough to
+carry a meaningful high-water mark is a real and separate question with a real
+answer somewhere in the desk's own data; no `min_history=N` was smuggled in as
+if it had been answered.
+
+**A second defect found and fixed in passing.** The owner-facing leverage alert
+printed "DRAWDOWN PAST -20%" for every `alert_owner` state. Since 2026-09-02
+that already included the bad-equity-read state, which has no measured drawdown
+at all — so the owner could be told a specific, false number about his own book.
+The message is now chosen from the rung: a state that was never measured reports
+UNMEASURABLE and no number, and the empty-curve case says outright that this is
+NOT a book at record highs.
+
+**A test that pinned the old behaviour was replaced, deliberately.**
+`test_peak_to_trough_pct_all_history_corrupted_still_returns_a_number_not_nan`
+documented the all-history-corrupted -> 0.0 fallback as an accepted residual
+("the ladder still functions"). It was the same defect in a second doorway and
+is now pinned the other way.
+
+**Not changed.** No threshold, rung or trade-governing number. `GROSS_LADDER`
+and `GROSS_LADDER_ALERT_PCT` are untouched. The ladder's order type, its 1%
+limit buffer, and its sequencing of cancels, sells and stop placement are
+untouched — the sell-instrument question is filed as board item 119, with the
+order type explicitly left alone.

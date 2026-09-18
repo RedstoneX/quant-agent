@@ -166,11 +166,11 @@ that a citation "is a URL a later reader can open and check" is what the
 `source` requirement below now enforces mechanically.
 
 Every constant that governs a real trade decision — a stop distance, a
-holding period, a risk percentage, a tolerance band, the reward:risk
-reference under which a range trade is capped at starter size (no longer a
-gate anywhere, never applied to a breakout, and self-flagged in
-`src/risk/constants.py` as the last flat number still standing) —
-must be READ FROM THE INSTRUMENT IN FRONT OF YOU: its volatility, its
+holding period, a risk percentage, a tolerance band, the retired reward:risk
+reference a range trade's payoff is still measured against for ranking
+(no longer a gate anywhere, never a size cap, never applied to a breakout,
+and self-flagged in `src/risk/constants.py` as the last flat number still
+standing) — must be READ FROM THE INSTRUMENT IN FRONT OF YOU: its volatility, its
 structure, its confirmed price action, or the trade's own claim recorded at
 entry. It must never be a flat calendar count, a round percentage, or a
 number chosen because it "sounds prudent."
