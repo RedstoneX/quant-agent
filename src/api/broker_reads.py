@@ -216,10 +216,21 @@ def read_margin_interest(cash: float | None) -> dict:
     — has just fetched it via `read_account()`; this avoids a second broker
     round-trip for the same number). Returns
     `{"debit_balance", "rate_pct", "daily_usd", "annual_usd", "label",
-    "broker_check_note", "error"}`, every numeric field `None` when there
-    is nothing to report — a zero/no debit balance (today's actual state:
-    the account has never carried a negative cash balance) degrades to an
-    all-`None` dict, never a fabricated zero-cost line. Never raises.
+    "broker_check_note", "error"}`. Never raises.
+
+    THREE distinct shapes, and the caller must keep them apart (owner
+    decision 2026-09-18 — see `margin_interest.format_daily_line`):
+
+      * a real debit balance: every field populated, `label` carrying the
+        ESTIMATE framing verbatim, `error` `None`;
+      * nothing borrowed: an EXPLICIT zero — `debit_balance`/`daily_usd`/
+        `annual_usd` all `0.0`, the real configured `rate_pct`, `label`
+        `None` (a certain zero is not an estimate) and `error` `None`.
+        This used to be an all-`None` dict that the cockpit rendered as
+        nothing at all, which was indistinguishable from a dead tracker;
+      * a fault (broker read failed, or no rate configured): numeric
+        fields `None` and `error` set. `error` is what tells a genuine
+        zero apart from a failure — never read a `None` figure as zero.
 
     Deliberately does NOT gate on `limits.allow_margin` before looking at
     `cash` — interest is a broker-side fact about the account's actual
@@ -254,7 +265,34 @@ def read_margin_interest(cash: float | None) -> dict:
         return {**empty, "error": str(exc)}
 
     if estimate is None:
-        return empty  # below the noise floor — silent, per spec's noise policy
+        # OWNER DECISION 2026-09-18, verbatim: "Yes, every day, even if
+        # it's zero, that way I know it's still working." An explicit,
+        # honest zero — NOT the all-`None` silence this used to return,
+        # which the cockpit rendered as nothing at all and was therefore
+        # indistinguishable from a dead tracker. This deliberately
+        # overrides the spec's original noise policy.
+        #
+        # `rate_pct` is the real configured rate (already read above) and
+        # the three dollar figures are a true zero: nothing was borrowed,
+        # so nothing is owed at any rate. `label` stays `None` because
+        # this is not an estimate — see `margin_interest.ZERO_DEBIT_LINE`.
+        # `error` stays `None`, which is how a caller tells a real zero
+        # apart from a failed read.
+        #
+        # `build_estimate` returns `None` for a missing/zero RATE as well
+        # as for a zero debit, so that case is separated out FIRST — a
+        # mis-keyed or deleted `risk.margin_interest_rate_pct` must reach
+        # the cockpit as a fault, never as a reassuring $0.00 on the one
+        # day the owner most needs to know the tracker is broken.
+        if not rate_pct or rate_pct <= 0:
+            return {**empty, "error": "no borrowing rate is configured"}
+        return {
+            **empty,
+            "debit_balance": 0.0,
+            "rate_pct": rate_pct,
+            "daily_usd": 0.0,
+            "annual_usd": 0.0,
+        }
 
     broker_check_note = None
     try:

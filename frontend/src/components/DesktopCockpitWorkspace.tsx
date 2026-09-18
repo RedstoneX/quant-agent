@@ -11,6 +11,7 @@ import { PositionsPanel } from "./PositionsPanel";
 import { HoldingsStrip } from "./HoldingsStrip";
 import { HeroBand } from "./HeroBand";
 import { LiquidityStrip } from "./LiquidityPanel";
+import { MarginInterestStrip } from "./MarginInterestPanel";
 import { TodaySessionsStrip } from "./TodaySessionsStrip";
 import { DecisionStateBanner } from "./DecisionStateBanner";
 import {
@@ -204,6 +205,11 @@ function AccountPane() {
         account={support.account}
         accountError={support.accountError}
         positions={support.positions}
+        variant="panel"
+      />
+      <MarginInterestStrip
+        account={support.account}
+        accountError={support.accountError}
         variant="panel"
       />
     </Pane>

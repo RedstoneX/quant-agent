@@ -165,13 +165,22 @@ class RiskLimits(BaseModel):
 
 class MarginInterestEstimate(BaseModel):
     """Margin interest ESTIMATE (spec §11.2) — MEASURES only, never a risk
-    decision. Every field is `None` when there is nothing to report: a
-    zero/no overnight debit balance (today's actual state — `allow_margin`
-    is `False`, so this is always empty in production right now), or a
-    read failure. `label` carries the ESTIMATE framing verbatim so no
-    consumer of this response can render the figure without it — paper
-    trading's own handling of margin interest is unconfirmed either way,
-    see `src.margin_interest`."""
+    decision.
+
+    `label` carries the ESTIMATE framing verbatim so no consumer of this
+    response can render the figure without it — paper trading's own
+    handling of margin interest is unconfirmed either way, see
+    `src.margin_interest`.
+
+    Three shapes, per `broker_reads.read_margin_interest` (owner decision
+    2026-09-18, "every day, even if it's zero"):
+      * a carried debit balance — every field set, `label` set;
+      * nothing borrowed — an explicit `0.0` in the three dollar fields
+        with the real `rate_pct`, `label` `None` (a certain zero is not an
+        estimate) and `error` `None`;
+      * a fault — dollar fields `None` and `error` set.
+    `error` is the ONLY safe way to tell a real zero from a failed read;
+    a `None` figure must never be rendered as zero."""
     debit_balance: float | None = None
     rate_pct: float | None = None
     daily_usd: float | None = None

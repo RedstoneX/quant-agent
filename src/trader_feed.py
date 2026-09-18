@@ -1352,6 +1352,12 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
     lines = [f"{_status_emoji(status)} {mode.upper()} · {fmt_time_12h(et_now())} · {outcome}"]
 
+    # P&L FIRST, directly under the heading — owner, 2026-09-18: "all the
+    # P&L information has to go at the very top of every telegram alert,
+    # right after the first line, which is really the heading." A repeat
+    # correction: it kept drifting below whatever banner was added next.
+    _new_section(lines, *_pnl_section_lines(result))
+
     _new_block(lines, _append_coverage_gaps, result)
 
     data_status = result.get("data_status") or {}
@@ -1426,9 +1432,10 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         f"{fmt_time_12h(et_now())} · {outcome}"
     ]
 
-    # Owner request 2026-09-17: today's + total P&L, always shown (never
-    # silently dropped the way the old "Session P&L" line was on every
-    # midday/close message — `run_position_review` now always sets these).
+    # P&L FIRST, directly under the heading (owner 2026-09-17, restated
+    # 2026-09-18 as the standing rule for EVERY message). Always shown,
+    # never silently dropped the way the old "Session P&L" line was on
+    # every midday/close message.
     _new_section(lines, *_pnl_section_lines(result))
 
     def _render_halt_banner(lines: list[str]) -> None:
@@ -1584,10 +1591,22 @@ def _pnl_section_lines(result: dict) -> list[str]:
     total_ret = _number(result.get("total_return_pct"))
     since = result.get("total_pnl_since")
     total_label = f"📊 Total P&L since {since}:" if since else "📊 Total P&L:"
-    return [
+    lines = [
         _fmt_pnl_line("📈 Today's P&L:", today_pnl, today_ret),
         _fmt_pnl_line(total_label, total_pnl, total_ret),
     ]
+    # Owner, 2026-09-18: P&L leads EVERY message, and a message that cannot
+    # know the figure says so rather than dropping the block — an absent
+    # block and a broken figure look identical to a reader. `_fmt_pnl_line`
+    # already renders each missing figure as "not available"; when NOTHING
+    # is known, one short sentence says why, so "not available" is never
+    # left looking like a fault.
+    if today_pnl is None and today_ret is None and total_pnl is None and total_ret is None:
+        lines.append(
+            "   This message was built without an account read, so there is "
+            "no figure yet."
+        )
+    return lines
 
 
 # === Evening report (2026-09-18 owner redesign) ===
@@ -2060,8 +2079,12 @@ def _format_evening(result: dict, elapsed: float) -> str:
     outcome = _evening_outcome(status, analysis)
     lines = [f"🌙 EVENING · {fmt_time_12h(et_now())} · {outcome}"]
 
-    _new_block(lines, _append_evening_banners, result)
+    # P&L FIRST, directly under the heading — owner, 2026-09-18. It sat
+    # below the evening banners, which is the same drift he is correcting
+    # everywhere else in this pass: a banner is about the desk, the P&L is
+    # about his money.
     _new_section(lines, *_evening_pnl_lines(result))
+    _new_block(lines, _append_evening_banners, result)
     _new_block(lines, _append_evening_positions, result, profiles)
     _new_block(lines, _append_evening_watchlist, result, profiles)
     _new_block(lines, _append_evening_tomorrow, result)
@@ -2149,6 +2172,14 @@ def _format_earnings(result: dict, elapsed: float) -> str:
     else:
         outcome = "RAN"
     lines = [f"📄 PRE-MARKET EARNINGS · {fmt_time_12h(et_now())} · {outcome}"]
+
+    # P&L FIRST, directly under the heading — owner, 2026-09-18: EVERY
+    # message, this one included. The pre-market filing reader runs before
+    # the open and does no account read, so both figures are genuinely
+    # unknown here; `_pnl_section_lines` renders that as "not available"
+    # plus one sentence saying why, rather than dropping the block or
+    # inventing a zero.
+    _new_section(lines, *_pnl_section_lines(result))
 
     if status == "analysis_error":
         banner = [
@@ -2311,9 +2342,12 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
                     )
                 ))
 
-    _new_block(lines, _render_status_banner)
-
+    # P&L FIRST, directly under the heading — owner, 2026-09-18. It used to
+    # sit BELOW the status banner here, which is exactly the drift he is
+    # correcting: the banner is about this tick, the P&L is about his money.
     _new_section(lines, *_pnl_section_lines(outer))
+
+    _new_block(lines, _render_status_banner)
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
@@ -2710,6 +2744,10 @@ def _format_hourly_desk_check(
         period_line,
     ]
 
+    # P&L FIRST, directly under the heading — owner, 2026-09-18. It used to
+    # sit below the hour's order list, four sections down.
+    _new_section(lines, *_pnl_section_lines(result))
+
     positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
     risk_positions = [
         row for row in positions
@@ -2745,8 +2783,6 @@ def _format_hourly_desk_check(
             lines,
             f"⚡ {trade_count} order(s) this hour — see the alert(s) already sent",
         )
-
-    _new_section(lines, *_pnl_section_lines(result))
 
     # Board item 89: "Positions held: N" named none of them. Every holding,
     # company alongside, with its own open profit or loss where recorded.
@@ -3335,10 +3371,12 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
         "status only — not a re-derivation of the hourly DESK CHECK "
         "message, which also reflects other ticks around it.",
 
-        "",
-        f"{_status_emoji(status)} {humanize_status(status)}",
     ]
+    # P&L FIRST, directly under the heading block — owner, 2026-09-18. It
+    # used to follow the status line; the status of a replayed tick is
+    # desk detail, the P&L is his money.
     _new_section(lines, *_pnl_section_lines(result))
+    _new_section(lines, f"{_status_emoji(status)} {humanize_status(status)}")
     _new_block(lines, _append_coverage_gaps, result)
     risk_positions = [
         row for row in result["_positions"]
