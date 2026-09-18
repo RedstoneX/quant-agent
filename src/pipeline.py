@@ -11995,6 +11995,21 @@ class TradingPipeline:
         lost did not. See `src/evidence_gate.py` for why no count is used and
         why the counting half of the owner's design is deliberately unbuilt.
 
+        WHICH LOST SEAT ACTUALLY STOPS THE RUN is an owner mandate decision
+        of 2026-09-18 — "Only technical analysis can stop the desk" — and
+        lives in `evidence_gate.BLOCKING_SEATS`, not here. A lost ADVISORY
+        seat is recorded in the same durable rows, logged loudly, carried in
+        the result so the unsuppressible data-quality alert still fires, and
+        named in the freshness disclosure. It does not halt trading.
+
+        EVERY DECISION DISCLOSES ITS OWN EVIDENCE FRESHNESS. With the other
+        seats advisory a decision can rest on one freshly-read seat plus a
+        carried-forward book, and every carried seat reports green; this is
+        the one path every decision passes through, so the count of seats
+        read on THIS tick is computed here and handed to the owner's message
+        and the durable record. Disclosure, not a threshold — there is no
+        minimum fresh count anywhere and none may be invented.
+
         THE SKIP IS LOUD, by three independent paths, because retired item 11
         was this desk producing nothing for a whole day with nobody noticing
         (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
@@ -12041,9 +12056,34 @@ class TradingPipeline:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("evidence gate: event write failed: %s", exc)
 
+        # Disclosure, carried out of here by `_attach_evidence_freshness` on
+        # every return path of the session wrappers. Stored on the pipeline
+        # as well as on ctx because the result dicts are built in dozens of
+        # places and the wrappers are the two that see all of them.
+        try:
+            self._last_evidence_freshness = verdict.freshness.to_evidence()
+            self._last_decision_data_status = dict(verdict.data_status)
+            ctx.evidence_freshness = dict(self._last_evidence_freshness)
+        except Exception as exc:  # noqa: BLE001 — never break the decision
+            logger.warning("evidence gate: freshness record failed: %s", exc)
+        logger.info("EVIDENCE FRESHNESS — %s", verdict.freshness.summary)
+
         evidence = verdict.to_evidence()
         _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
         if not verdict.skip:
+            if verdict.advisory_lost:
+                # Owner mandate 2026-09-18: only the technical seat halts the
+                # desk. An advisory seat losing its answer is still a real
+                # fault and is still said out loud — here, in the durable row
+                # above, and by `notifier.maybe_alert_data_quality`, which
+                # reads the `data_status` the wrappers now attach to every
+                # result. What it no longer does is stop trading.
+                logger.error(
+                    "evidence gate: ADVISORY seat(s) lost their answer and the "
+                    "decision PROCEEDED (owner mandate 2026-09-18, only the "
+                    "technical seat blocks): %s",
+                    {s: verdict.data_status.get(s) for s in verdict.advisory_lost},
+                )
             if verdict.unclassified:
                 logger.error(
                     "evidence gate: unclassified seat status this run: %s",
@@ -12058,6 +12098,7 @@ class TradingPipeline:
                 _record(
                     symbol, "not_decided", "evidence_gate_skip",
                     lost_seats=list(verdict.lost),
+                    blocking_lost_seats=list(verdict.blocking_lost),
                     data_status=dict(verdict.data_status),
                 )
         # Legit PM-less completion — same reason `no_data` records one: the
@@ -12098,6 +12139,9 @@ class TradingPipeline:
             "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
             "data_status": dict(ctx.data_status),
             "lost_seats": list(verdict.lost),
+            "blocking_lost_seats": list(verdict.blocking_lost),
+            "advisory_lost_seats": list(verdict.advisory_lost),
+            "evidence_freshness": verdict.freshness.to_evidence(),
             "reason": verdict.reason,
         }
 
@@ -12114,9 +12158,42 @@ class TradingPipeline:
         re-read without paying for a fresh run. Fail-soft — a storage
         problem costs the audit record, never the morning push.
         """
+        self._last_evidence_freshness = None
         result = self._run_morning_body()
+        self._attach_evidence_freshness(result)
         self._persist_session_report("morning", result)
         return result
+
+    def _attach_evidence_freshness(self, result) -> None:
+        """Carry this run's evidence-freshness disclosure out to the owner.
+
+        Owner mandate 2026-09-18 made every seat but the technical one
+        advisory, so a decision can now rest on ONE freshly-read seat plus a
+        carried-forward book — and every carried seat reports green. The
+        disclosure is computed once, by the evidence gate, on the single
+        path every decision passes through; this hands it to the message
+        renderer and to the durable session report.
+
+        Disclosure only. It states how much was read on this tick; it never
+        judges the count and there is no minimum — that number is the
+        owner's (docs/WORK.md item 20). Fail-soft: a problem here costs the
+        disclosure line, never the session.
+        """
+        if not isinstance(result, dict):
+            return
+        record = getattr(self, "_last_evidence_freshness", None)
+        if isinstance(record, dict) and "evidence_freshness" not in result:
+            result["evidence_freshness"] = dict(record)
+        # A lost ADVISORY seat no longer halts the run, so the one alert
+        # that cannot be silenced by a mode's noise policy
+        # (`notifier.maybe_alert_data_quality`, fired from main.py's finally
+        # block) must be able to see it. It reads `result["data_status"]`,
+        # which the intra_check result paths never carried — before the
+        # mandate change they did not have to, because a lost seat there
+        # halted the run instead.
+        status = getattr(self, "_last_decision_data_status", None)
+        if isinstance(status, dict) and status and "data_status" not in result:
+            result["data_status"] = dict(status)
 
     def _persist_session_report(self, mode: str, result: dict) -> None:
         """Write a morning/midday/close result dict verbatim, keyed by
@@ -13955,7 +14032,9 @@ class TradingPipeline:
         roughly every 30 minutes, so a date-keyed row would keep only the
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
+        self._last_evidence_freshness = None
         result = self._run_intra_check_body()
+        self._attach_evidence_freshness(result)
         self._persist_intra_check_report(result)
         return result
 

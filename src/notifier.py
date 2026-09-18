@@ -1229,6 +1229,84 @@ def describe_data_status(bad: dict) -> list[str]:
     return lines
 
 
+def _seat_list_words(seats: Any) -> str:
+    """"the chart research and the news research" — never internal keys."""
+    words = [seat_words(seat) for seat in (seats or []) if str(seat).strip()]
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def describe_evidence_freshness(freshness: Any) -> list[str]:
+    """How much of this decision's evidence was read on THIS tick, in words.
+
+    Owner mandate 2026-09-18 made every seat but the chart research
+    advisory. That means a decision can now rest on ONE freshly-read seat
+    plus a book carried over from the morning, and every one of those
+    carried seats reports green. Nothing anywhere said so. This says so.
+
+    It is DISCLOSURE, not a threshold: it states a count, it never judges
+    one. No minimum number of fresh seats exists in this desk and none may
+    be invented here — that number is the owner's (docs/WORK.md item 20).
+
+    Takes the dict produced by `evidence_gate.EvidenceFreshness.to_evidence`
+    and returns [] for anything it cannot read, so a missing or malformed
+    record costs the disclosure line and never the message.
+    """
+    if not isinstance(freshness, dict):
+        return []
+    fresh = [s for s in (freshness.get("fresh_seats") or []) if str(s).strip()]
+    carried = [s for s in (freshness.get("carried_seats") or []) if str(s).strip()]
+    absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
+    unknown = [
+        s for s in (freshness.get("unknown_freshness_seats") or [])
+        if str(s).strip()
+    ]
+    stale = [
+        s for s in (freshness.get("known_out_of_date_seats") or [])
+        if str(s).strip()
+    ]
+    total = len(fresh) + len(carried) + len(absent) + len(unknown)
+    if not total:
+        return []
+    lines = [
+        f"<b>HOW FRESH THIS DECISION'S EVIDENCE WAS</b> "
+        f"({len(fresh)} of {total} research seats read just now)"
+    ]
+    if fresh:
+        lines.append(f"   • read just now: {_seat_list_words(fresh)}")
+    else:
+        lines.append("   • read just now: none of them")
+    if carried:
+        lines.append(
+            f"   • carried over from earlier, not re-read: "
+            f"{_seat_list_words(carried)}"
+        )
+    if stale:
+        lines.append(
+            f"   • already known to be out of date: {_seat_list_words(stale)}"
+        )
+    if absent:
+        lines.append(f"   • no answer at all: {_seat_list_words(absent)}")
+    if unknown:
+        lines.append(
+            f"   • state the desk cannot classify, so not counted as read: "
+            f"{_seat_list_words(unknown)}"
+        )
+    return lines
+
+
+def _append_evidence_freshness(lines: list[str], result: dict) -> None:
+    """Put the freshness disclosure into a session message body."""
+    if not isinstance(result, dict):
+        return
+    block = describe_evidence_freshness(result.get("evidence_freshness"))
+    if block:
+        _new_section(lines, *block)
+
+
 def describe_skipped_decision(
     lost: Any, data_status: Any, *, include_next_pass: bool = True,
 ) -> list[str]:
@@ -1653,12 +1731,14 @@ def format_session_result(
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
         _new_block(lines, _append_trade_session_body, result)
+        _append_evidence_freshness(lines, result)
     elif mode == "evening":
         _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":
         _new_block(lines, _append_earnings_body, result)
     elif mode == "intra_check":
         _new_block(lines, _append_intra_check_body, result)
+        _append_evidence_freshness(lines, result)
     elif mode == "meta":
         _new_block(lines, _append_meta_body, result)
     elif mode == "daily":

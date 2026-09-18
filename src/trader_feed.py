@@ -860,6 +860,26 @@ def _signal_row_line(row: dict, profiles: dict[str, Any] | None = None) -> str:
     return text
 
 
+def _append_intraday_evidence_freshness(
+    lines: list[str], outer: dict | None, nested: dict | None,
+) -> None:
+    """The freshness disclosure on an intraday tick, in the owner's words.
+
+    The record is attached to the tick result by `run_intra_check`; an older
+    stored result, or a tick that never reached the decision, simply has
+    none and this renders nothing.
+    """
+    from src.notifier import describe_evidence_freshness
+
+    for source in (outer, nested):
+        if not isinstance(source, dict):
+            continue
+        block = describe_evidence_freshness(source.get("evidence_freshness"))
+        if block:
+            lines.extend(block)
+            return
+
+
 def _append_signals(
     lines: list[str],
     snap: dict[str, Any],
@@ -2354,6 +2374,16 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
 
     detail_lines: list[str] = []
+    # How much of this tick's evidence was actually read on this tick.
+    # Owner mandate 2026-09-18 made every seat but the chart research
+    # advisory, so an intraday decision can now stand on one fresh read plus
+    # this morning's book — and every carried seat reports clean. It sits
+    # inside the details block rather than the headline: it belongs to every
+    # tick, and a line on every tick at the top is how a banner stops being
+    # read. Disclosure only; it states a count and never judges one.
+    _new_block(
+        detail_lines, _append_intraday_evidence_freshness, outer, nested,
+    )
     _new_block(detail_lines, _append_signals, snap, candidates=candidates)
     _new_block(detail_lines, _append_pm, snap, may_glue=True)
     _new_block(detail_lines, _append_risk, snap)
