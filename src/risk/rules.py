@@ -547,8 +547,12 @@ def agreement_refuses_trade(score: int) -> bool:
 #: breaker is evaluated), and the cap below keeps the severity ordering
 #: coherent. What the comparison DID find is a severity inversion, recorded
 #: rather than changed because it is risk appetite: the daily breaker trips
-#: soonest and force-LIQUIDATES, while this ladder's deepest rung only halves
-#: exposure. The rolling-return "drawdown
+#: soonest, while this ladder's deepest rung only halves exposure. (This
+#: comment said the breaker "force-LIQUIDATES" until 2026-09-17 (retired-ok);
+#: it had not
+#: done so since 2026-09-14, when item 32 replaced the whole-book
+#: liquidation with a halt that sells nothing. The inversion is now one of
+#: trip ORDER, not of severity of action.) The rolling-return "drawdown
 #: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
 #: `drawdown_20d_threshold_pct`, halving new BUY size via
 #: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window

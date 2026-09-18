@@ -178,10 +178,14 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   goal here, and the limit's only job is bounding correlated blow-up risk.
   But be clear-eyed about the trade you are making: **at 75% of equity in one
   sector, an ordinary 20% sector-wide drawdown costs 15% of equity — more
-  than twice the 6.7% daily-loss circuit breaker (docs/WORK.md item 32:
-  expressed as a multiple of the ratified 5% per-trade risk unit, scaled by
-  square-root-of-time against the 5-day drawdown window) and deep into
-  the de-levering ladder both.** Concentration is
+  than twice the daily-loss circuit breaker's fixed-percentage rung
+  ({{risk.effective_max_daily_loss_pct}}%) and deep into the de-levering
+  ladder both.** That rung is a multiple of the ratified
+  {{risk.max_position_risk_pct}}% per-trade risk unit, scaled by
+  square-root-of-time against the 5-day drawdown window (docs/WORK.md item
+  32). It is the FALLBACK: on an ordinary day the breaker measures the held
+  book's own daily volatility instead, so the live trip point is usually a
+  different number and is not yours to assume. Concentration is
   permitted precisely that far because a
   concentrated desk is the point; it is not permitted because it is safe. If
   you are pushing a sector toward that number, the conviction had better be
