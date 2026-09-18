@@ -269,6 +269,51 @@ constant needs: something mechanical that fails when the prose and the
 behaviour disagree. Rewording a prompt is a behaviour change, not
 documentation.
 
+**Measured wider, 2026-09-18.** Seventeen false statements were found in the
+three seats that pick and size trades, eight of them able to change a trade.
+Two facts came out of trying to design a check for it, and both point away
+from the obvious answer. First, scanning prompt text for numbers does not
+work — about 1,825 number-like tokens, mostly dates and list numbering.
+Second, and decisive: neither confirmed defect lived in a prompt FILE at all.
+Both were strings the code assembles as it runs, so a file scanner would have
+caught neither.
+
+**The check that works is at the DELETION site, not the reading site.** When a
+mechanism is removed, search for its name across every prompt, every assembled
+string and every comment, and fail if it still appears. The flagship case was a
+deleted mechanism still described in prose with no number in it — nothing that
+inspects the prose for suspicious content could ever have found it, because
+the prose was not suspicious. Only the deletion knew.
+
+**And the rot is not confined to prompts.** The same day, a code comment was
+found reasoning at length about a reward:risk floor that the same file
+declares dead two hundred lines above and that the constants module marks
+inert. A comment is the cheapest place for a deleted rule to keep living,
+because nothing ever executes it. A related trap sits one step further out: a
+number can outlive its own derivation silently. A stop scaler was derived as
+"the tightest value that keeps the stop outside the measured noise band" on a
+base that was later changed, and at the new base that constraint no longer
+binds — the number survived, its justification did not, and nothing announced
+that it had become arbitrary again. When a base or an input changes, re-check
+every number that was derived FROM it, not just the ones that reference it.
+
+## A returned value that nobody catches is a check that does not exist
+
+**Found 2026-09-18.** Two reconciliation routines computed real answers —
+which positions the broker had closed behind the desk's back, and which
+unprotected positions had just been re-protected — and every one of their five
+call sites called them as bare statements, keeping nothing. What proved it was
+an unfinished pattern rather than a decision was the third sibling beside
+them, whose return IS captured and threaded into the session result, and which
+is the only reason a missing stop reaches the owner at all.
+
+State this kind of gap precisely or it misleads. Both routines logged what
+they did, so the information existed; what it could not do was reach a session
+result, a message, or any test that reads one. That is a REPORTING gap, not a
+detection gap, and calling it silent would have put the fix in the wrong
+place. The pattern to distrust on sight: a function that returns a value being
+invoked as a statement.
+
 ## A finding with no owner and no due date will be lost
 
 **Measured, 2026-09-17.** An audit that produces an inventory rather than
