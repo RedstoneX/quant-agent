@@ -38,6 +38,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _shared_ast_cache
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 #: Modules excluded from the import sweep, each with the reason. Keep this
@@ -98,19 +100,17 @@ def _fstring_backslash_offenders() -> list[str]:
     walks `FormattedValue` nodes and inspects the source text of each
     expression instead.
     """
+    # Parsing goes through `_shared_ast_cache`, keyed by absolute file path:
+    # `src/` is also scanned by test_one_definition_per_quantity.py's three
+    # guards, so any file already parsed there is not re-read or re-parsed
+    # here (and vice versa) -- neither scan's assertions change, only
+    # whether a given file's read+parse happens once or twice in a process.
     offenders: list[str] = []
     for package in ("ops", "scripts", "src", "tests"):
         root = PROJECT_ROOT / package
         if not root.is_dir():
             continue
-        for path in sorted(root.rglob("*.py")):
-            if "__pycache__" in path.parts:
-                continue
-            source = path.read_text(encoding="utf-8")
-            try:
-                tree = ast.parse(source, filename=str(path))
-            except SyntaxError:  # already unparseable; the import tests own that
-                continue
+        for path, source, tree in _shared_ast_cache.parse_tree(root):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.FormattedValue):
                     continue
