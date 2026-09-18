@@ -46,17 +46,27 @@ def _pipeline():
     return p
 
 
-def _buy_row(days_ago=6, horizon=15, setup="range", stop=90.0, target=140.0):
-    entry_date = (et_today() - timedelta(days=days_ago)).isoformat()
+def _buy_row(days_ago=6, horizon=15, setup="range", stop=90.0, target=140.0,
+             entry_date=None):
+    # `entry_date`, when given, is an explicit `date` — used by tests that
+    # need a specific SESSION count rather than whatever `days_ago` happens
+    # to work out to against the real wall-clock date (board item 91: a
+    # weekend in the range makes days_ago != sessions elapsed).
+    ed = entry_date if entry_date is not None else (et_today() - timedelta(days=days_ago))
     return {
         "stop_loss": stop, "take_profit": target,
-        "timestamp": f"{entry_date} 14:00:00",
+        "timestamp": f"{ed.isoformat()} 14:00:00",
         "expected_horizon_sessions": horizon, "setup_type": setup,
     }
 
 
-def _facts(pipeline, position, buy_row):
+def _facts(pipeline, position, buy_row, today=None):
     pipeline.db.get_symbol_last_buy.return_value = buy_row
+    if today is not None:
+        with patch("src.pipeline.et_today", return_value=today):
+            return pipeline._build_position_facts(
+                positions=[position], morning_trades=[], total_value=100_000.0,
+            )[position.symbol]
     return pipeline._build_position_facts(
         positions=[position], morning_trades=[], total_value=100_000.0,
     )[position.symbol]
@@ -67,12 +77,22 @@ def _facts(pipeline, position, buy_row):
 # ===========================================================================
 
 def test_pace_uses_the_horizon_pinned_at_entry():
-    """Entry 100, target 140, now 120 → 50% progress. Day 6 of a 12-session
-    thesis is half the time for half the progress → pace 1.0x, on schedule."""
+    """Entry 100, target 140, now 120 → 50% progress. 6 TRADING SESSIONS
+    (Mon 8/24 -> Tue 9/1, one weekend crossed) of a 12-session thesis is
+    half the time for half the progress → pace 1.0x, on schedule.
+
+    Board item 91: pinned to explicit dates (rather than a relative
+    `days_ago` off the real wall-clock date) because the calendar range
+    spans a weekend — `days_ago=6` calendar days does not reliably give 6
+    *sessions*, and the point of this test is sessions, not calendar days.
+    """
+    from datetime import date as _date
     facts = _facts(
         _pipeline(), _position(current_price=120.0),
-        _buy_row(days_ago=6, horizon=12),
+        _buy_row(entry_date=_date(2026, 8, 24), horizon=12),
+        today=_date(2026, 9, 1),
     )
+    assert facts["sessions_held"] == 6
     assert facts["thesis_progress_pct"] == pytest.approx(50.0)
     assert facts["pace"] == pytest.approx(1.0)
     assert facts["pace_status"] == "measured"
@@ -92,12 +112,68 @@ def test_pace_is_not_measurable_before_one_third_of_the_horizon():
 
 
 def test_pace_becomes_measurable_once_a_third_of_the_horizon_elapses():
+    """Exactly 5 TRADING SESSIONS (Mon 8/24 -> Mon 8/31, one weekend
+    crossed) of a 15-session horizon meets the one-third (5-session)
+    threshold. Pinned to explicit dates for the same reason as above —
+    `days_ago=5` calendar days across a weekend is only 3-4 sessions on
+    most real-world run dates, which would wrongly stay `too_early`."""
+    from datetime import date as _date
     facts = _facts(
         _pipeline(), _position(current_price=120.0),
-        _buy_row(days_ago=5, horizon=15),
+        _buy_row(entry_date=_date(2026, 8, 24), horizon=15),
+        today=_date(2026, 8, 31),
     )
+    assert facts["sessions_held"] == 5
     assert facts["pace"] is not None
     assert facts["pace_status"] == "measured"
+
+
+def test_pace_divides_sessions_by_sessions_a_weekend_does_not_move_it():
+    """Board item 91: `pace`'s `too_early`/`time_fraction` arithmetic read
+    the calendar-day `days_held` while `expected_horizon_sessions` is
+    denominated in SESSIONS — a `sessions_held` companion was computed
+    right above it and went unused. A Friday buy reviewed the following
+    Monday is 3 CALENDAR days but only 1 TRADING SESSION old; under the bug
+    that 1-session-old position (1/6 of a 6-session horizon, well under the
+    1/3 too_early floor) was reported as "measured" with pace 0.5x — a
+    false stalling signal on a position that has seen a single session of
+    real price action. This pins the fix: `too_early`/`pace` must be
+    computed from `sessions_held`, and the Friday->Monday weekend must not
+    move either one.
+    """
+    from datetime import date as _date
+    friday = _date(2026, 9, 11)
+    monday = _date(2026, 9, 14)
+    facts = _facts(
+        _pipeline(), _position(current_price=110.0),
+        _buy_row(entry_date=friday, horizon=6, target=140.0),
+        today=monday,
+    )
+    assert facts["days_held"] == 3
+    assert facts["sessions_held"] == 1
+    # 1 of 6 sessions is under the 1/3 floor (2 sessions) -> too_early, not
+    # a measured (and falsely stalled-looking) pace.
+    assert facts["pace_status"] == "too_early"
+    assert facts["pace"] is None
+
+    # Same review, but a horizon short enough that 1 session clears the
+    # 1/3 floor (1 >= max(1, 3/3)) -- confirms the arithmetic is genuinely
+    # sessions-over-sessions, not just always "too_early" for a 3-day-old
+    # position.
+    facts2 = _facts(
+        _pipeline(), _position(current_price=110.0),
+        _buy_row(entry_date=friday, horizon=3, target=140.0),
+        today=monday,
+    )
+    assert facts2["sessions_held"] == 1
+    assert facts2["pace_status"] == "measured"
+    # thesis_progress = (110-100)/(140-100)*100 = 25%; time_fraction =
+    # sessions_held/horizon = 1/3 -> pace = 25/(100/3) = 0.75. Under the old
+    # calendar-day bug this would instead have used days_held=3 (a full
+    # horizon's worth of calendar time against a 3-session horizon),
+    # giving time_fraction=1.0 and pace=0.25 -- a materially slower-looking
+    # position purely because a weekend sat in the date range.
+    assert facts2["pace"] == pytest.approx(0.75)
 
 
 def test_progress_and_pace_are_disabled_for_breakout_setups():
@@ -141,7 +217,10 @@ def test_pipeline_does_not_feed_calibration_hold_time_into_the_review_path():
     """Guard against a future edit quietly restoring the loop."""
     import inspect
 
-    source = inspect.getsource(TradingPipeline.run_position_review)
+    # `run_position_review` became a thin persistence wrapper on 2026-09-18
+    # (see `Database.save_session_report`); the real body — where this
+    # guard actually bites — is `_run_position_review_body`.
+    source = inspect.getsource(TradingPipeline._run_position_review_body)
     # Comments explaining WHY the loop was removed are welcome; a live
     # reference is not. Strip comment text before checking.
     code = "\n".join(
@@ -183,15 +262,88 @@ def test_reviewer_prompt_documents_the_pinned_horizon_not_average_hold_time():
 # ===========================================================================
 
 def test_deltas_detect_improvement():
+    """The EPD case: PRICE moved away from a FIXED stop, so distance-to-stop
+    improving is a real improvement and still counts as one.
+
+    `stop_loss` / `current_price` are carried on the snapshot since
+    2026-09-18 so the rise can be ATTRIBUTED (see
+    `test_a_wider_stop_is_not_an_improvement`). Stop unchanged at 24.00,
+    price 25.00 -> 25.32: (25.32 - 24.00) / 25.32 = 5.2%.
+    """
+    d = compute_deltas(
+        "EPD",
+        prior={"thesis_progress_pct": 16.0, "distance_to_stop_pct": 4.0,
+               "stop_loss": 24.0, "current_price": 25.0},
+        current={"thesis_progress_pct": 20.0, "distance_to_stop_pct": 5.2,
+                 "stop_loss": 24.0, "current_price": 25.32},
+    )
+    assert d.has_prior
+    assert d.improved == ["distance_to_stop_pct", "thesis_progress_pct"]
+    assert d.stop_driven == []
+    assert d.worsened == []
+    assert d.net_improved is True
+
+
+def test_distance_improvement_without_provenance_is_not_counted():
+    """A snapshot pair written before 2026-09-18 carries no stop or price,
+    so a distance-to-stop rise cannot be attributed to either term.
+
+    It is NOT counted as an improvement. That is the fail-open direction on
+    this path: an uncounted improvement can only make
+    `veto_contradicted_exit` fire LESS, and a veto that strands the desk in
+    a losing position is the worse failure. Self-heals after one session,
+    once both snapshots carry the two fields.
+    """
     d = compute_deltas(
         "EPD",
         prior={"thesis_progress_pct": 16.0, "distance_to_stop_pct": 4.0},
         current={"thesis_progress_pct": 20.0, "distance_to_stop_pct": 5.2},
     )
-    assert d.has_prior
-    assert d.improved == ["distance_to_stop_pct", "thesis_progress_pct"]
-    assert d.worsened == []
+    assert d.stop_driven == ["distance_to_stop_pct"]
+    assert d.improved == ["thesis_progress_pct"]
+    assert "provenance unknown" in d.render()
+
+
+def test_deltas_short_price_driven_improvement_still_counts():
+    """SHORT twin of `test_deltas_detect_improvement`. Stop fixed at 110
+    (above price, protecting the short); price falls 100 -> 90, a real
+    favourable move. `distance_to_stop_pct` (side-mirrored:
+    `(stop - current) / current * 100`) rises 10.0 -> 22.22, and — because
+    `qty` is carried and negative on both snapshots — the provenance
+    recomputation must recognise this as PRICE-driven, not stop-driven,
+    the same as it would for a long."""
+    d = compute_deltas(
+        "XYZ",
+        prior={"distance_to_stop_pct": 10.0, "stop_loss": 110.0,
+               "current_price": 100.0, "qty": -10.0},
+        current={"distance_to_stop_pct": 22.22, "stop_loss": 110.0,
+                 "current_price": 90.0, "qty": -10.0},
+    )
+    assert d.stop_driven == []
+    assert d.improved == ["distance_to_stop_pct"]
     assert d.net_improved is True
+
+
+def test_deltas_short_widened_stop_is_not_an_improvement():
+    """SHORT twin of the V/CMCSA/DIS real-data case: the stop is loosened
+    (moved further ABOVE price, from 110 to 130) while price actually moves
+    ADVERSELY for the short (100 -> 105, i.e. up). `distance_to_stop_pct`
+    still rises 10.0 -> 23.8 because both terms moved, but holding the stop
+    at its prior value (110) with the new price (105) gives
+    (110-105)/105*100 = 4.76 — LOWER than the prior 10.0, so price alone
+    does not carry the rise. Must land in `stop_driven`, excluded from
+    `improved`, exactly like the long case — not the sign-flipped opposite
+    conclusion a long-only recomputation would reach."""
+    d = compute_deltas(
+        "XYZ",
+        prior={"distance_to_stop_pct": 10.0, "stop_loss": 110.0,
+               "current_price": 100.0, "qty": -10.0},
+        current={"distance_to_stop_pct": 23.8, "stop_loss": 130.0,
+                 "current_price": 105.0, "qty": -10.0},
+    )
+    assert d.stop_driven == ["distance_to_stop_pct"]
+    assert d.improved == []
+    assert "wider stop, NOT an improvement" in d.render()
 
 
 def test_deltas_detect_deterioration():

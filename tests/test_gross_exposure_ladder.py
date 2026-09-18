@@ -475,13 +475,18 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     import inspect
     from src.pipeline import TradingPipeline
 
-    for entry_point in (TradingPipeline.run_morning, TradingPipeline.run_position_review):
+    # `run_morning`/`run_position_review` became thin persistence wrappers
+    # on 2026-09-18 (see `Database.save_session_report`, same shape
+    # `run_evening`/`_run_evening_body` already used); the preamble this
+    # test pins now lives in their bodies.
+    for entry_point in (TradingPipeline._run_morning_body,
+                        TradingPipeline._run_position_review_body):
         source = inspect.getsource(entry_point)
         assert "_enforce_gross_ceiling" in source, (
             f"{entry_point.__name__} must de-lever in its preamble"
         )
 
-    morning = inspect.getsource(TradingPipeline.run_morning)
+    morning = inspect.getsource(TradingPipeline._run_morning_body)
     assert morning.index("_enforce_gross_ceiling") < morning.index("_decision_stage"), (
         "the de-lever must run BEFORE the Portfolio Manager is called, so a "
         "blank or truncated model response cannot skip it"
@@ -490,7 +495,7 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # The midday/close lane has its own agent (the position reviewer) and the
     # same requirement: the ladder steps on measured drawdown, and a reviewer
     # that returns nothing must not postpone the de-lever to tomorrow.
-    review = inspect.getsource(TradingPipeline.run_position_review)
+    review = inspect.getsource(TradingPipeline._run_position_review_body)
     assert review.index("_enforce_gross_ceiling") < review.index("position_reviewer"), (
         "the de-lever must run BEFORE the position reviewer is called, for "
         "the same reason it runs before the Portfolio Manager"
@@ -535,6 +540,56 @@ def test_the_preamble_de_lever_submits_sells_with_no_pm_decision_present():
     assert ctx.leverage["ceiling_x"] == 1.0
     assert ctx.leverage["drawdown_pct"] == pytest.approx(-16.0, abs=0.1)
     assert ctx.leverage["distance_to_forced_liquidation_pct"] is not None
+    assert "delever_incomplete" not in ctx.leverage, (
+        "a de-lever that actually brought the book under the ceiling must "
+        "not raise the incomplete flag"
+    )
+
+
+def test_a_delever_that_fails_to_clear_the_ceiling_is_flagged():
+    """Reporting-only check: the trim was submitted, but the post-refresh
+    book is STILL over the ceiling (a failed order, a partial fill, or
+    integer-share rounding can all produce this). This must be visible on
+    `ctx.leverage` — which every session-result dict already copies — even
+    though nothing about the order sequence changed."""
+    from unittest.mock import MagicMock
+    from src.config import CashSweepConfig
+    from src.pipeline import TradingPipeline
+    from src.pipeline_context import RunContext
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = MagicMock()
+    pipeline.config.risk = _risk_config()
+    pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
+    pipeline.db = MagicMock()
+    # A book that fell 16% from its high: the ladder demands 1.0x.
+    pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
+    pipeline.broker = MagicMock()
+    # Post-refresh the broker still reports an over-levered book (the sell
+    # only partially filled) — 1.5x against a 1.0x ceiling.
+    pipeline.broker.get_account.return_value = {
+        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+    }
+    pipeline.broker.get_positions.return_value = [
+        _position("NVDA", qty=150.0, current_price=100.0),
+    ]
+    pipeline.cash_sweeper = None
+    pipeline._compute_deployable_cash = MagicMock(return_value=0.0)
+    pipeline._finalize_pending_protections = MagicMock()
+    pipeline._submit_protected_sell = MagicMock(
+        return_value=({"id": "order-1", "symbol": "NVDA"}, {}),
+    )
+
+    ctx = RunContext(run_id="test-run", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=100.0)]  # 2.0x
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders, "the de-lever must still submit its trim"
+    assert ctx.leverage["gross_x"] == pytest.approx(1.5)
+    assert ctx.leverage["ceiling_x"] == 1.0
+    assert ctx.leverage["delever_incomplete"] is True
 
 
 def test_the_ceiling_is_computed_from_account_state_alone():
@@ -898,6 +953,44 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
     # And the claim must be exact: this book is UNDER its cap, so it is not
     # true that every new position is refused.
     assert "refused once the book reaches it" in alert
+
+
+def test_a_failed_delever_gets_its_own_plain_language_alert():
+    """A de-lever that runs and still leaves the book over the ceiling is
+    unreportable (it only reaches the log) unless this line exists. Plain
+    words for a non-developer owner: what was attempted, that it fell short,
+    and the real measured number — never an internal name, a status code,
+    or an invented figure."""
+    from src.notifier import _append_leverage_line
+
+    lines: list[str] = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 1.5, "ceiling_x": 1.0, "base_ceiling_x": 2.0,
+        "drawdown_pct": -16.0, "distance_to_forced_liquidation_pct": 40.0,
+        "alert_owner": False, "delever_incomplete": True,
+    }})
+
+    assert len(lines) == 2, "the failed de-lever gets its own line"
+    alert = lines[1]
+    assert "still over" in alert
+    assert "1.50x" in alert and "1.00x" in alert
+    # No internal names, status codes, or component jargon in an
+    # owner-facing message.
+    for banned in ("FORCE_DELEVER", "ceiling_x", "gross_x", "§11.2"):
+        assert banned not in alert
+
+
+def test_no_failed_delever_alert_when_the_book_cleared_the_ceiling():
+    from src.notifier import _append_leverage_line
+
+    lines: list[str] = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 0.9, "ceiling_x": 1.0, "base_ceiling_x": 2.0,
+        "drawdown_pct": -16.0, "distance_to_forced_liquidation_pct": 40.0,
+        "alert_owner": False, "delever_incomplete": False,
+    }})
+
+    assert len(lines) == 1, "no incomplete-delever line when the flag is unset"
 
 
 # ===========================================================================

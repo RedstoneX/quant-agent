@@ -296,7 +296,11 @@ def test_execution_skip_is_not_misreported_as_investment_hold(tmp_path, monkeypa
         50.0,
     )
     assert "Execution gate: 1 skip" in msg
-    assert "insufficient_cash" in msg
+    # Board item 89 defect 5: this used to assert the internal reason CODE
+    # appeared in the owner's message. It must not; the plain-English label
+    # that `_SKIP_WHO_LABELS` already held for it must.
+    assert "insufficient_cash" not in msg
+    assert "Blocked by the desk — insufficient cash" in msg
     assert "decision(s) survived review but execution could not complete" in msg
 
 
@@ -1289,7 +1293,9 @@ def test_actionable_intraday_tick_sends_immediately_at_any_time(tmp_path, monkey
     msg = trader_feed.format_session_result("intra_check", outer, 3.0)
     assert msg is not None
     assert "⚡ INTRADAY OPPORTUNITY" in msg
-    assert "insufficient_cash" in msg
+    # Board item 89 defect 5 — plain words, never the internal code.
+    assert "insufficient_cash" not in msg
+    assert "Blocked by the desk — insufficient cash" in msg
     # A half-hour tick is not the hourly checkpoint — no desk-check banner.
     assert "🕐 DESK CHECK" not in msg
 
@@ -1822,7 +1828,12 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
         assert f"{sym}:" in details_section and reason in details_section
     assert "🧠 PM/Constructor: 2 change(s) · 0 hold(s)" in details_section
     assert "🛡️ Risk: APPROVED · rr_fail" in details_section
-    assert "fat_finger_guard" in details_section  # raw evidence, unabridged
+    # Board item 89 defect 5: the DETAILS block used to paste the internal
+    # reason code through verbatim. The guard's own plain sentence (the
+    # `detail`) is what carries the evidence, unabridged; the code does not
+    # appear anywhere in the message.
+    assert "fat_finger_guard" not in msg
+    assert "Blocked by desk safety check (not the broker)" in details_section
 
     # --- no separate 'who:' identity block anywhere ---
     assert "who:" not in msg
