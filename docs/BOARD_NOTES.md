@@ -356,6 +356,7 @@ decision at all.
 ## item 91
 
 **Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
+**Verified 2026-09-18, and it is worse than the general case —** the position reviewer's own pace check already has the right number sitting next to the wrong one. A weekend-aware trading-session count is computed a few lines above the pace math and used correctly elsewhere in the same file (widening the noise band). The pace math itself reads the calendar-day count instead, so the exact fix this item asks for already exists in scope and is simply not being read.
 
 ## item 92
 
@@ -418,3 +419,39 @@ decision at all.
   2. **"Why do we hold this" view.** When you click through to see why a position is held, the fix replaces what's already there rather than adding a new panel: one plain sentence at the top giving the real reason with actual numbers in it, then the rest of the decision-relevant detail written for a human to read, with no fixed line count — you rejected a "keep it to four lines" rule; the test is whether something is relevant, not how long it is. Internal ID numbers get tucked behind a toggle rather than shown up front.
   3. **Evening report.** Drop run identifiers and provider-request counts (nobody-facing plumbing); state the LLM cost in a sentence instead of a row of zeros; only mention "overnight fractional position unprotected by design" when something is actually abnormal that night, not every night; put today's and total profit/loss at the very top; keep the winners and underwater-positions lists; rewrite the risk/bias section so it reads in plain language.
 **Recommendation —** No action needed from you; recorded so the in-progress work has something to be checked against when it lands.
+## item 104
+
+**Plain language —** The three seats that actually pick and size your trades are each given a written brief, in plain English, describing the desk's rules. Seventeen statements in those briefs are no longer true — the code underneath them was changed and nobody changed the brief. Eight of the seventeen can change a trade. One of them killed a name on 17 September: the brief tells the seat that the macro view never counts toward how many sources agree, while the code counts it as a vote either way.
+**How confident to be —** Two were re-checked independently against the code on 18 September and both held up: the brief calls 75% "the sector limit" when the code treats 75% as a soft warning and 90% as the real ceiling, and the technical seat is told it is being shown the last 20 days of prices when it is actually shown 40.
+**Why it kept happening —** Nothing ties the English in a brief to the code it describes, so prose rots silently. Treat a brief as code that can go stale.
+**Recommendation —** Two pieces of work are already open and stacked, and between them they correct sixteen of the seventeen. Before anyone calls this finished, confirm which one is being left out and why.
+
+## item 105
+
+**Plain language —** The analyst seats' briefs contain about 55 numbers that exist nowhere but in the brief itself — no code behind them, nothing that checks them. The desk already bans numbers that were invented rather than read off real data; these are exactly that, and they were invisible because nobody had looked in the briefs. About 20 further statements about how markets behave are asserted with no source at all. Roughly a third of the portfolio manager's brief, and a quarter of two others', describes machinery the model does not actually operate — and that dead prose is where nearly every stale claim in item 104 was hiding.
+**One seat is a bigger question than the rest —** The evening seat's brief has not been touched since before this project began and still describes a hand-picked 77-stock value book held over quarters. The technical seat's brief describes a 5 to 15 day swing book. Both advise the same decision seat. They cannot both be right, and choosing between them is your call, not ours — it is now a dated decision on the board.
+**What was ruled out, so nobody rebuilds it —** Automatically scanning the briefs for numbers does not work: there are about 1,825 number-like tokens in them and most are dates and list numbering. More importantly, neither of the two confirmed cases in item 104 was even in a brief file — both were text the code assembles as it runs, so a file scanner would have caught neither.
+**Recommendation —** Build the check at the point of DELETION instead: when a mechanism is removed from the code, search for its name across every brief and every assembled string. That would have caught the worst case; nothing else proposed would.
+
+## item 106
+
+**Plain language — these are your own instructions, written down so the work lands against them.** Three pieces of work are in flight and each must match what you asked for, not an agent's taste: how the dashboard panels scroll, what the "why do we hold this" view shows, and how the evening report reads.
+**One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
+**The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
+
+## item 101
+
+**Plain language —** Twice a session the desk works out something important and then throws the answer away. One check finds exits the broker made on its own that the desk's books never recorded; the other counts positions it has just put protection back onto. Both compute the answer and then discard it at every one of the five places they are called. The answers do reach the log file, so this is not invisible — but they can never reach a Telegram message, a session summary, or anything that would actually tell you.
+**How we know it is wrong rather than deliberate —** The sister check sitting on the very next line does the opposite: it keeps its answer and carries it through to the session summary, which is how a missing stop reaches you today.
+**Recommendation —** Carry both answers through the same way the stop-coverage check already does. Do this alongside the Telegram work in item 89 — the "you were told you hold a name you sold that morning" defect is the same information going missing.
+
+## item 102
+
+**Plain language —** If an order fills only part-way and stays open, the desk never writes down how much of it filled. That is fine while the order eventually finishes, because the next pass picks it up. It stops being fine in a case the code itself already warns about: the broker deletes its order history after a few days, and after that an unrecorded order gets treated as having filled completely. So a half-filled order can end up counted as a whole one, with the cash and position figures wrong behind it.
+**Age —** This is not new and not from tonight's changes; it has been true at every one of these checks since they were written.
+**Recommendation —** Decide what a part-fill should record, then make that branch write it instead of skipping.
+
+## item 103
+
+**Plain language — your decision, and we are waiting on it.** You asked for the internal scrollbars to come off the detail panels, and they have. The consequence is that the Trades tab, which holds your full live trade history, now makes the page about 6,000 pixels tall. That is the cost of the change, not a fault, and moving to any other tab puts it back to normal. You were offered that one tab's scrollbar back and have not answered, so nothing has been changed.
+**Recommendation —** None until you rule. Your ruling was that scrolling belongs to a panel rather than to a position on the screen, so making one tab an exception is yours to decide, not ours.
