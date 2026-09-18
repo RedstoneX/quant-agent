@@ -432,6 +432,82 @@ def _since_entry(interim: list[dict], review: dict) -> list[str]:
     return lines
 
 
+def _number_words(value: Any) -> str | None:
+    """`9.286` -> `"9.286"`, `4.0` -> `"4"`. None for anything unreadable."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return None
+    if amount != amount or amount in (float("inf"), float("-inf")):
+        return None
+    text = f"{amount:,.4f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _purchase_summary(entry: dict) -> dict:
+    """When WE bought it, what WE paid, and how much — the owner asked for
+    the purchase date and purchase price by name (2026-09-18).
+
+    The fill price is preferred over the order price and the two are
+    distinguished in words, because the desk records both and they differ
+    (on the fixture: ordered at $219.51, filled at $219.00). Reporting the
+    order price as "what we paid" would be a small, avoidable lie.
+    """
+    raw_price = entry.get("fill_price")
+    price_is_fill = raw_price is not None
+    if raw_price is None:
+        raw_price = entry.get("price")
+    try:
+        price = float(raw_price) if raw_price is not None else None
+    except (TypeError, ValueError):
+        price = None
+    if price is not None and price <= 0:
+        price, price_is_fill = None, False
+
+    raw_qty = entry.get("fill_qty")
+    if raw_qty is None:
+        raw_qty = entry.get("qty")
+    try:
+        quantity = float(raw_qty) if raw_qty is not None else None
+    except (TypeError, ValueError):
+        quantity = None
+
+    iso = str(entry.get("timestamp") or "").strip()[:10] or None
+    when = humanize_date(iso) if iso else None
+    if not when:
+        iso = None
+
+    verb = "sold short" if str(entry.get("action") or "").upper() == "SHORT" else "bought"
+    qty_words = _number_words(quantity)
+    lead = f"We {verb}"
+    if qty_words:
+        lead += f" {qty_words} {'share' if qty_words == '1' else 'shares'}"
+    clauses: list[str] = []
+    if when:
+        clauses.append(f"on {when}")
+    if price is not None:
+        paid = f"at ${price:,.2f} a share"
+        paid += (
+            " (the price actually filled)"
+            if price_is_fill
+            else " (the price on the order; no fill price was recorded)"
+        )
+        clauses.append(paid)
+
+    if not qty_words and not clauses:
+        plain = f"When we bought it and what we paid: {NOT_RECORDED}"
+    else:
+        plain = lead + (" " + " ".join(clauses) if clauses else "") + "."
+
+    return {
+        "plain": plain,
+        "date": iso,
+        "price": price,
+        "price_is_fill": price_is_fill,
+        "quantity": quantity,
+    }
+
+
 def build_holding_why(
     entry: dict | None,
     evidence_rows: list[dict] | None = None,
@@ -682,7 +758,13 @@ def build_holding_why(
     else:
         invalidation_plain = f"What would prove this wrong: {NOT_RECORDED}"
 
+    purchase = _purchase_summary(entry)
+
     missing: list[str] = []
+    if purchase["date"] is None:
+        missing.append("the date we bought it")
+    if purchase["price"] is None:
+        missing.append("the price we paid")
     if not why:
         missing.append("why we opened it")
     if driver_name is None:
@@ -709,6 +791,7 @@ def build_holding_why(
             "primary_driver": driver_name,
             "primary_driver_detail": driver_detail,
             "raised_by": origins.get(driver_key) if driver_key else None,
+            "purchase": purchase,
             "insider": insider,
             "supporting": supporting,
             "fundamental_reason": fundamental,

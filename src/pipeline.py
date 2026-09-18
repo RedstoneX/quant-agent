@@ -3110,6 +3110,7 @@ class TradingPipeline:
                     )
                     repaired = self._repair_stop_coverage(
                         symbol, held - covered, is_short=is_short,
+                        outcome=gap,
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3160,7 +3161,7 @@ class TradingPipeline:
                         "buy" if is_short else "sell",
                     )
                 gap["repaired"] = self._repair_stop_coverage(
-                    symbol, held - covered, is_short=is_short,
+                    symbol, held - covered, is_short=is_short, outcome=gap,
                 )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
@@ -3237,9 +3238,16 @@ class TradingPipeline:
         try:
             from src import notifier as _notifier
 
+            # The refusal REASON, not just the shortfall (docs/WORK.md item
+            # 88). "The automatic repair could not restore one" was true of a
+            # corrupt recorded stop, a level the tape has already passed and
+            # an exhausted broker retry alike — three states with three
+            # different owner actions. `repair_refusal` is stamped by
+            # `repair_stop_coverage` and omitted when it has nothing to say.
             detail = "\n".join(
                 f"  {g.get('symbol', '?')}: held {g.get('held_qty')}, "
                 f"covered {g.get('covered_qty')}"
+                + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
                 for g in naked
             )
             _notifier.send_owner_alert(
@@ -3257,11 +3265,19 @@ class TradingPipeline:
 
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
+        outcome: dict | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
         (BUY for a long, SHORT for a short). Returns True when the gap
         was actually closed.
+
+        `outcome`, when given, is the caller's gap dict: a refusal stamps
+        `repair_refusal` on it with a plain sentence saying WHY nothing was
+        placed (docs/WORK.md item 88). Before that, the caller received a
+        bare False and the owner alert could only say the repair "could not
+        restore one" — a corrupt recorded stop, a level already through the
+        tape and three exhausted broker retries all read identically.
 
         THE BODY MOVED to `src.execution.stop_repair.repair_stop_coverage`
         and this is now a delegate — see that module for the whole design,
@@ -3290,6 +3306,7 @@ class TradingPipeline:
             uncovered_qty=uncovered_qty,
             is_short=is_short,
             db=self.db,
+            outcome=outcome,
         )
 
     def _submit_protected_sell(
@@ -4483,11 +4500,34 @@ class TradingPipeline:
         knows coverage wasn't actually rebuilt.
         """
         if residual_qty <= 0 or not cancelled_specs:
+            # NOTHING WAS REQUESTED: no residual to protect, or no stops were
+            # cancelled to restore. Legitimately "nothing to do".
             return True
-        stop_prices = [s.get("stop_price", 0) for s in cancelled_specs]
-        best_stop = min(stop_prices, default=0) if side == "buy" else max(stop_prices, default=0)
-        if best_stop <= 0:
-            return True
+        # docs/WORK.md item 88. `[s.get("stop_price", 0) for s in specs]` then
+        # `best_stop <= 0: return True` was the fail-open: a spec set whose
+        # prices are all zero/absent/garbage was read as "no stop to restore"
+        # and reported as SUCCESS — which makes the drain caller DELETE the
+        # persisted recovery intent and leaves the residual position naked
+        # with nothing left to retry it. A missing price also made `min`/`max`
+        # raise on a None. Judge the values first, then decide; specs existed,
+        # so "no usable price among them" is a REFUSAL, not an absence.
+        from src.execution.stop_records import usable_stop_prices
+
+        usable = usable_stop_prices(
+            s.get("stop_price") for s in cancelled_specs
+        )
+        if not usable:
+            logger.error(
+                "Reprotect REFUSED for %s: %d cancelled stop spec(s) carried "
+                "no usable trigger price (%r) — the residual %s share(s) are "
+                "UNPROTECTED and the recovery intent is kept so the next "
+                "drain retries. A garbage stop is not 'no stop needed'.",
+                symbol, len(cancelled_specs),
+                [s.get("stop_price") for s in cancelled_specs],
+                self._format_qty(residual_qty),
+            )
+            return False
+        best_stop = min(usable) if side == "buy" else max(usable)
 
         # Idempotency: drain may replay finalize on a row whose previous
         # attempt already submitted the residual stop but couldn't
@@ -11054,9 +11094,47 @@ class TradingPipeline:
             # Re-measure so the alert and the dashboard report the book that
             # now exists, not the one that triggered the de-lever.
             self._resolve_gross_ceiling(ctx)
+            self._alert_owner_delever_incomplete(ctx)
         except Exception as e:  # noqa: BLE001
             logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
         return orders
+
+    def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
+        """Flag it when the gross-exposure de-lever did not work.
+
+        `_enforce_gross_ceiling` already logs a warning the moment it
+        *decides* to trim. What nothing checked before this is the OUTCOME:
+        a trim can be submitted and still leave the book over the ceiling —
+        an order that failed to place, a partial fill, integer-share
+        rounding down, or the market moving between the plan and the fill
+        can all produce this. That gap is unreportable, not silent: it was
+        always in the log, just never in anything the owner actually reads
+        (a Telegram message) or in the session result a test can assert on.
+        This is a reporting-only check — it runs after every broker call in
+        the de-lever is already done and changes no order, no sizing, and no
+        sequencing.
+
+        Sets `ctx.leverage["delever_incomplete"] = True` (which every
+        session-result dict already threads through, since they all copy
+        `ctx.leverage` verbatim) whenever we have a real, freshly-measured
+        gross exposure that is still above the ceiling. Never guesses: both
+        numbers come from the same post-refresh `_resolve_gross_ceiling`
+        call used for the ordinary leverage line, and the check is skipped
+        (not defaulted to False) when either is unmeasurable.
+        """
+        leverage = ctx.leverage or {}
+        gross_x = leverage.get("gross_x")
+        ceiling_x = leverage.get("ceiling_x")
+        if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+            return
+        if gross_x <= ceiling_x:
+            return
+        leverage["delever_incomplete"] = True
+        logger.warning(
+            "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
+            "— gross exposure %.2fx equity vs a %.2fx ceiling.",
+            gross_x, ceiling_x,
+        )
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
@@ -14554,6 +14632,44 @@ class TradingPipeline:
         }
 
     def run_evening(self) -> dict:
+        """The evening session, plus the durable record of its own output.
+
+        The body below is unchanged; this wrapper exists so that EVERY
+        return path (holiday short-circuit, paid-analysis suspension, the
+        error payloads and the full report) lands in `evening_reports`
+        before the result reaches the notifier. Previously the run handed
+        stop_coverage_gaps / stop_proximity / earnings_proximity /
+        total_pnl / risk_capital_dollars to the Telegram formatter and
+        then dropped them: only daily_pnl and insights survived, so last
+        night's report could not be re-read without paying for a fresh
+        run. Persistence is fail-soft — a storage problem must cost the
+        audit record, never the evening push.
+        """
+        result = self._run_evening_body()
+        self._persist_evening_report(result)
+        return result
+
+    def _persist_evening_report(self, result: dict) -> None:
+        """Write the evening result dict verbatim, keyed by trading day.
+
+        No field is defaulted or filled in: a value the run could not
+        compute is stored absent/None so that a re-render says
+        "not available" rather than showing a fabricated zero.
+        """
+        if not isinstance(result, dict):
+            return
+        try:
+            self.db.save_evening_report(
+                date=session_date_key(),
+                run_id=result.get("run_id"),
+                payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "evening report persistence failed (non-fatal): %s", exc,
+            )
+
+    def _run_evening_body(self) -> dict:
         ctx = RunContext.start("evening")
         run_id = ctx.run_id
         logger.info("=== Evening report: %s ===", run_id)

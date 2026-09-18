@@ -701,6 +701,10 @@ export interface ResearchAgentBrief {
   tension: string | null;
   why_now: string | null;
   market_context: ResearchMarketContext[];
+  /* Why a stored row that LOOKED like a setup was not drawn as one. A
+   * dropped row used to vanish with no trace, so a missing mini-chart was
+   * indistinguishable from a seat that recorded nothing at all. */
+  market_context_gaps: string[];
   timestamp: string | null;
   error?: string | null;
 }
@@ -710,6 +714,21 @@ export interface ResearchMarketContext {
   stop: number;
   entry: number;
   target: number;
+  /* Which way the trade runs, read from the stored geometry itself
+   * (stop below entry = long, stop above entry = short) rather than from
+   * a rating string — the desk's own invariant, see
+   * `src/portfolio_constructor.py::_resolve_entry_and_stop`. */
+  direction: "long" | "short";
+  /* Where the drawn target came from. `derived` is the desk's own
+   * `take_profit`, computed from the instrument's bars by
+   * `src/data/levels.py::derive_structural_target`. Nothing else is ever
+   * drawn — the analyst model's `reference_target` is a guess the
+   * constructor deliberately stopped trusting on 2026-09-01. */
+  target_source: "derived";
+  /* The derivation's own basis words ("structural level" / "measured
+   * move") when the stored order reasoning carries them, else null. Never
+   * inferred — the UI prints only what the desk wrote. */
+  target_basis: string | null;
 }
 
 export interface ResearchSignal {
@@ -941,6 +960,84 @@ export interface AnalystScorecardResponse {
 
 
 // ---------------------------------------------------------------------
+// /holdings/{symbol}/why — "why do we hold this", in plain English
+//
+// Mirrors src/api/schemas.py's HoldingWhy* models field for field. Every
+// string here is ALREADY written for a person to read: the backend owns
+// the wording rules (src/api/holding_why.py), and the cockpit must never
+// re-phrase, re-derive or fill a gap in them. A null/absent field is
+// reported as absent — see `not_recorded`, which names the gaps in words.
+// ---------------------------------------------------------------------
+
+export interface HoldingPurchase {
+  plain: string;
+  date: string | null;
+  price: number | null;
+  price_is_fill: boolean;
+  quantity: number | null;
+}
+
+export interface HoldingInsiderPurchase {
+  plain: string;
+  actor: string | null;
+  role: string | null;
+  total_usd: number | null;
+  total_usd_plain: string | null;
+  purchase_count: number | null;
+  first_transaction_date: string | null;
+  last_transaction_date: string | null;
+  average_price: number | null;
+  not_recorded: string[];
+}
+
+export interface HoldingSupportingReason {
+  seat: string;
+  reason: string;
+}
+
+export interface HoldingHorizon {
+  sessions: number | null;
+  plain: string;
+  note: string;
+}
+
+export interface HoldingTakeProfit {
+  price: number | null;
+  plain: string;
+  acted_on: boolean;
+  note: string;
+}
+
+export interface HoldingWhyReadable {
+  why: string | null;
+  primary_driver: string | null;
+  primary_driver_detail: string | null;
+  raised_by: string | null;
+  purchase: HoldingPurchase;
+  insider: HoldingInsiderPurchase | null;
+  supporting: HoldingSupportingReason[];
+  fundamental_reason: string | null;
+  invalidation: string;
+  stop_price: number | null;
+  horizon: HoldingHorizon;
+  take_profit: HoldingTakeProfit;
+  since_entry: string[];
+}
+
+export interface HoldingWhyResponse {
+  symbol: string;
+  company_name: string | null;
+  lede: string;
+  readable: HoldingWhyReadable;
+  not_recorded: string[];
+  /** Accession numbers, internal flags, broker-eligibility JSON, run
+   * identifiers. Shown only behind the collapsed "technical detail"
+   * toggle, and never as a raw payload dump — see WhyPanel.tsx. */
+  raw_evidence: Record<string, unknown>;
+}
+
+
+// ---------------------------------------------------------------------
 // Calls
 // ---------------------------------------------------------------------
 
@@ -981,6 +1078,8 @@ export const api = {
     getJSON<ResearchDailyResponse>(`/research/daily/${encodeURIComponent(date)}`),
   analystScorecard: (ideaLimit = 25) =>
     getJSON<AnalystScorecardResponse>(`/analysts/scorecard?idea_limit=${ideaLimit}`),
+  holdingWhy: (symbol: string) =>
+    getJSON<HoldingWhyResponse>(`/holdings/${encodeURIComponent(symbol)}/why`),
   search: (q: string, limit = 50) =>
     getJSON<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 };

@@ -238,7 +238,12 @@ def _status_literals(func: ast.FunctionDef) -> set[str]:
 _PIPELINE_SESSION_FUNCTIONS = (
     "run_morning", "run_position_review", "run_intra_check",
     "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
-    "run_evening", "run_earnings_preprocess",
+    # `run_evening` is a thin wrapper (2026-09-18) that runs
+    # `_run_evening_body` and then persists the result to `evening_reports`
+    # so the report can be re-rendered later; every evening status literal
+    # lives in the body, so the body is scanned directly — the same shape as
+    # run_intra_check / _run_intraday_opportunity_scan above.
+    "run_evening", "_run_evening_body", "run_earnings_preprocess",
 )
 
 # Explicit indirection bridges: (source file, lookup, resolved status set).

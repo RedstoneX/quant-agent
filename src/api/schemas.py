@@ -1150,6 +1150,24 @@ class HoldingSupportingReason(BaseModel):
     reason: str
 
 
+class HoldingPurchase(BaseModel):
+    """When WE bought it and what WE paid — distinct from the insider's
+    purchase above, which is somebody else's trade. Owner-requested
+    2026-09-18: the two were confusable on screen because only the
+    insider's date and price were ever shown."""
+
+    plain: str
+    #: ISO date of the entry trade, for a consumer that wants to format it
+    #: itself. `plain` already carries it written out.
+    date: str | None = None
+    #: The fill price when the fill was reconciled, otherwise the price
+    #: recorded on the order. `price_is_fill` says which, because quoting
+    #: an order price as "what we paid" would be a small lie.
+    price: float | None = None
+    price_is_fill: bool = False
+    quantity: float | None = None
+
+
 class HoldingHorizon(BaseModel):
     sessions: int | None = None
     plain: str
@@ -1193,6 +1211,7 @@ class HoldingWhyReadable(BaseModel):
     primary_driver: str | None = None
     primary_driver_detail: str | None = None
     raised_by: str | None = None
+    purchase: HoldingPurchase
     insider: HoldingInsiderPurchase | None = None
     supporting: list[HoldingSupportingReason] = []
     fundamental_reason: str | None = None

@@ -31,7 +31,19 @@ describe("Mission Control component policy", () => {
     expect(sourceModules["./DesktopCockpitWorkspace.tsx"]).toContain('id: "account"');
     expect(sourceModules["./DesktopCockpitWorkspace.tsx"]).toContain('id: "sessions"');
     expect(sourceModules["./ui/DataTable.tsx"]).toContain("overflow-x-hidden");
-    expect(sourceModules["./ui/DataTable.tsx"]).not.toContain("overflow-x-auto");
+    // Horizontal scrolling stays BANNED by default and is reachable only
+    // through the explicit `scrollX` opt-in (owner request 2026-09-18,
+    // board item 103: the Trades blotter's sixteen columns get both
+    // scrollbars back, and no other table changes). Asserting the guard
+    // expression itself — rather than just the absence of the class —
+    // is what stops the old "every table grew a sideways scrollbar"
+    // regression coming back while still allowing the one exception.
+    expect(sourceModules["./ui/DataTable.tsx"]).toContain(
+      'scrollX ? "table-scroll-x overflow-x-auto" : "overflow-x-hidden"',
+    );
+    expect(
+      (sourceModules["./ui/DataTable.tsx"].match(/overflow-x-auto/g) ?? []).length,
+    ).toBe(1);
     expect(sourceModules["./TodaySessionsStrip.tsx"]).not.toContain("overflow-x-auto");
     expect(sourceModules["./CandidateRail.tsx"]).not.toContain("overflow-x-auto");
     expect(sourceModules["./TradesPanel.tsx"]).toContain("DataTable");

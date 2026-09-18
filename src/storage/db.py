@@ -623,6 +623,34 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- The evening run's OWN OUTPUT — the exact result dict the
+            -- evening Telegram formatter (src/trader_feed.py
+            -- `_format_evening`) was handed, plus the book as the
+            -- positions table held it at that moment.
+            --
+            -- Why this exists (2026-09-18): `run_evening` computed
+            -- stop_coverage_gaps / stop_proximity / earnings_proximity /
+            -- total_pnl / risk_capital_dollars from live broker state,
+            -- handed them to the notifier, and discarded them. daily_pnl
+            -- and insights persist the P&L and the narrative; nothing
+            -- persisted the report's own inputs, so last night's message
+            -- could not be re-read or reviewed without paying for a fresh
+            -- pipeline run. Keyed by trading day like daily_pnl/insights
+            -- (one authoritative report per day, a same-day re-run
+            -- replaces it) with the producing run_id carried alongside.
+            --
+            -- Purely a forensic/re-render record: nothing in the trading
+            -- path reads it, so losing this table costs no trading
+            -- behaviour. A partially-populated payload stays partial —
+            -- readers must render the gap as unavailable, never fill it.
+            CREATE TABLE IF NOT EXISTS evening_reports (
+                date TEXT PRIMARY KEY,
+                run_id TEXT,
+                payload_json TEXT NOT NULL,
+                positions_json TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS insights (
                 date TEXT PRIMARY KEY,
                 tomorrow_outlook TEXT,
@@ -3202,6 +3230,101 @@ class Database:
             )
             self.conn.commit()
             return cursor.rowcount > 0
+
+    def save_evening_report(self, *, date: str, run_id: str | None,
+                            payload: dict) -> None:
+        """Store the evening run's own output for later re-rendering.
+
+        `payload` is the result dict `run_evening` returns — the very
+        object the evening Telegram formatter is handed. It is stored
+        verbatim as JSON: no field is defaulted, renamed or filled in
+        here, because a reader must be able to tell "the run did not
+        produce this" from "the run produced zero". `default=str` is the
+        last-resort escape for a value that is not JSON-native; it never
+        substitutes for a missing value.
+
+        The book is captured alongside it because `trader_feed._read_run`
+        reads the `positions` table UNSCOPED (current holdings, not the
+        run's), so a re-render weeks later would otherwise show today's
+        book under last month's date.
+
+        Keyed by trading day, matching daily_pnl/insights: a documented
+        same-day evening re-run replaces the row and the run_id of the
+        run that actually produced the stored numbers travels with it.
+        """
+        import json
+
+        payload_json = json.dumps(payload, default=str)
+        with self._lock:
+            positions = [
+                dict(row) for row in self.conn.execute(
+                    "SELECT symbol, qty, avg_entry, current_price, market_value, "
+                    "unrealized_pnl FROM positions WHERE qty != 0 "
+                    "ORDER BY ABS(market_value) DESC"
+                ).fetchall()
+            ]
+            positions_json = json.dumps(positions, default=str)
+            self.conn.execute(
+                """INSERT INTO evening_reports
+                   (date, run_id, payload_json, positions_json)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(date) DO UPDATE SET
+                     run_id=excluded.run_id,
+                     payload_json=excluded.payload_json,
+                     positions_json=excluded.positions_json,
+                     timestamp=datetime('now')""",
+                (date, run_id, payload_json, positions_json),
+            )
+            self.conn.commit()
+
+    def get_evening_report(self, date: str | None = None) -> dict | None:
+        """One stored evening report — `date`, or the most recent one.
+
+        Returns None when there is no row, and None when the stored JSON
+        cannot be parsed: an unreadable row is an absent report, and the
+        caller must say so rather than render a partial guess. `positions`
+        is None (not []) when the row carries no book snapshot — "not
+        recorded" and "flat book" are different facts.
+        """
+        import json
+
+        with self._lock:
+            if date:
+                row = self.conn.execute(
+                    "SELECT * FROM evening_reports WHERE date = ?", (date,),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        try:
+            payload = json.loads(record.get("payload_json") or "")
+        except (TypeError, ValueError):
+            logger.error(
+                "evening_reports row for %s has unreadable payload_json",
+                record.get("date"),
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        positions = None
+        raw_positions = record.get("positions_json")
+        if raw_positions:
+            try:
+                parsed = json.loads(raw_positions)
+                positions = parsed if isinstance(parsed, list) else None
+            except (TypeError, ValueError):
+                positions = None
+        return {
+            "date": record.get("date"),
+            "run_id": record.get("run_id"),
+            "timestamp": record.get("timestamp"),
+            "payload": payload,
+            "positions": positions,
+        }
 
     def backfill_position_ids(self, *, dry_run: bool = False) -> dict:
         """One-time reconstruction of `position_id` chains for trades rows
