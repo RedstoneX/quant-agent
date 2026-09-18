@@ -81,13 +81,16 @@ already say.
   `tests` workflow actually queued with `gh run list --branch <branch>`; if
   nothing queued, trigger it with `gh workflow run tests --ref <branch>`.
   Two branches shipped with no run at all.
-- **The `Adversary:` line the closure gate looks for must be a line, not a
-  heading** — `scripts/work_queue.py`'s `ADVERSARY_LINE` regex
+- **The `Adversary:` line in a PR body is the SOFT check and no longer the
+  standard for a closure.** `scripts/work_queue.py`'s `ADVERSARY_LINE` regex
   (`^\s*Adversary\s*:\s*(.+)$`) matches `Adversary: <argument>` and does not
-  match `## Adversary`. Four agents got this wrong in one night. Verify with
-  `gh pr view <n> --json body --jq '.body|test("(?im)^\\s*Adversary\\s*:")'`
-  — it must print `true`. See `.claude/agents/qamc-adversary.md` for who
-  produces the argument, and the closure rule below Governance ratification.
+  match `## Adversary`; four agents got that wrong in one night, and it only
+  ever tested that six words were written down — the module says so itself at
+  its line 104. A change that RETIRES a board item is now held to the
+  enumerated record under "Definition of done" below, which fails `pytest`.
+  Write both: the PR-body line for the stop hook, the commit-message record
+  for the gate. See `.claude/agents/qamc-adversary.md` for who produces the
+  argument.
 - **No board item closes without the adversary agent arguing against closing
   it first** (`.claude/agents/qamc-adversary.md`) — it has found something
   real on every run.
@@ -210,9 +213,67 @@ of `docs/BOARD_NOTES.md`, keyed by number (`## item 44`, `## gate item 3`,
    anything is missing. Either deploy, or confirm a session is watching `main`
    and will.
 
+4. **A new item declares its completion criteria in the same commit**, and
+   retiring one accounts for every criterion it was filed with. Both fail
+   `pytest`; see "Definition of done" below for the exact shape.
+
 **Why this rule exists.** On 2026-09-11 the production checkout was found nine
 commits behind, so the owner's page had been showing week-old work while several
 sessions merged against it. Separately, three findings raised to him as questions
 were never written to the board at all, leaving him asked to rule on things he
 had no way to read. Both failures share one cause: the board was treated as
 something that updates itself, and it does not.
+
+## Definition of done — four checks that fail `pytest`
+
+Work here half-lands. The measured cases: the Portfolio Manager was stopped
+from being told it has no margin and never shown its real buying power; the
+weekend-aware session counter was added and one of its readers switched over;
+a catalogue of arbitrary numbers was finished and sourcing them never started;
+a credential file was built and the units that read it never installed. Nobody
+decided to ship half — the half in front of the author got fixed and the rest
+became permanent because nothing asked again.
+
+`scripts/definition_of_done.py` is the mechanical version and
+`tests/test_definition_of_done.py` is where it blocks, because `pytest` is the
+only check branch protection requires. Read the module for the reasoning and
+for what each check cannot catch; this is the contract.
+
+**Every check is diff-scoped.** A change that files no item, retires no item
+and touches no registered shared quantity is subject to none of them. That is
+the ceremony bound, and it held for 44 of the last 50 commits on `main`.
+
+1. **Filing an item declares its own halves.** A new `**N. ...**` block in
+   `docs/WORK.md` carries a `DONE WHEN:` line followed by one `- [ ]` bullet
+   per half. A question only the owner can answer says `NO CRITERIA: <reason>`
+   instead. Existing items are grandfathered — nothing is retrofitted.
+2. **Closing an item accounts for every criterion it was filed with**, in a
+   commit message: `Done-criteria-met: N/1`, or
+   `Done-criteria-deferred: N/2 -> item M (YYYY-MM-DD)` naming an item that
+   exists after the change. A criterion cannot simply stop being mentioned.
+3. **Changing a registered shared quantity accounts for every site that reads
+   it.** The consumer set is DERIVED from the tree by AST walk — including
+   sites that compute the quantity by hand and call nothing — and compared
+   against the diff's own line ranges, per site, not per file. Account for an
+   untouched one with `Consumers-unchanged: <file>:<function> — <why>`. The
+   declaration is checked against the derivation both ways, so a shorter list
+   does not satisfy it. Registry: `SHARED_QUANTITIES` in the module.
+4. **A closure records objections, not the fact that an adversary ran.**
+   `Objection-N: <argument>` and `Response-N: CHANGED <path> — ...` or
+   `Response-N: REJECTED — ...`, at least two, in a commit message. A
+   `CHANGED` response must cite a path the diff actually touches; that is the
+   one part a reader can falsify mechanically.
+5. **A closure names an acceptance observable.**
+   `Acceptance-observable: <what someone can confirm after a real live
+   session>`, citing a path that exists. Nothing on this desk validates a
+   prompt or behaviour change offline.
+
+**Deployment is verified on the box, not claimed in a PR.**
+`scripts/check_item_deployment.py` asks, per item, whether the commit that
+added that number to the retired-numbers line is an ancestor of
+`/home/qamc/quant-agent`'s HEAD. It is disjoint from the two existing drift
+checks by design: `check_deploy_drift.py` compares one commit against
+`origin/main`, `check_unit_drift.py` byte-compares installed systemd units,
+and a box that passes both can still be running a checkout that predates a
+closure. It has no timer yet — installing one is a deploy action. Run it by
+hand: `scripts/run_item_deployment_check.sh --no-telegram`.
