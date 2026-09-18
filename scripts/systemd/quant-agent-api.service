@@ -14,5 +14,37 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# Broker credentials as files, not environment variables (2026-09-17).
+#
+# WHY. Alpaca's trade_updates websocket authenticates with an in-band message,
+# not an HTTP header, so the OneCLI gateway — which injects headers on outbound
+# REST — cannot reach it. REST therefore works on a placeholder while the socket
+# can never authenticate. The socket can only work if this process holds the
+# real key, so the key is delivered here in the least exposed way available.
+#
+# systemd materialises each of these as a read-only file on a tmpfs and points
+# the process at it via $CREDENTIALS_DIRECTORY. The value never enters the
+# process environment, so it is not in /proc/<pid>/environ and is not inherited
+# by every child. src/credentials.py prefers these over the .env values, which
+# stay placeholders.
+#
+# NOT LoadCredentialEncrypted=. These are `systemd --user` units. Decrypting a
+# host-key credential means reading /var/lib/systemd/credential.secret, which is
+# mode 0400 root; an unprivileged user manager gets "Failed to determine local
+# credential key: Permission denied" and the unit dies at step CREDENTIALS.
+# Verified on this box. Encryption at rest needs the units moved to the system
+# manager first — the application code is identical either way.
+#
+# SetCredential= FIRST, ON PURPOSE. LoadCredential= against a missing file is
+# fatal to the unit. Without the fallback below, installing these units before
+# the credential files exist would stop the whole desk. With it, a missing file
+# degrades to an obvious stand-in that src/credentials.py detects and alerts on,
+# which is loud without being an outage. LoadCredential= overrides it whenever
+# the real file is present.
+SetCredential=alpaca_api_key:PLACEHOLDER-CREDENTIAL-NOT-DELIVERED
+SetCredential=alpaca_secret_key:PLACEHOLDER-CREDENTIAL-NOT-DELIVERED
+LoadCredential=alpaca_api_key:/home/qamc/credentials/alpaca_api_key
+LoadCredential=alpaca_secret_key:/home/qamc/credentials/alpaca_secret_key
+
 [Install]
 WantedBy=default.target
