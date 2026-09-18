@@ -2265,10 +2265,23 @@ class AppConfig(BaseModel):
         return self
 
 
-def _substitute_env_vars(value: str) -> str:
-    """Replace ${VAR_NAME} with environment variable values."""
+def _substitute_env_vars(value: str, overrides: dict[str, str] | None = None) -> str:
+    """Replace ${VAR_NAME} with environment variable values.
+
+    `overrides` takes precedence over `os.environ` for the names it carries. It
+    exists for credentials systemd delivered as files rather than environment
+    variables (see `src/credentials.py`): on the live box `.env` still holds a
+    placeholder for those names, and the placeholder must not win.
+
+    With `overrides` omitted or empty this behaves exactly as it always has —
+    every other interpolation in `settings.yaml` is untouched.
+    """
     def replacer(match):
         var_name = match.group(1)
+        if overrides:
+            override_value = overrides.get(var_name)
+            if override_value is not None:
+                return override_value
         env_value = os.environ.get(var_name)
         if env_value is None:
             return ""  # Optional env vars resolve to empty string
@@ -2276,19 +2289,29 @@ def _substitute_env_vars(value: str) -> str:
     return re.sub(r"\$\{(\w+)\}", replacer, value)
 
 
-def _walk_and_substitute(obj):
+def _walk_and_substitute(obj, overrides: dict[str, str] | None = None):
     """Recursively substitute env vars in all string values."""
     if isinstance(obj, str):
-        return _substitute_env_vars(obj)
+        return _substitute_env_vars(obj, overrides)
     if isinstance(obj, dict):
-        return {k: _walk_and_substitute(v) for k, v in obj.items()}
+        return {k: _walk_and_substitute(v, overrides) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_walk_and_substitute(item) for item in obj]
+        return [_walk_and_substitute(item, overrides) for item in obj]
     return obj
 
 
 def load_config(path: Path) -> AppConfig:
+    """Build the application config.
+
+    Credentials systemd delivered as files are preferred over the environment;
+    everything else resolves from the environment as before. A visibly broken
+    systemd hand-off raises `CredentialDeliveryError` here rather than letting
+    the desk start on a placeholder and fail later at the broker.
+    """
+    from src.credentials import load_systemd_credentials
+
     with open(path) as f:
         raw = yaml.safe_load(f)
-    substituted = _walk_and_substitute(raw)
+    credential_overrides = load_systemd_credentials()
+    substituted = _walk_and_substitute(raw, credential_overrides)
     return AppConfig(**substituted)
