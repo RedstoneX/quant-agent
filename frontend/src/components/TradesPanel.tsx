@@ -53,8 +53,14 @@ export function TradeTable({
   trades,
   onInspect,
   onSelectSymbol,
+  scrollX,
 }: {
   trades: TradeItem[];
+  /** Size the sixteen columns to their content and scroll sideways
+   * instead of squeezing them into the panel — see DataTable's `scrollX`.
+   * Off for this table's other consumers (JournalPanel,
+   * CandidateDetailModal), which are not in a narrow dock panel. */
+  scrollX?: boolean;
   onInspect?: (trade: TradeItem) => void;
   /** Symbol-cell-specific click: charts the symbol in place, same as
    * PositionsPanel's/OrdersPanel's onSelectSymbol. Deliberately separate
@@ -107,7 +113,7 @@ export function TradeTable({
     ] as LegacyColumnDef<TradeItem, unknown>[],
     [onSelectSymbol]
   );
-  return <DataTable data={trades} columns={columns} getRowId={(trade) => String(trade.id)} initialSorting={[{ id: "timestamp", desc: true }]} onRowClick={onInspect} />;
+  return <DataTable data={trades} columns={columns} getRowId={(trade) => String(trade.id)} initialSorting={[{ id: "timestamp", desc: true }]} onRowClick={onInspect} scrollX={scrollX} />;
 }
 
 export function TradesPanel({
@@ -117,8 +123,15 @@ export function TradesPanel({
   onInspect,
   onSelectSymbol,
   fit,
+  scrollX,
 }: {
   fit?: boolean;
+  /** Board item 103: this blotter is the one panel the owner asked to
+   * keep BOTH its own scrollbars, because grown to fit it ran to roughly
+   * six thousand pixels of page. The pane around it supplies the
+   * scrollbars; this flag stops the table pinning itself to the panel
+   * width so the horizontal one has something to scroll. */
+  scrollX?: boolean;
   trades: TradeItem[];
   error: string | null;
   loading: boolean;
@@ -145,7 +158,7 @@ export function TradesPanel({
       {!error && trades.length === 0 && <StateMessage text="No trades recorded yet." />}
       {!error && trades.length > 0 && filtered.length === 0 && <StateMessage text="No trades match this filter." />}
       {!error && filtered.length > 0 && (
-        <TradeTable trades={filtered} onInspect={onInspect} onSelectSymbol={onSelectSymbol} />
+        <TradeTable trades={filtered} onInspect={onInspect} onSelectSymbol={onSelectSymbol} scrollX={scrollX} />
       )}
     </Panel>
   );

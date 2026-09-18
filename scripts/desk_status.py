@@ -4,6 +4,9 @@
     scripts/desk_status.py --dry-run   # print the message, send nothing
     scripts/desk_status.py             # send it to the owner's channel
 
+    scripts/desk_status.py --evening              # last night's stored report
+    scripts/desk_status.py --evening 2026-09-17   # a specific night
+
 WHAT IT IS
     "Tell me where the desk stands, now." It reports state; it does not
     produce a view. There is no analysis in it and no opinion in it.
@@ -31,6 +34,17 @@ HONESTY
     rendered as "OK", as zero, or as blank. If the broker cannot be read at
     all, the command refuses to send anything rather than publish a message
     with an invented P&L.
+
+RE-READING AN EVENING REPORT
+    `--evening [DATE]` renders a night the evening run already stored (see
+    `Database.save_evening_report`) instead of the live status. It is the
+    way to review last night's report, or to show the owner what the report
+    looks like, without paying for a pipeline run: the message comes from
+    the stored row through the same formatter the live evening push uses,
+    with no broker call, no model call and no write. A night that is not
+    stored, or a row that cannot be read, is reported as unavailable and
+    nothing is sent; a stored row that is missing pieces says which ones,
+    in words, rather than rendering them as zero or as blank.
 """
 from __future__ import annotations
 
@@ -60,6 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="Print the message to stdout and send nothing.",
     )
+    parser.add_argument(
+        "--evening", nargs="?", const="latest", metavar="DATE",
+        help=(
+            "Re-render a stored evening report instead of the live desk "
+            "status. DATE is a trading day (YYYY-MM-DD); omit it for the "
+            "most recent stored night. Reads only the database — no "
+            "broker call, no model call."
+        ),
+    )
     return parser
 
 
@@ -83,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     config = load_config(config_path)
+
+    if args.evening:
+        return _send_stored_evening(args, config)
 
     api_key = os.environ.get("ALPACA_API_KEY", "")
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
@@ -108,8 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     message = format_desk_status(account, positions, time.monotonic() - start)
+    return _deliver(message, config, dry_run=args.dry_run)
 
-    if args.dry_run:
+
+def _deliver(message: str, config, *, dry_run: bool) -> int:
+    if dry_run:
         print(message)
         return 0
 
@@ -128,6 +157,50 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 4
     return 0
+
+
+def _send_stored_evening(args, config) -> int:
+    """`--evening [DATE]`: read one stored evening report back out.
+
+    Strictly a database read rendered by `trader_feed.render_stored_evening`
+    — no broker credentials are touched, no model is called, nothing is
+    written. This is how last night's report is reviewed, and how the
+    report format is shown to the owner, without paying for a run.
+
+    A report that is not stored is reported as not stored. Nothing is
+    rendered from a partial guess and no figure is ever invented: if the
+    row is absent or unreadable, this refuses and sends nothing, exactly
+    as the live path refuses rather than publish a made-up P&L.
+    """
+    from src.trader_feed import read_stored_evening, render_stored_evening
+
+    db_path = Path(config.storage.db_path)
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+    if not db_path.exists():
+        print(f"ERROR: database not found: {db_path}", file=sys.stderr)
+        return 2
+
+    requested = None if args.evening == "latest" else str(args.evening)
+    record = read_stored_evening(requested, db_path=db_path)
+
+    if record is None:
+        which = f"for {requested}" if requested else "at all"
+        print(
+            f"ERROR: no readable evening report stored {which} — nothing "
+            f"sent. The evening run either did not complete or predates "
+            f"the stored-report table; there is no honest message to send.",
+            file=sys.stderr,
+        )
+        return 3
+
+    try:
+        message = render_stored_evening(record)
+    except ValueError as exc:
+        print(f"ERROR: {exc} — nothing sent.", file=sys.stderr)
+        return 3
+
+    return _deliver(message, config, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

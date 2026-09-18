@@ -85,6 +85,8 @@ export function DataTable<T extends object>({
   compact = false,
   resizable = true,
   reorderable = false,
+  scrollX = false,
+  footer,
   storageKey,
 }: {
   data: T[];
@@ -103,10 +105,38 @@ export function DataTable<T extends object>({
    * and drop, and persists the resulting order to localStorage under
    * `storageKey`. Default false so existing consumers are unaffected. */
   reorderable?: boolean;
+  /** Let the table be WIDER than its container and scroll sideways,
+   * instead of squeezing every column into the panel width.
+   *
+   * Added 2026-09-18 for the Trades blotter (owner request, board item
+   * 103). Sixteen columns divided by the panel width is a few characters
+   * each — the fractions machinery above deliberately guarantees the
+   * table never exceeds its container, which is right for a 9-column
+   * blotter and wrong for this one. With `scrollX` the browser's own
+   * automatic table layout sizes each column to its content and the
+   * horizontal scrollbar carries the remainder; no minimum width is
+   * invented here, because the content already implies one. Column
+   * resizing is mutually exclusive with it (there is no fixed total to
+   * trade width within), so a `scrollX` table is rendered unresizable.
+   *
+   * The pane around it owns the scrollbars themselves — see
+   * DesktopCockpitWorkspace's PANE_SCROLL. */
+  scrollX?: boolean;
+  /** An extra row rendered below the body, inside the same table, so its
+   * cells line up with the columns above (a separate table could not
+   * stay aligned once a column is resized or reordered). Keyed by column
+   * id; a column with no entry renders an empty cell rather than
+   * anything invented. See PositionsPanel's totals row. */
+  footer?: Record<string, React.ReactNode>;
   /** Unique per table instance. Required to actually persist when
    * `resizable` or `reorderable` is set (silently skipped without it). */
   storageKey?: string;
 }) {
+  // Percentage-width columns and horizontal scrolling are mutually
+  // exclusive by construction (see `scrollX` above), so one flag governs
+  // the whole width machinery below rather than every call site having to
+  // remember to pass `resizable={false}` alongside `scrollX`.
+  const sizable = resizable && !scrollX;
   const [sorting, setSorting] = useState<SortingState>(initialSorting);
   const [fractions, setFractions] = useState<ColumnFractions>({});
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -235,7 +265,7 @@ export function DataTable<T extends object>({
   // Persisted values are normalized rather than migrated (see the
   // ColumnFractions comment), and a reorder keeps each column's own share.
   useLayoutEffect(() => {
-    if (!resizable) return;
+    if (!sizable) return;
     const ids = visibleKey ? visibleKey.split(",") : [];
     setFractions((prev) => {
       // First paint of a table with nothing saved renders with the
@@ -263,12 +293,12 @@ export function DataTable<T extends object>({
         ids.every((id) => Math.abs((next[id] ?? 0) - (prev[id] ?? 0)) < 1e-6);
       return unchanged ? prev : next;
     });
-  }, [resizable, storageKey, visibleKey]);
+  }, [sizable, storageKey, visibleKey]);
 
   useEffect(() => {
-    if (!resizable || !Object.keys(fractions).length) return;
+    if (!sizable || !Object.keys(fractions).length) return;
     writePersistedColumnState(storageKey, "sizing", fractions);
-  }, [resizable, storageKey, fractions]);
+  }, [sizable, storageKey, fractions]);
 
   /** Drag one column boundary. All the width moved comes out of the
    * column immediately to the right, so the row's total never changes
@@ -277,7 +307,7 @@ export function DataTable<T extends object>({
    * that sizes it — so it gets no handle, which is also why the old
    * handle-clipped-by-the-panel-edge problem cannot come back. */
   const beginColumnResize = (columnId: string) => (event: React.PointerEvent<HTMLElement>) => {
-    if (!resizable || event.button !== 0) return;
+    if (!sizable || event.button !== 0) return;
     const ids = visibleIds;
     const index = ids.indexOf(columnId);
     const nextId = ids[index + 1];
@@ -375,13 +405,23 @@ export function DataTable<T extends object>({
   }, [reorderable, dragColumnId]);
 
   return (
-    <div ref={wrapperRef} className="max-w-full min-w-0 overflow-x-hidden rounded-lg ring-1 ring-border">
+    <div
+      ref={wrapperRef}
+      // `overflow-x-hidden` is right for a table pinned to its container
+      // width (the default) and wrong for a `scrollX` one, where clipping
+      // is exactly what put half the Trades columns out of reach.
+      // `table-scroll-x` re-enables Tremor's own inner scroll region and
+      // releases its `w-full` table — both are needed, and neither is
+      // reachable from a Tailwind class on this element. See
+      // styles/index.css.
+      className={`max-w-full min-w-0 rounded-lg ring-1 ring-border ${scrollX ? "table-scroll-x overflow-x-auto" : "overflow-x-hidden"}`}
+    >
       {/* `table-layout: fixed` only once the widths are known. Until
           then the browser's automatic layout runs, which is what the
           seeding effect above measures. */}
       <Table
-        className={`${compact ? "text-xs" : "text-sm"} overflow-x-hidden`}
-        style={resizable ? { width: "100%", tableLayout: Object.keys(fractions).length ? "fixed" : "auto" } : undefined}
+        className={`${compact ? "text-xs" : "text-sm"} ${scrollX ? "w-auto" : "overflow-x-hidden"}`}
+        style={sizable ? { width: "100%", tableLayout: Object.keys(fractions).length ? "fixed" : "auto" } : undefined}
       >
         <TableHead>
           {table.getHeaderGroups().map((group) => (
@@ -398,8 +438,8 @@ export function DataTable<T extends object>({
                   // hit". Truncation now happens on the inner content
                   // wrapper, which looks identical and leaves the handle
                   // whole.
-                  className={`relative px-2 py-2 ${resizable ? "" : "whitespace-nowrap"} ${reorderable ? "cursor-grab select-none" : ""}`}
-                  style={resizable ? { width: `${(fractions[header.column.id] ?? 0) * 100}%` } : undefined}
+                  className={`relative px-2 py-2 ${sizable ? "" : "whitespace-nowrap"} ${reorderable ? "cursor-grab select-none" : ""}`}
+                  style={sizable ? { width: `${(fractions[header.column.id] ?? 0) * 100}%` } : undefined}
                   // Drag-anywhere reorder (2026-09-11): pointerdown on ANY
                   // part of the header cell starts click-vs-drag tracking,
                   // not just the small grip icon below. The grip stays as
@@ -408,7 +448,7 @@ export function DataTable<T extends object>({
                   // cell now.
                   onPointerDown={reorderable ? beginHeaderPointerTracking(header.column.id) : undefined}
                 >
-                  <div className={`flex min-w-0 items-center gap-1.5 ${resizable ? "overflow-hidden" : ""}`}>
+                  <div className={`flex min-w-0 items-center gap-1.5 ${sizable ? "overflow-hidden" : ""}`}>
                     {reorderable && (
                       <span
                         className={`pointer-events-none select-none text-border ${
@@ -450,7 +490,7 @@ export function DataTable<T extends object>({
                       </span>
                     )}
                   </div>
-                  {resizable && visibleIds.indexOf(header.column.id) < visibleIds.length - 1 && (
+                  {sizable && visibleIds.indexOf(header.column.id) < visibleIds.length - 1 && (
                     // 14px INTERACTIVE hit area centred on the column
                     // boundary (right: -7px + w-3.5), now genuinely 14px
                     // wide since the cell no longer clips it. The VISUAL
@@ -496,14 +536,36 @@ export function DataTable<T extends object>({
               {row.getVisibleCells().map((cell) => (
                 <TableCell
                   key={cell.id}
-                  className={`font-mono tabular-nums px-2 py-2 ${resizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
-                  style={resizable ? { width: `${(fractions[cell.column.id] ?? 0) * 100}%` } : undefined}
+                  className={`font-mono tabular-nums px-2 py-2 ${sizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
+                  style={sizable ? { width: `${(fractions[cell.column.id] ?? 0) * 100}%` } : undefined}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>
               ))}
             </TableRow>
           ))}
+          {footer && (
+            // Deliberately loud: the owner asked for a totals row that
+            // stands out, so it gets a heavier top border, a tinted
+            // background, bold text and a size up from the data rows.
+            // `tabular-nums` (as on every data cell above) keeps each
+            // digit the same width, so the total's digits line up
+            // vertically with the column they total.
+            <TableRow className="border-t-2 border-accent/70 bg-panel-alt font-bold">
+              {table.getVisibleLeafColumns().map((column) => (
+                <TableCell
+                  key={`total-${column.id}`}
+                  className={`font-mono tabular-nums px-2 py-3 text-[0.9rem] ${sizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
+                  style={sizable ? { width: `${(fractions[column.id] ?? 0) * 100}%` } : undefined}
+                >
+                  {/* No entry for this column means an EMPTY cell. A
+                      column whose sum would be meaningless must show
+                      nothing rather than a number invented to fill it. */}
+                  {footer[column.id] ?? null}
+                </TableCell>
+              ))}
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>
