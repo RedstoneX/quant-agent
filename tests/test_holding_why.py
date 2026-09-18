@@ -210,7 +210,15 @@ def test_a_holding_with_no_recorded_why_says_so_in_every_field():
     assert readable["take_profit"]["acted_on"] is False
     assert readable["take_profit"]["note"] == NOTHING_ACTS_ON_TARGET
     assert readable["invalidation"] == "What would prove this wrong: Not recorded."
+    # The order price survives even on this bare row, so it is reported as
+    # the order price and explicitly NOT as a fill. The date is genuinely
+    # absent (no timestamp on the row) and says so.
+    assert readable["purchase"]["price"] == 100.0
+    assert readable["purchase"]["price_is_fill"] is False
+    assert readable["purchase"]["date"] is None
+    assert "no fill price was recorded" in readable["purchase"]["plain"]
     assert result["not_recorded"] == [
+        "the date we bought it",
         "why we opened it",
         "which seat raised it",
         "the fundamental reason",
