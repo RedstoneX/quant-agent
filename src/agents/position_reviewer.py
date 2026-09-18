@@ -152,12 +152,15 @@ class PositionReviewerAgent(BaseAgent):
             ):
                 trade_context[sym] = t
 
-        # Non-LLM system actions taken earlier in this session (force-delever
-        # when margin drifted negative; emergency sell-all when daily loss
-        # breached -3% on a long; emergency buy-to-cover under that same
-        # breach when the position being closed was a short instead; a
-        # broker-resident protective stop firing and getting written back by
-        # the stop-out reconciler — 2026-08-28 ONDS/CCJ). These bypass the
+        # Non-LLM system actions taken earlier in this session: a
+        # deterministic de-lever (`FORCE_DELEVER` — the gross-exposure
+        # ladder, or the cash-only safety net when margin drifted negative),
+        # or a broker-resident protective stop firing and getting written
+        # back by the stop-out reconciler (2026-08-28 ONDS/CCJ). The
+        # `EMERGENCY_SELL` / `EMERGENCY_COVER` tags are still matched here
+        # because historical rows carry them; NOTHING EMITS THEM ANY MORE.
+        # The daily-loss breaker stopped liquidating on 2026-09-14 (item 32)
+        # and now halts without closing anything. These bypass the
         # reviewer — the closed positions are already gone from ctx.positions
         # — but surfacing them prevents the reviewer from reasoning in a
         # vacuum about why the book shrank. A circuit-breaker cover
@@ -525,13 +528,22 @@ class PositionReviewerAgent(BaseAgent):
             ).rstrip() + "\n"
 
         if recent_performance:
-            r5 = recent_performance.get("rolling_5d_pct")
-            r20 = recent_performance.get("rolling_20d_pct")
+            # A missing rolling return renders as "not provided", never as
+            # "None%" and never as 0. The PM's equivalent block already warns
+            # its seat not to read a missing value as zero; this one rendered
+            # the literal string "None%", which reads as a number to a model.
+            def _pct(value) -> str:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return f"{float(value):+.2f}%"
+                return "not provided"
+
+            r5 = _pct(recent_performance.get("rolling_5d_pct"))
+            r20 = _pct(recent_performance.get("rolling_20d_pct"))
             dd = recent_performance.get("in_drawdown")
             dd_note = " ⚠️ IN DRAWDOWN — bias toward HOLDING quality, don't panic-sell the bottom" if dd else ""
             perf_section = (
                 f"### Recent System Performance{dd_note}\n"
-                f"- 5d: {r5}% | 20d: {r20}%\n"
+                f"- 5d: {r5} | 20d: {r20}\n"
             )
         else:
             perf_section = ""
@@ -605,10 +617,9 @@ class PositionReviewerAgent(BaseAgent):
         if system_action_lines:
             system_actions_section = (
                 "### Non-LLM System Actions Earlier Today\n"
-                "These sells were triggered by hard-rule safety nets (force de-lever "
-                "when cash < 0; emergency sell-all on −3% daily-loss breach) or by the "
+                "These sells were triggered by a deterministic safety net, or by the "
                 "broker's own protective stop firing (STOP_OUT — the market closed the "
-                "position, not a decision anyone made) and bypassed LLM review — the "
+                "position, not a decision anyone made), and bypassed LLM review — the "
                 "listed symbols are already closed out of the book. Context-only; do "
                 "not try to re-open, re-stop, or second-guess:\n"
                 + "\n".join(system_action_lines) + "\n"
@@ -617,8 +628,8 @@ class PositionReviewerAgent(BaseAgent):
             system_actions_section = ""
 
         # Same-day trim discipline section. Renders only when at least one
-        # symbol was already trimmed earlier today (midday REDUCE, morning
-        # emergency sell, force-delever). The Python executor
+        # symbol was already trimmed earlier today (midday REDUCE, or a
+        # deterministic de-lever). The Python executor
         # enforces this rule independently — this section is the prompt-side
         # belt so the LLM isn't fighting an invisible filter.
         if already_trimmed_today:
@@ -626,7 +637,7 @@ class PositionReviewerAgent(BaseAgent):
                 "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
                 f"Symbols sold earlier today: {', '.join(sorted(already_trimmed_today))}\n"
                 "These positions ALREADY received a sell-side action this session day "
-                "(midday REDUCE, force-delever, or emergency sell).\n"
+                "(a midday REDUCE, or a deterministic de-lever).\n"
                 "**HOLD them at this session unless ONE of these HARD triggers fires:**\n"
                 "  - Named `thesis_invalid_if` condition is satisfied (price closed below "
                 "cited level, fundamental signal flipped, etc.)\n"

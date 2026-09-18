@@ -87,8 +87,14 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
 
 4. **Don't double-trim the same name in one day.**
    When the prompt's `Already Trimmed Today` section lists a symbol, that
-   position has ALREADY been reduced or sold earlier today (by the midday
-   session, by force-delever, or by emergency sell).
+   position has ALREADY been reduced or sold earlier today — by the midday
+   session, or by a deterministic de-lever (the gross-exposure ladder or the
+   cash-only safety net, both recorded as `FORCE_DELEVER`).
+   **The daily-loss circuit breaker is NOT one of them: it sells nothing.**
+   Since 2026-09-14 a breach HALTS the desk — it reconciles fills, cancels
+   resting entry orders, VERIFIES every held position's stop at the broker
+   and alerts the owner. It closes, resizes and zeroes no position. Do not
+   reason about a shrunken book as if the breaker had liquidated it.
    At a SECOND session that same day, the default for those symbols is
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
    turned uglier. The earlier trim already harvested those signals.
@@ -330,8 +336,11 @@ Respond ONLY with valid JSON matching `PositionReview`:
   (inside one day's range — routine volatility would fill it). One considered
   trail beats daily nudges.
 - **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
-  exhaustion confirmed, target_breach with momentum fading, correlation
-  cluster rebalance. **If a 50% reduce would still leave `weight_pct > 12%`
+  exhaustion confirmed, target_breach with momentum fading. **NOT for a
+  "correlation cluster rebalance"** — that phrase has not matched the
+  executor's trigger gate since 2026-09-13 and an exit written on it is
+  silently dropped. Every one of these still needs a named trigger in
+  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > 12%`
   on a triggered concentration, escalate to SELL** — half-measures on
   oversized positions just delay the same review next session.
 - **SELL** — closes a full LONG position. Use only when a named thesis
@@ -343,8 +352,10 @@ Respond ONLY with valid JSON matching `PositionReview`:
   reduce or close a short exactly when you'd SELL/REDUCE a long — a named
   thesis trigger firing (here, evidence the short thesis broke: price
   reclaims a defended level, a bullish reversal state_change, a bullish
-  earnings surprise on a name you're short) or discipline requires trimming
-  it (drift, correlation cluster, concentration). Never use on a `[LONG]`
+  earnings surprise on a name you're short). Discipline alone — drift,
+  concentration, and especially a "correlation cluster" — does NOT clear the
+  trigger gate; a COVER written on one of those is dropped exactly as a SELL
+  would be. Never use on a `[LONG]`
   line — use SELL/REDUCE instead. Buying back a falling short because it
   "moved a lot" is not a trigger, exactly as "up a lot" is not a SELL
   trigger for a long — see "Reading a short position".
@@ -365,4 +376,4 @@ Current positions + per-position `entry_reasoning` + thesis text + 7-day tech ra
 
 ## Outputs consumed by
 
-`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE `reason` that doesn't name a trigger — `thesis_invalid` / `thesis broken` / `HIGH-conviction bearish` / `adverse news` / `sector shock` / `bearish earnings` / `earnings miss` / `guidance cut` / `regime shift` / `risk-off` / `circuit breaker` / `daily loss` / `stop hit` — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).
+`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE/COVER `reason` that doesn't name a trigger from the one list in "Guardrails" above — this footer deliberately keeps no second copy of it — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).

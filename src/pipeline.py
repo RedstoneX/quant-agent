@@ -8769,7 +8769,7 @@ class TradingPipeline:
             where=f"morning late-breach ({where})", basis=basis, ctx=ctx,
         )
 
-    # `_midday_emergency_liquidate` was DELETED 2026-09-14 (docs/WORK.md
+    # `_midday_emergency_liquidate` was DELETED 2026-09-14 (retired-ok; docs/WORK.md
     # item 32). It force-closed the entire book on a daily-loss breach with
     # LIMIT orders 1% through the market and then restored the original
     # stops on any leg that did not fill — so on a correlated gap, the one
@@ -12678,8 +12678,13 @@ class TradingPipeline:
         Scheduled between morning and midday (typically 12:00 ET) to catch a
         flash crash that would otherwise accumulate unchecked through the
         busiest trading hour. Only one rule: daily P&L vs loss limit. If
-        breached, emergency-sell every position. Runs in ~5 seconds; OK for
-        a 30-minute cadence if the user wants even tighter coverage.
+        breached, HALT the desk — see `_halt_on_daily_loss_breach`. It
+        reconciles fills, cancels resting entry orders, verifies stop
+        coverage per held position AT THE BROKER, files a durable per-symbol
+        refusal reason and alerts the owner. It closes, resizes and zeroes
+        nothing: the whole-book liquidation this used to describe was
+        deleted on 2026-09-14 (item 32). Runs in ~5 seconds; OK for a
+        30-minute cadence if the user wants even tighter coverage.
         """
         ctx = RunContext.start("intra_check")
         run_id = ctx.run_id
@@ -12843,7 +12848,7 @@ class TradingPipeline:
             return result
 
         # docs/WORK.md item 32 (2026-09-14): this was a near-verbatim copy of
-        # `_midday_emergency_liquidate` — the same 1%-through-the-market LIMIT
+        # `_midday_emergency_liquidate` (retired-ok) — the same 1%-through-the-market LIMIT
         # orders, the same `_finalize_pending_protections` restore on no-fill.
         # Both are gone. The intra breaker now HALTS: it cancels resting
         # entries, verifies that every held position really is stop-covered
