@@ -23,8 +23,9 @@ What is covered here:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -206,7 +207,9 @@ def test_a_long_silent_failure_is_reported_with_a_measured_duration():
 # --- the message ------------------------------------------------------------
 
 
-def test_nothing_wrong_is_two_lines():
+def test_nothing_wrong_leads_with_heading_then_pnl_then_verdict():
+    """Shortest form the message ever takes: heading, the P&L block (owner
+    rule: every Telegram message, this one included), then the verdict."""
     quiet = [r for r in _records() if L.classify(r.message, r.level) is not None]
     quiet = [
         r
@@ -218,7 +221,10 @@ def test_nothing_wrong_is_two_lines():
     assert report.verdict == "healthy"
     messages = L.render(report)
     assert len(messages) == 1
-    assert len(messages[0].splitlines()) == 2
+    lines = messages[0].splitlines()
+    assert lines[0].startswith("<b>Desk health")
+    assert lines[1].startswith("\U0001f4c8")  # the P&L block leads, right under the heading
+    assert lines[-1].startswith("HEALTHY")
     assert "HEALTHY" in messages[0]
 
 
@@ -386,7 +392,7 @@ def test_a_family_with_no_board_item_says_so():
         family=next(f for f in L.FAMILIES if f.key == "seat_answer_unreadable"),
         count=1,
     )
-    assert "not yet on the list" in L.disposition(finding, {20}, {127}, is_new=True)
+    assert "being looked at" in L.disposition(finding, {20}, {127}, is_new=True)
 
 
 def test_a_tracked_family_says_it_is_tracked():
@@ -395,7 +401,7 @@ def test_a_tracked_family_says_it_is_tracked():
         count=1,
     )
     assert L.disposition(finding, {127}, {127}, is_new=True) == "being worked on"
-    assert L.disposition(finding, {127}, set(), is_new=True) == "on the list"
+    assert L.disposition(finding, {127}, set(), is_new=True) == "already being fixed"
 
 
 # --- the false alarms this module shipped, and the guards against them ------
@@ -690,3 +696,85 @@ def test_classify_is_case_insensitive_generally():
     fl = L.classify(lower.message, lower.level)
     fu = L.classify(upper.message, upper.level)
     assert fl is not None and fu is not None and fl.key == fu.key == "broker_turned_us_away"
+
+
+# --- owner formatting rules --------------------------------------------------
+
+
+def test_pnl_block_immediately_follows_the_heading():
+    """Owner, 2026-09-18: the P&L block goes right after the heading, on
+    EVERY Telegram message — this report included. Reuses the same
+    `trader_feed._pnl_section_lines` renderer as PR #526, so its emoji/
+    wording is the single shared one."""
+    for message in L.render(_report()):
+        lines = message.splitlines()
+        assert lines[0].startswith("<b>Desk health")
+        assert lines[1].startswith("\U0001f4c8")  # "Today's P&L:"
+
+
+def test_a_research_seat_is_named_not_a_generic_desk():
+    """The owner has said 'a research desk' means nothing to him — he wants
+    to know WHICH one. The fixture's real evidence-gate skip names news and
+    smart_money by their own log line; the bullet must say so in plain
+    words, via the same seat naming every other message already uses."""
+    report = _report()
+    finding = next(
+        f for f in report.reported if f.family.key == "decision_skipped_no_evidence"
+    )
+    message = "\n".join(L.render(_report()))
+    assert finding.seats, "the fixture's EVIDENCE GATE line should name real seats"
+    assert "a research desk" not in message
+    assert "the news research" in message
+
+
+def test_research_seat_unavailable_names_the_seat():
+    """Real fixture line: 'Morning research degraded: tech | full status=...'."""
+    report = _report()
+    finding = next(
+        f for f in report.reported if f.family.key == "research_seat_unavailable"
+    )
+    assert finding.seats == {"tech"}
+    bullet = [
+        line for line in "\n".join(L.render(report)).splitlines()
+        if "could not be reached" in line
+    ]
+    assert bullet and "the chart research" in bullet[0]
+
+
+def test_no_on_the_list_jargon_reaches_the_owner():
+    """'on the list' / 'not yet on the list' mean nothing to him (his own
+    words) — every disposition must be plain."""
+    message = "\n".join(L.render(_report()))
+    assert "on the list" not in message
+
+
+# --- cadence: three reports a trading day, watermark-continuous -------------
+
+
+def test_three_a_day_watermark_windows_neither_overlap_nor_gap(tmp_path):
+    """The new cadence fires at 08:55, 12:30 and 16:30 America/New_York.
+    Each firing's window must start exactly where the previous one ended —
+    the watermark's job, unchanged by the cadence change — so nothing in
+    the log is ever skipped or counted twice."""
+    state_path = tmp_path / "state.json"
+    et = ZoneInfo("America/New_York")
+    day = date(2026, 9, 21)  # a Monday
+    fire_times_et = [time(8, 55), time(12, 30), time(16, 30)]
+    fire_times = [
+        datetime.combine(day, t, tzinfo=et).astimezone(UTC) for t in fire_times_et
+    ]
+    windows = []
+    for now in fire_times:
+        state = L.load_state(state_path)
+        start, end = L.window_from_state(now, state)
+        windows.append((start, end))
+        report = L.Report(window_start=start, window_end=end, findings=[])
+        L.save_state(report, state_path)
+
+    # No gap, no overlap: each window starts exactly where the last ended.
+    for (_, prev_end), (next_start, _) in zip(windows, windows[1:]):
+        assert next_start == prev_end
+
+    # And each window actually covers a firing (end == that firing's time).
+    for (_, end), now in zip(windows, fire_times):
+        assert end == now

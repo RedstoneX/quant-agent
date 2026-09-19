@@ -96,7 +96,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from src.notifier import TelegramNotifier
+from src.notifier import TelegramNotifier, _seat_list_words
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,15 @@ class FaultFamily:
     #: resolved later in the window is not reported — the desk fixed it, and
     #: a fixed fault reported as current is a false alarm.
     resolved_by: tuple[re.Pattern[str], ...] = ()
+    #: Captures WHICH research seat a line is about (its internal key, e.g.
+    #: "tech", "smart_money"), so the bullet can name it in plain words
+    #: (`src.notifier.seat_words`) instead of saying "a research desk" —
+    #: the owner has said a generic label means nothing to him and he wants
+    #: to know which seat is actually at fault. `{seats}` in `sentence` is
+    #: filled from the DISTINCT seats seen across every occurrence in the
+    #: window; a line whose seat this pattern fails to capture falls back to
+    #: the generic phrase rather than losing the bullet.
+    seat_pattern: re.Pattern[str] | None = None
 
 
 def _p(*patterns: str) -> tuple[re.Pattern[str], ...]:
@@ -213,11 +222,17 @@ FAMILIES: tuple[FaultFamily, ...] = (
         key="decision_skipped_no_evidence",
         short_name="decisions thrown away for want of an answer",
         sentence=(
-            "The desk threw away {n} trading decision{plural} because a research "
-            "desk it had asked never answered in time"
+            "The desk threw away {n} trading decision{plural} because {seats} "
+            "never answered in time"
         ),
         reason=COST_A_DECISION,
         patterns=_p(r"EVIDENCE GATE .*decision skipped", r"(?m)^DECISION SKIPPED\b"),
+        # The line names exactly which seats it waited on, e.g. "... —
+        # news=expired, smart_money=expired." (`src.evidence_gate.
+        # EvidenceVerdict.reason`). Captures every `seat=state` pair so a
+        # window with several skips naming different seats names all of
+        # them, not just the first.
+        seat_pattern=re.compile(r"\b([a-z_]+)=(?:expired|stale|missing|absent)\b"),
         board_item=20,
     ),
     FaultFamily(
@@ -279,7 +294,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
         key="research_seat_unavailable",
         short_name="a research desk that could not be reached",
         sentence=(
-            "A research desk could not be reached on {n} occasion{plural} and the "
+            "{seats} could not be reached on {n} occasion{plural} and the "
             "work had to go ahead short-handed"
         ),
         reason=COST_A_DECISION,
@@ -289,6 +304,9 @@ FAMILIES: tuple[FaultFamily, ...] = (
         # below, among the things that never get a bullet. Only a seat that
         # was still missing when the work went ahead lands here.
         patterns=_p(r"Morning research degraded"),
+        # Real line: "Morning research degraded: tech | full status={...}" —
+        # names the exact seat that was missing.
+        seat_pattern=re.compile(r"Morning research degraded:\s*([a-z_]+)"),
     ),
     FaultFamily(
         key="stop_missing_or_failed",
@@ -576,6 +594,10 @@ class Finding:
     #: Earliest occurrence anywhere in the retained history, for the families
     #: whose severity is a function of how long they have been failing.
     first_seen_ever: datetime | None = None
+    #: Distinct research-seat internal keys named across every occurrence in
+    #: the window (only populated when `family.seat_pattern` is set), so the
+    #: bullet can say WHICH seat rather than "a research desk".
+    seats: set[str] = field(default_factory=set)
 
     @property
     def reportable(self) -> bool:
@@ -765,7 +787,7 @@ def analyse(
     findings: dict[str, Finding] = {}
     resolved: dict[str, int] = {}
 
-    def bump(family: FaultFamily, ts: datetime) -> None:
+    def bump(family: FaultFamily, ts: datetime, message: str) -> None:
         finding = findings.get(family.key)
         if finding is None:
             finding = Finding(family=family)
@@ -775,6 +797,8 @@ def analyse(
             finding.first_seen = ts
         if finding.last_seen is None or ts > finding.last_seen:
             finding.last_seen = ts
+        if family.seat_pattern is not None:
+            finding.seats.update(m.group(1) for m in family.seat_pattern.finditer(message))
 
     for record in records:
         if _is_owner_alert_echo(record):
@@ -797,12 +821,12 @@ def analyse(
                 # self-healed morning became a HURT verdict.
                 resolved[family.key] = resolved.get(family.key, 0) + 1
                 continue
-            bump(family, record.timestamp)
+            bump(family, record.timestamp, record.message)
         elif record.level in _SERIOUS_LEVELS:
             # Fail-closed: the desk itself called this a fault, and this module
             # has no wording for it. Saying nothing would be the one outcome
             # the report exists to prevent.
-            bump(_FAMILY_BY_KEY[UNRECOGNISED_KEY], record.timestamp)
+            bump(_FAMILY_BY_KEY[UNRECOGNISED_KEY], record.timestamp, record.message)
 
     for finding in findings.values():
         if finding.family.measure_duration and finding.count:
@@ -916,12 +940,64 @@ def disposition(
     if item is not None and item in in_tiers:
         return "being worked on"
     if item is not None and item in on_board:
-        return "on the list"
+        # NOT "on the list" — the owner has said that phrase means nothing to
+        # him. Plain words: it is tracked and someone is on it.
+        return "already being fixed"
     if finding.family.reason is None:
         return "watched and left alone"
     # No board item means nobody has picked this up. Saying anything warmer
     # would let the message claim work is happening that is not.
-    return "new — not yet on the list" if is_new else "still not on the list"
+    return "new — being looked at" if is_new else "still not being looked at"
+
+
+# --- the P&L block -----------------------------------------------------------
+
+
+def _pnl_lines() -> list[str]:
+    """The two-line P&L block every owner-facing Telegram message leads
+    with, directly under the heading (owner, 2026-09-18, verbatim: "all the
+    P&L information has to go at the very top of every telegram alert,
+    right after the first line, which is really the heading" — a rule
+    stated for every message, not only the desk's trading ones).
+
+    Rendered by `trader_feed._pnl_section_lines`, the SAME helper every
+    other message already uses (PR #526), so this figure can never read
+    differently from one sent minutes apart — never reconstructed here.
+
+    This module's whole design promise is that it never touches the broker
+    (see the module docstring) — so this reads the same `daily_pnl` table
+    the broker-touching sessions already persisted to, through
+    `src.api.db_reads`'s structurally read-only (`mode=ro`) connection, the
+    same one Mission Control's own history routes use. A missing DB, an
+    empty table, or any other fault degrades to the shared "not available"
+    wording `_pnl_section_lines({})` already renders for a message built
+    without an account read — never a fabricated figure, never a dropped
+    block.
+    """
+    result: dict = {}
+    try:
+        from src.api.db_reads import get_earliest_daily_pnl, get_recent_daily_pnl
+
+        rows = get_recent_daily_pnl(limit=1)
+        if rows:
+            latest = rows[0]
+            result["daily_pnl"] = latest.get("daily_pnl")
+            result["daily_return_pct"] = latest.get("daily_return_pct")
+            earliest = get_earliest_daily_pnl()
+            if earliest:
+                baseline = float(earliest["total_value"]) - float(earliest["daily_pnl"])
+                tv = latest.get("total_value")
+                if baseline > 0 and tv is not None:
+                    total_pnl = float(tv) - baseline
+                    result["total_pnl"] = total_pnl
+                    result["total_return_pct"] = total_pnl / baseline * 100
+                    result["total_pnl_since"] = earliest.get("date")
+    except Exception as exc:  # noqa: BLE001 — this block must never break the report
+        logger.warning("log-health: P&L block could not be read: %s", exc)
+        result = {}
+    from src.trader_feed import _pnl_section_lines
+
+    return _pnl_section_lines(result)
 
 
 # --- the message ------------------------------------------------------------
@@ -977,12 +1053,33 @@ def _time_words(moment: datetime) -> str:
     return stamp[:-2] + stamp[-2:].lower()
 
 
+def _seats_words(finding: Finding) -> str:
+    """WHICH research seat(s) a finding is about, in the owner's own words —
+    "the chart research and the insider-trading feed" — never the internal
+    key and never the generic "a research desk" a reader cannot act on.
+
+    Reuses `src.notifier.seat_words` / `_seat_list_words`, the exact naming
+    the desk's other Telegram messages already use for these same seats, so
+    a seat is never called two different things in two messages. Falls back
+    to the old generic phrase only when this family names no seat pattern or
+    a genuine line failed to match one — never loses the bullet over it.
+    """
+    if not finding.seats:
+        return "a research desk"
+    return _seat_list_words(sorted(finding.seats))
+
+
 def _bullet(
     finding: Finding, report: Report, on_board: set[int], in_tiers: set[int]
 ) -> str:
     sentence = finding.family.sentence.format(
-        n=finding.count, plural=_plural(finding.count)
+        n=finding.count, plural=_plural(finding.count), seats=_seats_words(finding)
     )
+    # A bullet reads as its own sentence and starts with a capital — most
+    # templates already do, but one now opens with `{seats}` (the naming
+    # can start "the chart research ..."), so the first letter is fixed up
+    # here rather than in every template. Digits are untouched by `.upper()`.
+    sentence = sentence[:1].upper() + sentence[1:]
     # The duration clause earns its place only when the fault PREDATES this
     # report — that is what makes "it has been like this since August" worth
     # a phone screen. For something that started inside the window, the
@@ -1025,13 +1122,18 @@ def render(
     """
     on_board, in_tiers = board_state(work_md)
     title = f"<b>Desk health — {_window_words(report)}</b>"
+    # P&L FIRST, directly under the heading, before the verdict and before
+    # anything else — the rule applies to every Telegram message this desk
+    # sends, this one included, not only the trading ones. See `_pnl_lines`.
+    pnl_lines = _pnl_lines()
 
     if report.verdict == "healthy":
-        # Two lines, as promised. A healthy report still goes out: its absence
-        # would be indistinguishable from the job not running.
-        return [f"{title}\n{_verdict_line(report)}"]
+        # As promised, still the shortest form: heading, P&L, verdict. A
+        # healthy report still goes out: its absence would be
+        # indistinguishable from the job not running.
+        return ["\n".join([title, *pnl_lines, _verdict_line(report)])]
 
-    head = [title, _verdict_line(report), ""]
+    head = [title, *pnl_lines, _verdict_line(report), ""]
     entries: list[tuple[Finding, str]] = []
     for finding in report.reported:
         was = report.previous.get(finding.family.key)
@@ -1058,11 +1160,18 @@ def render(
     # exists to prevent.
     ordered = [line for f, line in entries if f.family.reason in _HURT_REASONS]
     ordered += [line for f, line in entries if f.family.reason not in _HURT_REASONS]
-    return _pack(head, ordered, title)
+    return _pack(head, ordered, title, pnl_lines)
 
 
-def _pack(head: list[str], bullets: list[str], title: str) -> list[str]:
-    """Split `bullets` across as few messages as will hold them all."""
+def _pack(
+    head: list[str], bullets: list[str], title: str, pnl_lines: list[str]
+) -> list[str]:
+    """Split `bullets` across as few messages as will hold them all.
+
+    A continuation is its own Telegram message with its own heading, so it
+    carries the P&L block too — the rule is "every message", not "the
+    first one".
+    """
     messages: list[str] = []
     current_head = head
     current: list[str] = []
@@ -1070,7 +1179,7 @@ def _pack(head: list[str], bullets: list[str], title: str) -> list[str]:
         candidate = "\n".join(current_head + current + [bullet])
         if current and len(candidate) > MESSAGE_BUDGET:
             messages.append("\n".join(current_head + current))
-            current_head = [f"{title} — continued", ""]
+            current_head = [f"{title} — continued", *pnl_lines, ""]
             current = [bullet]
         else:
             current.append(bullet)

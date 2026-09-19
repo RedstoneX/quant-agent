@@ -1,6 +1,6 @@
-# Twice a trading day: once before the desk trades, once after it has stopped.
+# Three times a trading day: before the open, at midday, and after the close.
 [Unit]
-Description=quant-agent log-health report — 08:55 and 16:30 ET, Mon-Fri
+Description=quant-agent log-health report — 08:55, 12:30 and 16:30 ET, Mon-Fri
 
 [Timer]
 # 08:55 ET — thirty-five minutes before the morning session's 09:30 window
@@ -13,6 +13,15 @@ Description=quant-agent log-health report — 08:55 and 16:30 ET, Mon-Fri
 # earnings pre-processing window opens at 08:00, so a pre-market filing run
 # that died is inside the report rather than just missing from it.
 OnCalendar=Mon-Fri 08:55 America/New_York
+# 12:30 ET — the middle of the regular 09:30-16:00 session, added 2026-09-19
+# (owner: three reports a trading day, not one). This is a session-clock
+# boundary, not this codebase's `midday` PIPELINE window (13:00-14:30 ET,
+# `src.trading_calendar.SESSION_WINDOWS`) — the two happen to sit close
+# together but name different things, and this timer intentionally does not
+# try to straddle that window's own end. It reports on whatever the morning
+# session and the first half of the day's intraday ticks did, before the desk
+# has traded through the rest of the day on it unseen.
+OnCalendar=Mon-Fri 12:30 America/New_York
 # 16:30 ET — half an hour after the 16:00 close, which is both the end of the
 # regular session and the end of the `close` session's own window. The gap
 # covers the close session's 20-minute outer kill, so a close run that hung to
@@ -28,13 +37,15 @@ OnCalendar=Mon-Fri 16:30 America/New_York
 # Monday 08:55 run still covers the whole weekend — the watermark carries the
 # window forward from Friday's 16:30 with no gap and nothing counted twice.
 #
-# systemd resolves the IANA zone, so both stay New York time across DST.
+# systemd resolves the IANA zone, so all three stay New York time across DST
+# with no change to this file (exactly how the existing two already did it).
 # Persistent: a firing missed because the box was down runs on boot. The
 # watermark means the catch-up run covers the time it missed, not just the
-# moment it woke up.
+# moment it woke up — true for any subset of the three that get skipped, not
+# just the first.
 Persistent=true
 # The report does not care about the exact minute; letting systemd batch this
-# with the other morning checks is free.
+# with the other checks near each firing is free.
 AccuracySec=1m
 
 [Install]

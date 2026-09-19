@@ -677,6 +677,31 @@ def get_recent_daily_pnl(limit: int = 30) -> list[dict]:
             conn.close()
 
 
+def get_earliest_daily_pnl() -> dict | None:
+    """SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1.
+
+    The reset baseline `src.pipeline.TradingPipeline._total_pnl_since_reset`
+    uses for the "total P&L since" line — mirrors
+    `src.storage.db.Database.get_earliest_daily_pnl` exactly, through this
+    module's own structurally read-only connection. Used by
+    `src.log_health` to render the same P&L block every other owner-facing
+    message shows without that read-only report ever touching the write
+    class or the broker.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def session_prefixes_logged_on() -> list[str]:
     """Distinct run_id prefixes (e.g. "run", "midday") logged in agent_logs
     today (ET trading day). Mirrors `Database.session_prefixes_logged_on`'s
