@@ -110,6 +110,7 @@ Two entry points, one function, both through `scripts/alert_heartbeat.py`:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -187,6 +188,14 @@ class CoverageStatus:
     market_open: bool = False
     market_reason: str = ""
     already_alerted_repair_failure_for_day: bool = False
+    #: Held positions actually examined this run (the cash-sweep vehicle and
+    #: mid scale-in names excluded). None when the broker could not be read.
+    #: Observability only — board item 131: nothing decides on it.
+    positions_checked: int | None = None
+    #: Why a repair the gaps called for was NOT attempted this run (a live
+    #: session owns the desk, or another desk process holds the repair
+    #: lock). Empty when nothing was deferred. Observability only.
+    repair_deferred: str = ""
 
     @property
     def unprotected_total(self) -> float:
@@ -348,6 +357,7 @@ def _parse_iso(stamp: str) -> datetime | None:
 def uncovered_positions(
     broker: Any, *, sweep_symbol: str | None = None,
     skip_symbols: set[str] | None = None,
+    counts: dict[str, int] | None = None,
 ) -> tuple[list[CoverageGap], str | None]:
     """Every held position whose open protective stops cover less than the
     held quantity. Longs are checked against SELL stops, shorts against BUY
@@ -356,6 +366,10 @@ def uncovered_positions(
 
     Returns `(gaps, error)`; on a broker failure `gaps` is empty and
     `error` says why — the caller reports "could not check", never "clean".
+
+    `counts`, when given, receives `positions_checked` — how many held
+    positions were compared against their stops — so a clean run can say
+    how much it looked at (board item 131). It changes nothing here.
     """
     try:
         positions = broker.get_positions()
@@ -374,6 +388,8 @@ def uncovered_positions(
             continue
         if skip_symbols and str(symbol) in skip_symbols:
             continue
+        if counts is not None:
+            counts["positions_checked"] = counts.get("positions_checked", 0) + 1
         is_short = qty < 0
         try:
             _ok, specs = broker.snapshot_protective_stops(
@@ -761,6 +777,49 @@ def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# the broker-write lock shared with intra_check (board item 127)
+# ---------------------------------------------------------------------------
+
+#: The advisory flock file `TradingPipeline._intraday_scan_process_lock`
+#: takes beside the database. Same file, so this repair pass and
+#: `intra_check`'s broker-writing preamble exclude each other. Not a number
+#: and not new: the name is the one the pipeline has used since 2026-08-19.
+REPAIR_LOCK_NAME = ".intraday_scan.lock"
+
+
+@contextlib.contextmanager
+def repair_lock(db_path: str | Path | None = None):
+    """Non-blocking `fcntl.flock(LOCK_EX | LOCK_NB)` on `REPAIR_LOCK_NAME`
+    beside the database. Yields True when held, False when another process
+    holds it or the lock cannot be established (fail closed: a repair that
+    cannot prove it is alone does not run; the next tick retries). Released
+    by the kernel on process death, so a killed sweep cannot wedge it."""
+    import fcntl
+
+    lock_path = Path(db_path if db_path is not None else DB_PATH).parent / REPAIR_LOCK_NAME
+    fh = None
+    held = False
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "w")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = True
+        except BlockingIOError:
+            held = False
+    except Exception as exc:  # noqa: BLE001 — unknowable lock state: do not write
+        logger.warning("coverage sweep: could not establish the repair lock (%s)", exc)
+    try:
+        yield held
+    finally:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+# ---------------------------------------------------------------------------
 # the check
 # ---------------------------------------------------------------------------
 
@@ -787,8 +846,13 @@ def check_coverage(
     moment = now or _utc_now()
     state = load_state(state_path)
 
+    counts: dict[str, int] = {}
     gaps, broker_error = uncovered_positions(
         broker, sweep_symbol=sweep_symbol, skip_symbols=_scale_in_skip(broker, db_path),
+        counts=counts,
+    )
+    positions_checked = (
+        None if broker_error else int(counts.get("positions_checked", 0))
     )
     day = most_recent_trading_day(moment, broker)
     ran, db_error = session_ran_during(day, db_path)
@@ -815,32 +879,48 @@ def check_coverage(
     # start of its own run, so the gap this tick skips is one this tick did
     # not need to fill. `trading_session_lock_held()` never sees
     # `intra_check` — that mode is deliberately exempt from the lock (the
-    # flash-crash breaker) — but intra_check no longer shares this unit's
-    # tick after the 2026-09-17 schedule split, so that pairing is closed
-    # by timing rather than by this check.
+    # flash-crash breaker). The 2026-09-17 schedule split moved intra_check
+    # off this unit's tick; board item 127 (2026-09-19) now also closes that
+    # pairing with a lock rather than by timing alone: the repair pass
+    # below runs only while this process holds the SAME advisory flock
+    # `intra_check` now holds around its broker-writing preamble and its
+    # paid scan (`TradingPipeline._intraday_scan_process_lock`,
+    # `REPAIR_LOCK_NAME` beside the database). Contended means another desk
+    # process is writing to the broker right now; this tick defers exactly as
+    # it defers to a session, and the next tick re-reads the broker.
     from src.execution.scale_in import trading_session_lock_held
     session_active = trading_session_lock_held()
+    repair_deferred = ""
     if gaps and market_open and last_buy is not None and not session_active:
-        repairs = replace_missing_stops(
-            broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
-            db=db,
-        )
-        if any(r.placed for r in repairs):
-            refreshed, refresh_error = uncovered_positions(
-                broker, sweep_symbol=sweep_symbol,
-                skip_symbols=_scale_in_skip(broker, db_path),
-            )
-            if refresh_error is None:
-                gaps = refreshed
+        with repair_lock(db_path) as held:
+            if not held:
+                repair_deferred = (
+                    "another desk process holds the broker-write lock "
+                    f"({REPAIR_LOCK_NAME}); this tick placed nothing and the "
+                    "next one re-reads the broker"
+                )
+                market_reason = f"{market_reason}, but {repair_deferred}"
             else:
-                broker_error = broker_error or refresh_error
+                repairs = replace_missing_stops(
+                    broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
+                    db=db,
+                )
+                if any(r.placed for r in repairs):
+                    refreshed, refresh_error = uncovered_positions(
+                        broker, sweep_symbol=sweep_symbol,
+                        skip_symbols=_scale_in_skip(broker, db_path),
+                    )
+                    if refresh_error is None:
+                        gaps = refreshed
+                    else:
+                        broker_error = broker_error or refresh_error
     elif gaps and market_open and last_buy is not None and session_active:
-        market_reason = (
-            f"{market_reason}, but a trading session currently holds the "
-            "lock, so this tick defers the repair to that session's own "
-            "coverage reconcile rather than risk placing a stop the "
-            "session is in the middle of cancelling"
+        repair_deferred = (
+            "a trading session currently holds the lock, so this tick defers "
+            "the repair to that session's own coverage reconcile rather than "
+            "risk placing a stop the session is in the middle of cancelling"
         )
+        market_reason = f"{market_reason}, but {repair_deferred}"
     elif gaps and market_open and last_buy is None:
         market_reason = (
             f"{market_reason}, but no recorded-stop lookup was supplied, so "
@@ -898,6 +978,8 @@ def check_coverage(
         already_alerted_repair_failure_for_day=bool(failing_symbols) and all(
             sym in already_failed for sym in failing_symbols
         ),
+        positions_checked=positions_checked,
+        repair_deferred=repair_deferred,
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
@@ -1033,3 +1115,115 @@ def status_line(status: CoverageStatus) -> str:
         f"${status.unprotected_total:,.2f} with no stop and no session on "
         f"{status.trading_day} [{status.market_reason}]" + placed
     )
+
+
+# ---------------------------------------------------------------------------
+# the durable record of every run (board item 131)
+# ---------------------------------------------------------------------------
+#
+# Until 2026-09-19 a sweep run left one `print` in the systemd journal and a
+# state file that each run overwrote. Nothing reached `quant_agent.log`, and
+# nothing reached the database, so "has it ever run?" could be answered only
+# by someone who knew to read the journal of that one unit. Every run now
+# leaves BOTH a `COVERAGE SWEEP` line in the desk's log and one row in the
+# desk's existing lifecycle-event stream (`specialist_evidence`,
+# `kind='pipeline_event'`, `scope='run'` — the shape
+# `_record_pipeline_event` and the de-lever shortfall record use). Observability
+# only: nothing reads either to decide anything.
+
+#: The log prefix a reader greps for. One name for both entry points.
+SWEEP_LOG_NAME = "COVERAGE SWEEP"
+#: `agent_name` on the evidence row — distinct from 'pipeline' so the
+#: dashboard's per-session feed never mistakes a sweep for a session.
+SWEEP_AGENT_NAME = "coverage_sweep"
+
+
+def sweep_summary(
+    status: CoverageStatus | None, *, entry: str, run_id: str,
+    alerts: Iterable[str] = (), error: str | None = None,
+) -> dict[str, Any]:
+    """Everything one run did, as one flat dict. `status` None means the run
+    could not get as far as a check (`error` says why)."""
+    if status is None:
+        return {
+            "stage": "coverage_sweep", "outcome": "could_not_run",
+            "reason": error or "", "entry": entry, "run_id": run_id,
+        }
+    if status.broker_error:
+        outcome = "could_not_check"
+    elif status.repair_failures:
+        outcome = "repair_failed"
+    elif status.repaired:
+        outcome = "repaired"
+    elif not status.gaps:
+        outcome = "clean"
+    elif status.repair_deferred:
+        outcome = "repair_deferred"
+    else:
+        outcome = "gaps_left"
+    return {
+        "stage": "coverage_sweep",
+        "outcome": outcome,
+        "reason": status.repair_deferred or status.market_reason or "",
+        "entry": entry,
+        "run_id": run_id,
+        "trading_day": status.trading_day,
+        "session_ran": status.session_ran,
+        "market_open": status.market_open,
+        "positions_checked": status.positions_checked,
+        "gaps_found": len(status.gaps),
+        "gap_symbols": [g.symbol for g in status.gaps],
+        "unprotected_usd": status.unprotected_total,
+        "repairs_attempted": len(status.repairs),
+        "repairs_succeeded": len(status.repaired),
+        "repairs_failed": len(status.repair_failures),
+        "repaired": [
+            {"symbol": r.symbol, "qty": r.qty} for r in status.repaired
+        ],
+        "failed": [
+            {"symbol": r.symbol, "qty": r.qty, "detail": r.detail}
+            for r in status.repair_failures
+        ],
+        "repair_deferred": status.repair_deferred,
+        "broker_error": status.broker_error,
+        "db_error": status.db_error,
+        "alerts": list(alerts),
+    }
+
+
+def sweep_log_line(summary: dict[str, Any]) -> str:
+    """The one greppable line per run."""
+    if summary.get("outcome") == "could_not_run":
+        return (
+            f"{SWEEP_LOG_NAME} {summary.get('run_id')} ({summary.get('entry')}): "
+            f"could_not_run — {summary.get('reason')}"
+        )
+    alerts = summary.get("alerts") or []
+    return (
+        f"{SWEEP_LOG_NAME} {summary.get('run_id')} ({summary.get('entry')}): "
+        f"{summary.get('outcome')} — positions checked "
+        f"{summary.get('positions_checked')}, gaps {summary.get('gaps_found')}, "
+        f"repairs attempted {summary.get('repairs_attempted')} / succeeded "
+        f"{summary.get('repairs_succeeded')} / failed "
+        f"{summary.get('repairs_failed')}, alert "
+        f"{'; '.join(alerts) if alerts else 'none sent'}"
+        + (f", deferred: {summary['repair_deferred']}" if summary.get("repair_deferred") else "")
+        + (f", broker error: {summary['broker_error']}" if summary.get("broker_error") else "")
+    )
+
+
+def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
+    """One `specialist_evidence` row for this run. Never raises; False when
+    there is no database handle or the write failed (logged)."""
+    if db is None:
+        return False
+    try:
+        db.insert_specialist_evidence(
+            run_id=str(summary.get("run_id") or ""), agent_name=SWEEP_AGENT_NAME,
+            kind="pipeline_event", scope="run", symbol=None,
+            evidence_json=json.dumps(summary, sort_keys=True, default=str),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — a record is never trading authority
+        logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
+        return False
