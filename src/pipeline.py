@@ -1193,6 +1193,7 @@ class TradingPipeline:
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
+        self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in
             # tests/conftest.py. This flag is false in every application run.
@@ -3296,7 +3297,7 @@ class TradingPipeline:
                     )
                     repaired = self._repair_stop_coverage(
                         symbol, held - covered, is_short=is_short,
-                        outcome=gap,
+                        outcome=gap, resting_stops=list(specs or []),
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3361,6 +3362,7 @@ class TradingPipeline:
                     )
                 gap["repaired"] = self._repair_stop_coverage(
                     symbol, held - covered, is_short=is_short, outcome=gap,
+                    resting_stops=list(specs or []),
                 )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
@@ -3725,9 +3727,21 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
 
+    def _wire_protective_stop_block_recorder(self) -> None:
+        """The broker holds no database, so a protective stop its kill
+        switch refuses is recorded through this pipeline's one
+        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
+        Recording only — see `AlpacaBroker.protective_stop_block_recorder`.
+        `self.db` is read at call time, not captured, so a later swap of the
+        handle is honoured."""
+        from src.execution.exit_path_records import record_protective_stop_blocked
+        self.broker.protective_stop_block_recorder = (
+            lambda **facts: record_protective_stop_blocked(self.db, **facts)
+        )
+
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
-        outcome: dict | None = None,
+        outcome: dict | None = None, resting_stops: list | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
@@ -3769,6 +3783,8 @@ class TradingPipeline:
             is_short=is_short,
             db=self.db,
             outcome=outcome,
+            resting_stops=resting_stops,
+            caller="session_coverage_reconcile",
         )
 
     def _submit_protected_sell(
@@ -10301,13 +10317,33 @@ class TradingPipeline:
         Every proposal is bounded by `src/risk/trailing.py`: ratchet upward
         only, a minimum move worth an order, and never inside one ordinary
         day's range. Returns the broker orders placed.
+
+        Every evaluation also names WHY its position did or did not trail,
+        and that reason is written to `specialist_evidence`
+        (`kind='trail_state'`) whenever it differs from the last one on file
+        for that stock — so a stop that has never trailed has a findable
+        reason, without a row per stock per tick. Recording only: nothing
+        here reads the record back to decide anything but whether to write.
         """
         from src.execution.stop_records import (
             recorded_initial_stop, replace_stop_and_record,
         )
-        from src.risk.trailing import compute_trailing_stop
+        from src.execution.exit_path_records import (
+            last_trail_states, record_trail_state_if_changed,
+        )
+        from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
 
         orders: list[dict] = []
+        last_codes = last_trail_states(
+            self.db, [getattr(p, "symbol", "") for p in positions],
+        )
+
+        def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
+            record_trail_state_if_changed(
+                self.db, last_codes, run_id=run_id, symbol=symbol,
+                code=code, detail=detail, **facts,
+            )
+
         try:
             from src.execution.scale_in import pending_protection_symbols
             pending_syms = pending_protection_symbols(self.db)
@@ -10322,18 +10358,22 @@ class TradingPipeline:
                     "would race the cancel/rearm sequence",
                     symbol,
                 )
+                _note(symbol, "protection_restore_in_flight")
                 continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                _note(symbol, "opening_row_lookup_failed", str(e))
                 continue
             if not buy:
+                _note(symbol, "no_opening_buy_row")
                 continue
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: stop lookup failed for %s: %s", symbol, e)
+                _note(symbol, "live_stop_lookup_failed", str(e))
                 continue
 
             # Only bars SINCE ENTRY matter: a swing low from before the
@@ -10350,7 +10390,7 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
 
-            proposal = compute_trailing_stop(
+            evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
                 entry=position.avg_entry,
@@ -10372,7 +10412,15 @@ class TradingPipeline:
                 # after a trail. Powers the Type A +1R breakeven ratchet.
                 initial_stop=recorded_initial_stop(buy),
             )
+            proposal = evaluation.proposal
             if proposal is None:
+                _note(
+                    symbol, evaluation.code,
+                    current_stop=current_stop,
+                    current_price=position.current_price,
+                    entry=position.avg_entry,
+                    setup_type=(buy or {}).get("setup_type"),
+                )
                 continue
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
@@ -10385,11 +10433,24 @@ class TradingPipeline:
                     "trail: replace_stop_loss failed for %s (%s) — the OLD "
                     "stop remains in force", symbol, e,
                 )
+                _note(
+                    symbol, "replace_raised", str(e),
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _note(
+                    symbol, "replace_not_accepted",
+                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
+            _note(
+                symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                proposed_stop=proposal.new_stop, current_stop=current_stop,
+            )
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")
             orders.append(order)

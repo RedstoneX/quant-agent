@@ -124,8 +124,12 @@ def test_deterministic_trail_write_back_matches_the_new_level(db):
         symbol="AAA", new_stop=110.0, previous_stop=95.0,
         source="structure", reason="test trail",
     )
+    # The caller reads `evaluate_trailing_stop` (proposal + why-code) since
+    # the trail-state record landed; `compute_trailing_stop` is its view.
+    from src.risk.trailing import TRAIL_CODE_TRAILED, TrailEvaluation
     with patch(
-        "src.risk.trailing.compute_trailing_stop", return_value=proposal,
+        "src.risk.trailing.evaluate_trailing_stop",
+        return_value=TrailEvaluation(proposal, TRAIL_CODE_TRAILED),
     ):
         orders = pipeline._apply_deterministic_trails([pos], run_id="r1")
     assert len(orders) == 1
