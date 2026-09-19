@@ -3635,7 +3635,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline.py:14613-14618)
+      No caller in src/, and the docstring (src/pipeline.py:14620-14626)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.pipeline.TradingPipeline._build_blocked_proposals(lookback_days)
@@ -3716,7 +3716,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16320-16322). The LIVE number is the keyword literal at
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -3744,7 +3744,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16320-16322). The LIVE number is the keyword literal at
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_movers_count)
@@ -3771,7 +3771,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16320-16322). The LIVE number is the keyword literal at
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline.TradingPipeline._build_own_recent_decisions(limit)
@@ -3780,7 +3780,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline.py:13258-13262). Its only caller
+      (anti-flip-flop memory) (src/pipeline.py:13266-13270). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from.
@@ -4022,7 +4022,7 @@ numbers:
     base_value: 0.99
     note: >-
       Board item 138, the de-lever ladder's BUY-to-cover limit
-      (src/pipeline.py:11821): the same 1% applied on the other side, 1.01 = 2
+      (src/pipeline.py:11829): the same 1% applied on the other side, 1.01 = 2
       - 0.99. One number, mirrored.
   - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]
     value: 0.99
@@ -4032,7 +4032,7 @@ numbers:
     base_value: 0.99
     note: >-
       Board item 138, the de-lever ladder's SELL limit
-      (src/pipeline.py:11810-11822): the comment calls it the 'same
+      (src/pipeline.py:11818-11830): the comment calls it the 'same
       1%-through-the-market buffer _force_delever uses'. One number, two
       sites.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
@@ -4041,7 +4041,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       The 2% cushion on how much of the T-bill sweep vehicle is sold to cover
-      a cash deficit (src/pipeline.py:11516-11523): needed = deficit x 1.02.
+      a cash deficit (src/pipeline.py:11524-11531): needed = deficit x 1.02.
     open_question: >-
       How far does a sweep-vehicle sale's realised proceeds fall short of
       price x qty on this account, measured from its own SWEEP_SELL fills?
@@ -4055,7 +4055,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Board item 138. The 1%-through-the-market SELL limit on a forced de-
-      lever (src/pipeline.py:11531): price x 0.99. The comment at
+      lever (src/pipeline.py:11539): price x 0.99. The comment at
       src/pipeline.py:1454-1466 describes this cushion as the named class
       attribute `_EMERGENCY_LIMIT_CUSHION_PCT`, but that attribute is never
       read; the live number is this inline literal.
@@ -4075,7 +4075,7 @@ numbers:
     base_value: 0.99
     note: >-
       Projected proceeds of a de-lever sell, estimated at the same 0.99 the
-      sell limit uses (src/pipeline.py:11554 says 'matches our limit'). One
+      sell limit uses (src/pipeline.py:11562 says 'matches our limit'). One
       number, two sites.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
@@ -4157,7 +4157,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:16916-16930). Its output reaches a prompt only as a
+      (src/pipeline.py:16921-16935). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1497-1498 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
@@ -4183,7 +4183,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the COVER mirror of the 0.5% SELL offset
-      (src/pipeline_stages.py:6635-6640), 1.005 = 2 - 0.995. One number,
+      (src/pipeline_stages.py:6638-6642), 1.005 = 2 - 0.995. One number,
       mirrored.
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[2]
     value: 1.02
@@ -4191,7 +4191,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       An entry BUY is skipped when the quoted ask sits more than 2% above the
-      slippage cap (src/pipeline_stages.py:7240-7245); the comment says the
+      slippage cap (src/pipeline_stages.py:7242-7247); the comment says the
       multiple is 'deliberately loose because the input is'.
     open_question: >-
       How far above the cap does an IEX ask sit on names the desk then fills
@@ -4208,7 +4208,7 @@ numbers:
     base_value: 1.02
     note: >-
       The SHORT mirror of the BUY skip: bid < floor / 1.02
-      (src/pipeline_stages.py:7328-7333); its comment says 'Not a new
+      (src/pipeline_stages.py:7330-7335); its comment says 'Not a new
       percentage'.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25
@@ -4277,7 +4277,7 @@ numbers:
     note: >-
       Default minimum trim of the gross-ceiling trimmer
       (src/risk/rules.py:1819). Both callers pass cash_sweep.min_order_usd
-      (src/pipeline.py:11767-11774, src/portfolio_constructor.py:1295); the
+      (src/pipeline.py:11775-11782, src/portfolio_constructor.py:1295); the
       comment at src/pipeline.py:770-773 says it reuses that $500.
   - id: src.risk.rules.distance_to_forced_liquidation_pct(maintenance_margin_pct)
     value: 25
@@ -4287,8 +4287,8 @@ numbers:
     base_value: 25
     note: >-
       Default maintenance margin (src/risk/rules.py:1468); the one caller
-      passes risk.maintenance_margin_pct (src/pipeline.py:11639-11641,
-      11734-11736).
+      passes risk.maintenance_margin_pct (src/pipeline.py:11647-11649,
+      11742-11744).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
     value: 1
     status: derived
