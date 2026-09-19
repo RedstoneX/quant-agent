@@ -158,14 +158,19 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 88, (
+    assert MAX_ARBITRARY_ENTRIES == 106, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
         "trading decision -- a misclassification corrected, not a number added. "
         "87 -> 88 the same day: `refresh_deadline_s` carried the identical "
         "falsified sentence and was what the intraday freshness check ran out "
-        "of while deciding whether the tick could decide."
+        "of while deciding whether the tick could decide. "
+        "88 -> 106 on 2026-09-19, board item 130: scoping "
+        "src/execution/broker.py, src/coverage_watchdog.py, src/pipeline.py "
+        "and src/agents admitted 47 new sites, 18 of them arbitrary -- see "
+        "src/number_sources.py's MAX_ARBITRARY_ENTRIES comment for the count "
+        "by source."
     )
 
 
@@ -266,6 +271,12 @@ def test_scope_has_not_silently_narrowed() -> None:
     assert "src/portfolio_constructor.py" in SCOPED_PATHS
     assert "src/data/technical.py" in SCOPED_PATHS
     assert "src/data/levels.py" in SCOPED_PATHS
+    # Board item 130: broker.py IS the broker order.
+    assert "src/execution/broker.py" in SCOPED_PATHS
+    assert "src/execution/stop_repair.py" in SCOPED_PATHS
+    assert "src/coverage_watchdog.py" in SCOPED_PATHS
+    assert "src/pipeline.py" in SCOPED_PATHS
+    assert "src/agents" in SCOPED_PATHS
 
 
 def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
@@ -281,7 +292,12 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 192
+    assert MAX_UNSCOPED_NUMERIC_SITES == 145, (
+        "192 -> 145 on 2026-09-19, board item 130: src/execution/broker.py, "
+        "src/coverage_watchdog.py, src/pipeline.py and src/agents moved into "
+        "SCOPED_PATHS and their 47 sites now carry ledger entries instead of "
+        "sitting in this count."
+    )
 
 
 # --------------------------------------------------------------------------
