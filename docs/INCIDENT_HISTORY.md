@@ -12100,6 +12100,66 @@ the code path they describe — that has not been separately re-verified and
 should be checked against current `src/data/smart_money.py` before treating
 them as still live.
 
+**Follow-up 2026-09-19 — the PR #529 drain could never finish, and its
+watermark hid the whole trading day's filings.** In plain words: the check
+that was supposed to confirm "every filing on our own companies has been
+read" had to read about 5,400 filings in the 30 or so seconds left over from
+another job, so it never confirmed anything and the insider evidence was
+marked out of date on every check. It now has its own time allowance, keeps
+its progress company by company, and says exactly how many companies are
+fully read.
+
+- *Measured* (read-only against SEC, 2026-09-19, the desk's own User-Agent
+  and 8 requests/second limiter): 82 watched companies; 5,801 insider
+  filings inside the 365-day window, 5,431 of them unread, on 76 of the 82
+  companies; 11.0 s to fetch all 82 filing histories; 0.156 s per filing
+  read over 40 reads. Reading the backlog therefore takes about 858 s. The
+  drain shared the market-wide pass's 180 s, and that pass ran first and
+  took ~153 s by itself (journal, 2026-09-18 12:00:41 -> 12:03:14 UTC).
+- *Fixed — own budget.* `watched_drain_deadline_s` (859 s, derivation at
+  its definition in `src/config.py`) starts after the market-wide pass is
+  done. A test checks that the whole pre-market job still fits inside its
+  systemd limit of 1,260 s.
+- *Fixed — progress kept per company.* `watched_read_through_by_cik`
+  records each company the moment nothing on it is left unread; companies
+  are read smallest-backlog first. A drain that runs out of time loses
+  nothing and the next morning resumes. The single all-companies date is
+  still written, but only when every company is read, and freshness no
+  longer uses it.
+- *Fixed — a same-day blind spot.* The single date excluded any filing
+  "dated on or before" it as backlog. The drain runs at 08:00 ET and stamped
+  today, so every filing made later that trading day carried today's date
+  and was never seen as new: a false reuse, the dangerous direction. Now a
+  company that has been fully read cannot have backlog, so any unread
+  filing on it is new.
+- *Fixed — partial coverage is never reported clean.* Morning: a run that
+  would have said `ok` or `empty` says `partial` while any watched company
+  has unread filings. Intraday: the seat is `expired` with a reason naming
+  how many companies are not yet read — including when the remembered
+  answer is empty, which used to reuse as the clean `chose_not_to_refetch`
+  on the false ground that an empty answer is classified as lost.
+- *Fixed — the pre-open alert.* Production wraps the Form 4 provider in a
+  combined provider that never passed the read-through date up, so the
+  alert would have fired every morning whatever the drain did. Its wording
+  also still said the desk "will not make a new trading decision", false
+  since PR #535 made this seat advisory.
+- *Now recorded, not only logged:* the morning backlog counts
+  (`watched_pending_filings`, `discovery_cap_reached`, companies read) are a
+  `form4_backlog` evidence row each pre-market run; the morning seat's
+  coverage is inside its `scan_summary` row.
+- *Considered and not done — seeding.* Marking the backlog as read without
+  reading it would claim a year of coverage the desk does not have, the
+  same shape as the rejected exemption above. The 365-day window is the
+  owner's behavioural bound; reading it once costs ~14 minutes of one
+  morning, and steady-state inflow is ~16 filings a day on these companies.
+- *Not changed:* `peek_accessions` and the pipeline's
+  `_peek_new_form4_accessions` have no live caller since PR #529; the
+  pipeline one now logs a failure instead of swallowing it, and the stale
+  comment calling it "kept for the producing step" is corrected. Removal is
+  left for a separate change. If the pre-market job is killed by systemd
+  mid-drain, that morning's reads are cached on disk but not recorded as
+  read; the budget test is what keeps the job inside its limit.
+
 ---
 
 ### 2026-09-18 — the automatic board-conflict resolver silently dropped an entire item while reporting success

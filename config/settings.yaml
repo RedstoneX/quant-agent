@@ -1131,6 +1131,10 @@ smart_money:
   user_agent: "QAMC research-intelligence qamc-contact@proton.me"
   request_timeout_s: 15
   refresh_deadline_s: 180
+  # The watched-name drain's own budget, after the market-wide pass. Sized
+  # from a 2026-09-19 measurement of the watched backlog; derivation at
+  # src/config.py::SmartMoneyConfig.watched_drain_deadline_s.
+  watched_drain_deadline_s: 859
   requests_per_second: 8
   # 7 -> 365 on 2026-09-11 — see src/config.py::SmartMoneyConfig.lookback_days
   # for the full derivation. A year is the real behavioral bound: someone

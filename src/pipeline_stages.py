@@ -3865,6 +3865,24 @@ class MorningResearchStage:
             earnings_future = ex.submit(copy_context().run, _load_earnings)
             smart_money_future = ex.submit(copy_context().run, _run_smart_money)
 
+        # How much of the watched set the pre-market Form 4 pass actually
+        # read, per issuer. No network. The analyst's answer covers only the
+        # names read through; below, a clean status is downgraded to
+        # `partial` when any watched name still has unread filings, so the
+        # seat never reports `ok` / `empty` over filings nobody read.
+        sm_coverage = None
+        coverage_probe = getattr(self.smart_money_provider, "form4_coverage", None)
+        if smart_config and smart_config.enabled and callable(coverage_probe):
+            try:
+                sm_coverage = coverage_probe()
+                if not isinstance(sm_coverage, dict):
+                    sm_coverage = None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Smart-money coverage read failed: %s", exc)
+                sm_coverage = {"known": False, "error": type(exc).__name__}
+        sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
+            not sm_coverage.get("known") or bool(sm_coverage.get("unread"))
+        )
         try:
             findings, sm_result, provider_error, analysis_error = smart_money_future.result()
             ctx.smart_money_findings = findings
@@ -3882,6 +3900,9 @@ class MorningResearchStage:
                         "degraded" if provider_error or analysis_error else
                         "material" if findings else "quiet"
                     ),
+                    # Watched-name read-through as of the pre-market pass:
+                    # {known, as_of, watched, read_through, unread[symbols]}.
+                    "coverage": sm_coverage,
                 }, sort_keys=True),
             )
             if provider_error:
@@ -3942,6 +3963,21 @@ class MorningResearchStage:
             # it separately from a genuine quiet day or a provider failure.
             if sm_result is not None and getattr(sm_result, "truncated", False):
                 data_status["smart_money"] = "truncated"
+            # Partial coverage: an answer arrived and was read on this tick,
+            # but it cannot speak for watched names whose filings are not
+            # all read. `partial` is REPORTED + fresh + counted as degraded
+            # (src/evidence_gate.py) — honest on all three.
+            if (
+                sm_coverage_incomplete
+                and data_status.get("smart_money") in ("ok", "empty")
+            ):
+                data_status["smart_money"] = "partial"
+                logger.warning(
+                    "Smart-money seat is partial: %s of %s watched names read "
+                    "through (unread: %s)",
+                    sm_coverage.get("read_through"), sm_coverage.get("watched"),
+                    ", ".join(sm_coverage.get("unread") or []) or "coverage never recorded",
+                )
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)
             ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
