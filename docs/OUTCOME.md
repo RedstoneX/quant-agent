@@ -127,10 +127,13 @@ honour-system prose and the numbers it forbids accumulated under it. There is
 now a check — `src/number_sources.py`, failing through
 `tests/test_number_sources.py` — that requires a numeric definition site
 inside a declared scope to carry an entry in `config/number_ledger.yaml`
-recording where the number came from. 226 sites are in scope (179 before
+recording where the number came from. 324 sites are in scope (179 before
 2026-09-19's board item 130 admitted `src/execution/broker.py`,
-`src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`); 106
-distinct numbers are recorded as having nothing behind them.
+`src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`, 226 before
+the scanner learned the same day to see function-parameter defaults,
+numeric attributes on any class, and near-one inline price/size multipliers
+such as `price * 0.995`); 146 distinct numbers are recorded as having
+nothing behind them.
 
 **What the mechanism actually does, stated exactly, because an authority file
 must not claim more than the code does.** It is a COVERAGE and CONSISTENCY
@@ -154,7 +157,14 @@ check over a declared scope, not a proof that any number is sourced.
     `config/settings.yaml:751`, is the owner-ratified row at line 84 of THIS
     file, and was ratified on 2026-08-27. Every claim was one grep from being
     disproved. `source` must now be a URL or a `path:line` for that reason.
-  * It does not source any of the 86. That is `docs/WORK.md` item 90's open
+  * It sees a number only in one of five SHAPES: a module-level constant, a
+    `*Config` field, a function-parameter default, a class attribute, or a
+    multiplier/divisor literal between 0.5 and 2 (excluding 1). A threshold
+    in a comparison (`> 50`), an additive offset, a divisor like the
+    `/ 10.0` in the level-strength formula, a fallback argument, or a
+    keyword literal at a call site is still invisible. Hoisting such a
+    literal to a named constant is what makes it visible.
+  * It does not source any of the 146. That is `docs/WORK.md` item 90's open
     half, and every one of them is the owner's to move, not an agent's.
 
 Read `src/number_sources.py`'s docstring before adding a constant; the
