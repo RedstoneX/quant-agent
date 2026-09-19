@@ -29,7 +29,11 @@ from src.data.insider_signal import (
     classify_transaction,
     holdings_fraction,
 )
-from src.data.smart_money_cluster import cluster_survivors, observation_key
+from src.data.smart_money_cluster import (
+    cluster_survivors,
+    insider_purchase_clusters,
+    observation_key,
+)
 from src.models import SmartMoneyObservation
 from src.util.time import et_today
 
@@ -153,10 +157,13 @@ class SECForm4Provider:
         lookback_days: int = 14,
         min_transaction_value_usd: float = 100_000,
         external_min_transaction_value_usd: float = 250_000,
-        # Alldredge & Blank (J. Financial Research, 2019): purchases within
-        # ~2 days of a colleague's trade define a "cluster" (see
-        # docs/RESEARCH_FINDINGS.md:19). Was 14 days with no documented
-        # rationale until the 2026-09-04 audit fix.
+        # ROW-RETENTION window for `cluster_survivors`, NOT the research cluster
+        # (corrected 2026-09-19, board item 124). Alldredge & Blank's abstract
+        # (J. Financial Research, 2019) measures SAME-DAY purchases; "within two
+        # days" appears only in a secondary summary (IBKR Campus). The
+        # research-defined same-day opportunistic purchase cluster is
+        # `src.data.smart_money_cluster.insider_purchase_clusters`. Was 14 days
+        # with no documented rationale until the 2026-09-04 audit fix.
         cluster_window_days: int = 2,
         min_cluster_owners: int = 2,
         max_observations: int = 40,
@@ -1400,6 +1407,22 @@ class SECForm4Provider:
                 "disclosure_age_days": age_days,
                 "freshness": freshness,
             }))
+
+        # The research-defined purchase cluster (board item 124) is computed
+        # over EVERY parsed row, before the materiality filter and the
+        # observation cap, then stamped on each row of that symbol — so it
+        # reaches the seat whichever of the symbol's rows survive. Configured
+        # universe only; it changes neither admission nor sort order.
+        clusters = insider_purchase_clusters(
+            parsed, universe=core, today=et_today(),
+        )
+        if clusters:
+            parsed = [
+                item.model_copy(update={
+                    "purchase_cluster": clusters[item.symbol],
+                }) if item.symbol in clusters else item
+                for item in parsed
+            ]
 
         survivors = cluster_survivors(
             parsed,

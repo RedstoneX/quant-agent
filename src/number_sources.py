@@ -213,6 +213,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-09-19, board item 124: the research-defined insider purchase
+    # cluster now lifts the smart-money seat's conviction, so its definition
+    # is on the path from a verdict to an order.
+    "src/data/smart_money_cluster.py",
     # The indicator and level units. Every ATR multiple and every stop the
     # ledger tracks is a multiple of `technical.ATR_PERIOD`, and levels are
     # where stops are placed; watching the multiplier and not the unit was

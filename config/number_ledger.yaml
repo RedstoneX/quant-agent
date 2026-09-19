@@ -1244,6 +1244,18 @@ numbers:
       Part of the data-hygiene filter that drops an implausible bar before the
       scan runs; it decides what counts as a bad PRINT, not what counts as a
       trade.
+  - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
+    value: 2
+    status: sourced
+    site: src/data/smart_money_cluster.py
+    source: >-
+      https://papers.ssrn.com/abstract=2781761 (Alldredge & Blank, J.
+      Financial Research 42(2), 2019), abstract: a purchase "on the same day
+      as another insider purchase at the same company" -- the insider plus
+      one other, so two distinct insiders is the definition, not a tuned
+      threshold. The SSRN page returned HTTP 403 on 2026-09-19; the wording
+      is the abstract as quoted in search results. Definition site:
+      src/data/smart_money_cluster.py (board item 124).
   - id: src.data.technical.ATR_PERIOD
     value: 14
     status: sourced

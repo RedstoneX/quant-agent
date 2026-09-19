@@ -1147,8 +1147,9 @@ smart_money:
   max_observations: 40
   min_transaction_value_usd: 100000
   external_min_transaction_value_usd: 250000
-  # Alldredge & Blank (J. Financial Research, 2019): cluster = purchases
-  # within ~2 days of a colleague's trade (docs/RESEARCH_FINDINGS.md:19).
+  # Row-retention window for cluster_survivors, not the research cluster.
+  # Alldredge & Blank's abstract measures SAME-DAY purchases; "~2 days" is
+  # from a secondary summary only (src/data/smart_money_cluster.py).
   cluster_window_days: 2
   min_cluster_owners: 2
   max_external_candidates: 3

@@ -22,6 +22,59 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — the insider seat was told to use "clusters" that nothing supplied; a real same-day buying cluster now lifts its conviction one rung (board item 124)
+
+**What broke, in one line:** the insider seat's instructions told it to use
+insider-buying clusters "when supplied", nothing ever supplied one, and the
+code's own "cluster" was a looser two-day, buy-or-sell grouping that the
+research note justified with figures the paper's abstract does not contain.
+
+**What the sources actually say (checked 2026-09-19).** Alldredge & Blank
+(J. Financial Research 2019, SSRN 2781761) — abstract only, the SSRN and
+Wiley pages returned HTTP 403: about 23% of insider purchases happen on the
+SAME DAY as another insider's purchase at the same company, and clustered
+purchases are followed by abnormal returns above 2% over the next month. The
+"within ~2 days", "~2.1%" and "0.9 percentage points above solitary buys"
+figures the desk had been citing come from a secondary summary (IBKR Campus),
+not the abstract. Cohen, Malloy & Pomorski (NBER w16454, abstract fetched):
+opportunistic trades earn 82 basis points a month, routine trades
+"essentially zero". Nothing in either supports a SELLING cluster, and
+nothing supports a congressional one.
+
+**Measured before building (production cache, read-only, 2026-09-19).**
+Disclosures 2025-09-18 to 2026-09-18, 15,068 insider rows, 311 open-market
+purchases in the 101-name configured universe. Same-day clusters of two or
+more distinct insiders with opportunistic purchases: 15 cluster-days in 5
+names. Six are ordinary buying by named officers and directors (GME three
+days, MRVL, NKE, PFE). The other nine are TSM: dozens of TSMC officers buying
+$3,000-5,000 each of the Taiwan-listed shares on the same day every month —
+an employee purchase programme, which the routine test only catches once an
+insider has enough prior months on record, so the newest participants still
+read as opportunistic. That is a limit of the existing routine test, left
+as found.
+
+**What changed.**
+- A cluster is now computed in code: two or more distinct insiders,
+  opportunistic open-market purchases, same symbol, same transaction date,
+  configured universe only. It is recorded on the symbol's rows as a fact
+  (date, number of insiders, combined dollars, filing age) and shown to the
+  seat as one named field.
+- Its only effect: a bullish insider read at medium conviction becomes high.
+  Low stays low, bearish and neutral reads are untouched, the model does not
+  score it, and it changes no sort order and no admission.
+- The seat's prompt now names that one field and says conviction is set by
+  code.
+- The older two-day grouping was kept as what it actually is — a rule for
+  which rows the seat gets to see as context, for sells and for Congress too
+  — and its comments no longer call it the research cluster. Narrowing it
+  would have silently removed rows the seat and the operator see today.
+- `docs/RESEARCH_FINDINGS.md` corrected to what the abstract states.
+
+**What was deliberately not done.** No sell-side cluster. No congressional
+cluster. No age limit on how long a cluster can lift conviction — the source
+measures the following month, but choosing a cutoff was not part of the
+decided design. No fix to the TSM employee-plan false positive.
+
 ### 2026-09-19 — the daily log-health report missed the technical seat's own failures and false-alarmed on it every morning
 
 **What broke, in one line:** the owner's only window into the desk's logs
