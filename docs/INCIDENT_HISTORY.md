@@ -22,6 +22,70 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — nine places where the desk changed or threw away a trade and kept no record of it (board item 164)
+
+**What broke, in one line:** between the portfolio manager's answer and the
+order, nine rules could cut, drop or quietly ignore a decision and leave only
+a log line — which rotates away — so afterwards nobody could see what had
+happened to that stock or why.
+
+**The owner's ruling this closes against:** keep every decision and its
+reason. A log line is not a record.
+
+**What was checked, and all nine were real on main.** Each was read in the
+code before anything changed:
+
+1. A risk-seat edit that fails the order schema drops the whole trade — in
+   neither the refused-edit list nor any event.
+2. An edit to a field the desk cannot change, and
+3. an edit naming a stock that has no order left, were ignored — while the
+   seat's edit row stayed stored as if it had been applied, and the stock's
+   risk event said `modified`.
+4. The queued-earnings cap cut or dropped a BUY; the stored proposed order
+   kept the pre-cap size.
+5. The portfolio manager's answer had a target removed for an unaddressed
+   seat conflict, or
+6. for being malformed (only an in-memory counter saw it).
+7. The constructor turned "flip this long into a short" into "just close
+   it" — the stock still got an order, so it never counted as a drop.
+8. When a risk-seat size increase on a short could not be undone, the short
+   was dropped — and the record said "Reverted", which was false.
+9. Every stock the risk seat let through carried the same constant reason,
+   `risk_manager_verdict`; a book-level veto stamped one sentence on every
+   stock even when the seat had named one stock's own reason; and an exit the
+   seat approved reached the raw model log only.
+
+One detail of the board item was off: it placed the constant-reason defect
+at two line numbers, one of which is actually defect 8. Nothing else in it
+was wrong.
+
+**What changed — recording only.** No rule's decision, threshold, cap, size
+or order changed. Each outcome is now a per-symbol row in the evidence stream
+the desk already uses for every stage of a trade (`pipeline_event`), naming
+the rule (`gate`), the reason, and the size before and after where one
+changed. The risk event now says `modified` only when something actually
+changed, and carries the seat's own reason. An approved exit goes into the
+exit path's own record (`exit_refusal`, `code=ai_risk_approved`,
+`dropped=false`), which already held non-drop outcomes.
+
+**Two placements that were deliberate, not convenient.**
+- An edit naming a stock with no order in the plan is filed against the run,
+  not the stock, with the stock named inside. Filed against the stock, the
+  jam detector (the alarm that fires when every idea is refused for the same
+  reason, session after session) would have counted a stock the run never
+  considered, or overwritten the real refusal of one the seat had already
+  refused.
+- An approved exit is NOT a `pipeline_event` for the same reason: that alarm
+  treats any surviving row as the session having taken a new idea, and an
+  exit is not one. Filing it there would have been able to silence the alarm.
+
+**What would catch it next time:** every one of the new rows has a test that
+fails if the line writing it is removed (checked by removing each line in
+turn). A new gate that drops or changes a trade without writing a row is
+still possible; nothing mechanical prevents that yet.
+
+---
+
 ### 2026-09-19 — one broken line in the technical seat's answer threw away every good stock beside it
 
 **What broke, in one line:** when the technical seat answered about several

@@ -38,9 +38,11 @@ phrase gate — which is the case the 2026-08-27 ratification described
 
 This module does not change sale-block appetite. It does not move
 `NOISE_BAND_ATR_MULTIPLE` or `absolute_min_stop_atr_multiple` (item 70).
-It records every drop, and every uncertainty fail-open, as append-only
-per-symbol specialist evidence so a later upsert on the cooldown ledger
-cannot erase the reason.
+It records every drop, every uncertainty fail-open, and (since board item
+164, 2026-09-19) every AI Risk approval, as append-only per-symbol
+specialist evidence so a later upsert on the cooldown ledger cannot erase
+the reason. The kind keeps its historical name; `dropped` and `code` say
+which outcome a row is.
 """
 
 from __future__ import annotations
@@ -74,6 +76,11 @@ CODE_HOLDING_DISCIPLINE_FALSE = "holding_discipline_claim_false"
 # Uncertainty — recorded, not a drop from that layer.
 CODE_HARD_TRIGGER_UNCERTAIN = "hard_trigger_uncertain"
 CODE_AI_RISK_UNAVAILABLE = "ai_risk_unavailable"
+
+# A completed APPROVAL by the challenge seat — recorded, not a drop (board
+# item 164, 2026-09-19). Until then an approved exit reached `agent_logs`
+# only, so this per-symbol record held every outcome except the commonest.
+CODE_AI_RISK_APPROVED = "ai_risk_approved"
 
 _VALID_JUDGMENTS = frozenset({"named", "unnamed", "uncertain"})
 

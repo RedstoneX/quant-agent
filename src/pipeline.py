@@ -2595,6 +2595,7 @@ class TradingPipeline:
         decisions: list[TradeDecision],
         modifications,
         symbols_bars: dict | None = None,
+        unapplied: list[dict] | None = None,
     ) -> tuple[list[TradeDecision], list[dict]]:
         """Apply RM-proposed field modifications to decisions.
 
@@ -2664,6 +2665,16 @@ class TradingPipeline:
         DROPPED outright by a validation failure — so the caller can persist
         a visible pipeline event for each one instead of the edit just
         disappearing.
+
+        `unapplied` (board item 164, 2026-09-19) is an optional sink for the
+        three outcomes `rejected_mods` deliberately does NOT carry, each of
+        which used to reach the log only: a decision DROPPED because the
+        edit failed schema validation (`outcome="dropped"`), an edit naming
+        a field this method cannot modify, and an edit naming a symbol with
+        no decision in the plan (both `outcome="modification_not_applied"`).
+        Each entry names the symbol, the gate, the value asked for and the
+        seat's own reason. Recording only — nothing here changes what is
+        applied, reverted or dropped.
         """
         updated_decisions: list[TradeDecision | None] = list(decisions)
         modifiable_fields = {"allocation_pct", "entry_price", "stop_loss", "take_profit"}
@@ -2676,6 +2687,22 @@ class TradingPipeline:
                 mod = type(mod)(**{**mod.model_dump(), "field": field})
             if mod.field not in modifiable_fields:
                 logger.warning("Risk mod ignored: unknown field '%s'", mod.field)
+                if unapplied is not None:
+                    unapplied.append({
+                        "symbol": mod.symbol, "field": mod.field,
+                        "outcome": "modification_not_applied",
+                        "gate": "rm_modification_unknown_field",
+                        "requested": mod.new_value,
+                        "seat_reason": mod.reason,
+                        "reason": (
+                            f"RM modification NOT APPLIED: {mod.symbol}.{mod.field} "
+                            f"-> {mod.new_value} names a field the desk cannot "
+                            f"modify (modifiable: "
+                            f"{', '.join(sorted(modifiable_fields))}). The "
+                            f"decision is unchanged. RM reason given: "
+                            f"{mod.reason!r}"
+                        ),
+                    })
                 continue
 
             for idx, decision in enumerate(updated_decisions):
@@ -2722,6 +2749,30 @@ class TradingPipeline:
                         "DROPPING decision (RM intended a protection we cannot apply)",
                         mod.symbol, mod.field, mod.original_value, mod.new_value, exc,
                     )
+                    if unapplied is not None:
+                        errors = "; ".join(
+                            f"{'.'.join(str(p) for p in err.get('loc', ()))}: "
+                            f"{err.get('msg', '')}"
+                            for err in exc.errors()
+                        )
+                        unapplied.append({
+                            "symbol": decision.symbol, "field": mod.field,
+                            "outcome": "dropped",
+                            "gate": "rm_modification_schema_invalid",
+                            "action": decision.action,
+                            "before": getattr(decision, mod.field, None),
+                            "requested": mod.new_value,
+                            "seat_reason": mod.reason,
+                            "reason": (
+                                f"{decision.action} {decision.symbol} DROPPED: "
+                                f"the RM edit {mod.field} "
+                                f"{getattr(decision, mod.field, None)} -> "
+                                f"{mod.new_value} fails the order schema "
+                                f"({errors}), and a protection the seat asked "
+                                f"for that cannot be applied is not assumed "
+                                f"safe to skip. RM reason given: {mod.reason!r}"
+                            ),
+                        })
                     updated_decisions[idx] = None
                     break
 
@@ -2790,6 +2841,20 @@ class TradingPipeline:
                 break
             else:
                 logger.warning("Risk mod ignored: no matching decision for '%s'", mod.symbol)
+                if unapplied is not None:
+                    unapplied.append({
+                        "symbol": mod.symbol, "field": mod.field,
+                        "outcome": "modification_not_applied",
+                        "gate": "rm_modification_no_matching_decision",
+                        "requested": mod.new_value,
+                        "seat_reason": mod.reason,
+                        "reason": (
+                            f"RM modification NOT APPLIED: {mod.symbol} has no "
+                            f"decision left in the plan to edit ({mod.field} -> "
+                            f"{mod.new_value}), so nothing changed. RM reason "
+                            f"given: {mod.reason!r}"
+                        ),
+                    })
 
         return [d for d in updated_decisions if d is not None], rejected_mods
 
@@ -10713,6 +10778,10 @@ class TradingPipeline:
                     "AI Risk approved %d exit(s): %s",
                     len(decisions), (verdict.reasoning or "")[:200],
                 )
+                self._record_exit_review_approvals(
+                    decisions, set(), verdict, run_id=run_id,
+                    original_action_by_symbol=original_action_by_symbol,
+                )
                 return set(), verdict
         else:
             veto_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
@@ -10739,7 +10808,50 @@ class TradingPipeline:
                 detail=(veto_reasons[symbol] or "")[:400],
                 layer="ai_risk",
             )
+        # The exits the seat let through beside the ones it vetoed.
+        self._record_exit_review_approvals(
+            decisions, vetoed, verdict, run_id=run_id,
+            original_action_by_symbol=original_action_by_symbol,
+        )
         return vetoed, verdict
+
+    def _record_exit_review_approvals(
+        self, decisions, vetoed: set, verdict, *, run_id: str,
+        original_action_by_symbol: dict,
+    ) -> None:
+        """One durable per-symbol row for every exit the AI Risk seat
+        APPROVED on the exit-review path. Never raises.
+
+        Board item 164 (2026-09-19). A veto here was already durable
+        (`intraday_evaluations` plus an `exit_refusal` row), but an approval
+        reached `agent_logs` only — one raw model response per run, with no
+        per-symbol row saying "this exit was reviewed and let through, and
+        why". Written to the exit path's own per-symbol record
+        (`src/risk/exit_refusal.py`), which already carries non-drop
+        outcomes (`dropped=False`, the fail-open codes) — NOT to the
+        `pipeline_event` stream, because `src/refusal_signature.py` counts
+        any surviving `pipeline_event` as the session having taken an idea,
+        and an exit is not one. `ExitRiskVerdict` has no per-symbol approval
+        reason, so the detail is the seat's own run-level reasoning, marked
+        as such. Recording only: the returned veto set is unchanged.
+        """
+        from src.risk.exit_refusal import CODE_AI_RISK_APPROVED
+
+        category = getattr(verdict, "reason_category", None)
+        for d in decisions:
+            if d.symbol in vetoed:
+                continue
+            self._record_exit_refusal(
+                symbol=d.symbol, run_id=run_id,
+                action=original_action_by_symbol.get(d.symbol, d.action),
+                code=CODE_AI_RISK_APPROVED, dropped=False,
+                detail=(
+                    f"approved by the risk seat (category {category!r}; no "
+                    f"per-symbol reason in the verdict, run-level reasoning "
+                    f"follows): {verdict.reasoning or ''}"
+                ),
+                layer="ai_risk",
+            )
 
     def _midday_execute_llm_actions(
         self, positions, review, run_id: str,

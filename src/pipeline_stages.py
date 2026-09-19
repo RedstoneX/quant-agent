@@ -1545,6 +1545,42 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
     return faults
 
 
+def _record_constructor_side_flips(pipeline, ctx) -> None:
+    """One durable per-symbol row for every target the constructor collapsed
+    from a side flip to a close-only leg (`PortfolioConstructor`, rule D3).
+
+    Board item 164 (2026-09-19). The seat asked to turn a long into a short
+    (or back); the constructor refuses the flip and emits only the closing
+    leg. The symbol still produces an order, so it never counts as a drop,
+    and the only trace of the refused half was a log line. The record states
+    the held weight, the weight asked for and the weight emitted (0: flat).
+    Never raises.
+    """
+    try:
+        flips = getattr(pipeline.portfolio_constructor, "last_side_flips", None)
+        if not isinstance(flips, dict):
+            return
+        for sym, flip in flips.items():
+            held = flip.get("held_weight_pct")
+            asked = flip.get("requested_weight_pct")
+            _record_pipeline_event(
+                pipeline, ctx, sym, "deterministic_gate", "modified",
+                "side_flip_refused", gate="side_flip_refused",
+                held_weight_pct=held, requested_weight_pct=asked,
+                emitted_weight_pct=flip.get("emitted_weight_pct"),
+                detail=(
+                    f"{sym}: target asked to flip the position from "
+                    f"{held:+.2f}% to {asked:+.2f}% of the book in one "
+                    f"session; a single order that crosses sides is "
+                    f"unprotected between legs, so only the closing leg "
+                    f"(to 0%) was built. The other side can open in a later "
+                    f"session once the book is flat."
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("constructor side-flip recording failed: %s", exc)
+
+
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, ceiling: float, ask: float | None = None,
@@ -3363,14 +3399,109 @@ def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list
         })
         try:
             out.append(d.model_copy(update={"allocation_pct": before}))
-        except Exception as e:  # pragma: no cover - model_copy on a valid value
+        except Exception as e:
             # Cannot restore the smaller size, so do not ship the larger one.
             logger.warning(
                 "Could not revert %s's enlarged allocation_pct (%s) — "
                 "DROPPING the decision rather than executing the increase",
                 d.symbol, e,
             )
+            # Board item 164: the entry above says "Reverted", which is no
+            # longer true — the decision is gone. Restate it as the drop it
+            # is, so the durable record does not claim a trade shipped at
+            # its pre-edit size when nothing shipped at all.
+            rejected[-1].update({
+                "outcome": "dropped",
+                "gate": "rm_enlargement_revert_failed",
+                "action": d.action,
+                "before": before,
+                "requested": d.allocation_pct,
+                "reason": (
+                    f"RM modification would INCREASE {d.symbol}'s {d.action} "
+                    f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}); "
+                    f"restoring the pre-edit size failed ({e}), so the "
+                    f"{d.action} was DROPPED rather than shipped at the "
+                    f"enlarged size."
+                ),
+            })
     return out, rejected
+
+
+#: The four fields a risk-seat edit or `scale_all_buys` can change — the
+#: same set `_apply_risk_modifications` accepts (`modifiable_fields` there).
+_RISK_EDITABLE_FIELDS = ("allocation_pct", "entry_price", "stop_loss", "take_profit")
+
+
+def _risk_edit_snapshot(decisions) -> dict:
+    """`{(SYMBOL, action): {field: value}}` for the editable fields."""
+    out: dict = {}
+    for d in decisions or []:
+        if d is None:
+            continue
+        out[(d.symbol.strip().upper(), d.action)] = {
+            f: getattr(d, f, None) for f in _RISK_EDITABLE_FIELDS
+        }
+    return out
+
+
+def _risk_event_for(
+    decision, pre_rm_fields: dict, verdict, scale: float,
+    field_aliases: dict | None = None,
+):
+    """The per-symbol `risk` event for a leg that SURVIVED the risk seat.
+
+    Board item 164 (2026-09-19). This event used to carry the constant
+    reason `risk_manager_verdict` on every symbol, and read `modified` for
+    any symbol the seat merely NAMED in a modification — including an edit
+    that was rejected, reverted or never matched — and for every leg,
+    exits included, whenever `scale_all_buys` was below 1. Now:
+
+    - `outcome` is `modified` only when a field of this decision actually
+      differs from what it was before the seat's edits and scaling;
+    - `reason` is the seat's OWN reason for this symbol — the stated reason
+      on each modification that took effect — and only where the seat gave
+      none does it say so in words;
+    - `changes` carries every field that moved, as `[before, after]`.
+
+    Pure: reads the decision, the snapshot and the verdict; changes nothing.
+    """
+    key = (decision.symbol.strip().upper(), decision.action)
+    before = pre_rm_fields.get(key) or {}
+    changes = {
+        f: [before[f], getattr(decision, f, None)]
+        for f in _RISK_EDITABLE_FIELDS
+        if f in before and before[f] != getattr(decision, f, None)
+    }
+    category = getattr(verdict, "reason_category", None)
+    details: dict = {"gate": "risk_manager", "reason_category": category}
+    if not changes:
+        reason = (
+            f"risk manager approved {decision.symbol} unchanged; the seat "
+            f"gave no reason specific to this symbol (verdict category "
+            f"{category!r}; its run-level reasoning is on this run's verdict "
+            f"row)"
+        )
+        return "approved", reason, details
+    aliases = field_aliases if isinstance(field_aliases, dict) else {}
+    seat_reasons = []
+    for m in (getattr(verdict, "modifications", None) or []):
+        field = aliases.get(m.field, m.field)
+        if (
+            m.symbol.strip().upper() == key[0] and field in changes
+            and (m.reason or "").strip()
+        ):
+            seat_reasons.append(f"{field}: {m.reason}")
+    if (
+        scale < 1.0 and decision.action in ("BUY", "SHORT")
+        and "allocation_pct" in changes
+    ):
+        seat_reasons.append(f"scale_all_buys={scale:.2f} applied to every entry")
+    details["changes"] = changes
+    reason = "; ".join(seat_reasons) or (
+        f"risk manager changed {', '.join(sorted(changes))} on "
+        f"{decision.symbol} without stating a reason for this symbol"
+    )
+    return "modified", reason, details
 
 
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float, list]:
@@ -4977,6 +5108,10 @@ class DecisionStage:
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             **pm_decide_kwargs,
         )
+        # Board item 164: read NOW — the candidate-accounting re-ask below
+        # calls decide() again, which resets this list.
+        _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)
+        pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
         from src.agents.portfolio_manager import PortfolioManagerAgent
         macro_failures = list(
             getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
@@ -5039,6 +5174,19 @@ class DecisionStage:
         # return below, so a run whose PM produced nothing still shows which
         # seats had asked for what. Bookkeeping only; never raises.
         _link_nominations_to_decision(pipeline, ctx)
+        # Board item 164: a target the seat proposed and code then removed
+        # (malformed, or an unadjudicated seat conflict) is a decision the
+        # desk made about that symbol; it is persisted per symbol with the
+        # gate and the reason, not only logged. Written whether or not the
+        # PM call as a whole produced a usable decision.
+        for dropped in pm_dropped_targets:
+            _details = {
+                k: v for k, v in dropped.items() if k not in ("symbol", "reason")
+            }
+            _record_pipeline_event(
+                pipeline, ctx, dropped.get("symbol"), "portfolio_manager",
+                "target_dropped", dropped.get("reason", ""), **_details,
+            )
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -5240,6 +5388,7 @@ class DecisionStage:
         data_faults = _record_constructor_drops(pipeline, ctx, portfolio_decision)
         if data_faults:
             _alert_unmeasurable_symbols(data_faults)
+        _record_constructor_side_flips(pipeline, ctx)
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
@@ -5268,6 +5417,60 @@ class DecisionStage:
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx
+
+
+def _record_earnings_cap(pipeline, ctx, before: list, after: list) -> None:
+    """One durable per-symbol row for every BUY the queued-earnings cap
+    dropped or cut (`TradingPipeline._clamp_queued_earnings_buys`).
+
+    Board item 164 (2026-09-19). The cap is a BUY-only gate that either
+    removes a decision or replaces it with a smaller copy, so both outcomes
+    are read by comparing the list it was handed with the list it returned:
+    a BUY absent afterwards was DROPPED, one whose `allocation_pct` fell was
+    CUT. The size is stated before and after because the symbol's
+    `proposed_order` row, written earlier by DecisionStage, still carries
+    the pre-cap number. Never raises — a record failure must not stop the
+    stage (`_persist_evidence`'s contract).
+    """
+    try:
+        after_by_symbol = {
+            d.symbol.strip().upper(): d
+            for d in (after or []) if d is not None and d.action == "BUY"
+        }
+        for d in before or []:
+            if d is None or d.action != "BUY":
+                continue
+            sym = d.symbol.strip().upper()
+            kept = after_by_symbol.get(sym)
+            if kept is None:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
+                    "queued_earnings_cap", gate="queued_earnings_cap",
+                    before_allocation_pct=d.allocation_pct,
+                    after_allocation_pct=0.0,
+                    detail=(
+                        f"BUY {d.symbol} DROPPED: a just-filed earnings "
+                        f"report is queued and not yet read, and the name is "
+                        f"already at or over the queued-earnings weight cap, "
+                        f"so there is no room to add. The proposed order "
+                        f"asked for {d.allocation_pct:.2f}%."
+                    ),
+                )
+            elif kept.allocation_pct < d.allocation_pct:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "deterministic_gate", "modified",
+                    "queued_earnings_cap", gate="queued_earnings_cap",
+                    before_allocation_pct=d.allocation_pct,
+                    after_allocation_pct=kept.allocation_pct,
+                    detail=(
+                        f"BUY {d.symbol} CUT from {d.allocation_pct:.2f}% to "
+                        f"{kept.allocation_pct:.2f}%: a just-filed earnings "
+                        f"report is queued and not yet read, so the resulting "
+                        f"position is held to the queued-earnings weight cap."
+                    ),
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("queued-earnings cap recording failed: %s", exc)
 
 
 def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
@@ -5472,9 +5675,16 @@ class RiskStage:
         # at 15% with an unread filing could otherwise be topped up to 20%.
         # rm_positions (sweep-vehicle-free) is the right basis — parked T-bills
         # are cash and never carry an earnings filing.
+        before_earnings_cap = list(portfolio_decision.decisions)
         portfolio_decision.decisions = pipeline._clamp_queued_earnings_buys(
             portfolio_decision.decisions, earnings_results,
             positions=rm_positions, total_value=total_value,
+        )
+        # Board item 164: the cap used to reach the log only, while this
+        # symbol's `proposed_order` row (written by DecisionStage, before
+        # this gate) kept the pre-cap size. Recording only.
+        _record_earnings_cap(
+            pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
         )
 
         daily_pnl = total_value - last_equity
@@ -5872,10 +6082,21 @@ class RiskStage:
                 "Risk manager REJECTED trades: %s",
                 verdict.reasoning,
             )
+            # Board item 164: a book-level veto refuses every leg for the
+            # book's reason, but where the seat ALSO named this symbol with
+            # its own reason, that reason is what the symbol's record
+            # carries — the book reason rides beside it, not over it.
+            book_veto_symbol_reasons = verdict.rejections_by_symbol()
             for decision in portfolio_decision.decisions:
+                own = book_veto_symbol_reasons.get(
+                    decision.symbol.strip().upper()
+                )
                 _record_pipeline_event(
                     pipeline, ctx, decision.symbol, "risk", "rejected",
-                    verdict.reasoning,
+                    own or verdict.reasoning,
+                    gate="risk_manager_book_veto",
+                    book_level_reason=verdict.reasoning,
+                    reason_category=getattr(verdict, "reason_category", None),
                 )
             return {
                 "status": "rejected", "orders": [],
@@ -6066,6 +6287,12 @@ class RiskStage:
                         "status": "rejected", "orders": [], "reason": reasons,
                     }
 
+        # Board item 164: what each surviving leg looked like BEFORE the
+        # seat's edits and `scale_all_buys`, so the per-symbol `risk` event
+        # below can say what actually changed rather than stamping one
+        # constant on every symbol. Recording only.
+        pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
+
         if verdict.modifications:
             # Board item 135. `_apply_risk_modifications` guard 1b refuses an
             # `allocation_pct` edit that ENLARGES a BUY, but it tests
@@ -6084,9 +6311,11 @@ class RiskStage:
                 for d in portfolio_decision.decisions
                 if d.action in ("BUY", "SHORT")
             }
+            unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
+                unapplied=unapplied_mods,
             )
             portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
                 portfolio_decision.decisions, pre_mod_entry_alloc,
@@ -6097,11 +6326,29 @@ class RiskStage:
             # band floor breach) must be a visible, distinguishable event —
             # not an edit that just vanishes. See `_apply_risk_modifications`
             # docstring, guards 1 and 2 (2026-09-03 audit).
-            for rejected in rejected_mods:
+            # Board item 164: the dropped / not-applied outcomes
+            # `_apply_risk_modifications` used to log and nothing else. Each
+            # entry already carries its own outcome, gate and reason.
+            #
+            # An edit naming a symbol with no decision in this stage's plan
+            # is filed RUN-scoped with the symbol in the payload: a
+            # symbol-scoped row would make `src/refusal_signature.py` count
+            # a name the run never considered as a candidate, or overwrite
+            # the real refusal of a name the seat already refused above.
+            in_plan = {sym for sym, _action in pre_rm_fields}
+            for rejected in list(rejected_mods) + unapplied_mods:
+                _details = {
+                    k: v for k, v in rejected.items()
+                    if k not in ("symbol", "reason", "outcome")
+                }
+                _sym = rejected["symbol"]
+                if str(_sym or "").strip().upper() not in in_plan:
+                    _details["symbol_named"] = _sym
+                    _sym = None
                 _record_pipeline_event(
-                    pipeline, ctx, rejected["symbol"], "risk",
-                    "modification_rejected", rejected["reason"],
-                    field=rejected["field"],
+                    pipeline, ctx, _sym, "risk",
+                    rejected.get("outcome", "modification_rejected"),
+                    rejected["reason"], **_details,
                 )
 
         portfolio_decision.decisions, scale, scale_dropped = _apply_scale_all_buys(
@@ -6143,12 +6390,14 @@ class RiskStage:
                     pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
 
-        modified_symbols = {mod.symbol for mod in verdict.modifications}
         for decision in portfolio_decision.decisions:
+            outcome, reason, details = _risk_event_for(
+                decision, pre_rm_fields, verdict, scale,
+                field_aliases=getattr(pipeline, "_FIELD_ALIASES", None),
+            )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "risk",
-                "modified" if decision.symbol in modified_symbols or scale < 1.0 else "approved",
-                "risk_manager_verdict",
+                pipeline, ctx, decision.symbol, "risk", outcome, reason,
+                **details,
             )
             _record_pipeline_event(
                 pipeline, ctx, decision.symbol, "deterministic_gate", "allowed",
