@@ -3851,7 +3851,11 @@ class TradingPipeline:
         for prot in pending_protections:
             if wait:
                 try:
-                    self.broker.wait_for_order_terminal(prot["order_id"])
+                    # Kept on the intent so a caller can record the outcome
+                    # (the gross-exposure de-lever's shortfall row, item 112).
+                    prot["terminal_status"] = self.broker.wait_for_order_terminal(
+                        prot["order_id"],
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "%s: wait failed for %s order %s: %s — finalize will "
@@ -3865,6 +3869,7 @@ class TradingPipeline:
                 prot["position_qty_before_sell"], prot["specs"],
                 wal_row_id=prot.get("wal_row_id"), **side_kwargs,
             )
+            prot["coverage_confirmed"] = bool(ok)
             if not ok:
                 logger.warning(
                     "%s: finalize for %s (order %s) did not confirm stop "
@@ -11391,7 +11396,6 @@ class TradingPipeline:
         )
 
         orders: list[dict] = []
-        pending_protections: list[dict] = []
         projected_proceeds = 0.0
         for p in targets:
             if projected_proceeds >= deficit:
@@ -11426,7 +11430,6 @@ class TradingPipeline:
             if sale is None:
                 continue
             order, prot = sale
-            pending_protections.append(prot)
             try:
                 # Count the proceeds BEFORE the ledger write: the SELL is
                 # already live at the broker, so its cash is coming whether or
@@ -11465,13 +11468,16 @@ class TradingPipeline:
                     "live at the broker; its proceeds are already counted so the "
                     "sweep will not over-liquidate", p.symbol, e,
                 )
-
-        # Block the session until fills land so the post-refresh cash is real.
-        # Then finalize protection — if any limit didn't fill, restore the
-        # original stop coverage so the position isn't left naked.
-        self._finalize_pending_protections(
-            pending_protections, context="FORCE DE-LEVER",
-        )
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops (docs/WORK.md item
+            # 111). Finalizing the whole batch after the loop left every
+            # earlier symbol with no protective stop while later symbols were
+            # being cancelled, submitted and waited on. Which positions are
+            # sold, and how much, is unchanged: `projected_proceeds` above is
+            # booked at submit time, never from the fill.
+            self._finalize_pending_protections(
+                [prot], context="FORCE DE-LEVER",
+            )
 
         # Refresh ctx so downstream stages see post-sell truth.
         try:
@@ -11670,6 +11676,9 @@ class TradingPipeline:
             logger.warning("gross-exposure de-lever: entry-order cancel failed: %s", exc)
 
         positions_by_symbol = {p.symbol: p for p in ctx.positions}
+        # The equity the ceiling was measured against, kept for the item-112
+        # shortfall record (ctx.total_value is overwritten by the refresh).
+        equity_before = ctx.total_value
         orders: list[dict] = []
         pending_protections: list[dict] = []
         for trim in outcome.trims:
@@ -11732,9 +11741,18 @@ class TradingPipeline:
                     "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — "
                     "the order may still be live at the broker", trim.symbol, e,
                 )
-        if pending_protections:
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops (docs/WORK.md item
+            # 111). Finalizing the batch once after the loop left every
+            # earlier symbol with no protective stop while the later ones were
+            # cancelled, submitted and waited on — and the ladder only fires
+            # in a drawdown. The trims themselves (which names, how much, at
+            # what limit) were all fixed by `apply_gross_ceiling` before the
+            # loop began and are unchanged.
+            protection["trim_action"] = trim.action
+            protection["trim_qty"] = qty
             self._finalize_pending_protections(
-                pending_protections, context="GROSS-EXPOSURE DE-LEVER",
+                [protection], context="GROSS-EXPOSURE DE-LEVER",
             )
         try:
             account = self.broker.get_account()
@@ -11747,9 +11765,84 @@ class TradingPipeline:
             # now exists, not the one that triggered the de-lever.
             self._resolve_gross_ceiling(ctx)
             self._alert_owner_delever_incomplete(ctx)
+            self._record_delever_shortfall(
+                ctx, held_gross_before=outcome.held_gross,
+                ceiling_usd_before=outcome.ceiling_usd,
+                equity_before=equity_before, protections=pending_protections,
+            )
         except Exception as e:  # noqa: BLE001
             logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
         return orders
+
+    def _record_delever_shortfall(
+        self, ctx: RunContext, *, held_gross_before: float,
+        ceiling_usd_before: float | None,
+        equity_before: float | None, protections: list[dict],
+    ) -> None:
+        """Durable record of a gross-exposure de-lever that finished with the
+        book STILL over its ceiling (docs/WORK.md item 112).
+
+        `_alert_owner_delever_incomplete` already sets the flag the session
+        message reads; what nothing kept was the evidence — the book before
+        and after, the ceiling, and what each order actually did — so a
+        failed de-lever could not be reviewed after the log rotated. This
+        writes ONE row in the desk's existing lifecycle-event stream
+        (`specialist_evidence`, `agent_name='pipeline'`,
+        `kind='pipeline_event'`, `scope='run'` — the same shape
+        `_record_pipeline_event` and the stop-out reconciler use), NOT in
+        `agent_logs`: that table is the paid-model ledger, and the cost
+        circuit refuses a same-day `agent_logs` row whose run has no budget
+        session, which a pre-agent preamble write could produce.
+
+        Observability only: no order, alert, sizing or sequencing depends on
+        it, it writes nothing when the book cleared its ceiling, and it never
+        raises.
+        """
+        leverage = ctx.leverage or {}
+        if not leverage.get("delever_incomplete"):
+            return
+        try:
+            import json
+            gross_before_x = (
+                held_gross_before / equity_before
+                if isinstance(equity_before, (int, float)) and equity_before > 0
+                else None
+            )
+            order_rows = [
+                {
+                    "symbol": p.get("symbol"),
+                    "action": p.get("trim_action"),
+                    "qty_submitted": p.get("trim_qty"),
+                    "broker_order_id": p.get("order_id"),
+                    "terminal_status": p.get("terminal_status"),
+                    "stop_coverage_confirmed": p.get("coverage_confirmed"),
+                }
+                for p in protections
+            ]
+            payload = {
+                "stage": "gross_delever", "outcome": "still_over_ceiling",
+                "reason": leverage.get("reason") or "",
+                "rung": leverage.get("rung"),
+                "gross_usd_before": held_gross_before,
+                "gross_x_before": gross_before_x,
+                "equity_before": equity_before,
+                "ceiling_usd_before": ceiling_usd_before,
+                "gross_usd_after": leverage.get("gross_usd"),
+                "gross_x_after": leverage.get("gross_x"),
+                "ceiling_x": leverage.get("ceiling_x"),
+                "orders": order_rows,
+            }
+            self.db.insert_specialist_evidence(
+                run_id=ctx.run_id, agent_name="pipeline", kind="pipeline_event",
+                scope="run", symbol=None,
+                decision_id=getattr(ctx, "decision_id", None),
+                evidence_json=json.dumps(payload, sort_keys=True, default=str),
+            )
+        except Exception as exc:  # noqa: BLE001 — evidence is never trading authority
+            logger.warning(
+                "GROSS-EXPOSURE DE-LEVER: could not persist the shortfall "
+                "record for run %s: %s", ctx.run_id, exc,
+            )
 
     def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
         """Flag it when the gross-exposure de-lever did not work.
