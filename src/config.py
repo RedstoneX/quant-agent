@@ -1476,11 +1476,15 @@ class SmartMoneyConfig(BaseModel):
     #     exactly this reason — a short window silently returned almost
     #     nothing. 180 is that observed-in-the-wild figure, not one invented
     #     here.
-    # This is a data-COVERAGE window, not a signal-strength one: widening it
-    # cannot make stale data load-bearing, because
-    # `SmartMoneyFinding.deterministic_eligibility` (src/models.py) separately
-    # requires congressional-only evidence to be <=7 days old. Widening only
-    # stops real rows being thrown away before the analyst ever sees them.
+    # This is a data-COVERAGE window, not a signal-strength one. Corrected
+    # 2026-09-19: this comment used to say `SmartMoneyFinding.
+    # deterministic_eligibility` (src/models.py) requires congressional-only
+    # evidence to be <=7 days old. That age cutoff was removed by the
+    # 2026-09-11 redesign; what that validator still checks is structure (two
+    # or more members, one direction, each filed within the STOCK Act's 45
+    # days). Age is now weighed downstream by correlation with current
+    # evidence, and the congressional refresh reports how old the newest
+    # disclosure and the newest trade are.
     congress_lookback_days: int = Field(default=180, ge=1, le=365)
 
     @model_validator(mode="after")

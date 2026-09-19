@@ -1115,6 +1115,9 @@ class TradingPipeline:
                 data_dir=config.smart_money.congress_data_dir,
                 user_agent=config.smart_money.user_agent,
                 request_timeout_s=config.smart_money.congress_request_timeout_s,
+                # Declared in config since 2026-09-04 and never passed until
+                # 2026-09-19: the feed's own time budget, separate from Form 4's.
+                refresh_deadline_s=config.smart_money.congress_refresh_deadline_s,
                 max_trades_per_source=config.smart_money.congress_max_trades_per_source,
                 assumed_max_disclosure_lag_days=(
                     config.smart_money.congress_assumed_max_disclosure_lag_days
@@ -14091,6 +14094,7 @@ class TradingPipeline:
                 # job's stdout, so no one could ask the database whether the
                 # backlog was draining from one morning to the next.
                 self._record_form4_backlog(run_id, smart_money_refresh)
+                self._record_congressional_refresh(run_id, smart_money_refresh)
                 self._alert_form4_backlog_before_open(smart_money_refresh)
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
@@ -15057,6 +15061,25 @@ class TradingPipeline:
             evidence_json=_json.dumps(
                 {k: refresh.get(k) for k in keys}, sort_keys=True, default=str,
             ),
+        )
+
+    def _record_congressional_refresh(self, run_id: str, refresh: dict) -> None:
+        """Persist the congressional refresh's counts. Never raises.
+
+        Same record as the Form 4 backlog above: per source fetched, already
+        seen, processed, new, dropped by reason, watermark before/after,
+        duration, and how old the newest disclosure and each source's copy
+        are. Nothing is written when the congressional feed is switched off.
+        """
+        summary = refresh.get("congressional") if isinstance(refresh, dict) else None
+        if not isinstance(summary, dict):
+            return
+        import json as _json
+        _persist_evidence(
+            getattr(self, "db", None), run_id=run_id,
+            agent_name="smart_money_refresh", kind="congressional_refresh",
+            scope="run",
+            evidence_json=_json.dumps(summary, sort_keys=True, default=str),
         )
 
     def _alert_form4_backlog_before_open(self, refresh: dict) -> None:
