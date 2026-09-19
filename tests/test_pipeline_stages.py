@@ -2068,6 +2068,118 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
     assert result_ctx.data_status["tech"] == "ok"
 
 
+@patch("src.pipeline_stages.compute_indicators")
+def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
+    mock_compute_indicators, caplog,
+):
+    """2026-09-19 log-health false-alarm fix.
+
+    A `neutral` rating carries no view at all, so the model's own
+    conviction on it is structurally always 'low' — that is not a real
+    research degradation, it is the shape of a no-view read. Before this
+    fix, `data_status['tech'] == 'low_confidence'` (set whenever ANY
+    resolved read is low-conviction, regardless of rating) made the
+    "Morning research degraded: tech" ERROR line fire every single morning,
+    and the log-health report then told the owner a research desk "could
+    not be reached" on a morning where nothing was actually wrong.
+
+    `data_status['tech']` itself is UNCHANGED (still 'low_confidence',
+    asserted below) — RiskStage's `data_degraded` advisory and the Risk
+    Manager's prompt see exactly what they saw before. Only the ERROR
+    summary line is corrected."""
+    import logging
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, rating, conviction):
+        kwargs = dict(
+            symbol=symbol, rating=rating, conviction=conviction,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+        )
+        if rating != "neutral":
+            kwargs.update(
+                entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+                support_levels=[95.0], resistance_levels=[110.0],
+                setup_type="range", expected_horizon_sessions=10,
+                thesis_invalid_if="closes below support",
+            )
+        return TechAnalysisResult(**kwargs)
+
+    analyses_map = {
+        "AAPL": _mk("AAPL", "buy", "medium"),
+        "MSFT": _mk("MSFT", "neutral", "low"),
+    }
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with caplog.at_level(logging.WARNING, logger="src.pipeline_stages"):
+        result_ctx = stage.run(ctx)
+
+    # data_status is untouched — this is a reporting fix, not a gate change.
+    assert result_ctx.data_status["tech"] == "low_confidence"
+    degraded_lines = [
+        r.getMessage() for r in caplog.records
+        if "Morning research degraded" in r.getMessage()
+    ]
+    assert degraded_lines, "test setup sanity: other mocked seats are expected to degrade"
+    assert not any(
+        "tech" in line.split("|", 1)[0] for line in degraded_lines
+    ), f"tech must not be named as degraded on a neutral-only morning: {degraded_lines}"
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
+    mock_compute_indicators, caplog,
+):
+    """Contrast case for the fix above: a real BUY/SELL read the model
+    itself flagged as low-conviction is genuine degradation and must still
+    reach the operator log — only the neutral-driven false alarm is
+    suppressed."""
+    import logging
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, conviction):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction=conviction,
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+            thesis_invalid_if="closes below support",
+        )
+
+    analyses_map = {"AAPL": _mk("AAPL", "medium"), "MSFT": _mk("MSFT", "low")}
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with caplog.at_level(logging.WARNING, logger="src.pipeline_stages"):
+        result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["tech"] == "low_confidence"
+    degraded_lines = [
+        r.getMessage() for r in caplog.records
+        if "Morning research degraded" in r.getMessage()
+    ]
+    assert any(
+        "tech" in line.split("|", 1)[0] for line in degraded_lines
+    ), f"a real low-conviction BUY/SELL read must still be reported: {degraded_lines}"
+
+
 def _minimal_news_report(confidence="medium"):
     from src.models import MacroNarrative, NewsIntelligenceReport
     return NewsIntelligenceReport(

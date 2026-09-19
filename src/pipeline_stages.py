@@ -4021,6 +4021,16 @@ class MorningResearchStage:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Smart-money coverage read failed: %s", exc)
                 sm_coverage = {"known": False, "error": type(exc).__name__}
+        # How old the congressional evidence is (newest disclosure, newest
+        # trade, each source's copy). No network; None when that feed is off.
+        sm_congressional = None
+        congress_probe = getattr(self.smart_money_provider, "congressional_freshness", None)
+        if smart_config and smart_config.enabled and callable(congress_probe):
+            try:
+                sm_congressional = congress_probe()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Congressional freshness read failed: %s", exc)
+                sm_congressional = {"known": False, "error": type(exc).__name__}
         sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
             not sm_coverage.get("known") or bool(sm_coverage.get("unread"))
         )
@@ -4044,7 +4054,11 @@ class MorningResearchStage:
                     # Watched-name read-through as of the pre-market pass:
                     # {known, as_of, watched, read_through, unread[symbols]}.
                     "coverage": sm_coverage,
-                }, sort_keys=True),
+                    # Congressional disclosures lag the trade by weeks
+                    # (median 60 days measured 2026-09-19); this is how old the
+                    # newest one is, so nothing reads it as current news.
+                    "congressional": sm_congressional,
+                }, sort_keys=True, default=str),
             )
             if provider_error:
                 data_status["smart_money"] = "degraded" if findings else "provider_error"
@@ -4577,9 +4591,30 @@ class MorningResearchStage:
         # listing all degraded inputs side-by-side. The 2+ failure
         # advisory in RiskStage handles the runtime defensive response;
         # this log handles the postmortem readability.
+        # Tech's `low_confidence` is set (see the tech branch above) whenever
+        # ANY resolved read carries the model's own conviction="low" — and a
+        # `neutral` rating (no view at all) is effectively always
+        # low-conviction, because there is nothing for the model to be
+        # confident ABOUT. Before this fix that made this line fire ERROR
+        # every single morning regardless of whether a single actionable
+        # BUY/SELL call was ever shaky, and log-health then reported a
+        # perfectly healthy tech seat as "a research desk that could not be
+        # reached". `data_status["tech"]` itself, and everything that reads
+        # it (RiskStage's `data_degraded` advisory, the Risk Manager's
+        # prompt), is UNCHANGED by this — only this operator-facing summary
+        # line is corrected to name what actually degraded: a low-conviction
+        # read on a symbol the desk was actually weighing, not a no-view
+        # neutral read the model was never going to act on either way.
+        tech_low_confidence_is_noise = (
+            data_status.get("tech") == "low_confidence"
+            and not any(
+                a.conviction == "low" and a.rating != "neutral" for a in analyses
+            )
+        )
         degraded = [
             k for k, v in data_status.items()
             if evidence_gate.counts_as_degraded(v)
+            and not (k == "tech" and tech_low_confidence_is_noise)
         ]
         if degraded:
             logger.error(

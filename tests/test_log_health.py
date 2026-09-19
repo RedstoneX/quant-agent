@@ -562,3 +562,131 @@ def test_every_bullet_says_when_it_last_happened():
     for line in "\n".join(L.render(_report())).splitlines():
         if line.startswith("•") and "Still true:" not in line:
             assert "(last at " in line, line
+
+
+# --- 2026-09-19: the technical seat's own failures, previously invisible ---
+#
+# The audit that forced this: `classify()` returned None on six real (or
+# realistic, same wording as the source) technical-seat lines, because the
+# matching was case-sensitive and several of the seat's own log lines had
+# never been given a pattern at all. The technical seat is now the ONLY seat
+# that can stop the desk (owner ruling, 2026-09-18), so a line naming one of
+# its failures must never fall through unclassified.
+#
+# The first four are copied verbatim into the fixture (see the "Technical
+# seat, added 2026-09-19" section) from quant_agent.log.3 / .log.4. The last
+# two — the whole-answer non-JSON case and the request-sizing fallback —
+# have never fired in the retained production history, so they are built
+# here from the exact format string the source uses
+# (`src/agents/tech_analyst.py`), the same way the rest of this module
+# already builds records for lines the fixture cannot supply (see
+# `test_an_owner_alert_is_not_counted_twice` above).
+
+
+def test_a_capitalised_parse_failure_is_no_longer_invisible():
+    """`Failed to parse tech analysis item for KLAR: ...` — capital F. The
+    existing pattern was the lowercase literal `failed to parse`, an exact
+    string match that had matched every OTHER seat's failure line but never
+    this one, silently, since the day it was written."""
+    record = next(
+        r for r in _records()
+        if r.message.startswith("Failed to parse tech analysis item for KLAR")
+    )
+    assert record.level == "ERROR"
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "seat_answer_unreadable"
+
+
+def test_the_batch_level_unresolved_line_is_classified():
+    """`Tech batch: N symbol(s) unresolved after the single shared recovery
+    — explicit failed outcomes: [...]` — the multi-chunk batch's own final
+    loss line, a different ending from the `unresolved after retry` the old
+    pattern named."""
+    record = next(
+        r for r in _records()
+        if "unresolved after the single shared recovery" in r.message
+    )
+    assert record.level == "ERROR"
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "names_dropped_from_answer"
+
+
+def test_a_partial_tech_batch_is_classified_not_double_counted():
+    """`Tech batch partial: 84/87 symbols resolved, 3 failed even after
+    retry` restates, one layer up in `src.pipeline_stages`, the SAME loss
+    `tech_analyst`'s own `unresolved after...` line already counts under
+    `names_dropped_from_answer`. It must still be classified (never fall
+    into the unrecognised bucket) but as HANDLED, so one lost batch is not
+    reported as two."""
+    record = next(
+        r for r in _records() if r.message.startswith("Tech batch partial:")
+    )
+    assert record.level == "WARNING"
+    family = L.classify(record.message, record.level)
+    assert family is not None
+    assert family.reason is None, "must not double-count the batch-level loss"
+
+
+def test_phantom_rows_for_unsubmitted_symbols_are_classified():
+    """`Tech analyst emitted 1 row(s) for symbols not in the submitted
+    chunk — dropped: ['CHP']` — the model answered about a symbol nobody
+    asked about; the row is thrown away exactly like a malformed one."""
+    record = next(
+        r for r in _records()
+        if "emitted 1 row(s) for symbols not in the submitted chunk" in r.message
+    )
+    assert record.level == "WARNING"
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "seat_answer_unreadable"
+
+
+def test_tech_returning_non_json_is_classified():
+    """`Tech analyst returned non-JSON for batch analysis (...)` — the exact
+    format string in `TechAnalystAgent._analyze_chunk`. Never seen in the
+    retained production history, so built here rather than copied — see the
+    section note above."""
+    record = L.LogRecord(
+        datetime(2026, 9, 19, 14, 0, 0, tzinfo=UTC),
+        "ERROR",
+        "src.agents.tech_analyst",
+        "Tech analyst returned non-JSON for batch analysis (5 symbols "
+        "submitted: ['AAPL', 'MSFT'])",
+    )
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "seat_answer_unreadable"
+
+
+def test_tech_request_sizing_fallback_is_handled_not_invisible():
+    """`Tech batch: could not size the request set; falling back to fixed
+    N-symbol chunks. Analysis is unaffected...` — the source's own words say
+    this changes nothing about the analysis, so it belongs in the
+    informational bucket, not reported as a fault — but it must still be
+    CLASSIFIED, not silently fall through."""
+    record = L.LogRecord(
+        datetime(2026, 9, 19, 14, 0, 0, tzinfo=UTC),
+        "WARNING",
+        "src.agents.tech_analyst",
+        "Tech batch: could not size the request set; falling back to fixed "
+        "40-symbol chunks. Analysis is unaffected — this only changes how "
+        "the batch is divided.",
+    )
+    family = L.classify(record.message, record.level)
+    assert family is not None
+    assert family.reason is None
+
+
+def test_classify_is_case_insensitive_generally():
+    """Not just the one pattern the audit happened to catch — a differently
+    cased copy of any family's real trigger line must classify the same
+    way, because the desk's own logger calls are not a casing contract."""
+    lower = L.LogRecord(
+        datetime(2026, 9, 19, tzinfo=UTC), "WARNING", "alpaca.trading.stream",
+        "server rejected websocket connection: http 429",
+    )
+    upper = L.LogRecord(
+        datetime(2026, 9, 19, tzinfo=UTC), "WARNING", "alpaca.trading.stream",
+        "SERVER REJECTED WEBSOCKET CONNECTION: HTTP 429",
+    )
+    fl = L.classify(lower.message, lower.level)
+    fu = L.classify(upper.message, upper.level)
+    assert fl is not None and fu is not None and fl.key == fu.key == "broker_turned_us_away"

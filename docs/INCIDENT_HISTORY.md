@@ -34,6 +34,83 @@ what would catch it next time.
 
 **Found, not fixed.** Nothing in code checks earnings or scheduled-event dates before a buy. The fetched earnings dates reach only the reviewer's brief (morning and exit) and the evening report. The one earnings rule in code caps size on a company whose quarterly filing has just landed and is unread; that is a different check. The technical seat's "days to earnings" input is still not wired. So the reviewer was the only check on an event inside the holding window, and it is now advisory. Separately, the portfolio manager's own brief still tells it to cut every base size by a quarter after two "oversized" tags from the reviewer. That is a second route by which the reviewer's opinions change sizes, one session later; it was not touched here.
 
+### 2026-09-19 — the congressional-trading feed would have re-read every disclosure it had ever seen, every morning, and nothing would have said when its copy was old (fixed before it was ever switched on)
+
+**In plain words:** the congressional-trading feed has never run in production (its switch is off). Before the owner switches it on, he asked for it to work like the insider feed, not "read everything again over and over again every day". As built, every morning it downloaded both public sources whole, re-parsed all ~13,000 rows and rebuilt every observation from scratch. If a source was down it quietly re-read yesterday's saved file, and its only trace was a nested entry inside the Form 4 log line. It now downloads a file only when that file has changed, and it processes each disclosure once, ever. When a copy is old it says how old, and every refresh leaves a named log line, a durable record and lines the morning health report classifies.
+
+**What the sources can and cannot do (checked live, read-only, 2026-09-19).** Neither source can be asked for "only records newer than X". kadoa is a static GitHub file: its data folder holds only whole-file JSON, and `trades.json` is the newest 5,000 rows by filing date (filed 2026-07-01 to 2026-09-17). congresswatch is a static Vercel file: `/api` paths return 404, and `?since=2026-09-01` returns the identical 8,231 rows. congresswatch rows carry no id and no filing date. Both sources DO answer a conditional request (`If-None-Match` / `If-Modified-Since`) with `304 Not Modified` and zero bytes. So the feed uses conditional fetches, and when a file has changed it processes only the rows it has not seen. Each row is keyed by a fingerprint of the fields the code reads. kadoa's daily-recomputed return columns are deliberately left out of that fingerprint, or every row would look new every day. The date watermarks (kadoa's newest filing date; congresswatch's newest trade date) are reported, never used to skip, because a late filing can carry an older date than one already read.
+
+**Live two-refresh run, isolated scratch folder, 2026-09-19 (ET evening of 09-18).** Refresh 1 processed 13,231 rows: kadoa 5,000 (3,358 kept, 1,642 with no ticker) and congresswatch 8,231 (2,543 kept, 5,456 outside the 180-day window, 231 with no date, 1 future-dated). That gave 4,800 observations, matching the earlier dry run, in 0.9 s. Refresh 2: both sources answered "unchanged" and it processed **0** rows in 0.09 s. A third refresh with the validators deliberately cleared downloaded both files whole: 13,231 rows were already seen and 0 were processed. The newest disclosure was 1 day old; the newest trade was 18 days old. Across the 3,147 kept kadoa rows with a real filing date, the gap from trade to filing was a median of 60 days (range 0 to 880).
+
+**What is recorded.** The feed keeps `manifest.json` (per source: HTTP validators, last attempt and last success, outcome, watermark, processed keys), `disclosures.json` and `observations.json` under `data/smart_money/congressional/`. A crash can only cause a re-read, never a skip. There is one `Congressional refresh:` line per source per refresh and one summary line. A `congressional_refresh` evidence row is written per pre-market run, next to `form4_backlog`, and the morning `scan_summary` gains a `congressional` freshness block. A source that fails, or whose copy is from an earlier day, is served with a label giving its age, and the seat reads degraded. The health report gained three families (source unreachable, source unreadable, old copy used), each cleared by a later successful refresh of the same source. Unlike every other family there, these were not read off production logs, because none exist. The tests drive the real code into each failure and classify the line it emits.
+
+**Also changed.** Congressional rows are now labelled "fresh" only if the TRADE is recent, not the filing: a filing made yesterday about a two-month-old trade used to be called fresh. The feed's own time budget (`congress_refresh_deadline_s`) and the disclosure-lag setting were declared in config and never passed through; both now are, with values unchanged. A `src/config.py` comment still claimed congressional evidence must be 7 days old or less; that rule was removed on 2026-09-11, and the comment is corrected.
+
+**Found, not fixed.** A congresswatch-only row's filing date is estimated as trade + 45 days (capped at today), so its lag can never exceed 45 and the 45-day legal-deadline check always passes for such rows. The measured median lag of 60 days says real filings are often later than that.
+
+### 2026-09-19 — the daily log-health report missed the technical seat's own failures and false-alarmed on it every morning
+
+**What broke, in one line:** the owner's only window into the desk's logs
+(`src/log_health.py`, sent every trading morning) both missed real technical-
+seat failures and paged him with a fake one, on the seat now the only one
+that can stop the desk (2026-09-18 ruling).
+
+**Miss #1 — case-sensitive matching.** The report's pattern for "an answer
+the desk could not read" was the exact-case string `failed to parse`. The
+technical seat's own logger call spells it `Failed to parse tech analysis
+item for %s` — capital F — so it never matched, silently, since the line was
+first written; every OTHER seat's lowercase version of the same words did
+match. Five more real technical-seat lines had no pattern at all: the batch-
+level "unresolved after the single shared recovery" (a different ending from
+the "unresolved after retry" the report already knew), the whole-answer
+"returned non-JSON" case, a hallucinated row for a symbol nobody asked about
+("emitted N row(s) for symbols not in the submitted chunk"), and two summary
+lines from `src.pipeline_stages` ("Tech batch partial", "Tech batch: all N
+submitted symbol(s) failed") that restate a loss the seat's own line already
+counts. **Fix:** matching is now case-insensitive everywhere in this module
+(reviewed against the full retained history for a pattern that relies on
+case to tell two different conditions apart — none does), the five missing
+endings now have patterns, and the two pipeline_stages summaries are filed as
+informational (not reportable) so one lost batch is not counted twice under
+two different log lines.
+
+**Miss #2 — a fabricated daily alarm.** `data_status["tech"]` is set to
+`low_confidence` whenever ANY resolved read carries the model's own
+`conviction="low"` (`src/pipeline_stages.py`). A `neutral` rating has no view
+to be confident about, so it is effectively always low-conviction — which
+made the "Morning research degraded: tech" ERROR line fire most mornings
+regardless of whether any real BUY/SELL call was ever shaky, and the report
+then told the owner a research desk "could not be reached". (The standalone
+Telegram data-quality alert already carries an exemption for exactly this,
+`notifier._ALERT_EXEMPT_PER_SEAT`, ratified 2026-09-04 — this ERROR log line
+had never been given the same treatment.) **Fix, at the source:** the
+`degraded` list this one summary line reports from now excludes tech's
+`low_confidence` when every low-conviction read in the batch was `neutral`;
+a real low-conviction BUY/SELL read still reports. `data_status["tech"]`
+itself, RiskStage's `data_degraded` advisory, and the Risk Manager's prompt
+are byte-for-byte unchanged — this touches only the operator-facing summary
+line, deliberately, so no gate or trading behaviour moved.
+
+**Evidence.** Replayed the report's classifier over the last 10 trading
+days of real production logs (2026-09-04 through 2026-09-18): identical
+counts before and after, because none of the six missed line shapes actually
+occurred in that window — the technical seat's per-row parse fix (2026-09-19,
+same day, separate PR) had already cut off the malformed-row cases earlier in
+the retained history. Replayed over the full retained history instead
+(2026-08-01 to 2026-09-19) to prove the fix does something: `seat_answer_
+unreadable` 13 → 117, `names_dropped_from_answer` 82 → 84, and the generic
+fail-closed `unrecognised_faults` bucket 486 → 383 — the previously-invisible
+lines moving out of the catch-all and into their real, specific family.
+
+**Tests.** `tests/test_log_health.py` gained seven tests built from the
+literal log lines (four copied verbatim from production, two built from the
+tech seat's own format string for endings never yet seen live, one proving
+case-insensitivity generally); reverting the matching fix fails all seven.
+`tests/test_pipeline_stages.py` gained two tests for the false-alarm fix — a
+neutral-only low-conviction morning must not log "Morning research
+degraded", a real low-conviction BUY/SELL morning still must; reverting the
+source fix fails the first.
+
 ### 2026-09-19 — the stop-coverage sweep had been running all along, but only one unit's journal could show it; and three desk processes had raced to place the same stop (items 131 and 127)
 
 **In plain words:** the board suspected the every-30-minutes stop-coverage sweep had never run. It had run on every tick since 2026-09-14 and had put protective stops back at four market opens, but it wrote only to its own systemd journal, never to the desk's log or database, so nothing a person normally reads could show it. Every run now leaves a named line in the desk's log and one row in the desk's event record. Separately, the 2026-09-16 "stop repair failed" alarm turned out to be a three-way race with the sweep, not a two-way one. The desk's processes now take one shared lock before writing to the broker.
