@@ -122,7 +122,11 @@ The existing `specialist_evidence` stream now also accepts validated
 memory or trading dependency. Symbol events carry `stage`, `outcome`, `reason`
 and structured details for opportunity discovery, specialist success/failure,
 PM proposal/omission/failure, Risk outcome, deterministic gate, funding, order
-submission and protection. Existing evidence kinds remain the canonical agent
+submission and protection. One run-scoped event (no symbol) exists as well:
+`stage="gross_delever"`, `outcome="still_over_ceiling"`, written when the
+gross-exposure de-lever finishes with the book still over its ceiling; its
+details carry gross before/after, the ceiling and an `orders` list with each
+order's final broker status. Existing evidence kinds remain the canonical agent
 payloads; `trades` remains the canonical broker lifecycle row.
 
 `GET /runs/{run_id}/funnel` and the per-candidate endpoint expose those events,
