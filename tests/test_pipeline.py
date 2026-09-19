@@ -1680,6 +1680,10 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
@@ -4230,6 +4234,10 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
     pipeline._activate_cost_session = MagicMock()
@@ -4291,6 +4299,10 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
     pipeline._activate_cost_session = MagicMock()

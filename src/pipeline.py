@@ -14274,7 +14274,10 @@ class TradingPipeline:
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
         self._last_evidence_freshness = None
+        self._intra_preamble_deferred = ""
         result = self._run_intra_check_body()
+        if isinstance(result, dict) and self._intra_preamble_deferred:
+            result["preamble_deferred"] = self._intra_preamble_deferred
         self._attach_evidence_freshness(result)
         self._persist_intra_check_report(result)
         return result
@@ -14322,59 +14325,99 @@ class TradingPipeline:
 
         self._activate_cost_session(run_id, "intra_check")
 
-        # Drain orphaned protection-restore intents — intra runs every
-        # 30 min so this is the most frequent recovery opportunity for
-        # bails that landed during morning. Codex r8 #2.
-        self._drain_pending_protection_restores()
-        self._drain_pending_repegs()
-        # Broker-truth coverage audit + auto-repair every tick (audit round
-        # 2): an entry that fills after place_entry_protection's wait, or a
-        # repair that failed once, otherwise stayed naked until the NEXT
-        # session — hours. On the intra cadence the naked window is ≤30 min.
-        # Read-only when coverage is fine; ~1 broker call per held long.
-        # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
-        # the 30-minute sweep — the tightest cadence this audit runs on, and
-        # the one the fractional decision leans on — was the one caller whose
-        # findings never reached the operator's feed at all. Carried into the
-        # result dict now, exactly as every other session already does.
+        # Board item 127 (2026-09-19). Every write below reaches the broker,
+        # and `intra_check` is exempt from the wrapper's session lock (item
+        # 128), so this whole preamble used to run with no lock at all. It
+        # now runs only while this process holds the same advisory flock the
+        # paid scan below takes (`_intraday_scan_process_lock`) — which the
+        # standalone coverage sweep's repair pass also takes — and only while
+        # no morning/midday/close session owns the desk
+        # (`_blocking_owner_session`, the check the paid scan already uses).
+        # A live session runs this same preamble itself near the start of its
+        # own run, and it may be in the middle of cancelling stops to sell; a
+        # stop added here in that window is the worst pairing item 127 names.
+        # Deferring skips only this tick's preamble: the loss check below
+        # still runs every tick, and the next tick re-reads the broker.
         coverage_gaps: list[dict] = []
-        try:
-            coverage_gaps = self._reconcile_stop_coverage()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
-        # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
-        self._release_retired_cash_park(run_id)
-        self._reconcile_orphan_pending_submits()  # audit F4
-        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
-        # every ~30 min, so this is the tightest window this reconciler
-        # runs on — a stop that fires mid-session is written back within
-        # one tick instead of sitting unrecorded until the next scheduled
-        # session hours later.
-        try:
-            self._reconcile_stop_out_fills(run_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+        preamble_deferred = ""
+        with self._intraday_scan_process_lock() as preamble_lock:
+            if not preamble_lock:
+                preamble_deferred = (
+                    "another desk process holds the broker-write lock"
+                )
+            else:
+                blocking = self._blocking_owner_session()
+                if blocking == "unreadable":
+                    preamble_deferred = (
+                        "the active-session owner file could not be read "
+                        "(fail closed)"
+                    )
+                elif blocking is not None:
+                    preamble_deferred = (
+                        f"a live {blocking} session owns the desk and runs "
+                        "this same reconcile itself"
+                    )
+            if preamble_deferred:
+                logger.warning(
+                    "Intra check: broker-writing preamble DEFERRED this tick — "
+                    "%s. No drain, repair, release or reconcile ran; the loss "
+                    "check still runs.", preamble_deferred,
+                )
+            else:
+                # Drain orphaned protection-restore intents — intra runs every
+                # 30 min so this is the most frequent recovery opportunity for
+                # bails that landed during morning. Codex r8 #2.
+                self._drain_pending_protection_restores()
+                self._drain_pending_repegs()
+                # Broker-truth coverage audit + auto-repair every tick (audit round
+                # 2): an entry that fills after place_entry_protection's wait, or a
+                # repair that failed once, otherwise stayed naked until the NEXT
+                # session — hours. On the intra cadence the naked window is ≤30 min.
+                # Read-only when coverage is fine; ~1 broker call per held long.
+                # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
+                # the 30-minute sweep — the tightest cadence this audit runs on, and
+                # the one the fractional decision leans on — was the one caller whose
+                # findings never reached the operator's feed at all. Carried into the
+                # result dict now, exactly as every other session already does.
+                try:
+                    coverage_gaps = self._reconcile_stop_coverage()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
+                # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
+                self._release_retired_cash_park(run_id)
+                self._reconcile_orphan_pending_submits()  # audit F4
+                # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
+                # every ~30 min, so this is the tightest window this reconciler
+                # runs on — a stop that fires mid-session is written back within
+                # one tick instead of sitting unrecorded until the next scheduled
+                # session hours later.
+                try:
+                    self._reconcile_stop_out_fills(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
 
-        # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
-        # table still read 'submitted' half an hour later. The stop-coverage
-        # and stop-out reconcilers just above only watch protective/broker-
-        # initiated exits — neither one asks the broker about the fate of an
-        # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
-        # 'submitted' in the trades table). `run_morning` and the midday/
-        # close review both call `_reconcile_fills` for exactly that reason;
-        # this tick — the one that runs every ~30 minutes and is therefore
-        # the tightest window available to close that gap between sessions
-        # — never did. The live fill-notification websocket never
-        # authenticates on this host (placeholder credential, frozen pending
-        # an owner decision — see broker.py), so in production this always
-        # resolves through `_reconcile_fills`'s own bounded REST lookup
-        # (`broker.get_order_fill_info`), never the socket. Unscoped
-        # (no run_id) so a still-'submitted' row from ANY earlier session
-        # today is picked up, not just ones this tick itself created.
-        try:
-            self._reconcile_fills()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
+                # table still read 'submitted' half an hour later. The stop-coverage
+                # and stop-out reconcilers just above only watch protective/broker-
+                # initiated exits — neither one asks the broker about the fate of an
+                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
+                # 'submitted' in the trades table). `run_morning` and the midday/
+                # close review both call `_reconcile_fills` for exactly that reason;
+                # this tick — the one that runs every ~30 minutes and is therefore
+                # the tightest window available to close that gap between sessions
+                # — never did. The live fill-notification websocket never
+                # authenticates on this host (placeholder credential, frozen pending
+                # an owner decision — see broker.py), so in production this always
+                # resolves through `_reconcile_fills`'s own bounded REST lookup
+                # (`broker.get_order_fill_info`), never the socket. Unscoped
+                # (no run_id) so a still-'submitted' row from ANY earlier session
+                # today is picked up, not just ones this tick itself created.
+                try:
+                    self._reconcile_fills()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+
+        self._intra_preamble_deferred = preamble_deferred
 
         try:
             account = self.broker.get_account()
@@ -14654,17 +14697,19 @@ class TradingPipeline:
 
         Deliberately NOT a new service/daemon/timer — a plain advisory
         `flock` on a local file, the same idea as the wrapper's existing
-        `mkdir`-based session lock, and it applies ONLY to the new
-        opportunity-discovery path. Loss protection keeps its exemption and
-        never touches this. The lock is released on process exit even if we
+        `mkdir`-based session lock. Since 2026-09-19 (board item 127) it
+        also guards `intra_check`'s broker-writing preamble, and the
+        standalone coverage sweep's repair pass takes the same file
+        (`src.coverage_watchdog.repair_lock`). Loss protection keeps its
+        exemption and never touches this. The lock is released on process exit even if we
         are SIGKILLed, so a killed run cannot wedge it.
         """
         import fcntl
 
-        lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
         fh = None
         acquired = False
         try:
+            lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
             try:
