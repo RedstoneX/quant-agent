@@ -496,6 +496,11 @@ FAMILIES: tuple[FaultFamily, ...] = (
             # gives up; see `names_dropped_from_answer`.
             r"missing-from-response=\[",
             r"Tech batch incomplete across",
+            # One broken row in the seat's answer, dropped on its own while
+            # every well-formed row beside it is kept. Handled here for the
+            # same reason as the short answer above: if the retry does not
+            # recover the name, the loss is logged as `unresolved after retry`.
+            r"Tech answer carried \d+ malformed row",
         ),
     ),
 )

@@ -684,7 +684,10 @@ since; the old exams fed stale shapes and desk-recorded data.
   ran out of room (PR #412): reasoning effort "medium" = OpenRouter
   documented default; strict `json_schema`; same on the Google-direct route;
   free-form-map models like NewsIntelligenceReport go `strict=false` for
-  all; `$ref` sibling keywords stripped.
+  all; `$ref` sibling keywords stripped. **Exception, checked 2026-09-19:
+  `tech_analyst` gets NO response format on either route** — its answer is
+  a list, and it declares no `result_model`; see the 2026-09-19 entry in
+  `docs/INCIDENT_HISTORY.md` for what adding one would take.
 - Benchmark could not run the live Google-direct route (PR #412 added the
   `google-direct:` prefix).
 - Parallel benchmark runs sharing one DB were frozen by the cost circuit

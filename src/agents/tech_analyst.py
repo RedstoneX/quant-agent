@@ -126,6 +126,12 @@ class TechAnalystAgent(BaseAgent):
     # real thesis_invalid_if) plus the existing one-shot missing-symbol
     # retry; a wrapper result_model would not express "required iff not
     # neutral".
+    #
+    # Consequence, checked 2026-09-19: the seat is sent WITHOUT a response
+    # format on BOTH routes, Google-direct included — `_openai_wire_call`
+    # attaches one only when `result_model` is set. Its defence against a
+    # garbled row is therefore the per-row parse in `_analyze_chunk`
+    # (AgentResult.parse_json_rows), not constrained decoding.
     result_model = None
 
     @property
@@ -396,6 +402,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
 
         merged: dict[str, TechAnalysisResult | None] = {}
         result_parts: list[tuple[str, AgentResult]] = []
+        # {symbol: why} for rows returned but unusable, across every chunk
+        # and the recovery — see `_analyze_chunk(_malformed_sink=...)`.
+        unusable: dict[str, str] = {}
         # Phase 1: every primary chunk gets one chance before any repair.
         # Independent per-chunk recursion used to consume the session-wide
         # repair allowance before the later chunks were even analyzed.
@@ -404,6 +413,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 chunk, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
                 _retries_left=0, benchmark_pool=benchmark_pool,
+                _malformed_sink=unusable,
             )
             merged.update(chunk_analyses)
             if chunk_result is not None:
@@ -432,6 +442,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     recovery_data, prior_ratings, valuations,
                     prior_macro_regime, prior_macro_outlook, intraday_context,
                     _retries_left=0, _is_logical_retry=True,
+                    _malformed_sink=unusable,
                 )
             except OptionalPaidAnalysisRetrySkipped as exc:
                 recovered, recovery_result = {}, None
@@ -462,8 +473,13 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         if final_missing:
             logger.error(
                 "Tech batch: %d symbol(s) unresolved after the single shared "
-                "recovery — explicit failed outcomes: %s",
+                "recovery — explicit failed outcomes: %s (returned but "
+                "unusable: %s; absent from every answer: %s)",
                 len(final_missing), final_missing,
+                "; ".join(
+                    f"{s} {unusable[s]}" for s in final_missing if s in unusable
+                ) or "none",
+                [s for s in final_missing if s not in unusable],
             )
 
         combined_raw: list[str] = []
@@ -636,8 +652,14 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         _retries_left: int = _MAX_MISSING_RETRIES,
         _is_logical_retry: bool = False,
         benchmark_pool: dict | None = None,
+        _malformed_sink: dict[str, str] | None = None,
     ) -> tuple[dict[str, TechAnalysisResult | None], "AgentResult | None"]:
         """Single-call variant used inside the chunking loop.
+
+        `_malformed_sink`, when given, collects {symbol: reason} for every
+        row the model DID return but in broken JSON, across this call and its
+        retry, so the caller's final verdict can tell "malformed in the
+        answer" apart from "absent from the answer".
 
         2026-08-19 Tech batch-response symbol-loss fix: every symbol in
         `symbols_data` is guaranteed to be a key in the returned dict —
@@ -665,7 +687,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             optional_retry=_is_logical_retry,
             single_provider_attempt=_is_logical_retry,
         )
-        parsed = result.parse_json()
+        # Row-by-row, not `parse_json`: one garbled row must cost that row
+        # only, never every well-formed row beside it (2026-09-17 14:31
+        # `intra_check-26f52bf2` lost ORCL and ETN although both attempts
+        # returned them well-formed). See AgentResult.parse_json_rows.
+        salvage = result.parse_json_rows(key_field="symbol")
+        parsed = None if salvage is None else salvage.rows
+        malformed_rows = [] if salvage is None else salvage.malformed
+        if _malformed_sink is None:
+            _malformed_sink = {}
 
         submitted = {s.get("symbol") for s in symbols_data if isinstance(s, dict)}
         # Index input by symbol so we can attach atr_14 back to each
@@ -722,6 +752,23 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
         unsubmitted_symbols: list[str] = []
+        # Rows the model returned in broken JSON: {symbol: reason}. Counted
+        # as a dropped item like a schema-invalid row, never as "the model
+        # did not answer".
+        malformed: dict[str, str] = {}
+        for row in malformed_rows:
+            sym = row.key if row.key in submitted else "?"
+            if sym != "?":
+                malformed[sym] = row.reason
+                _malformed_sink[sym] = f"malformed: {row.reason}"
+            parse_telemetry.record_dropped_item("TechAnalysisResult", sym)
+        if malformed_rows:
+            logger.warning(
+                "Tech answer carried %d malformed row(s) — dropped individually, "
+                "the %d well-formed row(s) beside them kept: %s",
+                len(malformed_rows), len(parsed or []),
+                "; ".join(f"{row.key or '?'}: {row.reason}" for row in malformed_rows),
+            )
 
         if parsed is None:
             logger.error(
@@ -778,6 +825,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # advisory, the same non-blocking seam `data_degraded` and
                     # `pm_audit_step_missing` already use.
                     parse_telemetry.record_dropped_item("TechAnalysisResult", bad_symbol)
+                    if bad_symbol in submitted:
+                        fields = (
+                            ", ".join(
+                                ".".join(str(part) for part in err.get("loc", ()))
+                                for err in e.errors()
+                            )
+                            if hasattr(e, "errors") else type(e).__name__
+                        )
+                        _malformed_sink[bad_symbol] = f"failed validation on {fields}"
                     logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
             if unsubmitted_symbols:
                 logger.warning(
@@ -793,11 +849,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 s for s in symbols_data
                 if isinstance(s, dict) and s.get("symbol") in missing
             ]
+            # Three distinct causes, named apart: schema-invalid rows, rows in
+            # broken JSON, and symbols the answer genuinely did not contain.
+            omitted = sorted(missing - set(failed_symbols) - set(malformed))
             logger.warning(
                 "Tech batch incomplete: submitted=%d, parsed=%d, validation-failed=%s, "
-                "missing-from-response=%s — retrying the %d missing symbol(s) "
-                "(%d retry attempt(s) left)",
-                len(submitted), len(analyses), failed_symbols, sorted(missing),
+                "malformed-in-response=%s, missing-from-response=%s — retrying "
+                "only those %d symbol(s) (%d retry attempt(s) left)",
+                len(submitted), len(analyses), failed_symbols,
+                sorted(malformed), omitted,
                 len(retry_data), _retries_left,
             )
             try:
@@ -806,6 +866,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     prior_macro_regime, prior_macro_outlook, intraday_context,
                     _retries_left=_retries_left - 1,
                     _is_logical_retry=True,
+                    _malformed_sink=_malformed_sink,
                 )
             except OptionalPaidAnalysisRetrySkipped as exc:
                 retry_analyses, retry_result = {}, None
@@ -836,13 +897,19 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             if missing:
                 logger.error(
                     "Tech batch: %d symbol(s) unresolved after%s — recording an "
-                    "explicit failed outcome (never silently dropped): %s",
+                    "explicit failed outcome (never silently dropped): %s "
+                    "(returned but unusable: %s; absent from every answer: %s)",
                     len(missing),
                     (
                         " retry" if retry_attempted else
                         " parsing (shared retry budget exhausted)"
                     ),
                     sorted(missing),
+                    "; ".join(
+                        f"{s} {_malformed_sink[s]}" for s in sorted(missing)
+                        if s in _malformed_sink
+                    ) or "none",
+                    sorted(s for s in missing if s not in _malformed_sink),
                 )
             elif failed_symbols:
                 logger.info(

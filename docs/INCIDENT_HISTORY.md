@@ -22,6 +22,70 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — one broken line in the technical seat's answer threw away every good stock beside it
+
+**What broke, in one line:** when the technical seat answered about several
+stocks and made a typing slip in one of them, the desk kept one stock from
+the whole answer, told the log the model "had not answered" the rest, and
+sometimes lost good analyses permanently.
+
+**Why it mattered more after 2026-09-18.** The owner ruled that only the
+technical seat may stop the desk, and a stock the seat fails on counts as
+lost evidence. A parsing slip was therefore able to stop a decision.
+
+**The cause.** When an answer is not valid JSON as a whole, the shared
+parser (`AgentResult.parse_json`, used by every seat) picks ONE well-formed
+fragment. For the technical seat, whose answer is a list of stocks, that
+meant keeping one stock and discarding the rest. The seat then logged the
+discarded stocks as `missing-from-response` and re-asked for them; the retry
+could fail the same way.
+
+**Worked case, from the stored answers** (`agent_logs` row 456, run
+`intra_check-26f52bf2`, 2026-09-17 14:31): five stocks asked; the answer
+carried all five, SQQQ with a stray `n/a` line; ZS alone was kept. The retry
+of the other four came back with all four, SQQQ garbled again (`s"thesis_...`);
+MTZ alone was kept. ORCL and ETN were lost although both answers carried them
+well-formed.
+
+**Measured across every stored technical-seat answer** (292 answers in
+`agent_logs`, 2026-08-17 to 2026-09-18): 9 answers carried exactly one
+broken stock; in those 9 the old parser kept 9 stocks and the new one keeps
+54 — 45 good analyses recovered. On the other 283 answers the new parser
+returns exactly what the old one did.
+
+**The fix.** The technical seat now parses its answer stock by stock
+(`AgentResult.parse_json_rows`, opt-in; `parse_json` is unchanged for every
+other seat). A good stock is kept; a broken one is dropped on its own, logged
+with its symbol and the decoder's reason, and counted as a dropped item. Only
+the broken and genuinely absent stocks are re-asked. Log lines now name three
+causes apart: `validation-failed`, `malformed-in-response`, and
+`missing-from-response` (now meaning only what it says). The final loss line
+says, per stock, whether it was returned but unusable or absent from every
+answer. The row splitter resets its "inside a string" state at each line
+break, because JSON forbids a raw line break inside a string (RFC 8259 §7),
+so one missing quote cannot swallow the stocks after it.
+
+**Not done: constrained output on the Google route.** The Google-direct call
+already sends a response schema for any seat that declares one; the
+technical seat declares none, on either route. Adding one is not small:
+(1) its answer is a bare list, and the strict OpenAI-style schema this code
+builds requires an object at the top, so the prompt, parser and prompt
+snapshot tests would move to a wrapper object; (2) the result model carries
+eight fields the desk fills in itself (`atr_14`, `computed_levels`,
+`computed_level_touches`, `levels_coverage`, `signal_bar_low`,
+`signal_bar_high`, `bars_available`, `signal_age_days`), so a separate
+model-facing schema is needed; (3) `computed_level_touches` is a free-form
+map, which forces `strict=false` anyway; (4) whether Google's OpenAI-
+compatible endpoint then enforces the schema has not been tried on a live
+call. The per-stock parse above does not depend on any of that.
+
+**What still loses a stock.** A slip that unbalances braces (an extra `{`
+or a missing `}`) can merge two stocks into one broken piece; the first is
+then reported as broken, the second as absent, and both are re-asked. Not
+seen in the 292 stored answers.
+
+---
+
 ### 2026-09-18 — the risk seat's three sizing defects, one real and two that did not survive a check (items 135, 136, 137 closed)
 
 **What broke, in one line:** of three reported position-sizing defects, one was real and live (a short could be enlarged by an edit meant to shrink it), one was real but had never once fired in production (a levered ETF's size was shown to the risk seat in the wrong units), and the third — as filed — was wrong on both of its own claims; the actual, much smaller defect underneath it is what was fixed.

@@ -1,0 +1,110 @@
+```json
+[
+  {
+    "symbol": "ORCL",
+    "rating": "buy",
+    "conviction": "medium",
+    "entry_price": 150.65,
+    "reference_target": 159.52,
+    "stop_loss": 142.02,
+    "support_levels": [149.20, 142.02, 137.53],
+    "resistance_levels": [159.52, 161.70, 170.51],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    "thesis_invalid_if": "Price closes back below MA20 ($148.80) and support at $142.02 on expanding volume",
+    "reasoning_chain": {
+      "trend": "Live price ($150.65) is reclaiming the rising MA20 ($148.80) after a brief pullback, maintaining a constructive medium-term structure above the MA50.",
+      "momentum": "RSI at 45.72 is recovering from neutral territory toward bullish levels; MACD histogram shows signs of bottoming.",
+      "volatility": "ATR is 7.65 with volatility contracting near the 18th percentile, suggesting a potential volatility expansion phase on the breakout.",
+      "volume": "Up/down volume ratio is 0.51 reflecting prior distribution, but live session volume is picking up as price rallies.",
+      "support_resistance": "Immediate support sits at MA20 ($148.80) and structural level $142.02; overhead resistance is eyed at the recent swing high of $159.52."
+    },
+    "reasoning": "ORCL is rebounding cleanly above its MA20 intraday, offering a favorable swing setup from structural support toward overhead resistance."
+  },
+  {
+    "symbol": "SQQQ",
+    "rating": "neutral",
+    "conviction": "low",
+    "entry_price": null,
+    "reference_target": null,
+    "stop_loss": null,
+    "support_levels": [],
+    "resistance_levels": [],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    n/a
+    "thesis_invalid_if": "",
+    "reasoning_chain": {
+      "trend": "Price is trading down intraday to $38.67, breaking below the MA20 ($39.19) in a broader medium-term downtrend.",
+      "momentum": "RSI at 55.81 is slipping, and MACD is near the signal line without a decisive directional trigger.",
+      "volatility": "ATR is low at 1.54 (2nd percentile), indicating subdued volatility for this inverse ETF.",
+      "volume": "Up/down volume ratio is 1.66 showing longer-term accumulation, but short-term momentum conflicts with the broader risk-on market context.",
+      "support_resistance": "Support is located near $35.91, with overhead resistance at $40.63."
+    },
+    "reasoning": "Conflicting signals between inverse positioning and the broader risk-on macro regime warrant a neutral stance."
+  },
+  {
+    "symbol": "ETN",
+    "rating": "buy",
+    "conviction": "medium",
+    "entry_price": 413.04,
+    "reference_target": 431.71,
+    "stop_loss": 385.38,
+    "support_levels": [392.44, 385.38, 379.41],
+    "resistance_levels": [417.19, 426.79, 431.71],
+    "setup_type": "range",
+    "expected_horizon_sessions": 12,
+    "thesis_invalid_if": "Price closes below structural support at $385.38 on expanding volume",
+    "reasoning_chain": {
+      "trend": "Price is consolidating sideways between $384.77 and $430.25, currently trading live at $413.04 near the middle of the range above the rising MA200.",
+      "momentum": "RSI sits neutral at 44.36, while MACD remains negative but stabilizing.",
+      "volatility": "ATR is 15.13 and expanding (75th percentile), indicating high volatility suitable for wider range swings.",
+      "volume": "Up/down volume ratio is 0.43 showing distribution, but price is holding the lower-to-middle range support bounds.",
+      "support_resistance": "Key support is well-established at $385.38, with resistance stacked at $417.19 and $431.71."
+    },
+    "reasoning": "ETN maintains its consolidation range with price holding above vital structural support, keeping the buy thesis intact."
+  },
+  {
+    "symbol": "MTZ",
+    "rating": "neutral",
+    "conviction": "low",
+    "entry_price": null,
+    "reference_target": null,
+    "stop_loss": null,
+    "support_levels": [],
+    "resistance_levels": [],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    "thesis_invalid_if": "",
+    "reasoning_chain": {
+      "trend": "Price is trading down to $217.27 intraday, remaining well below both the declining MA20 ($243.55) and MA50 ($287.01).",
+      "momentum": "RSI is weak at 35.18, and MACD remains deeply negative (-16.65), showing persistent downward momentum.",
+      "volatility": "ATR is 13.14 (49th percentile), indicating steady volatility within a steep downtrend.",
+      "volume": "Up/down volume ratio of 0.32 confirms ongoing heavy distribution.",
+      "support_resistance": "Nearest support is distant at $194.52, while overhead resistance looms at $252.40."
+    },
+    "reasoning": "Persistent downward momentum and weak volume distribution argue against initiating long exposure despite oversold conditions."
+  },
+  {
+    "symbol": "ZS",
+    "rating": "buy",
+    "conviction": "high",
+    "entry_price": 198.42,
+    "reference_target": 226.85,
+    "stop_loss": 190.84,
+    "support_levels": [194.04, 190.84, 186.22],
+    "resistance_levels": [205.78, 216.95, 226.85],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    "thesis_invalid_if": "Price closes below structural support at $190.84 on heavy volume",
+    "reasoning_chain": {
+      "trend": "Price is pushing higher to $198.42 intraday, maintaining a strong bullish stack above rising MA20 ($177.40) and MA50 ($165.53) lines.",
+      "momentum": "RSI is bullish at 60.71, supported by a positive and expanding MACD line (4.30).",
+      "volatility": "ATR is 9.92 and expanding (83rd percentile), signaling robust momentum in the current advance.",
+      "volume": "Up/down volume ratio is 1.38, indicating clear institutional accumulation.",
+      "support_resistance": "Immediate support is anchored at structural level $190.84, with primary overhead resistance at the $226.85 level."
+    },
+    "reasoning": "ZS exhibits strong trend alignment, positive momentum, and solid accumulation volume, supporting a high-conviction continuation buy."
+  }
+]
+```
