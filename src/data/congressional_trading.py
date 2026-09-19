@@ -81,7 +81,16 @@ KADOA_TRADES_URL = (
     "https://raw.githubusercontent.com/kadoa-org/"
     "congress-trading-monitor/main/public/data/trades.json"
 )
+KADOA_FILERS_URL = (
+    "https://raw.githubusercontent.com/kadoa-org/"
+    "congress-trading-monitor/main/public/data/filers.json"
+)
 CONGRESSWATCH_TRADES_URL = "https://congresswatch.us/data/trades.json"
+
+#: Bump when the normalized row shape or the grouping rule changes: rows
+#: processed under an older rule are then read once more, in full, instead of
+#: being skipped forever as "already seen" under a rule that no longer holds.
+_STATE_SCHEMA = "2026-09-19.member-id-owner-asset"
 
 _AMOUNT_RE = re.compile(r"\$?([\d,]+)")
 _NAME_PREFIXES = ("rep.", "rep", "sen.", "sen", "hon.", "hon", "dr.", "dr", "mr.", "mr", "ms.", "ms", "mrs.", "mrs")
@@ -98,6 +107,119 @@ def _normalize_actor_name(raw: str) -> str:
     while parts and parts[0] in {p.rstrip(".") for p in _NAME_PREFIXES}:
         parts = parts[1:]
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Who owned it, what it was, and which member filed it.
+# ---------------------------------------------------------------------------
+#
+# The House PTR form's owner column is a code: SP (spouse), JT (joint), DC
+# (dependent child); the Senate eFD and congresswatch spell the same values
+# out. A BLANK owner on a House row means the filer: measured 2026-09-19,
+# 354 of the 366 kadoa rows with a blank owner that cross-match a
+# congresswatch row (same member, ticker, trade date, direction) are "Self"
+# there. Two trades that differ only in owner (a member's and a spouse's on
+# the same day) are two trades, so owner is part of the grouping key.
+_OWNER_CODES: dict[str, str] = {
+    "": "self", "self": "self",
+    "sp": "spouse", "spouse": "spouse",
+    "jt": "joint", "joint": "joint",
+    "dc": "dependent", "dependent child": "dependent", "child": "dependent",
+}
+
+# Asset classes. Only "stock" is evidence about the ticker's direction: a
+# PURCHASE of a put option is a bearish act recorded with a buy direction, and
+# a structured note "linked to the S&P 500" is filed under the issuing bank's
+# ticker (both seen in the live kadoa file, 2026-09-19). Codes are the House
+# PTR form's (ST stock, OP options); the other two feeds spell them out.
+_STOCK_ASSET_TYPES = frozenset({"st", "stock"})
+_OPTION_ASSET_TYPES = frozenset({"op", "options", "option", "stock option"})
+
+# Kadoa's filer list carries each member's official portrait, and the
+# portrait's file name IS the member's Bioguide id
+# (unitedstates.github.io/images/congress/225x275/G000583.jpg). Bioguide is
+# the Congress-wide stable member id and is what congresswatch carries
+# natively, so both feeds are keyed on it.
+_BIOGUIDE_IN_PHOTO = re.compile(r"/([A-Z]\d{6})\.jpg$")
+_BIOGUIDE_ID = re.compile(r"^[A-Z]\d{6}$")
+_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
+# The one amendment marker either feed carries: kadoa copies the House PTR's
+# "Filing Status: Amended" line into `comment` (2 congressional rows on
+# 2026-09-19). congresswatch carries no amendment marker at all.
+_AMENDED_MARKER = "filing status: amended"
+
+
+def _owner(raw) -> str:
+    label = " ".join(str(raw or "").strip().casefold().split())
+    return _OWNER_CODES.get(label, f"other:{label}")
+
+
+def _asset_class(raw) -> str:
+    label = " ".join(str(raw or "").strip().casefold().split())
+    if not label:
+        return "unknown"
+    if label in _STOCK_ASSET_TYPES:
+        return "stock"
+    if label in _OPTION_ASSET_TYPES:
+        return "option"
+    return "other"
+
+
+def _usable_ticker(raw) -> str:
+    """The symbol, or "" when the field holds no symbol at all. congresswatch
+    writes "--" where a filing named no ticker (1,248 rows, 2026-09-19); that
+    used to become a symbol called "--"."""
+    symbol = _symbol(raw or "")
+    return symbol if any(ch.isalnum() for ch in symbol) else ""
+
+
+def _name_parts(raw: str) -> tuple[str, str]:
+    """(surname, first initial) for the roster fallback below."""
+    parts = [p for p in _normalize_actor_name(raw).split() if p not in _NAME_SUFFIXES]
+    if len(parts) < 2:
+        return "", ""
+    return parts[-1], parts[0][:1]
+
+
+def _roster_from_congresswatch(rows: list) -> dict[str, list[str]]:
+    """(chamber|surname|first initial) -> the Bioguide ids congresswatch files
+    under that key. Built from the source's own rows; used only to place a
+    kadoa filer whose portrait is missing, and only when exactly one id fits."""
+    roster: dict[str, set[str]] = defaultdict(set)
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        bioguide = str(raw.get("bioguide_id") or "").strip()
+        surname, initial = _name_parts(str(raw.get("member_name") or ""))
+        if _BIOGUIDE_ID.match(bioguide) and surname:
+            chamber = str(raw.get("chamber") or "").strip().casefold()
+            roster[f"{chamber}|{surname}|{initial}"].add(bioguide)
+    return {key: sorted(ids) for key, ids in roster.items()}
+
+
+def _kadoa_member_map(filers: list, roster: dict[str, list[str]]) -> dict[str, dict]:
+    """kadoa filer id -> {"member_id", "via"}; a filer that cannot be placed on
+    exactly one Bioguide id maps to {"member_id": "", "via": why}."""
+    out: dict[str, dict] = {}
+    for filer in filers if isinstance(filers, list) else []:
+        if not isinstance(filer, dict) or not filer.get("id"):
+            continue
+        match = _BIOGUIDE_IN_PHOTO.search(str(filer.get("photo_url") or ""))
+        if match:
+            out[str(filer["id"])] = {"member_id": match.group(1), "via": "kadoa_portrait"}
+            continue
+        surname, initial = _name_parts(str(filer.get("full_name") or ""))
+        chamber = str(filer.get("chamber") or "").strip().casefold()
+        ids = roster.get(f"{chamber}|{surname}|{initial}", []) if surname else []
+        if len(ids) == 1:
+            out[str(filer["id"])] = {"member_id": ids[0], "via": "congresswatch_roster"}
+        else:
+            out[str(filer["id"])] = {
+                "member_id": "",
+                "via": "ambiguous_roster" if ids else "no_portrait_no_roster_match",
+            }
+    return out
 
 
 # Real STOCK Act transaction-type values, as they actually appear across the
@@ -299,36 +421,61 @@ _FINGERPRINT_FIELDS: dict[str, tuple[str, ...]] = {
     "kadoa": (
         "id", "ticker", "transaction_date", "filing_date", "filer_name",
         "filer_id", "transaction_type", "amount_range_low", "amount_range_high",
-        "amount_range_label", "doc_url", "chamber",
+        "amount_range_label", "doc_url", "chamber", "branch", "owner",
+        "asset_type", "comment",
     ),
     "congresswatch": (
         "ticker", "transaction_date", "member_name", "bioguide_id", "type",
         "amount", "ptr_link", "chamber", "owner", "asset_description",
+        "asset_type", "scanned_pdf",
     ),
 }
 
 _WATERMARK_FIELD = {"kadoa": "disclosure_date", "congresswatch": "transaction_date"}
 
 #: Every reason a row can be refused, in the order the log line prints them.
+#:   not_congress     kadoa also carries executive-branch (OGE 278-T) filers
+#:                    — 2,307 of its 5,000 rows on 2026-09-19. Not Congress.
+#:   scanned_filing   congresswatch lists paper filings it could not read
+#:                    (`scanned_pdf`), with no trade rows (231 on 2026-09-19).
+#:   member_unmapped  no single stable member id (see `_kadoa_member_map`).
 _DROP_REASONS: tuple[str, ...] = (
-    "future_dated", "bad_date", "no_ticker", "no_filer", "outside_lookback",
-    "malformed_row",
+    "not_congress", "scanned_filing", "future_dated", "bad_date", "no_ticker",
+    "no_filer", "member_unmapped", "outside_lookback", "malformed_row",
 )
 
+#: Rows that were kept but did not become an observation of their own when
+#: their group was merged. Together with `observations` these account for
+#: every kept row of a rebuilt group.
+_MERGE_OUTCOMES: tuple[str, ...] = (
+    "cross_source_duplicate", "superseded_by_amendment", "indistinguishable_repeat",
+)
 
-def _disclosure_keys(source: str, rows: list) -> list[str]:
+#: The drop surge check's control limit, in standard errors of the source's
+#: own historical drop rate: the standard Shewhart p-chart limit
+#: (NIST/SEMATECH e-Handbook of Statistical Methods, section 6.3.3.2,
+#: https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc332.htm).
+_P_CHART_SIGMAS = 3
+
+
+def _disclosure_keys(source: str, rows: list, extra: list | None = None) -> list[str]:
     """One stable key per raw row: a fingerprint of the fields read, plus the
     row's occurrence number among identical rows in the same file.
 
     congresswatch carries genuinely identical rows (84 fingerprints appear
     more than once, 2026-09-19) — the occurrence number keeps them distinct
-    without inventing an id the source does not have.
+    without inventing an id the source does not have. ``extra`` adds one
+    derived value per row to the fingerprint (kadoa: the member id its filer
+    resolves to), so a row refused because its member could not be placed is
+    read again the day the member can be.
     """
     fields = _FINGERPRINT_FIELDS[source]
     seen: Counter[str] = Counter()
     keys: list[str] = []
-    for raw in rows:
+    for index, raw in enumerate(rows):
         values = [raw.get(f) for f in fields] if isinstance(raw, dict) else raw
+        if extra is not None:
+            values = [values, extra[index]]
         digest = hashlib.sha1(
             json.dumps(values, sort_keys=True, default=str).encode()
         ).hexdigest()
@@ -338,8 +485,56 @@ def _disclosure_keys(source: str, rows: list) -> list[str]:
 
 
 def _group_key(row: dict) -> str:
-    """Same real trade across both feeds: ticker, filer, transaction date."""
-    return f"{row['symbol']}|{row['actor_key']}|{str(row['transaction_date'])[:10]}"
+    """One real trade: ticker, member (Bioguide id), trade date, direction,
+    owner and asset class. A member's and a spouse's purchase on the same day,
+    a buy and a sell, or a stock and an option trade are different trades and
+    must never collapse into one."""
+    return "|".join((
+        row["symbol"], row["member_id"], str(row["transaction_date"])[:10],
+        row["direction"], row["owner"], row["asset_class"],
+    ))
+
+
+def _link_key(row: dict) -> str:
+    """The group key without owner and asset class — how a one-source trade
+    is matched to a possible counterpart in the other source that disagrees
+    on exactly those fields."""
+    return "|".join((
+        row["symbol"], row["member_id"], str(row["transaction_date"])[:10],
+        row["direction"],
+    ))
+
+
+def _retention_date(row: dict) -> date:
+    """The date retention is judged on: the real filing date when there is
+    one, else the trade date. Never an estimate."""
+    return date.fromisoformat(str(row.get("disclosure_date") or row["transaction_date"])[:10])
+
+
+def _drop_surge(history: list[dict], processed: int, dropped: int) -> dict:
+    """Is this refresh's drop rate out of line with this source's own record?
+
+    A p-chart: the centre line is the pooled drop rate over the recorded
+    refreshes, the limit that rate plus `_P_CHART_SIGMAS` standard errors at
+    this refresh's size. Small refreshes get a wide limit, so a handful of
+    odd rows is not an alarm; a schema change that refuses every row of a
+    normal refresh is. With no history there is no rate to compare against,
+    and only the unambiguous case — rows processed and none kept — is a fault.
+    """
+    verdict = {"checked": False, "surge": False, "rate": None,
+               "history_rate": None, "limit": None, "history_refreshes": len(history)}
+    if processed <= 0:
+        return verdict
+    rate = dropped / processed
+    verdict.update(checked=True, rate=round(rate, 4))
+    past_processed = sum(int(h.get("processed") or 0) for h in history)
+    if past_processed <= 0:
+        verdict["surge"] = dropped == processed
+        return verdict
+    centre = sum(int(h.get("dropped") or 0) for h in history) / past_processed
+    limit = centre + _P_CHART_SIGMAS * (centre * (1 - centre) / processed) ** 0.5
+    verdict.update(history_rate=round(centre, 4), limit=round(limit, 4), surge=rate > limit)
+    return verdict
 
 
 def _header(response, name: str) -> str | None:
