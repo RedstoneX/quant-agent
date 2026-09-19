@@ -369,6 +369,37 @@ def test_insider_seat_expires_when_freshness_cannot_be_established():
     assert obj._carry_forward_insider(ctx).status == "expired"
 
 
+def test_an_empty_insider_seat_is_not_clean_when_coverage_is_partial():
+    """2026-09-19. An EMPTY remembered answer used to skip the fail-closed
+    branch, on the written ground that `insider_reuse` classifies an empty
+    payload as lost. It does not — an empty list is BLANK and reuses as
+    `chose_not_to_refetch`, an integrity-clean status saying "remembered; no
+    new filing". So with watched names never read through, the seat
+    reported clean over filings nobody had read."""
+    class _Form4:
+        def known_accessions(self):
+            return set()
+
+    ctx = SimpleNamespace(smart_money_findings=[])
+    partial = {
+        "ok": False, "new_filings": [], "read_through": "",
+        "checked": 82, "covered": 60, "unread_names": ["104169"],
+        "unread_filings": 193, "unchecked": [],
+        "reason": "22 of 82 watched name(s) not yet fully read",
+    }
+    obj = SimpleNamespace(
+        macro_store=_MacroStore(None),
+        news_store=_NewsStore(),
+        smart_money_provider=SimpleNamespace(
+            providers=[_Form4()], form4_freshness=lambda _s=None: partial,
+        ),
+        db=None,
+    )
+    _bind_reuse(obj)
+    obj._findings_from_specialist_evidence = lambda: []
+    assert obj._carry_forward_insider(ctx).status == "expired"
+
+
 def test_intraday_freshness_does_not_expire_on_backlog_alone():
     """THE ACCEPTANCE CONDITION for 2026-09-18's six lost windows.
 

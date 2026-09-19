@@ -1068,6 +1068,7 @@ class TradingPipeline:
             user_agent=config.smart_money.user_agent,
             request_timeout_s=config.smart_money.request_timeout_s,
             refresh_deadline_s=config.smart_money.refresh_deadline_s,
+            watched_drain_deadline_s=config.smart_money.watched_drain_deadline_s,
             requests_per_second=config.smart_money.requests_per_second,
             lookback_days=config.smart_money.lookback_days,
             max_filings_per_refresh=config.smart_money.max_filings_per_refresh,
@@ -13840,16 +13841,24 @@ class TradingPipeline:
                 except TypeError:
                     smart_money_refresh = self.smart_money_provider.refresh()
                 logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
-                # Backlog depth, named in its own line: `refresh` runs once a
-                # day pre-market, so a residue cannot drain until tomorrow,
-                # and an unread Form 4 is what the research-expiry peek reads
-                # as a new filing. Report-only — no threshold, no alert.
+                # Backlog depth and watched-name coverage, named in their own
+                # line: `refresh` runs once a day pre-market, so a residue
+                # cannot drain until tomorrow.
                 logger.info(
-                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s cap_reached=%s",
+                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
+                    "cap_reached=%s watched_read_through=%s/%s drain_deadline_hit=%s",
                     smart_money_refresh.get("pending_filings"),
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
+                    smart_money_refresh.get("watched_names_read_through"),
+                    smart_money_refresh.get("watched_names"),
+                    smart_money_refresh.get("watched_drain_deadline_hit"),
                 )
+                # ...and RECORDED where the desk records its status. Until
+                # 2026-09-19 these counts existed only in a log line and the
+                # job's stdout, so no one could ask the database whether the
+                # backlog was draining from one morning to the next.
+                self._record_form4_backlog(run_id, smart_money_refresh)
                 self._alert_form4_backlog_before_open(smart_money_refresh)
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
@@ -14752,21 +14761,41 @@ class TradingPipeline:
             return False
         return newer_material_wire(frozenset(covered), fetched)
 
+    def _record_form4_backlog(self, run_id: str, refresh: dict) -> None:
+        """Persist the pre-market Form 4 backlog and coverage. Never raises."""
+        if not isinstance(refresh, dict):
+            return
+        import json as _json
+        keys = (
+            "status", "pending_filings", "watched_pending_filings",
+            "discovery_cap_reached", "watched_read_through",
+            "watched_names", "watched_names_read_through",
+            "watched_names_unread", "watched_unchecked_names",
+            "watched_drain_ran", "watched_drain_read",
+            "watched_drain_deadline_hit", "error",
+        )
+        _persist_evidence(
+            getattr(self, "db", None), run_id=run_id,
+            agent_name="smart_money_refresh", kind="form4_backlog", scope="run",
+            evidence_json=_json.dumps(
+                {k: refresh.get(k) for k in keys}, sort_keys=True, default=str,
+            ),
+        )
+
     def _alert_form4_backlog_before_open(self, refresh: dict) -> None:
-        """Say BEFORE the open that today's intraday ticks will refuse.
+        """Say BEFORE the open that today's insider evidence is incomplete.
 
         `refresh` has always computed the backlog numbers and the pipeline
-        has only ever logged them. A returned value nobody catches is a
+        had only ever logged them. A returned value nobody catches is a
         check that does not exist — on 2026-09-18 the cap bound at the
         pre-market refresh, and the first anyone knew of it was six lost
         decision windows later.
 
-        The condition is the watermark, not the raw counts: the insider
-        seat's freshness is measured against the date through which watched
-        names are confirmed read, so a watermark that is not today is
-        exactly the state in which every tick today expires the seat. The
-        cap and the unchecked-names list are reported alongside because
-        they are why it did not advance.
+        The condition is coverage: every watched name read through today,
+        nothing unread, nothing unchecked. Anything else means the insider
+        seat cannot be current on every tick today. Since PR #535 that seat
+        is advisory — it no longer stops the desk — so the alert says the
+        desk decides WITHOUT complete insider evidence, not that it refuses.
         """
         if not isinstance(refresh, dict):
             return
@@ -14776,9 +14805,16 @@ class TradingPipeline:
         watched_pending = int(refresh.get("watched_pending_filings") or 0)
         unchecked = list(refresh.get("watched_unchecked_names") or [])
         cap_reached = bool(refresh.get("discovery_cap_reached"))
+        names = int(refresh.get("watched_names") or 0)
+        names_read = int(refresh.get("watched_names_read_through") or 0)
         if read_through == today and not watched_pending and not unchecked:
             return
         why: list[str] = []
+        if names:
+            why.append(
+                f"{names_read} of our {names} companies have every insider "
+                "filing read",
+            )
         if watched_pending:
             why.append(
                 f"{watched_pending} company filing(s) on names we hold are "
@@ -14788,6 +14824,11 @@ class TradingPipeline:
             why.append(
                 f"{len(unchecked)} of our own companies could not be checked "
                 "at all",
+            )
+        if bool(refresh.get("watched_drain_deadline_hit")):
+            why.append(
+                "the morning read of our own companies ran out of time; it "
+                "resumes where it stopped tomorrow morning",
             )
         if cap_reached:
             why.append(
@@ -14801,10 +14842,9 @@ class TradingPipeline:
         text = (
             "Insider-filing check did not finish this morning: "
             + "; ".join(why)
-            + ". Until it does, the desk will not make a new trading decision "
-            "today — it refuses rather than decide on company filings it has "
-            "not read. Nothing is at risk; existing positions and their stops "
-            "are unaffected."
+            + ". Until it does, the desk still makes its trading decisions "
+            "but without complete insider evidence, and each decision "
+            "records that. Existing positions and their stops are unaffected."
         )
         logger.error("PRE-OPEN: %s", text)
         try:
@@ -14846,6 +14886,11 @@ class TradingPipeline:
             except TypeError:
                 result = probe()
         except Exception as exc:  # noqa: BLE001
+            # Logged here, not only returned: the caller logs only when it
+            # holds findings, so an empty-seat tick used to lose this.
+            logger.warning(
+                "Form 4 freshness probe raised %s: %s", type(exc).__name__, exc,
+            )
             return {
                 "ok": False, "new_filings": [], "read_through": "",
                 "checked": 0, "unchecked": [],
@@ -14873,7 +14918,14 @@ class TradingPipeline:
             except TypeError:
                 found = peek()
             return {str(a).strip() for a in (found or []) if str(a).strip()}
-        except Exception:  # noqa: BLE001 — failed peek ≠ new filing
+        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
+            # No live caller since PR #529 (the decision tick uses
+            # `_form4_freshness`). Still: a swallowed failure here returned
+            # "nothing new" with no trace at all. Say so.
+            logger.warning(
+                "Form 4 accession peek failed, returning no accessions: %s: %s",
+                type(exc).__name__, exc,
+            )
             return set()
 
     def _form4_known_accessions(self) -> set[str]:
@@ -15155,12 +15207,14 @@ class TradingPipeline:
         # the desk's own unread backlog refused the decision. Backwards in
         # both directions. Now:
         #
-        #   probe ok, nothing filed since the watermark  -> reuse
-        #   probe ok, something filed since the watermark -> expired (real)
-        #   probe failed, partial, or no watermark        -> expired
+        #   every watched name read through, nothing unread  -> reuse
+        #   a read-through name has an unread filing          -> expired (real)
+        #   probe failed or partial, or any watched name not
+        #   yet fully read (per-issuer coverage)              -> expired
         #
         # Expiry is per tick and the probe is cheap, so an unknown costs one
-        # window and the next tick re-asks. Reuse on an unknown would put a
+        # window and the next tick re-asks. Coverage only grows: the
+        # pre-market drain records each issuer as it finishes it. Reuse on an unknown would put a
         # decision on evidence nobody checked, which the evidence gate
         # exists to prevent and which no later tick can undo.
         freshness = self._form4_freshness(ctx=ctx)
@@ -15170,16 +15224,24 @@ class TradingPipeline:
             if str(a).strip()
         }
         new_form4 = bool(incoming - set(accessions))
-        # Fail closed only where there is something to be stale ABOUT. An
-        # unknown freshness answer is dangerous precisely because it would
-        # let remembered findings be reused as current; with no remembered
-        # findings there is nothing to reuse, and `insider_reuse` below
-        # already classifies an empty payload as lost for its own, more
-        # accurate reason. Expiring a seat that holds nothing would report
-        # the wrong cause for the refusal.
-        if not probe_ok and findings:
+        # Fail closed whenever the probe cannot call the seat current —
+        # including when the remembered answer is EMPTY. CORRECTED
+        # 2026-09-19: this used to expire only a seat holding findings, on
+        # the stated ground that `insider_reuse` "already classifies an
+        # empty payload as lost". It does not: an empty list is BLANK, and
+        # BLANK reuses as `chose_not_to_refetch` — "Form 4 filings
+        # remembered; no new filing", an integrity-clean status. An empty
+        # answer is still a claim ("no material insider activity on any
+        # watched name"), and it is exactly as uncheckable as a full one
+        # when the probe failed or some watched names were never fully
+        # read. `not ok` now covers both: a failed or partial probe, and
+        # partial COVERAGE (`unread_names`), whose reason says how many
+        # names are not yet read. A desk with NO insider provider at all has
+        # no seat to be stale about, so an empty answer there is left alone.
+        has_provider = getattr(self, "smart_money_provider", None) is not None
+        if not probe_ok and (findings or has_provider):
             logger.warning(
-                "Intraday scan: Form 4 freshness unknown, insider seat "
+                "Intraday scan: insider seat cannot be called current, "
                 "expires this tick — %s", freshness.get("reason") or "no reason",
             )
             return CarryForward(findings, "expired", same_session=same_session)

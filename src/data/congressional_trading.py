@@ -571,6 +571,38 @@ class CongressionalTradingProvider:
         return ordered, error
 
 
+def _form4_drain_summary(results) -> dict:
+    """Top-level drain outcome across Form 4 sub-provider refresh results.
+
+    Empty when no sub-provider ran a drain, so a wrapper holding only
+    congressional providers adds nothing. The combined read-through date is
+    the EARLIEST any Form 4 provider reports — it is a claim that every
+    watched name is read, so it is only as late as the least-read provider.
+    """
+    form4 = [r for r in results if isinstance(r, dict) and "watched_drain_ran" in r]
+    if not form4:
+        return {}
+    dates = [str(r.get("watched_read_through") or "")[:10] for r in form4]
+    return {
+        "watched_read_through": "" if any(not d for d in dates) else min(dates),
+        "watched_unchecked_names": sorted({
+            str(n) for r in form4 for n in (r.get("watched_unchecked_names") or [])
+        }),
+        "watched_drain_ran": any(bool(r.get("watched_drain_ran")) for r in form4),
+        "watched_drain_read": sum(int(r.get("watched_drain_read") or 0) for r in form4),
+        "watched_drain_deadline_hit": any(
+            bool(r.get("watched_drain_deadline_hit")) for r in form4
+        ),
+        "watched_names": sum(int(r.get("watched_names") or 0) for r in form4),
+        "watched_names_read_through": sum(
+            int(r.get("watched_names_read_through") or 0) for r in form4
+        ),
+        "watched_names_unread": sorted({
+            str(n) for r in form4 for n in (r.get("watched_names_unread") or [])
+        }),
+    }
+
+
 class CombinedSmartMoneyProvider:
     """Fans one `SmartMoneySource` call out to several, concatenating
     results. Each sub-provider's failure is isolated: one raising or timing
@@ -623,6 +655,13 @@ class CombinedSmartMoneyProvider:
             "discovery_cap_reached": any(
                 bool(r.get("discovery_cap_reached")) for r in results.values()
             ),
+            # The drain's outcome, surfaced for the pre-open check. Until
+            # 2026-09-19 only the three counts above were lifted out of the
+            # per-provider dict, so the pre-open check always read an empty
+            # `watched_read_through` from this wrapper — the production
+            # wiring — and would have alerted every morning whatever the
+            # drain did. Only Form 4 providers carry these keys.
+            **_form4_drain_summary(results.values()),
             "error": "; ".join(errors) or None,
         }
 
@@ -654,9 +693,13 @@ class CombinedSmartMoneyProvider:
         """
         verdict = {
             "ok": False, "new_filings": [], "read_through": "",
-            "checked": 0, "unchecked": [], "reason": "no Form 4 provider",
+            "checked": 0, "covered": 0, "unread_names": [], "unread_filings": 0,
+            "unchecked": [], "reason": "no Form 4 provider",
         }
         answered = False
+        covered = 0
+        unread_names: list[str] = []
+        unread_filings = 0
         new_filings: set[str] = set()
         unchecked: list[str] = []
         reasons: list[str] = []
@@ -682,12 +725,18 @@ class CombinedSmartMoneyProvider:
             )
             unchecked.extend(str(c) for c in (result.get("unchecked") or []))
             checked += int(result.get("checked") or 0)
+            covered += int(result.get("covered") or 0)
+            unread_names.extend(str(c) for c in (result.get("unread_names") or []))
+            unread_filings += int(result.get("unread_filings") or 0)
             read_through = read_through or str(result.get("read_through") or "")
             if not result.get("ok"):
                 reasons.append(f"{name}:{result.get('reason') or 'not ok'}")
         verdict["new_filings"] = sorted(new_filings)
         verdict["unchecked"] = unchecked
         verdict["checked"] = checked
+        verdict["covered"] = covered
+        verdict["unread_names"] = sorted(set(unread_names))
+        verdict["unread_filings"] = unread_filings
         verdict["read_through"] = read_through
         if not answered:
             return verdict
@@ -696,10 +745,39 @@ class CombinedSmartMoneyProvider:
             return verdict
         verdict["ok"] = True
         verdict["reason"] = (
-            f"{len(new_filings)} new filing(s) since {read_through}"
-            if new_filings else f"nothing filed since {read_through}"
+            f"{len(new_filings)} new filing(s) on names read through"
+            if new_filings else "every watched name read through; nothing new"
         )
         return verdict
+
+    def form4_coverage(self) -> dict:
+        """Coverage of the watched set, from the Form 4 sub-provider(s). No network.
+
+        Unknown unless at least one sub-provider recorded coverage; with
+        several, the result is only as complete as the least complete.
+        """
+        merged = {"known": False, "as_of": "", "watched": 0,
+                  "read_through": 0, "unread": []}
+        found = False
+        for provider in self.providers:
+            probe = getattr(provider, "form4_coverage", None)
+            if not callable(probe):
+                continue
+            try:
+                result = probe() or {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Form 4 coverage read failed: %s", exc)
+                return {**merged, "known": False}
+            if not result.get("known"):
+                return {**merged, "known": False}
+            found = True
+            merged["as_of"] = merged["as_of"] or str(result.get("as_of") or "")
+            merged["watched"] += int(result.get("watched") or 0)
+            merged["read_through"] += int(result.get("read_through") or 0)
+            merged["unread"].extend(str(s) for s in (result.get("unread") or []))
+        merged["known"] = found
+        merged["unread"] = sorted(set(merged["unread"]))
+        return merged
 
     def peek_form4_accessions(self, symbols: list[str] | None = None) -> set[str]:
         """Union of Form 4 accessions currently visible on every sub-provider.
