@@ -24,7 +24,8 @@
   reject; its approval cannot override a deterministic drop. A dropped exit
   writes an append-only per-symbol reason on the named-trigger, AI-reject,
   noise-band, metric-contradiction, and proven-false holding-discipline
-  gates. This is the documented exception to item 4 on this path only, not
+  gates; an exit AI Risk approves writes the same kind of row with
+  `code=ai_risk_approved`, `dropped=false` (board item 164, 2026-09-19). This is the documented exception to item 4 on this path only, not
   permission to fail-open entries or to retune the noise-band / stop-floor
   1.0s (item 70). Verified by `tests/test_exit_refusal_coherence.py`.
 - **Kill switch** (2026-09-02): `risk.kill_switch_path` (default
