@@ -44,6 +44,8 @@ Nothing below should be merged until there is a working test gate. 94 PRs have a
 - **Deliberately push a failing test and confirm the merge is blocked.** This is the only step that constitutes proof. Do not skip it.
 - Add branch protection on `main` requiring the check to pass. A gate that reports but does not block is not a gate.
 
+*Correction (2026-09-19): this section describes the 2026-08-27 state. CI was enabled shortly afterward (fixed in #96) and has run on every PR since; it is not currently disabled or unexecuted.*
+
 **0.2 — Ratification rule.**
 Root cause of QAMC's drift: coding agents write the documents that define "accepted truth," and `STATE.md` declares independent review *"optional evidence, not permission and not a blocking gate."* Scope decisions made for engineering convenience (e.g. dropping short selling) laundered into requirements that every later agent treated as owner intent.
 
