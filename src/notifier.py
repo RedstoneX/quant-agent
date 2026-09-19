@@ -1182,8 +1182,8 @@ _SEAT_WORDS: dict[str, str] = {
 def _congress_enabled_now() -> bool:
     """Whether `config.smart_money.congress_enabled` is on right now.
 
-    Read directly from `config/settings.yaml` (via `src.config.load_config`,
-    the desk's own config loader) instead of being threaded through as a
+    Read directly from `config/settings.yaml` (the one key, falling back to
+    the pydantic field default) instead of being threaded through as a
     parameter: this module renders owner-facing text for dozens of call
     sites (Telegram alerts, the intraday tick, stored-run replays) that do
     not otherwise carry a config object, and several read stored historical
@@ -1192,11 +1192,21 @@ def _congress_enabled_now() -> bool:
     yaml) falls back to the field's own documented default, `False` — a
     wording helper must never raise or break an alert.
     """
+    # Reads only the one key, NOT through `load_config`: that also collects
+    # the systemd-delivered broker credentials, which a wording helper has
+    # no business touching on every alert it renders.
     try:
-        from src.config import load_config
+        import yaml
+
+        from src.config import SmartMoneyConfig
 
         settings_path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
-        return bool(load_config(settings_path).smart_money.congress_enabled)
+        with open(settings_path) as f:
+            raw = yaml.safe_load(f) or {}
+        section = raw.get("smart_money") or {}
+        if "congress_enabled" in section:
+            return bool(section["congress_enabled"])
+        return bool(SmartMoneyConfig.model_fields["congress_enabled"].default)
     except Exception:
         return False
 
