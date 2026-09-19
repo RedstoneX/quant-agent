@@ -55,15 +55,36 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
+      # Measured 2026-09-19 (runs 35396584309/35395293092/35386277411): with
+      # only the built-in pip wheel cache above, "Install package + test
+      # deps" already takes ~13-20s per shard because the wheels are warm --
+      # `Run pytest` is the actual cost at ~128-138s per shard. This second,
+      # explicit cache goes one step further and skips `pip install` (and its
+      # dependency resolution) entirely on a hit by caching the built
+      # virtualenv itself. It is keyed on the OS, the exact resolved Python
+      # version (so a runner image bump that changes the interpreter's
+      # absolute path can't restore a venv pointing at a binary that no
+      # longer exists) and a hash of pyproject.toml, so any dependency change
+      # invalidates it.
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml') }}
+
       - name: Install package + test deps
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
 
       - name: Run pytest
         # Inject dummy values for required env vars so any import-time
@@ -78,6 +99,7 @@ jobs:
           FRED_API_KEY: dummy-fred-key-for-ci
         run: |
           set -euo pipefail
+          source .venv/bin/activate
           # Refuse to run a split that is not a clean partition of the suite.
           # A dropped file would be tests silently not running underneath a
           # green required check, which is worse than a slow build.
