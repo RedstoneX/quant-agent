@@ -1161,14 +1161,51 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 # each one MEANS in the words a person would use; the key never reaches
 # the message. An unmapped seat or value is DESCRIBED and its raw text is
 # labelled as kept-for-the-record, never paraphrased into a claim.
+#
+# "smart_money" is deliberately NOT a fixed string here. Congressional
+# trading disclosures (`src/data/congressional_trading.py`) are gated by
+# `config.smart_money.congress_enabled`, off by default and never yet
+# turned on (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 entry). Naming
+# "congressional" in this label when that switch is off would tell the
+# owner the desk reads a feed it never actually reads. `_smart_money_seat_
+# label` below reads the real switch at call time, so the wording can
+# never drift from what the running desk actually does.
 _SEAT_WORDS: dict[str, str] = {
     "macro": "the market-backdrop research",
     "tech": "the chart research",
     "news": "the news research",
     "earnings": "the earnings-filing research",
-    "smart_money": "the insider-and-congressional-trading feed",
     "sector": "the sector research",
 }
+
+
+def _congress_enabled_now() -> bool:
+    """Whether `config.smart_money.congress_enabled` is on right now.
+
+    Read directly from `config/settings.yaml` (via `src.config.load_config`,
+    the desk's own config loader) instead of being threaded through as a
+    parameter: this module renders owner-facing text for dozens of call
+    sites (Telegram alerts, the intraday tick, stored-run replays) that do
+    not otherwise carry a config object, and several read stored historical
+    run data with no config in scope at all. Any failure to read it
+    (missing file in a test environment, credential delivery issues, bad
+    yaml) falls back to the field's own documented default, `False` — a
+    wording helper must never raise or break an alert.
+    """
+    try:
+        from src.config import load_config
+
+        settings_path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
+        return bool(load_config(settings_path).smart_money.congress_enabled)
+    except Exception:
+        return False
+
+
+def _smart_money_seat_label(congress_enabled: bool) -> str:
+    """The smart-money seat's plain name, true to what it actually reads."""
+    if congress_enabled:
+        return "the insider-and-congressional-trading feed"
+    return "the insider-trading feed"
 
 _DATA_STATUS_WORDS: dict[str, str] = {
     "failed": "did not return an answer",
@@ -1205,6 +1242,8 @@ _DATA_STATUS_WORDS: dict[str, str] = {
 def seat_words(seat: Any) -> str:
     """Plain words for one research seat's internal name."""
     key = str(seat or "").strip().lower()
+    if key == "smart_money":
+        return _smart_money_seat_label(_congress_enabled_now())
     return _SEAT_WORDS.get(key) or (
         f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})"
     )

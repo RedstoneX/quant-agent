@@ -4333,3 +4333,36 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     assert tsla["fill_status"] == "rejected"
     assert nvda["fill_status"] == "canceled"
     db.close()
+
+
+# === Congressional-trading owner-facing wording must track the real switch ===
+# `congress_enabled` (src/config.py) is off by default and has never been
+# turned on. The pre-market smart-money refresh log line must say so
+# honestly instead of always claiming both sources ran.
+
+def test_smart_money_refresh_sources_word_when_congress_off():
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    assert (
+        _smart_money_refresh_sources_word(False)
+        == "SEC Form 4 only (congressional cross-check switched off)"
+    )
+
+
+def test_smart_money_refresh_sources_word_when_congress_on():
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    assert _smart_money_refresh_sources_word(True) == "SEC Form 4 + congressional"
+
+
+def test_smart_money_refresh_sources_word_matches_repo_default_config():
+    """Revert-and-fail: if the log line goes back to a hard-coded
+    "SEC Form 4 + congressional" regardless of the switch, this fails
+    against the repo's own default (congressional cross-check off)."""
+    from src.config import SmartMoneyConfig
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    default_congress_enabled = SmartMoneyConfig().congress_enabled
+    assert default_congress_enabled is False
+    word = _smart_money_refresh_sources_word(default_congress_enabled)
+    assert "congressional" not in word or "switched off" in word

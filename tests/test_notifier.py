@@ -2473,3 +2473,63 @@ def test_last_sends_of_each_kind_query_matches_notifier_last_sends_script(tmp_pa
 
     by_kind = {r["kind"]: r["text"] for r in rows}
     assert by_kind == {"morning": "morning v2 (latest)", "evening": "evening v1"}
+
+
+# === Smart-money seat label must track the real congress_enabled switch ===
+# `config.smart_money.congress_enabled` (src/config.py) is off by default
+# and has never been turned on. Telegram text must never claim the desk
+# reads congressional trading disclosures while that switch is off.
+
+def test_smart_money_seat_label_off():
+    from src.notifier import _smart_money_seat_label
+
+    label = _smart_money_seat_label(False)
+    assert "congressional" not in label
+    assert label == "the insider-trading feed"
+
+
+def test_smart_money_seat_label_on():
+    from src.notifier import _smart_money_seat_label
+
+    label = _smart_money_seat_label(True)
+    assert label == "the insider-and-congressional-trading feed"
+
+
+def test_seat_words_smart_money_reflects_live_switch(monkeypatch):
+    """seat_words() must derive its wording from the actual runtime switch,
+    not a fixed string — this is what src.notifier._congress_enabled_now
+    is for."""
+    import src.notifier as notifier
+
+    monkeypatch.setattr(notifier, "_congress_enabled_now", lambda: False)
+    assert notifier.seat_words("smart_money") == "the insider-trading feed"
+
+    monkeypatch.setattr(notifier, "_congress_enabled_now", lambda: True)
+    assert (
+        notifier.seat_words("smart_money")
+        == "the insider-and-congressional-trading feed"
+    )
+
+
+def test_seat_words_smart_money_matches_repo_default_config():
+    """Revert-and-fail: without any mocking, seat_words("smart_money") must
+    match the repo's OWN config default (congress_enabled=False), proving
+    the wording is actually derived from the switch and not hard-coded back
+    to naming congress unconditionally."""
+    from src.config import SmartMoneyConfig
+    from src.notifier import seat_words
+
+    assert SmartMoneyConfig().congress_enabled is False
+    assert seat_words("smart_money") == "the insider-trading feed"
+
+
+def test_congress_enabled_now_defaults_false_on_load_failure(monkeypatch):
+    """A wording helper must never raise or break an alert just because
+    config couldn't be loaded (e.g. in a stripped-down test environment)."""
+    import src.notifier as notifier
+
+    def _boom(_path):
+        raise RuntimeError("no config here")
+
+    monkeypatch.setattr("src.config.load_config", _boom)
+    assert notifier._congress_enabled_now() is False
