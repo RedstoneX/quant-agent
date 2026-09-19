@@ -127,8 +127,10 @@ honour-system prose and the numbers it forbids accumulated under it. There is
 now a check — `src/number_sources.py`, failing through
 `tests/test_number_sources.py` — that requires a numeric definition site
 inside a declared scope to carry an entry in `config/number_ledger.yaml`
-recording where the number came from. 178 sites are in scope; 86 distinct
-numbers are recorded as having nothing behind them.
+recording where the number came from. 226 sites are in scope (179 before
+2026-09-19's board item 130 admitted `src/execution/broker.py`,
+`src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`); 106
+distinct numbers are recorded as having nothing behind them.
 
 **What the mechanism actually does, stated exactly, because an authority file
 must not claim more than the code does.** It is a COVERAGE and CONSISTENCY

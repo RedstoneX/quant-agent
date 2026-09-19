@@ -2576,3 +2576,529 @@ numbers:
       magnitude.
     note: >-
       Fallback weight for a seat SEAT_WEIGHT does not name.
+
+  # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
+  # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
+  # src/execution/stop_repair.py. No value changed. ---
+  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Fallback reconnect floor for the trade_updates fill-notification
+      socket, used only when the installed alpaca-py TradingStream does not
+      expose its own backoff attributes. It copies alpaca-py's own default
+      (site-packages/alpaca/trading/stream.py:53, alpaca-py 0.43.5) rather
+      than inventing a second clock. It decides how fast an optional
+      notification socket retries, never whether or how much to trade; the
+      bounded REST fill-confirmation path is unaffected when this socket is
+      off entirely.
+  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MAX_S
+    value: 30.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Fallback reconnect ceiling for the same trade_updates socket, same
+      alpaca-py default (site-packages/alpaca/trading/stream.py:54,
+      alpaca-py 0.43.5). Same reasoning as
+      src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
+      optional notification socket's retry speed, not a trade decision.
+  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION
+    value: 6
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Handshake-attempt ceiling for one trade_updates session, derived from
+      the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py:245-253).
+      One of three constants added 2026-09-18 to close an unbounded retry
+      loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
+      (src/execution/broker.py:218-242); none of the three decides, sizes,
+      prices or exits a trade -- the bounded REST fill path is unchanged and
+      is what runs when this ceiling fires.
+  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_DAY
+    value: 200
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Handshake-attempt ceiling per process per day for the same socket,
+      set to Alpaca's own published account-wide rate limit of 200
+      requests/minute (src/execution/broker.py:255-264, cross-checked
+      against measured 56 and 50 attempts on 2026-09-16/17). Same
+      not-trade-governing reasoning as
+      src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
+  - id: src.execution.broker._STREAM_RATE_LIMIT_STAND_DOWN_S
+    value: 60.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Stand-down after the broker answers HTTP 429 on the same socket, set
+      to Alpaca's published one-minute rate-limit window
+      (src/execution/broker.py:267-274). Same not-trade-governing reasoning
+      as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
+  - id: src.execution.broker._BROKER_HTTP_TIMEOUT
+    value: 30.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.broker._SECTOR_LOOKUP_TIMEOUT_S
+    value: 10
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.broker._ENTRY_FILL_TIMEOUT_S
+    value: 90.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap.
+      src/execution/broker.py:1313-1327 records that the real-time
+      trade_updates stream now detects a fill first and this is purely the
+      ceiling for the rare fallback where that stream itself could not be
+      used. It decides how long the desk waits, never whether or how much
+      to trade.
+  - id: src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+    value: 3
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      Retry ceiling for placing the protective stop immediately after an
+      entry fills (src/execution/broker.py:1329-1348). docs/WORK.md item
+      129: the stated reasoning -- that a failure surviving three attempts
+      must be a rejection rather than a transient fault -- is falsified by
+      2026-09-16 (item 127), where a transient concurrency conflict
+      survived all three attempts and was not a rejection.
+    open_question: >-
+      What attempt count and backoff would this class of transient failure
+      (rate limit, 5xx, dropped connection, fill/order eventual-consistency
+      race) actually need to clear, measured against real occurrences
+      rather than assumed to clear "in under a second"?
+    cost_while_unanswered: >-
+      A position can open with no protective stop and reach the owner alert
+      -- the "real remedy" the comment names -- while still exposed, on any
+      failure class the three-attempt/~2-second budget does not actually
+      cover.
+  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[0]
+    value: 0.5
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      First of the two stop-placement retry delays, same site and same
+      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      (docs/WORK.md item 129).
+    open_question: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
+      actually clears the transient failure classes this retry is meant
+      for, measured rather than assumed.
+    cost_while_unanswered: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: a position
+      can be left without a protective stop if the real clearing time
+      exceeds the assumed one.
+  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[1]
+    value: 1.5
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      Second of the two stop-placement retry delays, same site and same
+      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      (docs/WORK.md item 129).
+    open_question: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+    cost_while_unanswered: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+  - id: src.execution.broker._FRACTIONAL_QTY_EPSILON
+    value: 1.0e-9
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Floating-point tolerance used only to tell a genuine sub-share
+      remainder from float representation error (src/execution/broker.py:
+      1378-1400 docstring on `_split_protective_qty`) before splitting a
+      protective stop into a whole-share GTC leg and a sub-share DAY leg.
+      It guards against noise at the 1e-9 scale; any value in a wide band
+      well below a real fractional remainder (which is never smaller than a
+      broker-tradable fraction of one share) produces identical behaviour,
+      so this is a precision guard rather than a policy choice.
+  - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
+    value: 5
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap.
+      Bounds how many weekdays the watchdog's diagnostic sweep searches
+      backward for the most recent trading day
+      (src/coverage_watchdog.py:141-143); it decides how far the sweep
+      looks, never whether or how much to trade.
+  - id: src.coverage_watchdog._QTY_EPSILON
+    value: 1.0e-6
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      Floating-point tolerance for "covered < held" comparisons
+      (src/coverage_watchdog.py:145-146, same tolerance the coverage
+      reconciler uses). Guards against representation error rather than
+      choosing a policy magnitude, same reasoning as
+      src.execution.broker._FRACTIONAL_QTY_EPSILON.
+  - id: src.pipeline._PM_PROFILE_SYMBOL_CAP
+    value: 40
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. Ceiling
+      on how many symbols get a company-profile network lookup for PM's
+      informational facts block (src/pipeline.py:125-131); it decides how
+      much the desk fetches for that block, never whether or how much to
+      trade.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-flash']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-pro']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-chat']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-reasoner']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_DEFAULT_CEILING
+    value: 8192
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: fallback output-token ceiling for a DeepSeek model not
+      named in _DEEPSEEK_MAX_OUTPUT, not a trading decision.
+  - id: src.agents.base._DEFAULT_MAX_RETRIES
+    value: 2
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: default retry count for a failed LLM call, not a
+      trading decision.
+  - id: src.agents.base._LLM_HTTP_TIMEOUT
+    value: 300.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for LLM
+      HTTP calls. It decides how long the desk waits, never whether or how
+      much to trade.
+  - id: src.agents.base._DEFAULT_RETRY_DEADLINE_S
+    value: 480.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for the
+      LLM retry loop, not a trading decision.
+  - id: src.agents.base._RETRY_AFTER_CAP_S
+    value: 120.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: ceiling applied to a provider-returned Retry-After
+      value, not a trading decision.
+  - id: src.agents.base._ANTHROPIC_MAX_CONCURRENT
+    value: 4
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: concurrency cap on outstanding Anthropic calls, not a
+      trading decision.
+  - id: src.agents.base._GOVERNOR_CHARS_PER_TOKEN
+    value: 1.5
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: characters-per-token estimate used to govern request
+      size against a provider rate limit, not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+    value: 3
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: retry count for an OpenRouter generation-metadata
+      lookup (cost/usage accounting), not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_TIMEOUT_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for the
+      same OpenRouter lookup, not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_SLEEP_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: sleep between retries of the same OpenRouter lookup,
+      not a trading decision.
+  - id: src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS
+    value: 8
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many symbols' findings the smart-money synthesis prompt asks
+      for and how many the code keeps (src/agents/smart_money_analyst.py:
+      137, 361). Unlike a network fetch cap, a bound symbol here is silently
+      dropped from what the seat's verdict is built from, with nothing
+      downstream recorded as "missing evidence" -- the same shape
+      board item 90's history flags for `max_filings_per_refresh`, which
+      was corrected from not-trade-governing to arbitrary after a real day
+      where the cap binding refused a trading decision. Classified
+      arbitrary up front for that reason.
+    open_question: >-
+      On a day this cap binds, how many symbols with a live smart-money
+      finding are dropped from the synthesis, and does the seat's own
+      output say so?
+    cost_while_unanswered: >-
+      A queued symbol beyond the 8th gets no smart-money read that cycle,
+      indistinguishable in the output from one that was genuinely quiet.
+  - id: src.agents.smart_money_analyst._MAX_REPRESENTATIVE_TRANSACTIONS
+    value: 3
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many representative transactions are kept per finding
+      (src/agents/smart_money_analyst.py:199-204). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: a silent
+      truncation of the evidence a verdict reads, not a fetch/network cap.
+    open_question: >-
+      Does dropping transactions past the third ever change which findings
+      rank as actionable versus routine?
+    cost_while_unanswered: >-
+      A finding with many transactions is presented identically to one with
+      exactly three; the discarded transactions cannot be recovered from
+      the record afterward.
+  - id: src.agents.smart_money_analyst._MAX_FINDING_TEXT_WORDS
+    value: 24
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Word cap the synthesis prompt is told to write each finding within
+      (src/agents/smart_money_analyst.py:137-139). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: shapes the
+      evidence text a verdict reads, not a fetch/network cap.
+    open_question: >-
+      Has a finding ever needed more than 24 words to state correctly, and
+      would truncation there change how it reads?
+    cost_while_unanswered: >-
+      A finding requiring nuance beyond 24 words is either cut or forced
+      into a shorter, possibly misleading, statement.
+  - id: src.agents.smart_money_analyst._MAX_CONTEXT_TEXT_CHARS
+    value: 96
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Character cap applied to context text via `_bounded_context`
+      (src/agents/smart_money_analyst.py:182). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
+    open_question: >-
+      Does truncating context text at 96 characters ever cut the part that
+      would have changed a role or freshness classification?
+    cost_while_unanswered: >-
+      Context beyond 96 characters is silently dropped with no marker that
+      truncation happened.
+  - id: src.agents.smart_money_analyst._MAX_REASON_TEXT_CHARS
+    value: 220
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Character cap for the discount-reason text via `_bounded_context`
+      (src/agents/smart_money_analyst.py:93-95, 322). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS; the comment
+      there says only that this leaves "more room than an actor name", not
+      why 220 rather than another figure.
+    open_question: >-
+      Has a discount reason ever been truncated at 220 characters, and did
+      the truncated version still read correctly?
+    cost_while_unanswered: >-
+      A reason beyond 220 characters is silently cut with no marker.
+  - id: src.agents.smart_money_analyst._MAX_ACTOR_ROLES
+    value: 8
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many actor roles are kept per finding
+      (src/agents/smart_money_analyst.py:300). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
+    open_question: >-
+      Does a finding ever carry more than 8 actor roles, and does dropping
+      the rest change how the finding is read?
+    cost_while_unanswered: >-
+      Roles beyond the 8th are silently dropped with no marker.
+  - id: src.agents.smart_money_analyst._ROLE_RANK['actionable']
+    value: 3
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight deciding which smart-money findings are prioritised
+      into synthesis (src/agents/smart_money_analyst.py:98-102). The
+      ORDER (actionable > confirmatory > contradictory > historical) is the
+      only part this desk states a reason for; the point values 3/2/1/0 (0
+      excluded from the ledger as the neutral floor) carry no cited
+      derivation. By this desk's own rule a source for an order is not a
+      source for a point value.
+    open_question: >-
+      Does the spacing between these four ranks (rather than just their
+      order) ever change which findings the synthesis keeps versus drops?
+    cost_while_unanswered: >-
+      Ranking decides which insider findings reach the seat's verdict when
+      the symbol/transaction caps above bind, so an unexamined spacing
+      silently reorders what the desk sees.
+  - id: src.agents.smart_money_analyst._ROLE_RANK['confirmatory']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+  - id: src.agents.smart_money_analyst._ROLE_RANK['contradictory']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+  - id: src.agents.smart_money_analyst._FRESHNESS_RANK['fresh']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight for how fresh a finding is (src/agents/
+      smart_money_analyst.py:104); same "order stated, spacing not" gap as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Does the spacing between fresh/delayed/stale ever change which
+      findings the synthesis keeps versus drops?
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable']:
+      ranking decides what reaches the verdict when the caps above bind.
+  - id: src.agents.smart_money_analyst._FRESHNESS_RANK['delayed']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight for signal class (src/agents/smart_money_analyst.py:
+      106-109). The comment cites docs/RESEARCH_FINDINGS.md section 1 for
+      why routine transactions should rank LOWEST; that source justifies
+      the ordering, not the point values 2/1/1/0 (0 excluded as the neutral
+      floor).
+    open_question: >-
+      Does the spacing here ever change which findings the synthesis keeps
+      versus drops, beyond routine ranking last?
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable']:
+      ranking decides what reaches the verdict when the caps above bind.
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'];
+      this is the rank an unset/unknown signal class receives.
+    open_question: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['indeterminate']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.tech_analyst._BARS_PER_SYMBOL
+    value: 40
+    status: arbitrary
+    site: src/agents/tech_analyst.py
+    note: >-
+      OHLCV bars attached per symbol in the technical seat's prompt
+      (src/agents/tech_analyst.py:19-24). The comment gives only qualitative
+      reasoning ("enough for swing pivots... not so many that context
+      balloons"); structural levels are computed separately in
+      src/data/levels.py, but the recent-bar window itself still shapes
+      what the seat reads for micro-structure, and no derivation sets 40
+      rather than another figure.
+    open_question: >-
+      What lookback do swing-pivot and micro-structure reads actually need
+      on this desk's traded universe, measured rather than assumed
+      sufficient?
+    cost_while_unanswered: >-
+      A pivot or micro-structure feature older than 40 bars is invisible to
+      the seat's immediate-context read.
+  - id: src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL
+    value: 30
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: ceiling before the technical seat's symbol batch is
+      auto-chunked across more calls (src/agents/tech_analyst.py:59-76).
+      Every symbol is still analysed, only split across more requests, so
+      this decides call shape, not whether or how much to trade.
+  - id: src.agents.tech_analyst._CHUNK_SIZE
+    value: 25
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: chunk size once a batch is split
+      (src/agents/tech_analyst.py:63-76). Same reasoning as
+      src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL -- every symbol is still
+      analysed.
+  - id: src.agents.tech_analyst._MAX_MISSING_RETRIES
+    value: 1
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: bounded re-ask count for a symbol a chunk's first
+      response dropped (src/agents/tech_analyst.py:78-85). The comment
+      records that a symbol still missing after this is given an explicit
+      failed outcome rather than silently treated as analysed, which is
+      what keeps this a plumbing retry rather than a silent evidence drop.

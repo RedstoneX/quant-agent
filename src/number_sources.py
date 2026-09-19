@@ -187,6 +187,29 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/pipeline_stages.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
+    # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
+    # scope rule's own words ("every module on the path from a seat's
+    # verdict to a broker order") named this file and it was not here.
+    # `stop_repair.py` and `coverage_watchdog.py` are the repair/alarm path
+    # for a protective stop that failed to place. `stop_repair.py` still
+    # defines no module-level numeric constant (see the docstring note this
+    # entry used to require); scoping it adds nothing today but stops a
+    # future one arriving unseen.
+    "src/execution/broker.py",
+    "src/execution/stop_repair.py",
+    "src/coverage_watchdog.py",
+    # The pipeline's own decision/execution glue -- `_clamp_queued_earnings_
+    # buys`' `max_pct=5.0` lives here as a function-parameter default, which
+    # this scanner's structural rules (a)/(b) do NOT see (see the module
+    # docstring addendum below); scoping the file still catches every
+    # module-level and *Config-field constant it defines.
+    "src/pipeline.py",
+    # Every seat's prompt-construction and LLM-call code -- the path from
+    # evidence to a seat's verdict the scope rule names. Most of what lives
+    # here is LLM plumbing (timeouts, retries, token budgets) that is
+    # `not-trade-governing` once seen; the truncation caps and rank tables
+    # that shape what evidence a verdict is built from are not.
+    "src/agents",
 )
 
 #: Config classes inside scoped files whose numeric field defaults are sites.
@@ -271,14 +294,31 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: debt was written down. That the same falsified sentence sat on two rows
 #: is itself the finding: it is boilerplate, and boilerplate is not a
 #: classification.
-MAX_ARBITRARY_ENTRIES = 88
+#: 2026-09-19: 88 -> 106, board item 130. Scoping `src/execution/broker.py`,
+#: `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` admitted
+#: 47 new structural sites (0 in `src/execution/stop_repair.py`, which still
+#: defines no module-level numeric constant); 18 are `arbitrary`: the
+#: stop-placement retry ceiling and backoff pair item 129 already found
+#: unjustified (3 sites), the smart-money role/freshness/signal-class rank
+#: tables that order which insider findings reach synthesis (8 sites --
+#: ordering DIRECTION has a research citation, the point values do not),
+#: six smart-money prompt-truncation caps that drop findings/text/
+#: transactions with no downstream flag that anything was dropped (the same
+#: shape as the `max_filings_per_refresh` correction two entries above, so
+#: classified the cautious way up front rather than after a counter-
+#: example), and the technical seat's bars-per-symbol window (1 site). The
+#: other 29 are `not-trade-governing`: reconnect/timeout/retry/batch-size
+#: plumbing on a fill-notification socket or an LLM call, and two
+#: floating-point epsilons guarding representation error rather than
+#: choosing a policy value. No value was changed by this pass.
+MAX_ARBITRARY_ENTRIES = 106
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not
 #: chosen. The build fails if it RISES, so a trade number cannot be parked
 #: outside scope silently. Raising it is a reviewed line that says a new
 #: unscoped constant was looked at and is not trade-governing.
-MAX_UNSCOPED_NUMERIC_SITES = 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
+MAX_UNSCOPED_NUMERIC_SITES = 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
 
 #: Paths under `src/` the unscoped sentinel does not count: generated code and
 #: vendored trees have no author to ask.
