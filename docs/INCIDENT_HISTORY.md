@@ -22,6 +22,17 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — the midday/close reviewer and the ordinary SELL and COVER loops now put each name's stop back before touching the next (follow-on to item 111)
+
+**In plain words:** the same fault the de-lever loops had (entry above) was in three more places that sell or cover more than one holding in one pass — the position reviewer's exits at midday and close, and the ordinary SELL and COVER orders the portfolio manager's decisions produce. Each took every holding's protective stop off and sent every order first, and only waited for fills and put stops back after the whole pass. Each now finishes one holding — wait for its order, then restore, re-protect the remainder, or leave off on a full exit — before it touches the next. Which holdings exit, how much and at what price are unchanged.
+
+**Reproduced on main before fixing.** `tests/test_multi_name_exit_stop_sequencing.py` drives the real `_midday_execute_llm_actions` loop and the real `ExecutionStage.run` SELL and COVER loops, with the real `_submit_protected_sell`, `_cancel_stops_with_write_ahead` and `_finalize_pending_protections`; only the broker edges are recorded. On main the reviewer produced: NVDA stops cancelled, NVDA sold, AMD cancelled, AMD sold, TSLA cancelled, TSLA covered, then all three re-protected. The ExecutionStage SELL loop (NVDA, AMD, MSFT) and COVER loop (TSLA, RIVN) had the same shape. In the reviewer the fill wait was inside the batch finalize, so each later name also sat uncovered through every earlier name's wait (15-second default each, `wait_for_order_terminal`); in ExecutionStage every name sat uncovered until every order in the loop had been waited on.
+
+**Fix.** Each loop now waits for and finalizes one name right after that name's order and trade row. The finalize still runs when the trade-row write raises after the order was accepted (the stops are off and the order is live) — the reviewer has a test for that case. ExecutionStage still records each SELL's terminal status for the rotation gate, in the same order. **Same trade-off as the de-lever fix:** a later exit is now submitted after the earlier ones finished, up to 15 seconds per earlier order later than before, so it has less of the session to fill. No timing, threshold or price was changed.
+
+**Checked and not affected:** the two cash-sweep sells and the de-lever loops (already one name at a time); the start-of-session recovery drain, the ex-dividend stop shift and the scale-in stop replacement (each touches one symbol's stops at a time).
+
+**Tests.** Four tests; reverting the reviewer fix fails its two, reverting the ExecutionStage fix fails its two, and a fix that finalizes only on the happy path fails the trade-row test.
 ### 2026-09-19 — nine places where the desk changed or threw away a trade and kept no record of it (board item 164)
 
 **What broke, in one line:** between the portfolio manager's answer and the
@@ -12265,3 +12276,4 @@ reported success on its own.
 **Item 112 — what was already there, and what was added.** The item was partly stale: since it was filed, `_alert_owner_delever_incomplete` sets `delever_incomplete` on the session's leverage record, and the session message already shows a plain-words line when it is set. What was still missing was a durable record of the failure. A de-lever that ends over its ceiling now writes one run-scoped row to the existing lifecycle-event stream (`specialist_evidence`, `agent_name='pipeline'`, `kind='pipeline_event'`, `stage='gross_delever'`, `outcome='still_over_ceiling'`) holding the gross exposure and equity before, the ceiling, the gross exposure after, and for each order the symbol, side, quantity, broker order id, final broker status and whether its stop coverage was confirmed. It is deliberately NOT written to `agent_logs`: that is the paid-model ledger, and the cost circuit refuses a same-day `agent_logs` row whose run has no budget session — which a write from the pre-agent preamble could produce. No alert, no selling and no sizing were added; whether a failed de-lever should do anything more is still the owner's decision recorded on the item.
 
 **Tests.** `tests/test_gross_exposure_ladder.py`: two timeline tests (one per loop) fail on the pre-fix code and pass on the fix; the shortfall-row test fails with the write removed. A failing write is shown not to affect the de-lever.
+

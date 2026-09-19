@@ -6462,13 +6462,12 @@ class ExecutionStage:
             except Exception as e:
                 logger.warning("Failed to record HOLD decision for %s: %s", d.symbol, e)
 
-        sell_order_ids: list[str] = []
-        # Terminal status per SELL order id, filled in by the wait loop
+        # Terminal status per SELL order id, filled in by the per-name wait
         # below. Phase 14b reads it to decide whether the rotation's freed
         # room is REAL before the replacement BUY is allowed.
         sell_status_by_id: dict[str, str | None] = {}
-        pending_protections: list[dict] = []
         for decision in sell_decisions:
+            prot = None
             try:
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty <= 0:
@@ -6513,9 +6512,7 @@ class ExecutionStage:
                 if sale is None:
                     continue
                 order, prot = sale
-                pending_protections.append(prot)
                 orders.append(order)
-                sell_order_ids.append(order["id"])
                 pipeline.db.insert_trade(
                     symbol=decision.symbol, action=action_label, qty=qty,
                     price=sell_price, reasoning=decision.reasoning, run_id=run_id,
@@ -6557,8 +6554,18 @@ class ExecutionStage:
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
-
-        for order_id in sell_order_ids:
+            if prot is None:
+                continue
+            # Wait for THIS sell and rebuild THIS name's stop coverage on its
+            # actual fill before the loop cancels the next name's stops —
+            # the per-name discipline the de-lever loops got (docs/WORK.md
+            # item 111). Submitting every SELL first and waiting/finalizing
+            # the batch afterwards left every earlier name with no
+            # protective stop while later names were cancelled, submitted
+            # and waited on. Runs even when the ledger write above raised:
+            # the stops are off and the order is live. Which names are sold,
+            # how much and at what limit are unchanged.
+            order_id = prot["order_id"]
             # ExecutionStage was the lone SELL path missing this guard
             # — every other SELL path (force_delever / midday_emergency /
             # midday_llm / intra_check / take_profit) wraps the wait in
@@ -6583,25 +6590,20 @@ class ExecutionStage:
                     "Sell order %s did not fill before buy phase (status=%s); buys will use current cash only",
                     order_id, status or "unknown",
                 )
-
-        # Now that wait_for_order_terminal has returned for every sell,
-        # the broker's fill_info is final. Reprotect on actual residual
-        # (filled successfully) or restore originals (no-fill terminal).
-        # wait=False: the sell_order_ids loop above already blocked until each
-        # order reached terminal (it also gates the buy phase), so the orders
-        # are terminal here — re-waiting would be a redundant no-op.
-        pipeline._finalize_pending_protections(
-            pending_protections, context="ExecutionStage", wait=False,
-        )
+            # The wait above returned, so the broker's fill_info is final.
+            # Reprotect on actual residual (filled) or restore originals
+            # (no-fill terminal). wait=False: this order was just waited on.
+            pipeline._finalize_pending_protections(
+                [prot], context="ExecutionStage", wait=False,
+            )
 
         # Stage 3 (shorts): COVER loop — the exit-side twin of the SELL loop
         # just above. Reuses `_submit_protected_sell`'s side="buy" plumbing
         # (PR #135 built this for emergency covers; this is the first
         # decision-path caller). No protective stop is placed afterward —
         # covering REDUCES risk, it doesn't open any.
-        cover_order_ids: list[str] = []
-        cover_pending_protections: list[dict] = []
         for decision in cover_decisions:
+            prot = None
             try:
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty >= 0:
@@ -6647,9 +6649,7 @@ class ExecutionStage:
                 if sale is None:
                     continue
                 order, prot = sale
-                cover_pending_protections.append(prot)
                 orders.append(order)
-                cover_order_ids.append(order["id"])
                 pipeline.db.insert_trade(
                     symbol=decision.symbol, action=action_label, qty=qty,
                     price=cover_price, reasoning=decision.reasoning, run_id=run_id,
@@ -6668,8 +6668,11 @@ class ExecutionStage:
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
-
-        for order_id in cover_order_ids:
+            if prot is None:
+                continue
+            # Same per-name discipline as the SELL loop above: this short's
+            # BUY-stop coverage is rebuilt before the next short's is touched.
+            order_id = prot["order_id"]
             try:
                 status = pipeline.broker.wait_for_order_terminal(order_id)
             except Exception as e:
@@ -6684,10 +6687,9 @@ class ExecutionStage:
                     "Cover order %s did not fill before buy phase (status=%s)",
                     order_id, status or "unknown",
                 )
-
-        pipeline._finalize_pending_protections(
-            cover_pending_protections, context="ExecutionStage-Cover", wait=False,
-        )
+            pipeline._finalize_pending_protections(
+                [prot], context="ExecutionStage-Cover", wait=False,
+            )
 
         if sell_decisions or cover_decisions:
             account, positions, price_map = pipeline._refresh_account_state()

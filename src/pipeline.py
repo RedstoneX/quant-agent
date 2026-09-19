@@ -10884,7 +10884,6 @@ class TradingPipeline:
         signal for this path to act on.
         """
         orders: list[dict] = []
-        pending_protections: list[dict] = []
         _priority = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
@@ -11258,6 +11257,7 @@ class TradingPipeline:
                 logger.warning("Midday: skipping %s %s — no matching position",
                                act, symbol)
                 continue
+            prot = None
             try:
                 if act == "TRAIL_STOP":
                     try:
@@ -11392,7 +11392,6 @@ class TradingPipeline:
                 if sale is None:
                     continue
                 order, prot = sale
-                pending_protections.append(prot)
                 orders.append(order)
                 self.db.insert_trade(
                     symbol=symbol, action=act, qty=qty,
@@ -11409,9 +11408,18 @@ class TradingPipeline:
                 )
             except Exception as e:
                 logger.error("Midday order failed for %s: %s", symbol, e)
-        self._finalize_pending_protections(
-            pending_protections, context="Midday reviewer",
-        )
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops — the same per-name
+            # discipline the de-lever loops got (docs/WORK.md item 111).
+            # Finalizing the batch once after the loop left every earlier
+            # symbol with no protective stop while later symbols were
+            # cancelled, submitted and waited on. Runs even when the ledger
+            # write above raised: the stops are off and the order is live.
+            # Which names exit, how much and at what limit are unchanged.
+            if prot is not None:
+                self._finalize_pending_protections(
+                    [prot], context="Midday reviewer",
+                )
         return orders
 
     def _force_delever(self, ctx: RunContext) -> list[dict]:
