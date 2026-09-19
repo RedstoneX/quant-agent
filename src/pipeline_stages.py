@@ -4011,6 +4011,16 @@ class MorningResearchStage:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Smart-money coverage read failed: %s", exc)
                 sm_coverage = {"known": False, "error": type(exc).__name__}
+        # How old the congressional evidence is (newest disclosure, newest
+        # trade, each source's copy). No network; None when that feed is off.
+        sm_congressional = None
+        congress_probe = getattr(self.smart_money_provider, "congressional_freshness", None)
+        if smart_config and smart_config.enabled and callable(congress_probe):
+            try:
+                sm_congressional = congress_probe()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Congressional freshness read failed: %s", exc)
+                sm_congressional = {"known": False, "error": type(exc).__name__}
         sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
             not sm_coverage.get("known") or bool(sm_coverage.get("unread"))
         )
@@ -4034,7 +4044,11 @@ class MorningResearchStage:
                     # Watched-name read-through as of the pre-market pass:
                     # {known, as_of, watched, read_through, unread[symbols]}.
                     "coverage": sm_coverage,
-                }, sort_keys=True),
+                    # Congressional disclosures lag the trade by weeks
+                    # (median 60 days measured 2026-09-19); this is how old the
+                    # newest one is, so nothing reads it as current news.
+                    "congressional": sm_congressional,
+                }, sort_keys=True, default=str),
             )
             if provider_error:
                 data_status["smart_money"] = "degraded" if findings else "provider_error"

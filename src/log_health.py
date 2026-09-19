@@ -191,6 +191,13 @@ def _p(*patterns: str) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(p) for p in patterns)
 
 
+#: A later refresh in which the same congressional source answered clears its
+#: earlier failure — the saved copy is current again, so the fault is over.
+_CONGRESS_SOURCE_RECOVERED = _p(
+    r"^Congressional refresh: source=(\w+) outcome=(?:fetched|not_modified)",
+)
+
+
 # --- the families -----------------------------------------------------------
 # Every pattern below was read off real production log lines (verified against
 # /home/qamc/quant-agent/quant_agent.log and its rotations on 2026-09-18);
@@ -402,6 +409,54 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"Macro coverage: \d+/\d+ FRED series.*FAILED:",
         ),
         board_item=119,
+        measure_duration=True,
+    ),
+    # The congressional trading-disclosure feed. Unlike every family above,
+    # these patterns were NOT read off production logs: the feed has never
+    # run in production (switch off as of 2026-09-19). They are the feed's
+    # own format strings, and `tests/test_congressional_incremental.py`
+    # drives the real code into each failure and classifies the line it
+    # actually emits, so a rewording fails a test instead of going quiet.
+    # Duration is measured because the feed fails open to its saved copy:
+    # a source that has been down for a week looks exactly like a quiet one.
+    FaultFamily(
+        key="congress_source_unreachable",
+        short_name="a congressional trading source that could not be reached",
+        sentence=(
+            "A public source of congressional trading disclosures could not be "
+            "reached on {n} occasion{plural}"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=_p(r"^Congressional source unreachable: source=\w+"),
+        subject=re.compile(r"source=(\w+)"),
+        resolved_by=_CONGRESS_SOURCE_RECOVERED,
+        measure_duration=True,
+    ),
+    FaultFamily(
+        key="congress_source_unreadable",
+        short_name="a congressional trading source that sent back nonsense",
+        sentence=(
+            "A public source of congressional trading disclosures answered with "
+            "something the desk could not read on {n} occasion{plural}"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=_p(r"^Congressional source unreadable: source=\w+"),
+        subject=re.compile(r"source=(\w+)"),
+        resolved_by=_CONGRESS_SOURCE_RECOVERED,
+        measure_duration=True,
+    ),
+    FaultFamily(
+        key="congress_cache_stale",
+        short_name="old congressional trading disclosures used as if current",
+        sentence=(
+            "The desk read an old saved copy of congressional trading "
+            "disclosures because no fresh one could be had, on {n} "
+            "occasion{plural}"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=_p(r"^Congressional cache served stale: source=\w+"),
+        subject=re.compile(r"source=(\w+)"),
+        resolved_by=_CONGRESS_SOURCE_RECOVERED,
         measure_duration=True,
     ),
     FaultFamily(
