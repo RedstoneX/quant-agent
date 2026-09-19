@@ -834,6 +834,21 @@ def build_constructor_config(config, risk_engine_config):
             ),
     )
 
+
+def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
+    """What the pre-market smart-money refresh log line should say it read.
+
+    Congressional trading disclosures (`src/data/congressional_trading.py`)
+    are only ever fetched when `config.smart_money.congress_enabled` is
+    True — off by default, never turned on (see the 2026-09-04 entry in
+    `docs/INCIDENT_HISTORY.md`). The log line must say so honestly rather
+    than always naming both sources.
+    """
+    if congress_enabled:
+        return "SEC Form 4 + congressional"
+    return "SEC Form 4 only (congressional cross-check switched off)"
+
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -13840,7 +13855,11 @@ class TradingPipeline:
                     smart_money_refresh = self.smart_money_provider.refresh(watched)
                 except TypeError:
                     smart_money_refresh = self.smart_money_provider.refresh()
-                logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
+                logger.info(
+                    "Smart-money refresh (%s): %s",
+                    _smart_money_refresh_sources_word(self.config.smart_money.congress_enabled),
+                    smart_money_refresh,
+                )
                 # Backlog depth and watched-name coverage, named in their own
                 # line: `refresh` runs once a day pre-market, so a residue
                 # cannot drain until tomorrow.

@@ -579,7 +579,10 @@ def test_the_owner_alert_carries_no_machine_text():
     for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
                    "=failed", "intra_check-cfb08f1c", "run "):
         assert banned not in text, f"owner alert still contains {banned!r}"
-    assert "the insider-and-congressional-trading feed" in text
+    # congress_enabled is off (src/config.py default, never turned on), so
+    # this must say "insider-trading", never "insider-and-congressional".
+    assert "the insider-trading feed" in text
+    assert "congressional" not in text
 
 
 def test_the_owner_alert_is_bullets_not_a_paragraph():

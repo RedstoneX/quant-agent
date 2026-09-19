@@ -2359,7 +2359,10 @@ def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
     for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
                    "=expired", "intra_check-cfb08f1c"):
         assert banned not in msg, f"intraday message still contains {banned!r}"
-    assert "the insider-and-congressional-trading feed" in msg
+    # congress_enabled is off (src/config.py default, never turned on), so
+    # this must say "insider-trading", never "insider-and-congressional".
+    assert "the insider-trading feed" in msg
+    assert "congressional" not in msg
     banner = [ln for ln in msg.split("\n") if ln.startswith("🟡")][0]
     assert banner == "🟡 <b>DECISION SKIPPED — NOTHING WAS TRADED</b>"
 
