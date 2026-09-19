@@ -62,12 +62,29 @@ def _verdict(mods, **over) -> RiskVerdict:
 
 
 # ---------------------------------------------------------------------------
-# src/pipeline.py — `_apply_risk_modifications`
+# The risk seat's edits — REWRITTEN 2026-09-19 for the owner ruling
+#
+# These six tests used to drive the REAL `_apply_risk_modifications` through
+# `RiskStage` and pin the record each of its outcomes left (schema-invalid
+# edit DROPPED the trade; unknown field not applied; edit outside the plan;
+# applied edit read `modified`; enlarging edit reverted; book veto refused
+# every leg). The owner ruled the seat ADVISORY: `RiskStage` no longer calls
+# the applier and applies nothing the seat says. Each test keeps its scenario
+# and now pins the new record — the seat's words, with "not applied — owner
+# ruling 2026-09-19" — AND that the trade is exactly what it was.
 # ---------------------------------------------------------------------------
 
-def test_a_schema_invalid_risk_edit_records_the_dropped_trade():
-    """The edit fails the order schema, so the trade is DROPPED (unchanged
-    behaviour). It used to be in neither `rejected_mods` nor any event."""
+RULING = "not applied — owner ruling 2026-09-19"
+
+
+def _risk_events(pipeline, symbol):
+    return [p for s, p in _events(pipeline) if s == symbol and p["stage"] == "risk"]
+
+
+def test_a_schema_invalid_risk_edit_no_longer_drops_the_trade():
+    """Was: an edit that failed the order schema (allocation 150%) DROPPED
+    the trade — a side door through which the seat could remove a name. Now
+    the edit is recorded and the trade ships at the constructor's size."""
     decisions = [_xle(), _chpx()]
     verdict = _verdict([RiskModification(
         symbol="XLE", field="allocation_pct", original_value=5.0,
@@ -77,17 +94,14 @@ def test_a_schema_invalid_risk_edit_records_the_dropped_trade():
     ctx = _ctx(decisions)
 
     assert RiskStage(pipeline=pipeline).run(ctx) is None
-    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["CHPX"]
-
-    dropped = [p for s, p in _events(pipeline) if s == "XLE" and p["outcome"] == "dropped"]
-    assert len(dropped) == 1, _events(pipeline)
-    row = dropped[0]
-    assert row["stage"] == "risk"
-    assert row["gate"] == "rm_modification_schema_invalid"
-    assert row["field"] == "allocation_pct"
-    assert row["before"] == 5.0 and row["requested"] == 150.0
-    assert row["seat_reason"] == "cut the energy leg"
-    assert "DROPPED" in row["reason"] and "allocation_pct" in row["reason"]
+    assert [(d.symbol, d.allocation_pct) for d in ctx.portfolio_decision.decisions] == [
+        ("XLE", 5.0), ("CHPX", 6.0),
+    ]
+    [xle] = _risk_events(pipeline, "XLE")
+    assert xle["outcome"] == "objection_not_applied"
+    assert "allocation_pct 5 -> 150" in xle["reason"]
+    assert "cut the energy leg" in xle["reason"] and xle["reason"].endswith(RULING)
+    assert not [p for s, p in _events(pipeline) if p["outcome"] == "dropped"]
 
 
 def test_an_edit_to_an_unknown_field_is_recorded_as_not_applied():
@@ -100,21 +114,16 @@ def test_an_edit_to_an_unknown_field_is_recorded_as_not_applied():
 
     assert RiskStage(pipeline=pipeline).run(_ctx(decisions)) is None
 
-    events = _events(pipeline)
-    not_applied = [p for s, p in events if s == "CHPX" and p["outcome"] == "modification_not_applied"]
-    assert len(not_applied) == 1
-    assert not_applied[0]["gate"] == "rm_modification_unknown_field"
-    assert not_applied[0]["field"] == "conviction"
-    assert "NOT APPLIED" in not_applied[0]["reason"]
-    # And the leg's own risk event no longer claims it was modified.
-    final = [p for s, p in events if s == "CHPX" and p["stage"] == "risk"
-             and p["outcome"] in ("approved", "modified")]
-    assert [p["outcome"] for p in final] == ["approved"]
+    [chpx] = _risk_events(pipeline, "CHPX")
+    assert chpx["outcome"] == "objection_not_applied"
+    assert "change conviction" in chpx["reason"]
+    assert "lower the conviction" in chpx["reason"]
+    assert chpx["reason"].endswith(RULING)
 
 
 def test_an_edit_naming_a_symbol_outside_the_plan_is_recorded_run_scoped():
-    """No decision to edit, so nothing changed — recorded, and filed
-    run-scoped so the jam detector does not count a phantom candidate."""
+    """No decision to edit — recorded, and filed run-scoped so the jam
+    detector does not count a phantom candidate."""
     decisions = [_chpx()]
     verdict = _verdict([RiskModification(
         symbol="ZZZ", field="allocation_pct", original_value=4.0,
@@ -124,43 +133,43 @@ def test_an_edit_naming_a_symbol_outside_the_plan_is_recorded_run_scoped():
 
     assert RiskStage(pipeline=pipeline).run(_ctx(decisions)) is None
 
-    rows = [(s, p) for s, p in _events(pipeline) if p["outcome"] == "modification_not_applied"]
+    rows = [(s, p) for s, p in _events(pipeline)
+            if p["outcome"] == "objection_not_applied"]
     assert len(rows) == 1
     symbol, payload = rows[0]
     assert symbol is None
-    assert payload["symbol_named"] == "ZZZ"
-    assert payload["gate"] == "rm_modification_no_matching_decision"
+    assert payload["reason"].startswith("the risk reviewer objected: ZZZ: ")
     assert "halve ZZZ" in payload["reason"]
+    assert [p["outcome"] for p in _risk_events(pipeline, "CHPX")] == ["approved"]
 
 
-# ---------------------------------------------------------------------------
-# src/pipeline_stages.py — the per-symbol `risk` event
-# ---------------------------------------------------------------------------
-
-def test_the_risk_event_carries_the_seats_own_reason_and_the_change():
+def test_the_risk_event_carries_the_seats_own_reason_and_the_request():
     decisions = [_xle(), _chpx()]
     verdict = _verdict([RiskModification(
         symbol="XLE", field="allocation_pct", original_value=5.0,
         new_value=3.0, reason="energy already heavy in the book",
     )])
     pipeline = _real_mods(_stage_pipeline(verdict=verdict, decisions=decisions))
+    ctx = _ctx(decisions)
 
-    assert RiskStage(pipeline=pipeline).run(_ctx(decisions)) is None
+    assert RiskStage(pipeline=pipeline).run(ctx) is None
 
-    risk = {s: p for s, p in _events(pipeline) if p["stage"] == "risk"
-            and p["outcome"] in ("approved", "modified")}
-    assert risk["XLE"]["outcome"] == "modified"
-    assert "energy already heavy in the book" in risk["XLE"]["reason"]
-    assert risk["XLE"]["changes"] == {"allocation_pct": [5.0, 3.0]}
-    assert risk["CHPX"]["outcome"] == "approved"
-    assert risk["CHPX"]["reason"] != risk["XLE"]["reason"]
-    for payload in risk.values():
+    assert ctx.portfolio_decision.decisions[0].allocation_pct == 5.0
+    [xle] = _risk_events(pipeline, "XLE")
+    [chpx] = _risk_events(pipeline, "CHPX")
+    assert xle["outcome"] == "objection_not_applied"
+    assert "energy already heavy in the book" in xle["reason"]
+    assert "allocation_pct 5 -> 3" in xle["reason"]
+    assert "changes" not in xle, "nothing changed, so no change is claimed"
+    assert chpx["outcome"] == "approved"
+    for payload in (xle, chpx):
         assert payload["reason"] != "risk_manager_verdict"
+        assert payload["outcome"] != "modified"
 
 
-def test_a_rejected_edit_no_longer_reads_as_modified():
-    """Guard 1b reverts an enlarging BUY edit; the leg ships unchanged, so
-    its risk event must say approved, not modified."""
+def test_an_enlarging_edit_is_recorded_and_the_leg_ships_unchanged():
+    """Was: guard 1b reverted an enlarging BUY edit. Now no edit is applied
+    in either direction; the request is on the record."""
     decisions = [_chpx()]
     verdict = _verdict([RiskModification(
         symbol="CHPX", field="allocation_pct", original_value=6.0,
@@ -172,14 +181,14 @@ def test_a_rejected_edit_no_longer_reads_as_modified():
     assert RiskStage(pipeline=pipeline).run(ctx) is None
     assert ctx.portfolio_decision.decisions[0].allocation_pct == 6.0
 
-    outcomes = [p["outcome"] for s, p in _events(pipeline)
-                if s == "CHPX" and p["stage"] == "risk"]
-    assert "modification_rejected" in outcomes
-    assert "modified" not in outcomes
-    assert "approved" in outcomes
+    outcomes = [p["outcome"] for p in _risk_events(pipeline, "CHPX")]
+    assert outcomes == ["objection_not_applied"]
 
 
 def test_a_book_veto_carries_the_symbols_own_reason_where_the_seat_gave_one():
+    """Was: a book veto refused every leg, each carrying its own reason where
+    the seat gave one. Now no leg is refused; each leg's record still carries
+    its own reason beside the book-level one."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
@@ -187,16 +196,17 @@ def test_a_book_veto_carries_the_symbols_own_reason_where_the_seat_gave_one():
         reasoning="the book is one energy cluster",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
 
-    result = RiskStage(pipeline=pipeline).run(_ctx(decisions))
-
-    assert result["status"] == "rejected"
-    rejected = {s: p for s, p in _events(pipeline)
-                if p["stage"] == "risk" and p["outcome"] == "rejected"}
-    assert rejected["XLE"]["reason"] == "XLE-specific reason"
-    assert rejected["XLE"]["book_level_reason"] == "the book is one energy cluster"
-    assert rejected["CHPX"]["reason"] == "the book is one energy cluster"
-    assert rejected["CHPX"]["gate"] == "risk_manager_book_veto"
+    assert RiskStage(pipeline=pipeline).run(ctx) is None
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["XLE", "CHPX"]
+    [xle] = _risk_events(pipeline, "XLE")
+    [chpx] = _risk_events(pipeline, "CHPX")
+    assert "XLE-specific reason" in xle["reason"]
+    assert "the book is one energy cluster" in xle["reason"]
+    assert "the book is one energy cluster" in chpx["reason"]
+    assert "XLE-specific reason" not in chpx["reason"]
+    assert xle["gate"] == chpx["gate"] == "risk_manager_advisory"
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +517,10 @@ def test_an_approved_exit_review_leaves_a_per_symbol_record():
         assert "both exits are sound" in row["detail"]
 
 
-def test_the_exits_let_through_beside_a_veto_are_recorded_too():
+def test_the_exits_let_through_beside_an_objection_are_recorded_too():
+    """REWRITTEN 2026-09-19: was `..._beside_a_veto_...`, with AAA vetoed
+    (`ai_risk_reject`). Owner ruling: no exit is vetoed; AAA's objection is
+    recorded (`ai_risk_objected`, dropped=False) and BBB's approval too."""
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(),
         rejected_symbols=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
@@ -520,8 +533,10 @@ def test_the_exits_let_through_beside_a_veto_are_recorded_too():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     rows = _exit_rows(pipeline)
-    assert rows["AAA"]["code"] == "ai_risk_reject"
+    assert rows["AAA"]["code"] == "ai_risk_objected"
+    assert rows["AAA"]["dropped"] is False
+    assert "invalidation not confirmed" in rows["AAA"]["detail"]
     assert rows["BBB"]["code"] == "ai_risk_approved"
     assert rows["BBB"]["dropped"] is False

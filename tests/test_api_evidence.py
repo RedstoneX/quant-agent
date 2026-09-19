@@ -347,3 +347,50 @@ def test_candidate_detail_degrades_gracefully_on_malformed_evidence_row(client, 
     r = client.get(f"/runs/{RUN_ID}/candidates/AAPL")
     assert r.status_code == 200
     assert r.json()["tech"] is None
+
+
+def test_an_advisory_seat_row_is_not_reported_as_a_modification(client, tmp_path, monkeypatch):
+    """OWNER RULING 2026-09-19: the risk seat is advisory. Its rows carry
+    `applied: false`; the candidate detail says so and the funnel must not
+    claim the trade was "Modified by AI Risk Manager". A pre-ruling row (no
+    marker, previous test) keeps its original reading."""
+    db_path = tmp_path / "quant_agent_test.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="portfolio_manager", kind="proposed_order",
+        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "action": "BUY", "symbol": "AAPL", "allocation_pct": 15.0,
+            "entry_price": 150.0, "stop_loss": 140.0, "take_profit": 170.0,
+            "reasoning": "constructed order",
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="risk_manager", kind="modification",
+        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "symbol": "AAPL", "field": "allocation_pct",
+            "original_value": 15.0, "new_value": 5.0, "reason": "oversized",
+            "applied": False,
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps({
+            "approved": False, "reasoning_chain": _risk_reasoning_chain(),
+            "reasoning": "Objected — correlation risk.", "applied": False,
+        }),
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    body = client.get(f"/runs/{RUN_ID}/candidates/AAPL").json()
+    assert body["risk_verdict"]["applied"] is False
+    assert body["risk_modification_applied"] is False
+    assert body["risk_modification"]["new_value"] == 5.0  # the request, on record
+
+    funnel = client.get(f"/runs/{RUN_ID}/funnel").json()
+    [cand] = [c for c in funnel["candidates"] if c["symbol"] == "AAPL"]
+    assert cand["risk_modified"] is False

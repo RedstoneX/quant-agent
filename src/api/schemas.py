@@ -711,6 +711,9 @@ class RiskManagerVerdict(BaseModel):
     """Run-scoped RM verdict — approved/rejected + full reasoning, separate
     from any per-symbol `risk_modification` row."""
     verdict: RiskVerdict | None = None
+    #: False when the verdict was recorded under the 2026-09-19 owner ruling
+    #: (advisory seat: nothing in it was applied); None on a pre-ruling row.
+    applied: bool | None = None
     timestamp: str | None = None
 
 
@@ -765,6 +768,9 @@ class CandidateDetailResponse(BaseModel):
     pm_proposed_order: TradeDecision | None = None
     risk_verdict: RiskManagerVerdict | None = None
     risk_modification: RiskModification | None = None
+    #: False when `risk_modification` was recorded and NOT applied (owner
+    #: ruling 2026-09-19); None on a pre-ruling row, which was applied.
+    risk_modification_applied: bool | None = None
     trade: TradeItem | None = None
     trades: list[TradeItem] = []
     pipeline_events: list["PipelineEvent"] = []

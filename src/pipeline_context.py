@@ -439,7 +439,8 @@ class PMFacts:
         # these numbers verbatim, so the block itself has to be honest.
         if self.rm_verdicts_seen > 0:
             rm_block = (
-                f"### RM Discipline (last {self.rm_verdicts_seen} verdicts)\n"
+                f"### RM Discipline (last {self.rm_verdicts_seen} verdicts — "
+                f"advisory since 2026-09-19: requested, not applied)\n"
                 f"- scale_all_buys<1.0 count: {self.rm_scale_downs_last5}/{self.rm_verdicts_seen}"
                 f" · mods emitted: {self.rm_mods_last5}/{self.rm_verdicts_seen}"
             )

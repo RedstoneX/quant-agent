@@ -413,28 +413,36 @@ def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:
 
 
 @pytest.mark.parametrize("anchor", (
-    "**Veto is nuclear.**",
-    "≥ 5 separate `modifications`",
     # "R/R discipline is non-negotiable" was an anchor here until
     # 2026-09-11. It was REMOVED deliberately, by owner decision
     # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
     # setup type was the largest measured cause of proposals that never
     # became trades, and it is meaningless on a trend trade with no
-    # overhead level. What replaces it is anchored below — the veto
-    # framing this test protects is otherwise untouched.
+    # overhead level. What replaces it is anchored below.
     "R/R discipline is by SETUP TYPE, not universal",
     "Err on the side of capital preservation",
 ))
-def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:
-    """INTENTIONALLY RETAINED. The audit flagged the veto framing as
-    near-forbidding disagreement. It is kept: a rejection kills the whole
-    plan and PM learns only a one-word `reason_category`, while
-    `modifications` are surgical and carry a reason per symbol. Loosening
-    the threshold changes trading behaviour and is exactly the kind of
-    change that needs paper-trading evidence, not a prompt edit. The
-    independence work above changes what RM KNOWS, never what it may DO.
-    """
+def test_f5_review_anchors_are_unchanged(anchor: str) -> None:
+    """The two anchors that describe HOW the seat judges survive the
+    2026-09-19 ruling unchanged. (This test was `..._veto_hierarchy_is_
+    unchanged` and also pinned `**Veto is nuclear.**` and `≥ 5 separate
+    `modifications``; those two described the seat's power to refuse the
+    plan, which the owner removed — see the next test.)"""
     assert anchor in (PROMPT_DIR / "risk_manager.md").read_text()
+
+
+@pytest.mark.parametrize("gone", (
+    "**Veto is nuclear.**",
+    "≥ 5 separate `modifications`",
+    "You have veto power",
+    "hard engine violation",
+))
+def test_f5_veto_hierarchy_is_gone(gone: str) -> None:
+    """OWNER RULING 2026-09-19: the risk seat is advisory and may not block
+    or change a trade; the briefing must not instruct a veto or call an
+    advisory a hard violation. REPLACES the old assertion that the veto
+    hierarchy was intentionally retained."""
+    assert gone not in (PROMPT_DIR / "risk_manager.md").read_text()
 
 
 # ===========================================================================

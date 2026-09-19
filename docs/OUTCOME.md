@@ -105,7 +105,7 @@ The operator should be able to understand, without reading raw logs:
 - what candidates the system considered;
 - what specialist agents concluded and where they disagreed;
 - what the Portfolio Manager proposed;
-- what the AI Risk Manager changed or rejected;
+- what the AI Risk Manager objected to (advisory since 2026-09-19 — recorded, never applied);
 - what deterministic Python ultimately allowed or blocked;
 - why an active session produced no trade when candidates existed;
 - what actually executed versus what was proposed;

@@ -145,6 +145,17 @@ The prompt now says "independence does not mean disagreeing more often" and
 failure mode of the opposite instruction is a veto layer that manufactures
 objections. Pinned by `test_f5_veto_hierarchy_is_unchanged`.
 
+**Supersession (2026-09-19, owner ruling — the seat is ADVISORY).** Both the
+retained veto hierarchy above and the Phase 10.1 refinement below are
+superseded. The owner asked whether the seat should block whole plans over
+guidelines or only over hard limits and answered "it shouldn't have to":
+hard limits are enforced by code. Every lever — `approved: false`,
+`rejected_symbols`, `modifications`, `scale_all_buys` — is now recorded with
+its reason and NOT applied, on entries and exits. The briefing no longer
+instructs a veto. `test_f5_veto_hierarchy_is_unchanged` became
+`test_f5_review_anchors_are_unchanged` plus `test_f5_veto_hierarchy_is_gone`.
+See docs/INCIDENT_HISTORY.md (2026-09-19) and `src/risk/risk_seat_advisory.py`.
+
 **Supersession (2026-09-01, spec Phase 10.1 — owner-ratified).** The
 retained decision above rests on one sentence: *"a rejection kills the whole
 plan and PM learns only a one-word `reason_category`, whereas `modifications`

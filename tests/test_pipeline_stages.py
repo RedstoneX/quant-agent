@@ -727,13 +727,13 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
     assert "exceed max 20%" in kwargs["full_response"]
 
 
-def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
-    """2026-09-03 audit finding #3: the pre-RM hard-risk filter call passes
-    `in_drawdown`, but the post-modifications re-filter call previously
-    dropped it (defaulting to False) — the same drawdown state briefly
-    became invisible to the gate a second time in the same run, for no
-    reason tied to anything RM did. Assert the post-RM call now receives
-    the same `in_drawdown` value the pre-RM call computed."""
+def test_risk_stage_has_one_hard_filter_call_and_it_carries_in_drawdown():
+    """REWRITTEN 2026-09-19 (was `test_risk_stage_post_rm_refilter_carries_
+    in_drawdown_flag`, from 2026-09-03 audit finding #3 — the post-edit
+    re-filter had dropped `in_drawdown`). Owner ruling: the risk seat is
+    advisory, so its edits are not applied and there is nothing to re-filter
+    after it. The one hard-risk filter call still carries `in_drawdown`, and
+    `_apply_risk_modifications` is never reached."""
     from src.models import PortfolioDecision, RiskVerdict
 
     first_pass_decisions = [_buy("AAPL", 10)]
@@ -753,10 +753,7 @@ def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
 
     pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=[
-            (first_pass_decisions, [], []),
-            (first_pass_decisions, [], []),
-        ],
+        return_value=(first_pass_decisions, [], []),
     )
 
     ctx = RunContext.start("morning")
@@ -770,21 +767,23 @@ def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
     )
 
     stage = RiskStage(pipeline=pipeline)
-    stage.run(ctx)
+    assert stage.run(ctx) is None
 
-    assert pipeline._filter_hard_risk_decisions.call_count == 2
-    pre_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[0].kwargs
-    post_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[1].kwargs
-    assert pre_rm_kwargs["in_drawdown"] is True
-    assert post_rm_kwargs["in_drawdown"] is True
+    assert pipeline._filter_hard_risk_decisions.call_count == 1
+    assert pipeline._filter_hard_risk_decisions.call_args.kwargs["in_drawdown"] is True
+    pipeline._apply_risk_modifications.assert_not_called()
+    # 10 -> 5 is the CODE-owned drawdown halving (in_drawdown=True), which
+    # runs before the seat; the seat's own "trim to 5" is not what did it.
+    assert ctx.portfolio_decision.decisions[0].allocation_pct == 5
 
 
 def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
-    """End-to-end through RiskStage.run() with the REAL (unmocked)
-    `_apply_risk_modifications`: an RM modification that zeroes a SELL's
-    allocation_pct must not silently cancel the exit, and the refusal must
-    be persisted as a visible pipeline event rather than just vanishing.
-    Matches the two live 2026-08-24 incidents this fix closes."""
+    """End-to-end through RiskStage.run(): an RM modification that zeroes a
+    SELL's allocation_pct must not cancel the exit, and must be persisted as
+    a visible pipeline event. Matches the two live 2026-08-24 incidents.
+    REWRITTEN 2026-09-19: the event is now the advisory objection (outcome
+    `objection_not_applied`), not a guard-1 `modification_rejected`, because
+    since the owner ruling no seat edit is applied at all."""
     from src.models import PortfolioDecision, RiskVerdict
 
     sell = _sell("XLE")
@@ -804,10 +803,7 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
 
     pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=[
-            ([sell], [], []),
-            ([sell], [], []),
-        ],
+        return_value=([sell], [], []),
     )
 
     ctx = RunContext.start("morning")
@@ -822,26 +818,31 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
     stage = RiskStage(pipeline=pipeline)
     result = stage.run(ctx)
 
-    # The exit still ships — RM's edit was reverted, not the trade.
+    # The exit still ships at its own size.
     assert result is None
     assert ctx.portfolio_decision.decisions[0].allocation_pct == 100.0
 
     evidence_calls = pipeline.db.insert_specialist_evidence.call_args_list
-    rejection_calls = [
+    objection_calls = [
         c for c in evidence_calls
         if c.kwargs.get("kind") == "pipeline_event"
-        and "modification_rejected" in c.kwargs.get("evidence_json", "")
+        and "objection_not_applied" in c.kwargs.get("evidence_json", "")
     ]
-    assert len(rejection_calls) == 1
-    assert rejection_calls[0].kwargs["symbol"] == "XLE"
+    assert len(objection_calls) == 1
+    assert objection_calls[0].kwargs["symbol"] == "XLE"
+    payload = json.loads(objection_calls[0].kwargs["evidence_json"])
+    assert "RM believes this exit is unnecessary" in payload["reason"]
+    assert payload["reason"].endswith("not applied — owner ruling 2026-09-19")
 
 
-def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_everything():
-    """Second early-return site: RM approves with modifications, the
-    re-filter after applying them blocks everything. risk_manager.review
-    IS reached and logged normally here — the forensic risk_gate row is
-    additive on top of (not instead of) the real risk_manager agent_logs
-    row RiskStage.run() already writes for a reached RM call."""
+def test_risk_stage_has_no_post_seat_hard_risk_block():
+    """REWRITTEN 2026-09-19 (was `test_risk_stage_persists_hard_risk_block_
+    when_post_rm_modifications_block_everything`). That second early-return
+    site existed because seat edits could move a trade into a hard-limit
+    breach. Owner ruling: seat edits are recorded and not applied, the plan
+    is unchanged, so the hard filter runs once — before the seat — and a
+    breach it would have found after the seat cannot arise. The one agent
+    log is the seat's own; no forensic `risk_gate` row is written."""
     from src.models import PortfolioDecision, RiskVerdict
 
     first_pass_decisions = [_buy("AAPL", 10)]
@@ -860,8 +861,6 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     pipeline.risk_manager = MagicMock()
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
 
-    # First _filter_hard_risk_decisions call (pre-RM) lets the BUY through;
-    # second call (post-modifications re-filter) blocks everything.
     pipeline._filter_hard_risk_decisions = MagicMock(
         side_effect=[
             (first_pass_decisions, [], []),
@@ -881,18 +880,10 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     stage = RiskStage(pipeline=pipeline)
     result = stage.run(ctx)
 
-    assert result == {
-        "status": "hard_risk_block", "orders": [],
-        "reason": "AAPL position would be 25.0% and exceed max 20%",
-    }
-    # One real risk_manager agent_logs write (RM was reached) + one
-    # forensic risk_gate write (post-modifications block).
-    assert pipeline.db.insert_agent_log.call_count == 2
+    assert result is None
+    assert pipeline._filter_hard_risk_decisions.call_count == 1
     agent_names = [c.kwargs["agent_name"] for c in pipeline.db.insert_agent_log.call_args_list]
-    assert agent_names == ["risk_manager", "risk_gate"]
-    gate_kwargs = pipeline.db.insert_agent_log.call_args_list[1].kwargs
-    assert gate_kwargs["decision_id"] == ctx.decision_id
-    assert "exceed max 20%" in gate_kwargs["full_response"]
+    assert agent_names == ["risk_manager"]
 
 
 def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
@@ -1068,7 +1059,11 @@ def test_risk_stage_invested_target_holds_when_guidance_missing():
 
 
 def test_risk_parse_failure_is_agent_failure_not_rejection():
-    """No validated RiskVerdict means the agent failed; it did not veto."""
+    """No validated RiskVerdict means the agent failed; it did not veto.
+    REWRITTEN 2026-09-19: the run used to END with `agent_failure` and zero
+    orders (the 2026-08-27 entry fail-closed posture). Owner ruling: the seat
+    is advisory, so its failure stops nothing — the plan proceeds, and the
+    failure is still recorded as `agent_failure` on the log and evidence."""
     from src.agents.base import AgentResult
     from src.models import PortfolioDecision
 
@@ -1097,14 +1092,15 @@ def test_risk_parse_failure_is_agent_failure_not_rejection():
 
     result = RiskStage(pipeline=pipeline).run(ctx)
 
-    assert result == {
-        "status": "agent_failure", "orders": [],
-        "reason": "risk_manager_unparseable_output",
-    }
+    assert result is None
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["AAPL"]
     risk_log = pipeline.db.insert_agent_log.call_args.kwargs
     assert risk_log["status"] == "agent_failure"
-    evidence = pipeline.db.insert_specialist_evidence.call_args.kwargs
-    assert evidence["kind"] == "agent_failure"
+    kinds = [
+        c.kwargs["kind"]
+        for c in pipeline.db.insert_specialist_evidence.call_args_list
+    ]
+    assert "agent_failure" in kinds
 
 
 def test_decision_stage_delegation_returns_none():

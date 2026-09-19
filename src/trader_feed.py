@@ -418,7 +418,10 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         seen.add(symbol)
 
     risk = snap.get("risk")
-    if isinstance(risk, dict):
+    # Owner ruling 2026-09-19: the risk seat is advisory. A verdict recorded
+    # with `applied: false` blocked nothing, so its refusals are NOT listed
+    # as blocked names here — `_append_risk` reports them as objections.
+    if isinstance(risk, dict) and not _risk_is_advisory(risk):
         for row in risk.get("rejected_symbols") or []:
             if not isinstance(row, dict):
                 continue
@@ -979,9 +982,55 @@ def _risk_category_words(category: Any) -> str:
     )
 
 
+def _risk_is_advisory(risk: Any) -> bool:
+    """True for a verdict recorded under the 2026-09-19 owner ruling — the
+    seat's output was recorded and NOT applied. Pre-ruling rows carry no
+    marker and were applied, so they keep their original wording."""
+    from src.risk.risk_seat_advisory import APPLIED_KEY
+    return isinstance(risk, dict) and risk.get(APPLIED_KEY) is False
+
+
+def _append_advisory_risk(lines: list[str], snap: dict[str, Any], risk: dict) -> None:
+    """The risk reviewer's verdict, described as what it now is: advice."""
+    from src.risk.risk_seat_advisory import objection_text
+
+    category = _risk_category_words(risk.get("reason_category"))
+    objections: list[str] = []
+    if risk.get("approved") is False:
+        objections.append(f"whole plan — {_clip(risk.get('reasoning'), 300)}")
+    for row in risk.get("rejected_symbols") or []:
+        if isinstance(row, dict) and row.get("symbol"):
+            objections.append(
+                f"{row.get('symbol')} — {row.get('reason') or 'no reason stated'}"
+            )
+    for mod in snap.get("risk_mods") or []:
+        if isinstance(mod, dict) and mod.get("symbol"):
+            objections.append(
+                f"{mod.get('symbol')} {mod.get('field')} "
+                f"{mod.get('original_value')} -> {mod.get('new_value')} — "
+                f"{mod.get('reason') or 'no reason stated'}"
+            )
+    scale = risk.get("scale_all_buys")
+    if isinstance(scale, (int, float)) and scale != 1:
+        objections.append(f"every new entry to {scale * 100:.0f}% of the size asked for")
+    if not objections:
+        lines.append(f"🛡️ Risk reviewer: no objection · {category}")
+    else:
+        lines.append(f"🛡️ Risk reviewer: objected · {category}")
+        for text in objections:
+            lines.append(f"   {_clip(objection_text(text), 550)}")
+        return
+    reason = _clip(risk.get("reasoning"), 550)
+    if reason:
+        lines.append(f"   {reason}")
+
+
 def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     risk = snap.get("risk")
     if not isinstance(risk, dict):
+        return
+    if _risk_is_advisory(risk):
+        _append_advisory_risk(lines, snap, risk)
         return
     approved = risk.get("approved")
     label = "APPROVED" if approved is True else "REJECTED" if approved is False else "UNKNOWN"
@@ -1092,12 +1141,31 @@ def _append_no_trade_reason(
 
     if status == "rejected":
         reason = _clip(result.get("reason"), 650)
-        lines.append(f"⏸️ NO TRADE — Risk vetoed the plan{': ' + reason if reason else ''}")
+        if (
+            isinstance(risk, dict) and risk.get("approved") is False
+            and not _risk_is_advisory(risk)
+        ):
+            # A pre-ruling run: the risk seat's veto WAS applied then.
+            lines.append(
+                f"⏸️ NO TRADE — Risk vetoed the plan{': ' + reason if reason else ''}"
+            )
+        else:
+            # Since the 2026-09-19 owner ruling the only thing that ends a
+            # plan with this status is the code-owned holding-discipline
+            # check (every remaining exit's claimed trigger was PROVABLY
+            # FALSE). The risk reviewer can no longer produce it.
+            lines.append(
+                "⏸️ NO TRADE — every remaining trade failed the desk's own "
+                f"exit-claim check{': ' + reason if reason else ''}"
+            )
     elif status in {"hard_risk_block", "symbol_block"}:
         lines.append("⏸️ NO TRADE — deterministic eligibility blocked the proposed action(s)")
     elif status == "buys_unfunded" or skips:
         lines.append("⏸️ NO TRADE — decision(s) survived review but execution could not complete")
-    elif isinstance(risk, dict) and risk.get("approved") is False:
+    elif (
+        isinstance(risk, dict) and risk.get("approved") is False
+        and not _risk_is_advisory(risk)
+    ):
         lines.append(f"⏸️ NO TRADE — Risk rejected: {_clip(risk.get('reasoning'), 550)}")
     elif pm_orders and not actionable:
         lines.append("⏸️ NO TRADE — PM/constructor produced HOLD only")

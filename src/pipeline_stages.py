@@ -3355,6 +3355,11 @@ def _stash_macro_parse_failure(reason: str) -> None:
 def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
     """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
 
+    NOT CALLED ON ANY LIVE PATH since the owner ruling of 2026-09-19: the
+    risk seat is advisory and `RiskStage` records its output without applying
+    it (`src/risk/risk_seat_advisory.py`). Kept, with its unit tests, only
+    because deleting it is a separate change; do not re-wire it.
+
     `_apply_risk_modifications` guard 1b already does this for a BUY. It was
     written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
     the same cumulative clamp in the constructor, and scaled alongside BUY by
@@ -3506,6 +3511,11 @@ def _risk_event_for(
 
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float, list]:
     """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
+
+    NOT CALLED ON ANY LIVE PATH since the owner ruling of 2026-09-19: the
+    risk seat is advisory and `RiskStage` records its output without applying
+    it (`src/risk/risk_seat_advisory.py`). Kept, with its unit tests, only
+    because deleting it is a separate change; do not re-wire it.
 
     `scale_all_buys` is documented in config/prompts/risk_manager.md as
     a portfolio-level sizing knob with a ge=0.0 le=1.0 range — 0.0 is
@@ -5501,7 +5511,12 @@ def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
 
 
 class RiskStage:
-    """Hard filter → earnings cap → correlation → RM review → mods → re-filter.
+    """Hard filter → earnings cap → correlation → RM review (advisory) → HD check.
+
+    Since the owner ruling of 2026-09-19 the RM review is ADVISORY: its
+    veto, refusals, edits and `scale_all_buys` are recorded and never change
+    the plan (`src/risk/risk_seat_advisory.py`). The only drop after the seat
+    is the code-owned holding-discipline check on a provably false exit claim.
 
     Reads:  ctx.portfolio_decision, ctx.positions, ctx.total_value,
             ctx.last_equity, ctx.earnings_results, ctx.macro_analysis,
@@ -5807,7 +5822,7 @@ class RiskStage:
                 message=(
                     f"Upstream data sources degraded: {', '.join(sorted(degraded))} "
                     f"(status: {degraded}). Decisions may be built on incomplete input — "
-                    f"RM should consider scale_all_buys < 1.0."
+                    f"say in your review which decisions rest on the degraded inputs."
                 ),
                 value=float(len(degraded)),
                 limit=1.0,
@@ -5896,9 +5911,9 @@ class RiskStage:
                 rule="correlation_coverage_gap",
                 message=(
                     "Correlation matrix is empty (insufficient bar data this run). "
-                    "The cluster-concentration advisory is DISABLED. Consider "
-                    "scale_all_buys < 1.0 until coverage returns, especially for "
-                    "thematic names (AI, semis, energy)."
+                    "The cluster-concentration advisory is DISABLED. Say in "
+                    "`correlation_check` that cluster risk is unmeasured this "
+                    "run, especially for thematic names (AI, semis, energy)."
                 ),
                 value=0.0,
                 limit=2.0,
@@ -6025,136 +6040,100 @@ class RiskStage:
             **rm_log_kwargs,
         )
 
+        # OWNER RULING 2026-09-19 — the seat is ADVISORY. Nothing below may
+        # change `portfolio_decision.decisions`: the whole-plan veto, the
+        # per-name refusals, the field edits and `scale_all_buys` (0.0
+        # included) are RECORDED with their reasons and NOT applied. The hard
+        # limits are code and already ran above (`_filter_hard_risk_decisions`
+        # — the rules.py hard-block path, the risk budget, the evidence gate).
+        # See `src/risk/risk_seat_advisory.py` and docs/INCIDENT_HISTORY.md.
+        #
+        # Every evidence row the seat produces carries `applied: false` so a
+        # reader (dashboard funnel, Telegram feed) can tell a recorded-but-not-
+        # applied objection from a pre-ruling row that WAS applied.
+        import json as _json
+        from src.risk import risk_seat_advisory as _advisory
+        _not_applied = {_advisory.APPLIED_KEY: False, "ruling": _advisory.RULING}
+
+        def _advisory_json(model) -> str:
+            return _json.dumps(
+                {**_json.loads(model.model_dump_json()), **_not_applied},
+            )
+
         if verdict:
             _persist_evidence(
                 pipeline.db, run_id=run_id, agent_name="risk_manager",
                 kind="verdict", scope="run", decision_id=ctx.decision_id,
-                evidence_json=verdict.model_dump_json(),
+                evidence_json=_advisory_json(verdict),
             )
             for mod in verdict.modifications:
                 _persist_evidence(
                     pipeline.db, run_id=run_id, agent_name="risk_manager",
                     kind="modification", scope="symbol", symbol=mod.symbol,
-                    decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
+                    decision_id=ctx.decision_id, evidence_json=_advisory_json(mod),
                 )
-            # Phase 10.1 — the per-symbol audit trail. Written for EVERY
-            # refusal the verdict carries, including one naming a symbol not
-            # in the plan, so "why was this name refused" stays answerable per
-            # name and not only through the run-scoped verdict blob.
+            # Phase 10.1 — the per-symbol audit trail, one row per refusal the
+            # verdict carries, including one naming a symbol not in the plan.
             for rejection in verdict.rejected_symbols:
                 _persist_evidence(
                     pipeline.db, run_id=run_id, agent_name="risk_manager",
                     kind="rejection", scope="symbol", symbol=rejection.symbol,
                     decision_id=ctx.decision_id,
-                    evidence_json=rejection.model_dump_json(),
+                    evidence_json=_advisory_json(rejection),
                 )
 
+        seat_objections: dict[str, list[str]] = {}
         if verdict is None:
+            # FAILS OPEN since the 2026-09-19 ruling. Before it, an
+            # unparseable seat returned zero orders (the 2026-08-27 entry
+            # fail-closed posture): that was coherent only while the seat's
+            # approval gated execution. An advisory seat's approval gates
+            # nothing, so its absence removes no protection — the hard limits
+            # are code and already ran — and failing closed on it would be
+            # the seat blocking the plan by producing garbage (a malformed
+            # `rejected_symbols` entry or an out-of-range `scale_all_buys`
+            # fails the whole verdict). Recorded exactly as before.
             logger.error(
                 "Risk manager AGENT FAILURE: output remained unparseable after "
-                "bounded repair; no trading verdict exists",
+                "bounded repair; the plan proceeds unreviewed (the seat is "
+                "advisory — owner ruling 2026-09-19)",
             )
             for decision in portfolio_decision.decisions:
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "failed",
+                    pipeline, ctx, decision.symbol, "risk", "review_unavailable",
                     "risk_manager_unparseable_output",
+                    gate=_advisory.GATE_ADVISORY,
                 )
             _persist_evidence(
                 pipeline.db, run_id=run_id, agent_name="risk_manager",
                 kind="agent_failure", scope="run", decision_id=ctx.decision_id,
                 evidence_json=(
                     '{"failure":"unparseable_output",'
-                    '"stage":"risk_manager","verdict":null}'
+                    '"stage":"risk_manager","verdict":null,'
+                    '"plan_proceeded":true}'
                 ),
             )
-            return {
-                "status": "agent_failure", "orders": [],
-                "reason": "risk_manager_unparseable_output",
-            }
-
-        # BOOK-level veto, evaluated FIRST and unchanged. A correlation
-        # cluster, a total-exposure breach or a drawdown state is a property
-        # of the whole account, so when the book is what fails, every leg
-        # dying is the correct outcome — and a verdict that sets this AND
-        # names individual symbols still refuses everything.
-        if not verdict.approved:
-            logger.info(
-                "Risk manager REJECTED trades: %s",
-                verdict.reasoning,
+        else:
+            seat_objections, unmatched_objections = _advisory.objections_by_symbol(
+                verdict, portfolio_decision.decisions,
             )
-            # Board item 164: a book-level veto refuses every leg for the
-            # book's reason, but where the seat ALSO named this symbol with
-            # its own reason, that reason is what the symbol's record
-            # carries — the book reason rides beside it, not over it.
-            book_veto_symbol_reasons = verdict.rejections_by_symbol()
-            for decision in portfolio_decision.decisions:
-                own = book_veto_symbol_reasons.get(
-                    decision.symbol.strip().upper()
+            if seat_objections or unmatched_objections:
+                logger.info(
+                    "Risk manager objected (recorded, not applied — owner "
+                    "ruling 2026-09-19): approved=%s, %d name(s) — %s",
+                    verdict.approved, len(seat_objections),
+                    (verdict.reasoning or "")[:300],
                 )
+            for text in unmatched_objections:
+                # Named a symbol with no decision in this plan: run-scoped,
+                # so `src/refusal_signature.py` never counts a name the run
+                # never considered.
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "rejected",
-                    own or verdict.reasoning,
-                    gate="risk_manager_book_veto",
-                    book_level_reason=verdict.reasoning,
+                    pipeline, ctx, None, "risk", _advisory.OUTCOME_OBJECTION,
+                    _advisory.objection_text(text),
+                    gate=_advisory.GATE_ADVISORY,
                     reason_category=getattr(verdict, "reason_category", None),
                 )
-            return {
-                "status": "rejected", "orders": [],
-                "reason": verdict.reasoning,
-            }
-
-        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone.
-        # Before this, `approved` was the only refusal the schema had, so a
-        # single sub-floor R/R took the whole plan with it — run-64290730
-        # (2026-09-01) refused the morning citing XLE alone and killed CHPX,
-        # a passing trade in a different sector, with it.
-        rejections = verdict.rejections_by_symbol()
-        refused_decisions: list = []
-        if rejections:
-            surviving: list = []
-            for decision in portfolio_decision.decisions:
-                reason = rejections.get(decision.symbol.strip().upper())
-                if reason is None:
-                    surviving.append(decision)
-                    continue
-                refused_decisions.append(decision)
-                logger.info(
-                    "Risk manager REFUSED %s (the rest of the plan is "
-                    "unaffected): %s", decision.symbol, reason,
-                )
-                _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "rejected", reason,
-                )
-            unmatched = sorted(
-                set(rejections) - {d.symbol.strip().upper() for d in refused_decisions}
-            )
-            if unmatched:
-                logger.warning(
-                    "Risk manager refused %s, which is not in the proposed "
-                    "plan — no-op (evidence still recorded)",
-                    ", ".join(unmatched),
-                )
-            portfolio_decision.decisions = surviving
-
-            # `refused_decisions` guards the case where the refusals matched
-            # nothing: an empty plan plus a stray symbol name is not a
-            # refusal of anything and must not become one.
-            if refused_decisions and not surviving:
-                # Every leg refused individually. Same terminal status as a
-                # book veto because the outcome is the same — no orders — but
-                # each symbol carries its OWN reason above, not one shared
-                # sentence about a different symbol.
-                reasons = "; ".join(
-                    f"{sym}: {rejections[sym]}"
-                    for sym in sorted(
-                        {d.symbol.strip().upper() for d in refused_decisions}
-                    )
-                )
-                logger.info(
-                    "Every proposed trade was refused on its own merits: %s",
-                    reasons,
-                )
-                return {"status": "rejected", "orders": [], "reason": reasons}
 
         # Holding-discipline compliance — spec item 25 (2026-09-03, data-
         # driven replacement 2026-09-03/04). RM's own checklist
@@ -6168,11 +6147,13 @@ class RiskStage:
         # cannot reliably) check — see that function's module docstring.
         #
         # 2026-09-04, owner-approved escalation: a PROVEN-FALSE claim now
-        # DROPS the decision, using the exact same mechanism as a Risk
-        # Manager per-symbol refusal directly above (build `surviving`,
-        # record a "rejected" pipeline event per dropped symbol, and if
-        # nothing survives return the same terminal rejected status) — not a
-        # new veto path. An UNVERIFIABLE claim keeps the old behaviour
+        # DROPS the decision (build `surviving`, record a "rejected" pipeline
+        # event per dropped symbol, and if nothing survives return the
+        # terminal rejected status). Until 2026-09-19 this shared its shape
+        # with the Risk Manager's per-symbol refusal; that refusal is now
+        # recorded and NOT applied (owner ruling 2026-09-19), and this drop is
+        # the one that stays — it is deterministic Python acting on a claim
+        # proven false, not the seat. An UNVERIFIABLE claim keeps the old behaviour
         # exactly: logged and recorded, never dropped, never alerted. That
         # split is the owner's explicit instruction; `check.blocks` is the
         # single place it is decided.
@@ -6236,9 +6217,9 @@ class RiskStage:
                     active_state_changes=hd_active_state_changes,
                 )
                 if check.blocks:
-                    # PROVEN FALSE. Drop the decision exactly the way a
-                    # per-symbol RM refusal above does: same "rejected"
-                    # pipeline event, same surviving-list mechanism.
+                    # PROVEN FALSE. Code-owned drop: a "rejected" pipeline
+                    # event and the surviving-list mechanism. This is NOT the
+                    # risk seat and stays in force under the 2026-09-19 ruling.
                     logger.warning(
                         "Holding discipline BLOCK (claim proven false): %s",
                         check.finding,
@@ -6273,9 +6254,8 @@ class RiskStage:
                 portfolio_decision.decisions = hd_surviving
                 if not hd_surviving:
                     # Every remaining leg was blocked on a provably false
-                    # justification. Same terminal status as the per-symbol
-                    # refusal path above, and for the same reason: no orders,
-                    # with each symbol carrying its OWN reason.
+                    # justification: no orders, with each symbol carrying
+                    # its OWN reason.
                     reasons = "; ".join(
                         finding for _sym, finding in hd_blocked
                     )
@@ -6287,118 +6267,29 @@ class RiskStage:
                         "status": "rejected", "orders": [], "reason": reasons,
                     }
 
-        # Board item 164: what each surviving leg looked like BEFORE the
-        # seat's edits and `scale_all_buys`, so the per-symbol `risk` event
-        # below can say what actually changed rather than stamping one
-        # constant on every symbol. Recording only.
-        pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
-
-        if verdict.modifications:
-            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
-            # `allocation_pct` edit that ENLARGES a BUY, but it tests
-            # `decision.action == "BUY"` only — a SHORT was never covered,
-            # although the constructor sizes it with the identical cumulative
-            # arithmetic (`name_headroom_pct = (max_position_pct -
-            # current_short_gross_pct) / gross_mul`, the explicit mirror of
-            # the long clamp) and `_apply_scale_all_buys` already treats the
-            # two sides alike because both open new risk. Snapshotted here
-            # and enforced below for BOTH sides: for a BUY the inner guard
-            # has already reverted the edit, so this sweep is a no-op and
-            # finds nothing; for a SHORT it is the only thing standing
-            # between the seat and a short it believes it is cutting.
-            pre_mod_entry_alloc = {
-                (d.symbol.strip().upper(), d.action): d.allocation_pct
-                for d in portfolio_decision.decisions
-                if d.action in ("BUY", "SHORT")
-            }
-            unapplied_mods: list[dict] = []
-            portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
-                portfolio_decision.decisions, verdict.modifications,
-                symbols_bars=getattr(ctx, "symbols_bars", None),
-                unapplied=unapplied_mods,
-            )
-            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
-                portfolio_decision.decisions, pre_mod_entry_alloc,
-            )
-            rejected_mods = list(rejected_mods) + enlarged
-            # A modification this method refused (exit silently zeroed, or a
-            # stop/target edit that would have shipped a reward:risk / noise-
-            # band floor breach) must be a visible, distinguishable event —
-            # not an edit that just vanishes. See `_apply_risk_modifications`
-            # docstring, guards 1 and 2 (2026-09-03 audit).
-            # Board item 164: the dropped / not-applied outcomes
-            # `_apply_risk_modifications` used to log and nothing else. Each
-            # entry already carries its own outcome, gate and reason.
-            #
-            # An edit naming a symbol with no decision in this stage's plan
-            # is filed RUN-scoped with the symbol in the payload: a
-            # symbol-scoped row would make `src/refusal_signature.py` count
-            # a name the run never considered as a candidate, or overwrite
-            # the real refusal of a name the seat already refused above.
-            in_plan = {sym for sym, _action in pre_rm_fields}
-            for rejected in list(rejected_mods) + unapplied_mods:
-                _details = {
-                    k: v for k, v in rejected.items()
-                    if k not in ("symbol", "reason", "outcome")
-                }
-                _sym = rejected["symbol"]
-                if str(_sym or "").strip().upper() not in in_plan:
-                    _details["symbol_named"] = _sym
-                    _sym = None
-                _record_pipeline_event(
-                    pipeline, ctx, _sym, "risk",
-                    rejected.get("outcome", "modification_rejected"),
-                    rejected["reason"], **_details,
-                )
-
-        portfolio_decision.decisions, scale, scale_dropped = _apply_scale_all_buys(
-            portfolio_decision.decisions, verdict,
-        )
-        # Board item 136 — a scale-driven drop is a real refusal of a real
-        # trade and must leave the same kind of trace an RM refusal does.
-        # It cannot use the loop at the bottom of this method: the decision
-        # is no longer in the list by then.
-        for _sym, _pre_alloc in scale_dropped:
-            _record_pipeline_event(
-                pipeline, ctx, _sym, "risk", "scaled_out",
-                f"scale_all_buys={scale:.2f} reduced {_sym}'s entry "
-                f"allocation_pct from {_pre_alloc:.2f} to 0 — the order is "
-                f"DROPPED, not zeroed (a zero allocation reads as SKIP at "
-                f"execution). RM reason category: "
-                f"{getattr(verdict, 'reason_category', None)!r}",
-                field="allocation_pct",
-            )
-
-        if verdict.modifications or scale < 1.0 or refused_decisions:
-            portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
-                pipeline._filter_hard_risk_decisions(
-                    portfolio_decision.decisions,
-                    positions, total_value, daily_pnl,
-                    baseline=last_equity,
-                    invested_target_pct=invested_target_pct,
-                    correlation_matrix=correlation_matrix,
-                    cash=ctx.deployable_cash,
-                    in_drawdown=in_drawdown,
-                    gross_ceiling=session_gross_ceiling,
-                )
-            )
-            _apply_sector_unresolved_alert(data_status, post_mod_violations)
-            if blocked_reasons:
-                reasons = "; ".join(dict.fromkeys(blocked_reasons))
-                logger.warning("HARD RISK BLOCK AFTER MODIFICATIONS: %s", reasons)
-                if not portfolio_decision.decisions:
-                    pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
-                    return {"status": "hard_risk_block", "orders": [], "reason": reasons}
-
+        # One `risk` event per surviving leg: the seat's objections to it,
+        # recorded and not applied, or a plain "no objection". The plan is
+        # exactly what entered the seat's review minus only the code-owned
+        # holding-discipline drops above.
         for decision in portfolio_decision.decisions:
-            outcome, reason, details = _risk_event_for(
-                decision, pre_rm_fields, verdict, scale,
-                field_aliases=getattr(pipeline, "_FIELD_ALIASES", None),
-            )
-            _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "risk", outcome, reason,
-                **details,
-            )
+            objections = seat_objections.get(decision.symbol.strip().upper())
+            if verdict is not None and objections:
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk",
+                    _advisory.OUTCOME_OBJECTION,
+                    _advisory.objection_text("; ".join(objections)),
+                    gate=_advisory.GATE_ADVISORY,
+                    reason_category=getattr(verdict, "reason_category", None),
+                )
+            elif verdict is not None:
+                outcome, reason, details = _risk_event_for(
+                    decision, {}, verdict, 1.0,
+                    field_aliases=getattr(pipeline, "_FIELD_ALIASES", None),
+                )
+                _record_pipeline_event(
+                    pipeline, ctx, decision.symbol, "risk", outcome, reason,
+                    **details,
+                )
             _record_pipeline_event(
                 pipeline, ctx, decision.symbol, "deterministic_gate", "allowed",
                 "post_risk_checks_passed",

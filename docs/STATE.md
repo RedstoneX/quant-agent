@@ -17,6 +17,11 @@ This file records what is accepted and true **now**. Git history preserves imple
   Manager, so sells were taken by a single model call with no second opinion
   while buys passed three layers. `_risk_review_exits` now puts every
   SELL/REDUCE in front of the AI Risk Manager and drops what it rejects.
+  **Superseded 2026-09-19 (owner ruling):** the seat is ADVISORY on both
+  paths. It no longer drops an exit or changes/blocks an entry; every
+  objection is recorded (`ai_risk_objected`, `dropped=false` on exits;
+  `objection_not_applied` pipeline events on entries) and an unparseable
+  seat no longer stops the morning plan either. See docs/INCIDENT_HISTORY.md.
   **The failure posture is deliberately asymmetric with entries and this is
   not an oversight:** `RiskStage` fails CLOSED with zero orders when the Risk
   Manager is unparseable, but the exit path fails OPEN. Failing closed on an
@@ -30,8 +35,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   (Risk Manager unavailable/unparseable/verdict-less, or the hard-trigger
   recogniser itself unable to run) fails OPEN on both layers: that is the
   2026-08-27 ratification, now applied to the pair rather than to one layer
-  only. AI Risk remains a challenge seat: a parseable reject still drops; an
-  approval cannot override a deterministic drop. Every drop, and every
+  only. AI Risk remains a challenge seat (advisory since 2026-09-19: a
+  parseable reject is recorded, NOT dropped); an approval cannot override a
+  deterministic drop. Every drop, and every
   uncertainty fail-open, writes an append-only per-symbol reason. The fact
   gates (metric-contradiction veto, ATR noise band, proven-false holding-
   discipline) still run before the broker; their 1.0 multiples are item 70,

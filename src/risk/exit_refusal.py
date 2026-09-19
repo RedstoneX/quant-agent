@@ -57,8 +57,9 @@ logger = logging.getLogger(__name__)
 #: trading pipeline never reads these rows.
 EXIT_REFUSAL_KIND = "exit_refusal"
 
-#: The layer whose completed "no" is binding. AI Risk may add a refusal;
-#: it is not this owner.
+#: The layer whose completed "no" is binding. AI Risk may record an
+#: objection (never a drop since the 2026-09-19 owner ruling); it is not
+#: this owner.
 REFUSAL_OWNER = "deterministic"
 
 #: Shared uncertainty posture for both layers of the item-60 pair.
@@ -68,6 +69,8 @@ TriggerJudgment = Literal["named", "unnamed", "uncertain"]
 
 # Completed refusals (dropped=True).
 CODE_UNRECOGNIZED_TRIGGER = "unrecognized_trigger"
+# Historical only: written before the owner ruling of 2026-09-19, when the AI
+# Risk seat could still drop an exit. Kept so old rows stay readable.
 CODE_AI_RISK_REJECT = "ai_risk_reject"
 CODE_NOISE_BAND = "inside_atr_noise_band"
 CODE_CONTRADICTS_METRICS = "contradicts_own_metrics"
@@ -81,6 +84,11 @@ CODE_AI_RISK_UNAVAILABLE = "ai_risk_unavailable"
 # item 164, 2026-09-19). Until then an approved exit reached `agent_logs`
 # only, so this per-symbol record held every outcome except the commonest.
 CODE_AI_RISK_APPROVED = "ai_risk_approved"
+
+# An OBJECTION by the challenge seat — recorded, NOT a drop (owner ruling
+# 2026-09-19: the risk seat is advisory and may not block a SELL, REDUCE or
+# COVER). Replaces `ai_risk_reject` for every row written after the ruling.
+CODE_AI_RISK_OBJECTED = "ai_risk_objected"
 
 _VALID_JUDGMENTS = frozenset({"named", "unnamed", "uncertain"})
 

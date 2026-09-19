@@ -235,7 +235,9 @@ def test_prompt_describes_correct_pipeline_order():
     silently drift back."""
     from src.agents.risk_manager import PROMPT_PATH
     text = PROMPT_PATH.read_text()
-    assert "already ran, before you" in text
+    # Reworded 2026-09-19 with the advisory briefing: "ran before you and
+    # built the orders" replaces "already ran, before you".
+    assert "`PortfolioConstructor` ran before you" in text
     assert "After you, `PortfolioConstructor` submits orders" not in text
 
 

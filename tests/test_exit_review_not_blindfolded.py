@@ -160,12 +160,14 @@ def test_exit_chain_is_labelled_as_the_position_reviewers_not_pms():
 
 def test_absent_tech_block_is_unavailable_by_design_not_not_provided():
     """No TechAnalyst call runs on the midday/close loop. Saying '(not
-    provided)' invites the seat to read it as an omission and refuse."""
+    provided)' invites the seat to read it as an omission and object.
+    (Wording moved from "refuse" to "object to" 2026-09-19: the seat is
+    advisory and cannot refuse an exit.)"""
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
     assert "## Tech Analyst Signals\n(not provided)" not in message
     assert "UNAVAILABLE BY DESIGN ON THIS PATH" in message
-    assert "do not refuse an exit for lacking Tech confirmation" in message
+    assert "do not object to an exit for lacking Tech confirmation" in message
 
 
 def test_absent_news_block_says_unknown_not_quiet():
@@ -182,8 +184,10 @@ def test_exit_header_disapplies_the_checks_that_cannot_apply():
     assert "## Review Mode: EXIT REVIEW" in message
     # The $0.0 geometry is explained rather than left as an apparent data bug.
     assert "`$0.0` entry, stop and target are structural" in flat
-    # The veto's real-world direction is stated.
-    assert "Refusing an exit leaves the position ON THE BOOK" in flat
+    # REWRITTEN 2026-09-19: was "the veto's real-world direction is stated".
+    # The seat has no veto on exits any more; it is told so.
+    assert "you cannot block an exit" in flat
+    assert "Refusing an exit leaves the position ON THE BOOK" not in flat
 
 
 # --------------------------------------------------------------------------
@@ -444,8 +448,9 @@ def test_event_risk_checklist_cannot_be_read_as_a_reason_to_refuse_an_exit():
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
-    assert "Event proximity is **not a reason to refuse an exit**" in flat
-    assert "refusing HERE carries the position THROUGH it" in flat
+    # Reworded 2026-09-19 ("refuse" -> "object to"): the seat is advisory.
+    assert "event proximity is **not a reason to object to an exit**" in flat
+    assert "closing before an event carries LESS risk through it" in flat
     # And it is no longer a mandatory output field on this path, so the seat
     # is not compelled to produce a paragraph about an inverted instruction.
     assert "`event_risk` are\nOPTIONAL here" in message
@@ -459,7 +464,7 @@ def test_checklist_8_is_not_stood_down():
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
-    assert "Checklist 8 still applies and is the substance of your job" in flat
+    assert "Checklist 8 still applies and is the substance of your review" in flat
     # Stood-down items are named explicitly; 8 must not be among them.
     disapplied = flat[flat.index("**Does not apply here.**"):
                       flat.index("**Checklist 8 still applies")]
@@ -479,17 +484,18 @@ def test_the_four_gates_are_described_with_their_real_limits():
     assert "None of them can catch a plausibly-worded" in flat
 
 
-def test_seat_is_told_refusal_is_its_only_live_lever():
-    """`_apply_risk_modifications` is called only from the morning stage, and
-    `_risk_review_exits`' verdict is consumed for `rejected_symbols` alone. So
-    `modifications` and `scale_all_buys` do nothing here — and since
-    2026-09-14 they are not fields of `ExitRiskVerdict` at all. Telling the
-    seat how to edit `allocation_pct` on this path is the same class of false
-    statement this change exists to remove."""
+def test_seat_is_told_it_has_no_live_lever():
+    """REWRITTEN 2026-09-19 (was `test_seat_is_told_refusal_is_its_only_live_
+    lever`). Since the owner ruling the seat is advisory: `rejected_symbols`
+    is recorded and never drops an exit, so telling it refusal is a live lever
+    would be a false statement. `modifications` and `scale_all_buys` remain
+    non-fields of `ExitRiskVerdict`."""
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
-    assert "Refusal is your only lever" in flat
+    assert "Refusal is your only lever" not in flat
+    assert "you cannot block an exit" in flat
+    assert "is recorded and shown to the owner" in flat
     assert (
         "`modifications` and `scale_all_buys` are **not fields of this "
         "path's output**" in flat
@@ -552,9 +558,12 @@ def test_exit_verdict_has_no_levers_that_nothing_applies():
     assert "scale_all_buys" in RiskVerdict.model_fields
 
 
-def test_only_the_morning_stage_applies_modifications():
-    """The load-bearing fact under the whole change. If a second call site
-    ever applies them, the exit schema must grow them back."""
+def test_no_stage_applies_modifications():
+    """REWRITTEN 2026-09-19 (was `test_only_the_morning_stage_applies_
+    modifications`, which pinned the morning `RiskStage` as the single caller).
+    Since the owner ruling the seat is advisory and NOTHING applies its
+    modifications: the definition site is the only file that names the call.
+    If a call site ever reappears, the ruling has been undone."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
     callers = sorted(
@@ -562,8 +571,11 @@ def test_only_the_morning_stage_applies_modifications():
         for p in (root / "src").rglob("*.py")
         if "_apply_risk_modifications(" in p.read_text()
     )
-    # Definition site + the single caller. Nothing else.
-    assert callers == ["pipeline.py", "pipeline_stages.py"], callers
+    # Definition site only.
+    assert callers == ["pipeline.py"], callers
+    stages = (root / "src" / "pipeline_stages.py").read_text()
+    assert "pipeline._apply_risk_modifications(" not in stages
+    assert "= _apply_scale_all_buys(" not in stages
 
 
 def test_exit_chain_does_not_demand_the_steps_its_prompt_stands_down():

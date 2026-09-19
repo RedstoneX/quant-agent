@@ -702,7 +702,7 @@ def test_pipeline_risk_rejected(
     ), _mock_agent_result())
     mock_pm_cls.return_value = mock_pm
 
-    # Risk Manager REJECTS
+    # Risk Manager OBJECTS to the whole plan (advisory since 2026-09-19)
     mock_rm = MagicMock()
     mock_rm.review.return_value = (RiskVerdict(
         approved=False, modifications=[], reasoning="Too risky",
@@ -752,8 +752,12 @@ def test_pipeline_risk_rejected(
     pipeline = TradingPipeline(mock_config)
     result = pipeline.run_morning()
 
-    assert result["status"] == "rejected"
-    mock_broker.submit_order.assert_not_called()
+    # REWRITTEN 2026-09-19 (was: status == "rejected" and no order
+    # submitted). Owner ruling: the risk seat is advisory. Its `approved=False`
+    # is recorded and not applied, so the plan reaches the broker.
+    assert result["status"] != "rejected"
+    mock_broker.submit_order.assert_called_once()
+    assert mock_broker.submit_order.call_args.kwargs["symbol"] == "SPY"
 
 
 def test_pipeline_has_trading_day_guard():

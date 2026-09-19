@@ -2461,16 +2461,17 @@ class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
     the seat is asked to fill and no code consumes is not a harmless extra —
     it is an instruction to spend judgement on a lever that is not connected.
 
-    Refusal is the whole lever here: `approved=False` refuses every exit in
-    the batch (the book is what failed), `rejected_symbols` refuses one name
-    and lets the rest through. Per doctrine a refusal DROPS the exit from the
-    batch with a durable per-symbol reason; nothing on this path zeroes a
-    target.
+    OWNER RULING 2026-09-19: on this path too the verdict is ADVISORY.
+    `approved=False` (an objection to every exit in the batch) and
+    `rejected_symbols` (an objection to one exit) are recorded per symbol
+    with their reasons — `exit_refusal` code `ai_risk_objected`,
+    `dropped=False` — and NO exit is dropped for them. Before the ruling a
+    refusal dropped the exit.
     """
     approved: bool
     reasoning_chain: ExitRiskReasoningChain
-    # Same semantics as on `RiskVerdict`: each entry kills exactly one exit
-    # and leaves the others standing. The `reason` is the per-symbol audit
+    # Same semantics as on `RiskVerdict`: each entry is an objection to exactly
+    # one exit (recorded, not applied, since the 2026-09-19 owner ruling). The `reason` is the per-symbol audit
     # trail written to `specialist_evidence`.
     rejected_symbols: list[SymbolRejection] = []
     reason_category: RiskReasonCategory = "clean"
@@ -2484,16 +2485,19 @@ class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
 
 
 class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
-    # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
-    # always will: correlation clusters, total exposure and drawdown state are
-    # properties of the whole account, so when the BOOK is what fails, killing
-    # every leg is the correct answer. What changed in Phase 10.1 is only the
-    # GRANULARITY available for the other kind of failure — see
-    # `rejected_symbols`. No threshold moved.
+    # OWNER RULING 2026-09-19: every field below is ADVISORY. `RiskStage`
+    # records the verdict (evidence rows marked `applied: false`) and applies
+    # none of it — not the veto, not the refusals, not the edits, not
+    # `scale_all_buys`. See `src/risk/risk_seat_advisory.py`. The comments
+    # below describe what each field MEANS, and, where they say "refuses",
+    # "kills" or "multiplies", what it did before that ruling.
+    #
+    # BOOK-level verdict. `approved=False` is an objection to the ENTIRE plan.
     approved: bool
     reasoning_chain: RiskReasoningChain
     modifications: list[RiskModification] = []
-    # PER-SYMBOL refusal. Each entry kills exactly one leg and leaves every
+    # PER-SYMBOL refusal (advisory since 2026-09-19 — see the class comment).
+    # Before the ruling, each entry killed exactly one leg and left every
     # other leg standing; the survivors then go through `modifications`,
     # `scale_all_buys` and the deterministic hard-risk gate unchanged.
     #

@@ -810,6 +810,13 @@ Review these proposed trades and provide your verdict as JSON."""
     # failure rooted in it cannot be schema-repaired without the model
     # re-deciding — both fail closed, refusing the whole plan, which is the
     # conservative direction.
+    #
+    # OWNER RULING 2026-09-19: none of these fields is APPLIED any more — the
+    # seat is advisory. They stay "decision-bearing" here for RECORD
+    # fidelity only: a repair that rewrote the seat's objection would put
+    # words in its mouth. A verdict that fails here returns None, and since
+    # the ruling a None verdict no longer stops anything on either path
+    # (`RiskStage` and `_risk_review_exits` both proceed and record it).
     _DECISION_FIELDS = (
         "approved", "modifications", "rejected_symbols",
         "scale_all_buys", "reason_category",

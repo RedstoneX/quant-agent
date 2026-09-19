@@ -20,9 +20,11 @@
   recogniser that cannot run. Deterministic Python owns refusal: a completed
   "reason names no recognised trigger" still drops, and those exits are not
   sent to AI Risk, so a silent model cannot wave through a sale the owner
-  already refused. AI Risk may add a refusal when it returns a parseable
-  reject; its approval cannot override a deterministic drop. A dropped exit
-  writes an append-only per-symbol reason on the named-trigger, AI-reject,
+  already refused. AI Risk is ADVISORY (owner ruling 2026-09-19): a
+  parseable reject is recorded as `code=ai_risk_objected`, `dropped=false`,
+  and does not drop the exit; its approval cannot override a deterministic
+  drop. A dropped exit
+  writes an append-only per-symbol reason on the named-trigger,
   noise-band, metric-contradiction, and proven-false holding-discipline
   gates; an exit AI Risk approves writes the same kind of row with
   `code=ai_risk_approved`, `dropped=false` (board item 164, 2026-09-19). This is the documented exception to item 4 on this path only, not
@@ -47,8 +49,8 @@
   with no equity history does. Verified by
   `tests/test_gross_exposure_ladder.py`.
 - `cash_sweep` `SWEEP_BUY` intentionally bypasses the shared hard-risk gate. It is deterministic, config-fixed and treated as cash-equivalent; its own bounds govern it.
-- The shared deterministic gate runs before AI Risk and again after AI-applied modifications; AI cannot loosen a hard limit.
-- AI Risk can widen a positive `stop_loss`; that widening IS re-audited (`src/pipeline.py::_apply_risk_modifications`, 2026-09-03): the edit is refused if it rests the stop inside the ATR noise band, using the constructor's own arithmetic. That refuses the *edit*, not the ticket. A computed or missing range ratio is not a ticket refusal and not an edit refusal — invented numeric reward:risk floors are retired (owner 2026-09-17) — and a breakout is not measured on reward:risk at all. This is a known narrow behavior, not permission to redesign risk during unrelated work.
+- The shared deterministic gate runs before AI Risk. Since the owner ruling of 2026-09-19 the AI Risk seat is ADVISORY: its veto, per-symbol refusals, field edits and `scale_all_buys` are recorded (evidence rows marked `applied: false`) and NOT applied, so the plan after the seat is the plan before it and no second pass is needed; AI cannot loosen or tighten a hard limit. An unparseable seat no longer stops the morning plan (the 2026-08-27 entry fail-closed posture existed only because the seat's approval gated execution). The only drop after the seat on the morning path is the code-owned holding-discipline check on a PROVABLY FALSE exit claim.
+- (Historical, before 2026-09-19.) AI Risk could widen a positive `stop_loss`; that widening was re-audited (`src/pipeline.py::_apply_risk_modifications`, 2026-09-03, no longer called): the edit was refused if it rested the stop inside the ATR noise band, using the constructor's own arithmetic. That refused the *edit*, not the ticket. A computed or missing range ratio is not a ticket refusal and not an edit refusal — invented numeric reward:risk floors are retired (owner 2026-09-17) — and a breakout is not measured on reward:risk at all. This is a known narrow behavior, not permission to redesign risk during unrelated work.
 - `alpaca.paper` is the effective paper/live selector; `alpaca.base_url` is not a second live-safety switch.
 - The accepted Stage-2 API is separate-process, GET-only/read-only, uses independent SQLite `mode=ro` history reads, and has no trading-process dependency.
 - The accepted Smart Money external-symbol lane is temporary and run-scoped.

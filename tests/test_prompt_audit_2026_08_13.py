@@ -75,7 +75,16 @@ def test_rr_breakeven_hit_rate_is_taught(prompt_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("prompt_name", DECISION_CHAIN_PROMPTS)
+@pytest.mark.parametrize(
+    "prompt_name",
+    # risk_manager.md is excluded since 2026-09-19: the owner ruled the seat
+    # advisory and its briefing must carry no number the code does not use.
+    # The 1.5 reward:risk floor was retired 2026-09-11 (docs/WORK.md item
+    # 1(d)); `min_reward_risk_after_widening` is an inert historical key
+    # (src/risk/constants.py), so the only "1.5" the RM sheet still carried
+    # was the history of a floor that no longer exists.
+    tuple(p for p in DECISION_CHAIN_PROMPTS if p != "risk_manager.md"),
+)
 def test_rr_operative_thresholds_unchanged(prompt_name: str) -> None:
     """The correction was to the REASON, not the rule. 1.5 must still be
     the catalyst-free floor everywhere it was before — this branch is not

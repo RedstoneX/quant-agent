@@ -19,6 +19,7 @@ import yaml
 from src.pipeline import TradingPipeline, _reason_cites_hard_trigger
 from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
 from src.risk.exit_refusal import (
+    CODE_AI_RISK_OBJECTED,
     CODE_AI_RISK_REJECT,
     CODE_AI_RISK_UNAVAILABLE,
     CODE_HARD_TRIGGER_UNCERTAIN,
@@ -280,19 +281,26 @@ def test_ai_approval_cannot_override_an_unnamed_trigger_drop():
     )
 
 
-def test_parseable_ai_reject_of_a_cover_records_cover_not_sell():
+def test_parseable_ai_objection_to_a_cover_records_cover_not_sell():
+    """REWRITTEN 2026-09-19 (was `..._ai_reject_of_a_cover_...`, asserting
+    the COVER was vetoed with `ai_risk_reject`, dropped=True). Owner ruling:
+    the seat may not block a COVER. The objection is recorded — still as a
+    COVER, not relabelled SELL — and nothing is dropped."""
     pipeline = _risk_pipeline(_verdict(False, "cover is not justified"))
     vetoed, verdict = pipeline._risk_review_exits(
         _review_with(action="COVER", reason="thesis_invalid_if triggered"),
         [_position("AAA", qty=-10)], run_id="r1", total_value=100_000.0,
     )
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     payloads = _payloads(pipeline)
     assert any(
-        p["code"] == CODE_AI_RISK_REJECT and p["dropped"] is True
+        p["code"] == CODE_AI_RISK_OBJECTED and p["dropped"] is False
         and p.get("action") == "COVER"
+        and "cover is not justified" in p["detail"]
+        and "not applied — owner ruling 2026-09-19" in p["detail"]
         for p in payloads
     )
+    assert not any(p["code"] == CODE_AI_RISK_REJECT for p in payloads)
 
 
 def test_unnamed_skip_is_recorded_before_the_risk_manager_call():
@@ -310,16 +318,22 @@ def test_unnamed_skip_is_recorded_before_the_risk_manager_call():
     )
 
 
-def test_executor_still_skips_a_symbol_vetoed_by_ai_risk():
+def test_executor_no_longer_skips_a_symbol_named_by_ai_risk():
+    """REWRITTEN 2026-09-19 (was `test_executor_still_skips_a_symbol_vetoed_
+    by_ai_risk`). Owner ruling: the AI Risk seat may not block an exit, so a
+    symbol in `risk_vetoed_symbols` is NOT skipped — it goes on to the
+    code-owned gates. Observable: the holding-discipline fact check, which
+    runs after the point where the old skip `continue`d, is reached. (The old
+    assertion `orders == []` is not usable here: this fixture never places
+    an order either way.)"""
     pipeline = _risk_pipeline(_verdict(True))
     pipeline._format_qty = lambda q: str(q)
     pipeline._full_sell_qty = lambda q: q
-    orders = pipeline._midday_execute_llm_actions(
+    pipeline._midday_execute_llm_actions(
         positions=[_position("AAA")], review=_review_with(), run_id="r1",
         risk_vetoed_symbols={"AAA"},
     )
-    assert orders == []
-    pipeline.broker.submit_order.assert_not_called()
+    pipeline.db.get_prior_holding_protection_break.assert_called()
 
 
 def test_matcher_exception_fails_open_on_the_phrase_gate(monkeypatch):

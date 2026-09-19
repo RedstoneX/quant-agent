@@ -252,7 +252,9 @@ failure mode; it does not demonstrate a better verdict. That is a
 paper-trading question — see `DECISION_CHAIN_AUDIT.md` (F5).
 
 Not a change to what RM may DO. Veto authority, the modification hierarchy,
-and every deterministic risk and execution semantic are untouched.
+and every deterministic risk and execution semantic are untouched. (Since
+superseded on the RM side by the owner ruling of 2026-09-19: the seat is now
+advisory and its veto and modifications are recorded, never applied.)
 
 ### What the failures actually were
 

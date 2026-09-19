@@ -245,7 +245,9 @@ _STATUS_LABELS: dict[str, str] = {
     "nothing_new": "nothing new was filed",
     "market_holiday": "the market was shut",
     "early_close": "the market closed early",
-    "rejected": "the risk check turned the plan down",
+    # Since the 2026-09-19 owner ruling only the code-owned exit-claim check
+    # ends a run with this status; the AI risk reviewer is advisory.
+    "rejected": "the desk's own exit-claim check refused every remaining trade",
     "hard_risk_block": "blocked by the risk rules",
     "symbol_block": "blocked by the risk rules",
     "buys_unfunded": "there was not enough cash to fund the trade",

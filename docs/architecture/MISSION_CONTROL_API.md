@@ -140,7 +140,14 @@ Risk-stage rows are:
   2026-09-19 this carried the constant `risk_manager_verdict` and read
   `modified` for any symbol the seat merely named in an edit.)
 - `risk` / `rejected` on a book-level veto carries the symbol's own reason
-  where the seat named it, with `book_level_reason` beside it.
+  where the seat named it, with `book_level_reason` beside it. (Pre-2026-09-19
+  rows only. Since the owner ruling the seat is advisory: a veto, refusal,
+  edit or `scale_all_buys` is `risk` / `objection_not_applied`,
+  `gate=risk_manager_advisory`, reason "the risk reviewer objected: …; not
+  applied — owner ruling 2026-09-19". The seat's own `verdict`,
+  `modification` and `rejection` rows carry `applied: false`; the candidate
+  detail exposes it as `risk_verdict.applied` and `risk_modification_applied`,
+  and the funnel's `risk_modified` is false for such a row.)
 - `risk` / `dropped` (`gate=rm_modification_schema_invalid` or
   `rm_enlargement_revert_failed`) and `risk` / `modification_not_applied`
   (`rm_modification_unknown_field`, `rm_modification_no_matching_decision`).

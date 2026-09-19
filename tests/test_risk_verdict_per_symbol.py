@@ -137,13 +137,26 @@ def _events(pipeline) -> list[tuple[str, str, str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# The defect itself
+# The defect itself — and, since the owner ruling of 2026-09-19, the ruling
 # ---------------------------------------------------------------------------
+#
+# REWRITTEN 2026-09-19. These tests used to assert that a per-symbol refusal
+# DROPPED that leg and that `approved=False` refused every leg. The owner ruled
+# that the risk seat is ADVISORY: every refusal and veto is recorded with its
+# reason and NOT applied (src/risk/risk_seat_advisory.py). Each test below
+# keeps its original scenario and now asserts the ruling instead.
+
+RULING = "not applied — owner ruling 2026-09-19"
+
+
+def _risk_event(pipeline, symbol):
+    return [e for e in _events(pipeline) if e[0] == symbol and e[1] == "risk"]
+
 
 def test_refusing_xle_no_longer_kills_chpx():
-    """run-64290730, reproduced. One leg fails its own R/R floor; the other
-    is in a different sector on an unrelated thesis and passes. Before this
-    change the only lever available took both."""
+    """run-64290730, reproduced. The refusal of XLE is now recorded, not
+    applied — and CHPX, the leg that was killed alongside it in 2026-09-01,
+    is untouched either way."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
@@ -157,13 +170,14 @@ def test_refusing_xle_no_longer_kills_chpx():
 
     # None == "carry on to execution". A dict would be a terminal refusal.
     assert result is None
-    assert _symbols(ctx) == ["CHPX"], (
-        "the passing leg must survive a refusal aimed at a different symbol"
+    assert _symbols(ctx) == ["XLE", "CHPX"], (
+        "an advisory refusal must not remove the leg it names"
     )
 
 
 def test_the_refused_symbol_carries_its_own_reason_not_the_runs():
-    """The audit trail has to answer 'why did THIS name die', per name."""
+    """The audit trail still answers 'what did the reviewer say about THIS
+    name', per name — and says it was not applied."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
@@ -174,11 +188,16 @@ def test_the_refused_symbol_carries_its_own_reason_not_the_runs():
 
     RiskStage(pipeline=pipeline).run(_ctx(decisions))
 
-    risk_events = [e for e in _events(pipeline) if e[1] == "risk"]
-    assert ("XLE", "risk", "rejected", XLE_RR) in risk_events
-    assert not [e for e in risk_events if e[0] == "CHPX" and e[2] == "rejected"]
+    [xle_event] = _risk_event(pipeline, "XLE")
+    assert xle_event[2] == "objection_not_applied"
+    assert XLE_RR in xle_event[3]
+    assert xle_event[3].startswith("the risk reviewer objected: ")
+    assert xle_event[3].endswith(RULING)
+    assert "run-level narrative" not in xle_event[3]
+    assert [e[2] for e in _risk_event(pipeline, "CHPX")] == ["approved"]
+    assert not [e for e in _events(pipeline) if e[2] == "rejected"]
 
-    # And a durable per-symbol evidence row, the same way a modification gets one.
+    # And a durable per-symbol evidence row, marked as not applied.
     rejection_rows = [
         c.kwargs for c in pipeline.db.insert_specialist_evidence.call_args_list
         if c.kwargs.get("kind") == "rejection"
@@ -186,13 +205,15 @@ def test_the_refused_symbol_carries_its_own_reason_not_the_runs():
     assert len(rejection_rows) == 1
     assert rejection_rows[0]["symbol"] == "XLE"
     assert rejection_rows[0]["scope"] == "symbol"
-    assert XLE_RR in rejection_rows[0]["evidence_json"]
+    row = json.loads(rejection_rows[0]["evidence_json"])
+    assert row["reason"] == XLE_RR
+    assert row["applied"] is False
 
 
-def test_every_leg_refused_individually_still_ends_the_run():
-    """Per-symbol refusal is not a way to trade something. When every leg is
-    refused on its own merits the run is over — but each symbol carries its
-    own reason rather than one shared sentence about a different symbol."""
+def test_every_leg_refused_individually_no_longer_ends_the_run():
+    """Was: every leg refused on its own merits ended the run with zero
+    orders. Now both refusals are recorded and both legs go on to the code's
+    own checks."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
@@ -203,13 +224,12 @@ def test_every_leg_refused_individually_still_ends_the_run():
         reasoning="both refused, separately",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
 
-    result = RiskStage(pipeline=pipeline).run(_ctx(decisions))
-
-    assert result["status"] == "rejected"
-    assert result["orders"] == []
-    assert XLE_RR in result["reason"]
-    assert "stop sits inside the daily range" in result["reason"]
+    assert RiskStage(pipeline=pipeline).run(ctx) is None
+    assert _symbols(ctx) == ["XLE", "CHPX"]
+    assert XLE_RR in _risk_event(pipeline, "XLE")[0][3]
+    assert "stop sits inside the daily range" in _risk_event(pipeline, "CHPX")[0][3]
 
 
 def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
@@ -224,10 +244,14 @@ def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
 
     assert RiskStage(pipeline=pipeline).run(ctx) is None
     assert _symbols(ctx) == ["CHPX"]
+    # Recorded run-scoped, never as a symbol-scoped row for a name the run
+    # never considered.
+    run_scoped = [e for e in _events(pipeline) if e[0] is None and e[1] == "risk"]
+    assert run_scoped and XLE_RR in run_scoped[0][3]
 
 
 # ---------------------------------------------------------------------------
-# What must NOT change: the book-level veto
+# The whole-plan veto — recorded, not applied (owner ruling 2026-09-19)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("category,reasoning", (
@@ -238,10 +262,13 @@ def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
     ("oversized",
      "system is in drawdown; no new risk is appropriate today"),
 ))
-def test_book_level_failure_still_refuses_every_leg(category, reasoning):
-    """Correlation clusters, total exposure and drawdown state are properties
-    of the WHOLE account. When the book is the problem, killing every leg
-    remains the correct answer and this change must not soften it."""
+def test_book_level_objection_is_recorded_on_every_leg_and_refuses_none(
+    category, reasoning,
+):
+    """Was: a book-level veto refused every leg. The book-level limits these
+    reasons name are enforced by CODE (the hard filter, the risk budget,
+    the drawdown halving) before the seat speaks; the seat's opinion of the
+    book is now recorded against every leg and applied to none."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category=category,
@@ -250,16 +277,16 @@ def test_book_level_failure_still_refuses_every_leg(category, reasoning):
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
 
-    result = RiskStage(pipeline=pipeline).run(ctx)
+    assert RiskStage(pipeline=pipeline).run(ctx) is None
+    assert _symbols(ctx) == ["XLE", "CHPX"]
+    for sym in ("XLE", "CHPX"):
+        [event] = _risk_event(pipeline, sym)
+        assert event[2] == "objection_not_applied"
+        assert reasoning in event[3] and event[3].endswith(RULING)
+    assert not [e for e in _events(pipeline) if e[2] == "rejected"]
 
-    assert result == {"status": "rejected", "orders": [], "reason": reasoning}
-    rejected = {e[0] for e in _events(pipeline) if e[1] == "risk" and e[2] == "rejected"}
-    assert rejected == {"XLE", "CHPX"}
 
-
-def test_book_level_veto_wins_over_a_per_symbol_list():
-    """A verdict that sets both refuses everything. `approved=False` is
-    evaluated first and is never narrowed by what the symbol list says."""
+def test_book_level_objection_and_a_per_symbol_one_are_both_recorded():
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
@@ -269,15 +296,15 @@ def test_book_level_veto_wins_over_a_per_symbol_list():
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
 
-    result = RiskStage(pipeline=pipeline).run(ctx)
+    assert RiskStage(pipeline=pipeline).run(ctx) is None
+    assert _symbols(ctx) == ["XLE", "CHPX"]
+    xle_reason = _risk_event(pipeline, "XLE")[0][3]
+    assert "the book itself is the problem" in xle_reason and XLE_RR in xle_reason
 
-    assert result["status"] == "rejected"
-    assert _symbols(ctx) == ["XLE", "CHPX"], "no leg survives a book-level veto"
 
-
-def test_scale_all_buys_still_applies_to_the_survivors():
-    """Portfolio-level sizing is untouched by this change: it applies to
-    whatever remains after a per-symbol refusal, exactly as before."""
+def test_scale_all_buys_is_recorded_and_not_applied():
+    """Was: `scale_all_buys=0.5` halved every surviving entry. Now the sizes
+    are the constructor's, unchanged, and the request is on the record."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
@@ -288,9 +315,9 @@ def test_scale_all_buys_still_applies_to_the_survivors():
     ctx = _ctx(decisions)
 
     assert RiskStage(pipeline=pipeline).run(ctx) is None
-    survivors = ctx.portfolio_decision.decisions
-    assert [d.symbol for d in survivors] == ["CHPX"]
-    assert survivors[0].allocation_pct == pytest.approx(3.0)  # 6.0 x 0.5
+    sizes = {d.symbol: d.allocation_pct for d in ctx.portfolio_decision.decisions}
+    assert sizes == {"XLE": 5.0, "CHPX": 6.0}
+    assert "scale every new entry by 0.5" in _risk_event(pipeline, "CHPX")[0][3]
 
 
 def test_an_empty_verdict_behaves_exactly_as_before():
@@ -517,7 +544,10 @@ def _two_exits():
     )
 
 
-def test_a_per_symbol_refusal_vetoes_only_that_exit():
+def test_a_per_symbol_refusal_of_an_exit_is_recorded_not_applied():
+    """REWRITTEN 2026-09-19. Was: the refusal vetoed that exit. The owner
+    ruled the seat may not block a SELL / REDUCE / COVER; the objection is
+    recorded against that exit with its own reason."""
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(),
         rejected_symbols=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
@@ -530,15 +560,20 @@ def test_a_per_symbol_refusal_vetoes_only_that_exit():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     assert returned is verdict
-    detail = pipeline.db.record_intraday_evaluation.call_args.kwargs["detail"]
-    assert detail == "invalidation not confirmed", (
-        "the vetoed exit must record ITS OWN reason, not the run narrative"
+    call = pipeline.db.record_intraday_evaluation.call_args.kwargs
+    assert call["symbol"] == "AAA"
+    assert call["status"] == "exit_objection_by_ai_risk_not_applied"
+    assert "invalidation not confirmed" in call["detail"]
+    assert "BBB may exit" not in call["detail"], (
+        "the exit must record ITS OWN reason, not the run narrative"
     )
+    assert call["detail"].endswith(RULING)
 
 
-def test_book_level_veto_still_holds_every_exit():
+def test_book_level_objection_holds_no_exit():
+    """REWRITTEN 2026-09-19. Was: `approved=False` held every exit."""
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(),
         reasoning="drawdown state — hold everything",
@@ -550,25 +585,34 @@ def test_book_level_veto_still_holds_every_exit():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA", "BBB"}
+    assert vetoed == set()
+    recorded = {
+        c.kwargs["symbol"] for c in pipeline.db.record_intraday_evaluation.call_args_list
+        if c.kwargs["status"] == "exit_objection_by_ai_risk_not_applied"
+    }
+    assert recorded == {"AAA", "BBB"}
 
 
 # ---------------------------------------------------------------------------
 # The model has to know the field exists
 # ---------------------------------------------------------------------------
 
-def test_prompt_teaches_the_field_and_the_book_level_distinction():
-    """A schema the model does not know about produces malformed responses,
-    which fail closed and trade nothing — the exact outcome being removed."""
+def test_prompt_teaches_the_field_and_that_nothing_is_applied():
+    """A schema the model does not know about produces malformed responses.
+    REWRITTEN 2026-09-19: the prompt used to teach the book-level veto; it
+    now teaches that every field is recorded and none is applied."""
     text = PROMPT_PATH.read_text()
     assert "`rejected_symbols`" in text
     assert '"rejected_symbols"' in text, "the JSON example must carry the field"
-    # The distinction is the whole task; the prompt must state both halves.
-    assert "Do NOT use it when the failure belongs to the BOOK" in text
-    assert "refusing everything is still the correct answer" in text
+    assert "none is applied" in text
+    assert "Recorded, not applied" in text
 
 
-def test_prompt_still_reserves_the_whole_plan_veto_for_the_book():
+def test_prompt_no_longer_instructs_a_veto():
+    """REWRITTEN 2026-09-19 (was: the prompt still reserves the whole-plan
+    veto for the book). The ruling removes every instruction to veto."""
     text = PROMPT_PATH.read_text()
-    assert "**Veto is nuclear.**" in text
-    assert "Err on the side of capital preservation" in text
+    assert "**Veto is nuclear.**" not in text
+    assert "You have veto power" not in text
+    assert "nuclear option" not in text
+    assert "err on the side of capital preservation" in text.lower()

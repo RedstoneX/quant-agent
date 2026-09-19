@@ -692,13 +692,22 @@ def _risk_pipeline(verdict=None, raises=False):
     return pipeline
 
 
-def test_ai_risk_can_veto_an_exit():
+def test_ai_risk_can_no_longer_veto_an_exit():
+    """REWRITTEN 2026-09-19 (was `test_ai_risk_can_veto_an_exit`). Owner
+    ruling: the seat is advisory and may not block a SELL / REDUCE / COVER.
+    Its objection is recorded and the veto set is empty."""
     pipeline = _risk_pipeline(_verdict(False, "thesis is not actually broken"))
     vetoed, verdict = pipeline._risk_review_exits(
         _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
     )
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     assert verdict is not None and verdict.approved is False
+    statuses = [
+        c.kwargs.get("status")
+        for c in pipeline.db.record_intraday_evaluation.call_args_list
+    ]
+    assert "exit_objection_by_ai_risk_not_applied" in statuses
+    assert "exit_vetoed_by_ai_risk" not in statuses
 
 
 def test_ai_risk_approval_lets_the_exit_through():
@@ -711,8 +720,9 @@ def test_ai_risk_approval_lets_the_exit_through():
 
 
 def test_ai_risk_failure_fails_OPEN_for_exits():
-    """Owner-ratified asymmetry (2026-08-27). The entry path fails CLOSED with
-    zero orders; the exit path must not, because failing closed on an exit
+    """Owner-ratified asymmetry (2026-08-27). (Since the 2026-09-19 ruling the
+    entry path fails open too — the seat is advisory.) The exit path must
+    not fail closed, because failing closed on an exit
     means a thesis-invalidated position cannot be closed while a language
     model is unavailable. The deterministic gates have already run."""
     pipeline = _risk_pipeline(verdict=None)

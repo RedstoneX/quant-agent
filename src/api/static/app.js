@@ -932,9 +932,17 @@ function decisionChain(detail) {
       body.push(
         el("div", { className: "kv-row" }, [
           el("span", { className: "kv-label", text: "Verdict" }),
-          el("span", { className: "kv-value" }, [pill(v.approved ? "approved" : "rejected")]),
+          el("span", { className: "kv-value" }, [pill(
+            detail.risk_verdict.applied === false
+              ? (v.approved ? "no objection" : "objected (not applied)")
+              : (v.approved ? "approved" : "rejected")
+          )]),
         ])
       );
+      if (detail.risk_verdict.applied === false) {
+        body.push(el("p", { className: "card-text", text:
+          "Advisory: nothing in this verdict was applied to any trade — owner ruling 2026-09-19." }));
+      }
       body.push(kv("Reason category", v.reason_category));
       body.push(kv("Scale all buys", `${fmtNum(v.scale_all_buys)}x`));
       body.push(el("p", { className: "card-text", text: v.reasoning }));
@@ -959,12 +967,15 @@ function decisionChain(detail) {
 
   if (detail.risk_modification) {
     const m = detail.risk_modification;
+    const notApplied = detail.risk_modification_applied === false;
     steps.push({
-      title: "AI Risk Manager modification (this symbol)",
+      title: notApplied
+        ? "AI Risk Manager objection (this symbol) — not applied, owner ruling 2026-09-19"
+        : "AI Risk Manager modification (this symbol)",
       body: [
         kv("Field", m.field),
         kv("Original", fmtNum(m.original_value)),
-        kv("Modified to", fmtNum(m.new_value)),
+        kv(notApplied ? "Reviewer asked for" : "Modified to", fmtNum(m.new_value)),
         el("p", { className: "card-text", text: m.reason }),
       ],
     });

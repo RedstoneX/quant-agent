@@ -61,6 +61,20 @@ _TECH_DIRECTION = {
 }
 
 
+def _seat_row_applied(data) -> bool | None:
+    """The `applied` marker the risk stage writes on the risk seat's evidence
+    rows since the owner ruling of 2026-09-19 (the seat is advisory; its
+    output is recorded and not applied). `False` for those rows; `None` for a
+    pre-ruling row with no marker, which WAS applied at the time.
+
+    The key is spelled out rather than imported from
+    `src.risk.risk_seat_advisory.APPLIED_KEY`: API modules may not import
+    the risk package (tests/test_api_safety.py)."""
+    if isinstance(data, dict) and data.get("applied") is False:
+        return False
+    return None
+
+
 def _parse_evidence(row: dict):
     try:
         return json.loads(row["evidence_json"])
@@ -121,8 +135,10 @@ def _run_scoped_context(run_rows: list[dict]) -> tuple:
     risk_verdict = None
     verdict_row = _find(run_rows, "risk_manager", "verdict")
     if verdict_row:
+        raw_verdict = _parse_evidence(verdict_row)
         risk_verdict = RiskManagerVerdict(
-            verdict=_validate(RiskVerdict, _parse_evidence(verdict_row)),
+            verdict=_validate(RiskVerdict, raw_verdict),
+            applied=_seat_row_applied(raw_verdict),
             timestamp=verdict_row.get("timestamp"),
         )
 
@@ -194,6 +210,9 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
     risk_modification = (
         _validate(RiskModification, _parse_evidence(mod_row)) if mod_row else None
     )
+    risk_modification_applied = (
+        _seat_row_applied(_parse_evidence(mod_row)) if mod_row else None
+    )
 
     pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)
 
@@ -262,7 +281,9 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         macro_context=macro_context, news_context=news_context,
         pm_reasoning=pm_reasoning, pm_target=pm_target,
         pm_proposed_order=pm_proposed_order, risk_verdict=risk_verdict,
-        risk_modification=risk_modification, trade=trade, trades=trade_items,
+        risk_modification=risk_modification,
+        risk_modification_applied=risk_modification_applied,
+        trade=trade, trades=trade_items,
         pipeline_events=_pipeline_events(symbol_rows),
         consensus=ConsensusSummary(signals=signals, agreement=agreement),
     )
@@ -325,7 +346,15 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
         if reached_proposed:
             proposed_order_count += 1
 
-        risk_modified = _find(rows, "risk_manager", "modification") is not None
+        # A seat edit recorded under the 2026-09-19 owner ruling carries
+        # `applied: false` — it changed nothing, so the funnel must not say
+        # "Modified by AI Risk Manager". Pre-ruling rows have no marker and
+        # were applied.
+        _mod_row = _find(rows, "risk_manager", "modification")
+        risk_modified = (
+            _mod_row is not None
+            and _seat_row_applied(_parse_evidence(_mod_row)) is not False
+        )
 
         skip_row = _find(rows, "execution", "execution_skip")
         skip = _parse_evidence(skip_row) if skip_row else None

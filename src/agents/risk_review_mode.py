@@ -43,6 +43,10 @@ steps were skipped" — and 330 set `reason_category: "data_degraded"` on that
 basis, which feeds PM's self-calibration. The system recorded, permanently and
 untruthfully, that an analyst skipped a safety check.
 
+**Since the owner ruling of 2026-09-19 the seat is ADVISORY on both paths**
+— its veto and refusals are recorded and never applied — so the paragraph
+below is the history of why the exit direction was the dangerous one.
+
 **Why the direction still matters.** A veto on the morning path stops a
 PURCHASE, and not buying costs nothing. A veto on THIS path stops a SALE: the
 position stays on the book overnight with only the broker stop behind it.
@@ -147,14 +151,14 @@ You are reviewing the **position reviewer's decisions to CLOSE or REDUCE
 positions the desk already holds**. Some standing instructions were written for
 the morning plan and are wrong here.
 
-**Which way a mistake costs.** Refusing a BUY means not buying, which costs
-nothing. Refusing an exit leaves the position ON THE BOOK overnight with only
-the broker stop behind it.
+**Your review is advisory — you cannot block an exit** (owner ruling
+2026-09-19). An objection (`approved: false`, or the symbol in
+`rejected_symbols` with a reason) is recorded and shown to the owner; the
+exit still goes to the code-owned checks below.
 
-**Refusal is your only lever.** `modifications` and `scale_all_buys` are **not
-fields of this path's output** — do not emit them; nothing applies either. The
-% is the position reviewer's call on its own position; do not size it and do
-not comment on it. Approve, or name the symbol in `rejected_symbols`.
+`modifications` and `scale_all_buys` are **not fields of this path's output**
+— do not emit them. The % is the position reviewer's call on its own
+position; do not size it and do not comment on it.
 
 **Does not apply here.** `rr_audit`, `sizing_sanity` and `event_risk` are
 OPTIONAL here — omit them rather than explaining why they do not apply.
@@ -167,14 +171,13 @@ OPTIONAL here — omit them rather than explaining why they do not apply.
 - **Checklist 2 / Risk-Reward** — `$0.0` entry, stop and target are structural:
   an exit has no entry geometry. No ratio to audit, none to compute.
 - **Checklist 5** — no BUYs or SHORTs here to size.
-- **Checklist 4** — the instruction INVERTS. "Downsize or reject" on an event
-  inside the window was written for an entry, where refusing carries LESS risk
-  through the event; refusing HERE carries the position THROUGH it. Event
-  proximity is **not a reason to refuse an exit**, and an unfetched calendar is
-  **not `data_degraded`** here. Report a date that bears on the exit, or omit.
+- **Checklist 4** — event proximity is **not a reason to object to an exit**:
+  closing before an event carries LESS risk through it, not more. An unfetched
+  calendar is **not `data_degraded`** here. Report a date that bears on the
+  exit, or omit.
 
-**Checklist 8 still applies and is the substance of your job.** Four Python
-gates run on each exit — but after you speak, and all four are narrow: the
+**Checklist 8 still applies and is the substance of your review.** Four
+Python gates run on each exit — after you speak, and all four are narrow: the
 named-trigger gate checks only that the reason says recognised words, not that
 the claim is true; the noise band is bypassed whenever the reason cites
 external information, which the trigger gate all but requires; the
@@ -183,11 +186,12 @@ for that symbol; and `holding_discipline_claim_check` examines only a claimed
 regime flip or HIGH-conviction bearish state change, only while the position is
 still structurally protected, and passes every unverifiable claim by design.
 **None of them can catch a plausibly-worded, deterministically-clean exit that
-is simply wrong.** That gap is the job: does the named trigger hold up against
-the blocks you were given, and is closing the right response to it?
+is simply wrong.** That gap is what your written review is for: does the named
+trigger hold up against the blocks you were given, and is closing the right
+response to it? Say so, with the fact, so the owner can read it.
 
 A block marked unavailable below is a fact about this code path, not an
-analyst's omission, and is not on its own a reason to refuse. Say which
+analyst's omission, and is not on its own a reason to object. Say which
 questions you could not answer rather than answering them from something you
 were not shown.
 """
@@ -289,7 +293,7 @@ _ABSENT = {
             "session. Nobody skipped a step. Checklist 8 tells you to check "
             "the News and Tech blocks for the claimed trigger; the Tech half "
             "cannot be done here. Do not infer a rating, do not read the "
-            "silence as bearish or bullish, and do not refuse an exit for "
+            "silence as bearish or bullish, and do not object to an exit for "
             "lacking Tech confirmation. Say so in `signal_fidelity`."
         ),
     },
@@ -302,7 +306,7 @@ _ABSENT = {
             "nothing or failed (recorded in the run's coverage log). Treat "
             "today's news as UNKNOWN rather than as quiet and say so in "
             "`signal_fidelity`. A news claim you cannot verify is a reason to "
-            "say it is unverified, not on its own a reason to refuse.\n"
+            "say it is unverified, not on its own a reason to object.\n"
         ),
     },
 }

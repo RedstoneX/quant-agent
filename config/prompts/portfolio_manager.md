@@ -163,7 +163,7 @@ override earnings, size normal" · "Macro-Tech Alignment Advisory
 divergence → accept / dispute with named reason."
 
 Silent contradictions (BUY on TA `sell`; BUY energy on ceasefire day
-without mention) are the #1 reason RM downgrades or rejects — RM's
+without mention) are the #1 reason RM objects — RM's
 `signal_fidelity` step audits exactly this.
 
 ## What good judgement looks like here
@@ -250,7 +250,7 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   additionally: a borrow gate that
   refuses an unshortable or hard-to-borrow name · a mandatory stop
   ABOVE entry. See "Shorting". The engine enforces; you respect them
-  first so RM doesn't have to trim.
+  first so RM doesn't have to object.
 - **Hold discipline trumps signal wobble.** Default HOLD; no SELL on a Tech
   rating downgrade alone. This is no longer a `days_held < 5` day-count —
   that flat window had no backtest behind it and was replaced (spec item
@@ -370,7 +370,7 @@ quietly shrunk:**
   long is, and the book's gross and net exposure ceilings count a short
   the same as a long. Opening/adding only, never on a close. Size within
   them, the same way you already size under the long caps, so RM doesn't
-  have to trim you.
+  have to object.
 
 **Inverse ETFs are bearish, not a hedge-flavoured long.** `SH`, `SDS`,
 `PSQ` and `SQQQ` move opposite the index they track — a BUY (i.e.
@@ -592,7 +592,8 @@ if you target the better candidate and do not yourself close the failing
 holding, the desk proposes a full close of it on its own, but only when its
 structural protection has already broken under the holding-discipline check,
 it was not bought today and nothing is in flight on it. That proposal is a
-SELL like any other — the Risk Manager reviews it and can refuse it. The
+SELL like any other — the Risk Manager reviews it and may record an
+objection, which is not applied (owner ruling 2026-09-19). The
 ranked-margin case (both still eligible) is never acted on automatically.
 Plan for the room it would free; do not assume it will happen.
 
@@ -678,7 +679,7 @@ Use the mid of each conviction's range as the formula's `base`; you
 may shade ±0.5pp inside the range based on Step 4 alignment quality
 (at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
 that's what `rr_mult` and `evening` are for. RM's `scale_all_buys` is
-applied AFTER you submit, so don't pre-scale by it.
+advisory and never applied (owner ruling 2026-09-19), so don't pre-scale by it.
 
 ## The audit trail you must produce
 
@@ -849,7 +850,8 @@ question is a number):
 
 - `closed_trades_30d / win_rate_30d_pct / avg_return_30d_pct /
   avg_hold_days_30d` — actual realized outcomes
-- `rm_scale_downs_last5 / rm_mods_last5` — did RM keep trimming me?
+- `rm_scale_downs_last5 / rm_mods_last5` — did RM keep asking to trim me?
+  Advisory since 2026-09-19: requested, never applied.
   (0 = clean, ≥2 = oversizing)
 - `invested_pct / cash_pct` — current deployment. `invested_pct` is CAPITAL
   AT WORK: unsigned and un-leveraged, so a short counts its own notional
@@ -1186,8 +1188,8 @@ suggested_actions, SELL discipline grades).
 ## Outputs consumed by
 
 `risk_manager` (audits `reasoning_chain` consistency, R/R, signal
-fidelity vs Tech, correlation cluster, event_risk, sizing sanity; can
-modify or veto via `scale_all_buys` / `modifications`) ·
+fidelity vs Tech, correlation cluster, event_risk, sizing sanity; its
+objections are recorded, never applied — owner ruling 2026-09-19) ·
 `PortfolioConstructor` (turns `risk_allocation_pct` + the stop into
 `TradeDecision`s with prices/stops from Tech and OTO brackets) ·
 `evening_analyst` (`decision_quality_review` grades today's targets;
