@@ -22,6 +22,70 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — one broken line in the technical seat's answer threw away every good stock beside it
+
+**What broke, in one line:** when the technical seat answered about several
+stocks and made a typing slip in one of them, the desk kept one stock from
+the whole answer, told the log the model "had not answered" the rest, and
+sometimes lost good analyses permanently.
+
+**Why it mattered more after 2026-09-18.** The owner ruled that only the
+technical seat may stop the desk, and a stock the seat fails on counts as
+lost evidence. A parsing slip was therefore able to stop a decision.
+
+**The cause.** When an answer is not valid JSON as a whole, the shared
+parser (`AgentResult.parse_json`, used by every seat) picks ONE well-formed
+fragment. For the technical seat, whose answer is a list of stocks, that
+meant keeping one stock and discarding the rest. The seat then logged the
+discarded stocks as `missing-from-response` and re-asked for them; the retry
+could fail the same way.
+
+**Worked case, from the stored answers** (`agent_logs` row 456, run
+`intra_check-26f52bf2`, 2026-09-17 14:31): five stocks asked; the answer
+carried all five, SQQQ with a stray `n/a` line; ZS alone was kept. The retry
+of the other four came back with all four, SQQQ garbled again (`s"thesis_...`);
+MTZ alone was kept. ORCL and ETN were lost although both answers carried them
+well-formed.
+
+**Measured across every stored technical-seat answer** (292 answers in
+`agent_logs`, 2026-08-17 to 2026-09-18): 9 answers carried exactly one
+broken stock; in those 9 the old parser kept 9 stocks and the new one keeps
+54 — 45 good analyses recovered. On the other 283 answers the new parser
+returns exactly what the old one did.
+
+**The fix.** The technical seat now parses its answer stock by stock
+(`AgentResult.parse_json_rows`, opt-in; `parse_json` is unchanged for every
+other seat). A good stock is kept; a broken one is dropped on its own, logged
+with its symbol and the decoder's reason, and counted as a dropped item. Only
+the broken and genuinely absent stocks are re-asked. Log lines now name three
+causes apart: `validation-failed`, `malformed-in-response`, and
+`missing-from-response` (now meaning only what it says). The final loss line
+says, per stock, whether it was returned but unusable or absent from every
+answer. The row splitter resets its "inside a string" state at each line
+break, because JSON forbids a raw line break inside a string (RFC 8259 §7),
+so one missing quote cannot swallow the stocks after it.
+
+**Not done: constrained output on the Google route.** The Google-direct call
+already sends a response schema for any seat that declares one; the
+technical seat declares none, on either route. Adding one is not small:
+(1) its answer is a bare list, and the strict OpenAI-style schema this code
+builds requires an object at the top, so the prompt, parser and prompt
+snapshot tests would move to a wrapper object; (2) the result model carries
+eight fields the desk fills in itself (`atr_14`, `computed_levels`,
+`computed_level_touches`, `levels_coverage`, `signal_bar_low`,
+`signal_bar_high`, `bars_available`, `signal_age_days`), so a separate
+model-facing schema is needed; (3) `computed_level_touches` is a free-form
+map, which forces `strict=false` anyway; (4) whether Google's OpenAI-
+compatible endpoint then enforces the schema has not been tried on a live
+call. The per-stock parse above does not depend on any of that.
+
+**What still loses a stock.** A slip that unbalances braces (an extra `{`
+or a missing `}`) can merge two stocks into one broken piece; the first is
+then reported as broken, the second as absent, and both are re-asked. Not
+seen in the 292 stored answers.
+
+---
+
 ### 2026-09-18 — the risk seat's three sizing defects, one real and two that did not survive a check (items 135, 136, 137 closed)
 
 **What broke, in one line:** of three reported position-sizing defects, one was real and live (a short could be enlarged by an edit meant to shrink it), one was real but had never once fired in production (a levered ETF's size was shown to the risk seat in the wrong units), and the third — as filed — was wrong on both of its own claims; the actual, much smaller defect underneath it is what was fixed.
@@ -12035,6 +12099,66 @@ rewrite the same day may have already made the first two moot by replacing
 the code path they describe — that has not been separately re-verified and
 should be checked against current `src/data/smart_money.py` before treating
 them as still live.
+
+**Follow-up 2026-09-19 — the PR #529 drain could never finish, and its
+watermark hid the whole trading day's filings.** In plain words: the check
+that was supposed to confirm "every filing on our own companies has been
+read" had to read about 5,400 filings in the 30 or so seconds left over from
+another job, so it never confirmed anything and the insider evidence was
+marked out of date on every check. It now has its own time allowance, keeps
+its progress company by company, and says exactly how many companies are
+fully read.
+
+- *Measured* (read-only against SEC, 2026-09-19, the desk's own User-Agent
+  and 8 requests/second limiter): 82 watched companies; 5,801 insider
+  filings inside the 365-day window, 5,431 of them unread, on 76 of the 82
+  companies; 11.0 s to fetch all 82 filing histories; 0.156 s per filing
+  read over 40 reads. Reading the backlog therefore takes about 858 s. The
+  drain shared the market-wide pass's 180 s, and that pass ran first and
+  took ~153 s by itself (journal, 2026-09-18 12:00:41 -> 12:03:14 UTC).
+- *Fixed — own budget.* `watched_drain_deadline_s` (859 s, derivation at
+  its definition in `src/config.py`) starts after the market-wide pass is
+  done. A test checks that the whole pre-market job still fits inside its
+  systemd limit of 1,260 s.
+- *Fixed — progress kept per company.* `watched_read_through_by_cik`
+  records each company the moment nothing on it is left unread; companies
+  are read smallest-backlog first. A drain that runs out of time loses
+  nothing and the next morning resumes. The single all-companies date is
+  still written, but only when every company is read, and freshness no
+  longer uses it.
+- *Fixed — a same-day blind spot.* The single date excluded any filing
+  "dated on or before" it as backlog. The drain runs at 08:00 ET and stamped
+  today, so every filing made later that trading day carried today's date
+  and was never seen as new: a false reuse, the dangerous direction. Now a
+  company that has been fully read cannot have backlog, so any unread
+  filing on it is new.
+- *Fixed — partial coverage is never reported clean.* Morning: a run that
+  would have said `ok` or `empty` says `partial` while any watched company
+  has unread filings. Intraday: the seat is `expired` with a reason naming
+  how many companies are not yet read — including when the remembered
+  answer is empty, which used to reuse as the clean `chose_not_to_refetch`
+  on the false ground that an empty answer is classified as lost.
+- *Fixed — the pre-open alert.* Production wraps the Form 4 provider in a
+  combined provider that never passed the read-through date up, so the
+  alert would have fired every morning whatever the drain did. Its wording
+  also still said the desk "will not make a new trading decision", false
+  since PR #535 made this seat advisory.
+- *Now recorded, not only logged:* the morning backlog counts
+  (`watched_pending_filings`, `discovery_cap_reached`, companies read) are a
+  `form4_backlog` evidence row each pre-market run; the morning seat's
+  coverage is inside its `scan_summary` row.
+- *Considered and not done — seeding.* Marking the backlog as read without
+  reading it would claim a year of coverage the desk does not have, the
+  same shape as the rejected exemption above. The 365-day window is the
+  owner's behavioural bound; reading it once costs ~14 minutes of one
+  morning, and steady-state inflow is ~16 filings a day on these companies.
+- *Not changed:* `peek_accessions` and the pipeline's
+  `_peek_new_form4_accessions` have no live caller since PR #529; the
+  pipeline one now logs a failure instead of swallowing it, and the stale
+  comment calling it "kept for the producing step" is corrected. Removal is
+  left for a separate change. If the pre-market job is killed by systemd
+  mid-drain, that morning's reads are cached on disk but not recorded as
+  read; the budget test is what keeps the job inside its limit.
 
 ---
 

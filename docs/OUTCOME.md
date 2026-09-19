@@ -165,6 +165,35 @@ searched and ruled out, and what evidence would settle it. Outcome 3's rule
 that a citation "is a URL a later reader can open and check" is what the
 `source` requirement below now enforces mechanically.
 
+## No feature can be silently off, ever
+
+**ENFORCED SINCE 2026-09-19**, after an audit found `congress_enabled`
+(`SmartMoneyConfig`, shipped 2026-09-04, #271, deliberately off by default)
+had never been switched on in the five weeks since, while three owner-facing
+surfaces — the Telegram smart-money label, the pre-market refresh log line,
+and `docs/qamc_trading_desk_workflow.html` — kept describing congressional
+data as running. A switch being off is not itself a defect; nothing checking
+whether its declared state still matched its real one, or whether it existed
+at all outside its own field definition, was the defect.
+
+`src/feature_flags.py`, failing through `tests/test_feature_flags.py`
+(same `pytest` job as the number ledger above — no new required CI check
+name), requires every boolean field on every `src.config.*Config` class to
+carry an entry in `config/feature_flags.yaml` recording its EFFECTIVE value
+(`config/settings.yaml` layered over the pydantic default, resolved the same
+way `src.config.load_config` builds `AppConfig`), whether that value was
+chosen deliberately, and why. As of this writing 18 switches are declared;
+where git history and the code's own comments recorded no reason, the entry
+says "reason not recorded" rather than inventing one.
+
+**What it does not do, same caveat as the number ledger above.** It is a
+coverage and consistency check, not a proof any `reason` is true, and it
+cannot read a Telegram label, a log line, or an HTML page and check that it
+agrees with a switch's real state — that mismatch is still a human
+documentation pass. Read `src/feature_flags.py`'s docstring for the exact
+scope rule and the tri-state (`bool | None`) blind spot it flags a sentinel
+against.
+
 Every constant that governs a real trade decision — a stop distance, a
 holding period, a risk percentage, a tolerance band, the retired reward:risk
 reference a range trade's payoff is still measured against for ranking

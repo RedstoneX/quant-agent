@@ -1,0 +1,263 @@
+# The feature-flag ledger -- where every boolean switch's effective value
+# came from, and whether anyone chose it.
+#
+# WHAT THIS FILE IS. `congress_enabled` (SmartMoneyConfig, added 2026-09-04,
+# #271) shipped `False`, "off by default, opt in after review", and was never
+# switched on. That is a legitimate state for a switch to be in. What made it
+# a defect: nothing checked that its declared state (off) still matched three
+# owner-facing descriptions of it as RUNNING -- the Telegram smart-money label
+# ("the insider-and-congressional-trading feed", src/notifier.py), the
+# pre-market refresh log line ("SEC Form 4 + congressional", src/pipeline.py),
+# and docs/qamc_trading_desk_workflow.html. Nobody noticed for five weeks
+# because there was NO MECHANICAL CHECK that a switch existed, that its state
+# was declared, or that the declaration was still true.
+#
+# `src/feature_flags.py` enumerates every boolean field on every
+# `src.config.*Config` class and requires each one to appear here with its
+# EFFECTIVE value -- `config/settings.yaml` layered over the pydantic default,
+# resolved the identical way `src.config.load_config` builds `AppConfig`.
+# `tests/test_feature_flags.py` fails `pytest` (the check branch protection
+# requires) when a switch is undeclared, a declaration's value has drifted
+# from the live one, or a declaration points at a switch that no longer
+# exists. Read `src/feature_flags.py`'s module docstring for the scope rule
+# and for what this structurally cannot catch -- in particular: it cannot
+# read a Telegram label or an HTML page and check that it agrees with a
+# switch. That is still a human documentation pass, not a mechanical one.
+#
+# WHAT THIS FILE IS NOT. It is not evidence that any `reason` below is
+# correct -- only that one was written down. Where git history and the
+# code's own comments recorded nothing, `reason` is the literal string
+# "reason not recorded" rather than an invented rationale. That string is
+# itself a finding to act on, not a placeholder waiting to be filled in by
+# whoever next edits the row.
+#
+# FIELDS.
+#   id              -- `src.config.<ConfigClass>.<field>`.
+#   effective_value -- the live boolean: config/settings.yaml's value for
+#                      that section+key if present, else the pydantic field
+#                      default. Checked against the real config on every run.
+#   code_default    -- the pydantic field's own default, or `null` when the
+#                      field is required (no default at all: `paper`,
+#                      `require_stop_loss`). Recorded for readability only;
+#                      the gate checks `effective_value`, not this.
+#   intentional     -- true when a decision to set it this way is on record
+#                      (a commit, a docstring, an owner ruling); false when
+#                      the state is an artifact nobody chose (a scaffolding
+#                      default that was never revisited, a mechanical sync
+#                      of a hand-edited box).
+#   reason          -- one line, or "reason not recorded".
+#   decided         -- YYYY-MM-DD from `git log -S`/`git blame`, or `null`.
+#   source          -- a commit hash, PR number, or `path:line` a reader can
+#                      open. Never prose alone, same falsifiability rule as
+#                      config/number_ledger.yaml's `source` field.
+#
+# HOW TO ADD A FLAG. Do not invent a reason. If `git log -S "<field_name>"`
+# and `git blame` on its config/settings.yaml line give nothing, and the
+# field carries no explanatory comment or docstring in src/config.py, write
+# "reason not recorded" and leave `decided`/`source` null. That is honest;
+# guessing is not.
+
+flags:
+  - id: src.config.SmartMoneyConfig.congress_enabled
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Deliberate dark-deploy: two single-operator, no-track-record free
+      sources cross-checked against each other, shipped off so an operator
+      opts in after reviewing the PR. THE FINDING: it has stayed off for the
+      five weeks since with no re-review, while src/notifier.py's smart-money
+      label, src/pipeline.py's refresh log line, and
+      docs/qamc_trading_desk_workflow.html all describe it as running. This
+      is the switch the CI check in this file was built for.
+    decided: "2026-09-04"
+    source: "commit f5f0eec2 (#271); src/config.py:1394"
+
+  - id: src.config.CashSweepConfig.enabled
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Owner mandate, verbatim in the settings.yaml comment: "I want 100%
+      invested. I don't want anything sitting in T-bills or any other
+      positions that just yield interest." Off since.
+    decided: "2026-09-17"
+    source: "commit f25ddfd86; config/settings.yaml:1095-1101"
+
+  - id: src.config.ExecutionConfig.repeg_enabled
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Master switch for the single-shot entry reprice, deployed dark by
+      design ("the owner owns this switch" -- src/config.py docstring). Per
+      standing instruction this switch stays off and is not to be
+      re-proposed for enabling.
+    decided: "2026-08-28"
+    source: "commit 0b2982d0; src/config.py:404-407"
+
+  - id: src.config.ExecutionConfig.rotation_enabled
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      Automatic opportunity-cost rotation shipped off, then deliberately
+      turned on and filed as a board item once reviewed.
+    decided: "2026-09-12"
+    source: "commit 03f865402 (#318); config/settings.yaml:286"
+
+  - id: src.config.ExecutionConfig.fractional_enabled
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Fractional order sizing was owner-ratified and shipped; the fractional
+      broker-limits matrix (DAY tif required, no trailing stops) was measured
+      and documented around this same switch.
+    decided: "2026-09-02"
+    source: "commit b799ec8cd; config/settings.yaml:356"
+
+  - id: src.config.ExecutionConfig.fill_stream_enabled
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      Code default is off because the socket had never once authenticated
+      (1,017 auth failures, zero successes) — a placeholder credential
+      literally containing the word "placeholder". Turned on in settings.yaml
+      once the real credential was delivered and the auth failure was
+      root-caused and verified fixed. The code default staying False is
+      itself intentional: it is the safe fallback if credentials regress.
+    decided: "2026-09-18"
+    source: "commit a938e13ef (#517); config/settings.yaml:401"
+
+  - id: src.config.RiskConfig.allow_margin
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      Code default is the conservative cash-only mode ("margin leverage
+      amplifies drawdowns and is not the bot's intended mode unless
+      explicitly opted in" -- src/config.py docstring). Flipped on in
+      settings.yaml as a deliberate opt-in.
+    decided: "2026-09-02"
+    source: "commit a82f761e5; config/settings.yaml:989; src/config.py:927-931"
+
+  - id: src.config.RiskConfig.require_stop_loss
+    effective_value: true
+    code_default: null
+    intentional: false
+    reason: "reason not recorded"
+    decided: null
+    source: null
+
+  - id: src.config.IntradayScanConfig.enabled
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      Raised by hand on the production box on 2026-08-28 "to end that day's
+      outage" and later reconciled into git so the repo matched the running
+      system; not a from-scratch feature decision, but a recorded, deliberate
+      change with a stated cause.
+    decided: "2026-08-28"
+    source: "commit 1bfe0d775; config/settings.yaml:1119"
+
+  - id: src.config.SmartMoneyConfig.enabled
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      SEC Form 4 smart-money seat turned on as part of shipping the feature
+      that reads it (transient admissions).
+    decided: "2026-08-25"
+    source: "commit b1944cd08; config/settings.yaml:1127"
+
+  - id: src.config.LLMCostCircuitConfig.enabled
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Cost circuit intentionally enabled as part of bounding paid analysis
+      spend and failing closed rather than open.
+    decided: "2026-08-25"
+    source: "commit 6e4f0d077; config/settings.yaml:1421"
+
+  - id: src.config.LLMCostCircuitConfig.require_telegram_alerts
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Same commit as the cost circuit's own enable: an operator must be
+      alertable before the circuit is trusted to fail closed silently.
+    decided: "2026-08-25"
+    source: "commit 6e4f0d077; config/settings.yaml:1422"
+
+  - id: src.config.EvolutionConfig.enabled
+    effective_value: true
+    code_default: false
+    intentional: true
+    reason: >-
+      Quarterly prompt auto-evolution explicitly turned on (pre-QAMC, upstream
+      yebof commit; QAMC's own history starts 2026-08-09, so this predates the
+      desk's current owner but the commit message states the intent plainly).
+    decided: "2026-04-23"
+    source: "commit f3e5537a0 (#38); config/settings.yaml:1493"
+
+  - id: src.config.EvolutionConfig.dry_run
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Safety default so a piggybacked reflection cannot auto-commit an
+      unreviewed, polite-but-reversed prompt edit straight to git; proposals
+      are staged to proposed_edits.json for an operator to read first
+      (pre-QAMC, upstream yebof commit).
+    decided: "2026-05-13"
+    source: "commit c8caaf3d; src/config.py:1718-1723"
+
+  - id: src.config.EvolutionConfig.auto_commit
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Only meaningful once dry_run=false; commits each applied prompt edit so
+      a whole quarter's evolution has a one-shot `git revert` rollback
+      (pre-QAMC, upstream yebof commit).
+    decided: "2026-04-20"
+    source: "commit e84e5f3d; src/config.py:1712-1715"
+
+  - id: src.config.LLMConfig.structured_output
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      OpenRouter constrained to the agent's own pydantic result schema via
+      response_format on every call, instead of relying on prose-JSON
+      prompting alone.
+    decided: "2026-09-14"
+    source: "commit 3c4d4fdb9 (#412); config/settings.yaml:151"
+
+  - id: src.config.NewsConfig.per_symbol_enabled
+    effective_value: true
+    code_default: true
+    intentional: true
+    reason: >-
+      Per-symbol Yahoo Finance RSS scoped to held positions + admitted
+      candidates, owner decision after a "checked and rejected" audit of the
+      paid-news alternative.
+    decided: "2026-08-30"
+    source: "commit 0b6fc18cf; config/settings.yaml:1181-1187"
+
+  - id: src.config.AlpacaConfig.paper
+    effective_value: true
+    code_default: null
+    intentional: true
+    reason: >-
+      "Paper is the current execution environment and safety authorization,
+      not the product identity" -- the desk has not been ratified for live
+      capital. No commit records a discrete decision to set this true; it is
+      the standing state pending that ratification, not an artifact nobody
+      chose.
+    decided: null
+    source: "docs/OUTCOME.md:94"
