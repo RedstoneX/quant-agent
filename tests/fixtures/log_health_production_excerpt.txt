@@ -45,3 +45,9 @@ Placeholder trading credential in use (reported once a day while this stays true
 2026-09-18 13:30:44,543 [INFO] src.pipeline: FRACTIONAL DAY STOP RE-PLACED: AAPL — the sub-share remainder is covered again for this session.
 2026-09-18 13:47:27,710 [ERROR] src.pipeline: EVIDENCE GATE — decision skipped: 2 seat(s) were asked and their answer never arrived — news=expired, smart_money=expired. A decision resting on an answer the desk never received is not a degraded decision, it is a fabricated one (docs/WORK.md item 20).
 2026-09-18 14:17:37,893 [ERROR] src.pipeline: EVIDENCE GATE — decision skipped: 2 seat(s) were asked and their answer never arrived — news=expired, smart_money=expired. A decision resting on an answer the desk never received is not a degraded decision, it is a fabricated one (docs/WORK.md item 20).
+## Technical seat, added 2026-09-19 — real lines the case-sensitive/incomplete
+## classifier missed, copied verbatim from quant_agent.log.3 and .log.4.
+2026-09-01 13:31:47,785 [ERROR] src.agents.tech_analyst: Failed to parse tech analysis item for KLAR: 1 validation error for TechAnalysisResult
+2026-08-27 13:32:52,131 [ERROR] src.agents.tech_analyst: Tech batch: 3 symbol(s) unresolved after the single shared recovery — explicit failed outcomes: ['PWR', 'MP', 'CEG']
+2026-08-25 14:03:49,247 [WARNING] src.pipeline_stages: Tech batch partial: 84/87 symbols resolved, 3 failed even after retry — proceeding with the resolved subset
+2026-08-25 14:30:51,937 [WARNING] src.agents.tech_analyst: Tech analyst emitted 1 row(s) for symbols not in the submitted chunk — dropped: ['CHP']

@@ -4567,9 +4567,30 @@ class MorningResearchStage:
         # listing all degraded inputs side-by-side. The 2+ failure
         # advisory in RiskStage handles the runtime defensive response;
         # this log handles the postmortem readability.
+        # Tech's `low_confidence` is set (see the tech branch above) whenever
+        # ANY resolved read carries the model's own conviction="low" — and a
+        # `neutral` rating (no view at all) is effectively always
+        # low-conviction, because there is nothing for the model to be
+        # confident ABOUT. Before this fix that made this line fire ERROR
+        # every single morning regardless of whether a single actionable
+        # BUY/SELL call was ever shaky, and log-health then reported a
+        # perfectly healthy tech seat as "a research desk that could not be
+        # reached". `data_status["tech"]` itself, and everything that reads
+        # it (RiskStage's `data_degraded` advisory, the Risk Manager's
+        # prompt), is UNCHANGED by this — only this operator-facing summary
+        # line is corrected to name what actually degraded: a low-conviction
+        # read on a symbol the desk was actually weighing, not a no-view
+        # neutral read the model was never going to act on either way.
+        tech_low_confidence_is_noise = (
+            data_status.get("tech") == "low_confidence"
+            and not any(
+                a.conviction == "low" and a.rating != "neutral" for a in analyses
+            )
+        )
         degraded = [
             k for k, v in data_status.items()
             if evidence_gate.counts_as_degraded(v)
+            and not (k == "tech" and tech_low_confidence_is_noise)
         ]
         if degraded:
             logger.error(
