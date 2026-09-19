@@ -1,0 +1,102 @@
+[
+  {
+    "symbol": "ORCL",
+    "rating": "buy",
+    "conviction": "medium",
+    "entry_price": 150.65,
+    "reference_target": 159.52,
+    "stop_loss": 140.00,
+    "support_levels": [
+      140.71,
+      142.02,
+      137.53
+    ],
+    "resistance_levels": [
+      159.52,
+      161.68,
+      170.51
+    ],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    "thesis_invalid_if": "Price closes below MA50 ($140.71) on expanding volume",
+    "reasoning_chain": {
+      "trend": "Price at 150.65 crosses back above MA20 (148.80) while MA50 (140.71) is rising; intermediate trend is attempting to bottom after a steep prior pullback.",
+      "momentum": "RSI at 45.72 is neutral; MACD line 0.72 remains above signal with positive histogram expansion supporting the intraday bounce.",
+      "volatility": "ATR is 7.65 with volatility contracting to the 18th percentile; price sits right around the Bollinger middle band (148.80).",
+      "volume": "20-day up/down volume ratio of 0.51 indicates ongoing distribution, though today's intraday bounce shows responsive buying interest.",
+      "support_resistance": "Immediate support at MA50 ($140.71) and structural $142.02; overhead resistance at structural $159.52 and upper Bollinger band ($161.68)."
+    },
+    "reasoning": "ORCL is rebounding from near MA20 support with expanding intraday momentum, offering a defined range trade toward overhead resistance."
+  },
+  {
+    "symbol": "SQQQ",
+    "rating": "neutral",
+    "conviction": "low",
+    "entry_price": null,
+    "reference_target": null,
+    "stop_loss": null,
+    "support_levels": [],
+    "resistance_levels": [],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    s"thesis_invalid_if": "",
+    "reasoning_chain": {
+      "trend": "Price is trading near MA20 (39.19) and MA50 (39.91), remaining in a broader downtrend relative to the long-term MA200 (54.18).",
+      "momentum": "RSI at 55.81 is neutral; MACD is flat near the signal line with minimal directional conviction.",
+      "volatility": "ATR is 1.54, with volatility contracting to the 2nd percentile of its past year inside a tight Bollinger band squeeze (37.56 - 40.82).",
+      "volume": "Up/down volume ratio of 1.66 reflects prior accumulation, but recent sessions show lack of directional follow-through.",
+      "support_resistance": "Support resides near $35.91 while overhead resistance sits at $40.63 and $41.83."
+    },
+    "reasoning": "Lack of clear directional momentum and a tight volatility squeeze in an inverse ETF warrant a neutral stance."
+  },
+  {
+    "symbol": "ETN",
+    "rating": "buy",
+    "conviction": "medium",
+    "entry_price": 413.04,
+    "reference_target": 431.71,
+    "stop_loss": 385.00,
+    "support_levels": [
+      385.38,
+      392.44,
+      379.41
+    ],
+    "resistance_levels": [
+      417.19,
+      426.79,
+      431.71
+    ],
+    "setup_type": "range",
+    "expected_horizon_sessions": 12,
+    "thesis_invalid_if": "Price closes below support level $385.38",
+    "reasoning_chain": {
+      "trend": "Price at 413.04 is recovering toward MA20 ($408.10) inside a 19-session consolidation range between $385 and $430; long-term MA200 ($381.84) acts as a structural floor.",
+      "momentum": "RSI at 44.36 is neutral-weak but recovering; MACD remains negative (-5.33) but histogram is stabilizing.",
+      "volatility": "ATR is 15.13 and expanding (75th percentile); price is moving from the lower Bollinger band toward the middle band (408.10).",
+      "volume": "Up/down volume ratio of 0.43 reflects prior distribution, but today's +3.83% intraday recovery shows responsive buying at range support.",
+      "support_resistance": "Immediate support at structural $385.38 (4 touches) and MA200 ($381.84); overhead resistance at $431.71 (range top)."
+    },
+    "reasoning": "ETN is bouncing cleanly off multi-touch range support ($385.38) back toward the middle of its consolidation channel, providing a favorable risk-reward setup."
+  },
+  {
+    "symbol": "MTZ",
+    "rating": "neutral",
+    "conviction": "low",
+    "entry_price": null,
+    "reference_target": null,
+    "stop_loss": null,
+    "support_levels": [],
+    "resistance_levels": [],
+    "setup_type": "range",
+    "expected_horizon_sessions": 10,
+    "thesis_invalid_if": "",
+    "reasoning_chain": {
+      "trend": "Price is severely depressed well below declining MA20 (243.55), MA50 (287.01), and MA200 (305.64) in a strong primary downtrend.",
+      "momentum": "RSI at 35.18 is weak and oversold; MACD remains deeply negative (-16.65) with persistent downward pressure.",
+      "volatility": "ATR is 13.14 (stable at 49th percentile); price is testing the lower Bollinger band boundary ($215.93).",
+      "volume": "Up/down volume ratio of 0.32 confirms heavy ongoing distribution over the 20-day window.",
+      "support_resistance": "Immediate support is sparse ahead of structural levels near $194.52, while overhead resistance clusters heavily at $252.40 and $310.72."
+    },
+    "reasoning": "MTZ remains in a heavy downtrend with weak momentum and distribution, making it uninvestable from the long side despite being near lower Bollinger bands."
+  }
+]
