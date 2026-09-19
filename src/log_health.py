@@ -188,7 +188,20 @@ class FaultFamily:
 
 
 def _p(*patterns: str) -> tuple[re.Pattern[str], ...]:
-    return tuple(re.compile(p) for p in patterns)
+    # Case-INSENSITIVE. The audit that forced this (2026-09-19): the desk's
+    # own logger call spells "Failed to parse tech analysis item" with a
+    # capital F, and this family's pattern was `r"failed to parse"` — an
+    # exact-case match that had matched every OTHER seat's "failed to parse"
+    # (lowercase, e.g. "Phase 13: macro_analysis failed to parse") but never
+    # the technical seat's own per-item failures, silently, since the line
+    # was first written. A log line's wording is not a contract on its
+    # casing, and the technical seat is now the only one that can stop the
+    # desk — a pattern that only works for the case someone happened to type
+    # is exactly the fragility the fail-closed design elsewhere in this
+    # module exists to catch. Reviewed against every pattern below and the
+    # full 2026-08-17 to 2026-09-18 production history: none relies on case
+    # to tell two DIFFERENT real conditions apart.
+    return tuple(re.compile(p, re.IGNORECASE) for p in patterns)
 
 
 #: A later refresh in which the same congressional source answered clears its
@@ -225,6 +238,18 @@ FAMILIES: tuple[FaultFamily, ...] = (
         patterns=_p(
             r"failed to parse",
             r"validation failed — attempting one repair reprompt",
+            # A seat's whole answer was not JSON at all — worse than one bad
+            # item, and previously unclassified for every seat that can emit
+            # it (verified on tech: "Tech analyst returned non-JSON for batch
+            # analysis"; macro/earnings/risk/news/portfolio_manager/etc. use
+            # the same wording).
+            r"returned non-json",
+            # The technical seat inventing a row for a symbol nobody asked
+            # about (real production line: "Tech analyst emitted 1 row(s)
+            # for symbols not in the submitted chunk — dropped: ['CHP']").
+            # The row is thrown away just like a malformed one, so it is the
+            # same kind of paid-for-and-discarded answer.
+            r"emitted \d+ row\(s\) for symbols not in the submitted chunk",
         ),
     ),
     FaultFamily(
@@ -244,7 +269,15 @@ FAMILIES: tuple[FaultFamily, ...] = (
         # recovery ("0 remain explicit failures"); counting the first line
         # would have reported ten companies judged blind on a day none were.
         patterns=_p(
-            r"unresolved after retry",
+            # Broadened from the literal `unresolved after retry` (2026-09-19):
+            # the technical seat's own final-loss line now also reads
+            # "unresolved after the single shared recovery" (a multi-chunk
+            # batch's consolidated recovery) and "unresolved after parsing
+            # (shared retry budget exhausted)" (no retry was even attempted) —
+            # both real, both a name the desk judged without, and both were
+            # silently unclassified because the old pattern named only one of
+            # the three endings this line can have.
+            r"unresolved after",
             r"[1-9]\d* remain explicit failures",
             r"dropping malformed \w+ entry",
         ),
@@ -556,6 +589,23 @@ FAMILIES: tuple[FaultFamily, ...] = (
             # same reason as the short answer above: if the retry does not
             # recover the name, the loss is logged as `unresolved after retry`.
             r"Tech answer carried \d+ malformed row",
+            # Handled here, not under `names_dropped_from_answer`, because it
+            # is the SAME loss restated a layer up, not a second one: every
+            # run where `src.pipeline_stages` logs "Tech batch partial: X/Y
+            # symbols resolved, N failed even after retry" (or, on a total
+            # loss, "Tech batch: all N submitted symbol(s) failed even after
+            # retry"), `src.agents.tech_analyst` has already logged its own
+            # "... unresolved after ..." line naming the same symbols, which
+            # IS counted there. Counting both would report one lost batch as
+            # two.
+            r"Tech batch partial",
+            r"Tech batch: all \d+ submitted symbol\(s\) failed",
+            # A packing-arithmetic fallback the log line's own text says is
+            # inert ("Analysis is unaffected — this only changes how the
+            # batch is divided"): real production line, verified WARNING
+            # level, "Tech batch: could not size the request set; falling
+            # back to fixed N-symbol chunks."
+            r"could not size the request set",
         ),
     ),
 )
