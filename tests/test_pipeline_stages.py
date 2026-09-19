@@ -1793,6 +1793,76 @@ def test_morning_research_stage_smart_money_truncated_marks_status_truncated():
     assert result_ctx.data_status["smart_money"] == "truncated"
 
 
+def _smart_money_morning_stage(coverage, findings):
+    """A morning stage whose only interesting seat is smart money."""
+    from types import SimpleNamespace
+
+    from src.agents.base import AgentResult
+
+    config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["SPY"], lookback_days=30),
+        smart_money=SimpleNamespace(enabled=True),
+    )
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+    macro = MagicMock()
+    macro.get_macro_summary.return_value = {}
+    macro_analyst = MagicMock()
+    macro_analyst.analyze.return_value = (
+        None,
+        AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+    )
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    smart_money_provider = MagicMock()
+    smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
+    smart_money_provider.form4_coverage.return_value = coverage
+    smart_money_analyst = MagicMock()
+    smart_money_analyst.analyze.return_value = (
+        findings,
+        AgentResult(raw_text='{"findings":[]}', tokens_used=1, model="test",
+                    user_message="x"),
+        None,
+    )
+    stage = MorningResearchStage(
+        config=config, db=MagicMock(), market=market, macro=macro,
+        news_provider=MagicMock(), news_store=news_store,
+        macro_store=macro_store, tech_store=MagicMock(),
+        earnings_provider=MagicMock(), macro_analyst=macro_analyst,
+        news_analyst=MagicMock(), tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        smart_money_provider=smart_money_provider,
+        smart_money_analyst=smart_money_analyst,
+        admit_smart_money_candidates_fn=lambda _observations: (set(), {}),
+        has_actionable_signal_fn=lambda *args, **kwargs: False,
+        run_news_update_fn=lambda *args, **kwargs: (None, None),
+        load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
+    )
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    return stage.run(ctx)
+
+
+def test_morning_smart_money_is_partial_while_watched_names_are_unread():
+    """2026-09-19. The seat's answer covers only names whose Form 4s have
+    all been read. With unread filings left on a watched name, a clean run
+    must not be recorded as `ok` — nor as `empty`, which would claim "no
+    material insider activity" on names nobody finished reading."""
+    unread = {"known": True, "as_of": "2026-09-21", "watched": 82,
+              "read_through": 60, "unread": ["WMT"]}
+    assert _smart_money_morning_stage(unread, []).data_status["smart_money"] == "partial"
+    assert _smart_money_morning_stage(
+        {"known": False, "as_of": "", "watched": 0, "read_through": 0, "unread": []},
+        [],
+    ).data_status["smart_money"] == "partial"
+
+    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
+                "read_through": 82, "unread": []}
+    assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
+
+
 @patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
     """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when

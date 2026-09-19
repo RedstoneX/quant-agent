@@ -1039,6 +1039,13 @@ numbers:
       the watermark and refuses the day's ticks, so it is NOT demoted back
       to not-trade-governing. The value itself is a round 180 with no
       derivation recorded anywhere. NO VALUE WAS CHANGED here.
+      UPDATE 2026-09-19: it no longer bounds the watched-name drain. The
+      drain has its own budget, `watched_drain_deadline_s`, started after
+      this one is spent, so this deadline now bounds only the market-wide
+      pass (external candidate nomination) and the intraday freshness
+      probe's per-issuer index reads (82 GETs, 11.0 s measured 2026-09-19).
+      The open question below is therefore narrower than written: the
+      drain half of it is answered by that entry.
     open_question: >-
       What is the right network budget for one pre-market refresh plus a
       watched-name drain -- read off the measured time to read the desk's
@@ -1050,6 +1057,27 @@ numbers:
       not advance, and the pre-open check reports that the desk will refuse
       to decide all day. Set too high, a stuck SEC endpoint delays the
       pre-market path by up to this many seconds per refresh.
+  - id: src.config.SmartMoneyConfig.watched_drain_deadline_s
+    value: 859
+    status: sourced
+    site: src/config.py
+    source: >-
+      Derivation at src/config.py:1299 (the comment above the field), from a
+      read-only measurement against SEC on 2026-09-19 with the desk's own
+      User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
+      5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
+      read over 40 reads. 11.0 + 5,431 x 0.156 = 858.2 -> 859, i.e. the time
+      to clear the measured backlog in one pre-market run. SEC's published
+      ceiling is 10 req/s: https://www.sec.gov/os/accessing-edgar-data . Fit
+      against the job's TimeoutStartSec=1260
+      (scripts/systemd/quant-agent-earnings_preprocess.service:8) is kept by
+      tests/test_form4_backlog_order.py.
+    note: >-
+      Trade-governing in the same sense as refresh_deadline_s: until every
+      watched issuer is read through, the insider seat cannot be called
+      current. It binds only on the one-time catch-up; the steady-state
+      watched inflow is ~16 filings a day (5,801 in-window / 365). Progress
+      is recorded per issuer, so a drain that runs out of time loses nothing.
   - id: src.config.SmartMoneyConfig.request_timeout_s
     value: 15
     status: not-trade-governing

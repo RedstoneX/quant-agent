@@ -1268,6 +1268,35 @@ class SmartMoneyConfig(BaseModel):
     user_agent: str = "QAMC research-intelligence qamc-contact@proton.me"
     request_timeout_s: float = Field(default=15.0, ge=1, le=60)
     refresh_deadline_s: float = Field(default=180.0, ge=10, le=600)
+    # The watched-name Form 4 drain's OWN budget, started only after the
+    # market-wide pass above has finished with `refresh_deadline_s`. Until
+    # 2026-09-19 the drain shared that 180 s with the market-wide pass, which
+    # ran first and measured ~153 s on its own (journal, 2026-09-18
+    # 12:00:41 -> 12:03:14 UTC), so the drain could never finish.
+    #
+    # Sized to clear the MEASURED watched backlog in one pre-market run, read
+    # against SEC read-only on 2026-09-19 with the desk's own User-Agent and
+    # rate limiter:
+    #   82 watched issuers, one filing-history GET each: 11.0 s measured;
+    #   5,431 unread Form 4s inside `lookback_days` on those issuers;
+    #   0.156 s per filing read, measured over 40 reads at the 8 req/s
+    #   limiter below (SEC's published maximum is 10 req/s:
+    #   https://www.sec.gov/os/accessing-edgar-data).
+    #   11.0 + 5,431 x 0.156 = 858.2 s -> 859.
+    # It must also fit inside the job that runs it: TimeoutStartSec=1260 in
+    # scripts/systemd/quant-agent-earnings_preprocess.service. Measured job
+    # parts: ~2 s startup, `refresh_deadline_s` 180, and at most 147 s of
+    # work after the refresh (2026-09-17 journal, 12:03:14 -> 12:05:41) —
+    # 2 + 180 + 859 + 147 = 1,188 <= 1,260. tests/test_form4_backlog_order.py
+    # keeps that sum honest if any term changes.
+    #
+    # It binds only on the one-time catch-up: the steady-state inflow on
+    # those issuers is ~16 filings a day (5,801 in-window / 365), ~3 s.
+    # Progress is kept per issuer, so a drain that does not finish loses
+    # nothing and the next morning resumes where it stopped.
+    # Upper bound = the room that sum leaves: 1,260 - 2 - 180 - 147 = 931.
+    # Lower bound mirrors `refresh_deadline_s`'s.
+    watched_drain_deadline_s: float = Field(default=859.0, ge=10, le=931)
     requests_per_second: float = Field(default=8.0, ge=0.5, le=10.0)
     # 7 -> 90 -> 365 on 2026-09-11. This bounds how far back an insider/SEC
     # observation is FETCHED and RETAINED at full detail — a trade older
@@ -1305,6 +1334,19 @@ class SmartMoneyConfig(BaseModel):
     # independent of this number. Anything added later that walks the
     # lookback window from inside a decision tick falsifies this paragraph
     # again — that is the thing to check, not the value.
+    #
+    # RE-CHECKED 2026-09-19: "a filing already processed is never
+    # re-fetched" still holds, but the claim that this number only sets how
+    # many search queries run does NOT. Since PR #529 the watched-name drain
+    # must READ every unread Form 4 inside this window on every watched
+    # issuer before that issuer's evidence can be called current. Raising
+    # 7 -> 365 therefore created a one-time read of 5,431 filings on the
+    # desk's 82 watched issuers (measured 2026-09-19), which the drain
+    # could not do inside the 180 s it shared with the market-wide pass.
+    # That cost now has its own budget, `watched_drain_deadline_s`, sized
+    # from the measurement. The value 365 is unchanged — it is the owner's
+    # behavioural bound, and draining it is cheaper than seeding a claim
+    # of coverage the desk has not read.
     # STORAGE cost is small: measured directly against the live server's
     # actual cache 2026-09-11 — 4,324 records / 5.76 MB at the old 7-day
     # window, roughly ~300 MB at 365 days on a straight scale-up — trivial
