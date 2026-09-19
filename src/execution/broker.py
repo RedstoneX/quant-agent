@@ -1892,6 +1892,39 @@ class AlpacaBroker:
             "exchange": exchange,
         }
 
+    def list_assets(self) -> list[dict]:
+        """Every ACTIVE US-equity asset record, raw, one read-only GET.
+
+        The universe screen's candidate source (`src/universe_screen.py`).
+        Raw REST rather than the SDK's `get_all_assets` because the pinned
+        alpaca-py (0.44) `Asset` model has no `borrow_status`, the field
+        Alpaca now names as the borrow flag (it deprecated `easy_to_borrow`
+        on 2026-06-22 with a 2026-09-22 sunset —
+        https://docs.alpaca.markets/reference/get-v2-assets-1). Raises on
+        failure: an empty list would read as "every admitted name was
+        delisted", which it is not.
+        """
+        raw = self.client.get(
+            "/assets", {"status": "active", "asset_class": "us_equity"},
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
+        return [item for item in raw if isinstance(item, dict)]
+
+    def get_asset_record(self, symbol: str) -> dict | None:
+        """One raw asset record; None ONLY when the broker says it does not
+        exist (HTTP 404/422). Any other failure raises, so a network blip is
+        never mistaken for a delisting."""
+        alpaca_symbol = _alpaca_symbol(_internal_symbol(_alpaca_symbol(symbol)))
+        try:
+            raw = self.client.get(f"/assets/{alpaca_symbol}")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in (404, 422):
+                return None
+            raise
+        return raw if isinstance(raw, dict) else None
+
     def get_shortability(self, symbol: str) -> dict:
         """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
         `easy_to_borrow` flags, cached for the life of this broker instance

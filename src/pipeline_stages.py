@@ -3604,6 +3604,7 @@ class MorningResearchStage:
         smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
         admit_smart_money_candidates_fn=None,
         admit_nominated_candidates_fn=None,
+        admit_screened_universe_fn=None,
         event_calendar: "MacroEventCalendarProvider | None" = None,
         fomc_calendar: "FOMCCalendarProvider | None" = None,
         live_session_context_fn=None,
@@ -3646,6 +3647,10 @@ class MorningResearchStage:
         # groups/ranks SEC Form 4 rows, the other consumes an
         # already-capped nomination candidate list.
         self._admit_nominated_candidates = admit_nominated_candidates_fn
+        # Universe screen (src/universe_screen.py): (positions) ->
+        # (symbols, details) for this session's share of the screened,
+        # persisted universe. Returns nothing while the screen is off.
+        self._admit_screened_universe = admit_screened_universe_fn
         # Injected callables so we don't duplicate pre-filter / news / earnings
         # orchestration logic. Those still live on TradingPipeline for now
         # because they touch shared state we haven't finished extracting.
@@ -3715,6 +3720,20 @@ class MorningResearchStage:
                 logger.warning("Smart-money transient admission failed closed: %s", exc)
                 ctx.admitted_symbols = set()
                 ctx.smart_money_admissions = {}
+        if self._admit_screened_universe:
+            try:
+                screened, screened_details = self._admit_screened_universe(
+                    getattr(ctx, "positions", None) or [],
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Fails closed: no screened name this session, nothing else lost.
+                logger.warning("Screened-universe admission failed closed: %s", exc)
+                screened, screened_details = set(), {}
+            for symbol in sorted(screened):
+                if symbol in ctx.admitted_symbols:
+                    continue
+                ctx.admitted_symbols.add(symbol)
+                ctx.smart_money_admissions[symbol] = screened_details.get(symbol, {})
         configured_symbols = [
             str(symbol).strip().upper()
             for symbol in self.config.trading.universe if str(symbol).strip()
@@ -3742,8 +3761,10 @@ class MorningResearchStage:
                     pass
         for symbol, admission in ctx.smart_money_admissions.items():
             import json as _json
+            screened = admission.get("reason") == "universe_screen_admission"
             _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                self.db, run_id=ctx.run_id,
+                agent_name="universe_screen" if screened else "smart_money_analyst",
                 kind="admission", scope="symbol", symbol=symbol,
                 evidence_json=_json.dumps(admission, sort_keys=True),
             )
@@ -3757,7 +3778,7 @@ class MorningResearchStage:
             admission_reason = admission_details.pop("reason", None)
             _record_pipeline_event(
                 self, ctx, symbol, "opportunity", "admitted",
-                "smart_money_form4_admission",
+                "universe_screen_admission" if screened else "smart_money_form4_admission",
                 admission_reason=admission_reason,
                 **admission_details,
             )
