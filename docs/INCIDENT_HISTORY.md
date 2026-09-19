@@ -22,6 +22,69 @@ what would catch it next time.
 
 ---
 
+### 2026-09-19 — the daily log-health report missed the technical seat's own failures and false-alarmed on it every morning
+
+**What broke, in one line:** the owner's only window into the desk's logs
+(`src/log_health.py`, sent every trading morning) both missed real technical-
+seat failures and paged him with a fake one, on the seat now the only one
+that can stop the desk (2026-09-18 ruling).
+
+**Miss #1 — case-sensitive matching.** The report's pattern for "an answer
+the desk could not read" was the exact-case string `failed to parse`. The
+technical seat's own logger call spells it `Failed to parse tech analysis
+item for %s` — capital F — so it never matched, silently, since the line was
+first written; every OTHER seat's lowercase version of the same words did
+match. Five more real technical-seat lines had no pattern at all: the batch-
+level "unresolved after the single shared recovery" (a different ending from
+the "unresolved after retry" the report already knew), the whole-answer
+"returned non-JSON" case, a hallucinated row for a symbol nobody asked about
+("emitted N row(s) for symbols not in the submitted chunk"), and two summary
+lines from `src.pipeline_stages` ("Tech batch partial", "Tech batch: all N
+submitted symbol(s) failed") that restate a loss the seat's own line already
+counts. **Fix:** matching is now case-insensitive everywhere in this module
+(reviewed against the full retained history for a pattern that relies on
+case to tell two different conditions apart — none does), the five missing
+endings now have patterns, and the two pipeline_stages summaries are filed as
+informational (not reportable) so one lost batch is not counted twice under
+two different log lines.
+
+**Miss #2 — a fabricated daily alarm.** `data_status["tech"]` is set to
+`low_confidence` whenever ANY resolved read carries the model's own
+`conviction="low"` (`src/pipeline_stages.py`). A `neutral` rating has no view
+to be confident about, so it is effectively always low-conviction — which
+made the "Morning research degraded: tech" ERROR line fire most mornings
+regardless of whether any real BUY/SELL call was ever shaky, and the report
+then told the owner a research desk "could not be reached". (The standalone
+Telegram data-quality alert already carries an exemption for exactly this,
+`notifier._ALERT_EXEMPT_PER_SEAT`, ratified 2026-09-04 — this ERROR log line
+had never been given the same treatment.) **Fix, at the source:** the
+`degraded` list this one summary line reports from now excludes tech's
+`low_confidence` when every low-conviction read in the batch was `neutral`;
+a real low-conviction BUY/SELL read still reports. `data_status["tech"]`
+itself, RiskStage's `data_degraded` advisory, and the Risk Manager's prompt
+are byte-for-byte unchanged — this touches only the operator-facing summary
+line, deliberately, so no gate or trading behaviour moved.
+
+**Evidence.** Replayed the report's classifier over the last 10 trading
+days of real production logs (2026-09-04 through 2026-09-18): identical
+counts before and after, because none of the six missed line shapes actually
+occurred in that window — the technical seat's per-row parse fix (2026-09-19,
+same day, separate PR) had already cut off the malformed-row cases earlier in
+the retained history. Replayed over the full retained history instead
+(2026-08-01 to 2026-09-19) to prove the fix does something: `seat_answer_
+unreadable` 13 → 117, `names_dropped_from_answer` 82 → 84, and the generic
+fail-closed `unrecognised_faults` bucket 486 → 383 — the previously-invisible
+lines moving out of the catch-all and into their real, specific family.
+
+**Tests.** `tests/test_log_health.py` gained seven tests built from the
+literal log lines (four copied verbatim from production, two built from the
+tech seat's own format string for endings never yet seen live, one proving
+case-insensitivity generally); reverting the matching fix fails all seven.
+`tests/test_pipeline_stages.py` gained two tests for the false-alarm fix — a
+neutral-only low-conviction morning must not log "Morning research
+degraded", a real low-conviction BUY/SELL morning still must; reverting the
+source fix fails the first.
+
 ### 2026-09-19 — the midday/close reviewer and the ordinary SELL and COVER loops now put each name's stop back before touching the next (follow-on to item 111)
 
 **In plain words:** the same fault the de-lever loops had (entry above) was in three more places that sell or cover more than one holding in one pass — the position reviewer's exits at midday and close, and the ordinary SELL and COVER orders the portfolio manager's decisions produce. Each took every holding's protective stop off and sent every order first, and only waited for fills and put stops back after the whole pass. Each now finishes one holding — wait for its order, then restore, re-protect the remainder, or leave off on a full exit — before it touches the next. Which holdings exit, how much and at what price are unchanged.
