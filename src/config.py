@@ -1530,6 +1530,49 @@ class NominationConfig(BaseModel):
     max_total_per_run: int = Field(default=6, ge=1, le=20)
 
 
+class UniverseScreenConfig(BaseModel):
+    """Universe expansion and pruning (`src/universe_screen.py`).
+
+    The design agreed with the owner 2026-09-01 (docs/INCIDENT_HISTORY.md,
+    "Universe expansion and pruning"), built 2026-09-19. With `enabled` off
+    NOTHING changes: no weekly screen runs, no screened symbol reaches a
+    session, and the SEC Form 4 and nomination side doors keep their
+    pre-existing gates. With it on, both side doors run the same screen and
+    the Form 4 door gets its age gate back.
+
+    The spread and volatility thresholds have no field here on purpose: they
+    are DERIVED at run time from `execution.max_entry_slippage_bps` and
+    `risk.min_stop_atr_multiple` (see the module docstring), and the cap on
+    screened names per session is `nominations.max_per_seat_per_run` — the
+    screen is one more source of candidates, capped like one seat.
+    """
+
+    enabled: bool = False
+    data_dir: str = "data/universe"
+    # SEC Rule 3a51-1(d), 17 CFR 240.3a51-1: an equity security "that has a
+    # price of five dollars or more" is not a penny stock
+    # (https://www.law.cornell.edu/cfr/text/17/240.3a51-1, fetched
+    # 2026-09-19). The owner's words were "filter out ... the penny stocks";
+    # this is the legal line for what a penny stock is.
+    min_price_usd: float = Field(default=5.0, gt=0)
+    # FTSE Russell US indexes methodology: ineligible — "Companies under $30
+    # Million in total market capitalization" (https://www.lseg.com/content/
+    # dam/ftse-russell/en_us/documents/other/ftse-russell-us-indexes-
+    # methodology-overview-cut-sheet.pdf, fetched 2026-09-19). The floor of
+    # the broadest published US investable-equity index.
+    min_market_cap_usd: float = Field(default=30_000_000, gt=0)
+    # Wall-clock budget for one incremental pass. It runs at the end of the
+    # evening session: TimeoutStartSec=1260 in
+    # scripts/systemd/quant-agent-evening.service, and the evening body
+    # measured 173 s on 2026-09-19 (journal, 00:00:10 -> 00:03:03 UTC).
+    # 173 + 900 = 1,073 <= 1,260, leaving 187 s — more than the whole
+    # measured body again. A pass that does not finish loses nothing: the
+    # next evening resumes with whoever is still due.
+    screen_deadline_s: float = Field(default=900.0, ge=10, le=1080)
+    # Symbols per daily-bar download request (yfinance multi-ticker).
+    bars_batch_size: int = Field(default=50, ge=1, le=200)
+
+
 class ScheduleConfig(BaseModel):
     earnings_preprocess: str = "08:00"
     morning: str
@@ -2148,6 +2191,8 @@ class AppConfig(BaseModel):
     # unchanged and Phase 9 stays off-by-default-bound rather than
     # unbounded.
     nominations: NominationConfig = Field(default_factory=NominationConfig)
+    # Optional section — absent means the screen is off (enabled=False).
+    universe_screen: UniverseScreenConfig = Field(default_factory=UniverseScreenConfig)
     # Optional section — a settings.yaml without it gets the documented
     # default lookback (7 days), so older configs keep working unchanged.
     reconciliation: ReconciliationConfig = Field(default_factory=ReconciliationConfig)

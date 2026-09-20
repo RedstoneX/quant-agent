@@ -85,6 +85,100 @@ ladder that enforces them.
 
 ---
 
+### 2026-09-19 — Universe expansion and pruning built (the 2026-09-01 design), shipped switched off
+
+**What changed, in one line:** the desk can now add stocks that pass standard
+filters and drop ones that stop passing, instead of trading only a
+hand-typed list — built exactly to the owner's 2026-09-01 design, and left
+OFF until he turns it on.
+
+**Why now.** The owner restated it 2026-09-19: add stocks with "a certain
+amount of liquidity, a certain minimum price ... filter out the garbage, the
+penny stocks, the highly speculative", and remove the ones that stop
+passing. The design had sat unbuilt for 18 days.
+
+**Where each line comes from** (all in `config/number_ledger.yaml`; no
+arbitrary row was added):
+- minimum price $5 — SEC Rule 3a51-1(d), the legal definition of a penny
+  stock;
+- minimum company size $30M — the Russell US indexes' eligibility floor;
+- spread — estimated from a year of daily highs and lows (Corwin & Schultz,
+  J. Finance 2012), and half of it must sit inside the desk's own
+  entry-slippage belt (40 bps today), because a name whose ordinary cost to
+  cross is past that belt is one the execution stage refuses to buy;
+- volatility ceiling — ATR/price at most 0.5 / the minimum stop multiple
+  (20% today): past it, the desk's own minimum stop lands below half the
+  price, which the midday sanity rule refuses as a typo;
+- a year of history — a calendar year of bars AND the 210 bars the 200-day
+  average and its slope need;
+- shortable / easy to borrow, active, tradable, listed, not a warrant / unit
+  / right — the broker's own asset flags;
+- pending takeover — the issuer's own SEC filings: a merger proxy or
+  tender-offer filing not followed by a termination 8-K;
+- the per-morning cap — `nominations.max_per_seat_per_run` (3): the screen
+  is one more candidate source and is capped like one seat.
+
+**What differs from the 2026-09-01 design, and why:**
+1. *The hand-typed list is not screened or pruned.* The design prunes "the
+   universe"; the build prunes only what the screen itself added. Removing a
+   hand-typed name would mean editing the owner's config file from code. A
+   hand-typed name is therefore never removed, and none is reported.
+2. *Spread is estimated from daily bars, not read from quotes.* This account
+   sees IEX quotes only, which are routinely absurd (CCJ once showed a 15%
+   spread). The first estimator variant tried (floor each day's estimate at
+   zero, then average) read AAPL at 25.6 bps and TSLA at 44 bps — that is
+   volatility, not trading cost — and would have refused most volatile
+   large caps. The build averages first and floors the average, which reads
+   AAPL 0.2, TSLA 5.7, and still refuses an illiquid name at 64 bps
+   (measured 2026-09-19).
+3. *A resolved sector is still required* — kept from the old side-door gate
+   because the sector cap needs one. Not in the design.
+4. *Funds, preferreds and depositary receipts stay excluded* — kept from the
+   old side-door gate. The design names only warrants, units and rights.
+5. *Unreadable is not a failure.* A data outage neither admits a name nor
+   counts toward removing one; the design did not say.
+6. *Screened names reach the morning session only*, the same lane the Form 4
+   admissions use. The intraday scan still watches only the hand-typed list.
+7. *The Form 4 side door got its age gate back* (behind the same switch).
+   Since `lookback_days` went 7 -> 365 on 2026-09-11 nothing in the cache was
+   ever "stale", so a 364-day-old purchase could admit a name (RSG). Now a
+   purchase must have been disclosed within `risk.max_target_horizon_sessions`
+   (60) sessions — the desk's own longest target horizon. That base is itself
+   arbitrary in the ledger.
+
+**How it runs.** At the end of each evening session, an incremental pass
+(budget 900 s; the evening body measured 173 s against a 1,260 s job limit)
+reads the broker's active asset list, settles every name that fails on the
+asset flags alone for free, then reads bars in batches, then company size and
+SEC filings for survivors. Each symbol is screened at most once per ISO week;
+delisted/halted admitted names are checked every evening. State lives in
+`data/universe/universe_state.json`; each change is logged as
+`UNIVERSE_CHANGE`, written to `specialist_evidence`, and listed in the next
+morning's Telegram message below the P&L block.
+
+**Dry run, 2026-09-19, in isolation (scratch directory, no production
+write).** The broker asset list could NOT be read (no credentials usable
+read-only), so the candidate list was SEC's public listed-ticker file with
+the broker's borrow and tradability flags ASSUMED true — so the numbers
+below overstate what will pass. A random 1,000 of its 7,631 tickers:
+266 passed, 124 unreadable (company-data lookups throttled), 610 failed —
+most often no price history (203), under $5 (176), under a year of history
+(120), pending takeover (35), wide spread (21). Extrapolated, roughly 2,300
+names would be admitted [estimate: 266/876 x 7,631]; at 3 per morning the
+rotation would take years to cycle, so a ranking rule is likely needed
+before the switch goes on.
+
+**Found while building, NOT fixed (pre-existing):**
+- Alpaca deprecated the `easy_to_borrow` asset flag on 2026-06-22 and sunsets
+  it on **2026-09-22**. `AlpacaBroker.get_shortability` reads only that flag
+  and fails closed, so after the sunset every short may be refused as "not
+  shortable". The screen reads the replacement (`borrow_status`); the short
+  gate does not.
+- The old side-door gate's name filter matches the substring `" unit"`, so
+  "First United Corp" reads as a unit. The screen uses word boundaries.
+- SPAC shells (trading flat at trust value) and closed-end funds pass the
+  screen as designed; the design names neither.
+
 ### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
 
 **What broke, in one line:** when a stop did not trail, when the desk refused
@@ -9416,6 +9510,11 @@ targets, that check may now be too easy to pass and stop discriminating.
 
 **Universe expansion and pruning — DESIGN AGREED WITH THE OWNER 2026-09-01,
 never written down until now. Not built. Do not redesign it; implement this.**
+
+**STATUS 2026-09-19: BUILT, behind `universe_screen.enabled` (shipped OFF).
+"Not built" above is historical. What was built and every place it differs
+from this design: the 2026-09-19 entry "Universe expansion and pruning built"
+near the top of this file.**
 
 Today the 101-symbol universe is a hand-written list. Symbols CAN be added
 dynamically but only narrowly: up to 3/run via SEC Form 4 smart-money
