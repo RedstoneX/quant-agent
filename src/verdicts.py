@@ -141,6 +141,8 @@ __all__ = [
     "score_verdict",
     "seat_weight",
     "rank_verdicts",
+    "risk_reward_of",
+    "level_touches_of",
 ]
 
 #: Ordinal encoding of the desk's own conviction scale onto 0..1. Equal
@@ -194,6 +196,40 @@ def risk_reward_of(verdict: AnalystVerdict) -> float | None:
     """
     for item in verdict.evidence:
         if item.label == "risk_reward" and item.value is not None:
+            return float(item.value)
+    return None
+
+
+def level_touches_of(verdict: AnalystVerdict) -> float | None:
+    """The `stop_side_level_touches` value already carried in
+    `verdict.evidence`, if any.
+
+    `TechAnalysisResult.to_verdict()` attaches this: the sum, over the
+    computed structural levels on the RISK side of the analyst's entry
+    (below entry for a long, above it for a short — never the overhead
+    side a breakout is deliberately not judged on), of how many prior
+    pivots `find_structural_levels` clustered into each one
+    (`computed_level_touches`, the same count `PortfolioConstructor.
+    _level_backing_stop` already trusts to decide whether a stop earns the
+    tight-stop exemption). Real, already-measured chart structure — not
+    derived here, not invented.
+
+    Only the technical seat attaches this today (it is the only seat with a
+    chart), so this is None for every other seat's verdict.
+
+    NOT weighted by `SEAT_WEIGHT` where it is used below, unlike
+    magnitude/conviction/risk_reward. `SEAT_WEIGHT` is a published prior on
+    how reliably a TYPE of analysis forecasts direction (module docstring)
+    — it has no bearing on a deterministic pivot count, which does not
+    become more or less trustworthy for having come from a seat the
+    literature rates highly. Applying it here would be borrowing a number
+    for a purpose it was never derived for, and — because this signal is
+    summed, not averaged, across whatever seats attach it — would silently
+    double the total the day a second seat ever reports its own chart
+    structure under the same label.
+    """
+    for item in verdict.evidence:
+        if item.label == "stop_side_level_touches" and item.value is not None:
             return float(item.value)
     return None
 
@@ -383,21 +419,54 @@ def rank_verdicts(
             )
         if risk_reward is not None:
             components["risk_reward_tiebreak"] = round(risk_reward, 4)
+        # Third-stage tiebreak (item 141, 2026-09-20): summed
+        # `stop_side_level_touches` evidence — UNWEIGHTED, deliberately
+        # unlike every summed signal above (see `level_touches_of`'s
+        # docstring for why `SEAT_WEIGHT` does not belong on a
+        # deterministic pivot count). Unlike `risk_reward`, an absence
+        # here is a real zero (no computed structural levels on the risk
+        # side of the chart at all) — not a quantity
+        # `reward_risk_floor_applies` deliberately withholds for a whole
+        # setup type — so there is no "absent means neutral" case to
+        # handle: a candidate that attaches nothing here simply sorts
+        # behind one that attaches something, on real information either
+        # way. This is what still separates an all-breakout tied tier,
+        # which `_reward_risk_sort_values` places at a shared 0.0 for
+        # every member (see its docstring), before falling to `symbol`.
+        level_touches_total = sum(lt or 0.0 for lt in (
+            level_touches_of(v) for v in group
+        ))
+        components["level_touches_tiebreak"] = round(level_touches_total, 4)
         ranked.append(RankedCandidate(
             symbol=symbol,
             direction=directions.pop(),
-            score=round(sum(v for k, v in components.items() if k != "risk_reward_tiebreak"), 4),
+            score=round(
+                sum(
+                    v for k, v in components.items()
+                    if k not in ("risk_reward_tiebreak", "level_touches_tiebreak")
+                ),
+                4,
+            ),
             verdicts=sorted(group, key=lambda v: v.seat),
             components=components,
             neutral_seats=sorted(neutral_by_symbol.get(symbol, {})),
         ))
     # Highest composite first; on a tie, highest reward:risk next (real
     # information about the candidate, see module docstring fix #2 and the
-    # 2026-09-11 note above); `symbol` is the final,
-    # deterministic-but-arbitrary stabiliser only reached once both real
-    # signals are equal.
+    # 2026-09-11 note above); on a further tie (both equal, including the
+    # all-absent case an all-breakout tier produces), highest summed
+    # `level_touches` next — real, already-measured chart structure, never
+    # scored for a breakout's reward side but always available for its risk
+    # side (item 141, 2026-09-20); `symbol` is the final,
+    # deterministic-but-arbitrary stabiliser only reached once every real
+    # signal is equal.
     rr_sort = _reward_risk_sort_values(ranked)
-    ranked.sort(key=lambda c: (-c.score, -rr_sort[c.symbol], c.symbol))
+    ranked.sort(key=lambda c: (
+        -c.score,
+        -rr_sort[c.symbol],
+        -c.components.get("level_touches_tiebreak", 0.0),
+        c.symbol,
+    ))
     return ranked
 
 
