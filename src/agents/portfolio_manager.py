@@ -1037,50 +1037,37 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                     "the ladder as unknown, not as zero."
                 )
 
-        # Recent system performance (drawdown awareness).
+        # Recent system performance, REPORTING ONLY. The `in_drawdown`  # retired-ok
+        # flag and its two thresholds used to live here and halved every new
+        # BUY; that brake was removed 2026-09-20 on the owner's instruction
+        # (retired item 32, docs/INCIDENT_HISTORY.md). These numbers now
+        # inform the seat and gate nothing.
         recent_perf = kwargs.get("recent_performance") or {}
         if recent_perf:
             r5 = recent_perf.get("rolling_5d_pct")
             r20 = recent_perf.get("rolling_20d_pct")
-            dd = recent_perf.get("in_drawdown")
             trailing = recent_perf.get("trailing_days") or 0
-            dd_marker = " ⚠️ SYSTEM IN DRAWDOWN" if dd else ""
-            # docs/WORK.md item 32: rendered from the thresholds actually in
-            # force (`_compute_recent_performance`), not a hardcoded
-            # "5d < -3% OR 20d < -8%" description. Since the 2026-09-11 basis
-            # change these MOVE EVERY SESSION — they are a multiple of the
-            # normal daily move of the book actually held, not a fixed
-            # percentage of equity — so any hand-typed copy here would be
-            # wrong within days rather than merely going stale eventually.
-            t5 = recent_perf.get("drawdown_5d_threshold_pct")
-            t20 = recent_perf.get("drawdown_20d_threshold_pct")
-            threshold_desc = (
-                f"5d < {t5}% OR 20d < {t20}%"
-                if t5 is not None and t20 is not None
-                else "unavailable"
-            )
-            # docs/WORK.md item 32 (2026-09-14). A window with too little
-            # equity history to evaluate used to render as "None%", which
-            # reads to a model as a number near zero — i.e. as "we are not
-            # in drawdown" when the truth is "this brake cannot see". The
-            # rolling windows need 6 and 21 recorded sessions respectively
-            # (`_compute_recent_performance` reads rows[5] / rows[20]), and
-            # rows are only written by an evening run, so a paused desk does
-            # not accrue them. Say so instead of printing a null.
+
+            # A window with too little equity history to evaluate used to
+            # render as "None%", which reads to a model as a number near
+            # zero. The rolling windows need 6 and 21 recorded sessions
+            # respectively (`_compute_recent_performance` reads rows[5] /
+            # rows[20]), and rows are only written by an evening run, so a
+            # paused desk does not accrue them. Say so instead of printing
+            # a null.
             def _window(value, needed: int) -> str:
                 if value is not None:
                     return f"{value}%"
                 return (
                     f"NOT YET MEASURABLE — needs {needed} recorded sessions, "
-                    f"{trailing} on record. This brake cannot fire until then; "
-                    f"do not read it as zero or as an all-clear."
+                    f"{trailing} on record. Do not read it as zero or as an "
+                    f"all-clear."
                 )
 
             perf_section = (
-                f"## Recent System Performance (drawdown check){dd_marker}\n"
+                f"## Recent System Performance\n"
                 f"- Trailing 5-day return: {_window(r5, 6)}\n"
                 f"- Trailing 20-day return: {_window(r20, 21)}\n"
-                f"- Drawdown threshold: {threshold_desc} flags in_drawdown\n"
                 f"- History length: {trailing} days recorded\n"
             )
         else:

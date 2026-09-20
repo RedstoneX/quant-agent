@@ -12,7 +12,6 @@ from src.agents.base import (
     resolve_provider,
 )
 from src.risk.constants import (
-    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
 )
@@ -552,57 +551,6 @@ class ExecutionConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
     max_total_position_pct: float = Field(gt=0)
-    # docs/WORK.md item 32. Optional, same override pattern as
-    # `max_sector_hard_pct` below: an explicit value here always wins (kept
-    # for the ~50 existing tests/fixtures across this repo that set it to an
-    # arbitrary literal for unrelated reasons); when absent, it is DERIVED
-    # from the real per-trade risk unit via `effective_max_daily_loss_pct`
-    # rather than defaulting to another flat, independently-chosen number.
-    # See `daily_loss_risk_multiple` immediately below for the derivation.
-    max_daily_loss_pct: float | None = Field(default=None, gt=0, le=100)
-    # Spec/convention predates this repo's ratified mandate ("April-2026-era
-    # constant", docs/INCIDENT_HISTORY.md 2026-09-04). Expressed as "N times
-    # the real per-trade risk unit" (the standard "N losing R's" circuit-
-    # breaker convention referenced in the same entry) rather than a flat
-    # percent, so a future change to `max_position_risk_pct` moves this with
-    # it instead of silently going stale again — the exact failure mode item
-    # 32 found.
-    #
-    # BUG 1, FIXED 2026-09-04 (docs/WORK.md item 32,
-    # docs/INCIDENT_HISTORY.md). N was 3.0 — the SAME multiple as the 5-day
-    # window's (`drawdown_5d_risk_multiple`). Two windows of very different
-    # length cannot share one multiple and fire at a comparable rate: a
-    # one-day threshold set at the five-day threshold's level is, in
-    # practice, only reachable on a single-name gap event, so the daily
-    # circuit breaker was decorative.
-    #
-    #   DERIVATION (square-root-of-time). Drawdown magnitude over a window
-    #   scales with the square root of the window length — Van Hemert, Ganz,
-    #   Harvey et al., "Drawdowns", Journal of Portfolio Management, 2020.
-    #   For the same statistical firing rate across windows, thresholds must
-    #   therefore scale as sqrt(T), not sit flat.
-    #
-    #   Anchor on the 5-day window, which the item-32 research found is the
-    #   reasonably calibrated one of the three:
-    #
-    #       N_1d = N_5d * sqrt(1 / 5)
-    #            = 3.0   * 0.4472135955
-    #            = 1.3416407865...
-    #            -> 1.34  (2dp; the input multiples are provisional to
-    #                      roughly the nearest half, so more digits would
-    #                      be false precision)
-    #
-    #   At the ratified 5% per-trade risk unit that is a -6.7% daily
-    #   circuit breaker, down from -15%. Ratio to the 5-day window is now
-    #   1 : 2.24 (= sqrt(5)) rather than the old, incoherent 1 : 1.
-    #
-    # The ANCHOR multiple N_5d = 3 is still INHERITED, not re-derived: there
-    # is no measured drawdown/track record to validate it against (the
-    # 2026-09-02 clean-slate reset wiped the equity history that would let
-    # anyone check it). This fix corrects the RELATIVE scaling between
-    # windows, which is doctrine; the absolute calibration of the anchor
-    # stays flagged provisional in docs/WORK.md pending real trade history.
-    daily_loss_risk_multiple: float = Field(default=1.34, gt=0)
     max_sector_pct: float = Field(gt=0, le=100)
     # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
     # longer a veto — it is the diversification TARGET, past which further
@@ -637,156 +585,6 @@ class RiskConfig(BaseModel):
     # trade, which is what removes the incentive to squeeze stops. The prior
     # 0.5% ceiling lived in a constructor dataclass default nobody chose.
     max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
-    # docs/WORK.md item 32 / docs/INCIDENT_HISTORY.md 2026-09-04. The two
-    # rolling-return "drawdown brake" windows (`in_drawdown` in
-    # `src/pipeline.py::_compute_recent_performance`) that halve new BUY
-    # sizing when recent performance looks like the desk's edge degraded.
-    # Both used to be flat, hardcoded percentages (-3.0 / -8.0) chosen when
-    # this desk's real delivered per-trade risk was suppressed to ~1% by an
-    # unrelated, now-fixed notional cap bug (PRs #258/#259) — i.e. sized for
-    # roughly "3 losing max-size trades in 5 days" / "8 in 20 days" under
-    # the OLD ~1% unit. Re-expressed here as that same "N losing R's"
-    # multiple of the REAL per-trade risk unit (`max_position_risk_pct`)
-    # instead, via `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`
-    # below, so the brake auto-rescales if the risk unit ever changes again
-    # rather than silently going stale a second time.
-    #
-    # The 5-day multiple (3) is UNCHANGED from the pre-existing, never
-    # independently validated constant — there is no measured drawdown
-    # history to check it against (the 2026-09-02 clean-slate reset wiped
-    # the equity curve it'd need). It remains the ANCHOR the other two
-    # windows are scaled from, and stays flagged PROVISIONAL in
-    # docs/WORK.md pending real post-fix drawdown data. At the ratified 5%
-    # risk unit it is a -15% threshold, which happens to land exactly on
-    # the de-levering ladder's -15% -> 1.0x rung
-    # (`src/risk/rules.py::GROSS_LADDER`) — the two systems agree at this
-    # window, so nothing here needed reconciling.
-    #
-    # BUG 2, FIXED 2026-09-04 (docs/WORK.md item 32,
-    # docs/INCIDENT_HISTORY.md). The 20-day multiple WAS 8, i.e. a -40%
-    # threshold at the 5% risk unit. This desk carries a SECOND, older
-    # drawdown-response system — the §11.2 peak-to-trough gross-exposure
-    # de-levering ladder in `src/risk/rules.py` — which starts cutting
-    # exposure at -8%, is down to 1.0x by -15%, and at -20%
-    # (`GROSS_LADDER_ALERT_PCT`) drops to 0.5x AND alerts the owner. The
-    # two systems were never reconciled: the ladder had already halved the
-    # book and woken the owner while this brake was still completely
-    # silent, and stayed silent for another twenty points of drawdown.
-    # That is not a conservative-vs-aggressive difference of opinion, it is
-    # two systems that disagree about whether the desk is in trouble.
-    #
-    #   MINIMAL HONEST FIX: the 20-day brake must not still be asleep past
-    #   the point the ladder escalates to the owner.
-    #
-    #       N_20d <= |GROSS_LADDER_ALERT_PCT| / max_position_risk_pct
-    #              = 20 / 5
-    #              = 4.0        -> threshold -20%, exactly the alert rung
-    #
-    # NOTE this is TIGHTER than square-root-of-time from the 5-day anchor
-    # would give (N_5d * sqrt(20/5) = 3 * 2 = 6, i.e. -30%). The ladder
-    # constraint binds first, and where doctrine and an already-live
-    # sibling system disagree, matching the live system is the honest
-    # minimal move. FULL reconciliation of the two systems — whether they
-    # should share one drawdown response at all, and which one governs —
-    # is a real open design question and an OWNER call, deliberately not
-    # decided here. See docs/WORK.md item 32.
-    drawdown_5d_risk_multiple: float = Field(default=3.0, gt=0)
-    drawdown_20d_risk_multiple: float = Field(default=4.0, gt=0)
-    # docs/WORK.md item 32, owner call 2026-09-11 — THE BASIS CHANGE.
-    #
-    # Everything above this line expresses a loss alarm as a FIXED
-    # PERCENTAGE OF EQUITY. That was the defect the owner rejected: a fixed
-    # percentage is only correct for the volatility regime it was picked in,
-    # and markets are not stationary. Recalibrating the percentage from more
-    # history was explicitly REFUSED — it would have produced another frozen
-    # number with the same flaw.
-    #
-    # The alarms now trip at `sensitivity x sigma_daily x sqrt(T)`, where
-    # `sigma_daily` is the realized daily volatility of THE BOOK THE DESK IS
-    # ACTUALLY HOLDING — reconstructed from the real market price history of
-    # its current holdings at their current weights, recomputed every session
-    # (`src/risk/rules.py::measure_portfolio_daily_vol`). The multiples above
-    # remain as the fallback for when there is genuinely nothing to measure:
-    # an all-cash book, or holdings without enough price history.
-    #
-    # NOT THE ACCOUNT'S OWN EQUITY CURVE. That was the first implementation
-    # of this change and the owner rejected it the same day, correctly:
-    #
-    #   1. RAMP-UP CONTAMINATION. The account was reset 2026-09-02 and its
-    #      first sessions go from all-cash to fully deployed. A mostly-cash
-    #      account barely moves, so the measured volatility over exactly the
-    #      sessions needed to activate the alarms would be artificially LOW,
-    #      setting the thresholds artificially TIGHT — and they would then
-    #      fire on completely normal behaviour once the book was deployed.
-    #   2. THE RECORD IS CONTAMINATED ANYWAY. This desk has never operated
-    #      correctly; that is the entire content of its defect backlog.
-    #      Calibrating a safety threshold from a record of malfunction is
-    #      not sound, and no waiting period cures it.
-    #
-    # Measuring the holdings instead works IMMEDIATELY (their price history
-    # is abundant, whatever the account's is), SCALES WITH DEPLOYMENT
-    # automatically (weights are fractions of equity and are deliberately
-    # not renormalised, so a third-deployed book gets a proportionally
-    # tighter threshold — intended), and never reads the account's own past
-    # performance at all.
-    #
-    # NOT volatility targeting. Nothing here resizes a position; this only
-    # changes the yardstick the ALARM measures a loss against. Continuous
-    # volatility-target exposure scaling was separately REJECTED for this
-    # desk (docs/OUTCOME.md).
-    #
-    # THE SENSITIVITY IS PROVISIONAL AND IS NOT RESEARCH-GROUNDED.
-    # Researched 2026-09-11 and stated plainly: the sqrt(T) window scaling
-    # IS real, published, and cited (Van Hemert/Ganz/Harvey, "Drawdowns",
-    # JPM 2020), and volatility-relative risk measurement in general is
-    # standard practice — but there is NO citable industry-standard number
-    # for "how many multiples of recent volatility should trip a drawdown
-    # alarm". Anyone who presents one has invented it. Do not let a later
-    # pass dress this number up as derived; it is a risk-appetite dial.
-    #
-    #   3.0 IS AN OWNER RISK-APPETITE DECISION, 2026-09-11. It replaces an
-    #   earlier 6.7, which had been set purely for day-one continuity — 6.7
-    #   x a ~1%/session reference volatility reproduced the old frozen
-    #   -6.7% daily breaker exactly, so nothing would jump when the basis
-    #   changed. Measuring that for the first time is what exposed the
-    #   problem: at 6.7 the daily breaker only fires on a ~6.7-sigma
-    #   session, a crash-grade event, i.e. it was effectively DORMANT. The
-    #   owner reviewed the measured numbers and chose 3.0 — roughly a 3%
-    #   daily loss on a ~1%/session book, a genuinely rough day rather than
-    #   a crash. That is a deliberate, REVERSIBLE tightening of risk
-    #   appetite, not a calibration result.
-    #
-    #   THE REFERENCE VOLATILITY, for reading the numbers below only:
-    #   ~1.0% per session. MEASURED 2026-09-11 from real market data over
-    #   this desk's OWN 101-symbol configured universe (`trading.universe`):
-    #   trailing-20-session realized daily volatility of equal-weight
-    #   baskets the size this desk actually runs — median 1.04% at 5 names,
-    #   0.86% at 8, 0.80% at 12, with a 5th-to-95th spread of roughly
-    #   0.55%-1.7%. That proxy measurement is what the live mechanism now
-    #   does for real, against actual holdings and actual weights, so it is
-    #   an illustration of scale and NOT an input to the live thresholds.
-    #
-    #     daily : 3.0 x 1.0 x sqrt(1)  =  3.00%  (was 6.70%)
-    #     5-day : 3.0 x 1.0 x sqrt(5)  =  6.71%  (was 14.98%)
-    #     20-day: 3.0 x 1.0 x sqrt(20) = 13.42%  (was capped at 20.00%)
-    #
-    #   One sensitivity drives all three; no per-window multiple survives,
-    #   which is what stops them drifting apart the way bug 1 did. At 3.0
-    #   and a ~1% book the 20-day cap at `GROSS_LADDER_ALERT_PCT` (-20%) no
-    #   longer binds — it only binds above ~1.5%/session — but it stays,
-    #   because it is the thing that guarantees this brake can never be
-    #   asleep past the point the §11.2 de-levering ladder halves the book
-    #   and alerts the owner, whatever the volatility regime.
-    #
-    #   NOT VALIDATED against this desk's own realised trading outcomes,
-    #   and by design cannot be: the whole point of the basis change is that
-    #   the account's own record is contaminated and must not calibrate a
-    #   safety threshold. What WOULD change this number is the owner's
-    #   appetite, or evidence from live operation that 3.0 fires on days
-    #   that turn out to be ordinary. Revisit on that basis, not by fitting.
-    drawdown_vol_sensitivity: float = Field(
-        default=DEFAULT_DRAWDOWN_VOL_SENSITIVITY, gt=0,
-    )
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
@@ -1048,42 +846,6 @@ class RiskConfig(BaseModel):
         )
         return min(100.0, max(self.max_sector_pct, derived))
 
-    @property
-    def drawdown_5d_threshold_pct(self) -> float:
-        """Rolling 5-day return below which `in_drawdown` fires (negative).
-
-        `-(drawdown_5d_risk_multiple x max_position_risk_pct)` — see the
-        field comment above `drawdown_5d_risk_multiple` for the derivation
-        and its provisional multiplier.
-        """
-        return -(self.drawdown_5d_risk_multiple * self.max_position_risk_pct)
-
-    @property
-    def drawdown_20d_threshold_pct(self) -> float:
-        """Rolling 20-day return below which `in_drawdown` fires (negative).
-
-        `-(drawdown_20d_risk_multiple x max_position_risk_pct)` — see the
-        field comment above `drawdown_20d_risk_multiple` for the derivation
-        and its provisional multiplier.
-        """
-        return -(self.drawdown_20d_risk_multiple * self.max_position_risk_pct)
-
-    @property
-    def effective_max_daily_loss_pct(self) -> float:
-        """The daily-loss circuit-breaker threshold, explicit or derived.
-
-        Every consumer (`src/risk/rules.py`) reads this rather than
-        `max_daily_loss_pct` directly, matching `sector_hard_ceiling_pct`'s
-        pattern immediately below: an explicit `max_daily_loss_pct` always
-        wins; absent one, it derives as `daily_loss_risk_multiple x
-        max_position_risk_pct` so the breaker tracks the real per-trade risk
-        unit instead of sitting as an independently-chosen flat percent —
-        see the field comments above and docs/WORK.md item 32.
-        """
-        if self.max_daily_loss_pct is not None:
-            return self.max_daily_loss_pct
-        return self.daily_loss_risk_multiple * self.max_position_risk_pct
-
     @model_validator(mode="after")
     def _sector_hard_ceiling_is_above_the_target(self):
         # A hard ceiling below the diversification target would mean the
@@ -1102,6 +864,44 @@ class RiskConfig(BaseModel):
                 "below the diversification target it backstops"
             )
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_loss_alarm_keys(cls, data):
+        # Owner instruction 2026-09-20 (docs/INCIDENT_HISTORY.md, retired
+        # board item 32): the entire account-level loss-alarm mechanism — the
+        # daily halt and the 5-day / 20-day BUY-halving brakes — was removed.
+        # Same pattern and reason as the validators below: `extra="ignore"`
+        # would let a stale deployment's settings.yaml keep these keys and
+        # load silently, and an operator would believe a daily halt was
+        # armed when nothing reads it. That is the single most dangerous
+        # form this particular removal could rot into, because the belief
+        # it creates is a belief about loss protection.
+        if isinstance(data, dict):
+            stale = [
+                k for k in (
+                    "max_daily_loss_pct",           # retired-ok
+                    "daily_loss_risk_multiple",      # retired-ok
+                    "drawdown_vol_sensitivity",      # retired-ok
+                    "drawdown_5d_risk_multiple",     # retired-ok
+                    "drawdown_20d_risk_multiple",    # retired-ok
+                )
+                if k in data
+            ]
+            if stale:
+                raise ValueError(
+                    f"risk.{', risk.'.join(stale)} was removed 2026-09-20 on "
+                    "the owner's instruction: the account-level daily-loss "
+                    "halt and the 5-day/20-day rolling-return BUY brakes are "
+                    "retired in full (docs/INCIDENT_HISTORY.md, board item "
+                    "32). There is NO replacement key and no account-level "
+                    "loss limit — per-position stops are the desk's loss "
+                    "protection, and the §11.2 gross-exposure de-levering "
+                    "ladder (risk.max_gross_exposure_x) is the only "
+                    "account-level drawdown response left. Delete the key "
+                    "from the settings file."
+                )
+        return data
 
     @model_validator(mode="before")
     @classmethod

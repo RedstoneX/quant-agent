@@ -369,7 +369,7 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: 4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5 ATR
 #: research pre-filter; and the 5% preview size. No number was added and
 #: none changed -- the debt was always there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 148  # 2026-09-20, board item 124 cross-symbol crowd-out fix: +1 for the new `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` (the reserved-slot bound), recorded honestly as `arbitrary` with its open question stated -- no measurement yet backs it. Was 147, the same day, for the adversary review below: `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was `sourced` against an SSRN URL that returns HTTP 403 to everyone, including the author -- a citation nobody can open is not a source under this ledger's own rule. Relabelled `arbitrary` with its open question stated; no value changed. Was 146.
+MAX_ARBITRARY_ENTRIES = 142  # 2026-09-20, retired board item 32: -6 for the account-level loss alarms removed on the owner's direct instruction -- `RiskConfig.drawdown_20d_risk_multiple`, `RiskConfig.drawdown_5d_risk_multiple`, `DEFAULT_DRAWDOWN_VOL_SENSITIVITY`, `DRAWDOWN_BUY_SCALE`, `MIN_REALIZED_VOL_RETURNS` and `REALIZED_VOL_WINDOW_SESSIONS` (the volatility yardstick they were measured against went with them). Was 148.
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not

@@ -279,7 +279,6 @@ def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -323,7 +322,6 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -353,87 +351,6 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
     pipeline.broker.submit_order.assert_called_once()
 
 
-def test_execution_stage_blocks_buys_when_daily_loss_breached_during_run():
-    """The initial morning circuit breaker (#45) runs before LLM/research
-    — but the LLM window is 5-10 min on a slow OpenAI day, plenty of room
-    for the tape to gap through the daily-loss limit while PM/RM is
-    thinking. With intra_check exempt from the session lock (#46), this
-    race is now real: morning's stale snapshot says we can BUY while
-    intra is firing emergency sells off the live state.
-
-    Fix is a re-check before the BUY loop: refresh portfolio_value,
-    re-run risk_engine.check_daily_loss against ctx.last_equity, and
-    drop BUYs if the breach materialised mid-run. SELLs that already
-    fired through this session are kept (they reduce exposure, never
-    add)."""
-    from src.models import PortfolioDecision, Position, TradeDecision
-    from src.pipeline_context import RunContext
-
-    pipeline = MagicMock()
-    pipeline.broker.get_latest_price.return_value = 100.0
-    _mock_stop_seam(pipeline.broker)
-    _mock_stage_seam(pipeline)
-    # SELL submits cleanly first.
-    pipeline.broker.submit_order.return_value = {
-        "id": "sell-1", "status": "accepted", "symbol": "JPM",
-    }
-    pipeline.broker.wait_for_order_terminal.return_value = "filled"
-    # After the SELL, refresh shows total_value crashed through the limit.
-    pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 96_500.0},  # -3.5% from last_equity
-        [],
-        {},
-    )
-    loss_violation = MagicMock(message="Daily loss 3.5% exceeds max 3%")
-    pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._order_accepted.return_value = True
-    pipeline._format_qty = lambda q: str(q)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline.db = MagicMock()
-
-    ctx = RunContext.start("morning")
-    ctx.cash = 30_000.0
-    ctx.total_value = 100_000.0
-    ctx.last_equity = 100_000.0
-    ctx.positions = [
-        Position(
-            symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-            market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
-        ),
-    ]
-    ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        decisions=[
-            TradeDecision(
-                action="SELL", symbol="JPM", allocation_pct=100,
-                entry_price=300.0, stop_loss=280.0, take_profit=350.0,
-                reasoning="thesis broken",
-            ),
-            TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=99.0, stop_loss=92.0, take_profit=110.0,
-                reasoning="dip buy that should be blocked by re-check",
-            ),
-        ],
-        portfolio_view="test",
-    )
-    ctx.symbols_bars = {}
-
-    stage = ExecutionStage(pipeline=pipeline)
-    orders = stage.run(ctx)
-
-    # SELL went through (it fired BEFORE the re-check), BUY blocked.
-    submit_calls = pipeline.broker.submit_order.call_args_list
-    sides = [c.kwargs.get("side") for c in submit_calls]
-    assert "sell" in sides, f"SELL must have fired before the re-check; got {sides}"
-    assert "buy" not in sides, (
-        f"BUY must be blocked by daily-loss re-check; got submit_calls={submit_calls}"
-    )
-    pipeline.risk_engine.check_daily_loss.assert_called_with(
-        100_000.0, 96_500.0 - 100_000.0,
-    )
-
-
 def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     """Morning SELL path: when finalize can't rebuild coverage (returns
     ok=False, having persisted the recovery intent), the shared helper logs a
@@ -458,7 +375,6 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     pipeline._refresh_account_state.return_value = (
         {"cash": 60_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
     pipeline._full_sell_qty = lambda q: q
@@ -503,9 +419,13 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     ), f"expected a finalize-failure warning; got {[r.getMessage() for r in caplog.records]}"
 
 
-def test_execution_stage_allows_buys_when_daily_loss_not_breached_after_refresh():
-    """Sanity check: if the re-check shows no breach, BUYs proceed normally.
-    The re-check must not become a permanent BUY block on every morning."""
+def test_execution_stage_submits_buys_after_the_account_state_refresh():
+    """Renamed 2026-09-20 (retired item 32). This was
+    `..._allows_buys_when_daily_loss_not_breached_after_refresh` and its
+    docstring described a pre-BUY daily-loss re-check that no longer exists,
+    so it read as guarding a condition it could not reach. The refresh it
+    exercises is still real and still runs; what it pins is that a BUY
+    reaches the broker after it."""
     from src.models import PortfolioDecision, TradeDecision
     from src.pipeline_context import RunContext
 
@@ -515,13 +435,11 @@ def test_execution_stage_allows_buys_when_daily_loss_not_breached_after_refresh(
     pipeline.broker.submit_order.return_value = {
         "id": "buy-1", "status": "accepted", "symbol": "SPY",
     }
-    # No sells fired, so refresh runs from inside the re-check branch.
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_500.0},  # +0.5%, no breach
+        {"cash": 50_000.0, "portfolio_value": 100_500.0},
         [],
         {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
 
@@ -564,7 +482,6 @@ def test_execution_stage_skips_buy_when_entry_price_above_market_by_more_than_5p
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -725,58 +642,6 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
     assert kwargs["run_id"] == ctx.run_id
     assert kwargs["decision_id"] == ctx.decision_id
     assert "exceed max 20%" in kwargs["full_response"]
-
-
-def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
-    """2026-09-03 audit finding #3: the pre-RM hard-risk filter call passes
-    `in_drawdown`, but the post-modifications re-filter call previously
-    dropped it (defaulting to False) — the same drawdown state briefly
-    became invisible to the gate a second time in the same run, for no
-    reason tied to anything RM did. Assert the post-RM call now receives
-    the same `in_drawdown` value the pre-RM call computed."""
-    from src.models import PortfolioDecision, RiskVerdict
-
-    first_pass_decisions = [_buy("AAPL", 10)]
-    pipeline = _risk_stage_pipeline(first_pass_decisions)
-    pipeline._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
-
-    verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
-        modifications=[{
-            "symbol": "AAPL", "field": "allocation_pct",
-            "original_value": 10, "new_value": 5, "reason": "trim sizing",
-        }],
-    )
-    rm_result = MagicMock()
-    rm_result.used_fallback = False
-    pipeline.risk_manager = MagicMock()
-    pipeline.risk_manager.review.return_value = (verdict, rm_result)
-
-    pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=[
-            (first_pass_decisions, [], []),
-            (first_pass_decisions, [], []),
-        ],
-    )
-
-    ctx = RunContext.start("morning")
-    ctx.decision_id = f"{ctx.run_id}-dec-000009"
-    ctx.total_value = 100_000.0
-    ctx.last_equity = 100_000.0
-    ctx.cash = 50_000.0
-    ctx.recent_performance = {"in_drawdown": True}
-    ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=first_pass_decisions, portfolio_view="test",
-    )
-
-    stage = RiskStage(pipeline=pipeline)
-    stage.run(ctx)
-
-    assert pipeline._filter_hard_risk_decisions.call_count == 2
-    pre_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[0].kwargs
-    post_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[1].kwargs
-    assert pre_rm_kwargs["in_drawdown"] is True
-    assert post_rm_kwargs["in_drawdown"] is True
 
 
 def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():

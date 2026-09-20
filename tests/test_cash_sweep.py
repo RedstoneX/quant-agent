@@ -65,7 +65,7 @@ def _sweep_pipeline(enabled=True, reserve_pct=1.0, min_order_usd=500.0):
         ),
         risk=RiskConfig(
             max_position_pct=20, max_total_position_pct=90,
-            max_daily_loss_pct=3, max_sector_pct=40,
+            max_sector_pct=40,
             require_stop_loss=True, allow_margin=False,
         ),
     )
@@ -127,9 +127,7 @@ def test_filter_does_not_itself_credit_parked_value_as_cash():
     p = _sweep_pipeline()
     # $100k book: $9.5k NVDA, $80.5k SGOV, $1k deployable cash. 10% BUY = $10k.
     allowed, _, blocked = p._filter_hard_risk_decisions(
-        [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0,
-        daily_pnl=0.0, baseline=100_000.0, cash=1_000.0,
-    )
+        [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0, cash=1_000.0,)
     assert allowed == [], "SGOV's value must not fund a BUY the gate approves"
     assert any("cash" in r for r in blocked)
 
@@ -137,9 +135,7 @@ def test_filter_does_not_itself_credit_parked_value_as_cash():
 def test_filter_blocks_same_buy_when_sweep_disabled():
     p = _sweep_pipeline(enabled=False)
     allowed, _, blocked = p._filter_hard_risk_decisions(
-        [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0,
-        daily_pnl=0.0, baseline=100_000.0, cash=1_000.0,
-    )
+        [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0, cash=1_000.0,)
     assert allowed == []
     assert any("cash" in r for r in blocked)
 
@@ -149,9 +145,7 @@ def test_filter_excludes_vehicle_from_net_exposure():
     new BUY — parked cash is not market exposure."""
     p = _sweep_pipeline()
     allowed, _, blocked = p._filter_hard_risk_decisions(
-        [_buy(alloc=15.0)], [SGOV, NVDA], total_value=100_000.0,
-        daily_pnl=0.0, baseline=100_000.0, cash=20_000.0,
-    )
+        [_buy(alloc=15.0)], [SGOV, NVDA], total_value=100_000.0, cash=20_000.0,)
     assert [d.symbol for d in allowed] == ["AAPL"], blocked
 
 
@@ -430,7 +424,6 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
     p._midday_execute_llm_actions = MagicMock(return_value=[])
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.position_reviewer = MagicMock()
     p.position_reviewer.review.return_value = (
         PositionReview(
@@ -507,7 +500,6 @@ def _position_review_fixture(tmp_path):
     p._midday_execute_llm_actions = MagicMock(return_value=[])
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.position_reviewer = MagicMock()
     p.position_reviewer.review.return_value = (
         PositionReview(
@@ -760,9 +752,8 @@ def test_approved_buys_are_not_designed_around_unusable_liquidity():
     # covered by what execution can actually spend.
     allowed, _violations, blocked = p._filter_hard_risk_decisions(
         [_buy(symbol="AAPL", alloc=20.0)], [parked],
-        total_value=total_value, daily_pnl=0.0, baseline=total_value,
-        cash=deployable_cash,
-    )
+        total_value=total_value,
+        cash=deployable_cash,)
 
     assert allowed == [], (
         "the gate must not approve a BUY that execution's cash recheck "
@@ -776,9 +767,8 @@ def test_approved_buys_are_not_designed_around_unusable_liquidity():
     # approved — the fix must not have simply blocked everything.
     small_allowed, _v, small_blocked = p._filter_hard_risk_decisions(
         [_buy(symbol="AAPL", alloc=1.0)], [parked],   # $100 of $10k book
-        total_value=total_value, daily_pnl=0.0, baseline=total_value,
-        cash=deployable_cash,
-    )
+        total_value=total_value,
+        cash=deployable_cash,)
     assert [d.symbol for d in small_allowed] == ["AAPL"], small_blocked
 
 

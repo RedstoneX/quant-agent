@@ -24,8 +24,10 @@ Safety contract (from the adversarial design review):
     write-ahead orphan sweep owns partial submits) and also on any
     RiskStage early-exit (an RM-rejected plan must never be retried).
   - Stale protection: same-ET-date only, max age 90 minutes, plus the
-    existing ExecutionStage guards (5% entry-price staleness skip,
-    pre-BUY daily-loss recheck) run against FRESH market state.
+    existing ExecutionStage guard (5% entry-price staleness skip) runs
+    against FRESH market state. A pre-BUY daily-loss recheck was named
+    here too until 2026-09-20, when the whole account-level loss alarm was
+    removed (docs/INCIDENT_HISTORY.md, retired item 32).
   - Every function is best-effort: any error degrades to "no checkpoint"
     (normal full run), never to a crashed session.
 """
@@ -151,7 +153,10 @@ def mark_consumed(session: str) -> bool:
 
     Called (a) right before ExecutionStage submits (at-most-once for BUYs),
     (b) on any RiskStage early-exit — an RM-rejected or hard-blocked plan
-    must never be re-offered — and (c) on a daily-loss HALT exit.
+    must never be re-offered. A third call site, (c) on a daily-loss HALT
+    exit, was deleted 2026-09-20 with the account-level loss alarm itself
+    (docs/INCIDENT_HISTORY.md, retired item 32); the at-most-once contract
+    is unaffected, because that exit no longer happens.
 
     Fail-CLOSED: if rewriting the file fails (disk full, permissions), fall
     back to deleting it — for load() a missing checkpoint equals a consumed
@@ -187,7 +192,7 @@ def mark_consumed(session: str) -> bool:
 
 def write_status(session: str, status: str) -> None:
     """Record a legitimate PM-less terminal status for the ET day
-    (no_data / daily_loss_halted). The evening dead-man probe reads this to
+    (no_data, say). The evening dead-man probe reads this to
     avoid false 'morning killed mid-run' alarms. Never raises.
     """
     try:

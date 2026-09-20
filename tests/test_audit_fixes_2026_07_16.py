@@ -18,7 +18,7 @@ from src.pipeline import TradingPipeline
 
 def _cfg(**kw):
     base = dict(max_position_pct=20.0, max_total_position_pct=90.0,
-                max_daily_loss_pct=3.0, max_sector_pct=40.0,
+                max_sector_pct=40.0,
                 require_stop_loss=True, allow_margin=False)
     base.update(kw)
     return RiskConfig(**base)
@@ -44,7 +44,7 @@ def test_nan_market_value_blocks_instead_of_silently_disabling_caps():
                  market_value=80_000, unrealized_pnl=0.0, sector="Technology"),
     ]
     violations = eng.check(decision=_buy(), positions=positions,
-                           total_value=100_000.0, daily_pnl=0.0, cash=100_000.0)
+                           total_value=100_000.0, cash=100_000.0)
     from src.pipeline import HARD_BLOCK_RULES
     assert violations, "a NaN position must not yield an all-clear"
     assert any(v.rule in HARD_BLOCK_RULES for v in violations)
@@ -55,7 +55,7 @@ def test_clean_snapshot_still_evaluates_normally():
     positions = [Position(symbol="NVDA", qty=10, avg_entry=100, current_price=100,
                           market_value=1_000, unrealized_pnl=0.0, sector="Technology")]
     violations = eng.check(decision=_buy(alloc=5.0), positions=positions,
-                           total_value=100_000.0, daily_pnl=0.0, cash=100_000.0)
+                           total_value=100_000.0, cash=100_000.0)
     assert violations == []
 
 
@@ -74,9 +74,8 @@ def test_cluster_includes_the_buy_symbols_own_existing_position():
     matrix = {"NVDA": {"AVGO": 0.9}, "AVGO": {"NVDA": 0.9}}
     violations = eng.check(
         decision=_buy("NVDA", alloc=5.0), positions=positions,
-        total_value=100_000.0, daily_pnl=0.0, cash=100_000.0,
-        correlation_matrix=matrix, max_correlated_cluster_pct=50.0,
-    )
+        total_value=100_000.0, cash=100_000.0,
+        correlation_matrix=matrix, max_correlated_cluster_pct=50.0,)
     # 40k NVDA + 10k AVGO + 5k add = 55% > 50% cap. Pre-fix: 10k + 5k = 15% → silent.
     assert any(v.rule == "correlation_cluster" for v in violations)
 
@@ -183,8 +182,7 @@ def test_held_sector_etf_counts_toward_the_sector_cap():
     with patch("src.execution.broker._get_sector", return_value="Healthcare"):
         violations = eng.check(
             decision=_buy("LLY", alloc=15.0), positions=positions,
-            total_value=100_000.0, daily_pnl=0.0, cash=100_000.0,
-        )
+            total_value=100_000.0, cash=100_000.0,)
     assert any(v.rule == "max_sector_pct" for v in violations)
 
 

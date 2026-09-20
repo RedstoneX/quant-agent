@@ -137,7 +137,7 @@ def _short_target(symbol="TSLA", weight=5.0, suggested_stop=None) -> TargetPosit
 
 def _cfg(**kw) -> RiskConfig:
     base = dict(max_position_pct=20.0, max_total_position_pct=90.0,
-                max_daily_loss_pct=3.0, max_sector_pct=40.0,
+                max_sector_pct=40.0,
                 require_stop_loss=True, allow_margin=False)
     base.update(kw)
     return RiskConfig(**base)
@@ -156,7 +156,6 @@ def _exec_pipeline() -> MagicMock:
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_shortability.return_value = {
         "shortable": True, "easy_to_borrow": True, "reason": "eligible",
@@ -834,8 +833,7 @@ def test_single_short_cap_hard_blocks_opening_too_large_a_short():
         entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000, daily_pnl=0.0,
-    )
+        decision=decision, positions=[], total_value=100_000,)
     rules = {v.rule for v in violations}
     assert "max_position_pct" in rules
 
@@ -856,8 +854,7 @@ def test_a_short_is_capped_exactly_where_an_equivalent_long_is():
         )
         return {v.rule for v in engine.check(
             decision=d, positions=[_pos("XYZ", qty=held_qty, entry=100, price=100)],
-            total_value=100_000, daily_pnl=0.0,
-        )}
+            total_value=100_000,)}
 
     # 20% held + 13% new = exactly the cap: both pass.
     assert "max_position_pct" not in _rules("BUY", 200, 13.0)
@@ -883,8 +880,7 @@ def test_many_shorts_are_not_blocked_by_a_separate_bearish_book_cap():
         entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
-    )
+        decision=decision, positions=positions, total_value=100_000,)
     assert violations == []
 
 
@@ -898,8 +894,7 @@ def test_no_cap_blocks_a_cover():
         entry_price=0.0, stop_loss=0.0, take_profit=0.0, reasoning="reduce",
     )
     violations = engine.check(
-        decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
-    )
+        decision=decision, positions=positions, total_value=100_000,)
     assert violations == []
 
 
@@ -929,8 +924,7 @@ def test_cover_not_blocked_by_negative_cash_when_margin_disallowed():
     )
     violations = engine.check(
         decision=decision, positions=[_pos("XYZ", qty=-40, entry=100, price=100)],
-        total_value=100_000, daily_pnl=0.0, cash=-5_000.0,
-    )
+        total_value=100_000, cash=-5_000.0,)
     assert violations == []
 
 
@@ -944,9 +938,8 @@ def test_buy_is_still_blocked_by_negative_cash_when_margin_disallowed():
         entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000, daily_pnl=0.0,
-        cash=-5_000.0,
-    )
+        decision=decision, positions=[], total_value=100_000,
+        cash=-5_000.0,)
     rules = {v.rule for v in violations}
     assert "cash_only" in rules
 
@@ -990,8 +983,7 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
         entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000, daily_pnl=0.0,
-    )
+        decision=decision, positions=[], total_value=100_000,)
     assert len(violations) == 1
     v = violations[0]
     assert v.rule == "max_position_pct"
@@ -1004,8 +996,7 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
         entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
     )
     assert engine.check(
-        decision=clean, positions=[], total_value=100_000, daily_pnl=0.0,
-    ) == []
+        decision=clean, positions=[], total_value=100_000,) == []
 
 
 # ==========================================================================

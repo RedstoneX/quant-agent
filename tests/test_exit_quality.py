@@ -258,7 +258,6 @@ def test_entry_stop_floor_widens_tight_stop_and_resizes():
     pipeline.db.insert_trade.return_value = 7
     pipeline.broker.submit_order.return_value = {"id": "b1", "status": "accepted"}
     pipeline._order_accepted.return_value = True
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {"NVDA": 100.0},
     )
@@ -303,7 +302,6 @@ def test_entry_stop_floor_leaves_wide_stop_alone():
     pipeline.db.insert_trade.return_value = 7
     pipeline.broker.submit_order.return_value = {"id": "b1", "status": "accepted"}
     pipeline._order_accepted.return_value = True
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {"NVDA": 100.0},
     )

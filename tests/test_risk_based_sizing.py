@@ -496,7 +496,7 @@ def test_risk_envelope_reaches_the_constructor_from_config():
     # place rather than silently reverting to a looser envelope.
     defaults = RiskConfig(
         max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=40, require_stop_loss=True,
+        max_sector_pct=40, require_stop_loss=True,
     )
     assert defaults.max_position_risk_pct == 5.0
     assert defaults.min_position_risk_pct == 0.5
@@ -568,12 +568,11 @@ def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
 
     # And the engine that would have blocked it now passes it.
     engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=100, max_daily_loss_pct=5,
+        max_position_pct=20, max_total_position_pct=100,
         max_sector_pct=40, require_stop_loss=True,
     ))
     violations = engine.check(
-        decisions[0], [], EQUITY, 0.0, cash=EQUITY,
-    )
+        decisions[0], [], EQUITY, 0.0, cash=EQUITY,)
     assert [v.rule for v in violations] == []
 
 
@@ -790,7 +789,7 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
     from src.models import TradeDecision
 
     engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=65, max_total_position_pct=200, max_daily_loss_pct=5,
+        max_position_pct=65, max_total_position_pct=200,
         max_sector_pct=75, require_stop_loss=True,
     ))
 
@@ -801,8 +800,7 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
                 entry_price=100.0, stop_loss=95.0, take_profit=140.0,
                 reasoning="test",
             ),
-            [], EQUITY, 0.0, cash=EQUITY * 3,
-        )]
+            [], EQUITY, 0.0, cash=EQUITY * 3,)]
 
     assert "max_position_pct" not in check(65.0)
     assert "max_position_pct" in check(66.0)

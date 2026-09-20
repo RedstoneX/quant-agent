@@ -37,15 +37,10 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.constants import (
-    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-)
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
-    GROSS_LADDER_ALERT_PCT,
     GrossCeiling,
-    PortfolioVolEstimate,
     RiskRuleEngine,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
@@ -53,7 +48,6 @@ from src.risk.rules import (
     peak_to_trough_pct,
     position_weight_pct,
     resolve_gross_ceiling,
-    vol_relative_drawdown_threshold_pct,
 )
 from src.execution.broker import (
     AlpacaBroker,
@@ -177,33 +171,7 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
     return threaded
 
 
-def _daily_loss_limit_for_alert(engine, risk_config) -> float | None:
-    """The daily circuit-breaker limit actually in force, for operator alerts.
-
-    docs/WORK.md item 32 (owner call 2026-09-11). Prefers the engine's
-    `daily_loss_limit_pct` — the volatility-relative threshold when the
-    account has enough of its own history to measure one — and falls back to
-    the configured fixed percentage, then to None. Never raises: this feeds
-    a notification, and a broken read must not take a session alert down.
-    """
-    for source, attribute in (
-        (engine, "daily_loss_limit_pct"),
-        (risk_config, "effective_max_daily_loss_pct"),
-    ):
-        if source is None:
-            continue
-        try:
-            value = getattr(source, attribute, None)
-        except Exception:  # noqa: BLE001
-            continue
-        resolved = _optional_risk_number(value)
-        if resolved is not None:
-            return resolved
-    return None
-
-
 HARD_BLOCK_RULES = {
-    "max_daily_loss_pct",
     "max_total_position_pct",
     "max_position_pct",
     "require_stop_loss",
@@ -218,11 +186,6 @@ HARD_BLOCK_RULES = {
     # gate" at the pipeline level; putting it back reinstates the veto.
     "max_sector_hard_pct",
     "cash_only",
-    # Audit §1.1: the drawdown-halve rule used to live only in the PM and RM
-    # prompts, where "no deterministic code enforces this" was stated outright.
-    # It is a hard gate now. `apply_drawdown_scale` halves BUYs before this
-    # filter runs, so a violation here means a BUY reached the engine unscaled.
-    "drawdown_buy_cap",
     # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
     # value plus absolute short market value — may not exceed the ladder-
     # resolved multiple of equity. There was NO gross-exposure ceiling in
@@ -287,10 +250,18 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "regime flipped",
     "risk-off",
     "risk off",
-    # Deterministic risk management
-    "daily loss",
-    "daily-loss",
-    "circuit breaker",
+    # "daily loss" / "daily-loss" / "circuit breaker" were REMOVED
+    # 2026-09-20 (WORK.md item 32), for the same reason and by the same
+    # precedent as the correlation phrases below: the owner deleted the
+    # entire account-level loss alarm, so no part of the desk computes a
+    # daily-loss or circuit-breaker EVENT any more and the claim is not
+    # checkable against anything. Leaving them accepted would have been
+    # strictly worse than never having had them: `cites_external_information`
+    # waves a SELL/REDUCE/COVER past the noise-band and ratchet clamps when
+    # the reason cites one, so a seat writing "circuit breaker" would have
+    # bought itself a clamp bypass with an unverifiable phrase. There is no
+    # exchange-halt (LULD) detection in this codebase either, so the
+    # generous reading of "circuit breaker" has nothing behind it.
     # "correlation breach" / "correlation cluster breach" were REMOVED
     # 2026-09-13 (WORK.md item 44). They were the only accepted triggers with
     # nothing behind them: no part of the desk computes a correlation-breach
@@ -299,8 +270,10 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     # operational definition with a stated window and threshold was searched
     # for and not found (see docs/INCIDENT_HISTORY.md). Every other keyword
     # here names something the desk records: a news row, an earnings row, a
-    # macro regime read, a broker fill, a deterministic circuit breaker.
-    # This one named nothing, so it passed on the wording alone. Do NOT
+    # macro regime read, a broker fill. (This sentence used to end "a
+    # deterministic circuit breaker" — that one went the same way on
+    # 2026-09-20, see above.) The correlation phrase named nothing, so it
+    # passed on the wording alone. Do NOT
     # re-add it without a verifier that can answer "did that happen today?".
     # Protection already fired
     "stop hit",
@@ -483,24 +456,6 @@ def _market_is_open_now(broker) -> bool:
     return True
 
 
-def _limit_is_vol_relative(risk_engine) -> bool:
-    """Is the daily-loss limit currently the HELD BOOK's volatility-relative
-    one, rather than a fixed percentage of the account?
-
-    docs/WORK.md item 32 — decides which day-change number `daily_loss_
-    numerator` compares. Read defensively: an engine that cannot answer (an
-    older stub, a Mock in a fixture) is treated as fixed-percentage, which
-    is the pre-2026-09-14 behaviour and the more-negative numerator on any
-    day with realized losses.
-    """
-    from src.risk.rules import RiskRuleEngine
-    try:
-        basis = risk_engine.daily_loss_limit_basis()
-    except Exception:  # noqa: BLE001
-        return False
-    return basis == RiskRuleEngine.VOL_RELATIVE_BASIS
-
-
 def _price_is_through_stop(price: float, stop_price: float, *, is_short: bool) -> bool:
     """Has the tape passed a protective stop's trigger?
 
@@ -628,28 +583,8 @@ def build_risk_config(config) -> RiskConfig:
     return RiskConfig(
             max_position_pct=config.risk.max_position_pct,
             max_total_position_pct=config.risk.max_total_position_pct,
-            max_daily_loss_pct=config.risk.max_daily_loss_pct,
-            # docs/WORK.md item 32: `effective_max_daily_loss_pct` derives
-            # from these two when `max_daily_loss_pct` above is left unset,
-            # so both must be threaded through here too or a future config
-            # with an unset max_daily_loss_pct would silently derive against
-            # this dataclass's bare defaults instead of the real settings.
-            # `_risk_number` guards against the MagicMock-coerces-to-1.0
-            # posture the comment above `max_sector_hard_pct` describes.
             max_position_risk_pct=_risk_number(
                 getattr(config.risk, "max_position_risk_pct", None), 5.0,
-            ),
-            daily_loss_risk_multiple=_risk_number(
-                getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
-            ),
-            # docs/WORK.md item 32 (owner call 2026-09-11): how many
-            # multiples of the HELD BOOK's own normal daily move trip the
-            # daily breaker. Threaded for the same reason as the two above —
-            # an unthreaded value would silently derive against this model's
-            # bare default rather than real settings.
-            drawdown_vol_sensitivity=_risk_number(
-                getattr(config.risk, "drawdown_vol_sensitivity", None),
-                DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
             ),
             max_sector_pct=config.risk.max_sector_pct,
             # Spec §10.3 — the absolute ceiling behind the sector dial.
@@ -974,19 +909,7 @@ class TradingPipeline:
             # settings file other than the one this process is running on.
             risk_config=config.risk,
         )
-        self.risk_engine = RiskRuleEngine(
-            build_risk_config(config),
-        # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
-        # circuit breaker measure a loss against the normal daily move of
-        # the book actually held — from its holdings' real market price
-        # history — rather than a frozen percentage of equity, and NOT
-        # against the account's own (ramp-contaminated, malfunction-era)
-        # equity curve. Read lazily, at each check, because the breaker
-        # fires from six separate places in this file and the book changes
-        # intraday. Returns None-safe values; a failing read falls back to
-        # the fixed percentage.
-            portfolio_vol_provider=self.held_book_daily_vol_pct,
-        )
+        self.risk_engine = RiskRuleEngine(build_risk_config(config))
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
@@ -1473,74 +1396,6 @@ class TradingPipeline:
     # numbers for the two directions.
     _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
 
-    #: Session status when the daily-loss breaker trips. **Replaces
-    #: "emergency_sold" for that breaker only** (2026-09-14, docs/WORK.md
-    #: item 32). The breaker no longer sells anything: it stops the desk
-    #: taking new risk and verifies that what is held is protected. The
-    #: string changed with the behaviour on purpose — a payload that still
-    #: said "emergency_sold" while nothing had been sold would be the kind of
-    #: record this desk has been burned by. `_force_delever` and the §11.2
-    #: gross-exposure ladder still sell, still tag their rows
-    #: FORCE_DELEVER, and are untouched by this.
-    DAILY_LOSS_HALT_STATUS = "daily_loss_halted"
-    #: The durable, per-symbol, machine-readable reason a held name records
-    #: when the halt refuses further risk on it. Not a drop of a target and
-    #: not a resize — see `_halt_on_daily_loss_breach`.
-    DAILY_LOSS_HALT_REASON = "daily_loss_halt"
-
-    def _daily_loss_breach(self, account, positions):
-        """`(violation_or_None, baseline, pnl_compared, basis)` for the daily
-        circuit breaker — ONE place that decides what number is compared.
-
-        **The defect this closes** (2026-09-14, docs/WORK.md item 32): the
-        breaker's threshold is measured from the HELD BOOK's own realized
-        volatility, and the loss tested against it was
-        `total_value - last_equity` — the whole account's day change,
-        including realized losses on positions already closed today,
-        commissions and spread. Numerator and denominator did not measure the
-        same object, so the breaker could trip (or not) on movement the
-        threshold never modelled. Both sides now read the held book, with the
-        cash park excluded from each of them.
-
-        `basis` is recorded, never inferred later: ``"held_book"`` when every
-        non-park holding exposed a finite intraday change, ``"account"`` when
-        any did not. The account fallback is the more negative number on any
-        day with realized losses, so it trips SOONER — fail toward not
-        trading. It is also used when a book is held but its intraday change
-        reads as exactly flat, because a broker that omits the field reports
-        precisely that and there is no way to tell the two apart from here;
-        a flat read on a held book is therefore not trusted to suppress a
-        breach the account-wide number would raise.
-        """
-        from src.risk.rules import daily_loss_numerator
-
-        total_value = account["portfolio_value"] if isinstance(
-            account, dict,
-        ) else getattr(account, "portfolio_value", None)
-        last_equity = (
-            account.get("last_equity", total_value) if isinstance(account, dict)
-            else getattr(account, "last_equity", total_value)
-        )
-        try:
-            baseline = float(last_equity)
-            account_pnl = float(total_value) - baseline
-        except (TypeError, ValueError):
-            # Unreadable snapshot — `check_daily_loss` owns the non-finite
-            # path and logs the bypass; hand it through unchanged.
-            return (
-                self.risk_engine.check_daily_loss(float("nan"), float("nan")),
-                float("nan"), float("nan"), "unreadable",
-            )
-        pnl, basis = daily_loss_numerator(
-            account_pnl, positions,
-            vol_relative=_limit_is_vol_relative(self.risk_engine),
-            cash_park_symbol=self._sweep_symbol(),
-        )
-        return (
-            self.risk_engine.check_daily_loss(baseline, pnl),
-            baseline, pnl, basis,
-        )
-
     def _total_pnl_since_reset(
         self, total_value: float,
     ) -> tuple[float | None, float | None, str | None]:
@@ -1589,374 +1444,12 @@ class TradingPipeline:
         since_date = str(earliest.get("date") or "") or None
         return total_pnl, total_return_pct, since_date
 
-    def _verify_stop_coverage_at_halt(self, positions) -> list[dict]:
-        """Per-symbol stop-coverage truth, read from the broker, for a halt.
-
-        **This is the precondition of the halt, not a report attached to
-        it.** Halting instead of liquidating is only safe if the
-        per-position stops are genuinely live at the broker, and the desk's
-        own records cannot answer *whether a stop exists*. Coverage qty is
-        read from the broker. The archive's `trades.stop_loss` is written
-        back on every in-code replace/trail/repair/rearm/ex-div, and a
-        session reconcile reports when that number still disagrees with the
-        broker (an out-of-band move leaves no write-back row). That is the
-        LEVEL. This method still asks the BROKER for coverage, because a
-        stop that was cancelled and not replaced is a missing order, not a
-        stale price — which is exactly what the 2026-09-14 broker audit
-        found for the Visa and Disney *illusion* of an unfired stop (WORK.md
-        items 35 and 69, both closed as archive-stale; the write-back that
-        would have prevented those filings is item 71). Two live reasons
-        the answer can genuinely be "no" remain: a stop can be moved by a
-        maintenance action outside this code, and a sub-share remainder
-        provably cannot hold an overnight stop at this broker.
-
-        Three outcomes per holding, and the third is the one that exists
-        because of that archive:
-
-          ``covered``     open protective stops at least equal the held qty.
-          ``uncovered``   they do not — with the shortfall named by
-                          `_classify_coverage_gap`, the same classifier the
-                          session coverage audit uses, so an expected
-                          overnight sub-share lapse is not reported as a
-                          naked position.
-          ``unverified``  the broker could not be asked. **Never treated as
-                          covered.** `_reconcile_stop_coverage` `continue`s
-                          past this case and the symbol vanishes from its
-                          gap list; a halt that inherited that would
-                          silently assume protection exists.
-
-        The cash park is excluded — it is deliberately stopless
-        cash-equivalent, the same exemption the session audit makes.
-        """
-        out: list[dict] = []
-        park = (self._sweep_symbol() or "").strip().upper()
-        for p in positions or ():
-            symbol = str(getattr(p, "symbol", "") or "").strip().upper()
-            if not symbol or (park and symbol == park):
-                continue
-            try:
-                qty = float(getattr(p, "qty", 0) or 0)
-            except (TypeError, ValueError):
-                qty = 0.0
-            if qty == 0:
-                continue
-            is_short = qty < 0
-            held = abs(qty)
-            try:
-                _ok, specs = self.broker.snapshot_protective_stops(
-                    symbol, side=("buy" if is_short else "sell"),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.critical(
-                    "HALT COVERAGE CHECK UNREADABLE: %s — the broker could "
-                    "not be asked whether a protective stop is live (%s). "
-                    "Reported as UNVERIFIED, never as covered.", symbol, exc,
-                )
-                out.append({
-                    "symbol": symbol, "held_qty": held, "covered_qty": None,
-                    "state": "unverified", "detail": str(exc)[:200],
-                })
-                continue
-            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
-            if covered + 1e-6 >= held:
-                out.append({
-                    "symbol": symbol, "held_qty": held,
-                    "covered_qty": covered, "state": "covered",
-                })
-                continue
-            coverage, frac_uncovered = _classify_coverage_gap(
-                held=held, covered=covered,
-            )
-            out.append({
-                "symbol": symbol, "held_qty": held, "covered_qty": covered,
-                "state": "uncovered", "coverage": coverage,
-                "uncovered_qty": (
-                    frac_uncovered if coverage == "fractional" else held - covered
-                ),
-                "unprotected_value": _position_notional(
-                    p,
-                    frac_uncovered if coverage == "fractional"
-                    else held - covered,
-                ),
-            })
-        return out
-
-    @staticmethod
-    def _halt_coverage_shortfalls(coverage: list[dict]) -> list[dict]:
-        """The entries a halt must SHOUT about, not merely record.
-
-        A holding whose protection could not be verified, or whose durable
-        whole-share stop is missing or mis-sized. An expected overnight
-        sub-share lapse (`'fractional'`) is excluded for the same reason the
-        session audit excludes it — the durable leg is intact and the
-        remainder's DAY stop is gone by broker design every night; reporting
-        it as a naked position is how a banner gets tuned out. Its exposure
-        is still carried in the halt payload as a number.
-        """
-        return [
-            c for c in coverage
-            if c.get("state") == "unverified"
-            or (c.get("state") == "uncovered"
-                and c.get("coverage") in ("none", "partial"))
-        ]
-
-    def _halt_on_daily_loss_breach(
-        self, positions, loss_violation, run_id: str, *,
-        where: str, basis: str = "held_book", ctx=None,
-    ) -> dict:
-        """**Stop taking risk. Do not sell anything.** The daily-loss
-        circuit breaker's whole response, replacing the force-liquidation of
-        the entire book (2026-09-14, docs/WORK.md item 32).
-
-        WHY THE LIQUIDATION IS GONE. It submitted LIMIT orders 1% through the
-        market (`_EMERGENCY_LIMIT_CUSHION_PCT`), then called
-        `_finalize_pending_protections`, which restores the original stops on
-        any leg that did not fill. On a correlated gap — the only day a
-        whole-book dump could be argued for — a limit 1% through does not
-        fill, so the sequence was: cancel every protective stop, fail to
-        sell, put the stops back. An unprotected window, and nothing
-        achieved. On an ordinary day it filled fine, which is to say it
-        worked only when it was not needed. It also never once fired in
-        production: zero EMERGENCY_SELL/EMERGENCY_COVER rows in the archive
-        across 13 days of P&L whose worst day was -0.46% against a
-        reconstructed trip point near -0.70% of equity.
-
-        And the proportionate response already exists. `_enforce_gross_ceiling`
-        runs in the session preamble, trims only the EXCESS down to a
-        drawdown-scaled ceiling, and works with margin on. (`_force_delever`
-        is not it — it returns `[]` whenever `allow_margin` is true, which it
-        has been since 2026-09-02.) Nor is this breaker the defence against a
-        broker-initiated liquidation: at `max_gross_exposure_x: 2.0` against a
-        25% maintenance requirement the book can fall 33.3% before a margin
-        call, which is a week, not a day.
-
-        WHAT IT DOES INSTEAD, in order:
-
-          1. Reconcile fills, so every judgement below is made against
-             broker truth rather than a stale 'submitted' row.
-          2. Cancel every resting entry order. A working DAY entry limit is a
-             standing intention to add risk; refusing new risk has to mean
-             pending intentions too. Best-effort, and a failure is reported
-             in the alert rather than swallowed.
-          3. Run the session stop-coverage audit, which repairs a
-             recoverable long in place.
-          4. VERIFY coverage per held position against the broker
-             (`_verify_stop_coverage_at_halt`) — the precondition, see there.
-          5. File a durable, per-symbol, machine-readable refusal for every
-             holding, carrying its verified coverage state.
-          6. Alert the owner, escalating hard when any coverage is short or
-             unverifiable.
-
-        NOTHING HERE CLOSES, RESIZES OR ZEROES A POSITION, and nothing here
-        places an order except the coverage audit's stop REPAIR, which can
-        only ADD protection. A held name is refused, not sold; its target is
-        dropped, never set to zero (a 0% target reads as "sell it" on this
-        desk).
-
-        WHEN A POSITION HAS NO LIVE STOP AT THE MOMENT OF HALT: the halt
-        still halts — it must, because the alternative response was the
-        broken liquidation — but it does NOT halt quietly. The audit in step
-        3 first tries to re-place the stop from the level recorded on the
-        position's own BUY. If that fails, or if the broker could not be
-        asked at all, the symbol lands in `_halt_coverage_shortfalls`, the
-        owner alert leads with it by name and held quantity, and the returned
-        payload carries `stop_coverage_verified` plus
-        `unprotected_at_halt` so the feed, Mission Control and the evening
-        probe all see it. The desk does not sell the position to protect it:
-        selling on a breach day is exactly the behaviour being removed, and a
-        naked position is an operator escalation, not an excuse to fire the
-        mechanism that did not work.
-        """
-        held = list(positions or ())
-        logger.critical(
-            "DAILY LOSS HALT (%s): %s — refusing NEW RISK for the rest of "
-            "the session. %d position(s) are being kept and verified, not "
-            "sold (loss basis: %s).",
-            where, loss_violation.message, len(held), basis,
-        )
-        # 1. Broker truth before any judgement.
-        try:
-            self._reconcile_fills()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("daily-loss halt: fill reconcile failed: %s", exc)
-        # 2. Resting entry orders are standing intentions to add risk.
-        entries_cancelled = True
-        try:
-            self.broker.cancel_open_entry_orders()
-        except Exception as exc:  # noqa: BLE001
-            entries_cancelled = False
-            logger.error(
-                "DAILY LOSS HALT: could not cancel resting entry orders (%s) "
-                "— a working entry limit can still add risk during the halt. "
-                "Escalated to the owner.", exc,
-            )
-        # 3. The audit, which repairs a recoverable long in place.
-        try:
-            coverage_gaps = self._reconcile_stop_coverage()
-        except Exception as exc:  # noqa: BLE001
-            logger.error("daily-loss halt: coverage audit failed: %s", exc)
-            coverage_gaps = []
-        # 4. Verify, per position, against the broker.
-        coverage = self._verify_stop_coverage_at_halt(held)
-        shortfalls = self._halt_coverage_shortfalls(coverage)
-        # 5. Durable per-symbol refusal.
-        self._record_daily_loss_halt_refusals(
-            coverage, loss_violation, run_id=run_id, where=where, ctx=ctx,
-        )
-        # 6. Alert.
-        self._alert_owner_daily_loss_halt(
-            loss_violation, coverage, shortfalls, held,
-            where=where, basis=basis, entries_cancelled=entries_cancelled,
-        )
-        return {
-            "status": self.DAILY_LOSS_HALT_STATUS,
-            "halted": True,
-            "halt_reason": self.DAILY_LOSS_HALT_REASON,
-            "halt_where": where,
-            "daily_loss_basis": basis,
-            "positions": len(held),
-            # Explicitly empty and explicitly present: a reader must be able
-            # to see that the breaker placed no orders, rather than infer it
-            # from a missing key. A call site that already holds the session's
-            # own earlier orders (deterministic trails, say) overwrites this
-            # key so the feed still renders them; `halted` / `halt_reason`
-            # remain the record that the BREAKER sold nothing, and the
-            # invariant that this method never appends an order is tested.
-            "orders": [],
-            "stop_coverage_gaps": coverage_gaps,
-            "stop_coverage_verified": coverage,
-            "unprotected_at_halt": [
-                str(c.get("symbol")) for c in shortfalls if c.get("symbol")
-            ],
-            "entry_orders_cancelled": entries_cancelled,
-            "run_id": run_id,
-        }
-
-    def _record_daily_loss_halt_refusals(
-        self, coverage: list[dict], loss_violation, *,
-        run_id: str, where: str, ctx=None,
-    ) -> None:
-        """One durable, machine-readable row per held symbol. Never raises.
-
-        The desk's rule is that anything refused leaves a per-symbol reason a
-        machine can read, not a sentence in a log file. A halt refuses every
-        held name further risk, so every held name gets a row — carrying its
-        verified coverage state, which is the fact an operator will actually
-        need afterwards.
-        """
-        from src.pipeline_stages import _persist_evidence
-        import json as _json
-
-        decision_id = getattr(ctx, "decision_id", None)
-        for entry in coverage or ():
-            symbol = entry.get("symbol")
-            if not symbol:
-                continue
-            try:
-                _persist_evidence(
-                    self.db, run_id=run_id, agent_name="pipeline",
-                    kind="pipeline_event", scope="symbol", symbol=symbol,
-                    decision_id=decision_id,
-                    evidence_json=_json.dumps({
-                        "stage": "daily_loss_halt",
-                        "outcome": "no_new_risk",
-                        "reason": self.DAILY_LOSS_HALT_REASON,
-                        "where": where,
-                        "detail": loss_violation.message,
-                        "stop_coverage": entry.get("state"),
-                        "coverage_shortfall": entry.get("coverage"),
-                        "held_qty": entry.get("held_qty"),
-                        "covered_qty": entry.get("covered_qty"),
-                    }, sort_keys=True),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "daily-loss halt: could not record the refusal reason "
-                    "for %s: %s", symbol, exc,
-                )
-
-    def _alert_owner_daily_loss_halt(
-        self, loss_violation, coverage: list[dict], shortfalls: list[dict],
-        positions, *, where: str, basis: str, entries_cancelled: bool,
-    ) -> None:
-        """Push the halt to the owner. Never raises.
-
-        Two different messages on purpose. A halt with every position
-        verifiably protected is a serious but orderly event. A halt with a
-        position that has no live stop, or one the broker could not be asked
-        about, is the state that ends a desk — it leads the message, by name,
-        and is never folded into the same sentence as the orderly case.
-        """
-        try:
-            from src import notifier as _notifier
-
-            lines = [
-                "🛑 DAILY LOSS HALT — NO NEW RISK THIS SESSION",
-                f"{loss_violation.message}",
-                f"Tripped at: {where}. Loss measured on: "
-                f"{'the held book' if basis == 'held_book' else 'the whole account'}.",
-                "",
-                "Nothing was sold. Every position is being KEPT. Resting "
-                "entry orders were "
-                + ("cancelled." if entries_cancelled
-                   else "NOT cancelled — the cancel failed, see below."),
-            ]
-            if shortfalls:
-                lines += [
-                    "",
-                    f"⚠️ {len(shortfalls)} POSITION(S) ARE NOT VERIFIABLY "
-                    "PROTECTED RIGHT NOW. A halt assumes the per-position "
-                    "stops are live at the broker. For these, that is not "
-                    "established:",
-                ]
-                for c in shortfalls:
-                    if c.get("state") == "unverified":
-                        lines.append(
-                            f"  {c.get('symbol')}: held {c.get('held_qty')} — "
-                            "the broker could NOT be asked whether a stop is "
-                            "live. Not the same as 'no stop'; it means "
-                            "unknown."
-                        )
-                    else:
-                        lines.append(
-                            f"  {c.get('symbol')}: held {c.get('held_qty')}, "
-                            f"covered {c.get('covered_qty')} "
-                            f"({c.get('coverage')}) — "
-                            f"${float(c.get('unprotected_value') or 0):.2f} "
-                            "unprotected."
-                        )
-                lines.append(
-                    "The desk did NOT sell these to protect them — selling on "
-                    "a breach day is the behaviour that was removed. Place a "
-                    "stop manually or flatten, by hand."
-                )
-            else:
-                covered = [c for c in coverage if c.get("state") == "covered"]
-                lines += [
-                    "",
-                    f"Stop coverage verified at the broker on all "
-                    f"{len(covered)} position(s).",
-                ]
-            if not entries_cancelled:
-                lines += [
-                    "",
-                    "⚠️ The resting-entry cancel FAILED. A working entry "
-                    "limit can still add risk while the desk is halted — "
-                    "check open orders by hand.",
-                ]
-            _notifier.send_owner_alert(
-                "\n".join(lines),
-                symbols=[
-                    str(c.get("symbol")) for c in shortfalls if c.get("symbol")
-                ],
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("daily-loss halt owner alert failed: %s", exc)
 
     @staticmethod
     def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
-        """Direction-aware sizing for a FORCED close — circuit breaker,
-        risk-breach liquidation, operator kill. NOT the normal decision
+        """Direction-aware sizing for a FORCED close — the §11.2
+        de-levering ladder's forced trim, or an operator kill. NOT the
+        normal decision
         path: SELL/REDUCE decisions and the portfolio constructor keep
         refusing a negative qty exactly as before (see _full_sell_qty /
         _reduce_sell_qty and the Stage 1 guard in portfolio_constructor.py
@@ -1973,7 +1466,7 @@ class TradingPipeline:
         short doesn't fail safe — a SELL aimed at a position that's
         actually already short would ADD to the short (sell more of a
         symbol you don't hold long), doubling the very exposure the
-        circuit breaker exists to shed. Refusing and logging loudly beats
+        forced close exists to shed. Refusing and logging loudly beats
         guessing every time; the caller is responsible for the loud log,
         this just refuses to hand back an answer to guess with.
         """
@@ -2514,17 +2007,13 @@ class TradingPipeline:
         decisions: list[TradeDecision],
         positions,
         total_value: float,
-        daily_pnl: float,
-        baseline: float | None = None,
         invested_target_pct: float | None = None,
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
-        in_drawdown: bool = False,
         # Spec §11.2. The ladder-resolved gross-exposure ceiling for this
         # session. None falls back to the configured cap inside the engine —
         # a caller that forgets it still gets a ceiling, never none.
-        gross_ceiling=None,
-    ) -> tuple[list[TradeDecision], list, list[str]]:
+        gross_ceiling=None,) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
         blocked_reasons: list[str] = []
@@ -2637,23 +2126,19 @@ class TradingPipeline:
                 decision=decision,
                 positions=positions,
                 total_value=total_value,
-                daily_pnl=daily_pnl,
                 pending_investment=pending_investment,
                 pending_sector_investment=pending_sector_investment,
                 pending_symbol_investment=pending_symbol_investment,
-                baseline=baseline,
                 correlation_matrix=correlation_matrix,
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
-                in_drawdown=in_drawdown,
                 # Spec §11.2 — the execution half of the gross ceiling. The
                 # sweep vehicle has already been split out of `positions`
                 # above, so `cash_park_symbol` here is belt-and-braces for
                 # any future caller that has not.
                 gross_ceiling=gross_ceiling,
                 pending_gross_investment=pending_gross_investment,
-                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),
-            )
+                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),)
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
                 messages = [v.message for v in hard_violations]
@@ -8765,7 +8250,6 @@ class TradingPipeline:
         # System perf
         f.rolling_5d_pct = recent_performance.get("rolling_5d_pct")
         f.rolling_20d_pct = recent_performance.get("rolling_20d_pct")
-        f.in_drawdown = bool(recent_performance.get("in_drawdown"))
 
         # RC3: deployment gap vs the invested target as a hard fact in PM's
         # face. The target is the owner's fixed fully-invested mandate
@@ -8952,29 +8436,23 @@ class TradingPipeline:
         return "\n".join(lines)
 
     def _compute_recent_performance(self, current_equity: float) -> dict:
-        """Rolling 5-day and 20-day returns from db.daily_pnl, + drawdown flag.
+        """Rolling 5-day and 20-day returns from db.daily_pnl, plus the
+        §11.2 peak-to-trough drawdown that drives the de-levering ladder.
 
-        Used to tell PM 'we've been losing — size down' regardless of what the market
-        is doing. Independent of VIX / macro regime (which reflect market, not us).
+        Used to tell PM "we have been losing" regardless of what the market
+        is doing. Independent of VIX / macro regime (which reflect market,
+        not us).
 
-        The two thresholds MOVE EVERY SESSION since the 2026-09-11 basis
-        change (docs/WORK.md item 32): they are a multiple of the realized
-        daily volatility of THE BOOK CURRENTLY HELD, reconstructed from the
-        real market price history of its actual holdings at their actual
-        weights, not a fixed percentage of equity.
-        `held_book_daily_vol_pct` carries the yardstick they came from, and
-        is None when nothing is measurable (an all-cash book, or holdings
-        without enough price history) and the fixed-percentage fallback is
-        governing.
-
-        The ROLLING RETURNS are still the account's own — that is what the
-        brake is judging. Only the YARDSTICK moved off the equity curve.
+        **The rolling returns are REPORTING ONLY.** They used to carry an
+        `in_drawdown` flag, and two thresholds behind it, that halved every  # retired-ok
+        new BUY and SHORT. That brake was removed 2026-09-20 on the owner's
+        instruction along with the daily-loss halt (retired item 32,
+        docs/INCIDENT_HISTORY.md); nothing automatic reads these two numbers
+        any more. `peak_to_trough_pct` is a different measure and still
+        drives the ladder.
 
         Returns e.g. {'rolling_5d_pct': -2.3, 'rolling_20d_pct': -6.1,
-                      'in_drawdown': True, 'trailing_days': 18,
-                      'held_book_daily_vol_pct': 0.94,
-                      'drawdown_5d_threshold_pct': -6.3,
-                      'drawdown_20d_threshold_pct': -12.6}
+                      'trailing_days': 18, 'peak_to_trough_pct': -4.4}
         """
         try:
             rows = self.db.get_daily_pnl(limit=25)
@@ -8984,10 +8462,8 @@ class TradingPipeline:
         if not rows:
             return {
                 "rolling_5d_pct": None, "rolling_20d_pct": None,
-                "in_drawdown": False, "trailing_days": 0,
+                "trailing_days": 0,
                 "peak_to_trough_pct": None,
-                "drawdown_5d_threshold_pct": self.config.risk.drawdown_5d_threshold_pct,
-                "drawdown_20d_threshold_pct": self.config.risk.drawdown_20d_threshold_pct,
             }
 
         def _pct_change(start_idx: int) -> float | None:
@@ -9003,71 +8479,11 @@ class TradingPipeline:
         rolling_5d = _pct_change(5)
         rolling_20d = _pct_change(20)
 
-        # docs/WORK.md item 32 (owner call 2026-09-11). These thresholds are
-        # no longer a fixed percentage of equity at all — they are a multiple
-        # of the realized daily volatility of THE BOOK CURRENTLY HELD,
-        # measured from the real market price history of its actual holdings
-        # at their actual weights, scaled to each window by sqrt(time). A
-        # fixed percentage is only correct for the volatility regime it was
-        # chosen in, and markets are not stationary; the owner refused a
-        # recalibration of the fixed number for exactly that reason.
-        #
-        # The yardstick is NOT this account's own equity curve. That was the
-        # first implementation and the owner rejected it: the post-reset
-        # account spends its first sessions ramping from all-cash, a
-        # mostly-cash account barely moves, and the measurement would have
-        # been artificially low — setting the alarms artificially tight so
-        # they fire on normal behaviour once the book is deployed. See
-        # `src/risk/rules.py::measure_portfolio_daily_vol`.
-        #
-        # `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct` (the
-        # risk-unit-derived fixed percentages) survive as the fallback for
-        # when there is genuinely NOTHING to measure — an all-cash book, or
-        # holdings with too little price history. See
-        # `RiskConfig.drawdown_vol_sensitivity` for the sensitivity and,
-        # honestly, for what about it is and is not research-grounded.
-        daily_vol = self.held_book_daily_vol_pct()
-        sensitivity = _risk_number(
-            getattr(self.config.risk, "drawdown_vol_sensitivity", None),
-            DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-        )
-        threshold_5d = vol_relative_drawdown_threshold_pct(
-            daily_vol_pct=daily_vol, window_sessions=5,
-            sensitivity=sensitivity,
-            fallback_pct=self.config.risk.drawdown_5d_threshold_pct,
-        )
-        # The 20-day window is capped at `GROSS_LADDER_ALERT_PCT`, preserving
-        # the 2026-09-04 bug-2 fix: this brake must never again be asleep
-        # past the point the §11.2 de-levering ladder halves the book and
-        # alerts the owner. The cap is why the 20-day threshold is tighter
-        # than sqrt(time) alone would put it.
-        threshold_20d = vol_relative_drawdown_threshold_pct(
-            daily_vol_pct=daily_vol, window_sessions=20,
-            sensitivity=sensitivity,
-            fallback_pct=self.config.risk.drawdown_20d_threshold_pct,
-            cap_pct=GROSS_LADDER_ALERT_PCT,
-        )
-        # Keep the severity ORDER coherent in a high-volatility regime: once
-        # the 20-day cap binds, an uncapped 5-day threshold could end up
-        # DEEPER than the 20-day one, i.e. a shorter window tolerating a
-        # bigger loss than a longer one. Clamped to the 20-day threshold so
-        # |1d| <= |5d| <= |20d| <= |ladder alert| always holds.
-        if threshold_5d < threshold_20d:
-            threshold_5d = threshold_20d
-
-        in_drawdown = False
-        if rolling_5d is not None and rolling_5d < threshold_5d:
-            in_drawdown = True
-        if rolling_20d is not None and rolling_20d < threshold_20d:
-            in_drawdown = True
-
         # Spec §11.2: peak-to-trough drawdown, which drives the de-levering
-        # ladder's gross-exposure ceiling. A SEPARATE measure from
-        # `in_drawdown` above, on purpose — that one asks "has our recent
-        # edge degraded, so halve new BUYs" over a rolling window; this one
-        # asks "how far are we off the high-water mark, so how much may the
-        # book own". A longer window is read because a high-water mark over
-        # 25 sessions is not a high-water mark.
+        # ladder's gross-exposure ceiling. It asks "how far are we off the
+        # high-water mark, so how much may the book own". A longer window is
+        # read because a high-water mark over 25 sessions is not a
+        # high-water mark.
         try:
             hwm_rows = self.db.get_daily_pnl(limit=252)
         except Exception as e:  # noqa: BLE001
@@ -9083,151 +8499,10 @@ class TradingPipeline:
         return {
             "rolling_5d_pct": rolling_5d,
             "rolling_20d_pct": rolling_20d,
-            "in_drawdown": in_drawdown,
-            # docs/WORK.md item 32: carried through so prompt-facing text
-            # (e.g. PortfolioManagerAgent) can render the REAL, currently
-            # configured thresholds instead of a hardcoded description that
-            # would go stale the moment these are rescaled again.
-            "drawdown_5d_threshold_pct": threshold_5d,
-            "drawdown_20d_threshold_pct": threshold_20d,
-            # docs/WORK.md item 32: the yardstick itself, surfaced so an
-            # operator (and Mission Control) can see WHY a threshold sits
-            # where it does. None means "nothing measurable — the
-            # fixed-percentage fallback is governing". This is the normal
-            # daily move of the HELD BOOK, so it is already net of how
-            # deployed the book is: a third-deployed book reports roughly a
-            # third of the move the same basket fully deployed would.
-            "held_book_daily_vol_pct": (
-                None if daily_vol is None else round(daily_vol, 3)
-            ),
             "trailing_days": len(rows),
             "peak_to_trough_pct": peak_to_trough,
         }
 
-    def measure_held_book_daily_vol(self):
-        """`PortfolioVolEstimate` for the book the desk is holding right now.
-
-        docs/WORK.md item 32 (owner call 2026-09-11). The single place the
-        drawdown alarms' volatility yardstick is produced. Gathers what only
-        the pipeline can reach — the live position list, live equity, and
-        real market price history for those exact symbols — and hands it to
-        `src/risk/rules.py::measure_portfolio_daily_vol`, which owns the
-        arithmetic. The volatility DEFINITION therefore lives in exactly one
-        place rather than being re-implemented per caller, which is how this
-        desk ended up with two unreconciled drawdown measures in the first
-        place.
-
-        Price history comes from `self.market.get_ohlcv` — the same market
-        feed (yfinance, with the Alpaca fallback already wired in
-        `set_fallback_bars`) that technical analysis, the correlation matrix
-        and the ATR reads all use. No second price path is introduced.
-
-        Never raises. Any failure returns an estimate whose `daily_vol_pct`
-        is None, which means "fall back to the fixed percentage" — a broken
-        read must never disable the circuit breaker.
-        """
-        from src.risk.rules import (
-            measure_portfolio_daily_vol,
-            normalized_holding_weights,
-        )
-        try:
-            account, positions, _ = self._refresh_account_state()
-            equity = float(
-                getattr(account, "portfolio_value", None)
-                or getattr(account, "equity", None)
-                or 0.0
-            )
-            # 2026-09-14, docs/WORK.md item 32: the cash park is excluded
-            # here, exactly as `gross_exposure` already excludes it. Parked
-            # cash was 78% of the gross weight this yardstick was measured
-            # over on the archived book, which made the breaker's denominator
-            # neither the risk book nor the account.
-            weights = normalized_holding_weights(
-                positions, equity, cash_park_symbol=self._sweep_symbol(),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Could not read the held book for the volatility-relative "
-                "drawdown alarms; they fall back to their fixed-percentage "
-                "thresholds: %s", exc,
-            )
-            return PortfolioVolEstimate(None, reason="held book unreadable")
-        if not weights:
-            return measure_portfolio_daily_vol({}, {})
-
-        # Session-scoped memo. The daily circuit breaker fires from six
-        # separate places in this file, and each measurement is one market
-        # fetch per holding — without this the same number would be bought
-        # six times a session.
-        #
-        # Keyed on the TRADING DATE and on the holdings with their weights
-        # (to 4dp), so an intraday change in the book re-measures rather
-        # than serving a stale yardstick, AND a new session can never serve
-        # yesterday's. The date half is not decorative: `src/scheduler.py`
-        # holds ONE `TradingPipeline` for the life of the process, so this
-        # memo outlives a session. Without the date, a book whose weights
-        # happen to round to the same 4dp on two consecutive days would be
-        # priced today against yesterday's volatility — a silently stale
-        # yardstick under all three loss alarms. This comment previously
-        # CLAIMED a bar-date component the key did not have (docs/WORK.md
-        # item 32, 2026-09-14); the code now does what it said.
-        from src.trading_calendar import et_now
-        try:
-            measured_on = et_now().date().isoformat()
-        except Exception as exc:  # noqa: BLE001
-            # A clock/timezone failure must never serve a stale number: fall
-            # through with a key that can never match a previous call, so the
-            # measurement is simply redone.
-            logger.warning(
-                "Held-book volatility memo: could not read the trading date "
-                "(%s) — re-measuring rather than reusing a cached yardstick.",
-                exc,
-            )
-            # A fresh object each time: it can never equal a stored key, so
-            # the memo misses and the measurement is redone.
-            measured_on = object()
-        key = (
-            measured_on,
-            tuple(sorted((sym, round(w, 4)) for sym, w in weights.items())),
-        )
-        cached = getattr(self, "_held_book_vol_memo", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-
-        bars_by_symbol = {}
-        for symbol in weights:
-            try:
-                bars_by_symbol[symbol] = self.market.get_ohlcv(
-                    symbol, self.config.trading.lookback_days,
-                ) or []
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Price history fetch failed for %s while measuring the "
-                    "held book's volatility: %s", symbol, exc,
-                )
-                bars_by_symbol[symbol] = []
-
-        estimate = measure_portfolio_daily_vol(weights, bars_by_symbol)
-        self._held_book_vol_memo = (key, estimate)
-        return estimate
-
-    def held_book_daily_vol_pct(self) -> float | None:
-        """The held book's realized daily volatility in percent, or None.
-
-        docs/WORK.md item 32. Wired into `RiskRuleEngine` as
-        `portfolio_vol_provider`; also the yardstick
-        `_compute_recent_performance` reports and derives its two
-        rolling-return brakes from, so all three loss alarms read ONE
-        measurement rather than each making their own.
-        """
-        try:
-            return self.measure_held_book_daily_vol().daily_vol_pct
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Held-book volatility measurement failed (%s) — the drawdown "
-                "alarms fall back to their fixed-percentage thresholds.", exc,
-            )
-            return None
 
     def _refresh_account_state(self):
         account = self.broker.get_account()
@@ -9492,57 +8767,6 @@ class TradingPipeline:
     # individually by constructing a ctx, populating the needed fields,
     # and calling the method directly.
     # ---------------------------------------------------------------
-
-    def _check_late_breach_and_halt(
-        self, run_id: str, where: str, ctx=None,
-    ) -> dict | None:
-        """Refresh broker state and HALT if the daily-loss limit was crossed
-        mid-session. Renamed with the behaviour change — it no longer
-        liquidates; see `_halt_on_daily_loss_breach`.
-
-        Used by morning at the post-research checkpoint and (potentially)
-        by other long-running phases to close the gap between the
-        pre-research circuit breaker (#45) and the pre-execution recheck
-        (#48). On a slow-OpenAI day research can take 5-10 min — plenty
-        of time for the tape to gap through the limit while morning is
-        still computing.
-
-        Returns the halt response dict on breach, None to proceed. ``where``
-        is a short tag for the log message (post-research / post-decision /
-        etc).
-        """
-        try:
-            account = self.broker.get_account()
-            positions = self.broker.get_positions()
-        except Exception as exc:
-            logger.warning(
-                "Late-breach check (%s): broker query failed: %s — "
-                "proceeding without recheck", where, exc,
-            )
-            return None
-
-        loss_violation, _baseline, _pnl, basis = self._daily_loss_breach(
-            account, positions,
-        )
-        if not (loss_violation and positions):
-            return None
-
-        return self._halt_on_daily_loss_breach(
-            positions, loss_violation, run_id,
-            where=f"morning late-breach ({where})", basis=basis, ctx=ctx,
-        )
-
-    # `_midday_emergency_liquidate` was DELETED 2026-09-14 (retired-ok; docs/WORK.md
-    # item 32). It force-closed the entire book on a daily-loss breach with
-    # LIMIT orders 1% through the market and then restored the original
-    # stops on any leg that did not fill — so on a correlated gap, the one
-    # day a whole-book dump could be argued for, it cancelled every
-    # protective stop, failed to sell, and put the stops back. It never
-    # fired in production. `_halt_on_daily_loss_breach` replaces it: the
-    # breaker now refuses new risk and VERIFIES the stops it is relying on,
-    # and the proportionate leverage response stays where it already was,
-    # in `_enforce_gross_ceiling`. The EMERGENCY_SELL / EMERGENCY_COVER
-    # action tags remain recognised everywhere for historical rows.
 
     def _symbols_already_trimmed_today(self) -> set[str]:
         """Symbols that received a sell-side action earlier today (ET).
@@ -11336,8 +10560,10 @@ class TradingPipeline:
             # on day zero, never given a single day's normal range to breathe.
             #
             # Triggers originating outside the tape — earnings, news, regime,
-            # sector, correlation, circuit breaker, a fired stop — bypass this
-            # entirely. An earnings miss is an earnings miss whether the stock
+            # sector, a fired stop — bypass this entirely. ("correlation" and
+            # "circuit breaker" were in this sentence until they were removed
+            # from the accepted list, 2026-09-13 and 2026-09-20; neither
+            # bypasses anything now.) An earnings miss is an earnings miss whether the stock
             # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
             # before acting on information sells the bottom instead of the top.
             if act in ("SELL", "REDUCE", "COVER"):
@@ -11995,7 +11221,7 @@ class TradingPipeline:
         # That branch is correct for a genuinely fresh account with no
         # equity curve yet (see `resolve_gross_ceiling`'s docstring). Alpaca
         # has been observed to return NaN portfolio_value during market-open
-        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring), and
+        # glitches, and
         # holding the loosest cap on exactly that kind of broken-snapshot
         # day is the failure this guard closes: halting new risk (the
         # ladder's own floor rung) is safer than assuming zero drawdown.
@@ -12487,26 +11713,24 @@ class TradingPipeline:
         orders: list[dict] | None = None,
         extra: dict | None = None,
     ) -> dict:
-        """Recheck deterministic loss protection before a suspension return."""
+        """The suspension return payload.
+
+        It used to re-run an account-level loss check first. That
+        whole mechanism was removed 2026-09-20 on owner instruction
+        (docs/INCIDENT_HISTORY.md, retired item 32): per-position stops are
+        the desk's loss protection now, and they live at the broker rather
+        than depending on this process reaching this line.
+
+        KNOWN RESIDUE, deliberately not chased in that change: `session`
+        and `where` are now unused here, and the name still says "after
+        late safety" when there is no late safety check left. Eleven call
+        sites pass both. Renaming the method and dropping two keyword
+        arguments across all eleven is churn with no behavioural effect, so
+        it was left for whoever next touches this path — it is recorded
+        here rather than silently tolerated.
+        """
 
         existing_orders = list(orders or [])
-        halt = self._check_late_breach_and_halt(run_id, where)
-        if halt is not None:
-            if session == "morning":
-                # A halt supersedes any PM checkpoint written before the
-                # breaker opened (for example while entering RM). Never allow
-                # that pre-halt plan to resume after a reset.
-                from src import decision_checkpoint as _dc
-                _dc.mark_consumed("morning")
-                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-            # The halt itself placed no orders; these are the session's own,
-            # carried through so the feed still renders them.
-            halt["orders"] = existing_orders + list(halt.get("orders") or [])
-            halt["paid_analysis_suspended"] = True
-            halt["suspension_error"] = str(error)
-            if extra:
-                halt.update(extra)
-            return halt
         payload = self._paid_suspended_payload(
             run_id, orders=existing_orders, error=error,
         )
@@ -12894,26 +12118,6 @@ class TradingPipeline:
             # book we just read, before the long research window.
             self._sync_positions_from_broker(positions)
 
-            # Hard circuit breaker before any LLM/research work. If the account
-            # opens through the daily-loss limit, the deterministic response
-            # must not depend on PM/RM producing a tradeable plan later in the
-            # run. That response is a HALT, not a liquidation — docs/WORK.md
-            # item 32, see `_halt_on_daily_loss_breach`.
-            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-                account, positions,
-            )
-            if loss_violation and positions:
-                halt = self._halt_on_daily_loss_breach(
-                    positions, loss_violation, run_id,
-                    where="morning pre-research", basis=loss_basis, ctx=ctx,
-                )
-                # Any same-day plan is superseded by the halt — a stale
-                # unconsumed checkpoint must not resume, and the dead-man
-                # probe must not read this as a killed morning.
-                from src import decision_checkpoint as _dc
-                _dc.mark_consumed("morning")
-                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                return halt
 
             # All broker-resident and deterministic safety work above runs
             # even while the paid-analysis circuit is latched. Only now, at
@@ -12992,20 +12196,6 @@ class TradingPipeline:
                     )
                 analyses = ctx.analyses
 
-                # Late-breach check: research can take 5-10 min on slow OpenAI
-                # days. The pre-research circuit breaker (#45) caught open-gap
-                # losses; this catches the case where the tape crosses the
-                # daily-loss limit DURING research and the morning would
-                # otherwise bail to no_data/no_trades, leaving the breach for
-                # the next intra tick (30 min away). Mirror the pre-research
-                # bypass: deterministic HALT, no LLM dependency.
-                late_breach = self._check_late_breach_and_halt(
-                    run_id, "post-research", ctx=ctx,
-                )
-                if late_breach is not None:
-                    _dc.mark_consumed("morning")
-                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                    return late_breach
 
                 if not analyses:
                     logger.warning("No analyses produced, skipping trading")
@@ -13042,22 +12232,6 @@ class TradingPipeline:
                 # instead of a wasted research+PM spend.
                 _dc.write(ctx)
 
-                # Second late-breach check: PM is itself a multi-second LLM
-                # call (memory layers + Constructor sizing). The post-research
-                # check (#60) caught breaches during research but a parse-fail
-                # or empty-plan exit at this point would still skip the
-                # deterministic halt until the next intra tick. Codex
-                # r8 #1 caught this gap — same fix as #60, just one stage
-                # later in the pipeline.
-                late_breach = self._check_late_breach_and_halt(
-                    run_id, "post-decision", ctx=ctx,
-                )
-                if late_breach is not None:
-                    # The just-written checkpoint is superseded by the halt —
-                    # never resume it.
-                    _dc.mark_consumed("morning")
-                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                    return late_breach
 
             if not portfolio_decision:
                 failure_status = ctx.analysis_failure_status or "pm_agent_failure"
@@ -13793,32 +12967,6 @@ class TradingPipeline:
             self._total_pnl_since_reset(total_value)
         )
 
-        # Hard circuit breaker: if the session is already through the daily-loss
-        # limit, bypass all LLM/news/earnings work and HALT (docs/WORK.md item
-        # 32 — the force-liquidation this used to do is deleted). Keeps the
-        # deterministic safety path alive even when the reviewer
-        # model/provider is unavailable.
-        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-            ctx.account, positions,
-        )
-        if loss_violation and positions:
-            logger.warning(
-                "%s risk alert before LLM review: %s — bypassing reviewer and "
-                "halting new risk", session_type.capitalize(),
-                loss_violation.message,
-            )
-            halt = self._halt_on_daily_loss_breach(
-                positions, loss_violation, run_id,
-                where=f"{session_type} pre-review", basis=loss_basis, ctx=ctx,
-            )
-            halt["session"] = session_type
-            halt["review"] = None
-            halt["daily_pnl"] = daily_pnl
-            halt["daily_return_pct"] = daily_return_pct
-            halt["total_pnl"] = total_pnl
-            halt["total_return_pct"] = total_return_pct
-            halt["total_pnl_since"] = total_pnl_since
-            return halt
 
         # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
         # used to sit here: sell 15% of any position once its unrealised
@@ -14183,122 +13331,69 @@ class TradingPipeline:
                 review, ctx=ctx, run_id=run_id, review_kwargs=review_kwargs,
             )
 
-            # Risk check: if the daily loss limit is breached, HALT — refuse
-            # further risk and verify the stops. Else dispatch the LLM's
-            # per-position action list. (docs/WORK.md item 32: this used to
-            # force-sell the whole book.)
-            #
-            # Refresh FIRST, then measure: the locals here date from BEFORE
-            # the LLM review (minutes of crash tape ago), and the loss
-            # numerator is now read off the held positions themselves, so a
-            # stale position list would be a stale measurement. Falls back to
-            # the pre-review snapshot if the refresh fails — a breach must
-            # still be judged, on the best truth available.
-            fresh_account = ctx.account
+            # Refresh the broker book before dispatching the LLM's
+            # per-position action list: the locals here date from BEFORE the
+            # review (minutes of tape ago). Falls back to the pre-review
+            # snapshot if the refresh fails.
             try:
-                fresh_account = self.broker.get_account() or ctx.account
                 fresh_positions = self.broker.get_positions()
                 if fresh_positions:
                     positions = fresh_positions
             except Exception as e:  # noqa: BLE001
-                logger.warning("post-review breach check: refresh failed "
+                logger.warning("post-review position refresh failed "
                                "(using pre-review snapshot): %s", e)
-            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-                fresh_account, positions,
+            # Phase 3.7 — deterministic trailing FIRST, before the LLM's
+            # discretionary TRAIL_STOP is considered. Arithmetic does not
+            # need a language model's permission, and a winner's stop
+            # should not depend on one remembering to propose a move.
+            orders.extend(
+                self._apply_deterministic_trails(review_positions, run_id=run_id)
             )
-            if loss_violation:
-                # Review fix, still load-bearing: this branch previously FELL
-                # THROUGH to the park bookend — the system would buy SGOV with
-                # ~all equity on a breach day and the next intra tick would
-                # act on the fresh SGOV lot. Mirror the pre-review breaker:
-                # return, never park.
-                halt = self._halt_on_daily_loss_breach(
-                    positions, loss_violation, run_id,
-                    where=f"{session_type} post-review", basis=loss_basis,
-                    ctx=ctx,
-                )
-                halt["session"] = session_type
-                halt["review"] = review.model_dump() if review else None
-                # Best-available truth at halt time: the just-refreshed
-                # account snapshot above, not the pre-review one this
-                # function otherwise carries as `total_value`/`daily_pnl`.
-                fresh_total_value = (
-                    fresh_account.get("portfolio_value", total_value)
-                    if isinstance(fresh_account, dict) else total_value
-                )
-                fresh_last_equity = (
-                    fresh_account.get("last_equity", fresh_total_value)
-                    if isinstance(fresh_account, dict) else last_equity
-                )
-                halt["daily_pnl"] = (
-                    (fresh_total_value - fresh_last_equity) if fresh_last_equity else 0.0
-                )
-                halt["daily_return_pct"] = (
-                    (halt["daily_pnl"] / fresh_last_equity * 100) if fresh_last_equity else 0.0
-                )
-                (halt["total_pnl"], halt["total_return_pct"],
-                 halt["total_pnl_since"]) = self._total_pnl_since_reset(fresh_total_value)
-                # The session's own earlier orders (deterministic trails and
-                # the like) are preserved for the feed. The halt itself
-                # placed none — `halted` / `halt_reason` are the record of
-                # that, and the invariant is tested.
-                halt["orders"] = list(orders)
-                # Spec §11.2 — gross exposure and its ceiling.
-                halt["leverage"] = dict(ctx.leverage)
-                return halt
-            else:
-                # Phase 3.7 — deterministic trailing FIRST, before the LLM's
-                # discretionary TRAIL_STOP is considered. Arithmetic does not
-                # need a language model's permission, and a winner's stop
-                # should not depend on one remembering to propose a move.
-                orders.extend(
-                    self._apply_deterministic_trails(review_positions, run_id=run_id)
-                )
 
-                # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
-                # as well as entries. Until this landed the entire sell side
-                # skipped the veto layer the buy side has always had.
-                risk_vetoed, _exit_verdict = self._risk_review_exits(
+            # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
+            # as well as entries. Until this landed the entire sell side
+            # skipped the veto layer the buy side has always had.
+            risk_vetoed, _exit_verdict = self._risk_review_exits(
+                review, review_positions, run_id=run_id,
+                total_value=total_value, macro_summary=macro_summary,
+                position_facts=position_facts,
+                # This loop fetched all of these before the position
+                # reviewer ran; until 2026-09-13 none of them reached the
+                # AI Risk seat, which was then asked to audit the exits
+                # against news and drawdown state it had never been shown.
+                news_intel=session_news,
+                earnings_analyses=session_earnings,
+                cash=review_cash,
+                reserve_balance=reserve_balance,
+                recent_performance=recent_performance,
+            )
+            orders.extend(self._midday_execute_llm_actions(
+                review_positions, review, run_id,
+                already_trimmed_today=already_trimmed_today,
+                metric_deltas=metric_deltas,
+                risk_vetoed_symbols=risk_vetoed,
+                position_facts=position_facts,
+            ))
+
+            # Take-profit revision flags, adjudicated LAST — after every
+            # exit decision this session makes. A re-derived target
+            # therefore cannot reach this session's exits even in
+            # principle; and because progress/pace are measured against
+            # the PINNED entry target, it cannot reach a later session's
+            # exit-guard veto either. Places no orders: nothing here
+            # exits anything, and the trailing stop remains the only
+            # automatic exit (PR #321).
+            try:
+                target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,
-                    total_value=total_value, macro_summary=macro_summary,
-                    position_facts=position_facts,
-                    # This loop fetched all of these before the position
-                    # reviewer ran; until 2026-09-13 none of them reached the
-                    # AI Risk seat, which was then asked to audit the exits
-                    # against news and drawdown state it had never been shown.
-                    news_intel=session_news,
-                    earnings_analyses=session_earnings,
-                    cash=review_cash,
-                    reserve_balance=reserve_balance,
-                    recent_performance=recent_performance,
+                    seat="position_reviewer",
                 )
-                orders.extend(self._midday_execute_llm_actions(
-                    review_positions, review, run_id,
-                    already_trimmed_today=already_trimmed_today,
-                    metric_deltas=metric_deltas,
-                    risk_vetoed_symbols=risk_vetoed,
-                    position_facts=position_facts,
-                ))
-
-                # Take-profit revision flags, adjudicated LAST — after every
-                # exit decision this session makes. A re-derived target
-                # therefore cannot reach this session's exits even in
-                # principle; and because progress/pace are measured against
-                # the PINNED entry target, it cannot reach a later session's
-                # exit-guard veto either. Places no orders: nothing here
-                # exits anything, and the trailing stop remains the only
-                # automatic exit (PR #321).
-                try:
-                    target_revisions = self._adjudicate_target_revision_flags(
-                        review, review_positions, run_id=run_id,
-                        seat="position_reviewer",
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "target revision sweep failed (non-fatal, no target "
-                        "was changed): %s", exc,
-                    )
-                    target_revisions = []
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "target revision sweep failed (non-fatal, no target "
+                    "was changed): %s", exc,
+                )
+                target_revisions = []
 
             # Snapshot AFTER the review so the next session compares against
             # what this one actually saw. Written even when the review failed:
@@ -14641,18 +13736,19 @@ class TradingPipeline:
             )
 
     def _run_intra_check_body(self) -> dict:
-        """Lightweight intra-session circuit-breaker check (no LLM calls).
+        """Lightweight intra-session maintenance tick (no LLM calls).
 
-        Scheduled between morning and midday (typically 12:00 ET) to catch a
-        flash crash that would otherwise accumulate unchecked through the
-        busiest trading hour. Only one rule: daily P&L vs loss limit. If
-        breached, HALT the desk — see `_halt_on_daily_loss_breach`. It
-        reconciles fills, cancels resting entry orders, verifies stop
-        coverage per held position AT THE BROKER, files a durable per-symbol
-        refusal reason and alerts the owner. It closes, resizes and zeroes
-        nothing: the whole-book liquidation this used to describe was
-        deleted on 2026-09-14 (item 32). Runs in ~5 seconds; OK for a
-        30-minute cadence if the user wants even tighter coverage.
+        Scheduled between morning and midday (typically 12:00 ET). It
+        reconciles fills, repairs stop coverage on anything found
+        unprotected, reports the session snapshot, and runs the bounded
+        intraday opportunity scan.
+
+        **It no longer carries an account-level loss breaker.** That whole
+        mechanism — a daily P&L vs loss-limit test that halted the desk —
+        was removed 2026-09-20 on the owner's instruction (retired item 32,
+        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
+        living at the broker, which does not depend on this tick running.
+        Runs in ~5 seconds.
         """
         ctx = RunContext.start("intra_check")
         run_id = ctx.run_id
@@ -14679,8 +13775,12 @@ class TradingPipeline:
         # A live session runs this same preamble itself near the start of its
         # own run, and it may be in the middle of cancelling stops to sell; a
         # stop added here in that window is the worst pairing item 127 names.
-        # Deferring skips only this tick's preamble: the loss check below
-        # still runs every tick, and the next tick re-reads the broker.
+        # Deferring skips only this tick's preamble, and the next tick
+        # re-reads the broker. This used to add "the loss check below still
+        # runs every tick" as the rest of the safety argument; there is no
+        # loss check any more (2026-09-20, retired item 32), so the
+        # argument for deferring now rests entirely on the next tick
+        # re-reading. Board item 127 is open on that exposure.
         coverage_gaps: list[dict] = []
         preamble_deferred = ""
         with self._intraday_scan_process_lock() as preamble_lock:
@@ -14703,8 +13803,8 @@ class TradingPipeline:
             if preamble_deferred:
                 logger.warning(
                     "Intra check: broker-writing preamble DEFERRED this tick — "
-                    "%s. No drain, repair, release or reconcile ran; the loss "
-                    "check still runs.", preamble_deferred,
+                    "%s. No drain, repair, release or reconcile ran; the next "
+                    "tick re-reads the broker.", preamble_deferred,
                 )
             else:
                 # Drain orphaned protection-restore intents — intra runs every
@@ -14790,88 +13890,55 @@ class TradingPipeline:
             total_value, last_equity, daily_pnl, daily_return_pct, len(positions),
         )
 
-        # `daily_pnl` above stays the ACCOUNT's day change — that is what the
-        # snapshot log, the dashboard and this payload report, and it is not
-        # changing. The BREACH TEST reads the held book instead, so that it
-        # is measured against the same object its threshold is built from
-        # (docs/WORK.md item 32, `_daily_loss_breach`).
-        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-            account, positions,
-        )
-        if not loss_violation or not positions:
-            result = {
-                "status": "ok",
-                "daily_pnl": daily_pnl,
-                "daily_return_pct": daily_return_pct,
-                "total_pnl": total_pnl,
-                "total_return_pct": total_return_pct,
-                "total_pnl_since": total_pnl_since,
-                "positions": len(positions),
+        result = {
+            "status": "ok",
+            "daily_pnl": daily_pnl,
+            "daily_return_pct": daily_return_pct,
+            "total_pnl": total_pnl,
+            "total_return_pct": total_return_pct,
+            "total_pnl_since": total_pnl_since,
+            "positions": len(positions),
+            "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
+        }
+        # 2026-08-19 intraday opportunity-discovery fix: bounded new-
+        # opportunity scan.
+        try:
+            scan_result = self._run_intraday_opportunity_scan(ctx)
+        except PaidAnalysisSuspended as exc:
+            scan_result = {
+                "status": "paid_analysis_suspended",
                 "run_id": run_id,
-                "stop_coverage_gaps": coverage_gaps,
+                "error": str(exc),
+                "suspended": "intraday opportunity discovery only",
+                "preserved": "fill reconciliation and stop-coverage repair",
             }
-            # 2026-08-19 intraday opportunity-discovery fix: bounded new-
-            # opportunity scan, gated additionally on `not loss_violation`
-            # (belt-and-suspenders) — a daily-loss breach must never add
-            # new risk, whether or not there happened to be a position to
-            # force-close in the branch above.
-            if not loss_violation:
-                try:
-                    scan_result = self._run_intraday_opportunity_scan(ctx)
-                except PaidAnalysisSuspended as exc:
-                    scan_result = {
-                        "status": "paid_analysis_suspended",
-                        "run_id": run_id,
-                        "error": str(exc),
-                        "suspended": "intraday opportunity discovery only",
-                        "preserved": "intraday deterministic loss protection",
-                    }
-                except Exception as e:  # noqa: BLE001 — never let the scan
-                    # turn a routine intra_check tick into a failed run.
-                    # Operator-honesty fix: a crash used to set scan_result to
-                    # None, which is exactly what a healthy "ran, nothing to
-                    # do" tick also produces — no `intraday_scan` key, session
-                    # status stays "ok". The Telegram feed and the rehearsal
-                    # rig were both blind to the difference. Attaching a
-                    # dict (mirroring the `paid_analysis_suspended` shape
-                    # above) makes the crash visible through the same nested
-                    # path, while the tick itself still completes normally —
-                    # the deterministic loss check above already ran and is
-                    # unaffected by anything below it.
-                    logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
-                    scan_result = {
-                        "status": "intraday_scan_crashed",
-                        "run_id": run_id,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                        "preserved": "intraday deterministic loss protection",
-                    }
-                if scan_result is not None:
-                    result["intraday_scan"] = scan_result
-                    if scan_result.get("status") == "intraday_executed":
-                        # Scan went through ExecutionStage; refresh the
-                        # local table from broker truth (the start-of-tick
-                        # snapshot above is now stale).
-                        self._sync_positions_from_broker()
-            return result
-
-        # docs/WORK.md item 32 (2026-09-14): this was a near-verbatim copy of
-        # `_midday_emergency_liquidate` (retired-ok) — the same 1%-through-the-market LIMIT
-        # orders, the same `_finalize_pending_protections` restore on no-fill.
-        # Both are gone. The intra breaker now HALTS: it cancels resting
-        # entries, verifies that every held position really is stop-covered
-        # at the broker, files a per-symbol refusal, and alerts. It sells
-        # nothing. See `_halt_on_daily_loss_breach`.
-        halt = self._halt_on_daily_loss_breach(
-            positions, loss_violation, run_id,
-            where="intra_check", basis=loss_basis, ctx=ctx,
-        )
-        halt["daily_pnl"] = daily_pnl
-        halt["daily_return_pct"] = daily_return_pct
-        halt["total_pnl"] = total_pnl
-        halt["total_return_pct"] = total_return_pct
-        halt["total_pnl_since"] = total_pnl_since
-        return halt
+        except Exception as e:  # noqa: BLE001 — never let the scan
+            # turn a routine intra_check tick into a failed run.
+            # Operator-honesty fix: a crash used to set scan_result to
+            # None, which is exactly what a healthy "ran, nothing to
+            # do" tick also produces — no `intraday_scan` key, session
+            # status stays "ok". The Telegram feed and the rehearsal
+            # rig were both blind to the difference. Attaching a
+            # dict (mirroring the `paid_analysis_suspended` shape
+            # above) makes the crash visible through the same nested
+            # path, while the tick itself still completes normally.
+            logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
+            scan_result = {
+                "status": "intraday_scan_crashed",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "preserved": "fill reconciliation and stop-coverage repair",
+            }
+        if scan_result is not None:
+            result["intraday_scan"] = scan_result
+            if scan_result.get("status") == "intraday_executed":
+                # Scan went through ExecutionStage; refresh the
+                # local table from broker truth (the start-of-tick
+                # snapshot above is now stale).
+                self._sync_positions_from_broker()
+        return result
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
         """True when the explicit evaluation ledger says this symbol ran.
@@ -17090,19 +16157,9 @@ class TradingPipeline:
             "analysis": analysis.model_dump() if analysis else None,
             "run_id": run_id,
             "auto_meta": meta_result,
-            # Observability: surface a silently-missing session + the loss cap
-            # so the notifier can raise deterministic escalation (not just LLM).
+            # Observability: surface a silently-missing session so the
+            # notifier can raise deterministic escalation (not just LLM).
             "missing_sessions": missing_sessions,
-            # docs/WORK.md item 32: the limit ACTUALLY IN FORCE, read off
-            # the engine rather than the config, so the operator alert shows
-            # the volatility-relative threshold when one is measurable and
-            # the fixed-percentage fallback when it is not. Reading the
-            # config field here would have quietly reported the fallback
-            # every day regardless.
-            "max_daily_loss_pct": _daily_loss_limit_for_alert(
-                getattr(self, "risk_engine", None),
-                getattr(self.config, "risk", None),
-            ),
             "stop_coverage_gaps": coverage_gaps,
             # True 4pm-to-4pm headline P&L (None → notifier falls back to the
             # real-time total_value/daily_pnl figures).
@@ -17265,8 +16322,8 @@ class TradingPipeline:
         # kill, so 13 straight days of morning deaths passed this check and
         # the 🔴 banner never fired. Two sharper probes:
         if "morning" not in missing and "run" in present:
-            # A legit PM-less completion (no_data / daily_loss_halted)
-            # records a status marker — skip both probes for it.
+            # A legit PM-less completion (no_data, say) records a status
+            # marker — skip both probes for it.
             try:
                 from src import decision_checkpoint as _dc0
                 legit_early_exit = _dc0.read_status("morning") is not None

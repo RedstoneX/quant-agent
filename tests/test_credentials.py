@@ -165,7 +165,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:

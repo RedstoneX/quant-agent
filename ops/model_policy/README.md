@@ -156,6 +156,13 @@ trimming, `midday_exit` has one position pinned 0.25 ATRs from its stop,
 `risk_drawdown_discipline` has a BUY sized at the full base while
 `in_drawdown=true` requires it halved.
 
+> **STALE 2026-09-20.** `risk_drawdown_discipline` grades against a rule that
+> no longer exists: the account-level loss alarms, including the
+> `in_drawdown` BUY-halving, were retired in full on the owner's instruction
+> (`docs/INCIDENT_HISTORY.md`, board item 32). The scenario is `default=False`
+> and does not run, so nothing is being graded wrongly today — but it must be
+> rewritten or deleted before it is ever enabled.
+
 ### Scoping a re-run to one seat
 
 A prompt or input change to a single agent invalidates that agent's rows

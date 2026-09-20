@@ -61,9 +61,6 @@ RISK_NAMESPACE = "risk"
 #: still rendering the single source of truth. Anything not a declared field
 #: and not on this list is refused, so a typo cannot silently reach a method.
 RISK_COMPUTED_PROPERTIES = frozenset({
-    "effective_max_daily_loss_pct",
-    "drawdown_5d_threshold_pct",
-    "drawdown_20d_threshold_pct",
     "sector_hard_ceiling_pct",
 })
 
@@ -130,7 +127,7 @@ def resolve_placeholder(key: str, risk_config: Any) -> str:
         raise PromptPlaceholderError(
             f"placeholder {{{{{key}}}}} resolved to None. An unset optional "
             f"setting must be rendered through its derived property (e.g. "
-            f"`effective_max_daily_loss_pct`), not left blank in the prompt.",
+            f"`sector_hard_ceiling_pct`), not left blank in the prompt.",
         )
     if not isinstance(value, (int, float)):
         raise PromptPlaceholderError(

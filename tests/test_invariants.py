@@ -30,7 +30,6 @@ def _risk_config() -> RiskConfig:
     return RiskConfig(
         max_position_pct=15.0,
         max_total_position_pct=100.0,
-        max_daily_loss_pct=3.0,
         max_sector_pct=40.0,
         require_stop_loss=True,
     )
@@ -49,29 +48,10 @@ def test_invariant_orders_cannot_breach_position_cap():
         reasoning="pathological oversized",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0, daily_pnl=0,
-    )
+        decision=decision, positions=[], total_value=100_000.0,)
     rule_names = {v.rule for v in violations}
     assert "max_position_pct" in rule_names
     assert "max_position_pct" in HARD_BLOCK_RULES
-
-
-def test_invariant_orders_cannot_breach_daily_loss_cap():
-    engine = RiskRuleEngine(_risk_config())
-    decision = TradeDecision(
-        action="BUY", symbol="AAPL",
-        allocation_pct=5.0,
-        entry_price=180.0, stop_loss=170.0, take_profit=200.0,
-        reasoning="normal",
-    )
-    # 4% drawdown on a $100k baseline
-    violations = engine.check(
-        decision=decision, positions=[], total_value=96_000.0,
-        daily_pnl=-4_000.0, baseline=100_000.0,
-    )
-    rule_names = {v.rule for v in violations}
-    assert "max_daily_loss_pct" in rule_names
-    assert "max_daily_loss_pct" in HARD_BLOCK_RULES
 
 
 def test_invariant_hard_risk_stage_drops_breaching_buy():
@@ -95,9 +75,7 @@ def test_invariant_hard_risk_stage_drops_breaching_buy():
         reasoning="fine",
     )
     allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
-        [bad, ok], positions=[], total_value=100_000.0, daily_pnl=0,
-        baseline=100_000.0,
-    )
+        [bad, ok], positions=[], total_value=100_000.0,)
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols
     assert "AAPL" in allowed_symbols
@@ -139,9 +117,7 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
         reasoning="fine",
     )
     allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
-        [bad, ok], positions=[], total_value=100_000.0, daily_pnl=0,
-        baseline=100_000.0,
-    )
+        [bad, ok], positions=[], total_value=100_000.0,)
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols
     assert "AAPL" in allowed_symbols
@@ -468,7 +444,7 @@ def test_invariant_cash_only_no_margin_still_enforced_on_deployable_cash():
     SGOV's parked value can no longer be what makes a BUY 'affordable'."""
     cfg = RiskConfig(
         max_position_pct=100.0, max_total_position_pct=100.0,
-        max_daily_loss_pct=3.0, max_sector_pct=100.0,
+        max_sector_pct=100.0,
         require_stop_loss=True, allow_margin=False,
     )
     engine = RiskRuleEngine(cfg)
@@ -478,7 +454,7 @@ def test_invariant_cash_only_no_margin_still_enforced_on_deployable_cash():
         reasoning="more than deployable cash covers",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=10_000.0, daily_pnl=0,
+        decision=decision, positions=[], total_value=10_000.0,
         cash=145.0,  # the forensic's real deployable figure
     )
     assert "cash_only" in {v.rule for v in violations}

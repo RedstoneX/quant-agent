@@ -30,6 +30,15 @@ and rides the seam `data_degraded` and `correlation_coverage_gap` already use.
 
 ## F6 — The Risk Manager could not audit two of the rules it owns
 
+> **Superseded in part (2026-09-20).** The drawdown-halving rule this
+> finding is half about no longer exists: the owner removed the entire
+> account-level loss-alarm mechanism — the daily halt and the 5d/20d
+> BUY-halving brake — on 2026-09-20 (`docs/INCIDENT_HISTORY.md`, retired
+> board item 32). The rolling returns still reach the Risk Manager, but
+> there is no `in_drawdown` flag and nothing is halved. The holding-
+> discipline half of this finding stands. Left as written below because
+> this file records what was found and decided at the time.
+
 **Finding.** `config/prompts/risk_manager.md` makes RM the reviewer of PM's
 holding discipline and of the system-drawdown halving rule.
 `RiskManagerAgent.build_user_message` passed the inputs for neither.

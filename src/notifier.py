@@ -256,7 +256,10 @@ _STATUS_LABELS: dict[str, str] = {
     "broker_error": "the broker could not be reached",
     "fetch_error": "the data could not be fetched",
     "emergency_sold": "an emergency sale was made (historical)",
-    "daily_loss_halted": "stopped for the day after losses",
+    # Kept, like `emergency_sold`, so a run stored before 2026-09-20 still
+    # renders as words. The whole account-level loss alarm was removed that
+    # day on the owner's instruction (retired item 32); nothing emits this.
+    "daily_loss_halted": "stopped for the day after losses (historical)",  # retired-ok
     "kill_switch_halted": "stopped by the manual kill switch",
     "paid_analysis_suspended": "paid thinking is suspended",
     "evidence_gate_skip": "skipped \u2014 the data was incomplete",
@@ -2452,38 +2455,11 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         if isinstance(risk_for_banner, str) and risk_for_banner.lower() in ("elevated", "high"):
             lines.append(f"🚨 OPERATOR ATTENTION — risk_rating={risk_for_banner}")
 
-        # (2) DETERMINISTIC escalation — does NOT depend on the LLM correctly
-        # grading its own day (under-rating is exactly the failure you most want
-        # caught). If today's loss is within 80% of the hard daily-loss circuit-
-        # breaker limit, raise the banner regardless of risk_rating. Mirrors the
-        # trading path's two-layer (hard rule OR LLM) philosophy — the observability
-        # path should escalate on facts too, not just on model judgment.
-        # Use the SAME basis the headline shows: prefer the 4pm close-to-close P&L
-        # (esc_pnl=pnl_4pm, baseline=prior official close = equity_close - pnl_4pm)
-        # so the alert evaluates the number the operator actually sees. Fall back to
-        # the real-time diff when the 4pm figures aren't available. Without this, a
-        # day that recovered after-hours could hide a material 4pm loss from the
-        # alert (or vice-versa).
-        esc_pnl = result.get("pnl_4pm")
-        esc_close = result.get("equity_close")
-        if esc_pnl is not None and isinstance(esc_close, (int, float)):
-            esc_base = esc_close - esc_pnl
-        else:
-            esc_pnl = result.get("daily_pnl")
-            esc_tv = result.get("total_value")
-            esc_base = (esc_tv - esc_pnl) if (
-                isinstance(esc_pnl, (int, float)) and isinstance(esc_tv, (int, float))
-            ) else None
-        dl_limit = result.get("max_daily_loss_pct")
-        if (isinstance(esc_pnl, (int, float)) and isinstance(esc_base, (int, float))
-                and isinstance(dl_limit, (int, float)) and dl_limit > 0
-                and esc_pnl < 0 and esc_base > 0):
-            loss_pct = abs(esc_pnl / esc_base * 100)
-            if loss_pct >= 0.8 * dl_limit:
-                lines.append(
-                    f"🚨 DETERMINISTIC ALERT — daily loss {loss_pct:.2f}% is "
-                    f"≥80% of the {dl_limit:.0f}% circuit-breaker limit"
-                )
+        # A (2) used to sit here: a deterministic banner raised when the
+        # day's loss reached 80% of the account-level daily-loss circuit
+        # breaker. That breaker was removed 2026-09-20 on the owner's
+        # instruction (retired item 32, docs/INCIDENT_HISTORY.md), so there
+        # is no limit left to measure the day against.
 
     _new_block(lines, _render_escalation_banners)
 
@@ -2967,42 +2943,12 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
     lines.append(f"analyzed: {analyzed}  confirmed: {confirmed}  failed: {failed}")
 
 
-def _append_daily_loss_halt_banner(lines: list[str], result: dict) -> None:
-    """Say the desk has halted, and whether anything is unprotected.
-
-    docs/WORK.md item 32 (2026-09-14). The breaker used to render as a list
-    of EMERGENCY orders, which is how the operator knew it had fired. A halt
-    places no orders, so with no banner an `intra_check` tick that broke its
-    own 30-minute silence would show nothing to explain why. The owner alert
-    is sent separately and independently — this is the session message not
-    being mute about the same event.
-    """
-    if not result.get("halted"):
-        return
-    lines.append("🛑 DAILY LOSS HALT — no new risk this session")
-    lines.append("nothing was sold; every position is kept")
-    unprotected = result.get("unprotected_at_halt") or []
-    if unprotected:
-        lines.append(
-            "⚠️ NOT verifiably stop-covered at the halt: "
-            + ", ".join(str(s) for s in unprotected[:8])
-        )
-    elif result.get("stop_coverage_verified"):
-        lines.append(
-            f"stop coverage verified on "
-            f"{len(result['stop_coverage_verified'])} position(s)"
-        )
-    if result.get("entry_orders_cancelled") is False:
-        lines.append("⚠️ resting-entry cancel FAILED — check open orders")
-
-
 def _append_intra_check_body(lines: list[str], result: dict) -> None:
     # Reaches here when a deterministic breach fired, OR (spec §11.1 guard 3)
     # when an otherwise-OK 30-minute tick found a stop-coverage gap — the
     # sweep's finding is the whole reason that tick broke silence, so it is
     # the first thing on the message.
     _append_coverage_gap_banner(lines, result)
-    _append_daily_loss_halt_banner(lines, result)
     # Operator wants the details of whatever triggered.
     emergency = result.get("orders") or result.get("emergency_orders") or []
     if emergency:
@@ -3077,15 +3023,6 @@ def _status_emoji(status: str) -> str:
     if ("error" in status or status.startswith("pm_")
             or status in (
                 "rejected", "failed", "paid_analysis_suspended",
-                # docs/WORK.md item 32 (2026-09-14). The daily-loss breaker
-                # HALTS the desk now instead of liquidating it, and it is
-                # classified with the kill switch rather than in the
-                # "emergency_sold" warning bucket above: the desk has stopped
-                # taking risk and is holding a book whose protection it has
-                # just had to verify. That needs the 🛑 SHAPE — shape rather
-                # than colour is the point, the owner is red-green colour
-                # blind (item 21b).
-                "daily_loss_halted",
                 # Guard 1 (2026-09-02): ops halted the desk with the
                 # kill-switch flag file. This is the one status that fires
                 # even on an intra_check tick, which is otherwise silent —

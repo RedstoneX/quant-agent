@@ -97,6 +97,165 @@ desk, and it is filed as board item 168 rather than folded in here.
 
 ---
 
+### 2026-09-20 — the desk's second, account-level loss response was REMOVED ENTIRELY on the owner's instruction (board item 32 retired)
+
+**In plain words:** the desk used to have two separate ways of reacting to
+losing money. One is a ladder that gradually trims how much the book may own
+as it falls further below its best-ever level. The other was a set of alarms
+that read the account's own recent losses and, when one tripped, stopped the
+desk taking any new risk for the day or cut every new purchase in half. The
+owner has removed the second one completely. The ladder stays.
+
+**This is not a defect fix.** Nothing was found broken. The owner decided the
+mechanism was more dangerous than the thing it protected against, and said
+so in these words, 2026-09-20:
+
+> "I'm starting to think that I'm fine with the stops on the individual
+> stocks and I do not want a nuclear option so remove the whole secondary
+> halt on portfolio completely because there's too many things you keep
+> finding where a slight normal fluctuation in the market can liquidate or
+> halt everything — that's too dangerous to leave — the proper stop losses
+> should be enough."
+
+**What he was reacting to.** This item had already produced three rounds of
+findings in six days, every one of them about the same shape of problem: the
+alarm firing, or being able to fire, on a day that was not actually unusual.
+The whole-book liquidation half was deleted on 2026-09-14 by his own merged
+PR after it was shown it would have cancelled every protective stop, failed
+to sell into a gap, and put the stops back. A retuned-trigger fix for the
+remaining halt was built and then superseded before merging (PR #564, closed
+unmerged). The pattern he is pointing at is real, and his answer to it is to
+stop having the mechanism rather than to keep re-tuning it.
+
+**What was removed.**
+
+- The daily circuit breaker: the account-level test of the day's loss
+  against a limit, and the halt it triggered — refusing all new risk for
+  the session, cancelling resting entry orders, verifying every held
+  position's stop at the broker, filing a per-symbol refusal and alerting
+  the owner. Every place it fired from went with it: the morning
+  pre-research check, the two late-breach checks around research and the
+  PM call, the pre- and post-review checks in the midday and close
+  sessions, the intra-session tick, the pre-BUY re-check in the execution
+  stage, and the gate that stopped the cash sweep parking on a breach day.
+- The 5-day and 20-day rolling-return brakes: the `in_drawdown` flag and
+  the deterministic halving of every new BUY and SHORT that hung off it,
+  plus the engine's fail-closed cap for an unscaled order that reached it
+  another way.
+- The volatility yardstick built solely to set those thresholds — the
+  measurement of the held book's own realized daily volatility from its
+  holdings' price history, and the square-root-of-time scaling of one
+  sensitivity multiple across the three windows.
+- Everything that only existed to serve them: five settings, nine entries in
+  the number ledger (six of them flagged arbitrary, which is the
+  `MAX_ARBITRARY_ENTRIES` 148 → 142 move), the status string, the Telegram halt banner, the
+  "within 80% of the limit" deterministic escalation banner on the evening
+  message, the per-symbol refusal rows, the owner alert, and the prompt
+  paragraphs telling the Portfolio Manager, the Risk Manager and the
+  position reviewer how the mechanism worked.
+
+**A consequence worth stating rather than discovering later.** That evening
+banner was the desk's only FACT-based escalation on the owner's message —
+its own deleted comment said so: it existed because the model under-rating
+its own day is exactly the failure you most want caught, and it did not
+depend on the model. With it gone, the evening message's escalation is
+`risk_rating` from the evening analyst, i.e. model judgement, plus the
+§11.2 ladder's own owner-alert at its ratified drawdown point. No
+replacement threshold was invented here: any number picked to replace it
+would be exactly the kind of arbitrary constant this desk forbids, and the
+limit it measured against no longer exists to be measured against.
+
+**What was deliberately NOT touched.** The §11.2 peak-to-trough
+gross-exposure de-levering ladder — the one that trims the ceiling on how
+much the book may own at -8%, -15% and -20% below its equity high. It is a
+different mechanism and the owner did not ask for it to go. It is also
+different in kind, which is why leaving it is coherent rather than a
+half-measure: it trims exposure gradually, it never halts the desk, and it
+never closes a position outright. The rolling 5-day and 20-day return
+figures also survive, as information shown to the seats; nothing is gated on
+them any more.
+
+**Two more board items were voided by this, and one was filed.** Items 92
+(the daily-loss trigger tightening when a holding's volatility cannot be
+measured) and 144 (the 5-day and 20-day rungs never having been evaluable
+for want of equity history) both asked real questions about the mechanism's
+thresholds. Neither was answered; both lost their subject, and are retired
+as void rather than as fixed. The §11.2 ladder has its own
+unmeasurable-drawdown question and that one is untouched and still live —
+do not read these two retirements as covering it.
+
+Filed the other way: **item 169**, because this removal deleted the only
+path that told the owner, by symbol, that a position's protective stop
+could not be READ at the broker — as distinct from not being there. Both
+remaining readers of stop coverage fail quiet on a broker snapshot error,
+and both did so before this change [verified against `origin/main`]; what
+this change did was remove the layer covering for them, in the same breath
+as making per-position stops the desk's only loss protection. That is the
+one place this change leaves the desk worse rather than simpler, and it is
+on the board rather than in this paragraph alone.
+
+**The one real entanglement, and how it was resolved.** Board item 39's
+rotation-sequencing work (PR #563, open and unmerged at the time of this
+change) uses a gate it calls `daily_loss_recheck` as the first of four
+refusal checks on a rotation's replacement BUY. That gate is not a separate
+per-trade budget check that happens to share code — it is this same
+account-level breaker, run against a projected post-sale book. With the
+breaker gone it has nothing to evaluate, so it must be dropped from that
+branch's gate list when it rebases. Its other three gates — no live price,
+stale entry, sizing rounds to zero — are untouched and still do the work
+that PR exists for, so the feature is not hollowed out.
+
+**What would catch a resurrection, and what would not.**
+`config/retired_mechanisms.yaml` now carries this retirement with its
+function names and the prose forms that describe it, and the build fails if
+any prompt, docstring or comment under its scan globs starts describing it
+again. Two honest limits on that guarantee, both found by the adversary
+review of this change and not by the registry:
+
+- **The registry did not find the stale prose in this change; a reader
+  did.** Its matching is literal-phrase, so six surviving statements in
+  `config/prompts/portfolio_manager.md` scanned clean while flatly
+  contradicting the paragraphs this change had already corrected — among
+  them the Rule Priority table's row 9, which the prompt itself designates
+  as the tie-breaker when two rules conflict, and which told the Portfolio
+  Manager that a halving would be applied to its sizes after it submitted.
+  They are corrected here. Do not cite the registry as coverage it does not
+  have.
+- **Its scan globs do not cover everything.** `tests/`, `ops/`,
+  `src/api/`, `src/data/`, `scripts/`, `frontend/`, `config/settings.yaml`
+  and `docs/` are outside them, which is why a stale `settings.yaml`
+  comment pointing at "the daily circuit breaker above" survived while two
+  of its three identical siblings were corrected. Also fixed here.
+
+**A defect in the guard itself, found while arguing about this change.**
+The first attempt here dropped the halt's own run status from the two places
+that turn a status into words and a colour for the owner, while
+`emergency_sold` — retired the same way six days earlier — was kept in both
+as a historical label. Restoring the label failed the retired-mechanism
+check, and the reason turned out to be a bug in the check rather than a
+reason to drop the label: `OPT_OUT_MARKER` documents a per-LINE `retired-ok`
+opt-out, but the scanner compared the marker only against the extracted
+prose, which for a string literal is the literal's CONTENTS. A trailing
+`# retired-ok` on a `"key": "value",` line could therefore never work, and
+five such markers were already sitting inert in `src/config.py` reading to
+every later author as though they did. The scanner now checks the source
+line as well, `tests/test_retired_mechanisms.py` pins it, and the label is
+kept in both places. The colour mattered more than it first looked: a
+historical halted run was falling through to the white "nothing happened"
+bucket, and the owner is red-green colour blind, so the one status the desk
+has that means "the desk stopped" was reading as an ordinary quiet day.
+
+**The strongest remaining check is not the registry — it is
+`RiskConfig._reject_deleted_loss_alarm_keys`.** `RiskConfig` inherits
+pydantic's default `extra="ignore"`, so a stale deployment's
+`settings.yaml` still carrying any of the five deleted keys would otherwise
+load silently, and an operator would believe a daily halt was armed when
+nothing reads it. That validator refuses all five loudly at config load.
+It is the one way this removal could rot into a false belief about loss
+protection, so it is guarded by code rather than by a scanner.
+
+---
+
 ### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
 
 **In plain words:** an item on the open-work list asking to fix a bug — a

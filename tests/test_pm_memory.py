@@ -272,71 +272,6 @@ def test_handle_ex_dividends_skips_when_ex_div_is_today(tmp_path):
     pipeline.broker.replace_stop_loss.assert_not_called()
 
 
-def test_run_intra_check_halts_and_sells_nothing_on_breach(tmp_path):
-    """Intra check at -4% daily: HALTS. It refuses new risk, cancels resting
-    entry orders and verifies stop coverage — and sells nothing.
-
-    docs/WORK.md item 32 (2026-09-14): this test used to assert the opposite,
-    that every position was force-sold at a limit 1% below market. That
-    liquidation is deleted; on the correlated gap it was built for the limit
-    would not have filled and the no-fill path restored the very stops it had
-    just cancelled."""
-    from unittest.mock import MagicMock
-    from src.pipeline import TradingPipeline
-    from src.storage.db import Database
-    from src.risk.rules import RiskRuleEngine
-    from src.config import RiskConfig
-
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3.0, max_sector_pct=40,
-        require_stop_loss=False,
-    ))
-    pipeline.broker = MagicMock()
-    pipeline.broker.is_trading_day.return_value = True
-    pipeline.broker.get_account.return_value = {
-        "portfolio_value": 96_000.0, "last_equity": 100_000.0, "cash": 10_000.0,
-    }
-    pos = Position(
-        symbol="NVDA", qty=50, avg_entry=200, current_price=192,
-        market_value=9600, unrealized_pnl=-400, sector="Technology",
-    )
-    pipeline.broker.get_positions.return_value = [pos]
-    pipeline.broker.submit_order.return_value = {
-        "id": "sell-1", "status": "accepted", "symbol": "NVDA",
-    }
-    # audit F1 #1: SELL paths use the split snapshot/cancel seam.
-    pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
-    pipeline.broker.cancel_protective_stops.return_value = (True, [])
-    pipeline.cost_circuit = MagicMock()
-    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
-    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
-        "paid path must not precede the deterministic halt"
-    )
-
-    result = pipeline.run_intra_check()
-    assert result["status"] == "daily_loss_halted"
-    assert result["halted"] is True
-    assert result["orders"] == []
-    # NOTHING was sold — the invariant this change exists to establish.
-    pipeline.broker.submit_order.assert_not_called()
-    # The position is still held, and reported as not verifiably covered:
-    # `snapshot_protective_stops` returns no stops for it.
-    assert result["positions"] == 1
-    assert result["unprotected_at_halt"] == ["NVDA"]
-    # Resting entry orders ARE cancelled — refusing new risk includes
-    # pending intentions to add it.
-    pipeline.broker.cancel_open_entry_orders.assert_called_once_with()
-    pipeline.cost_circuit.activate_session.assert_called_once()
-    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
-
-
 def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
     """Intra check at -1% daily: no action, status 'ok'."""
     from unittest.mock import MagicMock
@@ -352,7 +287,7 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
     pipeline.db = db
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3.0, max_sector_pct=40,
+        max_sector_pct=40,
         require_stop_loss=False,
     ))
     pipeline.broker = MagicMock()

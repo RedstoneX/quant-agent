@@ -87,7 +87,7 @@ def get_cash_sweep_reserve_pct() -> float:
 
 def get_risk_limits() -> RiskConfig:
     """The deterministic risk gate's own configured limits (percentages
-    only — max_position_pct/max_total_position_pct/max_daily_loss_pct/
+    only — max_position_pct/max_total_position_pct/
     max_sector_pct — never a secret or credential). Read-only display
     context for Mission Control so a UI exposure gauge can be scaled
     against QAMC's actual hard-block thresholds instead of an arbitrary

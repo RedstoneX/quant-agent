@@ -61,7 +61,7 @@ def _risk_config(**overrides) -> SimpleNamespace:
     clamp) so a test that isn't specifically about a gate doesn't
     accidentally trip one."""
     fields = dict(
-        max_position_pct=100.0, max_total_position_pct=100.0, max_daily_loss_pct=100.0,
+        max_position_pct=100.0, max_total_position_pct=100.0,
         max_sector_pct=100.0, require_stop_loss=True,
         max_portfolio_risk_pct=25.0, max_position_risk_pct=5.0,
         min_position_risk_pct=0.5, max_cluster_risk_share_pct=40.0,

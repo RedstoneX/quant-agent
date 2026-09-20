@@ -94,7 +94,9 @@ class ExitTrigger(str, Enum):
     SECTOR_SHOCK = "sector_shock"
     EARNINGS = "earnings"
     REGIME_SHIFT = "regime_shift"
-    RISK_BREAKER = "risk_breaker"
+    # `RISK_BREAKER` ("daily loss" / "circuit breaker") was REMOVED
+    # 2026-09-20 with the account-level loss alarm itself (WORK.md item 32,
+    # docs/INCIDENT_HISTORY.md). Nothing computes the event it named.
     STOP_FIRED = "stop_fired"
     CANNOT_SUBSTANTIATE = "cannot_substantiate"
 
@@ -121,7 +123,6 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     ExitTrigger.REGIME_SHIFT: (
         "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
     ),
-    ExitTrigger.RISK_BREAKER: ("daily loss", "daily-loss", "circuit breaker"),
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
 }
 

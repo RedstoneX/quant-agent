@@ -158,11 +158,14 @@ def _status_emoji(status: str) -> str:
     if status in {"rejected", "hard_risk_block", "symbol_block", "buys_unfunded"}:
         return "🟡"
     if "error" in status or status in {
-        "failed", "emergency_sold",
-        # docs/WORK.md item 32 (2026-09-14): the daily-loss breaker's status.
-        # "emergency_sold" is kept alongside it so historical runs still
-        # render; nothing emits it any more.
-        "daily_loss_halted",
+        # "emergency_sold" and the halt status beside it are kept so runs
+        # stored before their retirements still render RED rather than
+        # falling through to the white "nothing happened" bucket; the owner
+        # is red-green colour blind, so a halted historical run reading as
+        # ordinary is the wrong kind of wrong. Nothing emits either any more
+        # (item 32 — the liquidation half went 2026-09-14, the halt itself
+        # 2026-09-20).
+        "failed", "emergency_sold", "daily_loss_halted",  # retired-ok
         "kill_switch_halted",
     }:
         return "🔴"
@@ -245,7 +248,6 @@ _SKIP_WHO_LABELS: dict[str, str] = {
     "unusable_stop": "Blocked by desk safety check — unusable stop (not the broker)",
     "kill_switch_halted": "Blocked by desk safety check — kill switch (not the broker)",
     "broker_rejected": "Blocked by the broker",
-    "daily_loss_recheck": "Blocked by desk safety check — daily-loss breaker",
     "insufficient_cash": "Blocked by the desk — insufficient cash",
     "below_min_notional": "Blocked by the desk — order too small",
     "no_price": "Blocked by the desk — no verifiable price",
@@ -1458,23 +1460,6 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     # every midday/close message.
     _new_section(lines, *_pnl_section_lines(result))
 
-    def _render_halt_banner(lines: list[str]) -> None:
-        if status == "emergency_sold":
-            # Historical runs only — nothing emits this any more (item 32).
-            lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
-        if status == "daily_loss_halted":
-            lines.append(
-                "🛑 DAILY-LOSS CIRCUIT BREAKER — NEW RISK HALTED. Nothing sold; "
-                "every position kept."
-            )
-            unprotected = result.get("unprotected_at_halt") or []
-            if unprotected:
-                lines.append(
-                    "⚠️ NOT verifiably stop-covered at the halt: "
-                    + ", ".join(str(s) for s in unprotected[:8])
-                )
-
-    _new_block(lines, _render_halt_banner)
     _new_block(lines, _append_coverage_gaps, result)
 
     positions = result.get("positions")
@@ -1812,23 +1797,10 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
     if isinstance(risk, str) and risk.lower() in ("elevated", "high"):
         lines.append(f"🚨 NEEDS YOUR ATTENTION — the desk graded today's risk {risk}")
 
-    esc_pnl = _number(result.get("pnl_4pm"))
-    esc_close = _number(result.get("equity_close"))
-    if esc_pnl is not None and esc_close is not None:
-        esc_base = esc_close - esc_pnl
-    else:
-        esc_pnl = _number(result.get("daily_pnl"))
-        esc_tv = _number(result.get("total_value"))
-        esc_base = (esc_tv - esc_pnl) if (esc_pnl is not None and esc_tv is not None) else None
-    limit = _number(result.get("max_daily_loss_pct"))
-    if (esc_pnl is not None and esc_base is not None and limit is not None
-            and limit > 0 and esc_pnl < 0 and esc_base > 0):
-        loss_pct = abs(esc_pnl / esc_base * 100)
-        if loss_pct >= 0.8 * limit:
-            lines.append(
-                f"🚨 Today's loss of {loss_pct:.2f}% is within reach of the "
-                f"{limit:.0f}% limit that halts the desk for the day"
-            )
+    # A deterministic banner used to sit here, raised when the day's loss
+    # reached 80% of the account-level loss limit. That
+    # breaker was removed 2026-09-20 on the owner's instruction (retired
+    # item 32, docs/INCIDENT_HISTORY.md).
 
 
 def _append_evening_positions(lines: list[str], result: dict, profiles: dict) -> None:
@@ -2620,9 +2592,7 @@ def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
     # report just said. Anything actionable (an order placed/filled/cancelled/
     # refused, a stop-coverage gap, a scan crash, `paid_analysis_suspended`,
     # a degraded-fill or coverage finding, ...) already set `own_message`
-    # above and is never reached by this branch, in or out of the window. The
-    # daily-loss circuit breaker never reaches here at all — it alerts
-    # directly from `TradingPipeline._alert_owner_daily_loss_halt`.
+    # above and is never reached by this branch, in or out of the window.
     if own_message is None and _is_midday_collision_tick():
         return None
 

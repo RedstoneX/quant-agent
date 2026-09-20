@@ -152,7 +152,6 @@ export interface MarginInterestEstimate {
 export interface RiskLimits {
   max_position_pct: number | null;
   max_total_position_pct: number | null;
-  max_daily_loss_pct: number | null;
   max_sector_pct: number | null;
 }
 
