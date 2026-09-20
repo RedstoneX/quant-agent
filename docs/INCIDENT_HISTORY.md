@@ -90,7 +90,12 @@ off-by-default wording/state (457 passed across those five files).
 **Retires docs/WORK.md item 161** (see that file's retired-numbers line):
 its concern — history entries describing the feed as running before it ever
 was — is now resolved the strong way, by the feed actually running, rather
-than by adding a "still off" note to old entries.
+than by adding a "still off" note to old entries. Item 161's one declared
+completion criterion is met this way, not deferred; see this commit's
+`Done-criteria-met` trailer. The definition-of-done gate's adversary record
+and acceptance observable for this closure are also carried as commit
+trailers rather than restated here, per this file's own rule against
+recording what the repo already records.
 
 ---
 
