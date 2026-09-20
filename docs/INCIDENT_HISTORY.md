@@ -12065,3 +12065,21 @@ back out of the file and confirm it is still there, rather than trusting the
 reported success on its own.
 
 ---
+
+### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
+
+**In plain words:** an item on the open-work list asking to fix a bug — a
+holding's age being measured in calendar days instead of trading-session days
+for one pace calculation — was fixed two days before this entry. The fix was
+never written up here and the item was never removed from the list, so it
+sat open doing nothing for two days.
+
+**Done-criteria-met:** PR #493 (commit d93659fa, merged 2026-09-18) changed
+the position reviewer's pace calculation in `src/pipeline.py` so `too_early`
+and `time_fraction` read the weekend-aware `sessions_held` figure instead of
+calendar-day `days_held` — the code carries a comment citing this board item
+by number. Retired from `docs/WORK.md` 2026-09-20 during a full-board
+redundancy sweep prompted by finding two other already-fixed items the same
+day.
+
+---
