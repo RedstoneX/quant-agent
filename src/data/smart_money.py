@@ -183,6 +183,7 @@ UNVERIFIED_EDGAR_REASONS = frozenset({
     "edgar_total_changed",
     "edgar_coverage_stale",
     "edgar_rows_unreadable",
+    "edgar_enumerated_above_total",
 })
 
 
@@ -307,6 +308,12 @@ def edgar_coverage(stats: object) -> dict:
         reasons = sorted(set(reasons) | {"edgar_never_queried"})
     elif days_with_total < days_queried:
         reasons = sorted(set(reasons) | {"edgar_total_unreadable"})
+    if total > 0 and enumerated > total:
+        # More distinct readable filings than EDGAR said existed. Contrived
+        # rather than observed, but the alternative is a ratio above 1.0
+        # rendered with nothing attached to explain it, and a coverage
+        # figure that reads better than complete is not a coverage figure.
+        reasons = sorted(set(reasons) | {"edgar_enumerated_above_total"})
     verified = (
         days_queried > 0
         and days_with_total == days_queried

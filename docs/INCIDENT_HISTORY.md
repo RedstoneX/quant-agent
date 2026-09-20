@@ -126,6 +126,25 @@ count matching the service's own count exactly. If this ever does start firing
 on ordinary traffic, that is worth knowing about the filing service, not a
 reason to soften the rule into a percentage.
 
+**ONE KNOWN, ACCEPTED, WATCHED RISK — read this before concluding the fix is
+wrong.** The morning read asks about today first, and it runs between roughly
+08:00 and 09:15 New York time while the filing service is still accepting and
+indexing today's filings, which it starts doing at 06:00. Two ordinary things
+could therefore happen on that one day slice and nothing else: a filing could
+be indexed between two pages of the read and come back twice, or the service's
+own count for today could grow while the read is part-way through it. Either
+would make an entirely normal morning report that it could not account for
+itself. Whether this actually happens depends on how many insider filings
+typically land that early, which no amount of further testing here can settle —
+only watching a real Monday morning can. So it is accepted rather than guessed
+at, and this is what to look for: it will show up as `edgar_rows_unreadable` or
+`edgar_total_changed` naming TODAY'S date specifically, with every other day in
+the window clean. That pattern is this race and nothing else. The remedy if it
+does fire is to stop asking about the still-open current day, or to read it
+last — not to loosen the check, which is exact everywhere else. No board item
+was filed for it because `docs/WORK.md` is at its growth cap; this paragraph is
+the record.
+
 **What would catch it next time.** The generalisable lesson is the one this
 desk keeps relearning under different names: a provider's own count of what
 it holds is the only honest denominator, and a status derived without one is

@@ -26,6 +26,20 @@ test IS the reading of those bodies.
     those are choices, not failures, and their residue is reported
     elsewhere;
   * every broken shape reads as NOT verified, with a named reason.
+
+THE TWO JUDGEMENTS, AND WHY NEITHER IS A CHOSEN NUMBER
+------------------------------------------------------
+`verified` is an exact condition, not a cut point, and it is made of two:
+
+  * every day slice queried handed back a count of its own that this code
+    could read — and EFTS's capped `relation: "gte"` count is EDGAR
+    declining to give one, not a count;
+  * every day the scan paged all the way through that count yielded as many
+    distinct readable filings as the count said were there.
+
+Both are arithmetic. Nothing here picks a fraction, and the cost of the
+second — one unreadable row is a shortfall — is stated in the test that
+covers it rather than softened into a percentage.
 """
 
 from unittest.mock import Mock
@@ -510,7 +524,7 @@ def test_the_pre_open_alert_names_the_unreadable_count(monkeypatch):
         "watched_names": 4, "watched_names_read_through": 4,
         "watched_drain_ran": True, "watched_drain_deadline_hit": False,
         "edgar_coverage": {
-            "verified": True, "reasons": [], "enumerated": 900,
+            "known": True, "verified": True, "reasons": [], "enumerated": 900,
             "edgar_total": 900, "days_queried": 2, "days_in_window": 366,
         },
     }
@@ -522,7 +536,8 @@ def test_the_pre_open_alert_names_the_unreadable_count(monkeypatch):
     assert sent == []
 
     alert({**clean, "edgar_coverage": {
-        "verified": False, "reasons": ["edgar_returned_no_hits_for_nonzero_total"],
+        "known": True, "verified": False,
+        "reasons": ["edgar_returned_no_hits_for_nonzero_total"],
         "enumerated": 0, "edgar_total": 412, "days_queried": 2,
         "days_in_window": 366,
     }})
@@ -750,7 +765,7 @@ def test_the_alert_carries_the_coverage_counts_whatever_it_is_about(monkeypatch)
         "watched_names_read_through": 4, "watched_drain_ran": True,
         "watched_drain_deadline_hit": False,
         "edgar_coverage": {
-            "verified": True, "reasons": [], "enumerated": 435,
+            "known": True, "verified": True, "reasons": [], "enumerated": 435,
             "edgar_total": 435, "days_queried": 76, "days_in_window": 366,
             "window_fraction": 0.2077,
         },
@@ -822,3 +837,84 @@ def test_the_combined_merge_treats_days_as_a_window_not_a_quantity():
     ])
     assert summary["edgar_coverage"]["verified"] is False
     assert "never_recorded" in summary["edgar_coverage"]["reasons"]
+
+
+def test_an_ordinary_clean_morning_logs_the_coverage_and_alerts_nobody(
+    monkeypatch, caplog,
+):
+    """The case the whole `window_fraction` objection was about: nothing is
+    wrong, so no alert fires — and the honest "how much of the window did we
+    actually reach" figure must still be written down somewhere a person can
+    find it. It goes to the log on every pass, alert or no alert."""
+    import logging
+
+    import src.notifier as notifier
+    from src.pipeline import TradingPipeline
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
+
+    with caplog.at_level(logging.INFO, logger="src.pipeline"):
+        alert({
+            "watched_read_through": et_today().isoformat(),
+            "watched_pending_filings": 0, "watched_unchecked_names": [],
+            "discovery_cap_reached": False, "watched_names": 82,
+            "watched_names_read_through": 82, "watched_drain_ran": True,
+            "watched_drain_deadline_hit": False,
+            "edgar_coverage": {
+                "known": True, "verified": True, "reasons": [],
+                "enumerated": 435, "edgar_total": 435, "days_queried": 76,
+                "days_in_window": 366, "window_fraction": 0.2077,
+            },
+        })
+
+    assert sent == []
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "76 of 366 days" in logged
+    assert "read 435 of 435 filings" in logged
+
+
+def test_a_blank_coverage_record_reads_as_unknown_not_as_nothing_to_report(
+    monkeypatch,
+):
+    """"read 0 of 0 filings across 0 of 0 days" is what a record that was
+    never written looks like, and to a human it reads as reassurance. It has
+    to read as the opposite — the same trap `ratio` avoids by answering None
+    to nought-of-nought rather than 1.0."""
+    import src.notifier as notifier
+    from src.data.smart_money import blank_edgar_coverage
+    from src.pipeline import TradingPipeline
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
+
+    alert({
+        "watched_read_through": et_today().isoformat(),
+        "watched_pending_filings": 0, "watched_unchecked_names": [],
+        "discovery_cap_reached": False, "watched_names": 82,
+        "watched_names_read_through": 82, "watched_drain_ran": True,
+        "watched_drain_deadline_hit": False,
+        "edgar_coverage": blank_edgar_coverage(),
+    })
+
+    assert len(sent) == 1
+    assert "NOT KNOWN" in sent[0]
+    assert "0 of 0" not in sent[0]
+
+
+def test_more_readable_filings_than_edgar_reported_is_named():
+    """A coverage figure that reads better than complete is not a coverage
+    figure. Contrived rather than observed, but a ratio above 1.0 with
+    nothing attached to explain it is exactly the kind of number this desk
+    ends up arguing about six weeks later."""
+    coverage = edgar_coverage({
+        "edgar_total": 10, "edgar_enumerated": 12, "edgar_rows_received": 12,
+        "edgar_days_queried": 1, "edgar_days_in_window": 1,
+        "edgar_days_with_total": 1, "edgar_coverage_reasons": [],
+    })
+
+    assert coverage["ratio"] == 1.2
+    assert coverage["verified"] is False
+    assert "edgar_enumerated_above_total" in coverage["reasons"]

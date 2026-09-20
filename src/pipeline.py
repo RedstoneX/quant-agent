@@ -15461,8 +15461,10 @@ class TradingPipeline:
         # Form 4 drain keys is held to this, and so is one that reports an
         # error — a sub-provider that raised outright produces neither the
         # drain keys nor a coverage record, and that is the LOUDEST case,
-        # not an exemption. A wrapper with no Form 4 provider and no error
-        # is not silently failing; it has nothing to say.
+        # not an exemption. A wrapper with neither is not asked to answer
+        # for coverage it never had; it is NOT thereby let off the alert,
+        # because an empty `watched_read_through` still trips the ordinary
+        # did-not-finish clause below.
         edgar = refresh.get("edgar_coverage")
         form4_answered = "watched_drain_ran" in refresh or bool(refresh.get("error"))
         edgar_unverified = (
@@ -15476,13 +15478,28 @@ class TradingPipeline:
         # is a fact the owner needs on an ORDINARY morning — rendering it
         # only on the failure branch would have shown him the honest number
         # exactly when it was least representative.
-        coverage_line = (
-            "Insider-filing coverage this morning: read "
-            f"{record.get('enumerated', 0)} of {record.get('edgar_total', 0)} "
-            "filings the service reported, across "
-            f"{record.get('days_queried', 0)} of "
-            f"{record.get('days_in_window', 0)} days looked at."
-        ) if record else ""
+        #
+        # Gated on whether coverage was RECORDED, not merely present. A
+        # blank record is all zeros, and "read 0 of 0 filings across 0 of 0
+        # days" reads to a human as nothing to worry about when it means
+        # the opposite — the same trap `ratio` already avoids by answering
+        # None to nought-of-nought rather than 1.0.
+        if record.get("known"):
+            coverage_line = (
+                "Insider-filing coverage this morning: read "
+                f"{record.get('enumerated', 0)} of {record.get('edgar_total', 0)} "
+                "filings the service reported, across "
+                f"{record.get('days_queried', 0)} of "
+                f"{record.get('days_in_window', 0)} days looked at."
+            )
+        elif record:
+            coverage_line = (
+                "Insider-filing coverage this morning: NOT KNOWN — the "
+                "morning read did not record how much of the filing service "
+                "it covered."
+            )
+        else:
+            coverage_line = ""
         if coverage_line:
             logger.info("PRE-OPEN: %s", coverage_line)
         if (
