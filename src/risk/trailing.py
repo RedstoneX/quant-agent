@@ -76,7 +76,9 @@ from dataclasses import dataclass
 
 __all__ = [
     "TrailProposal",
+    "TrailEvaluation",
     "compute_trailing_stop",
+    "evaluate_trailing_stop",
     "MIN_RATCHET_PCT",
     "CHANDELIER_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
@@ -187,6 +189,33 @@ class TrailProposal:
     reason: str
 
 
+#: Why an evaluation ended the way it did. One code per exit of
+#: `evaluate_trailing_stop`, so "why has this stop never trailed?" has an
+#: answer on file (`src/execution/exit_path_records.py`). Names only — no
+#: code path branches on them.
+TRAIL_CODE_TRAILED = "trailed"
+TRAIL_CODE_BAD_PRICE_INPUT = "no_usable_entry_or_price"
+TRAIL_CODE_NO_LIVE_STOP = "no_live_stop"
+TRAIL_CODE_RANGE_NO_INITIAL_STOP = "range_below_target_no_entry_stop_on_record"
+TRAIL_CODE_RANGE_ZERO_RISK = "range_below_target_entry_equals_entry_stop"
+TRAIL_CODE_RANGE_BELOW_1R = "range_below_target_not_yet_1r"
+TRAIL_CODE_RANGE_ALREADY_BREAKEVEN = "range_below_target_stop_already_at_breakeven"
+TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE = "range_breakeven_not_between_stop_and_price"
+TRAIL_CODE_NO_CANDIDATE = "no_structure_and_no_usable_chandelier"
+TRAIL_CODE_BELOW_MIN_RATCHET = "move_smaller_than_min_ratchet"
+TRAIL_CODE_INSIDE_NOISE_BAND = "inside_noise_band"
+TRAIL_CODE_ROUNDED_OFF_SIDE = "rounded_candidate_not_between_stop_and_price"
+
+
+@dataclass(frozen=True)
+class TrailEvaluation:
+    """The proposal (or None) AND the code naming why — so a caller can
+    record a no-trail instead of discarding it."""
+
+    proposal: TrailProposal | None
+    code: str
+
+
 def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
     """Confirmed swing lows, oldest first.
 
@@ -279,7 +308,7 @@ def _structural_pivot(pivots: list[float], *, is_short: bool) -> float | None:
 def _range_breakeven_ratchet(
     *, symbol: str, ent: float, cur: float, stop: float,
     initial_stop: float | None, is_short: bool, setup_type: str | None,
-) -> TrailProposal | None:
+) -> TrailEvaluation:
     """Type A's +1R breakeven ratchet — see the module docstring's 2026-09-04
     fix #3 note.
 
@@ -294,10 +323,10 @@ def _range_breakeven_ratchet(
     """
     init_stop = _finite(initial_stop) if initial_stop is not None else None
     if init_stop is None or init_stop <= 0:
-        return None
+        return TrailEvaluation(None, TRAIL_CODE_RANGE_NO_INITIAL_STOP)
     risk = abs(ent - init_stop)
     if risk <= 0:
-        return None
+        return TrailEvaluation(None, TRAIL_CODE_RANGE_ZERO_RISK)
 
     if is_short:
         trigger = ent - RANGE_BREAKEVEN_R_MULTIPLE * risk
@@ -308,18 +337,20 @@ def _range_breakeven_ratchet(
         reached_1r = cur >= trigger
         already_protected = stop >= ent
 
-    if not reached_1r or already_protected:
-        return None
+    if not reached_1r:
+        return TrailEvaluation(None, TRAIL_CODE_RANGE_BELOW_1R)
+    if already_protected:
+        return TrailEvaluation(None, TRAIL_CODE_RANGE_ALREADY_BREAKEVEN)
 
     candidate = round(ent, 2)
     if is_short:
         if not (cur < candidate < stop):
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE)
     else:
         if not (stop < candidate < cur):
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE)
 
-    return TrailProposal(
+    return TrailEvaluation(TrailProposal(
         symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
         source="breakeven_ratchet",
         reason=(
@@ -330,7 +361,7 @@ def _range_breakeven_ratchet(
             f"(Van Tharp / Elder) rather than staying fully unprotected until "
             f"the whole target is hit"
         ),
-    )
+    ), TRAIL_CODE_TRAILED)
 
 
 def compute_trailing_stop(
@@ -365,18 +396,45 @@ def compute_trailing_stop(
     (every pre-fix call site, until updated) simply means that ratchet never
     fires, reproducing the exact old behaviour.
     """
+    return evaluate_trailing_stop(
+        symbol=symbol, setup_type=setup_type, entry=entry,
+        current_price=current_price, current_stop=current_stop,
+        reference_target=reference_target, bars=bars, atr=atr,
+        min_ratchet_pct=min_ratchet_pct, qty=qty, initial_stop=initial_stop,
+    ).proposal
+
+
+def evaluate_trailing_stop(
+    *,
+    symbol: str,
+    setup_type: str | None,
+    entry: float,
+    current_price: float,
+    current_stop: float | None,
+    reference_target: float | None,
+    bars=None,
+    atr: float | None = None,
+    min_ratchet_pct: float = MIN_RATCHET_PCT,
+    qty: float | None = None,  # None reads as a long — see `is_short` below
+    initial_stop: float | None = None,
+) -> TrailEvaluation:
+    """`compute_trailing_stop`, plus the code naming why it ended where it
+    did. Same arguments, same arithmetic, same proposal — this IS the body;
+    the other is its one-field view. See `compute_trailing_stop` for the
+    argument contract."""
+
     ent = _finite(entry)
     cur = _finite(current_price)
     stop = _finite(current_stop) if current_stop is not None else None
     atr_f = _finite(atr) if atr is not None else None
 
     if ent is None or cur is None or ent <= 0 or cur <= 0:
-        return None
+        return TrailEvaluation(None, TRAIL_CODE_BAD_PRICE_INPUT)
     if stop is None or stop <= 0:
         # No live stop means the position is unprotected, which is a repair
         # problem, not a trailing problem. Inventing a trailing stop here
         # would paper over a missing protective order.
-        return None
+        return TrailEvaluation(None, TRAIL_CODE_NO_LIVE_STOP)
 
     is_short = (_finite(qty) or 1.0) < 0
 
@@ -443,35 +501,35 @@ def compute_trailing_stop(
                 source = "chandelier"
 
     if candidate is None:
-        return None
+        return TrailEvaluation(None, TRAIL_CODE_NO_CANDIDATE)
 
     # --- Invariants --------------------------------------------------------
     # Ratchet toward less risk only, and only when the move is worth an order.
     if is_short:
         if candidate >= stop * (1 - min_ratchet_pct / 100.0):
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
     else:
         if candidate <= stop * (1 + min_ratchet_pct / 100.0):
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
 
     # Never inside one ordinary day's range of current price.
     if atr_f is not None and atr_f > 0:
         if is_short:
             noise_ceiling = cur + NOISE_BAND_ATR_MULTIPLE * atr_f
             if candidate < noise_ceiling:
-                return None
+                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
         else:
             noise_floor = cur - NOISE_BAND_ATR_MULTIPLE * atr_f
             if candidate > noise_floor:
-                return None
+                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
 
     candidate = round(candidate, 2)
     if is_short:
         if candidate >= stop or candidate <= cur:
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
     else:
         if candidate <= stop or candidate >= cur:
-            return None
+            return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
 
     locked = ""
     if is_short:
@@ -480,7 +538,7 @@ def compute_trailing_stop(
     else:
         if candidate >= ent:
             locked = " — at or above entry, so this position stops consuming risk budget"
-    return TrailProposal(
+    return TrailEvaluation(TrailProposal(
         symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
         source=source,
         reason=(
@@ -488,4 +546,4 @@ def compute_trailing_stop(
             f"stop ${stop:.2f} -> ${candidate:.2f} with price ${cur:.2f}"
             f"{locked}"
         ),
-    )
+    ), TRAIL_CODE_TRAILED)

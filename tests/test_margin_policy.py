@@ -85,6 +85,47 @@ def test_margin_mode_true_skips_cash_rule():
     assert not any(v.rule == "cash_only" for v in violations)
 
 
+def test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy():
+    """Board item 85 (2026-09-17): with cash negative and margin enabled,
+    a confirmed BUY was refused for a reason unrelated to trade merit — the
+    manager read cash as the spending limit when it was not. Reproduces the
+    incident's real figures (cash -$915.83, equity $9,736, $10,652 already
+    held [docs/WORK.md item 85]): `cash_only` must not fire at all once
+    margin is on (it is `allow_margin`-gated, not a function of the sign of
+    cash), and the gross-exposure LADDER — not raw cash — is what actually
+    governs whether a new BUY has room. At the ladder's undrawn 2.0x
+    ceiling ($19,472) against $10,652 already held, $8,820 of headroom
+    remains, so a modest new BUY must clear both gates."""
+    from src.risk.rules import GROSS_EXPOSURE_RULE, resolve_gross_ceiling
+
+    engine = RiskRuleEngine(_risk_config(allow_margin=True))
+    held = Position(
+        symbol="HELD", qty=100, avg_entry=100.0, current_price=106.52,
+        market_value=10_652.0, unrealized_pnl=652.0, sector="Technology",
+    )
+    decision = TradeDecision(
+        action="BUY", symbol="CRM", allocation_pct=20.0,  # ~$1,947 of $9,736
+        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        reasoning="confirmed setup",
+    )
+    ceiling = resolve_gross_ceiling(0.0, base_x=2.0)  # no drawdown -> 2.0x
+    assert ceiling.ceiling_x == 2.0
+
+    violations = engine.check(
+        decision=decision, positions=[held], total_value=9_736.0,
+        daily_pnl=0.0, cash=-915.83, gross_ceiling=ceiling,
+    )
+
+    assert not any(v.rule == "cash_only" for v in violations), (
+        "cash_only must never fire with allow_margin=True — negative cash "
+        "is expected once margin is on and is not a spending limit"
+    )
+    assert GROSS_EXPOSURE_RULE not in [v.rule for v in violations], (
+        "the BUY has real headroom under the ladder and must not be "
+        "refused for a reason unrelated to its own merit"
+    )
+
+
 def test_filter_accumulates_pending_buys_against_cash():
     """Two $6k BUYs with $10k cash: second one blocks, first passes."""
     pipeline = _pipeline_with_engine(_risk_config(allow_margin=False))

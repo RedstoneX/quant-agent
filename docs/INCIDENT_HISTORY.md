@@ -22,6 +22,69 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — item 85 checked against current main and found already fixed, not open
+
+**In plain words.** The board still listed a live-money defect — the
+portfolio manager and the position reviewer being told the account had no
+margin, and its cash as a hard spending limit, while margin was actually
+enabled and real room existed. Re-checking it against the code as it
+stands on main today found the fix was already shipped and already had
+its own regression tests; the board entry was simply never retired.
+
+**What the item asked for.** Filed 2026-09-17 against a real incident: with
+cash at -$916, the manager was told it had negative capital and no margin
+and correctly refused a confirmed BUY, while the account actually held
+about $8,000 of ladder headroom (equity $9,736, holdings $10,652, 2x
+ceiling). The item's own text noted the PROMPT wording half shipped the
+same night in #452, and left open whether "the figures themselves" — the
+actual headroom numbers, not just corrected wording — reach the seat.
+
+**What checking against main found.** They do, and did before this change.
+`DecisionStage.run` (`src/pipeline_stages.py`) and
+`TradingPipeline._run_position_review_body` (`src/pipeline.py`) both call
+`_entry_deployment_budget` — the exact §11.2 computation execution's submit
+loop sizes real orders against — and thread its `margin_headroom_usd`,
+`margin_ladder_backed`, `margin_ladder_multiple` and `margin_ladder_rung`
+straight into `PortfolioManagerAgent.decide` and
+`PositionReviewerAgent.review`. Both prompt builders render a "Margin
+Capacity" section with that real dollar figure when the ladder resolved,
+and an honest "could not be resolved... treat as unknown, not zero" when it
+did not — never a fabricated number and never a silent "no margin". The
+underlying hard-block gate (`RiskRuleEngine.check`'s `cash_only` rule) is
+also unaffected by the sign of cash once `allow_margin` is true; it is
+gated on the config flag, not on whether cash happens to be negative, and
+the actual limiter for a levered BUY is the gross-exposure ladder, exactly
+as this item wanted.
+
+**This was independently reconfirmed, not just inherited from #452.** The
+2026-09-18 write-up above (item 133) says directly: "the manager had been
+told the account had no margin while margin was enabled... both were
+prompt falsehoods, both were corrected before this work started, and both
+were confirmed on the main branch rather than taken on trust." Item 85's
+board text was never updated to reflect that second confirmation.
+
+**Coverage already existed.** `tests/test_margin_policy.py` carried
+`test_pm_prompt_never_says_no_margin_when_margin_enabled`,
+`test_pm_prompt_margin_section_discloses_ladder_headroom`,
+`test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget` (a
+source-level pin on the wiring itself) and the same trio mirrored for the
+reviewer — all built on the incident's own numbers (cash -$915.83, equity
+$9,736, headroom $11,434.37 at a 2.0x ceiling). This change adds one more:
+`test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy`
+exercises the actual hard-block gate (not just the prompt) with the
+incident's figures, confirming `cash_only` never fires once margin is on
+and a BUY with real ladder headroom is not refused.
+
+**What was NOT found.** No code path was found where a stale cache, a
+wrong account field, a sign error, or a race with a pending order feeds a
+wrong buying-power number into a risk or sizing gate — the specific
+mechanisms this kind of defect usually takes. If one exists, it is not on
+any of the four call sites (PM decide, PM re-ask, reviewer review, reviewer
+re-ask) that build these prompts, and not in the hard gate or the §11.2
+ladder that enforces them.
+
+---
+
 ### 2026-09-19 — Universe expansion and pruning built (the 2026-09-01 design), shipped switched off
 
 **What changed, in one line:** the desk can now add stocks that pass standard
@@ -115,6 +178,83 @@ before the switch goes on.
   "First United Corp" reads as a unit. The screen uses word boundaries.
 - SPAC shells (trading flat at trust value) and closed-end funds pass the
   screen as designed; the design names neither.
+
+### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
+
+**What broke, in one line:** when a stop did not trail, when the desk refused
+to put a missing stop back, and when the desk's own kill switch blocked a
+protective stop, the only trace was a log line — and in the last case the
+owner's alert said the broker had refused it.
+
+**Where this came from.** The 2026-09-18 audit of gates that decide and
+record nothing. All three were checked on main before anything changed, and
+all three were real:
+
+1. **Trailing stop.** Every "no trail this time" returned nothing and the
+   caller moved on, so a position whose stop never trailed was invisible —
+   including one with no opening row at all, which was skipped without even
+   a log line.
+2. **Stop-repair refusal.** A reason sentence on an in-memory dict, a log
+   line and a one-shot Telegram. This is the path that left ~$223 of shares
+   unprotected on 2026-09-18 ("only X of Y uncovered shares could be
+   covered"); afterwards it could not be counted or trended.
+3. **Kill switch blocking a protective stop.** No record at all, and the
+   repair's alert fell through to "the broker did not accept a protective
+   stop after every retry" — the broker was never asked.
+
+**What changed — recording only.** No stop trails, is repaired or is blocked
+any differently; no threshold moved. Each is now a row in the desk's existing
+evidence table (`specialist_evidence`) under its own kind:
+- `trail_state` — why the stop did or did not trail, written only when the
+  reason differs from the last one on file for that stock, so a stop stuck
+  for the same reason all month leaves one row, not one per check.
+- `stop_repair_refusal` — every refusal, with the stock, the uncovered
+  quantity, the reason, how much was held and covered, and the stop orders
+  already resting at the broker.
+- `protective_stop_blocked` — every protective stop the kill switch refused,
+  from every path that places one. The repair's alert now says plainly that
+  the desk's own kill switch blocked the stop, for which stock.
+
+**One placement that was deliberate.** None of these is a `pipeline_event`.
+The jam alarm reads every per-stock `pipeline_event` as "the session
+considered this stock as a new idea"; stop-side rows filed there could join or
+break a streak they have nothing to do with — the same reason board item 164
+kept approved exits out of it.
+
+**Found on the way, NOT fixed (each changes behaviour, not just recording):**
+- When the kill switch blocks the stop placed right after an entry fills, the
+  entry's own record says the protection was `placed`, no owner alert fires,
+  and a scale-in's write-ahead row is discharged as if covered. The new
+  `protective_stop_blocked` row is now the only true record of it.
+- Restoring stops after a failed sell or replace counts a kill-switch refusal
+  as "restored".
+- The ex-dividend stop shift skips several cases with only a log line, and a
+  shift the broker did not accept with nothing at all.
+- The partial-exit re-protect's "no accepted order id" leaves a retry row
+  but not the reason, which is a log line only.
+- Already known from the audit: the stop-level reconcile overwrites a wrong
+  recorded stop with no history, the scale-in rearm refusal and four cash-park
+  skips are log-only.
+
+**What would catch it next time:** each new row has a test that fails when
+the line writing it is removed (checked by removing each in turn). Nothing
+mechanical yet stops a new stop-side branch from discarding its decision.
+
+---
+
+### 2026-09-19 — the congressional-trading feed would have re-read every disclosure it had ever seen, every morning, and nothing would have said when its copy was old (fixed before it was ever switched on)
+
+**In plain words:** the congressional-trading feed has never run in production (its switch is off). Before the owner switches it on, he asked for it to work like the insider feed, not "read everything again over and over again every day". As built, every morning it downloaded both public sources whole, re-parsed all ~13,000 rows and rebuilt every observation from scratch. If a source was down it quietly re-read yesterday's saved file, and its only trace was a nested entry inside the Form 4 log line. It now downloads a file only when that file has changed, and it processes each disclosure once, ever. When a copy is old it says how old, and every refresh leaves a named log line, a durable record and lines the morning health report classifies.
+
+**What the sources can and cannot do (checked live, read-only, 2026-09-19).** Neither source can be asked for "only records newer than X". kadoa is a static GitHub file: its data folder holds only whole-file JSON, and `trades.json` is the newest 5,000 rows by filing date (filed 2026-07-01 to 2026-09-17). congresswatch is a static Vercel file: `/api` paths return 404, and `?since=2026-09-01` returns the identical 8,231 rows. congresswatch rows carry no id and no filing date. Both sources DO answer a conditional request (`If-None-Match` / `If-Modified-Since`) with `304 Not Modified` and zero bytes. So the feed uses conditional fetches, and when a file has changed it processes only the rows it has not seen. Each row is keyed by a fingerprint of the fields the code reads. kadoa's daily-recomputed return columns are deliberately left out of that fingerprint, or every row would look new every day. The date watermarks (kadoa's newest filing date; congresswatch's newest trade date) are reported, never used to skip, because a late filing can carry an older date than one already read.
+
+**Live two-refresh run, isolated scratch folder, 2026-09-19 (ET evening of 09-18).** Refresh 1 processed 13,231 rows: kadoa 5,000 (3,358 kept, 1,642 with no ticker) and congresswatch 8,231 (2,543 kept, 5,456 outside the 180-day window, 231 with no date, 1 future-dated). That gave 4,800 observations, matching the earlier dry run, in 0.9 s. Refresh 2: both sources answered "unchanged" and it processed **0** rows in 0.09 s. A third refresh with the validators deliberately cleared downloaded both files whole: 13,231 rows were already seen and 0 were processed. The newest disclosure was 1 day old; the newest trade was 18 days old. Across the 3,147 kept kadoa rows with a real filing date, the gap from trade to filing was a median of 60 days (range 0 to 880).
+
+**What is recorded.** The feed keeps `manifest.json` (per source: HTTP validators, last attempt and last success, outcome, watermark, processed keys), `disclosures.json` and `observations.json` under `data/smart_money/congressional/`. A crash can only cause a re-read, never a skip. There is one `Congressional refresh:` line per source per refresh and one summary line. A `congressional_refresh` evidence row is written per pre-market run, next to `form4_backlog`, and the morning `scan_summary` gains a `congressional` freshness block. A source that fails, or whose copy is from an earlier day, is served with a label giving its age, and the seat reads degraded. The health report gained three families (source unreachable, source unreadable, old copy used), each cleared by a later successful refresh of the same source. Unlike every other family there, these were not read off production logs, because none exist. The tests drive the real code into each failure and classify the line it emits.
+
+**Also changed.** Congressional rows are now labelled "fresh" only if the TRADE is recent, not the filing: a filing made yesterday about a two-month-old trade used to be called fresh. The feed's own time budget (`congress_refresh_deadline_s`) and the disclosure-lag setting were declared in config and never passed through; both now are, with values unchanged. A `src/config.py` comment still claimed congressional evidence must be 7 days old or less; that rule was removed on 2026-09-11, and the comment is corrected.
+
+**Found, not fixed.** A congresswatch-only row's filing date is estimated as trade + 45 days (capped at today), so its lag can never exceed 45 and the 45-day legal-deadline check always passes for such rows. The measured median lag of 60 days says real filings are often later than that.
 
 ### 2026-09-19 — the daily log-health report missed the technical seat's own failures and false-alarmed on it every morning
 
