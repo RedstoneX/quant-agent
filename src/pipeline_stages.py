@@ -691,6 +691,178 @@ def _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx) -> None:
     ctx.rotation = None
 
 
+def _rotation_ranked_margin_execution_gate_failure(
+    pipeline, ctx, new_symbol: str, buy_decision,
+) -> tuple[str, str] | None:
+    """`ranked_margin` sequencing pre-check, ExecutionStage layer.
+
+    `_drop_rotation_sell_if_buy_leg_refused` (RiskStage) only sees what
+    RiskStage itself can refuse (hard risk rules, the AI Risk Manager,
+    holding discipline, sizing/correlation). Four more things can still
+    drop the replacement BUY, all of them LATER, inside `ExecutionStage`,
+    all AFTER the rotation's SELL loop has already run: the daily-loss
+    re-check, `no_price`, `stale_entry` (5% threshold) and `qty_zero`. A
+    RiskStage-only pre-check leaves every one of those able to produce
+    "sold, nothing bought, alert-only" for `ranked_margin` exactly like the
+    gap this feature was built to close. This function evaluates the SAME
+    four gates the code below still runs, using the SAME helpers and the
+    SAME thresholds, before the sell is ever submitted, so a buy that would
+    fail any of them blocks the sell too.
+
+    Uses `ctx.total_value` / `ctx.positions` as they stand right now — the
+    sale has not happened yet, so post-sale figures do not exist yet. That
+    is the conservative side for the daily-loss check (pre-sale equity is
+    the worse of the two whenever the sale itself is not a loss) and a
+    reasonable stand-in for sizing (the constructor sized this buy against
+    total portfolio value, which a same-day round-trip swap changes only by
+    slippage). It is deliberately NOT byte-identical to the post-sale
+    preflight loop further down — that loop still runs on fresher numbers
+    after the sale, and a buy that clears here but is refused there is
+    still caught by that loop and still produces the existing "buy not
+    submitted" alert; what this closes is the previously-unconditional path
+    where none of these four gates were consulted before the SELL fired.
+
+    Returns None when the buy would survive all four gates today; else
+    `(reason, detail)` naming the one gate it fails.
+    """
+    total_value = ctx.total_value
+    positions = ctx.positions
+
+    from src.pipeline import _limit_is_vol_relative
+    from src.risk.rules import daily_loss_numerator
+    daily_pnl_now, _basis = daily_loss_numerator(
+        total_value - ctx.last_equity, positions,
+        vol_relative=_limit_is_vol_relative(pipeline.risk_engine),
+        cash_park_symbol=getattr(
+            getattr(pipeline.config, "cash_sweep", None), "symbol", None,
+        ),
+    )
+    loss_violation = pipeline.risk_engine.check_daily_loss(
+        ctx.last_equity, daily_pnl_now,
+    )
+    if loss_violation:
+        return "daily_loss_recheck", loss_violation.message
+
+    market_price = _live_fill_price(pipeline, new_symbol)
+    if not isinstance(market_price, (int, float)) or market_price <= 0:
+        return (
+            "no_price",
+            "no verifiable live price (daily bar close is not a fill reference)",
+        )
+
+    entry_price = getattr(buy_decision, "entry_price", 0) or 0
+    if entry_price > 0:
+        deviation = abs(entry_price - market_price) / market_price
+        if deviation > 0.05:
+            return "stale_entry", (
+                f"entry ${entry_price:.2f} is {deviation * 100:.1f}% from "
+                f"market ${market_price:.2f} (threshold 5%)"
+            )
+
+    preflight_price = max(market_price, entry_price or 0)
+    preflight_short = buy_decision.action == "SHORT"
+    preflight_fractional = _fractional_sizing_allowed(
+        pipeline, new_symbol, is_short=preflight_short,
+    )
+    preflight_qty = _size_shares(
+        pipeline,
+        (total_value * buy_decision.allocation_pct / 100) / preflight_price,
+        fractional=preflight_fractional,
+    )
+    if preflight_qty <= 0:
+        return "qty_zero", (
+            f"allocation {buy_decision.allocation_pct:.2f}% at "
+            f"${preflight_price:.2f} rounds to zero shares"
+        )
+    preflight_risk_qty = _qty_by_risk_budget(
+        pipeline, total_value=total_value, sizing_price=preflight_price,
+        stop_price=buy_decision.stop_loss, is_short=preflight_short,
+        fractional=preflight_fractional,
+    )
+    if preflight_risk_qty is not None and preflight_risk_qty < preflight_qty:
+        preflight_qty = preflight_risk_qty
+    if preflight_qty <= 0:
+        return "qty_zero", (
+            f"risk budget at ${preflight_price:.2f} entry / "
+            f"${buy_decision.stop_loss:.2f} stop rounds to zero shares"
+        )
+    return None
+
+
+def _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx) -> None:
+    """ExecutionStage, before the SELL loop — the second half of the
+    `ranked_margin` sequencing pre-check. `_drop_rotation_sell_if_buy_leg_
+    refused` (RiskStage) closes the RiskStage-only gap; this closes the
+    rest (`_rotation_ranked_margin_execution_gate_failure`'s docstring
+    lists exactly which four checks). `ineligible_hold` is untouched — it
+    keeps its existing sell-then-alert tolerance, unchanged by this pass.
+
+    On success this records `ctx.rotation["ranked_margin_precheck_passed"]
+    = True`. That flag, not `execution.rotation_ranked_margin_enabled`
+    alone, is what the SELL loop below requires before it will submit a
+    `ranked_margin` rotation's close — see the guard at the point the
+    order is built. A config switch left on cannot by itself put a sell on
+    the wire; this function's outcome, computed fresh every run, has to
+    say so too.
+    """
+    rotation = ctx.rotation
+    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
+        return
+    if rotation.get("sell_order_id"):
+        return  # already got through the sell loop once this run
+    held_symbol = str(rotation.get("held_symbol") or "").upper()
+    new_symbol = str(rotation.get("new_symbol") or "").upper()
+    if not held_symbol or not new_symbol:
+        return
+    decisions = list(getattr(ctx.portfolio_decision, "decisions", None) or [])
+    buy_decision = next(
+        (
+            d for d in decisions
+            if d.symbol.strip().upper() == new_symbol
+            and d.action in ("BUY", "SHORT")
+        ),
+        None,
+    )
+    if buy_decision is None:
+        return  # RiskStage's own pre-check already withdrew it
+
+    try:
+        failure = _rotation_ranked_margin_execution_gate_failure(
+            pipeline, ctx, new_symbol, buy_decision,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail closed, like every rotation guard
+        failure = ("execution_gate_check_failed", str(exc))
+
+    if failure is None:
+        rotation["ranked_margin_precheck_passed"] = True
+        return
+
+    reason, detail = failure
+    remaining = [
+        d for d in decisions
+        if not (
+            (d.symbol.strip().upper() == held_symbol and d.action == "SELL")
+            or (d is buy_decision)
+        )
+    ]
+    ctx.portfolio_decision.decisions = remaining
+    logger.warning(
+        "Rotation (ranked_margin): withdrawing both legs before either "
+        "reaches the broker — the replacement buy of %s would fail this "
+        "run's %s execution gate: %s", new_symbol, reason, detail,
+    )
+    _record_pipeline_event(
+        pipeline, ctx, held_symbol, "rotation", "skipped",
+        "ranked_margin_buy_leg_would_fail_execution_gate",
+        new_symbol=new_symbol, execution_gate=reason, detail=detail,
+    )
+    _record_execution_skip(
+        pipeline, ctx, new_symbol, "rotation_buy_leg_precheck",
+        f"{reason}: {detail}",
+    )
+    ctx.rotation = None
+
+
 def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
     """Phase 14b — record both legs' outcome durably once the buy phase has
     run. A sale that freed room for a BUY that then did not happen is the
@@ -6608,6 +6780,28 @@ class ExecutionStage:
         cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
         hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
 
+        # `ranked_margin` sequencing pre-check, part two — before ANY order
+        # in this session is submitted. RiskStage's own pre-check
+        # (`_drop_rotation_sell_if_buy_leg_refused`) only sees what
+        # RiskStage itself can refuse; the daily-loss re-check and the
+        # no_price / stale_entry / qty_zero gates further down in THIS
+        # method all run later still, after the SELL loop below has
+        # already put the rotation's close on the wire. Evaluate the
+        # replacement buy against those same gates now and withdraw both
+        # legs together if it would not survive them, so the sell is never
+        # submitted into a buy that was always going to be refused.
+        # `ineligible_hold` is untouched. Re-derive the decision lists
+        # below since this can remove entries from `portfolio_decision.
+        # decisions`.
+        _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+        portfolio_decision = ctx.portfolio_decision
+        sell_decisions = [d for d in portfolio_decision.decisions if d.action == "SELL"]
+        buy_decisions = [
+            d for d in portfolio_decision.decisions if d.action in ("BUY", "SHORT")
+        ]
+        cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
+        hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
+
         for d in hold_decisions:
             try:
                 pipeline.db.insert_trade(
@@ -6627,6 +6821,37 @@ class ExecutionStage:
             try:
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty <= 0:
+                    continue
+                # Structural barrier, `ranked_margin` only: the config
+                # switch (`rotation_ranked_margin_enabled`) is deliberately
+                # not sufficient on its own to put this sell on the wire —
+                # `_drop_rotation_legs_if_buy_would_fail_execution_gates`
+                # above must have ACTUALLY run this run and recorded a pass
+                # for the replacement buy. If it has not (a future code
+                # path skipping that call, a refactor moving this loop
+                # earlier), this is unreachable through the normal flow
+                # above, so refuse rather than sell on an unverified flag —
+                # the same fail-closed posture as every other rotation
+                # guard. `ineligible_hold` carries no such requirement and
+                # is untouched.
+                rot = ctx.rotation
+                if (
+                    isinstance(rot, dict)
+                    and rot.get("tier") == "ranked_margin"
+                    and decision.symbol.upper() == rot.get("held_symbol")
+                    and rot.get("ranked_margin_precheck_passed") is not True
+                ):
+                    logger.error(
+                        "Rotation (ranked_margin): refusing to submit the "
+                        "close of %s — no recorded pass from this run's "
+                        "execution-gate pre-check. rotation_ranked_margin_"
+                        "enabled alone is never sufficient authorization.",
+                        decision.symbol,
+                    )
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "rotation", "skipped",
+                        "ranked_margin_precheck_not_recorded",
+                    )
                     continue
                 if decision.allocation_pct == 0:
                     logger.warning(

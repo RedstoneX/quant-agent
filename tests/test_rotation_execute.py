@@ -41,13 +41,16 @@ from src.models import (
 from src.pipeline import TradingPipeline, _reason_cites_hard_trigger
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
+    ExecutionStage,
     _alert_rotation_executed,
     _apply_rotation_execution,
     _drop_rotation_buy_if_room_not_freed,
+    _drop_rotation_legs_if_buy_would_fail_execution_gates,
     _drop_rotation_sell_if_buy_leg_refused,
     _record_rotation_buy_leg_outcome,
     _rotation_execution_enabled,
     _rotation_ranked_margin_enabled,
+    _rotation_ranked_margin_execution_gate_failure,
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
@@ -885,3 +888,405 @@ def test_pm_section_says_so_only_when_execution_is_enabled():
     assert precheck.opportunity.tier == "ineligible_hold"
     assert precheck.opportunity.held_symbol == "OLD"
     assert precheck.headroom_pct == pytest.approx(0.2)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-20 adversary review, four gaps in the first sequencing pass.
+#
+# (1) The RiskStage-only pre-check (`_drop_rotation_sell_if_buy_leg_
+#     refused`, tested above) never saw the daily-loss re-check or the
+#     no_price / stale_entry / qty_zero gates — all four run LATER, inside
+#     `ExecutionStage`, AFTER the rotation's SELL loop had already run.
+#     `_rotation_ranked_margin_execution_gate_failure` +
+#     `_drop_rotation_legs_if_buy_would_fail_execution_gates` close that.
+# (2) Claimed: the equity refresh feeding the daily-loss re-check is gated
+#     on `if not sell_decisions:`, so it is skipped on a rotation run and
+#     the re-check reads stale pre-sale equity. Checked against the code:
+#     false as stated — the refresh that actually feeds the re-check runs
+#     unconditionally on `if sell_decisions or cover_decisions:`, which is
+#     always true on a rotation run; `if not sell_decisions:` only guards a
+#     second, otherwise-redundant refresh for the buy-only case. No fix was
+#     applicable; `test_post_sale_equity_refresh_is_not_skipped_on_a_
+#     rotation_run` below pins the refresh actually firing.
+# (3) The `ranked_margin` tier's structural barrier (previously a
+#     `ValueError` making it impossible to reach) had become a plain
+#     config boolean — sufficient by itself to unlock execution. The SELL
+#     loop now also requires `ctx.rotation["ranked_margin_precheck_
+#     passed"] is True`, recorded ONLY by (1)'s pre-check having actually
+#     run and passed THIS run — the flag alone can no longer put a sell on
+#     the wire.
+# (4) `_record_rotation_buy_leg_outcome`'s "sold, nothing bought, alert-
+#     only" path must be unreachable for `ranked_margin` via any of the
+#     four DETERMINISTIC gates (1) closes — not via genuine broker
+#     non-fill, which is a different, irreducible risk this feature never
+#     claimed to remove and which `_drop_rotation_buy_if_room_not_freed`
+#     already handles correctly.
+# ---------------------------------------------------------------------------
+
+def _rm_pipeline(*, daily_loss_violation=None, market_price=100.0,
+                 fractional_enabled=False):
+    pipeline = MagicMock()
+    pipeline.config = SimpleNamespace(
+        execution=SimpleNamespace(
+            rotation_enabled=True, rotation_ranked_margin_enabled=True,
+            fractional_enabled=fractional_enabled,
+        ),
+        risk=SimpleNamespace(),
+    )
+    pipeline.risk_engine.check_daily_loss.return_value = daily_loss_violation
+    pipeline.risk_engine.daily_loss_limit_basis.side_effect = Exception("n/a")
+    pipeline.broker.get_latest_price_stamped = None
+    pipeline.broker.get_latest_price.side_effect = (
+        (lambda symbol: market_price) if market_price is not None
+        else (lambda symbol: None)
+    )
+    return pipeline
+
+
+def _rm_ctx(total_value=100_000.0, last_equity=100_000.0) -> RunContext:
+    ctx = _ctx()
+    ctx.total_value = total_value
+    ctx.last_equity = last_equity
+    ctx.positions = []
+    return ctx
+
+
+# --- (1) the four execution gates, unit-level -------------------------------
+
+def test_execution_gate_fails_on_daily_loss_recheck():
+    violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
+    pipeline = _rm_pipeline(daily_loss_violation=violation)
+    ctx = _rm_ctx()
+    failure = _rotation_ranked_margin_execution_gate_failure(
+        pipeline, ctx, "NEW", _buy("NEW"),
+    )
+    assert failure == ("daily_loss_recheck", violation.message)
+
+
+def test_execution_gate_fails_on_no_price():
+    pipeline = _rm_pipeline(market_price=None)
+    ctx = _rm_ctx()
+    reason, detail = _rotation_ranked_margin_execution_gate_failure(
+        pipeline, ctx, "NEW", _buy("NEW"),
+    )
+    assert reason == "no_price"
+
+
+def test_execution_gate_fails_on_stale_entry():
+    pipeline = _rm_pipeline(market_price=100.0)
+    ctx = _rm_ctx()
+    stale_buy = TradeDecision(
+        action="BUY", symbol="NEW", allocation_pct=5.0, entry_price=200.0,
+        stop_loss=180.0, take_profit=250.0, reasoning="r",
+    )
+    reason, detail = _rotation_ranked_margin_execution_gate_failure(
+        pipeline, ctx, "NEW", stale_buy,
+    )
+    assert reason == "stale_entry"
+    assert "threshold 5%" in detail
+
+
+def test_execution_gate_fails_on_qty_zero():
+    pipeline = _rm_pipeline(market_price=100.0)
+    ctx = _rm_ctx()
+    tiny_buy = TradeDecision(
+        action="BUY", symbol="NEW", allocation_pct=0.00001, entry_price=100.0,
+        stop_loss=90.0, take_profit=120.0, reasoning="r",
+    )
+    reason, detail = _rotation_ranked_margin_execution_gate_failure(
+        pipeline, ctx, "NEW", tiny_buy,
+    )
+    assert reason == "qty_zero"
+
+
+def test_execution_gate_passes_a_healthy_buy():
+    pipeline = _rm_pipeline(market_price=100.0)
+    ctx = _rm_ctx()
+    healthy_buy = TradeDecision(
+        action="BUY", symbol="NEW", allocation_pct=5.0, entry_price=100.0,
+        stop_loss=90.0, take_profit=130.0, reasoning="r",
+    )
+    assert _rotation_ranked_margin_execution_gate_failure(
+        pipeline, ctx, "NEW", healthy_buy,
+    ) is None
+
+
+# --- (1)+(3) the wrapper that withdraws both legs and records the pass -----
+
+def test_wrapper_withdraws_both_legs_when_the_buy_would_fail_a_gate(tmp_path):
+    violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
+    pipeline = _rm_pipeline(daily_loss_violation=violation)
+    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline.db.initialize()
+    ctx = _rm_ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("NEW"), _buy("OTHER")]
+
+    _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OTHER"]
+    assert ctx.rotation is None
+    (_, payload), = _rotation_events(pipeline.db)
+    assert payload["outcome"] == "skipped"
+    assert payload["reason"] == "ranked_margin_buy_leg_would_fail_execution_gate"
+    assert payload["execution_gate"] == "daily_loss_recheck"
+    (skip,) = ctx.execution_skips
+    assert skip["symbol"] == "NEW" and skip["reason"] == "rotation_buy_leg_precheck"
+    assert "daily_loss_recheck" in skip["detail"]
+
+
+def test_wrapper_records_a_pass_and_keeps_both_legs_when_the_buy_is_healthy(tmp_path):
+    pipeline = _rm_pipeline(daily_loss_violation=None, market_price=100.0)
+    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline.db.initialize()
+    ctx = _rm_ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin")
+    ctx.portfolio_decision = _decision()
+    healthy_buy = TradeDecision(
+        action="BUY", symbol="NEW", allocation_pct=5.0, entry_price=100.0,
+        stop_loss=90.0, take_profit=130.0, reasoning="r",
+    )
+    ctx.portfolio_decision.decisions = [_sell("OLD"), healthy_buy]
+
+    _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD", "NEW"]
+    assert ctx.rotation is not None
+    assert ctx.rotation["ranked_margin_precheck_passed"] is True
+    assert _rotation_events(pipeline.db) == []
+
+
+def test_wrapper_is_a_noop_for_ineligible_hold(tmp_path):
+    pipeline = _rm_pipeline(daily_loss_violation=MagicMock(message="breach"))
+    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline.db.initialize()
+    ctx = _rm_ctx()
+    ctx.rotation = _rotation_dict(tier="ineligible_hold")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("NEW")]
+
+    _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD", "NEW"]
+    assert ctx.rotation is not None
+    assert "ranked_margin_precheck_passed" not in ctx.rotation
+    assert _rotation_events(pipeline.db) == []
+
+
+def test_wrapper_is_a_noop_once_the_sell_already_submitted(tmp_path):
+    pipeline = _rm_pipeline(daily_loss_violation=MagicMock(message="breach"))
+    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline.db.initialize()
+    ctx = _rm_ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin", sell_order_id="brk-1")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("NEW")]
+
+    _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD", "NEW"]
+
+
+def test_wrapper_is_a_noop_when_riskstage_already_dropped_the_buy(tmp_path):
+    """The buy leg is already absent (RiskStage's own pre-check got there
+    first) — nothing left to check or withdraw."""
+    pipeline = _rm_pipeline(daily_loss_violation=MagicMock(message="breach"))
+    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline.db.initialize()
+    ctx = _rm_ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_buy("OTHER")]
+
+    _drop_rotation_legs_if_buy_would_fail_execution_gates(pipeline, ctx)
+
+    assert ctx.rotation is not None
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OTHER"]
+
+
+# --- (1)+(3)+(4) end to end through the real ExecutionStage -----------------
+
+def _es_pipeline(*, ranked_margin_enabled=True, daily_loss_violation=None,
+                 market_price=100.0):
+    pipeline = MagicMock()
+    pipeline.config = SimpleNamespace(
+        execution=SimpleNamespace(
+            rotation_enabled=True,
+            rotation_ranked_margin_enabled=ranked_margin_enabled,
+            fractional_enabled=False,
+        ),
+        risk=SimpleNamespace(),
+    )
+    pipeline.db = MagicMock()
+    pipeline.broker.get_latest_price_stamped = None
+    pipeline.broker.get_latest_price.return_value = market_price
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._full_sell_qty = lambda q: q
+    pipeline._order_accepted.return_value = True
+    pipeline.risk_engine.check_daily_loss.return_value = daily_loss_violation
+    pipeline.risk_engine.daily_loss_limit_basis.side_effect = Exception("n/a")
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 30_000.0, "portfolio_value": 100_000.0}, [], {},
+    )
+    return pipeline
+
+
+def _es_ctx(rotation: dict, buy_decision=None) -> RunContext:
+    ctx = RunContext.start("morning")
+    ctx.cash = 30_000.0
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.positions = [
+        Position(
+            symbol="OLD", qty=10.0, avg_entry=100.0, current_price=95.0,
+            market_value=950.0, unrealized_pnl=-50.0, sector="Technology",
+        ),
+    ]
+    ctx.rotation = rotation
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_rc(),
+        decisions=[_sell("OLD"), buy_decision or _buy("NEW")],
+        portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+    return ctx
+
+
+def _healthy_buy(symbol="NEW") -> TradeDecision:
+    """A buy that clears the `_es_pipeline(market_price=100.0)` default
+    gates: entry within 5% of market, and a real, orderable size."""
+    return TradeDecision(
+        action="BUY", symbol=symbol, allocation_pct=5.0, entry_price=100.0,
+        stop_loss=90.0, take_profit=130.0, reasoning="r",
+    )
+
+
+def test_ranked_margin_sell_never_reaches_broker_when_buy_would_fail_daily_loss_recheck(
+    monkeypatch,
+):
+    """Issues (1) and (4), end to end: a buy that would fail the daily-loss
+    re-check — a gate `_drop_rotation_sell_if_buy_leg_refused` (RiskStage)
+    cannot see — must stop the SELL before it is ever submitted, and the
+    'sold, nothing bought, alert-only' owner page must never fire for a
+    sell that never happened."""
+    sent = _capture_alerts(monkeypatch)
+    violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
+    pipeline = _es_pipeline(daily_loss_violation=violation)
+    ctx = _es_ctx(_rotation_dict(tier="ranked_margin"))
+
+    stage = ExecutionStage(pipeline=pipeline)
+    orders = stage.run(ctx)
+
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+    assert ctx.rotation is None
+    assert sent == [], "no owner alert — the sell never happened, so there is nothing to page"
+
+
+def test_ranked_margin_sell_never_reaches_broker_when_buy_has_no_price(monkeypatch):
+    sent = _capture_alerts(monkeypatch)
+    pipeline = _es_pipeline(market_price=None)
+    ctx = _es_ctx(_rotation_dict(tier="ranked_margin"))
+
+    stage = ExecutionStage(pipeline=pipeline)
+    orders = stage.run(ctx)
+
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+    assert ctx.rotation is None
+    assert sent == []
+
+
+def test_ranked_margin_flag_alone_is_not_sufficient_when_precheck_never_ran(monkeypatch):
+    """Issue (3): `rotation_ranked_margin_enabled=True` must not, by
+    itself, be enough to submit a `ranked_margin` close. Proven by
+    disabling the execution-gate pre-check (as a future refactor moving
+    the sell loop earlier might accidentally do) and confirming the SELL
+    loop's own structural guard still refuses the order — the flag is on,
+    the buy leg would in fact clear every gate, and the sell is still
+    blocked because no pass was recorded THIS run."""
+    import src.pipeline_stages as ps
+
+    monkeypatch.setattr(
+        ps, "_drop_rotation_legs_if_buy_would_fail_execution_gates",
+        lambda pipeline, ctx: None,
+    )
+    pipeline = _es_pipeline(daily_loss_violation=None, market_price=100.0)
+    ctx = _es_ctx(_rotation_dict(tier="ranked_margin"))  # no precheck_passed key
+
+    stage = ps.ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    pipeline.broker.submit_order.assert_not_called()
+
+
+def test_ranked_margin_sell_proceeds_once_the_precheck_recorded_a_pass():
+    """Positive control for the two tests above and for issue (3): once
+    the execution-gate pre-check has ACTUALLY run and recorded a pass, the
+    close proceeds exactly as before."""
+    pipeline = _es_pipeline(daily_loss_violation=None, market_price=100.0)
+    pipeline.broker.submit_order.return_value = {
+        "id": "sell-1", "status": "accepted", "symbol": "OLD",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    from tests.test_pipeline_stages import _mock_stage_seam, _mock_stop_seam
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    ctx = _es_ctx(_rotation_dict(tier="ranked_margin"), buy_decision=_healthy_buy())
+
+    stage = ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    # Only asserting the SELL leg here (issue (3)'s positive control) — the
+    # BUY leg's own downstream sizing/cash-sweep machinery is exercised by
+    # other tests, not this one.
+    assert pipeline.broker.submit_order.called, "the SELL must reach the broker"
+    assert ctx.rotation["sell_order_id"] == "sell-1"
+
+
+# --- (2) the equity-freshness claim, checked and pinned ---------------------
+
+def test_post_sale_equity_refresh_is_not_skipped_on_a_rotation_run():
+    """Issue (2) as raised: the refresh feeding the daily-loss re-check is
+    gated on `if not sell_decisions:`, so it is supposedly skipped on a
+    rotation run and the re-check reads stale pre-sale equity. Checked
+    against `ExecutionStage._run_session`: the refresh that actually
+    matters runs unconditionally on `if sell_decisions or cover_decisions:`
+    — true whenever a rotation's SELL exists — and only the SECOND,
+    redundant refresh is gated on `if not sell_decisions:`. This pins that:
+    exactly one refresh call, and the BUY is dropped on the REFRESHED
+    (post-sale) total, not the $100,000 pre-run snapshot."""
+    from tests.test_pipeline_stages import _mock_stage_seam, _mock_stop_seam
+
+    pipeline = _es_pipeline(daily_loss_violation=None, market_price=100.0)
+    pipeline.broker.submit_order.return_value = {
+        "id": "sell-1", "status": "accepted", "symbol": "OLD",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    # Pre-run snapshot: $100,000, no breach. Post-sale refresh: $96,500 —
+    # a 3.5% loss, a fresh breach the daily-loss re-check must catch.
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 60_000.0, "portfolio_value": 96_500.0}, [], {},
+    )
+    violation = MagicMock(message="Daily loss 3.5% exceeds max 3%")
+    pipeline.risk_engine.check_daily_loss.return_value = violation
+    ctx = _es_ctx(_rotation_dict(tier="ineligible_hold"))
+
+    stage = ExecutionStage(pipeline=pipeline)
+    orders = stage.run(ctx)
+
+    assert len(orders) == 1, "the SELL itself still submits — only the BUY is at risk here"
+    assert orders[0]["id"] == "sell-1"
+    assert pipeline._refresh_account_state.call_count == 1, (
+        "the buy-only branch's refresh must not redundantly re-fire when "
+        "the sell/cover refresh already ran"
+    )
+    pipeline.risk_engine.check_daily_loss.assert_called_once()
+    called_last_equity, called_pnl = pipeline.risk_engine.check_daily_loss.call_args[0]
+    assert called_last_equity == 100_000.0
+    # The pnl handed to check_daily_loss must be built from the REFRESHED
+    # $96,500, not the stale $100,000 snapshot (which would show ~0 pnl).
+    assert called_pnl != 0.0

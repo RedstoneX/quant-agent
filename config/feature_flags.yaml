@@ -111,6 +111,20 @@ flags:
     decided: "2026-09-12"
     source: "commit 03f865402 (#318); config/settings.yaml:286"
 
+  - id: src.config.ExecutionConfig.rotation_ranked_margin_enabled
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Second, separate switch for the ranking-based rotation trigger,
+      independent of `rotation_enabled` (already true). Flipping
+      `rotation_enabled` alone must never arm this tier. Stays off pending
+      the owner's own rollout decision on live selling against the item
+      39(a) score-margin threshold, which is unrelated to the sequencing
+      fix this switch shipped alongside.
+    decided: "2026-09-20"
+    source: "commit 2ab1b5fa (#555); config/settings.yaml"
+
   - id: src.config.ExecutionConfig.fractional_enabled
     effective_value: true
     code_default: true
