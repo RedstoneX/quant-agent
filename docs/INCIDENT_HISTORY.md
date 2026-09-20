@@ -155,6 +155,130 @@ Before trusting any "ok" on a fetched feed, ask what it was measured against.
 
 ---
 
+### 2026-09-20 — at the open the desk could use yesterday's price as if it were today's
+
+**In plain words.** First thing in the morning, for a handful of companies, the
+desk was looking at the price from the *previous day's* final trade and treating
+it as the price right now. Everything built on that price — how big a position
+should be, whether a stop had been hit, whether a stock was above or below a
+level worth buying at — was then built on a number from a day that had already
+ended, at the single most volatile moment of the trading day. The owner named
+this the highest-priority fix of the night and called it "a huge, huge problem,
+poisoning everything else."
+
+**How it showed up.** On 2026-09-17, 8 of 104 names — one of them a stock the
+desk actually held — came back from the broker in the morning carrying the
+previous session's last trade. The detail that mattered and had not been acted
+on: the *same* broker response already contained today's opening price for those
+names, in a different field. The desk was refusing the seat on a name while
+today's real price sat unread in the reply it already had.
+
+**What the real cause turned out to be.** Two things, one reported and one not.
+
+The reported one: the code read a single field, "the last trade", and asked
+whether its timestamp was today. For a thinly traded name on the price feed this
+account is entitled to, that field can still be yesterday's several minutes into
+the session — the account is not entitled to the consolidated feed, so a stock
+that has traded elsewhere but not on this venue shows nothing. The check itself
+was correct and the name was correctly refused rather than mispriced. What was
+wrong was giving up there, when the broker's own reply also carries today's
+one-minute bar and today's still-forming daily bar, both of which are built out
+of real trades on the same venue. Pricing off those is not a guess and it is not
+a quote — a quote is what somebody is *willing* to do, and the desk's standing
+rule is that a quote must never be worn as a trade.
+
+The one nobody had reported: the block of figures labelled to the technical seat
+as "CURRENT SESSION (TODAY)" — the day's open, high, low and volume — was taken
+from the broker's "daily bar" field with nothing at all checking which day that
+bar belonged to. For a name that has not traded today the broker returns
+*yesterday's* daily bar in that slot. So a name could be shown yesterday's whole
+trading range under a heading that said today. Same defect, one field over, and
+it would have outlived the reported one. It was found by asking what else in the
+same reply was being trusted without a date check, which is the only reason it
+was found at all.
+
+**What was ruled out.** An elapsed-time rule — "the price must be less than N
+minutes old" — was rejected. N would be an invented number with nothing behind
+it, which is the thing this desk refuses on principle, and it would also be
+wrong: a stock that genuinely has not traded for twenty minutes is thin, not
+stale.
+
+Using the previous close as a stand-in was never on the table. A name with no
+trade today has no price today, and saying so is the honest answer.
+
+**What the first version of this fix got wrong, and how.** The first pass used
+one test — does this price's timestamp fall on today's date in New York — and
+argued in writing that any tighter rule would be an invented number. The
+adversary showed that was false on this desk's own record: the dashboard
+already had a tighter test that is *not* invented, built on the time the
+exchange opens, and this same file already records a proposal being rejected in
+September for exactly the weakness date-only comparison has — a price from
+before the market opened still counts as "today's", and on a day that gaps at
+the open it can sit on the wrong side of the real price. So a second bound was
+added: a price must also be stamped at or after the 09:30 open. Nothing was
+invented; the bound is when the exchange opens, which it publishes months ahead
+and which is the same on a half-day.
+
+The adversary also found a subtler version of the same bug that no date test
+could ever catch: with three possible sources ranked by how good they are
+rather than how recent, a stock that traded once at 09:31 and then only
+appeared in aggregate data all afternoon would be priced at its 09:31 figure at
+four o'clock. Most recent now wins; the quality ranking only breaks ties.
+
+And it found a way the fix could have hurt: a stock that simply has not traded
+today would have been counted as a *broken ticker* and, after three checks, the
+owner would have been messaged to go and see whether it still exists. The two
+thin names in the original report are exactly that case, so the alarm would
+have been wrong the first day it fired. Quiet and broken are now counted
+separately again.
+
+**What happens now.** One piece of code decides what "today's price" means, and
+everything that needs one asks it. It tries the last trade, then today's
+one-minute bar, then today's forming daily bar, and if none of those is from
+today it refuses and says which of the two reasons applies — the feed returned
+nothing at all, or the feed returned only a prior session. A name that gets
+refused is told to the technical seat as a *lost price seat*: no
+price-dependent judgement on that name today, the structural history is still
+good, and it is priced normally again the next session. It is not dropped and
+not quietly downgraded to "low confidence", which was the previous behaviour and
+which invites the model to have an opinion anyway.
+
+The resolved number is published under a different name from the raw broker
+field, deliberately. Both now sit side by side in the same object, and the
+failure mode of the next person reading the wrong one is exactly this bug
+returning. Naming them differently is what makes picking the wrong one visible.
+
+**What would catch it next time.** Twelve deliberate sabotages of the fix were
+written and run against its own tests — comparing dates in the wrong timezone,
+treating the session open as the cutoff instead of the date, trusting a
+timestamp with no timezone on it, allowing yesterday through, reading the wrong
+end of a bar, skipping the date check on one field out of three, confusing
+Friday with the previous session on a Monday, accepting a zero or a NaN as a
+price, and reverting each rewired reader to the raw field. Ten were caught on
+the first pass; two were not — a missing date check on the one-minute bar, and
+a reader quietly preferring the raw field — and both were real holes in the
+tests rather than in the fix. Tests were added for both and all twelve are now
+caught. The two that slipped are the useful part of this paragraph: a fix whose
+tests pass is not the same as a fix whose tests would notice it being undone.
+
+**One thing here is still unconfirmed and is written down rather than assumed.**
+The whole "which day does this bar belong to" half rests on the broker stamping
+a daily bar at a time that reads as that day in New York. The published
+convention says it does and the software library documents the field, but
+nobody has made a live call from this desk to watch it happen. If it is wrong,
+every stock loses its session range at once rather than any stock showing the
+wrong one — the safe direction — and an error is logged the first morning
+saying precisely that. Confirming it is the first thing to look at after a real
+session.
+
+**Deliberately not done, so nobody assumes it was.** The price feed is still
+not pinned to a named venue; a stock that loses its price for the day still
+produces one log line rather than a stored, per-stock reason; and the cockpit
+chart still draws today's candle from the raw broker field, which is filed as
+its own board item because it needs a front-end build.
+
+---
+
 ### 2026-09-20 — the only seat allowed to halt the desk was told it sees half the price history it is actually sent
 
 **In plain words:** the technical analyst is the one seat that can stop the

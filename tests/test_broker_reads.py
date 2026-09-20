@@ -531,14 +531,24 @@ def _snapshot_broker(snapshots: dict, capture: list | None = None):
 
 
 def test_read_live_quotes_flattens_snapshot_data(monkeypatch):
+    from src.trading_calendar import et_now
+
+    # `session_bar_at` dates the session block (board item 120). Alpaca puts
+    # the PREVIOUS session's daily bar in that slot for a name that has not
+    # printed today, so the range is only passed through when the bar's own
+    # timestamp says today.
+    today_bar_at = et_now().replace(hour=0, minute=0, second=0, microsecond=0)
     monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({
-        "NVDA": {"last_price": 121.5, "prev_close": 119.0, "session_open": 120.0, "session_high": 122.0, "session_low": 118.5},
+        "NVDA": {"last_price": 121.5, "prev_close": 119.0,
+                 "session_bar_at": today_bar_at,
+                 "session_open": 120.0, "session_high": 122.0, "session_low": 118.5},
     }))
     out = broker_reads.read_live_quotes(["NVDA"])
     assert out["error"] is None
     row = out["quotes"]["NVDA"]
     assert row["last_price"] == 121.5
     assert row["prev_close"] == 119.0
+    assert row["session_bar_is_today"] is True
     assert row["session_open"] == 120.0
     assert row["session_high"] == 122.0
     assert row["session_low"] == 118.5

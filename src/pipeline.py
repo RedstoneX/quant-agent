@@ -3218,6 +3218,81 @@ class TradingPipeline:
                     return True
         return False
 
+    @staticmethod
+    def _resolve_live_context(snapshots: dict, symbols: list) -> tuple:
+        """Freshness-resolve a bulk snapshot reply into per-symbol context.
+
+        Shared by the morning Tech pass and the intraday opportunity scan,
+        because both hand the SAME payload to the SAME seat and only one of
+        them used to check it (docs/WORK.md item 120). Returns
+        `(context, missing, stale, rescued)`.
+
+        `context[sym]` is either `{"live_unavailable": reason}` or the raw
+        snapshot decorated with `live_price` / `live_price_source` /
+        `live_price_at` / `live_price_description`, with the `session_*`
+        block blanked when the daily bar in it belongs to a prior session.
+        """
+        from src.data.live_price import (
+            NO_PRICE_AT_ALL, SOURCE_LAST_TRADE, resolve_live_price,
+        )
+
+        out: dict[str, dict] = {}
+        missing: list[str] = []
+        stale: list[str] = []
+        rescued: dict[str, str] = {}
+        blanked: list[str] = []
+        for sym in symbols:
+            snap = snapshots.get(sym) or {}
+            resolved = resolve_live_price(snap)
+            if resolved.price is None:
+                (missing if resolved.unavailable == NO_PRICE_AT_ALL
+                 else stale).append(sym)
+                out[sym] = {"live_unavailable": resolved.unavailable}
+                continue
+            # The RAW provider price is deliberately NOT republished here.
+            # It sits a key away from the resolved one, still carrying a
+            # prior session's number, and the next reader picking the wrong
+            # one is this bug returning. What no consumer can reach, no
+            # consumer can misread.
+            entry = {k: v for k, v in snap.items()
+                     if k not in ("last_price", "minute_close")}
+            entry["live_price"] = resolved.price
+            entry["live_price_source"] = resolved.source
+            entry["live_price_at"] = resolved.as_of
+            entry["live_price_description"] = resolved.describe()
+            if not resolved.session_bar_is_today:
+                # The daily bar in this payload belongs to a PRIOR session.
+                # Blank it rather than let a caller render yesterday's
+                # open/high/low/volume under a "today" heading.
+                blanked.append(sym)
+                for field in ("session_open", "session_close", "session_high",
+                              "session_low", "session_volume"):
+                    entry[field] = None
+            if resolved.source != SOURCE_LAST_TRADE:
+                rescued[sym] = resolved.source
+            out[sym] = entry
+        # Blanking every priced name at once is the signature of the one
+        # assumption in `resolve_live_price` that has never been checked
+        # against a live call: that a daily bar's timestamp carries the
+        # session's ET date. If that is wrong this fires on day one instead
+        # of the session range vanishing silently.
+        priced = len(symbols) - len(missing) - len(stale)
+        if blanked and priced and len(blanked) == priced:
+            logger.error(
+                "live session context: EVERY priced symbol (%d) had a daily "
+                "bar dated to a prior session. One name is ordinary; all of "
+                "them means the daily-bar timestamp convention is not what "
+                "`src/data/live_price.py` assumes — check it before trusting "
+                "any session range", len(blanked),
+            )
+        elif blanked:
+            logger.info(
+                "live session context: %d symbol(s) carried a PRIOR session's "
+                "daily bar; their session range is blanked rather than shown "
+                "as today's (item 120): %s", len(blanked), blanked[:10],
+            )
+        return out, missing, stale, rescued
+
     def _live_session_context(self, symbols) -> dict[str, dict]:
         """Live, in-progress-session price facts for `symbols`, or {}.
 
@@ -3231,13 +3306,33 @@ class TradingPipeline:
         - Outside regular hours: {} — completed bars ARE current (after the
           close today's bar is complete; pre-market/weekend the last close
           is the latest price that exists).
-        - In session: one bulk snapshot. A symbol with no last trade, or
-          whose last trade is not from today (holiday, halt, feed gap), gets
-          `{"live_unavailable": reason}` and a WARNING — rendered as an
-          explicit STALE label, never silently replaced by yesterday.
+        - In session: one bulk snapshot, resolved through
+          `src.data.live_price.resolve_live_price`. A symbol with no print
+          from TODAY on any of the snapshot's three print-derived fields
+          gets `{"live_unavailable": reason}` and a WARNING — rendered as an
+          explicit STALE label, never silently replaced by yesterday, and
+          never replaced by a quote mid.
         Never raises.
+
+        2026-09-20, board item 120: this used to read `last_price` alone. On
+        2026-09-17 that cost 8 of 104 names their technical seat at the open
+        while today's forming bar in the SAME payload already held the open,
+        because a thin name's `latest_trade` can still be yesterday's minutes
+        into the session on an IEX entitlement. Two changes follow from that:
+        the resolver now falls through to today's minute bar and then today's
+        forming session bar (both aggregations of real prints on the same
+        entitled venue, neither a quote), and the `session_*` block is
+        BLANKED when the snapshot's daily bar is not today's — Alpaca returns
+        the previous session's bar in that slot for a name that has not
+        printed, and it was being rendered to the analyst as "CURRENT SESSION
+        (TODAY)".
+
+        The resolved number is published as `live_price` (with
+        `live_price_source` and `live_price_at`), NOT as `last_price`. The
+        raw provider field keeps its own name so no reader can pick up an
+        unchecked number believing it was checked.
         """
-        from src.trading_calendar import in_regular_session, live_price_is_today
+        from src.trading_calendar import in_regular_session
 
         symbols = [s for s in (symbols or []) if s]
         if not symbols or not in_regular_session():
@@ -3247,30 +3342,22 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("live session context: snapshot read failed: %s", exc)
             snapshots = {}
-        out: dict[str, dict] = {}
-        missing: list[str] = []
-        stale: list[str] = []
-        for sym in symbols:
-            snap = snapshots.get(sym) or {}
-            last = snap.get("last_price")
-            if not isinstance(last, (int, float)) or last <= 0:
-                missing.append(sym)
-                out[sym] = {"live_unavailable": "no live trade price returned"}
-                continue
-            if not live_price_is_today(snap.get("last_trade_at")):
-                stale.append(sym)
-                out[sym] = {
-                    "live_unavailable": "last trade is not from today's session",
-                }
-                continue
-            out[sym] = dict(snap)
+        out, missing, stale, rescued = self._resolve_live_context(snapshots, symbols)
         if missing or stale:
             logger.warning(
                 "live session context: in-session price unavailable for %d/%d "
-                "symbol(s) (no price: %s; not today: %s) — labelled STALE in "
-                "the Tech prompt, not replaced by the last close",
+                "symbol(s) (no price: %s; no today print: %s) — labelled STALE "
+                "in the Tech prompt, not replaced by the last close and never "
+                "by a quote mid",
                 len(missing) + len(stale), len(symbols),
                 missing[:10], stale[:10],
+            )
+        if rescued:
+            logger.info(
+                "live session context: %d/%d symbol(s) had no today last-trade "
+                "print but a today bar on the same venue, priced from it "
+                "rather than losing the seat (item 120): %s",
+                len(rescued), len(symbols), sorted(rescued.items())[:10],
             )
         return out
 
@@ -16157,6 +16244,10 @@ class TradingPipeline:
         cannot vanish the mover list. A skip after wait names these
         symbols in a durable reason instead of dropping them silently.
         """
+        from src.data.live_price import (
+            NO_PRICE_AT_ALL, NO_SNAPSHOT, resolve_live_price,
+        )
+
         cfg = self.config.intraday_scan
         universe = list(self.config.trading.universe)
         snapshots = self.broker.get_intraday_snapshots(universe) or {}
@@ -16165,12 +16256,34 @@ class TradingPipeline:
         candidates: list[tuple[str, float]] = []
         for symbol in universe:
             snap = snapshots.get(symbol) or {}
-            last = snap.get("last_price")
+            # item 120: the move that buys a PAID look has to be today's.
+            # This read `last_price` straight, so a name still carrying a
+            # prior session's print measured a move that did not happen
+            # today. Same resolver as the morning Tech pass, so "today" is
+            # decided in one place.
+            resolved = resolve_live_price(snap)
+            last = resolved.price
             prev = snap.get("prev_close")
-            if not (isinstance(last, (int, float)) and isinstance(prev, (int, float))):
+            # The miss counter pages the owner after three consecutive
+            # scans with "check whether the ticker is still valid/tradable
+            # on Alpaca". It exists to tell a BROKEN ticker from a quiet
+            # one (`src/storage/db.py`), so a thin name that simply has not
+            # printed today must NOT feed it — item 120's own filing names
+            # two IEX-thin names in exactly that state, and paging on them
+            # would be a false alarm. A symbol the feed returned nothing
+            # for at all is still a miss.
+            fed_nothing = resolved.unavailable in (NO_SNAPSHOT, NO_PRICE_AT_ALL)
+            if not isinstance(prev, (int, float)) or (
+                last is None and fed_nothing
+            ):
                 self._track_intraday_snapshot_miss(symbol)
                 continue
             self._track_intraday_snapshot_ok(symbol)
+            if last is None:
+                # Quiet, not broken: the feed answered, the name has no
+                # today print. It cannot have moved today, so it buys no
+                # paid look — and it does not page anybody either.
+                continue
             if prev <= 0:
                 continue
             move_pct = abs(last - prev) / prev * 100.0
@@ -16382,9 +16495,20 @@ class TradingPipeline:
         # never as a completed daily bar. Held names already in the
         # universe snapshot are included; a hold outside that snapshot
         # still gets bars, just no live-session block.
-        intraday_context = {
-            s: snapshots[s] for s in tech_symbols if s in snapshots
-        }
+        # item 120: resolved through the SAME freshness rule the morning
+        # pass uses. This used to hand Tech the raw snapshot, so a name
+        # whose last trade was a prior session's could be rendered to the
+        # intraday seat as "CURRENT SESSION (TODAY)".
+        intraday_context, _missing, _stale, _rescued = self._resolve_live_context(
+            snapshots, [s for s in tech_symbols if s in snapshots],
+        )
+        if _missing or _stale:
+            logger.warning(
+                "Intraday scan: no today print for %d symbol(s) handed to Tech "
+                "(no price: %s; no today print: %s) — labelled as a lost price "
+                "seat, never replaced by a prior session's number",
+                len(_missing) + len(_stale), _missing[:10], _stale[:10],
+            )
         self._require_paid_analysis("intraday_tech_analyst")
         analyses_map, ta_result = self.tech_analyst.analyze_batch(
             symbols_data,

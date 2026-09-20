@@ -3672,9 +3672,14 @@ class MorningResearchStage:
     def _live_price_kwarg(live_context: dict, symbol: str) -> dict:
         """`{"live_price": x}` only when a usable live price exists, so an
         injected prefilter with the old 4-argument signature still works
-        outside market hours."""
+        outside market hours.
+
+        Reads `live_price` — the freshness-RESOLVED number
+        `_live_session_context` publishes (docs/WORK.md item 120) — not the
+        raw provider `last_price`, which can be a prior session's print.
+        """
         ic = live_context.get(symbol) or {}
-        price = ic.get("last_price")
+        price = ic.get("live_price")
         if ic.get("live_unavailable") or not isinstance(price, (int, float)) or price <= 0:
             return {}
         return {"live_price": price}

@@ -423,6 +423,13 @@ class LiveQuote(BaseModel):
     # telling you. `None` only when `last_price` itself is `None`.
     quote: PriceObservation | None = None
     prev_close: float | None = None
+    # Whether the `session_*` block below belongs to TODAY (docs/WORK.md
+    # item 120). Alpaca returns the PREVIOUS session's daily bar in that
+    # slot for a name that has not printed today, so without this the
+    # cockpit could draw yesterday's range as this session's. False means
+    # the three fields below are `None` and the caller must not infer a
+    # range for today; it must NOT be rendered as a range of zero.
+    session_bar_is_today: bool = False
     session_open: float | None = None
     session_high: float | None = None
     session_low: float | None = None
