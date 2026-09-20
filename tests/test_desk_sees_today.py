@@ -335,6 +335,7 @@ from src.data.live_price import (  # noqa: E402
     SOURCE_LAST_TRADE,
     SOURCE_MINUTE_BAR,
     SOURCE_SESSION_BAR,
+    SOURCE_SESSION_BAR_OPEN,
     resolve_live_price,
 )
 
@@ -495,12 +496,22 @@ def test_the_first_second_of_the_session_is_today_and_the_last_of_the_prior_is_n
     )
     assert at_open.price == 158.38
 
+    # A pre-market print is NOT this session's price. Date equality alone
+    # would let a 04:00 ET print be rendered at 09:30 as the current price
+    # — the exact weakness the desk rejected a proposal over on 2026-09-18.
     premarket = resolve_live_price(
         _snap(last_price=158.00,
               last_trade_at=datetime(2026, 9, 17, 4, 0, tzinfo=ET)),
         when=SEP17_OPEN,
     )
-    assert premarket.price == 158.00
+    assert premarket.price is None
+
+    # …and one second before the open is still pre-market.
+    assert resolve_live_price(
+        _snap(last_price=158.00,
+              last_trade_at=datetime(2026, 9, 17, 9, 29, 59, tzinfo=ET)),
+        when=SEP17_OPEN,
+    ).price is None
 
     one_second_before_midnight = resolve_live_price(
         _snap(last_price=161.79,
@@ -527,7 +538,7 @@ def test_a_utc_stamp_that_is_still_yesterday_in_et_is_stale():
               last_trade_at=datetime(2026, 9, 18, 0, 30, tzinfo=UTC)),
         when=datetime(2026, 9, 17, 20, 35, tzinfo=ET),
     )
-    assert evening_et_same_session.price == 159.0
+    assert evening_et_same_session.price == 159.0  # 20:30 ET, after the open
 
     utc_date_matches_but_et_date_does_not = resolve_live_price(
         _snap(last_price=161.79,
@@ -601,13 +612,48 @@ def test_a_zero_or_negative_or_nan_price_is_not_a_price():
         assert r.source == SOURCE_SESSION_BAR, f"{bad!r} was accepted as a price"
 
 
-def test_todays_bar_with_a_close_of_zero_falls_back_to_its_open():
-    """A bar one minute old may not have published a close yet."""
+def test_todays_bar_with_no_close_falls_back_to_its_open_and_SAYS_SO():
+    """A bar one minute old may not have published a close yet.
+
+    The fallback carries its OWN source label. Telling a paid seat "close of
+    today's still-forming session bar" when the number is the 09:30 open is
+    a false provenance string, and at 15:30 it would be badly false.
+    """
     r = resolve_live_price(
         _snap(session_bar_at=SEP17_BAR_AT, session_open=158.38, session_close=None),
         when=SEP17_OPEN.replace(minute=31),
     )
-    assert r.price == 158.38 and r.source == SOURCE_SESSION_BAR
+    assert r.price == 158.38
+    assert r.source == SOURCE_SESSION_BAR_OPEN
+    assert "open of today's session bar" in r.describe()
+    assert "close of" not in r.describe()
+
+
+def test_the_most_recent_usable_print_wins_not_the_purest():
+    """BREAKAGE ATTEMPT — same-day staleness.
+
+    Precedence by purity alone prices a name off its 09:31 last trade all
+    afternoon while its own minute bars keep updating. That is item 120's
+    defect in same-day form and no date test can catch it.
+    """
+    r = resolve_live_price(
+        _snap(last_price=158.38, last_trade_at=SEP17_OPEN.replace(minute=31),
+              minute_close=162.10,
+              minute_bar_at=datetime(2026, 9, 17, 15, 59, tzinfo=ET),
+              session_bar_at=SEP17_BAR_AT, session_close=162.10),
+        when=datetime(2026, 9, 17, 16, 0, tzinfo=ET),
+    )
+    assert r.price == 162.10
+    assert r.source == SOURCE_MINUTE_BAR
+
+    # …and purity still breaks a genuine tie.
+    same_instant = SEP17_OPEN.replace(minute=45)
+    tied = resolve_live_price(
+        _snap(last_price=158.38, last_trade_at=same_instant,
+              minute_close=158.40, minute_bar_at=same_instant),
+        when=same_instant,
+    )
+    assert tied.source == SOURCE_LAST_TRADE
 
 
 # --- the pipeline and the prompt, end to end --------------------------------
@@ -713,7 +759,37 @@ def test_the_intraday_mover_scan_does_not_buy_a_paid_look_on_yesterdays_move(
 
     movers, _ = p._intraday_scan_mover_candidates(MagicMock())
     assert [m[0] for m in movers] == ["MSFT"]
-    p._track_intraday_snapshot_miss.assert_called_once_with("ORCL")
+    # A thin name that simply has not printed today is QUIET, not BROKEN.
+    # The miss counter pages the owner with "check whether the ticker is
+    # still valid/tradable on Alpaca" after three consecutive scans, and
+    # item 120's own filing names two IEX-thin names in exactly this state
+    # — paging on them would be a false alarm.
+    p._track_intraday_snapshot_miss.assert_not_called()
+    assert ("ORCL",) in [c.args for c in p._track_intraday_snapshot_ok.call_args_list]
+
+
+def test_a_symbol_the_feed_returned_nothing_for_is_still_a_snapshot_miss():
+    """The counter must keep firing for a genuinely absent symbol — the
+    fix above must not disable the broken-ticker alarm outright."""
+    from src.pipeline import TradingPipeline
+
+    now = SEP17_OPEN.replace(hour=11)
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.get_intraday_snapshots.return_value = {
+        "MSFT": _snap(last_price=400.0, last_trade_at=now, prev_close=440.0),
+        "BADTIX": {},
+    }
+    p.config = MagicMock()
+    p.config.intraday_scan.move_threshold_pct = 3.0
+    p.config.intraday_scan.cooldown_hours = 4
+    p.config.trading.universe = ["MSFT", "BADTIX"]
+    p._track_intraday_snapshot_miss = MagicMock()
+    p._track_intraday_snapshot_ok = MagicMock()
+    p._recently_intraday_evaluated = MagicMock(return_value=False)
+
+    p._intraday_scan_mover_candidates(MagicMock())
+    p._track_intraday_snapshot_miss.assert_called_once_with("BADTIX")
 
 
 def test_the_cockpit_does_not_render_a_prior_sessions_range_as_this_session(
@@ -738,3 +814,69 @@ def test_the_cockpit_does_not_render_a_prior_sessions_range_as_this_session(
     assert out["session_high"] is None
     assert out["session_low"] is None
     assert out["quote"]["freshness"] == "stale"
+
+
+def test_a_prior_sessions_minute_bar_is_not_used_either():
+    """BREAKAGE ATTEMPT — the minute bar needs its OWN date check.
+
+    The `minute_bar` slot carries the last minute bar that EXISTS, which for
+    a name that has not printed today is one from a prior session. Skipping
+    its freshness check reintroduces the whole defect one field over, and
+    every other test still passed when that check was removed.
+    """
+    r = resolve_live_price(
+        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
+              minute_close=161.79, minute_bar_at=SEP16_CLOSE),
+        when=SEP17_OPEN.replace(minute=31),
+    )
+    assert r.price is None
+    assert r.unavailable == ONLY_STALE
+
+    # …and with a today session bar present it is the SESSION BAR that
+    # rescues the name, never the prior session's minute bar.
+    rescued = resolve_live_price(
+        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
+              minute_close=161.79, minute_bar_at=SEP16_CLOSE,
+              session_bar_at=SEP17_BAR_AT, session_close=158.55),
+        when=SEP17_OPEN.replace(minute=31),
+    )
+    assert rescued.price == 158.55
+    assert rescued.source == SOURCE_SESSION_BAR
+
+
+def test_the_tech_prompt_never_falls_back_to_the_raw_provider_field():
+    """BREAKAGE ATTEMPT — the `live_price` / `last_price` trap.
+
+    Both keys are present on a rescued symbol's context: `last_price` is the
+    raw provider field, still a PRIOR session's print, and `live_price` is
+    the resolved one. A reader that prefers `last_price`, or falls back to
+    it, prints yesterday. Nothing else in this file caught that.
+    """
+    msg = _tech_msg({"ORCL": {
+        "last_price": 161.79,                      # yesterday, raw
+        "last_trade_at": SEP16_CLOSE,
+        "live_price": ORCL_LIVE,                   # today, resolved
+        "live_price_description": "close of today's still-forming session bar",
+        "prev_close": 161.79, "session_open": ORCL_LIVE,
+        "session_high": 160.0, "session_low": ORCL_LIVE, "session_volume": 1000,
+    }})
+    price_line = [
+        line for line in msg.splitlines() if "Current price:" in line
+    ]
+    assert len(price_line) == 1
+    # 161.79 is legitimately present on this line as the PRIOR CLOSE the
+    # move is measured against; what must not appear is the raw field in
+    # the price slot itself.
+    assert price_line[0].strip().startswith("Current price: $158.38"), price_line[0]
+    assert "Current price: $161.79" not in msg, (
+        "the prior session's raw last_price reached the live-price line"
+    )
+
+    # And with NO resolved price the section must refuse outright rather
+    # than reaching for the raw field.
+    lost = _tech_msg({"ORCL": {
+        "last_price": 161.79, "last_trade_at": SEP16_CLOSE,
+        "live_unavailable": ONLY_STALE,
+    }})
+    assert "NO PRICE FROM TODAY" in lost
+    assert "CURRENT SESSION" not in lost

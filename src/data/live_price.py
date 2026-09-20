@@ -21,35 +21,98 @@ decides what "today" means is testable without a broker.
 
 THE RULE
 --------
-Freshness is ET-DATE EQUALITY against the current ET date, and nothing
-else. That is `trading_calendar.live_price_is_today`, which is already the
-desk's ratified test (the stop-repair freshness ruling, 2026-09-19: "the
-freshness test is date-equality only"). **No new threshold is introduced
-here** — there is no "recent enough" minutes cutoff to source or to file in
-`config/number_ledger.yaml`, deliberately, because an elapsed-minutes bound
-would be exactly the arbitrary number this desk refuses.
+A point-in-time price counts as this session's when BOTH hold:
+
+  * its ET date equals the current ET date
+    (`trading_calendar.live_price_is_today`), and
+  * it is stamped at or after today's regular-session open, 09:30 ET
+    (`trading_calendar.REGULAR_SESSION_OPEN_MIN`).
+
+**No new threshold is introduced.** Both bounds already exist in this repo
+and neither is fitted: the date test is the desk's ratified freshness rule
+(stop-repair ruling, 2026-09-19), and 09:30 ET is the NYSE core-session
+open, a fact the exchange publishes months ahead. `src/api/broker_reads.py
+::_quote_freshness` already uses that same boundary for this same field and
+says why in its own docstring. There is no elapsed-minutes "recent enough"
+cutoff anywhere here — that WOULD be the arbitrary number this desk
+refuses, and it is deliberately absent.
+
+The second bound was added after the first version of this module shipped
+with date-equality alone. `docs/INCIDENT_HISTORY.md` records the desk
+rejecting a proposal on 2026-09-18 for precisely that weakness: a price
+"sitting from before the market opened would still count as 'today's' and
+could sit on the wrong side of the real price on a gap day". A 04:12 ET
+pre-market print rendered to a seat at 09:30:05 as the current price is
+that defect, one field over from the one this module was written for.
+
+The open bound needs no holiday or early-close calendar: 09:30 is the open
+on a half-day too, and on a holiday nothing prints at all.
+
+A DAILY BAR IS DATED, NOT STAMPED. Today's forming session bar carries its
+OPENING timestamp (00:00 ET), which is before the open by construction, so
+the 09:30 bound cannot apply to it. It is dated by date-equality alone —
+correctly, because a bar dated today IS today's session by definition.
+
+AMONG FRESH CANDIDATES, THE MOST RECENT WINS. Precedence by purity alone
+would price a name off its 09:31 last trade all afternoon while its own
+minute bars kept updating — item 120's defect in same-day form, and one no
+date test can ever catch. Purity breaks ties, recency does not lose to it.
 
 PRECEDENCE, and why
 -------------------
+Among candidates that pass the rule above, the most recent wins; where two
+share a stamp, this order breaks the tie:
+
 1. `last_trade`   — the actual print. What the desk wants.
 2. `minute_bar`   — an aggregation of real prints on the same entitled
                     venue. A print, one minute coarse.
-3. `session_bar`  — today's still-forming daily bar close; also an
-                    aggregation of real prints, coarser again.
-4. nothing        — the name has no today print. A LOST SEAT, named, not a
-                    number worn as if it were current.
+3. `session_bar`  — today's still-forming daily bar. Coarser again, and
+                    considered only when no point-in-time candidate is
+                    usable, because its stamp cannot be compared for
+                    recency against theirs.
+4. nothing        — the name has no usable print from this session. A LOST
+                    SEAT, named, not a number worn as if it were current.
 
-A QUOTE MID IS NEVER USED. A quote is what somebody is willing to do, not
-what was done; the board item says so in as many words, and no branch here
-can reach one.
+A QUOTE MID IS NEVER USED HERE. A quote is what somebody is willing to do,
+not what was done; the board item says so in as many words, and no branch
+in this module can reach one.
+
+That is a rule about the RESEARCH price, not a desk-wide rule, and the
+distinction matters because the repo contains the opposite decision one
+layer over. `src/execution/broker.py::get_latest_price_stamped` returns a
+quote midpoint, and `src/pipeline_stages.py::_today_order_price` accepts
+one as a FILL REFERENCE — deliberately, and covered by its own test. The
+two are not in conflict: bounding an order you are about to send against
+the current book is a different act from telling an analyst what a company
+is worth. Nothing here changes the order path.
 
 WHAT THIS DOES NOT DO
 ---------------------
-It cannot tell a halted name from a thin one — both look like "no today
-print" and both are correctly a lost seat rather than a guess. It does not
-know about early closes or holidays; on a holiday nothing prints, so every
-name resolves to no-today-print, which is the right answer arrived at
-without a holiday calendar.
+It cannot tell a halted name from a thin one — both look like "no print
+this session" and both are correctly a lost seat rather than a guess.
+
+It does not pin the market-data feed. `get_intraday_snapshots` sends no
+`feed` argument, so the venue is whatever the account defaults to. The
+claim that the minute bar and the session bar are prints "on the same
+entitled venue" is true because they come from the same response as the
+last trade — not because anything here enforces it. Pinning the feed was
+part of what board item 120 described and is NOT done here.
+
+It does not know about early closes. `trading_calendar.in_regular_session`
+treats every weekday as running to 16:00, so on a 13:00 half-day a price
+from 12:59 is still rendered between 13:00 and 16:00 as though the session
+were open. That is a pre-existing property of the session window, not
+something this module introduces, and it is not fixed here.
+
+**One thing in this module is asserted and not yet observed:** that Alpaca
+stamps a DAILY bar at a time whose ET date equals the session date. The
+SDK documents `Bar.timestamp` as the bar's opening timestamp and the
+published daily-bar convention is 00:00 ET normalised to UTC, but no live
+snapshot call has been made from this desk to confirm it for this account.
+If that is wrong the comparison inverts and every name loses its session
+range — which fails VISIBLE (a blanked range and a warning), never toward
+showing a prior session as this one. Confirming it is the first thing to
+look at after a real session.
 """
 
 from __future__ import annotations
@@ -57,13 +120,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from src.trading_calendar import live_price_is_today
+from src.trading_calendar import (
+    REGULAR_SESSION_OPEN_MIN,
+    live_price_is_today,
+    to_et,
+)
 
 #: Source labels, in precedence order. Exported so callers and tests name
 #: the same strings rather than retyping them.
 SOURCE_LAST_TRADE = "last_trade"
 SOURCE_MINUTE_BAR = "minute_bar"
 SOURCE_SESSION_BAR = "session_bar"
+#: The forming bar's OPEN, used only when it has published no close yet.
+#: A separate label because saying "close" when the number is the open is a
+#: false provenance string reaching a paid seat.
+SOURCE_SESSION_BAR_OPEN = "session_bar_open"
 
 #: Human-readable rendering for each source, for prompts and logs. A seat
 #: told "last trade" when it is really a one-minute aggregate has been
@@ -73,6 +144,7 @@ SOURCE_DESCRIPTION = {
     SOURCE_LAST_TRADE: "last trade print",
     SOURCE_MINUTE_BAR: "close of today's latest 1-minute bar",
     SOURCE_SESSION_BAR: "close of today's still-forming session bar",
+    SOURCE_SESSION_BAR_OPEN: "open of today's session bar (no close published yet)",
 }
 
 #: Reasons a name resolves to no price. Distinct strings because "the feed
@@ -80,7 +152,7 @@ SOURCE_DESCRIPTION = {
 #: conditions and get counted separately.
 NO_SNAPSHOT = "no snapshot returned for this symbol"
 NO_PRICE_AT_ALL = "no live trade price returned"
-ONLY_STALE = "no print from today's session (latest is from a prior session)"
+ONLY_STALE = "no print from this session (latest is from before today's open)"
 
 
 @dataclass(frozen=True)
@@ -119,6 +191,19 @@ def _positive(value) -> float | None:
     return value if value > 0 else None
 
 
+def _is_from_this_session(stamp, when) -> bool:
+    """True when a point-in-time stamp is today AND at/after today's open.
+
+    Both bounds are named in this module's docstring; neither is fitted.
+    A missing or naive stamp is not from this session — unknown freshness
+    fails visible.
+    """
+    if not live_price_is_today(stamp, when):
+        return False
+    et = to_et(stamp)
+    return et.hour * 60 + et.minute >= REGULAR_SESSION_OPEN_MIN
+
+
 def resolve_live_price(snapshot, when: datetime | None = None) -> ResolvedPrice:
     """Resolve one `get_intraday_snapshots` payload into today's price.
 
@@ -137,39 +222,49 @@ def resolve_live_price(snapshot, when: datetime | None = None) -> ResolvedPrice:
     session_bar_is_today = bool(live_price_is_today(session_bar_at, when))
 
     # The forming session bar's CLOSE is the latest print inside it, which
-    # is what "the current price" means; `session_open` is the fallback only
-    # because a bar one minute old may not have published a close yet. The
-    # bar is dated by `session_bar_at`, its OPENING stamp — the only
-    # timestamp the provider gives for it.
+    # is what "the current price" means. Its OPEN is the fallback only
+    # because a bar one minute old may not have published a close yet —
+    # DEFENSIVE, not observed: no Alpaca daily bar with a valid open and no
+    # close has been seen here. It gets its own source label so a seat
+    # priced off the open is never told it was priced off the close.
     session_price = _positive(snapshot.get("session_close"))
+    session_source = SOURCE_SESSION_BAR
     if session_price is None:
         session_price = _positive(snapshot.get("session_open"))
+        session_source = SOURCE_SESSION_BAR_OPEN
 
-    candidates = (
+    # Point-in-time candidates: date-equal AND at or after today's open.
+    point_in_time = (
         (SOURCE_LAST_TRADE,
          _positive(snapshot.get("last_price")),
-         snapshot.get("last_trade_at"),
-         None),
+         snapshot.get("last_trade_at")),
         (SOURCE_MINUTE_BAR,
          _positive(snapshot.get("minute_close")),
-         snapshot.get("minute_bar_at"),
-         None),
-        (SOURCE_SESSION_BAR, session_price, session_bar_at, session_bar_is_today),
+         snapshot.get("minute_bar_at")),
     )
 
-    saw_any_price = False
-    for source, price, stamp, precomputed_fresh in candidates:
+    saw_any_price = session_price is not None
+    usable: list[tuple] = []
+    for rank, (source, price, stamp) in enumerate(point_in_time):
         if price is None:
             continue
         saw_any_price = True
-        fresh = (precomputed_fresh if precomputed_fresh is not None
-                 else bool(live_price_is_today(stamp, when)))
-        if not fresh:
+        if not _is_from_this_session(stamp, when):
             continue
+        usable.append((to_et(stamp), -rank, source, price, stamp))
+
+    if usable:
+        # Most recent first; purity (the negated rank) breaks a tie.
+        usable.sort(reverse=True)
+        _, _, source, price, stamp = usable[0]
         return ResolvedPrice(price, source, stamp, None, session_bar_is_today)
 
-    # Distinguish "the feed had nothing" from "the feed had only yesterday".
-    # A thin name and a broken feed are different problems and the log has
-    # to be able to tell them apart.
+    if session_price is not None and session_bar_is_today:
+        return ResolvedPrice(session_price, session_source, session_bar_at,
+                             None, session_bar_is_today)
+
+    # Distinguish "the feed had nothing" from "the feed had only a prior
+    # session". A thin name and a broken feed are different problems and the
+    # log has to be able to tell them apart.
     reason = ONLY_STALE if saw_any_price else NO_PRICE_AT_ALL
     return ResolvedPrice(None, None, None, reason, session_bar_is_today)
