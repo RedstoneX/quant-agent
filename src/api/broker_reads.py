@@ -33,6 +33,7 @@ from src.api.deps import (
     get_risk_limits,
 )
 from src.execution.broker import AlpacaBroker, _internal_symbol
+from src.trading_calendar import live_price_is_today
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +558,12 @@ def read_live_quotes(symbols: list[str]) -> dict:
             if last_price is not None or snap.get("prev_close") is not None:
                 any_data = True
             last_trade_at = snap.get("last_trade_at")
+            # item 120: Alpaca returns the PREVIOUS session's daily bar in
+            # the `daily_bar` slot for a name that has not printed today, so
+            # these three were capable of showing yesterday's range on the
+            # cockpit as this session's. Blank them unless the bar's own
+            # timestamp says today.
+            session_is_today = live_price_is_today(snap.get("session_bar_at"))
             quotes[sym] = {
                 "last_price": last_price,
                 "quote": {
@@ -569,9 +576,10 @@ def read_live_quotes(symbols: list[str]) -> dict:
                     "freshness": _quote_freshness(last_trade_at, session_open),
                 } if last_price is not None else None,
                 "prev_close": snap.get("prev_close"),
-                "session_open": snap.get("session_open"),
-                "session_high": snap.get("session_high"),
-                "session_low": snap.get("session_low"),
+                "session_bar_is_today": session_is_today,
+                "session_open": snap.get("session_open") if session_is_today else None,
+                "session_high": snap.get("session_high") if session_is_today else None,
+                "session_low": snap.get("session_low") if session_is_today else None,
             }
         # get_intraday_snapshots itself never raises — a total read failure
         # (bad/absent credentials, market-data outage) degrades to `{}` for
