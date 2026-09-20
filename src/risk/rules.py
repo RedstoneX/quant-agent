@@ -2294,7 +2294,10 @@ class RiskRuleEngine:
     #: of the ACCOUNT, so the account's day change is what matches them.
     FIXED_BASIS = "fixed_percentage"
 
-    def daily_loss_limit_basis(self) -> str:
+    def daily_loss_limit_basis(
+        self, *, portfolio_vol_pct: float | None = None,
+        use_supplied_vol: bool = False,
+    ) -> str:
         """WHICH rung of `daily_loss_limit_pct` is governing right now.
 
         2026-09-14, docs/WORK.md item 32. The breaker's numerator has to
@@ -2304,16 +2307,47 @@ class RiskRuleEngine:
         limit no longer tells you which, so the two are computed together
         and this reports the answer.
         """
-        _limit, basis = self._daily_loss_limit_and_basis()
+        _limit, basis = self._daily_loss_limit_and_basis(
+            portfolio_vol_pct=portfolio_vol_pct,
+            use_supplied_vol=use_supplied_vol,
+        )
         return basis
 
-    def _daily_loss_limit_and_basis(self) -> tuple[float, str]:
+    def _daily_loss_limit_and_basis(
+        self, *, portfolio_vol_pct: float | None = None,
+        use_supplied_vol: bool = False,
+    ) -> tuple[float, str]:
+        """The governing daily-loss limit and which rung produced it.
+
+        `use_supplied_vol` substitutes `portfolio_vol_pct` for the live
+        `portfolio_vol_provider` read, and is the ONLY supported way to ask
+        what this limit WOULD be over a book other than the one held right
+        now. It does not skip a rung: an explicit `max_daily_loss_pct`
+        still wins, the cap still applies, and an unusable supplied sigma
+        still falls back exactly as an unusable measured one does. Its one
+        caller is the rotation sequencing gate
+        (`src/pipeline_stages.py::_rotation_buy_leg_projected_refusal`),
+        which must compare a PROJECTED post-sale numerator against the
+        threshold that same projected book produces — the vol-relative rung
+        is measured FROM the held book, so selling a holding moves the
+        threshold as well as the loss, and testing one against the other's
+        denominator is the exact mismatch item 32 was raised about.
+        """
         explicit = getattr(self.config, "max_daily_loss_pct", None)
         if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
             if math.isfinite(float(explicit)) and float(explicit) > 0:
                 return float(explicit), self.FIXED_BASIS
         fallback = self.config.effective_max_daily_loss_pct
-        sigma = self.portfolio_daily_vol_pct()
+        if use_supplied_vol:
+            sigma = portfolio_vol_pct
+            if isinstance(sigma, bool) or not isinstance(sigma, (int, float)):
+                sigma = None
+            elif not math.isfinite(float(sigma)) or float(sigma) <= 0:
+                sigma = None
+            else:
+                sigma = float(sigma)
+        else:
+            sigma = self.portfolio_daily_vol_pct()
         if sigma is None:
             return fallback, self.FIXED_BASIS
         threshold = vol_relative_drawdown_threshold_pct(
@@ -2874,8 +2908,21 @@ class RiskRuleEngine:
 
         return violations
 
-    def check_daily_loss(self, baseline: float, daily_pnl: float) -> RiskViolation | None:
+    def check_daily_loss(
+        self, baseline: float, daily_pnl: float, *,
+        portfolio_vol_pct: float | None = None,
+        use_supplied_vol: bool = False,
+    ) -> RiskViolation | None:
         """Standalone daily loss check. `baseline` is the % denominator (e.g. last_equity).
+
+        `use_supplied_vol` / `portfolio_vol_pct` are passed straight to
+        `_daily_loss_limit_and_basis` — see that docstring. Omitted (the
+        default, and every existing caller), this method behaves exactly as
+        it did: the threshold is read from the live held book. Supplied, the
+        SAME comparison below runs against the threshold a projected book
+        produces. There is no path here that weakens the breaker: a supplied
+        sigma that is unusable falls back to the fixed rung, identically to
+        an unmeasurable live one.
 
         NaN handling: any NaN in `baseline` or `daily_pnl` (Alpaca has been
         observed to return NaN for `portfolio_value` during market-open
@@ -2911,7 +2958,10 @@ class RiskRuleEngine:
         daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
         # docs/WORK.md item 32: volatility-relative limit where measurable,
         # fixed-percentage fallback otherwise. See `check()` above.
-        limit = self.daily_loss_limit_pct
+        limit, _limit_basis = self._daily_loss_limit_and_basis(
+            portfolio_vol_pct=portfolio_vol_pct,
+            use_supplied_vol=use_supplied_vol,
+        )
         if daily_loss_pct > limit:
             return RiskViolation(
                 rule="max_daily_loss_pct",

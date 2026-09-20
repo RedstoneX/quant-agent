@@ -82,6 +82,28 @@ selling an eligible, thesis-intact position on an unmeasured margin would be
 exactly the "arbitrary number decides a trade" pattern this desk refuses
 elsewhere.
 
+**Board item 39, 2026-09-20 — what changed and what did NOT.** The
+ranked-margin tier now HAS an execution path, behind a second switch
+(`execution.rotation_ranked_margin_enabled`, default False), and that path
+is sequenced correctly: the replacement BUY is run through the downstream
+refusal gates against the book as it will be AFTER the sale, and both legs
+are withdrawn together if it would be refused, so the desk cannot end up
+sold out of a position with nothing bought
+(`src/pipeline_stages.py::_drop_rotation_legs_if_buy_would_be_refused`).
+The sale additionally cannot be BUILT without a `RotationClearance` below —
+an object carrying the projected numbers the buy was cleared on, which no
+configuration can produce.
+
+The paragraph above is still the reason the switch is OFF, and it is not a
+formality. `ROTATION_MARGIN_PCT` is recorded in
+`config/number_ledger.yaml` as `arbitrary` — "a round quarter percent with
+no source". Closing the sequencing defect removed a reason this tier could
+not be turned on; it did not answer the one stated here. `docs/WORK.md`
+item 39(a) is the remaining blocker: it lists what has already been ruled
+out (the citations above among them — the SHAPE is sourced, the NUMBER is
+not) and what would settle it. Note what 39(a) itself says: "do not
+promote it to an execution gate until answered."
+
 Why the desk's holding discipline still binds: `docs/WORK.md` item 25 says a
 position stays protected from a plain, no-real-trigger sale unless the level
 backing its thesis has broken (confirmed on two consecutive closes, or the
@@ -147,12 +169,43 @@ from dataclasses import dataclass, field
 from src.verdicts import RankedCandidate, score_verdict, seat_weight
 
 __all__ = [
+    "REQUIRED_BUY_LEG_GATES",
     "ROTATION_MARGIN_PCT",
+    "RotationClearance",
     "RotationOpportunity",
     "RotationPrecheck",
     "evaluate_rotation_opportunity",
+    "rotation_proposal_reason",
     "rotation_sell_reason",
 ]
+
+#: Board item 39. Every downstream refusal path that can drop the rotation's
+#: REPLACEMENT BUY *after* the SELL has already been submitted, and that is
+#: knowable before the sale. A `ranked_margin` sale may not be built unless a
+#: `RotationClearance` proves EVERY name here was evaluated this run against
+#: PROJECTED POST-SALE state.
+#:
+#: The names are the `_record_execution_skip` reason codes the execution
+#: stage itself uses, so this list and the code it mirrors can be compared
+#: mechanically (`tests/test_rotation_sequencing.py` pins that).
+#:
+#: This list is deliberately NOT "every way a BUY can fail" — see
+#: `rotation_sell_reason` for the paths that remain open by construction and
+#: why no pre-check can close them.
+REQUIRED_BUY_LEG_GATES = (
+    "daily_loss_recheck",
+    "no_price",
+    "stale_entry",
+    "qty_zero",
+    # Added after adversary review of attempt 3. Both are deterministic
+    # functions of the POST-SALE book, so both are knowable before the
+    # sale — and both are the refusals a rotation is most likely to hit,
+    # because a rotation only surfaces when the risk headroom is already
+    # under the floor. Leaving them out was the same class of omission as
+    # attempt 1's, one layer further down.
+    "insufficient_cash",
+    "below_min_notional",
+)
 
 #: Relative margin the best-ranked new candidate must clear over the
 #: weakest still-eligible held position's score before a rotation is
@@ -160,6 +213,13 @@ __all__ = [
 #: this is the conservative end of a real but unpinned range, not a
 #: measured fact.
 ROTATION_MARGIN_PCT = 0.25
+
+#: `PortfolioConstructor._build_sell` truncates an order's reasoning at 500
+#: characters after appending the thesis condition. A rotation reason that
+#: overruns it loses its LAST clause first — which is the one naming what
+#: the sale was cleared on, or that it is contingent. Not a threshold on
+#: anything traded: it is the length of a field this text has to fit in.
+ROTATION_REASON_MAX_CHARS = 500
 
 
 @dataclass(frozen=True)
@@ -356,6 +416,51 @@ class RotationPrecheck:
     telemetry_available: bool = True
 
 
+@dataclass(frozen=True)
+class RotationClearance:
+    """Proof that a rotation's replacement BUY was run through every gate in
+    `REQUIRED_BUY_LEG_GATES` against PROJECTED POST-SALE state, and survived.
+
+    **This object is the safety net, and it is not a flag.** Board item 39's
+    first fix attempt replaced the structural barrier that made a
+    `ranked_margin` sale impossible to build with a plain config boolean,
+    which meant one truthy value anywhere in the settings chain was enough
+    to put a real sale on the wire. A boolean cannot carry evidence. This
+    can, and `rotation_sell_reason` refuses — unconditionally, with no
+    config read anywhere in the refusal — to build the sale's reason
+    without one whose contents match the opportunity in hand.
+
+    `projected_positions` / `projected_equity` / `projected_daily_pnl` /
+    `projected_basis` are recorded so the audit row states the numbers the
+    sale was actually cleared on, rather than asserting that a check
+    happened.
+    """
+
+    held_symbol: str
+    new_symbol: str
+    #: Every gate evaluated. Must cover `REQUIRED_BUY_LEG_GATES`.
+    gates_checked: tuple[str, ...]
+    #: The day-change number the projected post-sale book produced, and
+    #: which rung of `daily_loss_limit_pct` governed it.
+    projected_daily_pnl: float
+    projected_basis: str
+    #: Held names remaining after every SELL/COVER this session, the
+    #: rotation's own included, and the equity those were measured against.
+    projected_positions: tuple[str, ...]
+    projected_equity: float
+
+    def covers(self, *, held_symbol: str, new_symbol: str) -> bool:
+        """Is this clearance about THIS rotation, and did it check every
+        gate? A clearance minted for a different pair, or one missing a
+        gate, is not a clearance for this sale."""
+        if self.held_symbol.strip().upper() != held_symbol.strip().upper():
+            return False
+        if self.new_symbol.strip().upper() != new_symbol.strip().upper():
+            return False
+        checked = {str(g).strip() for g in self.gates_checked}
+        return all(gate in checked for gate in REQUIRED_BUY_LEG_GATES)
+
+
 def rotation_sell_reason(
     opportunity: RotationOpportunity,
     *,
@@ -364,6 +469,7 @@ def rotation_sell_reason(
     headroom_pct: float,
     ceiling_pct: float,
     floor_pct: float,
+    clearance: "RotationClearance | None" = None,
 ) -> str:
     """The checkable reason a rotation sale carries, from measured facts only.
 
@@ -379,10 +485,51 @@ def rotation_sell_reason(
     thesis condition and then truncates the order's reasoning at 500; the
     untruncated detail lives in the `rotation` pipeline_event.
     """
+    if opportunity.tier == "ranked_margin":
+        # Board item 39. The ranked-margin tier sells a position that still
+        # passes the desk's own entry gates, purely to fund a replacement.
+        # If the replacement is then refused downstream the desk has closed
+        # a position for a reason that never materialised — so the sale may
+        # only be built once the replacement has been run through
+        # `REQUIRED_BUY_LEG_GATES` against the book as it will be AFTER the
+        # sale.
+        #
+        # This raise is unconditional and reads no config. A feature flag
+        # decides whether the CALLER gets as far as asking; it cannot
+        # decide whether the question is answerable.
+        if not isinstance(clearance, RotationClearance):
+            raise ValueError(
+                "rotation_sell_reason: the ranked-margin tier requires a "
+                "RotationClearance proving the replacement BUY was checked "
+                "against projected post-sale state "
+                f"(gates: {', '.join(REQUIRED_BUY_LEG_GATES)}). No config "
+                "flag substitutes for it — board item 39, attempt 1."
+            )
+        if not clearance.covers(
+            held_symbol=opportunity.held_symbol,
+            new_symbol=opportunity.new_symbol,
+        ):
+            raise ValueError(
+                "rotation_sell_reason: the RotationClearance supplied is not "
+                f"for {opportunity.held_symbol} -> {opportunity.new_symbol} "
+                "with every required gate checked (it covers "
+                f"{clearance.held_symbol} -> {clearance.new_symbol}, gates "
+                f"{', '.join(clearance.gates_checked)})."
+            )
+        return _ranked_margin_sell_reason(
+            opportunity,
+            protection_basis=protection_basis,
+            protection_detail=protection_detail,
+            headroom_pct=headroom_pct,
+            ceiling_pct=ceiling_pct,
+            floor_pct=floor_pct,
+            clearance=clearance,
+        )
     if opportunity.tier != "ineligible_hold":
         raise ValueError(
-            "rotation_sell_reason is for the categorical tier only — the "
-            "ranked-margin tier is surfaced, never executed"
+            "rotation_sell_reason knows two tiers, 'ineligible_hold' and "
+            f"'ranked_margin'; {opportunity.tier!r} is neither and is not "
+            "executable"
         )
     failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
     return (
@@ -393,4 +540,114 @@ def rotation_sell_reason(
         f"under the {floor_pct:.2f}% minimum. Full close to free room for "
         f"{opportunity.new_symbol}, the best-ranked eligible candidate (score "
         f"{opportunity.new_score:.2f}) the PM targeted."
+    )
+
+
+def _ranked_margin_sell_reason(
+    opportunity: RotationOpportunity,
+    *,
+    protection_basis: str,
+    protection_detail: str,
+    headroom_pct: float,
+    ceiling_pct: float,
+    floor_pct: float,
+    clearance: RotationClearance | None,
+) -> str:
+    """The checkable reason a RANKED-MARGIN rotation sale carries.
+
+    Same discipline as the categorical reason above — every clause names
+    something recorded elsewhere this run — with two additions the
+    categorical tier does not need:
+
+      * the like-for-like sub-score the margin was actually cleared on
+        (`shared_seats`, `docs/INCIDENT_HISTORY.md` 2026-09-14), because
+        the full composite is a coverage-sensitive weighted SUM and is not
+        comparable term-for-term between two names; and
+      * the projected post-sale daily-loss number the replacement BUY was
+        cleared against, so the Risk Manager and the evening review can
+        check that the sale was sequenced behind the buy's gates rather
+        than ahead of them (board item 39).
+
+    Kept compact for the same 500-character truncation in
+    `PortfolioConstructor._build_sell`.
+    """
+    seats = ("; ".join(opportunity.shared_seats) or "none")[:40]
+    held_shared = opportunity.held_shared_score
+    new_shared = opportunity.new_shared_score
+    held_score = opportunity.held_score
+    tail = (
+        f"BUY pre-cleared post-sale (day chg "
+        f"${clearance.projected_daily_pnl:.0f}, {clearance.projected_basis})."
+        if clearance is not None else
+        "CONTINGENT on the replacement BUY clearing its gates; withdrawn "
+        "with it if it does not."
+    )
+    reason = (
+        f"ROTATION (ranked margin, src/rotation.py): {opportunity.held_symbol}"
+        f" is the weakest still-eligible holding (score "
+        f"{0.0 if held_score is None else held_score:.2f}); "
+        f"{opportunity.new_symbol} ({opportunity.new_score:.2f}) clears the "
+        f"{opportunity.margin_pct * 100:.0f}% margin on the seats covering "
+        f"both ({seats}: {held_shared} vs {new_shared}). Protection not "
+        f"intact ({protection_basis}: {protection_detail[:40]}). Headroom "
+        f"{headroom_pct:.2f}% of the {ceiling_pct:.2f}% ceiling, under the "
+        f"{floor_pct:.2f}% minimum. {tail}"
+    )
+    # `PortfolioConstructor._build_sell` appends the thesis condition and
+    # truncates the order's reasoning at 500 characters, and the clause
+    # that makes a CONTINGENT proposal honest is the last one — so it is
+    # the first thing a long seat list or a long protection detail would
+    # eat. The two variable-length clauses are capped above, and this
+    # asserts the result rather than trusting the caps
+    # (`tests/test_rotation_sequencing.py` pins the worst case).
+    if len(reason) > ROTATION_REASON_MAX_CHARS:
+        raise ValueError(
+            f"rotation reason is {len(reason)} characters, past the "
+            f"{ROTATION_REASON_MAX_CHARS} the constructor truncates at — "
+            f"the clause naming what the sale was cleared on would be cut"
+        )
+    return reason
+
+
+def rotation_proposal_reason(
+    opportunity: RotationOpportunity,
+    *,
+    protection_basis: str,
+    protection_detail: str,
+    headroom_pct: float,
+    ceiling_pct: float,
+    floor_pct: float,
+) -> str:
+    """The reason text a PROPOSED rotation close carries into the Risk
+    Manager's review — never an authorisation to sell.
+
+    Board item 39. The ranked-margin tier's replacement BUY cannot be
+    checked at proposal time: its entry price, stop and size do not exist
+    until `PortfolioConstructor` has run, and the gates that refuse it read
+    live quotes at execution. So the proposal says so, in the text the Risk
+    Manager and the audit row both read, and the SALE itself is built
+    separately by `rotation_sell_reason` — which will not produce a string
+    at all without a `RotationClearance`.
+
+    Keeping these two apart is the point. A single function that returned a
+    usable reason with and without evidence would put the entire guard on
+    the caller remembering to pass the evidence.
+    """
+    if opportunity.tier == "ranked_margin":
+        return _ranked_margin_sell_reason(
+            opportunity,
+            protection_basis=protection_basis,
+            protection_detail=protection_detail,
+            headroom_pct=headroom_pct,
+            ceiling_pct=ceiling_pct,
+            floor_pct=floor_pct,
+            clearance=None,
+        )
+    return rotation_sell_reason(
+        opportunity,
+        protection_basis=protection_basis,
+        protection_detail=protection_detail,
+        headroom_pct=headroom_pct,
+        ceiling_pct=ceiling_pct,
+        floor_pct=floor_pct,
     )

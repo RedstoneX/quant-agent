@@ -2515,9 +2515,28 @@ numbers:
       How much better a candidate must be before the desk rotates out of a
       holding. A round quarter percent with no source. Auto-rotation is the
       one flag the owner wants enabled, so this binds the moment it is.
+      Board item 39, 2026-09-20: this is now the ONLY remaining blocker on
+      execution.rotation_ranked_margin_enabled. The sequencing defect that
+      also blocked that tier - a rotation SELL firing ahead of a
+      replacement BUY a later gate refuses - is closed; this is not. The
+      categorical tier does not depend on this number at all and is
+      unaffected.
     open_question: >-
       How much better must a candidate be than a held name to justify paying
       two spreads and two commissions to swap?
+    already_ruled_out: >-
+      docs/WORK.md item 39(a) carries the list and it is not short:
+      Grinold & Kahn's no-trade region, FTSE Russell banding, published
+      rebalancing tolerance bands, backtesting, and (2026-09-17) the
+      models' own confidence scores and entry-price-versus-now. The shape
+      is sourced; the NUMBER is not, and none of those yields one in
+      verdict-score units. Do not repeat this search.
+    what_would_settle_it: >-
+      docs/WORK.md item 39(a), verbatim: a published study of rank-swap
+      turnover versus decay by SIGNAL gap, or a breakeven computed from
+      measured round-trip cost against a score-to-expected-return mapping
+      this desk does not yet compute - building that mapping is the real
+      prerequisite. A research question, not an owner call.
     cost_while_unanswered: >-
       Rotation either churns for marginal improvement or never fires.
   - id: src.verdicts.CONVICTION_SCORE['high']
@@ -4241,6 +4260,63 @@ numbers:
     cost_while_unanswered: >-
       Every ordinary exit concedes up to 0.5%; if too tight on a fast tape the
       exit does not fill and the position is held against the decision.
+  - id: src.rotation.ROTATION_REASON_MAX_CHARS
+    value: 500
+    status: not-trade-governing
+    site: src/rotation.py
+    note: >-
+      Board item 39, attempt 3. Not a trading threshold: it is the length of
+      the field this text has to fit in. `_build_sell` stores
+      `reasoning[:500]` (src/portfolio_constructor.py:3142, :3198, :3411),
+      so a rotation reason longer than that loses its LAST clause - which is
+      the one naming what the sale was cleared on, or that the close is
+      contingent on the replacement buy. Read from the truncation it has to
+      survive; if that column width changes, this changes with it.
+  - id: src.pipeline_stages._projected_post_sale_cash:factor[0]
+    value: 1.005
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 39, attempt 3. The same mirrored 0.5% exit offset as the
+      projection above, applied to the CASH an exit leaves behind rather
+      than to the equity: a COVER buys the borrowed shares back at
+      price x 1.005 and spends that cash. Read from the loop it mirrors;
+      not a second number.
+  - id: src.pipeline_stages._projected_post_sale_cash:factor[1]
+    value: 0.995
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 39, attempt 3. The SELL side of the same mirrored offset:
+      a sale credits price x 0.995, the limit the SELL loop actually
+      places, rather than the mark.
+  - id: src.pipeline_stages._projected_post_sale_book:factor[0]
+    value: 1.005
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 39, attempt 3. The rotation sequencing gate projects the
+      equity the account will hold once this session's exits have gone
+      through, and an exit fills at the SELL loop's own limit rather than at
+      the mark. This is that same 0.5% offset, read from the loop it
+      mirrors - not a second number. If the two ever differ, the projection
+      is describing a fill that never happens.
+  - id: src.pipeline_stages._projected_post_sale_book:factor[1]
+    value: 0.995
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 39, attempt 3. The COVER mirror of the offset above,
+      1.005 = 2 - 0.995, exactly as the COVER loop mirrors it. One number,
+      mirrored, in the projection as in the execution.
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[1]
     value: 1.005
     status: derived

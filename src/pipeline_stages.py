@@ -253,6 +253,27 @@ def _rotation_execution_enabled(pipeline) -> bool:
     return getattr(execution_cfg, "rotation_enabled", None) is True
 
 
+def _rotation_ranked_margin_enabled(pipeline) -> bool:
+    """Board item 39 — is the RANKED-MARGIN rotation tier executable?
+
+    Requires `execution.rotation_ranked_margin_enabled is True` IN ADDITION
+    to `_rotation_execution_enabled`, and the same `is True` convention for
+    the same reason (a MagicMock config must never read as "yes, close a
+    real position on your own").
+
+    This flag decides whether the tier is ASKED about. It does not decide
+    whether a sale can be built: `src/rotation.py::rotation_sell_reason`
+    raises unconditionally without a `RotationClearance`, which only
+    `_rotation_buy_leg_projected_refusal` below mints, and only after the
+    replacement BUY has survived every gate in `REQUIRED_BUY_LEG_GATES`
+    against PROJECTED POST-SALE state.
+    """
+    if not _rotation_execution_enabled(pipeline):
+        return False
+    execution_cfg = getattr(getattr(pipeline, "config", None), "execution", None)
+    return getattr(execution_cfg, "rotation_ranked_margin_enabled", None) is True
+
+
 #: Trades-row fill states that mean "an order on this symbol has been
 #: handed to the broker and not yet reconciled" — the same two values
 #: `Database.get_symbol_last_buy(include_in_flight=True)` treats as
@@ -322,7 +343,7 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     if not _rotation_execution_enabled(pipeline):
         return
     from src.models import TargetPosition
-    from src.rotation import RotationPrecheck, rotation_sell_reason
+    from src.rotation import RotationPrecheck, rotation_proposal_reason
 
     precheck = getattr(
         getattr(pipeline, "portfolio_manager", None), "last_rotation_precheck", None,
@@ -333,9 +354,21 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     held_symbol = opportunity.held_symbol.strip().upper()
     new_symbol = opportunity.new_symbol.strip().upper()
 
-    if opportunity.tier != "ineligible_hold":
+    if opportunity.tier == "ranked_margin":
+        # Board item 39. Executable only behind its own second switch, and
+        # even then this only PROPOSES the close: the sale is withdrawn
+        # again in `ExecutionStage._run_session` unless the replacement BUY
+        # clears every gate in `REQUIRED_BUY_LEG_GATES` against projected
+        # post-sale state. Nothing here can put it on the wire.
+        if not _rotation_ranked_margin_enabled(pipeline):
+            _rotation_skip(
+                pipeline, ctx, opportunity, "ranked_margin_tier_not_enabled",
+            )
+            return
+    elif opportunity.tier != "ineligible_hold":
         _rotation_skip(
-            pipeline, ctx, opportunity, "ranked_margin_tier_is_surfaced_only",
+            pipeline, ctx, opportunity, "unknown_rotation_tier",
+            tier_seen=str(opportunity.tier),
         )
         return
 
@@ -444,7 +477,12 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         )
         return
 
-    reason = rotation_sell_reason(
+    # A PROPOSAL, not an authorisation — see `rotation_proposal_reason`.
+    # For the categorical tier this is byte-for-byte the string
+    # `rotation_sell_reason` produced before; for the ranked-margin tier it
+    # says in the Risk Manager's own input that the close is contingent on
+    # the replacement BUY clearing its execution gates.
+    reason = rotation_proposal_reason(
         opportunity,
         protection_basis=protection.basis,
         protection_detail=str(protection.detail),
@@ -468,6 +506,20 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     ctx.rotation = {
         "held_symbol": held_symbol,
         "new_symbol": new_symbol,
+        # Board item 39: the execution stage branches on this. A rotation
+        # dict without it is treated as the categorical tier, which is what
+        # every pre-item-39 caller meant.
+        "tier": opportunity.tier,
+        # Minted (or not) by `_rotation_sell_gate`, immediately before
+        # the close is submitted. `None` here is not a
+        # default that decays open: the SELL loop refuses a ranked-margin
+        # rotation sale outright unless a real `RotationClearance` is
+        # sitting in this slot.
+        "clearance": None,
+        "opportunity": opportunity,
+        "protection_basis_text": protection.basis,
+        "protection_detail_text": str(protection.detail),
+        "floor_pct": float(precheck.floor_pct),
         "new_score": float(opportunity.new_score),
         "held_reasons": list(opportunity.reasons),
         "protection_basis": protection.basis,
@@ -490,6 +542,901 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         ceiling_pct=float(precheck.ceiling_pct),
         tier=opportunity.tier,
     )
+
+
+def _projected_sale_qty(decision, position) -> float:
+    """How many shares `decision` will actually take off `position`.
+
+    Mirrors `ExecutionStage._run_session`'s own SELL sizing exactly —
+    whole-share flooring on a whole-share position, the `>= position` full-
+    exit promotion, the `allocation_pct == 0` ambiguity skip — because a
+    projection that sized a sale differently from the loop that places it
+    would be describing a book that never exists. Returns 0.0 for anything
+    the loop would skip.
+    """
+    try:
+        held_qty = float(getattr(position, "qty", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    # The action and the position's SIGN have to agree, exactly as the two
+    # execution loops require. The SELL loop refuses a SELL on a short
+    # (`existing[0].qty <= 0: continue`) and the COVER loop refuses a COVER
+    # on a long — so a projection that closed either one would remove
+    # exposure the real session keeps, and a book that keeps a losing
+    # position the projection dropped is more negative than the projection
+    # said. Both directions are unsafe; both are refused here.
+    #
+    # A blanket `abs()` was the over-correction of the opposite bug, where
+    # sizing off the SIGNED quantity made every COVER a no-op.
+    covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
+    if covering and held_qty >= 0:
+        return 0.0  # a COVER on a long: the COVER loop skips it
+    if not covering and held_qty <= 0:
+        return 0.0  # a SELL on a short: the SELL loop skips it
+    held_qty = abs(held_qty)
+    if held_qty <= 0:
+        return 0.0
+    try:
+        pct = float(getattr(decision, "allocation_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if pct == 0:
+        # The loop logs this as ambiguous and skips it, so nothing is sold.
+        return 0.0
+    if 0 < pct < 100:
+        qty = held_qty * (pct / 100.0)
+        if float(held_qty).is_integer():
+            qty = max(1.0, float(int(qty)))
+        if qty <= 0:
+            return 0.0
+        return min(qty, held_qty)
+    return held_qty
+
+
+def _projected_post_sale_book(pipeline, ctx, positions, total_value: float,
+                              sell_decisions: list, cover_decisions: list):
+    """The held book and the equity as they will be once THIS SESSION'S
+    exits have gone through — the state the downstream gates will actually
+    read, projected before any of them has been submitted.
+
+    Board item 39. The daily-loss re-check that can refuse a rotation's
+    replacement BUY recomputes from `ctx.positions` AFTER the sale, on both
+    sides of its comparison: the numerator is the held book's own intraday
+    change (`daily_loss_numerator`) and the volatility-relative rung of the
+    threshold is measured from the held book too
+    (`RiskRuleEngine.portfolio_vol_provider`). Removing a position
+    therefore removes its intraday P&L from the loss AND moves the limit
+    that loss is tested against. A check fed PRE-sale state is blind to
+    both — which is exactly why attempt 2 on this item was unsafe by
+    construction, and why this builds the post-sale book instead of
+    re-implementing the check against the pre-sale one.
+
+    **Exactly the exits it is handed are applied, and no others.** The
+    rotation gate hands it ONE decision — the rotation's own close — and
+    relies on a fresh `_refresh_account_state()` read for everything else
+    the session has already done. Projecting the other exits would be
+    guessing at fills nobody controls; measuring them is free, because the
+    rotation's close is ordered last.
+
+    Returns `(projected_positions, equity_for_weights, account_pnl)`.
+
+      * `equity_for_weights` is `total_value` unchanged. A sale is
+        mark-to-market neutral: it converts a marked position into the cash
+        that position was already marked at, so the book's composition
+        changes and its total does not.
+      * `account_pnl` is `total_value - concession - ctx.last_equity`,
+        where `concession` is what the limit prices below give up against
+        the marks (`_submit_protected_sell` sells at `0.995 * price`). That
+        is the one real equity effect of executing, it is knowable, and it
+        is subtracted rather than ignored — a more negative day change
+        trips the breaker SOONER, which is the side to be wrong on.
+
+    Cover decisions are applied the same way: a COVER closes a short, which
+    also removes that name's intraday change from the held book.
+    """
+    from src.rotation import ROTATION_MARGIN_PCT  # noqa: F401  (module sanity)
+
+    by_symbol = {}
+    for decision in list(sell_decisions or []) + list(cover_decisions or []):
+        symbol = str(getattr(decision, "symbol", "") or "").strip().upper()
+        if symbol:
+            by_symbol.setdefault(symbol, decision)
+
+    projected = []
+    concession = 0.0
+    for position in positions or []:
+        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+        decision = by_symbol.get(symbol)
+        if decision is None:
+            projected.append(position)
+            continue
+        held_qty = float(getattr(position, "qty", 0.0) or 0.0)
+        sold = _projected_sale_qty(decision, position)
+        if sold <= 0:
+            projected.append(position)
+            continue
+        try:
+            price = float(getattr(position, "current_price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price > 0:
+            # What the marketable limit gives up against the mark if it
+            # fills at the limit. A SELL rests BELOW the mark and a COVER
+            # BUYS back ABOVE it, so the cushion is applied in opposite
+            # directions and costs the account in both. Rounded the same
+            # way the loops round it so the two cannot drift.
+            covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
+            # The SAME two factors `ExecutionStage._run_session` prices its
+            # own exits at — 0.995 for a SELL, its 1.005 mirror for a COVER
+            # (board item 138, `config/number_ledger.yaml`). No new number:
+            # a projection that priced an exit differently from the loop
+            # that places it would be describing a fill that never happens.
+            limit = round(price * (1.005 if covering else 0.995), 2)
+            concession += abs(limit - price) * abs(sold)
+        remaining = abs(held_qty) - abs(sold)
+        if remaining <= 0 or held_qty == 0:
+            continue  # position gone
+        projected.append(_scaled_position(position, remaining / abs(held_qty)))
+
+    try:
+        last_equity = float(getattr(ctx, "last_equity", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        last_equity = 0.0
+    account_pnl = float(total_value) - concession - last_equity
+    return projected, float(total_value), account_pnl
+
+
+def _scaled_position(position, remaining_fraction: float):
+    """A copy of `position` holding `remaining_fraction` of what it holds.
+
+    Used only for a PARTIAL exit. Quantity, market value and — the field
+    the daily-loss numerator actually reads — `unrealized_intraday_pnl` all
+    scale by the same fraction, because selling half a position leaves half
+    its intraday change on the books. Any field this does not know about is
+    carried through unchanged.
+
+    `copy.copy` rather than a constructor call: `Position` is not stable
+    across this repo's fixtures (several tests use simple stand-ins), and a
+    projection helper must not be the thing that decides what a position
+    class looks like.
+    """
+    import copy
+    clone = copy.copy(position)
+    for field_name in ("qty", "market_value", "unrealized_intraday_pnl",
+                       "unrealized_pnl", "cost_basis"):
+        value = getattr(clone, field_name, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            setattr(clone, field_name, float(value) * remaining_fraction)
+        except Exception:  # noqa: BLE001
+            # A frozen or property-backed field: leave it. The numerator
+            # reads `unrealized_intraday_pnl`, and a field that could not
+            # be scaled down is left at its FULL value, which overstates
+            # the remaining book rather than understating it.
+            continue
+    return clone
+
+
+def _projected_post_sale_cash(cash: float, positions, sell_decisions,
+                              cover_decisions) -> float:
+    """Settled cash once this session's exits have gone through — a LOWER
+    bound, deliberately.
+
+    Called with the rotation's own close and nothing else — every other
+    exit is already reflected in the `cash` this is handed, because that
+    number comes from a broker read taken after they ran.
+
+    A SELL adds its limit proceeds; a COVER SPENDS cash to buy the borrowed
+    shares back, so it is subtracted. The cash sweep is not modelled at
+    all: it can only liquidate the park INTO cash, never out of it, so
+    leaving it out can only understate what is deployable. Understating
+    refuses a rotation that would have worked; overstating sells a position
+    to fund an order that is then refused.
+
+    This is live on the settled-cash branch of `_entry_deployment_budget`
+    only — the ladder branch compares gross exposure and never reads cash.
+    That branch is reached whenever the gross ceiling cannot be resolved,
+    and whenever `allow_margin` is set back to false.
+    """
+    try:
+        cash = float(cash or 0.0)
+    except (TypeError, ValueError):
+        cash = 0.0
+    by_symbol = {}
+    for decision in list(sell_decisions or []) + list(cover_decisions or []):
+        symbol = str(getattr(decision, "symbol", "") or "").strip().upper()
+        if symbol:
+            by_symbol.setdefault(symbol, decision)
+    for position in positions or []:
+        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+        decision = by_symbol.get(symbol)
+        if decision is None:
+            continue
+        sold = _projected_sale_qty(decision, position)
+        if sold <= 0:
+            continue
+        try:
+            price = float(getattr(position, "current_price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
+        limit = round(price * (1.005 if covering else 0.995), 2)
+        cash += (-1.0 if covering else 1.0) * limit * abs(sold)
+    return cash
+
+
+def _projected_entry_cost(decision, equity: float, *,
+                          budget_is_gross: bool) -> float:
+    """What an entry earlier in the same session will take out of the
+    deployment pool before the rotation's own buy reaches it.
+
+    A SHORT is never SIZED by the entry budget (D11), but it still DRAWS
+    the pool whenever that pool is the ladder's gross headroom rather than
+    settled cash — the submit loop's own rule is
+    `if budget_is_gross or not is_short: entry_budget -= estimated_cost`,
+    because a short occupies gross exactly as a long does. Excluding it
+    outright over-stated the pool by the whole short, which is the unsafe
+    direction: the projection clears, reality refuses, and the position has
+    already been sold.
+
+    The charge is the full allocation, which is an UPPER bound on the real
+    draw (the submit loop takes `min(qty_by_alloc, qty_by_risk)` and every
+    later adjustment moves the quantity down, and it only draws at all once
+    the broker accepts). Over-charging shrinks the pool, which refuses a
+    rotation that would have worked — the side to be wrong on.
+    """
+    if (str(getattr(decision, "action", "") or "").upper() == "SHORT"
+            and not budget_is_gross):
+        return 0.0
+    try:
+        allocation_pct = float(getattr(decision, "allocation_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, float(equity) * allocation_pct / 100.0)
+
+
+def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
+                                        buy_decision, positions,
+                                        total_value: float,
+                                        rotation_sell,
+                                        cash: float = 0.0,
+                                        buy_decisions_before: list | None = None):
+    """Would the rotation's replacement BUY be refused downstream, judged
+    against the book as it will be AFTER this session's exits?
+
+    Returns `(clearance, reason, detail)`: exactly one of `clearance` (a
+    `src.rotation.RotationClearance`) and `reason` is not None.
+
+    Board item 39. Every gate below is the SAME computation the execution
+    stage runs later, fed projected post-sale inputs — not a second
+    implementation of it:
+
+      * `daily_loss_recheck` — `risk.rules.daily_loss_numerator` over the
+        projected book, then `RiskRuleEngine.check_daily_loss` with the
+        threshold ALSO measured from the projected book
+        (`TradingPipeline.held_book_daily_vol_pct(positions=..., equity=...)`
+        feeding `use_supplied_vol`). Both halves of that comparison are
+        measured from the held book, so both move when a holding is sold;
+        moving only one is the mismatch `docs/WORK.md` item 32 exists
+        about, and testing a projected numerator against a pre-sale
+        denominator would reintroduce it.
+      * `no_price` / `stale_entry` — `_live_fill_price` and the same 5%
+        deviation test the preflight applies. Neither depends on the sale
+        at all, so these are exact now, not projected.
+      * `qty_zero` — the preflight's own sizing helpers (`_size_shares`,
+        `_qty_by_risk_budget`, `_fractional_sizing_allowed`) at the
+        projected equity.
+
+    **What this does NOT close, stated plainly.** The BUY submit loop can
+    still refuse an entry for reasons no pre-check can evaluate in advance:
+    the latency window (`latency_window`), an unfillable marketable limit
+    against the NBBO at submit time, the borrow gate on a SHORT, and any
+    broker rejection. Those are not knowable before the sale, and the tape
+    can also move between this projection and the real check. This gate
+    removes the deterministic, knowable refusals — the ones that made the
+    naked-sale outcome reproducible — and the residual is recorded in the
+    PR and in `docs/INCIDENT_HISTORY.md` rather than papered over.
+    """
+    from src.rotation import REQUIRED_BUY_LEG_GATES, RotationClearance
+    from src.risk.rules import RiskRuleEngine, daily_loss_numerator
+
+    symbol = str(getattr(buy_decision, "symbol", "") or "").strip().upper()
+    checked: list[str] = []
+
+    # TWO projections, not one, because the two gates below need opposite
+    # assumptions about the OTHER exits this session (adversary review of
+    # attempt 3):
+    #
+    #   * `every_exit` — every SELL and COVER fills. That is what the real
+    #     daily-loss re-check will read IF they all fill.
+    #   * `rotation_only` — only the rotation's own close fills. The desk
+    #     already knows exits do not always fill; that is why
+    #     `_drop_rotation_buy_if_room_not_freed` exists. An exit that does
+    #     not fill leaves its gross exposure in place, so this is the
+    #     book with the LEAST room.
+    #
+    # The daily-loss gate is run against BOTH and refuses if EITHER trips,
+    # because an unfilled exit can leave the held book either more or less
+    # negative and neither branch may be assumed. The funding gate uses
+    # `rotation_only`, the smaller pool. Both choices refuse rotations that
+    # would have worked and neither clears one that would not — the
+    # direction this desk is wrong on everywhere else.
+    # ONE projection, over the rotation's own close and nothing else.
+    #
+    # An earlier version projected the other exits this session too, and
+    # then tried to bound the uncertainty by evaluating two books — "all
+    # exits fill" and "only the rotation's fills". That is not a bound: the
+    # worst case is per-position (an exit carrying an intraday LOSS fails
+    # to fill while one carrying a GAIN fills), and that mixed book is
+    # neither of the two. Sampling two points of 2^N and calling it
+    # conservative is the same mistake as attempt 2, one level up.
+    #
+    # It is also unnecessary. This gate now runs from inside the SELL loop,
+    # immediately before the rotation's own close is submitted, and the
+    # rotation's close is ordered LAST among this session's exits. By the
+    # time it is reached every other exit has a terminal status and the
+    # account has been refreshed, so the other exits are a MEASUREMENT in
+    # `positions`, not an assumption. The only thing left to project is the
+    # one sale that has not happened yet — which is the thing a projection
+    # is actually good for.
+    # `positions` is a broker read taken after every other SELL this
+    # session reached a terminal status, so everything else the session did
+    # is already in it. A session with a COVER still pending never reaches
+    # this function at all (`_pending_cover_symbols`), so the only thing
+    # left to project is the one sale that has not happened yet.
+    projected_positions, equity_for_weights, account_pnl = (
+        _projected_post_sale_book(
+            pipeline, ctx, positions, total_value,
+            [rotation_sell] if rotation_sell is not None else [], [],
+        )
+    )
+
+    # --- gate 1: the daily-loss re-check, both halves projected ----------
+    checked.append("daily_loss_recheck")
+    park = getattr(
+        getattr(pipeline.config, "cash_sweep", None), "symbol", None,
+    )
+    try:
+        projected_vol = pipeline.held_book_daily_vol_pct(
+            positions=projected_positions, equity=equity_for_weights,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Rotation gate: projected held-book volatility unreadable (%s) "
+            "— the projected breaker falls back to its fixed rung, exactly "
+            "as the live one does.", exc,
+        )
+        projected_vol = None
+    try:
+        basis = pipeline.risk_engine.daily_loss_limit_basis(
+            portfolio_vol_pct=projected_vol, use_supplied_vol=True,
+        )
+        vol_relative = basis == RiskRuleEngine.VOL_RELATIVE_BASIS
+    except Exception:  # noqa: BLE001
+        # Same defensive read as `_limit_is_vol_relative`: an engine that
+        # cannot answer is treated as fixed-percentage, the more negative
+        # numerator on any day with realized losses.
+        vol_relative = False
+    projected_pnl, projected_pnl_basis = daily_loss_numerator(
+        account_pnl, projected_positions,
+        vol_relative=vol_relative, cash_park_symbol=park,
+    )
+    try:
+        violation = pipeline.risk_engine.check_daily_loss(
+            float(getattr(ctx, "last_equity", 0.0) or 0.0), projected_pnl,
+            portfolio_vol_pct=projected_vol, use_supplied_vol=True,
+        )
+    except TypeError:
+        # An engine stub predating the projected-threshold arguments.
+        # Refuse rather than silently fall back to the live threshold,
+        # which is the pre-sale one and is what made attempt 2 unsafe.
+        return None, "daily_loss_recheck", (
+            "the risk engine cannot evaluate the daily-loss limit against "
+            "a projected book, so the replacement buy cannot be cleared"
+        )
+    if violation is not None:
+        return None, "daily_loss_recheck", (
+            f"projected post-sale {violation.message} "
+            f"({projected_pnl_basis} basis, day change "
+            f"${projected_pnl:.2f} over {len(projected_positions)} "
+            f"remaining holding(s))"
+        )
+
+    # --- gate 2/3: price and entry staleness, exact now ------------------
+    checked.append("no_price")
+    market_price = _live_fill_price(pipeline, symbol)
+    if not isinstance(market_price, (int, float)) or isinstance(
+        market_price, bool,
+    ) or market_price <= 0:
+        return None, "no_price", (
+            "no verifiable live price for the replacement buy (daily bar "
+            "close is not a fill reference)"
+        )
+    market_price = float(market_price)
+
+    checked.append("stale_entry")
+    try:
+        entry_price = float(getattr(buy_decision, "entry_price", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        entry_price = 0.0
+    if entry_price > 0:
+        deviation = abs(entry_price - market_price) / market_price
+        if deviation > 0.05:
+            return None, "stale_entry", (
+                f"entry ${entry_price:.2f} is {deviation * 100:.1f}% from "
+                f"market ${market_price:.2f} (threshold 5%)"
+            )
+
+    # --- gate 4: does the replacement round to a tradeable size? ---------
+    checked.append("qty_zero")
+    sizing_price = max(market_price, entry_price or 0.0)
+    is_short = getattr(buy_decision, "action", "BUY") == "SHORT"
+    fractional = _fractional_sizing_allowed(
+        pipeline, symbol, is_short=is_short,
+    )
+    try:
+        allocation_pct = float(
+            getattr(buy_decision, "allocation_pct", 0.0) or 0.0,
+        )
+    except (TypeError, ValueError):
+        allocation_pct = 0.0
+    qty = _size_shares(
+        pipeline,
+        (float(equity_for_weights) * allocation_pct / 100.0) / sizing_price,
+        fractional=fractional,
+    )
+    if qty <= 0:
+        return None, "qty_zero", (
+            f"allocation {allocation_pct:.2f}% at ${sizing_price:.2f} "
+            f"rounds to zero shares"
+        )
+    risk_qty = _qty_by_risk_budget(
+        pipeline, total_value=float(equity_for_weights),
+        sizing_price=sizing_price,
+        stop_price=getattr(buy_decision, "stop_loss", 0.0),
+        is_short=is_short, fractional=fractional,
+    )
+    if risk_qty is not None and risk_qty < qty:
+        qty = risk_qty
+    if qty <= 0:
+        return None, "qty_zero", (
+            f"risk budget at ${sizing_price:.2f} entry / "
+            f"${getattr(buy_decision, 'stop_loss', 0.0)} stop rounds to zero "
+            f"shares"
+        )
+
+    # --- gates 5/6: can the post-sale book actually FUND the replacement? -
+    # Added after adversary review of attempt 3. These are the refusals a
+    # rotation is MOST likely to hit, because a rotation only surfaces when
+    # the risk headroom is already under the floor — and risk-based sizing
+    # can ask for more notional than the sale frees whenever the new name's
+    # stop is tighter than the old one's. Both are deterministic functions
+    # of the post-sale book, so both belong here rather than in the
+    # "unknowable" residual.
+    #
+    # The budget is deliberately a LOWER BOUND: it is measured on the
+    # projected book with the projected cash and WITHOUT the cash sweep's
+    # help. The sweep can only add deployable cash, never remove it, so a
+    # replacement that fits here fits the real budget too. Being wrong in
+    # this direction refuses a rotation that would have worked, which costs
+    # an opportunity; being wrong the other way sells a position to fund an
+    # order that is then refused, which costs the position.
+    checked.append("insufficient_cash")
+    checked.append("below_min_notional")
+    projected_cash = _projected_post_sale_cash(
+        cash, positions,
+        [rotation_sell] if rotation_sell is not None else [], [],
+    )
+    try:
+        entry_budget, ladder_backed, budget_note = _entry_deployment_budget(
+            pipeline, ctx, projected_positions, float(equity_for_weights),
+            projected_cash,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, "insufficient_cash", (
+            f"the post-sale entry budget could not be measured ({exc}), so "
+            f"the replacement buy cannot be cleared"
+        )
+    # Earlier entries in the same session drain the pool before this one
+    # reaches it — the submit loop subtracts each order's cost as it goes,
+    # so the projection walks the same order.
+    for earlier in buy_decisions_before or []:
+        entry_budget -= _projected_entry_cost(
+            earlier, float(equity_for_weights),
+            budget_is_gross=bool(ladder_backed),
+        )
+    single_name_cap = _single_name_execution_cap(
+        pipeline, float(equity_for_weights),
+    )
+    order_ceiling = min(entry_budget, single_name_cap)
+    estimated_cost = qty * sizing_price
+    if not is_short and estimated_cost > order_ceiling:
+        affordable_qty = _size_shares(
+            pipeline, order_ceiling / sizing_price, fractional=fractional,
+        )
+        if affordable_qty <= 0:
+            return None, "insufficient_cash", (
+                f"estimated cost ${estimated_cost:.2f} exceeds the "
+                f"${order_ceiling:.2f} deployable on the post-sale book "
+                f"({budget_note})"
+            )
+        resized_cost = min(qty, affordable_qty) * sizing_price
+        floor_usd = _min_order_usd(pipeline)
+        if resized_cost < floor_usd:
+            return None, "below_min_notional", (
+                f"${order_ceiling:.2f} deployable on the post-sale book "
+                f"re-sizes the order to ${resized_cost:.2f}, below the "
+                f"${floor_usd:,.0f} minimum worth trading"
+            )
+
+    missing = [g for g in REQUIRED_BUY_LEG_GATES if g not in checked]
+    if missing:
+        # Unreachable while this function and `REQUIRED_BUY_LEG_GATES` agree.
+        # It is here so that they cannot silently stop agreeing: a gate added
+        # to the list and not to this function refuses the sale rather than
+        # clearing it on a check that was never run.
+        return None, "gate_coverage_incomplete", (
+            f"gates not evaluated: {', '.join(missing)}"
+        )
+    clearance = RotationClearance(
+        held_symbol=str(rotation.get("held_symbol") or ""),
+        new_symbol=symbol,
+        gates_checked=tuple(checked),
+        projected_daily_pnl=float(projected_pnl),
+        projected_basis=str(projected_pnl_basis),
+        projected_positions=tuple(
+            str(getattr(p, "symbol", "") or "").strip().upper()
+            for p in projected_positions
+        ),
+        projected_equity=float(equity_for_weights),
+    )
+    return clearance, None, None
+
+
+def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
+    """The symbols this session will actually COVER when the rotation's
+    close is gated, in the order they will be covered.
+
+    **A cover that cannot move the book does not count.** The COVER loop
+    refuses two classes outright — a COVER against a symbol that is not
+    held short (`existing[0].qty >= 0`), and one with
+    `allocation_pct == 0` — and both take zero shares off the book, change
+    no intraday P&L and move no gross. Counting them would refuse the
+    rotation for a cause with no effect, every session the PM keeps
+    proposing that dead cover, which is a statement about the desk rather
+    than about the market. `_projected_sale_qty` applies the same sign and
+    allocation agreement the COVER loop itself applies, so the filter here
+    and the loop there cannot drift apart.
+
+    Board item 39. The COVER loop runs AFTER the SELL loop, so at gate time
+    no cover has happened and none can be measured — unlike the other
+    SELLs, which the reorder makes measurable.
+
+    They also cannot be usefully BOUNDED. An earlier attempt kept a pending
+    exit in the projected book when it carried an intraday loss and dropped
+    it when it carried a gain, on the grounds that
+    `held_book_daily_pnl` is a plain sum and that selection is its worst
+    case. It is — for the NUMERATOR. But the daily-loss threshold's
+    volatility-relative rung is `sensitivity * sigma` measured from the
+    same book (`vol_relative_drawdown_threshold_pct`), sigma is a property
+    of the basket's price history and not of today's P&L sign, and the
+    limit is strictly INCREASING in it: keeping a volatile losing name in
+    the projected book widens the limit far more than its loss narrows it,
+    which is the loosening direction. Gross exposure wants a third
+    selection again (an exit that does not fill keeps its gross, so the
+    worst case there is keeping ALL of them). One book cannot be the worst
+    case for three consumers that disagree.
+
+    So the desk does not guess: a rotation is refused outright on any
+    session with a cover pending. That costs a rotation on cover days and
+    fails toward not trading, which is the direction every other guard on
+    this path fails in. Whether cover days are common enough for that to
+    matter is a count, and it is `docs/WORK.md` item 165's count.
+    """
+    by_symbol = {
+        str(getattr(p, "symbol", "") or "").strip().upper(): p
+        for p in (positions or [])
+    }
+    symbols = []
+    for decision in cover_decisions or []:
+        symbol = str(getattr(decision, "symbol", "") or "").strip().upper()
+        if not symbol or symbol in symbols:
+            continue
+        position = by_symbol.get(symbol)
+        if position is None:
+            continue  # nothing held: the COVER loop skips it
+        if _projected_sale_qty(decision, position) <= 0:
+            continue  # a no-op cover: it cannot move anything to bound
+        symbols.append(symbol)
+    return tuple(symbols)
+
+
+def _rotation_sell_last(sell_decisions: list, ctx) -> list:
+    """This session's SELLs with a RANKED-MARGIN rotation's close moved to
+    the END, and every other order preserved.
+
+    Board item 39. The rotation's close is the only exit whose paired BUY
+    can be refused for lack of the room the close frees, so it is the only
+    one that must not be submitted until that question is answered — and
+    the question is easiest to answer once every OTHER exit has a terminal
+    status and the account has been re-read. Going last is what turns the
+    other exits from something to project into something to measure.
+
+    A no-op on every session without a ranked-margin rotation, which is
+    every session while `execution.rotation_ranked_margin_enabled` is off.
+    """
+    rotation = getattr(ctx, "rotation", None)
+    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
+        return sell_decisions
+    held = str(rotation.get("held_symbol") or "").strip().upper()
+    if not held:
+        return sell_decisions
+    others = [
+        d for d in sell_decisions
+        if str(getattr(d, "symbol", "") or "").strip().upper() != held
+    ]
+    rotation_legs = [
+        d for d in sell_decisions
+        if str(getattr(d, "symbol", "") or "").strip().upper() == held
+    ]
+    return others + rotation_legs
+
+
+def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
+                        total_value: float, cash: float,
+                        cover_decisions: list | None = None):
+    """Board item 39 — may this RANKED-MARGIN rotation close be submitted?
+
+    Returns `None` for any SELL that is not a ranked-margin rotation close;
+    every pre-item-39 path lands there and is unaffected. Otherwise returns
+    `(cleared, positions, total_value, cash)`, with a REFRESHED book the
+    caller must adopt — clearing the gate against a fresh book while the
+    loop then sizes and prices off a stale one would reintroduce, one
+    statement later, exactly the divergence `_projected_sale_qty` exists to
+    prevent.
+
+    **Why it lives inside the SELL loop rather than ahead of it.** The
+    rotation's close is ordered last (`_rotation_sell_last`), so by the
+    time this runs every other SELL this session has been submitted and
+    waited on to a terminal status. Re-reading the account here therefore
+    MEASURES what those did instead of assuming it.
+
+    COVERs are the exception: their loop runs AFTER this one, so no cover
+    has happened, none can be measured, and — see `_pending_cover_symbols`
+    — none can honestly be bounded either. A session with a cover pending
+    refuses the rotation outright.
+
+    An earlier version ran ahead of the whole loop and projected the other
+    exits too, bounding the uncertainty by evaluating two books ("all exits
+    fill" and "only this one fills"). That is not a bound — the worst case
+    is per-position and is neither book — and it also put this gate in
+    direct conflict with `apply_gross_ceiling`, which nets out EVERY
+    planned exit when it sizes the replacement. Measuring removes both
+    problems.
+
+    `cleared=False` means: do not submit this close. The replacement BUY
+    then dies on the existing `_drop_rotation_buy_if_room_not_freed` path,
+    because `rotation["sell_order_id"]` is never set — the room it was
+    granted was never freed. Both legs fall together and the desk simply
+    keeps the position.
+
+    Scope: the RANKED-MARGIN tier only. The categorical tier
+    (`ineligible_hold`, already live) sells a holding that fails the desk's
+    own entry rules today and whose structural protection has already
+    broken — a sale this desk's doctrine independently supports, so it
+    stands on its own and nothing here touches it.
+    """
+    rotation = getattr(ctx, "rotation", None)
+    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
+        return None
+    held_symbol = str(rotation.get("held_symbol") or "").strip().upper()
+    new_symbol = str(rotation.get("new_symbol") or "").strip().upper()
+    if str(getattr(decision, "symbol", "") or "").strip().upper() != held_symbol:
+        return None
+
+    def _withdraw(reason: str, detail: str):
+        logger.warning(
+            "Rotation withdrawn BEFORE the sell (%s): %s. %s is NOT sold — "
+            "the desk keeps the position rather than going naked.",
+            reason, detail, held_symbol,
+        )
+        _record_pipeline_event(
+            pipeline, ctx, held_symbol, "rotation", "withdrawn", reason,
+            new_symbol=new_symbol, detail=str(detail)[:400],
+            tier="ranked_margin",
+        )
+        _record_execution_skip(
+            pipeline, ctx, held_symbol, "rotation_withdrawn", str(detail)[:400],
+        )
+        # `ctx.rotation` is MARKED withdrawn, not cleared. Clearing it would
+        # make `_drop_rotation_buy_if_room_not_freed` a no-op, and the
+        # replacement BUY — which the constructor sized on the premise that
+        # this close frees room — would then go out against room that was
+        # never freed, putting the book over the risk ceiling. Leaving the
+        # dict in place with no `sell_order_id` is exactly the state that
+        # function already reads as "not submitted, no room freed".
+        rotation["withdrawn"] = reason
+        rotation["clearance"] = None
+
+    pending_covers = _pending_cover_symbols(cover_decisions, positions)
+    if pending_covers:
+        _withdraw(
+            "cover_pending",
+            f"this session still intends to cover "
+            f"{', '.join(pending_covers)}, and the COVER loop runs after "
+            f"this one — their effect on the daily-loss limit cannot be "
+            f"measured yet and cannot be bounded either (the numerator, the "
+            f"volatility-relative threshold and gross exposure each have a "
+            f"different worst case). The desk does not guess: "
+            f"{held_symbol} is kept.",
+        )
+        return False, positions, total_value, cash
+
+    buy_leg = next(
+        (d for d in (buy_decisions or [])
+         if str(getattr(d, "symbol", "") or "").strip().upper() == new_symbol),
+        None,
+    )
+    if buy_leg is None:
+        _withdraw(
+            "buy_leg_absent",
+            f"the replacement buy of {new_symbol} is not in this session's "
+            f"orders, so closing {held_symbol} would free room for nothing",
+        )
+        return False, positions, total_value, cash
+
+    # Re-read the account. This is a measurement of everything the session
+    # has already done, and the book the projection below starts from. A
+    # read it cannot make is a refusal to act — the posture every other
+    # guard on this path takes.
+    try:
+        account, positions, price_map = pipeline._refresh_account_state()
+        total_value = float(
+            account["portfolio_value"] if isinstance(account, dict)
+            else getattr(account, "portfolio_value", total_value)
+        )
+        cash = float(
+            account["cash"] if isinstance(account, dict)
+            else getattr(account, "cash", cash)
+        )
+    except Exception as exc:  # noqa: BLE001
+        _withdraw(
+            "account_refresh_failed",
+            f"close withheld: the post-sale book could not be projected "
+            f"from a current account state ({exc})",
+        )
+        return False, positions, total_value, cash
+
+    held = next(
+        (p for p in (positions or [])
+         if str(getattr(p, "symbol", "") or "").strip().upper() == held_symbol),
+        None,
+    )
+    if held is None or float(getattr(held, "qty", 0.0) or 0.0) <= 0:
+        # The refreshed book no longer holds it (a stop filled, a
+        # broker-side close). The SELL loop would drop it silently two
+        # statements below; a candidate must not leave this pipeline
+        # without a durable, per-symbol reason.
+        _withdraw(
+            "held_position_gone",
+            f"{held_symbol} is no longer held on a current broker read, so "
+            f"there is nothing to close and no room to free for {new_symbol}",
+        )
+        return False, positions, total_value, cash
+
+    clearance, reason, detail = _rotation_buy_leg_projected_refusal(
+        pipeline, ctx, rotation=rotation, buy_decision=buy_leg,
+        positions=positions, total_value=total_value, cash=cash,
+        rotation_sell=decision,
+        # The submit loop walks `buy_decisions` in order and subtracts each
+        # order's cost from the pool as it goes, so everything ahead of the
+        # rotation's own buy has already drawn the budget down by the time
+        # it is reached.
+        buy_decisions_before=list(
+            buy_decisions[:buy_decisions.index(buy_leg)],
+        ),
+    )
+    if clearance is None:
+        _record_execution_skip(
+            pipeline, ctx, new_symbol, str(reason),
+            f"rotation buy leg refused on projected post-sale state: {detail}",
+        )
+        _withdraw(
+            f"buy_leg_would_be_refused:{reason}",
+            f"close withheld because the replacement buy of {new_symbol} "
+            f"would be refused ({reason}: {detail})",
+        )
+        return False, positions, total_value, cash
+
+    rotation["clearance"] = clearance
+    _record_pipeline_event(
+        pipeline, ctx, held_symbol, "rotation", "buy_leg_cleared",
+        "projected_post_sale_gates_passed", new_symbol=new_symbol,
+        gates=list(clearance.gates_checked),
+        projected_daily_pnl=clearance.projected_daily_pnl,
+        projected_basis=clearance.projected_basis,
+        projected_positions=list(clearance.projected_positions),
+        projected_equity=clearance.projected_equity,
+        tier="ranked_margin",
+    )
+    return True, positions, total_value, cash
+
+
+#: Sentinel returned by `_rotation_ranked_margin_sell_reason` when the SELL
+#: must NOT be submitted. Distinct from `None`, which means "not a
+#: ranked-margin rotation close — carry on as before".
+_ROTATION_SELL_REFUSED = object()
+
+
+def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
+    """The last barrier in front of a RANKED-MARGIN rotation close.
+
+    Returns:
+      * `None` — this SELL is not a ranked-margin rotation close. Every
+        pre-item-39 path lands here and is unaffected.
+      * a `str` — the close is permitted, and this is the reason built from
+        the `RotationClearance` that permitted it.
+      * `_ROTATION_SELL_REFUSED` — do not submit this SELL.
+
+    Board item 39, and the reason it is written this way. Attempt 1 on this
+    item took the structural barrier that made a ranked-margin sale
+    impossible to BUILD and replaced it with a config boolean, so one truthy
+    value anywhere in the settings chain was sufficient to put a real sale
+    on the wire. The barrier here is `src/rotation.py::rotation_sell_reason`
+    raising `ValueError` without a `RotationClearance` — an object carrying
+    the projected post-sale numbers the replacement buy was cleared on, that
+    no configuration can produce. This function reads no flag at all; it
+    only asks whether the evidence exists, and refuses the sale when the
+    answer raises.
+    """
+    from src.rotation import RotationOpportunity, rotation_sell_reason
+
+    rotation = getattr(ctx, "rotation", None)
+    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
+        return None
+    symbol = str(getattr(decision, "symbol", "") or "").strip().upper()
+    if symbol != str(rotation.get("held_symbol") or "").strip().upper():
+        return None
+    opportunity = rotation.get("opportunity")
+    if not isinstance(opportunity, RotationOpportunity):
+        logger.error(
+            "Rotation SELL of %s REFUSED: the run carries no rotation "
+            "opportunity to build a reason from. The position is kept.",
+            symbol,
+        )
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "rotation", "sell_refused",
+            "no_opportunity_on_context", new_symbol=rotation.get("new_symbol"),
+        )
+        return _ROTATION_SELL_REFUSED
+    try:
+        return rotation_sell_reason(
+            opportunity,
+            protection_basis=str(rotation.get("protection_basis_text") or ""),
+            protection_detail=str(rotation.get("protection_detail_text") or ""),
+            headroom_pct=float(rotation.get("headroom_pct") or 0.0),
+            ceiling_pct=float(rotation.get("ceiling_pct") or 0.0),
+            floor_pct=float(rotation.get("floor_pct") or 0.0),
+            clearance=rotation.get("clearance"),
+        )
+    except ValueError as exc:
+        logger.error(
+            "Rotation SELL of %s REFUSED at the wire: %s. The position is "
+            "kept — the desk does not sell into an uncleared replacement.",
+            symbol, exc,
+        )
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "rotation", "sell_refused",
+            "no_clearance", new_symbol=rotation.get("new_symbol"),
+            detail=str(exc)[:400],
+        )
+        _record_execution_skip(
+            pipeline, ctx, symbol, "rotation_sell_refused", str(exc)[:400],
+        )
+        return _ROTATION_SELL_REFUSED
 
 
 def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float,
@@ -5158,6 +6105,12 @@ class DecisionStage:
             )),
             # Phase 14b: wording only — see `_apply_rotation_execution`.
             rotation_execute_enabled=_rotation_execution_enabled(pipeline),
+            # Board item 39: the ranked-margin tier is executable behind its
+            # own second switch, and the PM's prompt has to say so or the
+            # model sizes its plan as though no room is being freed.
+            rotation_ranked_margin_enabled=_rotation_ranked_margin_enabled(
+                pipeline,
+            ),
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
@@ -6508,6 +7461,15 @@ class ExecutionStage:
         cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
         hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
 
+        # Board item 39 — the RANKED-MARGIN rotation's close goes LAST
+        # among this session's exits, so that when its paired BUY is
+        # checked (in `_rotation_sell_gate`, immediately before the close
+        # is submitted) every other exit has a terminal status and the
+        # account can simply be re-read rather than guessed at. A no-op on
+        # every session without a ranked-margin rotation, which is every
+        # session while `execution.rotation_ranked_margin_enabled` is off.
+        sell_decisions = _rotation_sell_last(sell_decisions, ctx)
+
         for d in hold_decisions:
             try:
                 pipeline.db.insert_trade(
@@ -6525,8 +7487,51 @@ class ExecutionStage:
         for decision in sell_decisions:
             prot = None
             try:
+                # Board item 39. For a ranked-margin rotation close this
+                # re-reads the account (measuring what the exits above
+                # actually did), projects THIS sale, and runs the
+                # replacement BUY through every refusal gate that is
+                # knowable before the sale. `cleared` False means the buy
+                # would be refused, so the close is not submitted and the
+                # desk keeps the position instead of going naked. `None`
+                # for every other SELL in the desk's history.
+                rotation_gate = _rotation_sell_gate(
+                    pipeline, ctx, decision, buy_decisions, positions,
+                    total_value, cash, cover_decisions,
+                )
+                if rotation_gate is not None:
+                    cleared, positions, total_value, cash = rotation_gate
+                    # Adopt the refreshed book so this close is sized and
+                    # priced off the same state the gate cleared against.
+                    # `deployable_cash` is DERIVED from cash, so it is
+                    # computed BEFORE any of the four is assigned: a raise
+                    # part-way through would otherwise be swallowed by this
+                    # loop's own handler and leave three fresh fields
+                    # beside a stale derivation. All four, or none.
+                    refreshed = (
+                        positions, cash, total_value,
+                        pipeline._compute_deployable_cash(cash, positions),
+                    )
+                    (ctx.positions, ctx.cash, ctx.total_value,
+                     ctx.deployable_cash) = refreshed
+                    if not cleared:
+                        continue
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty <= 0:
+                    continue
+                # Board item 39 — the unconditional barrier. A RANKED-MARGIN
+                # rotation close may not reach the broker unless
+                # `rotation_sell_reason` can build its reason from a real
+                # `RotationClearance`, which only the projected post-sale
+                # gate above mints. This reads no config: the feature flag
+                # decides whether such a close is ever PROPOSED, and cannot
+                # decide whether it is permitted to execute. Attempt 1 on
+                # this item replaced exactly this kind of structural barrier
+                # with a config boolean; it is not a config boolean again.
+                rotation_final_reason = _rotation_ranked_margin_sell_reason(
+                    pipeline, ctx, decision,
+                )
+                if rotation_final_reason is _ROTATION_SELL_REFUSED:
                     continue
                 if decision.allocation_pct == 0:
                     logger.warning(
@@ -6593,6 +7598,21 @@ class ExecutionStage:
                 ):
                     rotation["sell_order_id"] = order.get("id")
                     rotation["sell_qty"] = float(qty)
+                    if isinstance(rotation_final_reason, str):
+                        # A SECOND durable fact, not an edit of the first.
+                        # The proposal the Risk Manager reviewed and the
+                        # clearance the sale executed under are two
+                        # different things that happened at two different
+                        # times; overwriting one with the other leaves the
+                        # ledger disagreeing with the alert about what was
+                        # said when. Written once, never edited.
+                        rotation["cleared_reason"] = rotation_final_reason
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "rotation",
+                            "sell_cleared_reason", rotation_final_reason,
+                            broker_order_id=order.get("id"),
+                            new_symbol=rotation.get("new_symbol"),
+                        )
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "rotation",
                         "sell_submitted", rotation.get("reason", ""),

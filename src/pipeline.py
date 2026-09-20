@@ -9104,8 +9104,31 @@ class TradingPipeline:
             "peak_to_trough_pct": peak_to_trough,
         }
 
-    def measure_held_book_daily_vol(self):
+    def measure_held_book_daily_vol(self, positions=None, equity=None):
         """`PortfolioVolEstimate` for the book the desk is holding right now.
+
+        **`positions` / `equity` override the live broker read** so a
+        PROJECTED book can be measured through this identical arithmetic
+        rather than through a second, hand-rolled copy of it. The only
+        caller that passes them is the rotation sequencing gate
+        (`src/pipeline_stages.py::_rotation_buy_leg_projected_refusal`),
+        which must know what the daily circuit breaker's THRESHOLD will be
+        over the book that exists AFTER a proposed sale, not the one that
+        exists before it — the threshold is measured from the held book's
+        own volatility, so removing a holding moves it. Both arguments must
+        be given together or neither; one alone is a programming error.
+        """
+        if (positions is None) != (equity is None):
+            raise ValueError(
+                "measure_held_book_daily_vol: pass BOTH positions and equity "
+                "to measure a projected book, or neither to measure the live "
+                "one — projected weights built from live equity (or the "
+                "reverse) describe a book that never exists."
+            )
+        return self._measure_held_book_daily_vol(positions, equity)
+
+    def _measure_held_book_daily_vol(self, positions=None, equity=None):
+        """Implementation of `measure_held_book_daily_vol`.
 
         docs/WORK.md item 32 (owner call 2026-09-11). The single place the
         drawdown alarms' volatility yardstick is produced. Gathers what only
@@ -9130,13 +9153,17 @@ class TradingPipeline:
             measure_portfolio_daily_vol,
             normalized_holding_weights,
         )
+        projected = positions is not None
         try:
-            account, positions, _ = self._refresh_account_state()
-            equity = float(
-                getattr(account, "portfolio_value", None)
-                or getattr(account, "equity", None)
-                or 0.0
-            )
+            if positions is None:
+                account, positions, _ = self._refresh_account_state()
+                equity = float(
+                    getattr(account, "portfolio_value", None)
+                    or getattr(account, "equity", None)
+                    or 0.0
+                )
+            else:
+                equity = float(equity)
             # 2026-09-14, docs/WORK.md item 32: the cash park is excluded
             # here, exactly as `gross_exposure` already excludes it. Parked
             # cash was 78% of the gross weight this yardstick was measured
@@ -9208,10 +9235,19 @@ class TradingPipeline:
                 bars_by_symbol[symbol] = []
 
         estimate = measure_portfolio_daily_vol(weights, bars_by_symbol)
+        if projected:
+            # A PROJECTED measurement is never memoised. The memo has one
+            # slot and is read by all six of the breaker's call sites, so a
+            # transient `get_ohlcv` failure during a projection would
+            # otherwise be able to set the day's threshold for the LIVE
+            # book as well (adversary review, board item 39 attempt 3).
+            # Re-measuring the live book costs one fetch per holding; a
+            # degraded yardstick served to the circuit breaker costs more.
+            return estimate
         self._held_book_vol_memo = (key, estimate)
         return estimate
 
-    def held_book_daily_vol_pct(self) -> float | None:
+    def held_book_daily_vol_pct(self, positions=None, equity=None) -> float | None:
         """The held book's realized daily volatility in percent, or None.
 
         docs/WORK.md item 32. Wired into `RiskRuleEngine` as
@@ -9221,7 +9257,9 @@ class TradingPipeline:
         measurement rather than each making their own.
         """
         try:
-            return self.measure_held_book_daily_vol().daily_vol_pct
+            return self.measure_held_book_daily_vol(
+                positions=positions, equity=equity,
+            ).daily_vol_pct
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Held-book volatility measurement failed (%s) — the drawdown "

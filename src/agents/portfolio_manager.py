@@ -677,6 +677,9 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             ceiling_pct=max_portfolio_risk_pct,
             precheck=rotation_precheck,
             execute_enabled=bool(kwargs.get("rotation_execute_enabled", False)),
+            ranked_margin_enabled=bool(
+                kwargs.get("rotation_ranked_margin_enabled", False),
+            ),
         )
 
         # L2 memory: each position line also gets entry context + Tech rating trajectory
@@ -1891,6 +1894,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         ceiling_pct: float,
         precheck: RotationPrecheck | None = None,
         execute_enabled: bool = False,
+        #: Board item 39 — `execution.rotation_ranked_margin_enabled`, the
+        #: SECOND switch. `execute_enabled` alone still means the
+        #: categorical tier only, exactly as before.
+        ranked_margin_enabled: bool = False,
     ) -> str:
         """Phase 14 — the opportunity-cost comparison, surfaced as
         information. See `src/rotation.py` for the rule, the margin and the
@@ -1989,16 +1996,77 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "this gap is not an artefact of coverage. Had it not, "
                 "nothing would have been surfaced."
             )
-        lines.append(
-            "This is a comparison, not an instruction: it names the "
-            "weakest thing currently using the room and the strongest "
-            "thing there is no room for. Trimming or exiting "
-            f"{opportunity.held_symbol} to fund {opportunity.new_symbol} is "
-            "one reasonable call; doing nothing is another. Either way, an "
-            "edit to a held position needs the same substantive "
-            "justification any other exit does — this note is not one."
+        # Board item 39: the RANKED-MARGIN tier only, deliberately.
+        #
+        # "Doing nothing is another reasonable call" is not true once the
+        # desk can close the name itself, and two adjacent paragraphs
+        # claiming opposite things is a prompt that has rotted. That is
+        # equally true of the CATEGORICAL tier, which is live today — but
+        # rewording a live seat's prompt is a behaviour change on a path
+        # that is trading, it is not required by this item, and it belongs
+        # in a change a reviewer can judge on its own merits rather than
+        # as a footnote in a sequencing fix. The categorical text below is
+        # therefore byte-for-byte unchanged.
+        desk_may_act = (
+            ranked_margin_enabled and opportunity.tier == "ranked_margin"
         )
-        if execute_enabled and opportunity.tier == "ineligible_hold":
+        if desk_may_act:
+            lines.append(
+                "This names the weakest thing currently using the room and "
+                "the strongest thing there is no room for. Read the "
+                "paragraph below before you plan: on this comparison the "
+                "desk may close the held name ITSELF, so leaving it alone "
+                "is not one of the outcomes. An edit to a held position "
+                "still needs the same substantive justification any other "
+                "exit does — this note is not one."
+            )
+        else:
+            lines.append(
+                "This is a comparison, not an instruction: it names the "
+                "weakest thing currently using the room and the strongest "
+                "thing there is no room for. Trimming or exiting "
+                f"{opportunity.held_symbol} to fund "
+                f"{opportunity.new_symbol} is one reasonable call; doing "
+                "nothing is another. Either way, an edit to a held "
+                "position needs the same substantive justification any "
+                "other exit does — this note is not one."
+            )
+        if ranked_margin_enabled and opportunity.tier == "ranked_margin":
+            # Board item 39. The desk can now act on THIS tier too, behind
+            # its own second switch. The model must be told, or it sizes a
+            # plan as though no room is being freed — and the rotation's
+            # own arithmetic then depends on that plan. A prompt that is
+            # silent about what the desk will do on its own is wrong in the
+            # same way stale code is.
+            lines.append(
+                "AUTOMATIC ROTATION IS ENABLED for this ranked-margin case: "
+                f"if you include a BUY target for {opportunity.new_symbol} "
+                f"and do not yourself close {opportunity.held_symbol}, the "
+                f"desk will propose a full close of {opportunity.held_symbol}"
+                " on its own — but ONLY if its structural protection has "
+                "already broken under the holding-discipline check, it was "
+                "not bought today, nothing is in flight on it, AND the "
+                f"replacement buy of {opportunity.new_symbol} still clears "
+                "every gate that can be KNOWN before the sale (the "
+                "daily-loss limit, a usable price, a fresh entry, a "
+                "tradeable size, and the funding), measured against the "
+                "book as it would be AFTER the sale. Some refusals are not "
+                "knowable in advance — a stale quote at the moment of "
+                "submission, a broker rejection — and those are not "
+                "covered. If the buy would be refused on anything that IS "
+                "knowable, NEITHER leg happens and the holding stays. That "
+                "proposal goes through the Risk Manager like any other "
+                "exit.\n"
+                "Do NOT size your other BUYs against the room this would "
+                f"free. Size {opportunity.new_symbol} for the position you "
+                "want and size everything else against the book as it "
+                "stands. If the session's entries together ask for more "
+                "than the freed room can fund, the funding gate refuses "
+                "this replacement and BOTH legs are withdrawn — so "
+                "spending the same room twice does not get you a bigger "
+                "trade, it gets you no rotation."
+            )
+        elif execute_enabled and opportunity.tier == "ineligible_hold":
             # Phase 14b. Wording only — the act itself is decided in
             # `DecisionStage._apply_rotation_execution` from the desk's own
             # data, after this prompt returns.
@@ -2082,6 +2150,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # a categorically-ineligible holding this session; the act
                # is decided in `DecisionStage`, never in this prompt.
                rotation_execute_enabled: bool = False,
+               rotation_ranked_margin_enabled: bool = False,
                # 2026-09-04 fix: the SAME real derived reward:risk
                # `PortfolioConstructor.construct_orders` gates on,
                # keyed by upper-case symbol — see `candidate_eligibility`
@@ -2150,6 +2219,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             existing_risk_pct=existing_risk_pct,
             max_portfolio_risk_pct=max_portfolio_risk_pct,
             rotation_execute_enabled=rotation_execute_enabled,
+            rotation_ranked_margin_enabled=rotation_ranked_margin_enabled,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
             accounting_challenge=accounting_challenge,
