@@ -74,13 +74,29 @@ per-symbol refusal, the holding-discipline claim check, and
 `_submit_protected_sell`'s cancel-write-ahead → submit → restore-on-failure
 discipline. No gate is bypassed, and no new exempt reason category exists.
 
-Why only the categorical tier is automated: an ineligible holding fails the
+Why the categorical tier was automated first: an ineligible holding fails the
 same rule a brand-new buy must clear today, so the case is a rule outcome,
-not a ranking judgement. The ranked-margin tier stays information-only
-because a 25% score gap is a PROVISIONAL, unmeasured band (see above), and
-selling an eligible, thesis-intact position on an unmeasured margin would be
-exactly the "arbitrary number decides a trade" pattern this desk refuses
-elsewhere.
+not a ranking judgement.
+
+**`ranked_margin` execution — separate flag, separate risk.** A 25% score
+gap is still a PROVISIONAL, unmeasured band (see above), and selling an
+eligible, thesis-intact position on it is still, on its own, the "arbitrary
+number decides a trade" pattern this desk refuses elsewhere — enabling
+execution here does not resolve that; it is a distinct, still-live doctrine
+question the owner accepts explicitly by turning on
+`execution.rotation_ranked_margin_enabled` (default OFF, independent of
+`rotation_enabled`), separately from the sequencing question below.
+
+What execution DOES require, once that switch is on: `ranked_margin` fires
+far more often than `ineligible_hold` (a ranking gap, not a rule failure),
+so "sold, replacement buy refused downstream, owner-alerted" — tolerable as
+a rare `ineligible_hold` edge case — would become routine churn if the same
+behaviour applied here. `_drop_rotation_sell_if_buy_leg_refused`
+(`src/pipeline_stages.py`, end of `RiskStage._run_review`) closes that: the
+sell and the replacement buy are built and risk-reviewed together, in one
+plan, before `ExecutionStage` ever submits either one, so if the buy did
+not survive that review the sell is withdrawn there too — before either
+order reaches the broker — rather than sold into an unfunded replacement.
 
 Why the desk's holding discipline still binds: `docs/WORK.md` item 25 says a
 position stays protected from a plain, no-real-trigger sale unless the level
@@ -378,16 +394,44 @@ def rotation_sell_reason(
     detail at 60) because `PortfolioConstructor._build_sell` appends the
     thesis condition and then truncates the order's reasoning at 500; the
     untruncated detail lives in the `rotation` pipeline_event.
+
+    Both tiers are supported: `ineligible_hold` (categorical — the held
+    name fails today's own entry rules) and, since the `ranked_margin`
+    sequencing pre-check (`src/pipeline_stages.py::
+    _drop_rotation_sell_if_buy_leg_refused`), `ranked_margin` itself
+    (both sides eligible; the ranking margin was cleared) — see
+    `evaluate_rotation_opportunity` for what each tier means.
     """
-    if opportunity.tier != "ineligible_hold":
-        raise ValueError(
-            "rotation_sell_reason is for the categorical tier only — the "
-            "ranked-margin tier is surfaced, never executed"
+    if opportunity.tier == "ineligible_hold":
+        failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
+        basis = (
+            f"{opportunity.held_symbol} fails the desk's own entry rules "
+            f"today ({failed_rules})"
         )
-    failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
+    elif opportunity.tier == "ranked_margin":
+        held_shared = opportunity.held_shared_score
+        new_shared = opportunity.new_shared_score
+        if held_shared is None or new_shared is None:
+            # Defensive only — `evaluate_rotation_opportunity` always fills
+            # both for this tier. Falls back to the full composite, labelled
+            # as such, rather than crash on a hand-built/legacy opportunity.
+            held_shared = opportunity.held_score or 0.0
+            new_shared = opportunity.new_score
+            seat_desc = "full composite score, no shared-seat figure recorded"
+        else:
+            seat_desc = (
+                f"shared-seat score over {'/'.join(opportunity.shared_seats) or 'no shared seats'}"
+            )
+        basis = (
+            f"{opportunity.held_symbol} still clears today's entry rules, "
+            f"but ranks below {opportunity.new_symbol} by more than the "
+            f"{opportunity.margin_pct:.0%} margin on the like-for-like "
+            f"{seat_desc} ({held_shared:.2f} vs {new_shared:.2f})"
+        )
+    else:
+        raise ValueError(f"unknown rotation tier {opportunity.tier!r}")
     return (
-        f"ROTATION (deterministic, src/rotation.py): {opportunity.held_symbol} "
-        f"fails the desk's own entry rules today ({failed_rules}); structural "
+        f"ROTATION (deterministic, src/rotation.py): {basis}; structural "
         f"protection not intact ({protection_basis}: {protection_detail[:60]}). "
         f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk ceiling, "
         f"under the {floor_pct:.2f}% minimum. Full close to free room for "

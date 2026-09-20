@@ -428,6 +428,19 @@ class ExecutionConfig(BaseModel):
     execution path, to free room for the best-ranked new candidate the PM
     itself asked to buy. Every rotation fires a standalone owner alert."""
 
+    rotation_ranked_margin_enabled: bool = False
+    """Second, SEPARATE switch for the `ranked_margin` tier only — OFF by
+    default even when `rotation_enabled` is already on live. Both must be
+    True for a ranked-margin swap (a much higher-frequency, marginal
+    rank-based trigger than `ineligible_hold`) to execute; with this one
+    off, `ranked_margin` stays surfaced-only, byte for byte, exactly as it
+    was before this switch existed. This is a deliberate second gate, not
+    an oversight: flipping `rotation_enabled` alone must never newly arm
+    this tier. See `src/rotation.py` and
+    `_drop_rotation_sell_if_buy_leg_refused` in `src/pipeline_stages.py` for
+    the pre-check that withdraws the sell leg, before it ever reaches the
+    broker, if the replacement buy would not survive risk review."""
+
     repeg_poll_seconds: float = Field(default=5.0, gt=0, le=30)
     """How long to let the working order rest before the one reprice, and —
     only if the exchange has not yet acknowledged the order by then — how

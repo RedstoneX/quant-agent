@@ -253,6 +253,18 @@ def _rotation_execution_enabled(pipeline) -> bool:
     return getattr(execution_cfg, "rotation_enabled", None) is True
 
 
+def _rotation_ranked_margin_enabled(pipeline) -> bool:
+    """Phase 14b — is the SECOND, separate `ranked_margin` switch ON?
+
+    Same MagicMock-safe `is True` convention as `_rotation_execution_enabled`
+    above. This is checked IN ADDITION to that base switch, never instead of
+    it — see `rotation_ranked_margin_enabled`'s docstring in `src/config.py`
+    for why the two are deliberately independent.
+    """
+    execution_cfg = getattr(getattr(pipeline, "config", None), "execution", None)
+    return getattr(execution_cfg, "rotation_ranked_margin_enabled", None) is True
+
+
 #: Trades-row fill states that mean "an order on this symbol has been
 #: handed to the broker and not yet reconciled" — the same two values
 #: `Database.get_symbol_last_buy(include_in_flight=True)` treats as
@@ -294,9 +306,16 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
 
       1. `execution.rotation_enabled` must be explicitly True (else this
          function is a no-op and the run is byte-for-byte Phase 14).
-      2. The PM's own prompt must have surfaced a comparison this session,
-         and it must be the categorical tier. The ranked-margin tier is
-         information only (see `src/rotation.py`).
+      2. The PM's own prompt must have surfaced a comparison this session.
+         The categorical (`ineligible_hold`) tier needs nothing further.
+         The `ranked_margin` tier ALSO needs the separate
+         `execution.rotation_ranked_margin_enabled` switch — see that
+         field's docstring in `src/config.py` — and, because it is a
+         marginal ranking call rather than a rule outcome, it is additionally
+         covered by `_drop_rotation_sell_if_buy_leg_refused` (RiskStage, end
+         of review): if the replacement buy this rotation exists to fund
+         does not survive the SAME risk review the sell does, the sell is
+         withdrawn too, before either ever reaches the broker.
       3. The held name must be a LONG the broker actually shows. Shorts
          are not automated — a COVER is a different order shape with its
          own caps, and nothing here has been verified against it.
@@ -333,7 +352,16 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     held_symbol = opportunity.held_symbol.strip().upper()
     new_symbol = opportunity.new_symbol.strip().upper()
 
-    if opportunity.tier != "ineligible_hold":
+    if opportunity.tier not in ("ineligible_hold", "ranked_margin"):
+        _rotation_skip(pipeline, ctx, opportunity, "unknown_rotation_tier")
+        return
+    if (
+        opportunity.tier == "ranked_margin"
+        and not _rotation_ranked_margin_enabled(pipeline)
+    ):
+        # Second, separate switch (`rotation_ranked_margin_enabled`) is off:
+        # this tier stays surfaced-only, byte for byte, exactly as before
+        # this switch existed — `rotation_enabled` alone never arms it.
         _rotation_skip(
             pipeline, ctx, opportunity, "ranked_margin_tier_is_surfaced_only",
         )
@@ -475,6 +503,12 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         "headroom_pct": float(precheck.headroom_pct),
         "ceiling_pct": float(precheck.ceiling_pct),
         "reason": reason,
+        # Read by `_drop_rotation_sell_if_buy_leg_refused` (RiskStage) — the
+        # pre-check that withdraws this sell before it reaches the broker
+        # if the buy leg does not survive risk review applies to
+        # `ranked_margin` only; `ineligible_hold` keeps its existing
+        # sell-then-alert tolerance unchanged.
+        "tier": opportunity.tier,
     }
     logger.warning(
         "Rotation: proposing a full close of %s to free room for %s — %s",
@@ -576,6 +610,85 @@ def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list,
             continue
         kept.append(d)
     return kept
+
+
+def _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx) -> None:
+    """RiskStage, end of review — `ranked_margin` sequencing pre-check.
+
+    The gap this closes: once a rotation SELL is broker-accepted it cannot
+    be undone, but the replacement BUY can still be refused downstream
+    (AI Risk Manager, a hard risk rule, sizing, correlation, the holding-
+    discipline claim check) for reasons that have nothing to do with the
+    rotation's own logic. Today that produces "sold, nothing bought,
+    owner-alerted" (`_record_rotation_buy_leg_outcome`) — tolerable for
+    `ineligible_hold` because it triggers rarely, but `ranked_margin` is a
+    much higher-frequency, marginal-swap trigger, so the SAME behaviour
+    there would make that routine instead of rare.
+
+    No new "dry run" machinery is needed: the sell and the buy were added
+    to the SAME plan and have already been carried through every gate this
+    stage runs (`_filter_supported_symbols`, `_clamp_queued_earnings_buys`,
+    `_filter_hard_risk_decisions` (both passes), the AI Risk Manager's
+    book veto and per-symbol refusal, `holding_discipline_claim_check`,
+    `_apply_risk_modifications`, `_apply_scale_all_buys`) — all of it BEFORE
+    `ExecutionStage` ever submits an order. Called at the very end of
+    `RiskStage._run_review`, this only has to look at what SURVIVED that
+    review: if the replacement buy is gone but the rotation's own sell is
+    still in the plan, the sell is withdrawn here too, before it ever
+    reaches the broker, and recorded as a plain `rotation`/`skipped` event
+    instead of a sale followed by an alert.
+
+    `ineligible_hold` is untouched — this only acts when `ctx.rotation`
+    carries `tier == "ranked_margin"`, and only before the sell has been
+    submitted (`sell_order_id` unset); it is a no-op on every other run.
+    """
+    rotation = ctx.rotation
+    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
+        return
+    if rotation.get("sell_order_id"):
+        return  # this run already got past RiskStage once — nothing to undo
+    held_symbol = str(rotation.get("held_symbol") or "").upper()
+    new_symbol = str(rotation.get("new_symbol") or "").upper()
+    if not held_symbol or not new_symbol:
+        return
+    decisions = list(getattr(ctx.portfolio_decision, "decisions", None) or [])
+    buy_survived = any(
+        d.symbol.strip().upper() == new_symbol and d.action in ("BUY", "SHORT")
+        for d in decisions
+    )
+    if buy_survived:
+        return
+    remaining: list = []
+    sell_dropped = False
+    for d in decisions:
+        if (
+            not sell_dropped
+            and d.symbol.strip().upper() == held_symbol
+            and d.action == "SELL"
+        ):
+            sell_dropped = True
+            continue
+        remaining.append(d)
+    if not sell_dropped:
+        return  # the sell itself did not survive review either — nothing to do
+    ctx.portfolio_decision.decisions = remaining
+    detail = (
+        f"the replacement buy of {new_symbol} did not survive this run's "
+        "risk review (see its risk / deterministic_gate events for why), so "
+        f"the {held_symbol} close was withdrawn before it reached the "
+        "broker rather than sold into an unfunded replacement"
+    )
+    logger.warning(
+        "Rotation (ranked_margin): withdrawing the close of %s — the "
+        "replacement buy of %s did not survive risk review",
+        held_symbol, new_symbol,
+    )
+    _record_pipeline_event(
+        pipeline, ctx, held_symbol, "rotation", "skipped",
+        "ranked_margin_buy_leg_would_be_refused",
+        new_symbol=new_symbol, detail=detail,
+    )
+    ctx.rotation = None
 
 
 def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
@@ -6424,6 +6537,14 @@ class RiskStage:
                 if not portfolio_decision.decisions:
                     pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
+
+        # `ranked_margin` sequencing pre-check: every gate above has now
+        # decided what survives from this SAME plan, before ExecutionStage
+        # submits anything — so if the rotation's replacement buy did not
+        # survive, withdraw its sell leg here too, rather than sell into an
+        # unfunded replacement. No-op for `ineligible_hold` and for any run
+        # without an active rotation.
+        _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)
 
         for decision in portfolio_decision.decisions:
             outcome, reason, details = _risk_event_for(

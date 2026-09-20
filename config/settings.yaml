@@ -284,6 +284,10 @@ execution:
   # paused since ~2026-09-03, so the first real rotation will be the first
   # end-to-end proof. Watch the first one.
   rotation_enabled: true
+  # `rotation_ranked_margin_enabled` is deliberately ABSENT here — it
+  # defaults False in `src/config.py` regardless of the switch above, so
+  # the `ranked_margin` tier stays surfaced-only until the owner turns it
+  # on explicitly and separately. See that field's docstring.
   # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
   # count the risk math produced is used as-is instead of being floored to a
   # whole number. Whole-share rounding is a silent, constant tax — V wanted

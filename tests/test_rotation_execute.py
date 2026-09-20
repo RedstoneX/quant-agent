@@ -44,8 +44,10 @@ from src.pipeline_stages import (
     _alert_rotation_executed,
     _apply_rotation_execution,
     _drop_rotation_buy_if_room_not_freed,
+    _drop_rotation_sell_if_buy_leg_refused,
     _record_rotation_buy_leg_outcome,
     _rotation_execution_enabled,
+    _rotation_ranked_margin_enabled,
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
@@ -66,10 +68,18 @@ BROKEN_DETAIL = (
 
 
 def _opportunity(tier: str = "ineligible_hold") -> RotationOpportunity:
+    if tier == "ineligible_hold":
+        return RotationOpportunity(
+            new_symbol="NEW", new_score=1.8, held_symbol="OLD",
+            held_score=None, tier=tier, reasons=HELD_REASONS,
+        )
+    # ranked_margin: both sides eligible — populate the like-for-like
+    # shared-seat fields `evaluate_rotation_opportunity` always fills for
+    # this tier (`docs/INCIDENT_HISTORY.md` 2026-09-14).
     return RotationOpportunity(
         new_symbol="NEW", new_score=1.8, held_symbol="OLD",
-        held_score=None if tier == "ineligible_hold" else 0.9,
-        tier=tier, reasons=HELD_REASONS if tier == "ineligible_hold" else (),
+        held_score=0.9, tier=tier, reasons=(),
+        shared_seats=("Technical",), held_shared_score=0.9, new_shared_score=1.8,
     )
 
 
@@ -124,13 +134,17 @@ class _ProtectionProbe:
         )
 
 
-def _pipeline(tmp_path, *, enabled=True, precheck=None, protected=False):
+def _pipeline(tmp_path, *, enabled=True, ranked_margin_enabled=False,
+              precheck=None, protected=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
     pipeline.config = SimpleNamespace(
-        execution=SimpleNamespace(rotation_enabled=enabled),
+        execution=SimpleNamespace(
+            rotation_enabled=enabled,
+            rotation_ranked_margin_enabled=ranked_margin_enabled,
+        ),
     )
     pipeline.portfolio_manager = SimpleNamespace(
         last_rotation_precheck=precheck if precheck is not None else _precheck(_opportunity()),
@@ -232,10 +246,14 @@ def test_categorically_ineligible_unprotected_holding_is_rotated_out(tmp_path):
     assert payload["reason"] == close.thesis
 
 
-def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
+def test_ranked_margin_tier_is_surfaced_only_by_default_even_with_rotation_on(tmp_path):
+    """`rotation_enabled` alone must never arm `ranked_margin` — the second,
+    separate `rotation_ranked_margin_enabled` switch (default False) is
+    required too."""
     pipeline, db, probe = _pipeline(
         tmp_path, precheck=_precheck(_opportunity("ranked_margin")),
     )
+    assert _rotation_ranked_margin_enabled(pipeline) is False
     ctx = _ctx()
     decision = _decision(_buy_new())
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
@@ -245,6 +263,32 @@ def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
     (_, payload), = _rotation_events(db)
     assert payload["outcome"] == "skipped"
     assert payload["reason"] == "ranked_margin_tier_is_surfaced_only"
+
+
+def test_ranked_margin_tier_executes_once_its_own_flag_is_also_on(tmp_path):
+    """With BOTH `rotation_enabled` and `rotation_ranked_margin_enabled` on,
+    an eligible-but-weaker held position IS rotated out, through the exact
+    same target-append path the categorical tier uses."""
+    pipeline, db, probe = _pipeline(
+        tmp_path, ranked_margin_enabled=True,
+        precheck=_precheck(_opportunity("ranked_margin")),
+    )
+    assert _rotation_ranked_margin_enabled(pipeline) is True
+    ctx = _ctx()
+    decision = _decision(_buy_new())
+    _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
+
+    assert [t.symbol for t in decision.targets] == ["NEW", "OLD"]
+    close = decision.targets[1]
+    assert close.is_close and close.risk_allocation_pct == 0.0
+    assert "still clears today's entry rules" in close.thesis
+    assert ctx.rotation["tier"] == "ranked_margin"
+    assert ctx.rotation["held_symbol"] == "OLD"
+    assert len(probe.calls) == 1
+
+    (_, payload), = _rotation_events(db)
+    assert payload["outcome"] == "proposed"
+    assert payload["tier"] == "ranked_margin"
 
 
 def test_nothing_surfaced_means_nothing_happens(tmp_path):
@@ -488,10 +532,31 @@ def test_reason_does_not_word_itself_past_the_midday_keyword_gate():
     assert not _reason_cites_hard_trigger(noise)
 
 
-def test_reason_builder_refuses_the_ranked_margin_tier():
+def test_reason_builder_supports_the_ranked_margin_tier():
+    """Since the `ranked_margin` sequencing pre-check
+    (`_drop_rotation_sell_if_buy_leg_refused`) exists, this tier can be
+    executed too, and its sale needs a reason built from measured facts
+    the same way the categorical tier's does — the like-for-like
+    shared-seat scores `evaluate_rotation_opportunity` computed, not the
+    raw (coverage-incomparable) composite scores."""
+    reason = rotation_sell_reason(
+        _opportunity("ranked_margin"), protection_basis="noise_band_broken",
+        protection_detail="x", headroom_pct=0.2, ceiling_pct=25.0, floor_pct=0.5,
+    )
+    assert "OLD" in reason and "NEW" in reason
+    assert "still clears today's entry rules" in reason
+    assert "0.90" in reason and "1.80" in reason
+    assert "Technical" in reason
+
+
+def test_reason_builder_unknown_tier_raises():
     with pytest.raises(ValueError):
         rotation_sell_reason(
-            _opportunity("ranked_margin"), protection_basis="noise_band_broken",
+            _opportunity("ineligible_hold").__class__(
+                new_symbol="NEW", new_score=1.0, held_symbol="OLD",
+                held_score=None, tier="bogus_tier",
+            ),
+            protection_basis="noise_band_broken",
             protection_detail="x", headroom_pct=0.2, ceiling_pct=25.0, floor_pct=0.5,
         )
 
@@ -574,6 +639,13 @@ def _buy(symbol: str) -> TradeDecision:
     )
 
 
+def _sell(symbol: str) -> TradeDecision:
+    return TradeDecision(
+        action="SELL", symbol=symbol, allocation_pct=100.0, entry_price=95.0,
+        stop_loss=92.0, take_profit=0.0, reasoning="rotation close",
+    )
+
+
 def test_buy_leg_dropped_when_the_rotation_close_did_not_fill(tmp_path):
     pipeline, db, _ = _pipeline(tmp_path)
     ctx = _ctx()
@@ -601,6 +673,96 @@ def test_buy_leg_dropped_when_the_rotation_close_was_refused_upstream(tmp_path):
     (skip,) = ctx.execution_skips
     assert skip["reason"] == "rotation_room_not_freed"
     assert "not submitted" in skip["detail"]
+
+
+# ---------------------------------------------------------------------------
+# `ranked_margin` sequencing pre-check — RiskStage, before ExecutionStage
+# submits anything: a buy leg that did not survive risk review must not be
+# followed by a sell no one can undo.
+# ---------------------------------------------------------------------------
+
+def test_ranked_margin_would_be_refused_buy_blocks_the_sell_from_ever_firing(tmp_path):
+    """(a) The replacement buy did not survive this run's risk review (it is
+    simply absent from the surviving decisions) — the rotation's own sell
+    must be withdrawn here too, before either ever reaches
+    `ExecutionStage`, rather than sell into an unfunded replacement."""
+    pipeline, db, _ = _pipeline(tmp_path)
+    ctx = _ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("OTHER")]
+
+    _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OTHER"]
+    assert ctx.rotation is None
+    (_, payload), = _rotation_events(db)
+    assert payload["outcome"] == "skipped"
+    assert payload["reason"] == "ranked_margin_buy_leg_would_be_refused"
+    assert payload["new_symbol"] == "NEW"
+
+
+def test_ranked_margin_would_succeed_buy_lets_the_normal_sequencing_proceed(tmp_path):
+    """(b) The replacement buy DID survive risk review (it is still in the
+    plan) — the sell proceeds untouched, into the existing correct
+    sell-then-buy sequencing `ExecutionStage._run_session` already runs."""
+    pipeline, db, _ = _pipeline(tmp_path)
+    ctx = _ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("NEW")]
+
+    _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD", "NEW"]
+    assert ctx.rotation is not None
+    assert ctx.rotation["tier"] == "ranked_margin"
+    assert _rotation_events(db) == []
+
+
+def test_ineligible_hold_behaviour_is_unchanged_by_the_ranked_margin_precheck(tmp_path):
+    """(c) `ineligible_hold` keeps its existing tolerance: even when the
+    buy leg is missing, this pre-check must not touch its sell — the
+    existing sell-then-alert-on-no-buy path (`_record_rotation_buy_leg_
+    outcome`) is what still governs that tier, unchanged."""
+    pipeline, db, _ = _pipeline(tmp_path)
+    ctx = _ctx()
+    ctx.rotation = _rotation_dict(tier="ineligible_hold")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD"), _buy("OTHER")]
+
+    _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD", "OTHER"]
+    assert ctx.rotation is not None
+    assert _rotation_events(db) == []
+
+
+def test_precheck_is_a_noop_once_the_sell_already_submitted(tmp_path):
+    """A rotation with a recorded `sell_order_id` already got past this
+    same RiskStage pass once this run — nothing left to withdraw."""
+    pipeline, db, _ = _pipeline(tmp_path)
+    ctx = _ctx()
+    ctx.rotation = _rotation_dict(tier="ranked_margin", sell_order_id="brk-1")
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_sell("OLD")]
+
+    _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OLD"]
+    assert ctx.rotation is not None
+
+
+def test_precheck_is_a_noop_with_no_active_rotation(tmp_path):
+    pipeline, db, _ = _pipeline(tmp_path)
+    ctx = _ctx()
+    ctx.portfolio_decision = _decision()
+    ctx.portfolio_decision.decisions = [_buy("OTHER")]
+
+    _drop_rotation_sell_if_buy_leg_refused(pipeline, ctx)  # no exception
+
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["OTHER"]
+    assert ctx.rotation is None
 
 
 def test_buy_leg_kept_when_the_rotation_close_filled(tmp_path):
