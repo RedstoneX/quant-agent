@@ -60,36 +60,76 @@ from src.models import OHLCV, TechnicalIndicators
 #: exact evasion board item 98's test file had to learn about.
 _SPELLED = (
     r"one|two|three|four|five|six|seven|eight|nine|ten|twelve|twenty|thirty"
-    r"|forty|fifty|sixty|ninety|hundred|thousand|a\s+few|several"
+    r"|forty|fifty|sixty|ninety|hundred|thousand"
+)
+_N = r"(?:\d[\d,]*|" + _SPELLED + r")"
+_QUALIFIER = r"(?:calendar\s+|trading\s+|weekday\s+|market\s+|business\s+)?"
+_UNIT = r"(?:day|month|year|session|bar|candle)s?"
+
+#: The words a depth claim gets written around. The first draft anchored on
+#: "history" alone and adversary review broke it by swapping one noun
+#: ("1800 calendar days of DATA", "a 5-year WINDOW", "sessions of RECORD",
+#: "the upstream FETCH is 1800 calendar days").
+_DEPTH = (
+    r"(?:histor\w*|price\s+action|lookback|look-?back|back\s*fill|"
+    r"data|record|series|depth|window|upstream|fetch\w*)"
 )
 
-#: The words a depth claim can be written around. The first draft anchored on
-#: "history" alone and adversary review broke it in eight ways with one word
-#: swapped — "1800 calendar days of DATA", "a 5-year WINDOW", "1,250 sessions
-#: of RECORD". Anchoring on the vocabulary rather than on one noun is what
-#: makes the residue scan a check rather than a re-reading of today's sentence.
-_DEPTH_WORD = (
-    r"(?:histor\w*|data|price\s+action|record|window|lookback|look-back|"
-    r"back\s*fill|series|depth)"
-)
-
-#: A claim about how much PRICE HISTORY sits behind the seat's indicators, in
-#: any unit and either word order. Anchored on a depth word within a short
-#: distance so ordinary time spans in the sheet (signal age, holding horizon,
-#: earnings proximity) are not swept in.
+#: A claim about how much price history sits behind the seat's inputs.
+#:
+#: SHAPE, NOT PROXIMITY, and that distinction is the whole check. The second
+#: draft of this file matched a number near a depth word within 25 characters.
+#: It still missed two rewordings, and adversary review then broke it the other
+#: way: five of seven ordinary technical-analysis sentences FAILED it, because
+#: "window", "data", "record", "series" and "price action" are everyday words
+#: on this sheet ("a rating more than 5 days old is stale data"). A check that
+#: fires on innocent edits gets an exemption added, and an exemption is how a
+#: check gets hollowed out — so this matches the GRAMMAR of a depth claim
+#: instead: <n> <unit> OF <depth>, an <n>-<unit> <depth>, <n> <unit> upstream,
+#: <depth>: <n> <unit>, or <depth> covers/is/reaches <n> <unit>. Measured
+#: against thirteen rewordings and ten innocent sentences: thirteen caught,
+#: zero false positives.
 _HISTORY_CLAIM_RE = re.compile(
-    r"(?:(?:\d+|" + _SPELLED + r")[\s\-~]*"
-    r"(?:calendar\s+|trading\s+|weekday\s+|market\s+|business\s+)?"
-    r"(?:day|month|year|session|bar|candle)s?"
-    r"[^.\n]{0,25}?" + _DEPTH_WORD
-    # Reverse word order ("history of 1800 calendar days") deliberately omits
-    # bars and candles: "history (not the 40 bars you are shown)" is a claim
-    # about the ATTACHED WINDOW, which is board item 98's number and is owned
-    # by tests/test_tech_analyst_bar_count.py. Two files, two numbers.
-    + r"|" + _DEPTH_WORD + r"[^.\n]{0,25}?(?:\d+|" + _SPELLED + r")[\s\-~]*"
-    r"(?:calendar\s+|trading\s+|weekday\s+|market\s+|business\s+)?"
-    r"(?:day|month|year)s?)",
+    r"(?:" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT
+    + r"\s+(?:of|worth\s+of)\s+(?:\w+\s+){0,2}?" + _DEPTH
+    + r"|" + _N + r"[\s~]*-\s*" + _UNIT[:-2] + r"\s+" + _DEPTH
+    + r"|" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT + r"\s+(?:upstream|of\s+it|back)\b"
+    + r"|" + _DEPTH + r"\s*[:=]\s*" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT
+    + r"|" + _DEPTH + r"\s+(?:\w+\s+){0,2}?"
+    + r"(?:of|is|was|covers?|reach\w*|goes?\s+back|spans?)\s+"
+    + r"(?:\w+\s+){0,2}?" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT + r")",
     re.IGNORECASE,
+)
+
+#: Rewordings the scan must catch, and ordinary sentences it must NOT. Both
+#: lists are asserted below, because a residue scan that cannot be wrong about
+#: innocent text is the version that survives its first false alarm.
+_MUST_CATCH = (
+    "indicators are computed from ~120 days of history upstream",
+    "indicators are computed upstream from ~120 days of data",
+    "Indicators rest on 1800 calendar days of price action",
+    "built off a 5-year window",
+    "Trend is judged over roughly 1250 sessions of record",
+    "a 120-day lookback",
+    "history of 1800 calendar days",
+    "the series covers 1800 calendar days",
+    "depth: 1800 calendar days",
+    "five years of price action",
+    "levels use 1800 days of series depth",
+    "indicators use 1800 calendar days upstream",
+    "The upstream fetch is 1800 calendar days.",
+)
+_MUST_NOT_CATCH = (
+    "A rating more than 5 days old is stale data — re-read the chart.",
+    "Earnings within 3 days — the price action into the print is unreliable.",
+    "Hold for the 5-15 day swing horizon; the series of higher lows must stay intact.",
+    "A gap older than 10 sessions has usually lost its record as a magnet.",
+    "Do not chase more than 3 days after the breakout window opened.",
+    "Require a 2 day closing confirmation before calling a level broken.",
+    "Signal age over 7 days means the prior rating is no longer current data.",
+    "the most recent 40 daily bars",
+    "Same rating, age 8+ days without progress to target",
+    "expected_horizon_sessions of 5-15 trading days",
 )
 
 #: The sheet's data-sufficiency floor — "return neutral below this much
@@ -476,19 +516,48 @@ _BLOCK_KWARGS = ("intraday_context=", "prior_macro_regime=", "prior_macro_outloo
 _ASSEMBLY_SITES = ("src/pipeline.py", "src/pipeline_stages.py")
 
 
+def _analyze_batch_calls() -> list[str]:
+    """The text of every `analyze_batch(...)` call in the assembly sites.
+
+    Scoped to the call rather than counted over the file, because a union
+    count over two whole files is restored by the kwarg name appearing in a
+    comment or an unrelated helper — which would re-hide a deleted site.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    calls: list[str] = []
+    for site in _ASSEMBLY_SITES:
+        source = (repo / site).read_text()
+        at = source.find("analyze_batch(")
+        while at != -1:
+            depth, i = 0, source.index("(", at)
+            for j in range(i, len(source)):
+                if source[j] == "(":
+                    depth += 1
+                elif source[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        calls.append(source[at:j + 1])
+                        break
+            at = source.find("analyze_batch(", at + 1)
+    return calls
+
+
 @pytest.mark.parametrize("kwarg", _BLOCK_KWARGS)
 def test_the_blocks_are_still_passed_by_every_assembly_site(kwarg: str) -> None:
     """The blocks must really reach the seat, not merely render when handed."""
-    repo = Path(__file__).resolve().parents[1]
-    total = sum(
-        (repo / site).read_text().count(kwarg) for site in _ASSEMBLY_SITES
+    calls = _analyze_batch_calls()
+    assert len(calls) >= 3, (
+        f"found {len(calls)} `analyze_batch(...)` call(s) across "
+        f"{', '.join(_ASSEMBLY_SITES)}; there were three when board item 168 "
+        f"was closed."
     )
-    assert total >= 3, (
-        f"`{kwarg}` is passed at {total} site(s) across {', '.join(_ASSEMBLY_SITES)}; "
-        f"all three technical-batch assembly sites passed it when board item 168 "
-        f"was closed. If a site was deliberately dropped, say so in the PR and "
-        f"lower this floor — and check whether {PROMPT_PATH.name} should still "
-        f"tell the seat to expect the block."
+    missing = [c.split("(")[0] for c in calls if kwarg not in c]
+    assert not missing, (
+        f"`{kwarg}` is absent from {len(missing)} of the {len(calls)} "
+        f"`analyze_batch(...)` calls across {', '.join(_ASSEMBLY_SITES)}. The "
+        f"seat is no longer sent a block {PROMPT_PATH.name} promises to "
+        f"explain. If a site was deliberately dropped, say so in the PR and "
+        f"check whether the sheet should still tell the seat to expect it."
     )
 
 
@@ -548,8 +617,39 @@ def test_longest_indicator_window_tracks_the_constant(pretend: int, monkeypatch)
     import src.data.technical as technical
     monkeypatch.setattr(technical, "LONGEST_INDICATOR_WINDOW", pretend)
     rendered = render_tech_placeholders(_prompt_source(), lookback_days=1800)
-    stated = set(re.findall(r"longest(?: of them reaches)? (\d+) sessions", rendered))
+    stated = set(re.findall(
+        r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+(\d+)\s+sessions", rendered,
+    ))
     assert stated == {str(pretend)}, (
         f"with `LONGEST_INDICATOR_WINDOW` = {pretend} the sheet states "
         f"{sorted(stated)}. Some indicator-depth claim is hard-coded."
+    )
+
+
+# --------------------------------------------------------------------------
+# The scan itself, in both directions
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", _MUST_CATCH)
+def test_the_residue_scan_catches_every_known_rewording(text: str) -> None:
+    assert _history_claims(text), (
+        f"the residue scan does not see {text!r} as a depth claim. Every entry "
+        f"in _MUST_CATCH is a rewording that adversary review walked past an "
+        f"earlier draft of this scan."
+    )
+
+
+@pytest.mark.parametrize("text", _MUST_NOT_CATCH)
+def test_the_residue_scan_leaves_ordinary_sentences_alone(text: str) -> None:
+    """A check that fires on innocent edits is a check that gets exempted away.
+
+    Every sentence here is the sort of thing this sheet says about signal age,
+    holding horizon or earnings proximity. An earlier draft failed five of
+    them, which would have turned CI red on an unrelated edit with the message
+    "this is board item 168 coming back" — and the fix for that is always an
+    exemption, which is how the scan stops scanning.
+    """
+    assert not _history_claims(text), (
+        f"the residue scan reads {text!r} as a depth claim. It is not one — "
+        f"tighten the grammar rather than exempting the phrase."
     )

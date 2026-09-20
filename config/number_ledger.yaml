@@ -3131,24 +3131,25 @@ numbers:
     status: sourced
     site: src/agents/tech_analyst.py
     source: >-
-      src/trading_calendar.py:106 — the desk's own weekend-aware session
-      counter, which this arithmetic is pinned against at
-      tests/test_tech_analyst_history_window.py:261, averaged over all seven
-      possible start weekdays where the start-weekday phase cancels exactly.
-      Five of every seven calendar days are Monday-to-Friday; the figure is
-      used only to state the technical seat's history depth back to it in
-      sessions as well as calendar days (board item 168). It is not a
-      lookback, a threshold or a weight — changing it changes no fetch, no
-      indicator and no trade.
+      The definition of the seven-day week: five of its days are
+      Monday-to-Friday. Not a market-structure number and not a measurement —
+      no market data could change it. Used only to state the technical seat's
+      history depth back to it in sessions as well as calendar days (board
+      item 168); it is not a lookback, a threshold or a weight, and changing
+      it changes no fetch, no indicator and no trade. Consistency with the
+      desk's existing weekday counter (src/trading_calendar.py:106, which
+      shares the same Monday-to-Friday assumption rather than independently
+      evidencing it) is asserted at
+      tests/test_tech_analyst_history_window.py:312.
   - id: src.agents.tech_analyst._DAYS_PER_WEEK
     value: 7
     status: sourced
     site: src/agents/tech_analyst.py
     source: >-
-      src/trading_calendar.py:106 — the denominator of the weekday fraction
-      above, pinned by the same measurement at
-      tests/test_tech_analyst_history_window.py:261. Seven days in a week;
-      same scope, same test, same absence of any trading effect.
+      The definition of the week: seven days. The denominator of the weekday
+      fraction above, checked for consistency at the same site,
+      tests/test_tech_analyst_history_window.py:312. Same scope, same absence
+      of any trading effect.
   - id: src.agents.tech_analyst._BARS_PER_SYMBOL
     value: 40
     status: arbitrary

@@ -117,7 +117,7 @@ _HISTORY_PHRASE_RE = re.compile(
 #: bars are attached. Rendered from that constant and checked in
 #: tests/test_tech_analyst_history_window.py; exempted here by shape.
 _LONGEST_INDICATOR_PHRASE_RE = re.compile(
-    r"longest(?: of them reaches)? \d+ sessions"
+    r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+\d+\s+sessions"
 )
 
 #: Bar counts to render the sheet against in the coupling test. All sit above

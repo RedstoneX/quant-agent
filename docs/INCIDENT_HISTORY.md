@@ -135,6 +135,14 @@ sheet says "fewer after market holidays" and the alternative — pinning the
 1,254 bars once measured for one symbol on one date — is the fitting this desk
 forbids.
 
+**What this cost, measured.** The standing sheet grew 4,725 bytes, about 1,180
+tokens on every technical request [measured 2026-09-20 against `origin/main`].
+That sits OUTSIDE `_REQUEST_TOKEN_BUDGET`, because the packer in
+`_split_to_budget` measures only the user message — a pre-existing gap this
+change is the largest single contributor to so far. Recorded rather than
+fixed: changing what the packer measures is a behaviour change on the seat's
+batching, and this item did not authorise one.
+
 ---
 
 ### 2026-09-20 — the only seat allowed to halt the desk was told it sees half the price history it is actually sent
