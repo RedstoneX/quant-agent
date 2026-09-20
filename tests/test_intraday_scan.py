@@ -137,8 +137,20 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
     return pipeline
 
 
-def _snapshot(last, prev):
-    return {"last_price": last, "prev_close": prev}
+def _snapshot(last, prev, *, trade_at="today"):
+    """A snapshot whose last trade is from TODAY unless a test says otherwise.
+
+    board item 120: the mover scan now resolves the price through
+    `src.data.live_price.resolve_live_price`, so a payload with no timestamp
+    at all is correctly not-today and buys no paid look. Every test here
+    means "this name traded today and moved", so the default stamps it now;
+    pass `trade_at=<datetime>` or `trade_at=None` to say otherwise.
+    """
+    from src.trading_calendar import et_now
+
+    if trade_at == "today":
+        trade_at = et_now()
+    return {"last_price": last, "prev_close": prev, "last_trade_at": trade_at}
 
 
 # ---------- disabled by default ----------
@@ -834,9 +846,25 @@ def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
 # INCOMPLETE current-session block. An incomplete day is never presented
 # as a finished daily bar.
 
-def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None):
+def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None,
+                      *, trade_at="today", bar_at="today"):
+    """Today's snapshot for a name that has genuinely traded today.
+
+    board item 120: `session_bar_at` dates the `session_*` block, which
+    Alpaca fills with the PREVIOUS session's daily bar for a name that has
+    not printed. Defaults stamp both as today; pass `bar_at=None` to model
+    a name whose session bar is a prior session's.
+    """
+    from src.trading_calendar import et_now
+
+    now = et_now()
+    if trade_at == "today":
+        trade_at = now
+    if bar_at == "today":
+        bar_at = now.replace(hour=0, minute=0, second=0, microsecond=0)
     return {
-        "last_price": last, "prev_close": prev,
+        "last_price": last, "prev_close": prev, "last_trade_at": trade_at,
+        "session_bar_at": bar_at,
         "session_open": o, "session_high": h,
         "session_low": lo, "session_volume": v,
     }
@@ -855,7 +883,7 @@ def test_todays_move_is_passed_to_tech_as_current_session_context(mock_compute_i
     p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
 
     ctx_arg = p.tech_analyst.analyze_batch.call_args.kwargs["intraday_context"]
-    assert ctx_arg["AAPL"]["last_price"] == 110.0
+    assert ctx_arg["AAPL"]["live_price"] == 110.0
     assert ctx_arg["AAPL"]["prev_close"] == 100.0
     assert ctx_arg["AAPL"]["session_volume"] == 9_100_000
 
@@ -866,6 +894,7 @@ def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
     from datetime import date
     from src.agents.tech_analyst import TechAnalystAgent
     from src.models import OHLCV, TechnicalIndicators
+    from src.pipeline import TradingPipeline
 
     bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0,
                   close=100.0, volume=5_000_000)]
@@ -878,9 +907,15 @@ def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
         agent = TechAnalystAgent(api_key="t", model="claude-sonnet-4-6-20250514")
         msg = agent.build_user_message(
             symbols_data=[{"symbol": "AAPL", "bars": bars, "indicators": indicators}],
-            intraday_context={"AAPL": _session_snapshot(
-                last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5, v=9_100_000,
-            )},
+            # Resolved exactly as the scan resolves it (item 120) — the
+            # prompt is never handed a raw, unchecked snapshot.
+            intraday_context=TradingPipeline._resolve_live_context(
+                {"AAPL": _session_snapshot(
+                    last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5,
+                    v=9_100_000,
+                )},
+                ["AAPL"],
+            )[0],
         )
 
     assert "CURRENT SESSION" in msg and "INCOMPLETE" in msg
@@ -947,8 +982,12 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     result = p._run_intraday_opportunity_scan(ctx)
 
     # Tech saw today's live move...
-    assert p.tech_analyst.analyze_batch.call_args.kwargs[
-        "intraday_context"]["AAPL"]["last_price"] == 110.0
+    tech_ctx = p.tech_analyst.analyze_batch.call_args.kwargs[
+        "intraday_context"]["AAPL"]
+    assert tech_ctx["live_price"] == 110.0
+    # item 120: the RAW provider field is not republished beside the
+    # resolved one — what no consumer can reach, no consumer can misread.
+    assert "last_price" not in tech_ctx
     # ...and it reached execution through the shared chain.
     assert ctx.analyses == [analysis]
     p.decision_stage.run.assert_called_once_with(ctx)

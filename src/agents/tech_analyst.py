@@ -243,16 +243,27 @@ class TechAnalystAgent(BaseAgent):
                 # Fail visible: the model must not read yesterday's close as
                 # today's price.
                 return (
-                    f"\n⚠️ LIVE PRICE UNAVAILABLE ({unavailable}) — the trading "
-                    f"session is IN PROGRESS but no current price could be "
-                    f"read. The last completed close above is STALE for today; "
-                    f"do not treat it as the current price, and say so in your "
-                    f"reasoning_chain."
+                    f"\n⚠️ NO PRICE FROM TODAY ({unavailable}) — the trading "
+                    f"session is IN PROGRESS but this name has produced no "
+                    f"print today on any feed this account is entitled to: no "
+                    f"trade, no minute bar, no session bar. The last completed "
+                    f"close above is STALE for today; do not treat it as the "
+                    f"current price. You have NO current price for this name, "
+                    f"so you cannot judge where it sits against any level, "
+                    f"stop or target: say the price seat is LOST for this "
+                    f"symbol in your reasoning_chain and do not assign it a "
+                    f"price-dependent setup. The completed-bar structure above "
+                    f"is still valid as structure."
                 )
-            last = ic.get("last_price")
+            # `live_price` is the freshness-RESOLVED number (item 120): a
+            # today print, a today minute-bar close, or a today forming-bar
+            # close — never the raw `last_price`, which can be yesterday's,
+            # and never a quote mid.
+            last = ic.get("live_price")
             prev = ic.get("prev_close")
             if not isinstance(last, (int, float)) or last <= 0:
                 return ""
+            source_text = ic.get("live_price_description") or "last trade print"
             # Move is measured against the prior COMPLETED close, which is
             # what "today's move" means; fall back to the last bar in the
             # series when the snapshot didn't carry one.
@@ -269,14 +280,30 @@ class TechAnalystAgent(BaseAgent):
                     return "n/a"
                 return f"{prefix}{v:,.2f}" if prefix else f"{v:,.0f}"
 
+            # The session line is only rendered when the snapshot's daily bar
+            # is TODAY's. `_live_session_context` blanks those fields when it
+            # is not (item 120) — Alpaca puts the PREVIOUS session's daily bar
+            # in that slot for a name that has not printed today, and this
+            # block used to render it under a "TODAY" heading.
+            has_session_bar = any(
+                isinstance(ic.get(k), (int, float)) and ic.get(k) > 0
+                for k in ("session_open", "session_high", "session_low")
+            )
+            session_line = (
+                f"\n  Session so far: O={_fmt('session_open')} "
+                f"H={_fmt('session_high')} L={_fmt('session_low')} "
+                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                if has_session_bar else
+                "\n  Session so far: NOT AVAILABLE — this name has no "
+                "today session bar; do not infer a range for today."
+            )
             return (
                 f"\n⚠️ CURRENT SESSION (TODAY, INCOMPLETE — this trading day has "
                 f"NOT closed; these are live intraday figures, NOT a finished "
                 f"daily bar and NOT part of the completed series above):"
-                f"\n  Last trade: ${last:,.2f} ({move_str})"
-                f"\n  Session so far: O={_fmt('session_open')} "
-                f"H={_fmt('session_high')} L={_fmt('session_low')} "
-                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                f"\n  Current price: ${last:,.2f} ({move_str}) "
+                f"— source: {source_text}"
+                f"{session_line}"
                 f"\n  The indicators above are computed from COMPLETED daily "
                 f"bars only and therefore do NOT yet reflect this move. Judge "
                 f"the setup on today's live price action against those levels, "
@@ -328,7 +355,10 @@ class TechAnalystAgent(BaseAgent):
             # In-progress session: classify support/resistance against the
             # LIVE price, not yesterday's close (2026-09-14, ORCL 2026-09-10).
             ic = intraday_context.get(symbol) or {}
-            live_price = ic.get("last_price")
+            # item 120: the freshness-resolved price, not the raw provider
+            # `last_price` — classifying support/resistance against a prior
+            # session's print is exactly the defect this replaced.
+            live_price = ic.get("live_price")
             if (
                 ic.get("live_unavailable")
                 or not isinstance(live_price, (int, float))

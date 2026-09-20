@@ -57,6 +57,7 @@ from unittest.mock import MagicMock, patch
 from src import trader_feed
 from src.config import IntradayScanConfig
 from src.pipeline import TradingPipeline
+from src.trading_calendar import et_now
 from tests.test_intraday_scan import _ta_result, _todays_macro_state, _todays_news_dump
 from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_OF_HOUR_TIME
 
@@ -379,7 +380,11 @@ def test_normal_scan_with_no_opportunities_stays_healthy(
     mock_compute_indicators.return_value = MagicMock()
     p = _pipeline(enabled=True, universe=("AAPL",))
     p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": {"last_price": 110.0, "prev_close": 100.0},  # 10% move
+        # `last_trade_at`/`session_bar_at` are board item 120: a payload
+        # with no timestamps is correctly not-today and buys no paid
+        # look, so a fixture that means "this traded today" says so.
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0,
+                 "last_trade_at": et_now()},  # 10% move
     }
     analysis = _ta_result("AAPL", rating="neutral")
     p.tech_analyst.analyze_batch.return_value = (

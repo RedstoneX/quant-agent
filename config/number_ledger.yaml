@@ -853,6 +853,27 @@ numbers:
       records EDGAR's own per-day total (`busiest_day_total`, read from
       `hits.total.value`, which was previously fetched and discarded) so
       the cap can be read off the instrument on a later pass.
+      UPDATE 2026-09-20 (board item 126). That same per-day total is now
+      also kept per day slice and reported as coverage:
+      `edgar_coverage` on the refresh result and in the Form 4 manifest
+      carries EDGAR's own count, how many rows the scan walked, the ratio
+      of the two, and named reasons. NO THRESHOLD WAS ADDED and no cut
+      point is derived from the ratio -- the only judgement made is
+      `verified`, which is the exact condition "every day slice queried
+      handed back a readable count and no page stopped short of one".
+      This cap binding is explicitly NOT one of the reasons that clears
+      `verified` (see `UNVERIFIED_EDGAR_REASONS` in
+      src/data/smart_money.py): a budget spent as designed is not a failed
+      read. The open question below is unchanged and still unanswered.
+      CAVEAT for whoever answers it, found 2026-09-20 in review and
+      measured live: EFTS caps `hits.total.value` at exactly 10,000 and
+      marks it `relation: "gte"`. `_edgar_total` now returns None for a
+      capped count, so `busiest_day_total` can never silently pin at the
+      platform's ceiling and be mistaken for a measurement of filing
+      volume. Daily Form 4 volumes sampled during that review ranged 435 to
+      2,805 [measured 2026-09-20 against efts.sec.gov, twelve days], well
+      under the cap, but these are day counts and NOT the distinct-accession
+      figure this open question asks for at the market-wide level.
     open_question: >-
       How many DISTINCT Form 4 accessions are filed on a busy day, and what
       cap does that imply for market-wide reading -- read off
