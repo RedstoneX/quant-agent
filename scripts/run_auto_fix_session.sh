@@ -142,6 +142,52 @@ for f in "$PROMPT_FILE" "$SETTINGS_FILE"; do
     [[ -f "$f" ]] || { log "missing ${f}; refusing to run"; exit 1; }
 done
 
+# --- the adversary ----------------------------------------------------------
+# The owner's ruling authorising this loop attaches one condition — "make sure
+# that you're running everything with adversary" — so a session that cannot
+# reach `qamc-adversary` is not a cheaper version of this job, it is a
+# different and unauthorised one.
+#
+# It has to be injected explicitly. `.claude/agents/qamc-adversary.md` is a
+# PROJECT-scoped agent, and we deliberately pass `--setting-sources local` to
+# keep the project's Stop hook and the user's standing permission grants out of
+# an unattended run — which drops the project's agents with them. The first
+# rehearsal (2026-09-20) found exactly this: the session reported the adversary
+# missing from its roster and ruled out every rule/threshold/gate/exit item on
+# the board for that reason alone. Silently correct behaviour, and silently the
+# wrong job.
+#
+# So the agent is read from its own file and handed in with `--agents`. One
+# definition, still the file on disk, no second copy to drift.
+ADVERSARY_FILE="${WT}/.claude/agents/qamc-adversary.md"
+AGENTS_JSON=""
+if [[ -f "$ADVERSARY_FILE" ]]; then
+    AGENTS_JSON="$(python3 - "$ADVERSARY_FILE" <<'PY'
+import json, sys, re
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.S)
+front, body = (m.group(1), m.group(2)) if m else ("", text)
+def field(name):
+    hit = re.search(rf"^{name}:\s*(.+)$", front, re.M)
+    return hit.group(1).strip() if hit else ""
+agent = {"description": field("description") or "Argues against a QAMC proposal.",
+         "prompt": body.strip()}
+tools = field("tools")
+if tools:
+    agent["tools"] = [t.strip() for t in tools.split(",") if t.strip()]
+model = field("model")
+if model:
+    agent["model"] = model
+print(json.dumps({"qamc-adversary": agent}))
+PY
+)" || AGENTS_JSON=""
+fi
+if [[ -z "$AGENTS_JSON" ]]; then
+    log "could not build the qamc-adversary definition; refusing to run"
+    log "a session that cannot run the adversary is not the job the owner authorised"
+    exit 1
+fi
+
 PROMPT="$(cat "$PROMPT_FILE")"
 if [[ "$REHEARSE" -eq 1 ]]; then
     PROMPT="${PROMPT}
@@ -192,6 +238,7 @@ timeout --kill-after=30 "$TIMEOUT_SEC" \
     --permission-mode acceptEdits \
     --settings "$SETTINGS_FILE" \
     --setting-sources local \
+    --agents "$AGENTS_JSON" \
     --add-dir "$WORKDIR" \
     ${REHEARSE_ARGS[@]+"${REHEARSE_ARGS[@]}"} \
     <<< "$PROMPT"
