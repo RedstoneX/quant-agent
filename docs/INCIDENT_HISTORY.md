@@ -22,6 +22,69 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — item 85 checked against current main and found already fixed, not open
+
+**In plain words.** The board still listed a live-money defect — the
+portfolio manager and the position reviewer being told the account had no
+margin, and its cash as a hard spending limit, while margin was actually
+enabled and real room existed. Re-checking it against the code as it
+stands on main today found the fix was already shipped and already had
+its own regression tests; the board entry was simply never retired.
+
+**What the item asked for.** Filed 2026-09-17 against a real incident: with
+cash at -$916, the manager was told it had negative capital and no margin
+and correctly refused a confirmed BUY, while the account actually held
+about $8,000 of ladder headroom (equity $9,736, holdings $10,652, 2x
+ceiling). The item's own text noted the PROMPT wording half shipped the
+same night in #452, and left open whether "the figures themselves" — the
+actual headroom numbers, not just corrected wording — reach the seat.
+
+**What checking against main found.** They do, and did before this change.
+`DecisionStage.run` (`src/pipeline_stages.py`) and
+`TradingPipeline._run_position_review_body` (`src/pipeline.py`) both call
+`_entry_deployment_budget` — the exact §11.2 computation execution's submit
+loop sizes real orders against — and thread its `margin_headroom_usd`,
+`margin_ladder_backed`, `margin_ladder_multiple` and `margin_ladder_rung`
+straight into `PortfolioManagerAgent.decide` and
+`PositionReviewerAgent.review`. Both prompt builders render a "Margin
+Capacity" section with that real dollar figure when the ladder resolved,
+and an honest "could not be resolved... treat as unknown, not zero" when it
+did not — never a fabricated number and never a silent "no margin". The
+underlying hard-block gate (`RiskRuleEngine.check`'s `cash_only` rule) is
+also unaffected by the sign of cash once `allow_margin` is true; it is
+gated on the config flag, not on whether cash happens to be negative, and
+the actual limiter for a levered BUY is the gross-exposure ladder, exactly
+as this item wanted.
+
+**This was independently reconfirmed, not just inherited from #452.** The
+2026-09-18 write-up above (item 133) says directly: "the manager had been
+told the account had no margin while margin was enabled... both were
+prompt falsehoods, both were corrected before this work started, and both
+were confirmed on the main branch rather than taken on trust." Item 85's
+board text was never updated to reflect that second confirmation.
+
+**Coverage already existed.** `tests/test_margin_policy.py` carried
+`test_pm_prompt_never_says_no_margin_when_margin_enabled`,
+`test_pm_prompt_margin_section_discloses_ladder_headroom`,
+`test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget` (a
+source-level pin on the wiring itself) and the same trio mirrored for the
+reviewer — all built on the incident's own numbers (cash -$915.83, equity
+$9,736, headroom $11,434.37 at a 2.0x ceiling). This change adds one more:
+`test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy`
+exercises the actual hard-block gate (not just the prompt) with the
+incident's figures, confirming `cash_only` never fires once margin is on
+and a BUY with real ladder headroom is not refused.
+
+**What was NOT found.** No code path was found where a stale cache, a
+wrong account field, a sign error, or a race with a pending order feeds a
+wrong buying-power number into a risk or sizing gate — the specific
+mechanisms this kind of defect usually takes. If one exists, it is not on
+any of the four call sites (PM decide, PM re-ask, reviewer review, reviewer
+re-ask) that build these prompts, and not in the hard gate or the §11.2
+ladder that enforces them.
+
+---
+
 ### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
 
 **What broke, in one line:** when a stop did not trail, when the desk refused
