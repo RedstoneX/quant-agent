@@ -2103,6 +2103,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         # morning/midday/close. A morning miss must not spend the close's
         # shot, and a spent flag must not skip a later session.
         self._soft_exit_retry_used = False
+        # Board item 164 (2026-09-19): every target this call removes after
+        # the model answered — malformed, or carrying an unadjudicated seat
+        # conflict — with the gate and the reason, for `DecisionStage` to
+        # persist per symbol. Reset per call; recording only.
+        self.last_dropped_targets = []
         result = self.run(
             analyses=analyses,
             positions=positions,
@@ -2186,7 +2191,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             else 0
         )
         if isinstance(parsed, dict):
-            parsed = self._drop_invalid_targets(parsed)
+            parsed = self._drop_invalid_targets(
+                parsed, dropped=self.last_dropped_targets,
+            )
             parsed = self._drop_invalid_rejections(parsed)
         try:
             decision = PortfolioDecision(**parsed)
@@ -2213,6 +2220,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             decision = self._drop_unadjudicated_conflicts(
                 decision, positions=positions, total_value=total_value,
                 existing_risk_pct=existing_risk_pct,
+                dropped=self.last_dropped_targets,
             )
             # The sub-floor catalyst gate. Same per-target-prune contract as
             # the conflict drop above and applied in the same place, before
@@ -2276,7 +2284,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     len(reparsed.get("targets", []))
                     if isinstance(reparsed.get("targets", []), list) else 0
                 )
-                reparsed = self._drop_invalid_targets(reparsed)
+                # The repaired answer replaces the first one, so its drops
+                # replace the first attempt's in the record too.
+                self.last_dropped_targets = []
+                reparsed = self._drop_invalid_targets(
+                    reparsed, dropped=self.last_dropped_targets,
+                )
                 reparsed = self._drop_invalid_rejections(reparsed)
                 if not self._decision_fields_unchanged(parsed, reparsed):
                     logger.error(
@@ -2311,6 +2324,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     decision = self._drop_unadjudicated_conflicts(
                         decision, positions=positions, total_value=total_value,
                         existing_risk_pct=existing_risk_pct,
+                        dropped=self.last_dropped_targets,
                     )
                     # Same sub-floor catalyst gate as the first-attempt path.
                     # A schema repair must not be a way around it.
@@ -2684,6 +2698,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     def _drop_unadjudicated_conflicts(
         cls, decision: PortfolioDecision, *, positions: list[Position], total_value: float,
         existing_risk_pct: dict[str, float] | None = None,
+        dropped: list[dict] | None = None,
     ) -> PortfolioDecision:
         """An unresolved seat conflict on a target that OPENS or INCREASES
         exposure drops THAT ONE TARGET; it never fails the whole session.
@@ -2741,6 +2756,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     CONFLICT_UNADJUDICATED_STATUS, target.symbol, intent,
                     unaddressed, signal_conflicts[:300],
                 )
+                # Board item 164: `dropped` is the optional per-symbol sink
+                # `decide()` hands in so the drop is persisted, not only
+                # logged. Recording only — the drop above is unchanged.
+                if dropped is not None:
+                    dropped.append({
+                        "symbol": target.symbol,
+                        "gate": CONFLICT_UNADJUDICATED_STATUS,
+                        "intent": intent,
+                        "unaddressed_sources": list(unaddressed),
+                        "reason": (
+                            f"{target.symbol} target ({intent}) DROPPED: the "
+                            f"target records a conflict from "
+                            f"{', '.join(unaddressed)} that signal_conflicts "
+                            f"does not address by naming both the symbol and "
+                            f"the source; a name being opened or increased "
+                            f"must address every recorded conflict."
+                        ),
+                    })
                 continue
             kept.append(target)
         decision.targets = kept
@@ -3020,9 +3053,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return parsed
 
     @staticmethod
-    def _drop_invalid_targets(parsed: dict) -> dict:
+    def _drop_invalid_targets(parsed: dict, dropped: list[dict] | None = None) -> dict:
         """Pre-validate each TargetPosition; drop malformed entries with a
         warning naming the symbol (or list index when missing).
+
+        `dropped` (board item 164) is an optional sink: each discarded entry
+        is appended with its symbol, the gate and the validation error, so
+        the caller can persist it per symbol instead of the only trace being
+        a log line and an in-memory counter. Recording only.
 
         Mutates parsed in place for `targets`. Non-list shapes normalize to
         []. The TargetPosition validators stay strict (target_weight_pct
@@ -3046,6 +3084,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "Portfolio manager: dropping non-dict targets entry "
                     "at index %d: %r", i, item,
                 )
+                if dropped is not None:
+                    dropped.append({
+                        "symbol": None, "index": i,
+                        "gate": "pm_target_malformed",
+                        "reason": (
+                            f"targets entry at index {i} DROPPED: it is a "
+                            f"{type(item).__name__}, not an object, so it "
+                            f"names no symbol: {item!r}"
+                        ),
+                    })
                 continue
             try:
                 # Dry run: the surviving dicts are validated again by
@@ -3063,6 +3111,27 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "Portfolio manager: dropping malformed target for %s: %s",
                     sym, e,
                 )
+                if dropped is not None:
+                    errors = "; ".join(
+                        f"{'.'.join(str(p) for p in err.get('loc', ()))}: "
+                        f"{err.get('msg', '')}"
+                        for err in e.errors()
+                    )
+                    raw_symbol = item.get("symbol")
+                    dropped.append({
+                        "symbol": (
+                            str(raw_symbol).strip().upper()
+                            if isinstance(raw_symbol, str) and raw_symbol.strip()
+                            else None
+                        ),
+                        "index": i,
+                        "gate": "pm_target_malformed",
+                        "reason": (
+                            f"{sym} target DROPPED at parse: it fails the "
+                            f"target schema ({errors}), so no position is "
+                            f"built from it; the rest of the decision stands."
+                        ),
+                    })
                 continue
             valid.append(item)
         parsed["targets"] = valid

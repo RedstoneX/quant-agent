@@ -1663,6 +1663,13 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Called with the facts of every protective stop the kill switch
+    #: refuses (see `_submit_stop_limit_order`). The broker holds no
+    #: database, so the owner of one wires this — `TradingPipeline` does, to
+    #: `src/execution/exit_path_records.record_protective_stop_blocked`.
+    #: None (the default) records nothing, exactly as before. Recording
+    #: only: its result and any exception it raises are ignored.
+    protective_stop_block_recorder: "object | None" = None
     #: Live `trade_updates` websocket feed. Declared here, FALSE, for the
     #: same reason as `_kill_switch_path` above: an instance built without
     #: __init__ must read the safe value rather than raise. Fail-closed
@@ -1891,6 +1898,39 @@ class AlpacaBroker:
             "name": name,
             "exchange": exchange,
         }
+
+    def list_assets(self) -> list[dict]:
+        """Every ACTIVE US-equity asset record, raw, one read-only GET.
+
+        The universe screen's candidate source (`src/universe_screen.py`).
+        Raw REST rather than the SDK's `get_all_assets` because the pinned
+        alpaca-py (0.44) `Asset` model has no `borrow_status`, the field
+        Alpaca now names as the borrow flag (it deprecated `easy_to_borrow`
+        on 2026-06-22 with a 2026-09-22 sunset —
+        https://docs.alpaca.markets/reference/get-v2-assets-1). Raises on
+        failure: an empty list would read as "every admitted name was
+        delisted", which it is not.
+        """
+        raw = self.client.get(
+            "/assets", {"status": "active", "asset_class": "us_equity"},
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
+        return [item for item in raw if isinstance(item, dict)]
+
+    def get_asset_record(self, symbol: str) -> dict | None:
+        """One raw asset record; None ONLY when the broker says it does not
+        exist (HTTP 404/422). Any other failure raises, so a network blip is
+        never mistaken for a delisting."""
+        alpaca_symbol = _alpaca_symbol(_internal_symbol(_alpaca_symbol(symbol)))
+        try:
+            raw = self.client.get(f"/assets/{alpaca_symbol}")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in (404, 422):
+                return None
+            raise
+        return raw if isinstance(raw, dict) else None
 
     def get_shortability(self, symbol: str) -> dict:
         """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
@@ -4959,6 +4999,14 @@ class AlpacaBroker:
 
         Returns the broker's response dict, or None when every attempt
         failed. Never raises.
+
+        A kill-switch refusal does NOT raise (`_submit_stop_limit_order`
+        returns a dict with `id=None`) — until this check existed that fell
+        straight through to the success branch below and was logged and
+        returned as a PLACED stop. The switch is a stable ops halt, not a
+        transient broker error, so this does not burn the retry burst on
+        it: one refusal is reported as blocked and the leg fails now,
+        exactly as if the broker itself had refused every attempt.
         """
         attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
         last_exc: BaseException | None = None
@@ -4981,6 +5029,15 @@ class AlpacaBroker:
                     ]
                     time.sleep(delay)
                 continue
+            from src.execution.exit_path_records import is_kill_switch_block
+            if is_kill_switch_block(order):
+                logger.critical(
+                    "protective stop [%s] for %s qty=%.4f BLOCKED by the "
+                    "desk's own kill switch — nothing was sent to the "
+                    "broker; NOT reporting this as placed.",
+                    leg, symbol, qty,
+                )
+                return None
             if attempt > 1:
                 logger.warning(
                     "protective stop [%s] placed for %s on attempt %d/%d — the "
@@ -5293,7 +5350,28 @@ class AlpacaBroker:
                 "for %s qty=%s stop=$%.4f.",
                 self._kill_switch_path, symbol, qty, stop_price,
             )
-            return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
+            # Until 2026-09-19 this refusal left no record, and the repair
+            # path told the owner the BROKER had refused the stop. The
+            # durable row goes through the recorder the database's owner
+            # wires in; `detail` is the plain sentence any caller can show.
+            from src.execution.exit_path_records import kill_switch_blocked_text
+            recorder = self.protective_stop_block_recorder
+            if recorder is not None:
+                try:
+                    recorder(
+                        symbol=symbol, qty=qty, stop_price=stop_price,
+                        side=side, kill_switch_path=str(self._kill_switch_path),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never trading authority
+                    logger.warning(
+                        "kill-switch block record for %s could not be "
+                        "written: %s", symbol, exc,
+                    )
+            return {
+                "id": None, "status": "kill_switch_halted", "symbol": symbol,
+                "blocked_by": "kill_switch",
+                "detail": kill_switch_blocked_text(symbol),
+            }
         # docs/WORK.md item 88 — the LAST authority before the broker, for
         # the callers that reach this directly (the partial-exit reprotect
         # and the restore paths) rather than through
@@ -5386,10 +5464,23 @@ class AlpacaBroker:
         placed: list[dict] = []
         for leg_qty in legs:
             try:
-                placed.append(self._submit_stop_limit_order(
+                leg_order = self._submit_stop_limit_order(
                     symbol=symbol, qty=leg_qty, stop_price=stop_price,
                     limit_price=limit_price, side=side,
-                ))
+                )
+                # A kill-switch refusal does not raise (`id=None` dict) —
+                # this docstring's own "either worked or raised" contract
+                # means a refusal MUST become an exception here too, or the
+                # caller (replace_stop_loss) logs and returns it as a
+                # placed trailing stop. Raising drives the same
+                # already-placed-leg rollback below as any other failure.
+                from src.execution.exit_path_records import is_kill_switch_block
+                if is_kill_switch_block(leg_order):
+                    raise RuntimeError(
+                        f"protective stop leg for {symbol} qty={leg_qty} "
+                        f"blocked by the desk's own kill switch"
+                    )
+                placed.append(leg_order)
             except Exception:
                 for done in placed:
                     try:
@@ -5498,20 +5589,37 @@ class AlpacaBroker:
                 )
                 continue
             try:
-                self._submit_stop_limit_order(
+                restore_result = self._submit_stop_limit_order(
                     symbol=symbol,
                     qty=spec["qty"],
                     stop_price=spec["stop_price"],
                     limit_price=spec.get("limit_price"),
                     side=side,
                 )
-                restored += 1
             except Exception as exc:
                 logger.error(
                     "replace_stop_loss: failed to restore prior stop for %s @ $%.2f: %s",
                     symbol, spec["stop_price"], exc,
                 )
                 failed_specs.append(spec)
+                continue
+            # A kill-switch refusal does not raise — it comes back as a
+            # dict with `id=None` — so without this check the loop above
+            # counted a refused restore as `restored += 1`, and the caller
+            # (the WAL drain, and replace_stop_loss's own rollback) then
+            # treated the position as re-covered and discharged its
+            # recovery row over a stop that was never sent to the broker.
+            from src.execution.exit_path_records import is_kill_switch_block
+            if is_kill_switch_block(restore_result):
+                logger.critical(
+                    "replace_stop_loss: restore of prior stop for %s @ "
+                    "$%.2f BLOCKED by the desk's own kill switch — NOT "
+                    "counting this as restored; the position stays flagged "
+                    "uncovered.", symbol, spec["stop_price"],
+                )
+                failed_specs.append(spec)
+                continue
+            restored += 1
         if restored:
             new_submits = restored - skipped_already_alive
             if skipped_already_alive:

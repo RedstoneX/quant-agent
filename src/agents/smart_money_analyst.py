@@ -282,6 +282,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 ), 2)
                 for direction in direction_counts
             },
+            # Board item 124: the deterministic same-day opportunistic
+            # purchase cluster, or null. A source fact; the seat may explain
+            # it, but conviction is set by code (`_purchase_cluster_lift`).
+            "insider_purchase_cluster": cls._cluster_fact(observations),
             "routine_reasons": sorted({
                 row.signal_class_reason for row in observations
                 if row.signal_class == "routine" and row.signal_class_reason
@@ -325,6 +329,22 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 "accession_number": row.accession_number,
                 "transaction_row": row.transaction_row,
             } for row in representatives],
+        }
+
+    @staticmethod
+    def _cluster_fact(observations: list[SmartMoneyObservation]) -> dict | None:
+        stamped = [
+            row.purchase_cluster for row in observations
+            if row.stream == "insider" and row.purchase_cluster is not None
+        ]
+        if not stamped:
+            return None
+        cluster = max(stamped, key=lambda c: c.transaction_date)
+        return {
+            "transaction_date": cluster.transaction_date.isoformat(),
+            "distinct_insiders": cluster.distinct_insiders,
+            "combined_value_usd": cluster.combined_value_usd,
+            "filing_age_days": cluster.filing_age_days,
         }
 
     @classmethod
@@ -409,7 +429,17 @@ class SmartMoneyAnalystAgent(BaseAgent):
         rows = []
         for observation in observations:
             dumped = observation.model_dump(mode="json")
-            rows.append({field: dumped.get(field) for field in stable_fields})
+            row = {field: dumped.get(field) for field in stable_fields}
+            # A new or vanished purchase cluster changes what the seat is
+            # asked to weigh; its age does not (it advances daily). The key is
+            # added only when present so rows without one hash exactly as
+            # before and existing cached syntheses stay valid.
+            cluster = dumped.get("purchase_cluster")
+            if isinstance(cluster, dict):
+                row["purchase_cluster"] = {
+                    k: v for k, v in cluster.items() if k != "filing_age_days"
+                }
+            rows.append(row)
         rows.sort(key=lambda row: (
             str(row.get("symbol", "")),
             str(row.get("accession_number", "")),

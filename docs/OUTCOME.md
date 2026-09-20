@@ -127,8 +127,13 @@ honour-system prose and the numbers it forbids accumulated under it. There is
 now a check — `src/number_sources.py`, failing through
 `tests/test_number_sources.py` — that requires a numeric definition site
 inside a declared scope to carry an entry in `config/number_ledger.yaml`
-recording where the number came from. 178 sites are in scope; 86 distinct
-numbers are recorded as having nothing behind them.
+recording where the number came from. 324 sites are in scope (179 before
+2026-09-19's board item 130 admitted `src/execution/broker.py`,
+`src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`, 226 before
+the scanner learned the same day to see function-parameter defaults,
+numeric attributes on any class, and near-one inline price/size multipliers
+such as `price * 0.995`); 146 distinct numbers are recorded as having
+nothing behind them.
 
 **What the mechanism actually does, stated exactly, because an authority file
 must not claim more than the code does.** It is a COVERAGE and CONSISTENCY
@@ -152,7 +157,14 @@ check over a declared scope, not a proof that any number is sourced.
     `config/settings.yaml:751`, is the owner-ratified row at line 84 of THIS
     file, and was ratified on 2026-08-27. Every claim was one grep from being
     disproved. `source` must now be a URL or a `path:line` for that reason.
-  * It does not source any of the 86. That is `docs/WORK.md` item 90's open
+  * It sees a number only in one of five SHAPES: a module-level constant, a
+    `*Config` field, a function-parameter default, a class attribute, or a
+    multiplier/divisor literal between 0.5 and 2 (excluding 1). A threshold
+    in a comparison (`> 50`), an additive offset, a divisor like the
+    `/ 10.0` in the level-strength formula, a fallback argument, or a
+    keyword literal at a call site is still invisible. Hoisting such a
+    literal to a named constant is what makes it visible.
+  * It does not source any of the 146. That is `docs/WORK.md` item 90's open
     half, and every one of them is the owner's to move, not an agent's.
 
 Read `src/number_sources.py`'s docstring before adding a constant; the
@@ -164,6 +176,35 @@ open number. The schema does NOT yet require the other two — what was already
 searched and ruled out, and what evidence would settle it. Outcome 3's rule
 that a citation "is a URL a later reader can open and check" is what the
 `source` requirement below now enforces mechanically.
+
+## No feature can be silently off, ever
+
+**ENFORCED SINCE 2026-09-19**, after an audit found `congress_enabled`
+(`SmartMoneyConfig`, shipped 2026-09-04, #271, deliberately off by default)
+had never been switched on in the five weeks since, while three owner-facing
+surfaces — the Telegram smart-money label, the pre-market refresh log line,
+and `docs/qamc_trading_desk_workflow.html` — kept describing congressional
+data as running. A switch being off is not itself a defect; nothing checking
+whether its declared state still matched its real one, or whether it existed
+at all outside its own field definition, was the defect.
+
+`src/feature_flags.py`, failing through `tests/test_feature_flags.py`
+(same `pytest` job as the number ledger above — no new required CI check
+name), requires every boolean field on every `src.config.*Config` class to
+carry an entry in `config/feature_flags.yaml` recording its EFFECTIVE value
+(`config/settings.yaml` layered over the pydantic default, resolved the same
+way `src.config.load_config` builds `AppConfig`), whether that value was
+chosen deliberately, and why. As of this writing 18 switches are declared;
+where git history and the code's own comments recorded no reason, the entry
+says "reason not recorded" rather than inventing one.
+
+**What it does not do, same caveat as the number ledger above.** It is a
+coverage and consistency check, not a proof any `reason` is true, and it
+cannot read a Telegram label, a log line, or an HTML page and check that it
+agrees with a switch's real state — that mismatch is still a human
+documentation pass. Read `src/feature_flags.py`'s docstring for the exact
+scope rule and the tri-state (`bool | None`) blind spot it flags a sentinel
+against.
 
 Every constant that governs a real trade decision — a stop distance, a
 holding period, a risk percentage, a tolerance band, the retired reward:risk

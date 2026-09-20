@@ -158,6 +158,84 @@ class MarketDataProvider:
             )
         return _completed_only(bars, cutoff, symbol, "yfinance")
 
+    def get_ohlcv_batch(self, symbols: list[str], lookback_days: int) -> dict[str, list[OHLCV]]:
+        """COMPLETED daily bars for many symbols in ONE yfinance request.
+
+        Same contract as `get_ohlcv` (completed bars only, NaN rows dropped),
+        for the universe screen, which reads a year of bars for up to a few
+        thousand candidates and cannot afford one request each. A symbol
+        missing from the reply maps to []; a failed request RAISES, so the
+        caller can tell "this symbol has no history" from "the feed is down".
+        """
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        cutoff = last_completed_bar_date()
+        end = cutoff + timedelta(days=1)
+        start = et_today() - timedelta(days=lookback_days)
+
+        def _download():
+            return yf.download(
+                wanted, start=str(start), end=str(end), progress=False,
+                group_by="ticker", auto_adjust=False, threads=True,
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            df = ex.submit(_download).result(timeout=_DOWNLOAD_TIMEOUT_S * 4)
+        if df is None:
+            raise RuntimeError("yfinance batch download returned nothing")
+        out: dict[str, list[OHLCV]] = {}
+        multi = isinstance(df.columns, pd.MultiIndex)
+        for symbol in wanted:
+            try:
+                frame = df[symbol] if multi else (df if len(wanted) == 1 else None)
+            except KeyError:
+                frame = None
+            if frame is None or frame.empty:
+                out[symbol] = []
+                continue
+            cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in frame.columns]
+            if len(cols) < 5:
+                out[symbol] = []
+                continue
+            clean = frame.dropna(subset=cols)
+            bars = [
+                OHLCV(
+                    date=idx.date(), open=float(row["Open"]), high=float(row["High"]),
+                    low=float(row["Low"]), close=float(row["Close"]),
+                    volume=int(row["Volume"]),
+                )
+                for idx, row in clean.iterrows()
+            ]
+            out[symbol] = _completed_only(bars, cutoff, symbol, "yfinance batch")
+        return out
+
+    def get_company_profile(self, symbol: str) -> dict | None:
+        """{"market_cap_usd", "sector_raw", "quote_type"} from yfinance, or None
+        when it could not be read. Bounded by the same per-symbol timeout as
+        valuations."""
+        def _fetch():
+            return yf.Ticker(symbol).info or {}
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                info = ex.submit(_fetch).result(timeout=_VALUATION_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — timeout or fetch error
+            logger.warning("company profile fetch failed for %s: %s", symbol, exc)
+            return None
+        if not isinstance(info, dict) or not info:
+            return None
+        cap = info.get("marketCap")
+        try:
+            cap = float(cap) if cap is not None else None
+        except (TypeError, ValueError):
+            cap = None
+        return {
+            "market_cap_usd": cap,
+            "sector_raw": info.get("sector"),
+            "quote_type": info.get("quoteType"),
+        }
+
     def get_upcoming_ex_dividend(self, symbol: str) -> dict:
         """Return {date, amount} for a symbol's upcoming ex-dividend, or {}.
 

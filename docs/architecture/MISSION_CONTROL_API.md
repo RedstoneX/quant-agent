@@ -122,8 +122,43 @@ The existing `specialist_evidence` stream now also accepts validated
 memory or trading dependency. Symbol events carry `stage`, `outcome`, `reason`
 and structured details for opportunity discovery, specialist success/failure,
 PM proposal/omission/failure, Risk outcome, deterministic gate, funding, order
-submission and protection. Existing evidence kinds remain the canonical agent
+submission and protection. One run-scoped event (no symbol) exists as well:
+`stage="gross_delever"`, `outcome="still_over_ceiling"`, written when the
+gross-exposure de-lever finishes with the book still over its ceiling; its
+details carry gross before/after, the ceiling and an `orders` list with each
+order's final broker status. Existing evidence kinds remain the canonical agent
 payloads; `trades` remains the canonical broker lifecycle row.
+
+**Every gate that changes or discards a decision writes one (board item 164,
+2026-09-19).** Each such row carries a `gate` code naming the rule, the
+reason, and — where a size changed — the value before and after. The
+Risk-stage rows are:
+
+- `risk` / `approved` or `modified` — `modified` ONLY when a field actually
+  changed (`changes: {field: [before, after]}`); `reason` is the seat's own
+  stated reason for that symbol, or says in words that it gave none. (Until
+  2026-09-19 this carried the constant `risk_manager_verdict` and read
+  `modified` for any symbol the seat merely named in an edit.)
+- `risk` / `rejected` on a book-level veto carries the symbol's own reason
+  where the seat named it, with `book_level_reason` beside it.
+- `risk` / `dropped` (`gate=rm_modification_schema_invalid` or
+  `rm_enlargement_revert_failed`) and `risk` / `modification_not_applied`
+  (`rm_modification_unknown_field`, `rm_modification_no_matching_decision`).
+  An edit naming a symbol with no decision in the plan is filed run-scoped
+  with `symbol_named`, so it never becomes a phantom candidate.
+- `deterministic_gate` / `blocked` or `modified`, `reason=queued_earnings_cap`
+  with `before_allocation_pct` / `after_allocation_pct` — the symbol's
+  `proposed_order` row is written earlier and keeps the pre-cap size.
+- `deterministic_gate` / `modified`, `reason=side_flip_refused` — a flip
+  collapsed to its closing leg, with held / requested / emitted weight.
+- `portfolio_manager` / `target_dropped` — a target removed after the model
+  answered (`pm_target_malformed`, `conflict_unadjudicated`).
+
+An exit the AI Risk seat APPROVES on the exit-review path is recorded in the
+exit path's own per-symbol record (`kind="exit_refusal"`,
+`code="ai_risk_approved"`, `dropped=false`) — not as a `pipeline_event`,
+because the jam detector (`src/refusal_signature.py`) would count a surviving
+exit as the session having taken a new idea.
 
 `GET /runs/{run_id}/funnel` and the per-candidate endpoint expose those events,
 all matching trades, terminal `fill_status`/fill facts, protection outcome and

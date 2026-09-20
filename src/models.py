@@ -1566,6 +1566,31 @@ class AnalystProvenance(LLMOutputModel):
         )
 
 
+class InsiderPurchaseCluster(BaseModel):
+    """Two or more distinct insiders buying the same stock on the same day.
+
+    Computed in Python by
+    `src.data.smart_money_cluster.insider_purchase_clusters` from SEC Form 4
+    rows only; never parsed from a model response. The definition is the one
+    Alldredge & Blank measure (J. Financial Research 42(2), 2019; SSRN
+    2781761): a purchase "on the same day as another insider purchase at the
+    same company". Members are restricted to open-market purchases (Form 4
+    code P) that the routine test in `src.data.insider_signal` classified
+    OPPORTUNISTIC, because Cohen, Malloy & Pomorski (NBER w16454) find routine
+    trades earn "essentially zero" abnormal return.
+
+    `filing_age_days` is today minus the latest member filing's disclosure
+    date — how long ago the cluster became fully knowable. It changes daily
+    and is therefore excluded from the synthesis evidence hash.
+    """
+    transaction_date: date
+    distinct_insiders: int = Field(ge=2)
+    insider_ciks: list[str] = Field(min_length=2)
+    combined_value_usd: float = Field(ge=0)
+    latest_disclosure_date: date
+    filing_age_days: int = Field(ge=0)
+
+
 class SmartMoneyObservation(LLMOutputModel):
     """Source-backed smart-money fact; timestamps and amounts are source facts.
 
@@ -1640,6 +1665,14 @@ class SmartMoneyObservation(LLMOutputModel):
     # congressional row cached before this field existed.
     cross_source_agreement: Literal["", "single_source", "agreement", "discrepancy"] = ""
     cross_source_note: str = ""
+    # The most recent same-day opportunistic insider purchase cluster in this
+    # row's symbol, stamped by `SECForm4Provider.fetch` on every insider row
+    # of a CONFIGURED-UNIVERSE symbol (never on a non-universe or
+    # congressional row). A per-symbol fact carried on each row so it
+    # survives whichever rows the materiality filter and the observation cap
+    # keep. Its only effect is `SmartMoneyFinding.to_verdict`'s
+    # medium -> high conviction lift; it never changes sorting or admission.
+    purchase_cluster: InsiderPurchaseCluster | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -1697,6 +1730,28 @@ _SMART_MONEY_ROLE_CONVICTION: dict[str, str] = {
 #: Magnitude is now `NO_STATED_STRENGTH` (0.0 — this seat has no strength
 #: scale of its own, and does not borrow one); the role still sets
 #: conviction, which is the one place it has a derivation behind it.
+
+
+def _purchase_cluster_lift(
+    conviction: str,
+    direction: str,
+    cluster: "InsiderPurchaseCluster | None",
+) -> str:
+    """Owner ask 2026-09-19 (board item 124): a confirmed same-day
+    opportunistic insider purchase cluster lifts this seat's conviction from
+    "medium" to "high" on a bullish read, and does nothing else.
+
+    Why only buying and only one rung: Alldredge & Blank (2019) report
+    abnormal returns after CLUSTERED PURCHASES; nothing in that source is
+    about sales, and a purchase cluster says nothing in favour of a bearish
+    call. The lift is capped at the existing high rung — this seat's
+    conviction is a three-rung label, and a cluster cannot create a rung the
+    table does not have, nor rescue a "low" (contradictory/historical) read,
+    which the table puts there for reasons the cluster does not address.
+    """
+    if cluster is not None and direction == "bullish" and conviction == "medium":
+        return "high"
+    return conviction
 
 
 class SmartMoneyFinding(LLMOutputModel):
@@ -1760,8 +1815,19 @@ class SmartMoneyFinding(LLMOutputModel):
                 and len(directional) == 1
                 and all(o.lag_days <= 45 for o in self.observations)
             )
+            # Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20
+            # entry): congressional disclosures are evidence and must never
+            # be zeroed out, but their ceiling is "confirmatory" — they may
+            # raise a thesis's conviction, never alone reach "actionable"
+            # present-tense trading evidence. A same-day cluster of several
+            # members (the >=2-actor gate above) therefore lifts conviction
+            # by AT MOST ONE step, historical/low -> confirmatory/medium; it
+            # is capped here, not scaled by how many members clustered, so a
+            # 2-member and a 10-member cluster land on the same rung.
             if not self.support_eligible:
                 self.economic_role = "historical"
+            elif self.economic_role == "actionable":
+                self.economic_role = "confirmatory"
             self.transient_admission_eligible = False
             return self
 
@@ -1795,6 +1861,17 @@ class SmartMoneyFinding(LLMOutputModel):
             self.economic_role = "historical"
         return self
 
+    def purchase_cluster(self) -> "InsiderPurchaseCluster | None":
+        """The deterministic purchase cluster stamped on this finding's
+        insider rows, or None. Congressional rows never carry one."""
+        stamped = [
+            o.purchase_cluster for o in self.observations
+            if o.stream == "insider" and o.purchase_cluster is not None
+        ]
+        if not stamped:
+            return None
+        return max(stamped, key=lambda c: c.transaction_date)
+
     def to_verdict(self) -> "AnalystVerdict":
         """This finding, restated in the shared Phase 13 verdict shape.
 
@@ -1823,7 +1900,15 @@ class SmartMoneyFinding(LLMOutputModel):
                        ranking through its weighted conviction; see
                        `NO_STATED_STRENGTH` and `src/verdicts.py`.
         conviction   — `_SMART_MONEY_ROLE_CONVICTION[economic_role]`. New
-                       judgment.
+                       judgment. Then ONE deterministic lift, owner ask
+                       2026-09-19 (board item 124): a bullish finding whose
+                       insider rows carry a confirmed same-day opportunistic
+                       purchase cluster (`InsiderPurchaseCluster`) is lifted
+                       from "medium" to "high". Nothing else moves: "low"
+                       stays low, "high" cannot go higher, a bearish or
+                       neutral read is untouched, and the model has no say —
+                       it may mention the cluster, the code sets the rung.
+                       See `_purchase_cluster_lift`.
         evidence     — `summary` and `why_now`, each as one labelled item
                        when present, plus up to 5 observations (most recent
                        transaction_date first) summarized as text.
@@ -1841,12 +1926,27 @@ class SmartMoneyFinding(LLMOutputModel):
         # read from this seat states no distance. See `NO_STATED_STRENGTH`.
         magnitude = NO_STATED_STRENGTH
         conviction = _SMART_MONEY_ROLE_CONVICTION[self.economic_role]
+        cluster = self.purchase_cluster()
+        conviction = _purchase_cluster_lift(conviction, stance, cluster)
 
         evidence: list[VerdictEvidence] = []
         if self.summary.strip():
             evidence.append(VerdictEvidence(label="summary", text=self.summary.strip()))
         if self.why_now.strip():
             evidence.append(VerdictEvidence(label="why_now", text=self.why_now.strip()))
+        if cluster is not None:
+            evidence.append(VerdictEvidence(
+                label="insider_purchase_cluster",
+                value=cluster.combined_value_usd,
+                as_of=cluster.transaction_date,
+                text=(
+                    f"{cluster.distinct_insiders} distinct insiders made "
+                    "opportunistic open-market purchases on "
+                    f"{cluster.transaction_date.isoformat()}, combined "
+                    f"${cluster.combined_value_usd:,.0f}; latest filing "
+                    f"{cluster.filing_age_days} days old"
+                ),
+            ))
         most_recent = sorted(
             self.observations, key=lambda o: o.transaction_date, reverse=True,
         )[:5]

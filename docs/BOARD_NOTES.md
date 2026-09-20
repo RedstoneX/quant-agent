@@ -189,6 +189,32 @@ retry, rather than freeze forever on a missing seat. If that retry is
 blocked by the spend cap, or still fails, you get a message naming the
 seat. A successful repair is written down, not paged.
 
+**Your ruling, 18 September — "only technical analysis can stop the
+desk" —** is built. Before it, ALL five seats could stop a decision, and
+nobody had decided that: it was an accident of which seat happened to
+report a failure word, so any seat that gained a new failure word quietly
+gained the power to halt trading. Now the chart research is the one seat
+that can stop the desk, and that is written down in one place with your
+ruling and its date next to it. The other four still matter: if one of them
+loses its answer it is recorded, you are still told, and the desk still
+counts the run as degraded — it just goes ahead and decides.
+
+**What shipped alongside it, because otherwise the change would have been
+invisible —** with four seats advisory, a decision can now stand on ONE
+piece of research read just now plus four answers carried over from the
+morning. Every one of those carried answers reports as fine, so nothing
+anywhere said "four fifths of this was not looked at again". Now every
+decision says so: how many seats were read just now, how many were carried
+over, how many had nothing, and which carried answers the desk already
+knows are out of date. That is a statement of fact, not a bar — it does not
+refuse anything and no minimum was invented.
+
+**One more correction in the same pass —** "I have a good answer and I know
+a newer one exists" was being filed as "the answer never arrived". Those
+are not the same thing and the rule itself says so. It is now its own
+category; it still counts as a degraded run and it is now named to you
+explicitly whenever a decision leans on one.
+
 **The decision —** Still yours, and now the only thing left in this item:
 whether *partial* evidence should also stop a decision, and if so, where the
 line sits. Not "did the seat answer" — that is settled and built, morning
@@ -196,6 +222,13 @@ and the later scan alike — but "the seat answered about 40 of 65 companies,
 is that enough?". Nothing published answers that, so it either gets a
 number from you or a ruling that partial coverage should never stop a
 decision at all.
+
+**One thing you may want to look at —** on the every-thirty-minutes scan,
+the chart research can never be recorded as having lost its answer; the way
+that scan is written, it is always either "fine" or "partly fine". So on
+that scan the rule can now record and report, but it can no longer refuse
+anything. That follows from your ruling rather than from a fault, and no
+agent has widened the rule to work around it.
 
 ## item 32
 

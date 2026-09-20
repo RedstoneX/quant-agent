@@ -248,6 +248,14 @@ class RunContext:
     # expiry peek). None means the seat has no honest input and must stay
     # lost rather than be re-asked with nothing.
     heal_news_text: str | None = None
+    # How much of this decision's evidence was read on THIS tick, as
+    # `evidence_gate.EvidenceFreshness.to_evidence()`. Written by the
+    # evidence gate, the one path every decision passes through. Owner
+    # mandate 2026-09-18 made every seat but the technical one advisory, so
+    # a decision can now stand on one fresh seat plus a carried-forward
+    # book with every seat reporting green; this is what says so. It is a
+    # disclosure and carries no threshold.
+    evidence_freshness: dict | None = None
     # Fills path: desk-caused stall after Risk (WS handshake). Catch-up
     # inside the already-approved ceiling is a safety net only, not the
     # product. Repeg stays off. Submit deadline is the sum of programmed

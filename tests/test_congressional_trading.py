@@ -490,6 +490,113 @@ def test_congressional_disclosure_past_the_legal_deadline_is_still_ineligible():
 
 
 # ---------------------------------------------------------------------------
+# Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20 entry): four
+# rules for how congressional evidence is weighted by the PM. See
+# `SmartMoneyFinding.deterministic_eligibility`'s congressional branch.
+# ---------------------------------------------------------------------------
+
+def _congress_obs(actor: str, *, lag_days: int = 10) -> SmartMoneyObservation:
+    """One minimal, real, on-time congressional observation."""
+    return SmartMoneyObservation(
+        symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
+        direction="buy", amount_range="$15,001 - $50,000",
+        transaction_date=TODAY - timedelta(days=20),
+        disclosure_date=TODAY - timedelta(days=20 - lag_days),
+        known_at=datetime.combine(TODAY - timedelta(days=20 - lag_days), datetime.min.time()),
+        source_url="https://example.invalid/x",
+        transaction_value_usd=15001.0,
+        in_core_universe=True, in_trading_universe=True,
+        admission_eligible=False, transient_admission_eligible=False,
+        lag_days=lag_days, disclosure_age_days=20 - lag_days, freshness="delayed",
+        economic_role="confirmatory",
+    )
+
+
+def test_rule1_congress_enabled_by_default_evidence_is_never_zeroed_out():
+    """Rule 1: congressional evidence must be weighted, never fully zeroed
+    out on research grounds. The switch defaults on, and even a single,
+    non-clustered disclosure still reaches a real (non-empty) role/
+    conviction rather than being dropped."""
+    assert SmartMoneyConfig().congress_enabled is True
+
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        summary="One member bought.", why_now="Single disclosure, no cluster.",
+        observations=[_congress_obs("Kevin Hern")],
+    )
+    assert finding.support_eligible is False
+    # Downgraded to "historical" (low conviction), not discarded: it still
+    # reaches `to_verdict()` and is counted in the PM's ranking sum.
+    verdict = finding.to_verdict()
+    assert verdict.conviction == "low"
+
+
+def test_rule2_congressional_only_finding_can_never_reach_actionable():
+    """Rule 2: congressional evidence is a confirmatory ceiling only. Even
+    when the model self-reports "actionable" on a structurally eligible
+    (clustered) finding, the deterministic check downgrades it -- congress
+    alone must never claim present-tense actionable trading evidence, and
+    must never be sole basis for admitting a new symbol."""
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Two members bought.", why_now="Clustered buys.",
+        observations=[_congress_obs("Kevin Hern"), _congress_obs("Jane Doe")],
+    )
+    assert finding.support_eligible is True
+    assert finding.economic_role == "confirmatory"
+    # Never the sole basis for admitting a new symbol into consideration.
+    assert finding.transient_admission_eligible is False
+    verdict = finding.to_verdict()
+    assert verdict.conviction == "medium"
+
+
+def test_rule3_cluster_size_does_not_compound_conviction():
+    """Rule 3: a same-day cluster of multiple members lifts conviction by
+    at most ONE step, not compounding per additional member -- a 2-member
+    and a 10-member cluster must land on the identical rung."""
+    two_members = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Two members bought.", why_now="Clustered buys.",
+        observations=[_congress_obs("Kevin Hern"), _congress_obs("Jane Doe")],
+    )
+    ten_members = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Ten members bought.", why_now="Larger clustered buy.",
+        observations=[_congress_obs(f"Member {i}") for i in range(10)],
+    )
+    assert two_members.economic_role == ten_members.economic_role == "confirmatory"
+    assert two_members.to_verdict().conviction == ten_members.to_verdict().conviction == "medium"
+
+
+def test_rule4_transaction_date_is_never_inferred_from_lag_or_pattern(tmp_path):
+    """Rule 4: only real, disclosed trade dates count. congresswatch carries
+    no filing/disclosure-date field, so its DISCLOSURE date is conservatively
+    estimated (documented, flagged `disclosure_date_estimated=True`) -- but
+    the TRANSACTION (trade) date itself is always the source row's own real
+    field, verbatim, never derived from a lag or a pattern."""
+    provider = CongressionalTradingProvider(
+        data_dir=str(tmp_path / "c"),
+        session=_mock_session([], []),
+    )
+    real_trade_date = TODAY - timedelta(days=30)
+    row, why = provider._normalize_congresswatch(
+        _congresswatch_row(transaction_date=real_trade_date)
+    )
+    assert why is None
+    assert row["transaction_date"] == real_trade_date.isoformat()
+    # Only the disclosure date is estimated, and it says so honestly.
+    assert row["disclosure_date_estimated"] is True
+    assert row["disclosure_date"] != row["transaction_date"]
+
+    # No real transaction_date at all -> dropped, never inferred/estimated.
+    bad_row = _congresswatch_row()
+    del bad_row["transaction_date"]
+    row2, why2 = provider._normalize_congresswatch(bad_row)
+    assert row2 is None
+    assert why2 is not None
+
+
+# ---------------------------------------------------------------------------
 # Direction parsing (bug 2) — House PTR forms carry SHORT CODES (P/S/E), not
 # only full words. Those fell through to "unknown" and were lost.
 # ---------------------------------------------------------------------------

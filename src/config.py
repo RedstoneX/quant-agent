@@ -1268,6 +1268,35 @@ class SmartMoneyConfig(BaseModel):
     user_agent: str = "QAMC research-intelligence qamc-contact@proton.me"
     request_timeout_s: float = Field(default=15.0, ge=1, le=60)
     refresh_deadline_s: float = Field(default=180.0, ge=10, le=600)
+    # The watched-name Form 4 drain's OWN budget, started only after the
+    # market-wide pass above has finished with `refresh_deadline_s`. Until
+    # 2026-09-19 the drain shared that 180 s with the market-wide pass, which
+    # ran first and measured ~153 s on its own (journal, 2026-09-18
+    # 12:00:41 -> 12:03:14 UTC), so the drain could never finish.
+    #
+    # Sized to clear the MEASURED watched backlog in one pre-market run, read
+    # against SEC read-only on 2026-09-19 with the desk's own User-Agent and
+    # rate limiter:
+    #   82 watched issuers, one filing-history GET each: 11.0 s measured;
+    #   5,431 unread Form 4s inside `lookback_days` on those issuers;
+    #   0.156 s per filing read, measured over 40 reads at the 8 req/s
+    #   limiter below (SEC's published maximum is 10 req/s:
+    #   https://www.sec.gov/os/accessing-edgar-data).
+    #   11.0 + 5,431 x 0.156 = 858.2 s -> 859.
+    # It must also fit inside the job that runs it: TimeoutStartSec=1260 in
+    # scripts/systemd/quant-agent-earnings_preprocess.service. Measured job
+    # parts: ~2 s startup, `refresh_deadline_s` 180, and at most 147 s of
+    # work after the refresh (2026-09-17 journal, 12:03:14 -> 12:05:41) —
+    # 2 + 180 + 859 + 147 = 1,188 <= 1,260. tests/test_form4_backlog_order.py
+    # keeps that sum honest if any term changes.
+    #
+    # It binds only on the one-time catch-up: the steady-state inflow on
+    # those issuers is ~16 filings a day (5,801 in-window / 365), ~3 s.
+    # Progress is kept per issuer, so a drain that does not finish loses
+    # nothing and the next morning resumes where it stopped.
+    # Upper bound = the room that sum leaves: 1,260 - 2 - 180 - 147 = 931.
+    # Lower bound mirrors `refresh_deadline_s`'s.
+    watched_drain_deadline_s: float = Field(default=859.0, ge=10, le=931)
     requests_per_second: float = Field(default=8.0, ge=0.5, le=10.0)
     # 7 -> 90 -> 365 on 2026-09-11. This bounds how far back an insider/SEC
     # observation is FETCHED and RETAINED at full detail — a trade older
@@ -1305,6 +1334,19 @@ class SmartMoneyConfig(BaseModel):
     # independent of this number. Anything added later that walks the
     # lookback window from inside a decision tick falsifies this paragraph
     # again — that is the thing to check, not the value.
+    #
+    # RE-CHECKED 2026-09-19: "a filing already processed is never
+    # re-fetched" still holds, but the claim that this number only sets how
+    # many search queries run does NOT. Since PR #529 the watched-name drain
+    # must READ every unread Form 4 inside this window on every watched
+    # issuer before that issuer's evidence can be called current. Raising
+    # 7 -> 365 therefore created a one-time read of 5,431 filings on the
+    # desk's 82 watched issuers (measured 2026-09-19), which the drain
+    # could not do inside the 180 s it shared with the market-wide pass.
+    # That cost now has its own budget, `watched_drain_deadline_s`, sized
+    # from the measurement. The value 365 is unchanged — it is the owner's
+    # behavioural bound, and draining it is cheaper than seeding a claim
+    # of coverage the desk has not read.
     # STORAGE cost is small: measured directly against the live server's
     # actual cache 2026-09-11 — 4,324 records / 5.76 MB at the old 7-day
     # window, roughly ~300 MB at 365 days on a straight scale-up — trivial
@@ -1319,10 +1361,13 @@ class SmartMoneyConfig(BaseModel):
     max_observations: int = Field(default=40, ge=1, le=200)
     min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
     external_min_transaction_value_usd: float = Field(default=250_000, ge=1_000)
-    # Alldredge & Blank (J. Financial Research, 2019) define a cluster as
-    # purchases within ~2 days of a colleague's trade (see
-    # docs/RESEARCH_FINDINGS.md:19). Was 14 days with no documented
-    # rationale until the 2026-09-04 audit fix.
+    # ROW-RETENTION window for `cluster_survivors`, NOT the research cluster
+    # (corrected 2026-09-19, board item 124). Alldredge & Blank's abstract
+    # (J. Financial Research, 2019) measures SAME-DAY purchases; "within two
+    # days" appears only in a secondary summary (IBKR Campus). The
+    # research-defined same-day opportunistic purchase cluster is
+    # `src.data.smart_money_cluster.insider_purchase_clusters`. Was 14 days
+    # with no documented rationale until the 2026-09-04 audit fix.
     cluster_window_days: int = Field(default=2, ge=1, le=45)
     min_cluster_owners: int = Field(default=2, ge=2, le=10)
     max_external_candidates: int = Field(default=3, ge=1, le=10)
@@ -1387,11 +1432,14 @@ class SmartMoneyConfig(BaseModel):
     # `src/data/congressional_trading.py::CongressionalTradingProvider`.
     # Two independent free, credentialless sources are cross-checked against
     # each other rather than trusted singly: both are single-operator, young
-    # projects with no track record. Off by default, same conservative
-    # rollout pattern as other new autonomous-decision surfaces in this
-    # file (see `intra_check.enabled` above) — an operator opts in
-    # deliberately after reviewing the PR.
-    congress_enabled: bool = False
+    # projects with no track record. Switched on 2026-09-20 per owner
+    # ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, that date): congressional
+    # trading disclosures are evidence and must be weighted by the PM, never
+    # zeroed out on research grounds — see `SmartMoneyFinding
+    # .deterministic_eligibility`'s congressional branch (src/models.py) for
+    # the confirmatory-ceiling and cluster-cap enforcement that ships with
+    # this flip.
+    congress_enabled: bool = True
     congress_kadoa_url: str = (
         "https://raw.githubusercontent.com/kadoa-org/"
         "congress-trading-monitor/main/public/data/trades.json"
@@ -1434,11 +1482,15 @@ class SmartMoneyConfig(BaseModel):
     #     exactly this reason — a short window silently returned almost
     #     nothing. 180 is that observed-in-the-wild figure, not one invented
     #     here.
-    # This is a data-COVERAGE window, not a signal-strength one: widening it
-    # cannot make stale data load-bearing, because
-    # `SmartMoneyFinding.deterministic_eligibility` (src/models.py) separately
-    # requires congressional-only evidence to be <=7 days old. Widening only
-    # stops real rows being thrown away before the analyst ever sees them.
+    # This is a data-COVERAGE window, not a signal-strength one. Corrected
+    # 2026-09-19: this comment used to say `SmartMoneyFinding.
+    # deterministic_eligibility` (src/models.py) requires congressional-only
+    # evidence to be <=7 days old. That age cutoff was removed by the
+    # 2026-09-11 redesign; what that validator still checks is structure (two
+    # or more members, one direction, each filed within the STOCK Act's 45
+    # days). Age is now weighed downstream by correlation with current
+    # evidence, and the congressional refresh reports how old the newest
+    # disclosure and the newest trade are.
     congress_lookback_days: int = Field(default=180, ge=1, le=365)
 
     @model_validator(mode="after")
@@ -1482,6 +1534,49 @@ class NominationConfig(BaseModel):
     # one run, regardless of how many seats nominated or how many raw
     # nominations survived the per-seat cap.
     max_total_per_run: int = Field(default=6, ge=1, le=20)
+
+
+class UniverseScreenConfig(BaseModel):
+    """Universe expansion and pruning (`src/universe_screen.py`).
+
+    The design agreed with the owner 2026-09-01 (docs/INCIDENT_HISTORY.md,
+    "Universe expansion and pruning"), built 2026-09-19. With `enabled` off
+    NOTHING changes: no weekly screen runs, no screened symbol reaches a
+    session, and the SEC Form 4 and nomination side doors keep their
+    pre-existing gates. With it on, both side doors run the same screen and
+    the Form 4 door gets its age gate back.
+
+    The spread and volatility thresholds have no field here on purpose: they
+    are DERIVED at run time from `execution.max_entry_slippage_bps` and
+    `risk.min_stop_atr_multiple` (see the module docstring), and the cap on
+    screened names per session is `nominations.max_per_seat_per_run` — the
+    screen is one more source of candidates, capped like one seat.
+    """
+
+    enabled: bool = False
+    data_dir: str = "data/universe"
+    # SEC Rule 3a51-1(d), 17 CFR 240.3a51-1: an equity security "that has a
+    # price of five dollars or more" is not a penny stock
+    # (https://www.law.cornell.edu/cfr/text/17/240.3a51-1, fetched
+    # 2026-09-19). The owner's words were "filter out ... the penny stocks";
+    # this is the legal line for what a penny stock is.
+    min_price_usd: float = Field(default=5.0, gt=0)
+    # FTSE Russell US indexes methodology: ineligible — "Companies under $30
+    # Million in total market capitalization" (https://www.lseg.com/content/
+    # dam/ftse-russell/en_us/documents/other/ftse-russell-us-indexes-
+    # methodology-overview-cut-sheet.pdf, fetched 2026-09-19). The floor of
+    # the broadest published US investable-equity index.
+    min_market_cap_usd: float = Field(default=30_000_000, gt=0)
+    # Wall-clock budget for one incremental pass. It runs at the end of the
+    # evening session: TimeoutStartSec=1260 in
+    # scripts/systemd/quant-agent-evening.service, and the evening body
+    # measured 173 s on 2026-09-19 (journal, 00:00:10 -> 00:03:03 UTC).
+    # 173 + 900 = 1,073 <= 1,260, leaving 187 s — more than the whole
+    # measured body again. A pass that does not finish loses nothing: the
+    # next evening resumes with whoever is still due.
+    screen_deadline_s: float = Field(default=900.0, ge=10, le=1080)
+    # Symbols per daily-bar download request (yfinance multi-ticker).
+    bars_batch_size: int = Field(default=50, ge=1, le=200)
 
 
 class ScheduleConfig(BaseModel):
@@ -2102,6 +2197,8 @@ class AppConfig(BaseModel):
     # unchanged and Phase 9 stays off-by-default-bound rather than
     # unbounded.
     nominations: NominationConfig = Field(default_factory=NominationConfig)
+    # Optional section — absent means the screen is off (enabled=False).
+    universe_screen: UniverseScreenConfig = Field(default_factory=UniverseScreenConfig)
     # Optional section — a settings.yaml without it gets the documented
     # default lookback (7 days), so older configs keep working unchanged.
     reconciliation: ReconciliationConfig = Field(default_factory=ReconciliationConfig)

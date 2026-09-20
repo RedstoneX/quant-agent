@@ -665,6 +665,79 @@ def _is_retryable(exc: Exception) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class MalformedRow:
+    """One element of a list-shaped answer that was not valid JSON.
+
+    `key` is the row's identifying field (e.g. the symbol) read from the
+    broken text when it is legible, else None. `reason` is the decoder's own
+    message plus the offending line, short enough for one log line.
+    """
+    key: str | None
+    reason: str
+
+
+@dataclass
+class RowSalvage:
+    """Result of `AgentResult.parse_json_rows`: every well-formed row, plus
+    every row that was present in the answer but malformed. A row in neither
+    list was genuinely not returned by the model."""
+    rows: list
+    malformed: list[MalformedRow]
+
+
+def _array_element_spans(text: str, open_idx: int) -> tuple[list[tuple[int, int | None]], int]:
+    """Spans of the top-level `{...}` elements of the array opening at
+    `open_idx`, and the index just past the array's close (or len(text)).
+
+    String-aware bracket counting, with one recovery rule: string state is
+    reset at every raw newline, because JSON forbids a literal newline inside
+    a string (RFC 8259 section 7: control characters U+0000-U+001F must be
+    escaped). A stray or missing quote therefore corrupts at most its own
+    line, never the element boundaries of the rows after it. An element still
+    open when the text ends is returned with end None (a cut-off answer).
+    """
+    spans: list[tuple[int, int | None]] = []
+    depth = 0
+    in_str = False
+    escaped = False
+    elem_start: int | None = None
+    n = len(text)
+    pos = open_idx + 1
+    while pos < n:
+        ch = text[pos]
+        if ch == "\n":
+            in_str = False
+            escaped = False
+        elif in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            if depth == 0 and ch == "{":
+                elem_start = pos
+            depth += 1
+        elif ch in "}]":
+            if depth == 0:
+                if ch == "]":
+                    return spans, pos + 1
+                # Stray closer at array level: ignore it.
+            else:
+                depth -= 1
+                if depth == 0 and elem_start is not None:
+                    spans.append((elem_start, pos + 1))
+                    elem_start = None
+        pos += 1
+    if elem_start is not None:
+        spans.append((elem_start, None))
+    return spans, n
+
+
 @dataclass
 class AgentResult:
     raw_text: str
@@ -891,6 +964,93 @@ class AgentResult:
 
         logger.warning("Failed to parse agent response as JSON: %s", self.raw_text[:200])
         return None
+
+    def parse_json_rows(self, key_field: str = "symbol") -> RowSalvage | None:
+        """Row-by-row parse for an agent whose answer is a LIST of objects.
+
+        Opt-in; `parse_json` above is unchanged for every other seat. The
+        difference only shows when the whole answer is not valid JSON:
+        `parse_json` then returns ONE winning fragment, which for a list
+        answer means one garbled row throws away every well-formed row beside
+        it (tech seat, 2026-09-17 14:31 `intra_check-26f52bf2`: five rows
+        returned, one carried a bare `n/a`, one row survived; the retry lost
+        ORCL and ETN the same way although both answers carried them
+        well-formed). Here each element of the answer's array is parsed on
+        its own: good rows are kept, broken ones are reported as
+        `MalformedRow` with their `key_field` value when legible.
+
+        Returns None only when nothing in the answer parses at all.
+        """
+        text = self.raw_text.strip()
+        for candidate in (text, self._repair_unquoted_keys(text)):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            return RowSalvage(
+                rows=parsed if isinstance(parsed, list) else [parsed],
+                malformed=[],
+            )
+
+        # Every array in the answer whose first element is an object. The
+        # LAST one wins, matching parse_json's "latest correction" rule for a
+        # draft-then-fix answer.
+        chosen: list[tuple[int, int | None]] | None = None
+        search = 0
+        while True:
+            open_idx = self.raw_text.find("[", search)
+            if open_idx < 0:
+                break
+            nxt = open_idx + 1
+            while nxt < len(self.raw_text) and self.raw_text[nxt] in " \t\r\n":
+                nxt += 1
+            if nxt >= len(self.raw_text) or self.raw_text[nxt] != "{":
+                search = open_idx + 1
+                continue
+            spans, search = _array_element_spans(self.raw_text, open_idx)
+            if spans:
+                chosen = spans
+
+        if chosen is None:
+            # Not list-shaped (e.g. a single object in prose): the shared
+            # fragment parser's answer, unchanged.
+            parsed = self.parse_json()
+            if parsed is None:
+                return None
+            return RowSalvage(
+                rows=parsed if isinstance(parsed, list) else [parsed],
+                malformed=[],
+            )
+
+        key_re = re.compile(r'"%s"\s*:\s*"([^"\n]+)"' % re.escape(key_field))
+        rows: list = []
+        malformed: list[MalformedRow] = []
+        for start, end in chosen:
+            chunk = self.raw_text[start:end] if end is not None else self.raw_text[start:]
+            key_match = key_re.search(chunk)
+            key = key_match.group(1) if key_match else None
+            if end is None:
+                malformed.append(MalformedRow(
+                    key, "row cut off: the answer ended before the row closed",
+                ))
+                continue
+            error: json.JSONDecodeError | None = None
+            for candidate in (chunk, self._repair_unquoted_keys(chunk)):
+                try:
+                    rows.append(json.loads(candidate))
+                    error = None
+                    break
+                except json.JSONDecodeError as exc:
+                    error = error or exc
+            if error is not None:
+                lines = chunk.splitlines()
+                bad_line = lines[error.lineno - 1].strip() if 0 < error.lineno <= len(lines) else ""
+                malformed.append(MalformedRow(
+                    key, f"{error.msg} near {bad_line!r}",
+                ))
+        if not rows and not malformed:
+            return None
+        return RowSalvage(rows=rows, malformed=malformed)
 
 
 def agent_log_kwargs(result: AgentResult) -> dict:

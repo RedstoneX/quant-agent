@@ -268,31 +268,84 @@ def _submissions(by_cik: dict[str, list[tuple[str, str]]]):
     return _get
 
 
-def test_freshness_ignores_backlog_and_never_runs_a_crawl(tmp_path, monkeypatch):
-    """THE ACCEPTANCE CONDITION for the six lost windows.
+def test_freshness_reports_backlog_on_unread_names_without_a_crawl(
+    tmp_path, monkeypatch,
+):
+    """THE ACCEPTANCE CONDITION for the six lost windows, restated per issuer.
 
-    An unread accession filed on or before the watermark is backlog, not new
-    information, and the probe must reach that verdict without EFTS.
+    Backlog lives only on names never read through, and it is reported as
+    exactly that — `unread_names`, not `new_filings` — without EFTS.
+
+    REPLACES `test_freshness_ignores_backlog_and_never_runs_a_crawl`
+    (2026-09-19). That test pinned "an unread filing dated on or before the
+    single watermark is backlog". On a name that has been read through that
+    rule is the defect `test_freshness_sees_a_filing_made_on_the_read_through_day`
+    below reproduces: every filing made on the watermark's own date after the
+    pre-market read was hidden as backlog. The no-crawl half is kept.
     """
     provider = _provider(tmp_path, lookback_days=365)
-    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
     monkeypatch.setattr(
         provider, "_discover",
         Mock(side_effect=AssertionError("freshness must not run a crawl")),
     )
+    from src.data.smart_money import et_today
+    today = et_today().isoformat()
     (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": [],           # 000001 was NEVER read: backlog
-        "watched_read_through": "2026-09-18",
+        "processed_accessions": [],
+        "watched_read_through_by_cik": {"1045810": today},
     }))
     monkeypatch.setattr(provider, "_get", _submissions({
-        "1045810": [("0000000001-26-000001", "2026-09-15")],
+        "1045810": [],
+        # AAPL was never read through and 000001 was never read: backlog.
+        "320193": [("0000000001-26-000001", today)],
+    }))
+
+    verdict = provider.form4_freshness(["NVDA", "AAPL"])
+
+    assert verdict["new_filings"] == []
+    assert verdict["unread_names"] == ["320193"]
+    assert verdict["unread_filings"] == 1
+    assert verdict["covered"] == 1
+    # Partial coverage is never "current".
+    assert verdict["ok"] is False
+    assert "not yet fully read" in verdict["reason"]
+
+
+def test_freshness_sees_a_filing_made_on_the_read_through_day(
+    tmp_path, monkeypatch,
+):
+    """The false-REUSE hole in the single watermark, reproduced.
+
+    The pre-market drain ran at 08:00 ET and stamped today. A Form 4 filed
+    at 14:00 ET the same day carries today's filing date, so `filed <=
+    watermark` hid it as "backlog" on every intraday tick — the seat reused
+    superseded findings all afternoon. On a name read through, an unread
+    filing can only be new.
+    """
+    provider = _provider(tmp_path, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+    today = et_today().isoformat()
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "processed_accessions": ["0000000001-26-000001"],
+        # Both shapes written, so the single-watermark code reads its own.
+        "watched_read_through": today,
+        "watched_read_through_by_cik": {"1045810": today},
+    }))
+    monkeypatch.setattr(provider, "_get", _submissions({
+        "1045810": [
+            ("0000000002-26-000002", today),     # filed after the morning read
+            ("0000000001-26-000001", today),
+        ],
     }))
 
     verdict = provider.form4_freshness(["NVDA"])
 
     assert verdict["ok"] is True
-    assert verdict["new_filings"] == []
+    assert verdict["new_filings"] == ["0000000002-26-000002"]
 
 
 def test_freshness_expires_on_a_filing_after_the_watermark(tmp_path, monkeypatch):
@@ -302,6 +355,7 @@ def test_freshness_expires_on_a_filing_after_the_watermark(tmp_path, monkeypatch
     (tmp_path / "manifest.json").write_text(json.dumps({
         "processed_accessions": ["0000000001-26-000001"],
         "watched_read_through": "2026-09-15",
+        "watched_read_through_by_cik": {"1045810": "2026-09-15"},
     }))
     monkeypatch.setattr(provider, "_get", _submissions({
         "1045810": [
@@ -332,6 +386,9 @@ def test_freshness_partial_failure_is_unknown_not_clean(tmp_path, monkeypatch):
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
     (tmp_path / "manifest.json").write_text(json.dumps({
         "processed_accessions": [], "watched_read_through": "2026-09-18",
+        "watched_read_through_by_cik": {
+            "1045810": "2026-09-18", "320193": "2026-09-18",
+        },
     }))
     good = _submissions({"1045810": []})
 
@@ -461,10 +518,240 @@ def test_pre_open_check_alerts_before_the_day_is_lost(monkeypatch):
         "watched_read_through": "2026-09-17",
         "watched_pending_filings": 4, "watched_unchecked_names": [],
         "discovery_cap_reached": True,
+        "watched_names": 82, "watched_names_read_through": 60,
     })
     assert len(sent) == 1
     text = sent[0]
-    # Plain words: the owner is not a developer and must be able to act on it.
-    assert "will not make a new trading decision" in text
+    # CHANGED 2026-09-19: this asserted "will not make a new trading
+    # decision". PR #535 made the insider seat advisory, so that sentence
+    # became false; the alert now says what actually happens, and how much
+    # of the watched set IS read.
+    assert "will not make a new trading decision" not in text
+    assert "without complete insider evidence" in text
+    assert "60 of our 82 companies" in text
     for jargon in ("Form 4", "accession", "watermark", "EDGAR", "peek", "cap"):
         assert jargon not in text, f"{jargon!r} is not plain language"
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-19: the drain gets its own budget and keeps progress per issuer.
+#
+# Measured that day, read-only against SEC: 82 watched issuers, 5,431 unread
+# Form 4s inside the 365-day window, 0.156 s per filing read — ~858 s of
+# reading against the 180 s the drain SHARED with a market-wide pass that
+# runs first and measured ~153 s on its own. So the single watermark was
+# never written and the insider seat was stale on every tick.
+
+
+class _Clock:
+    """A monotonic clock the test advances; stands in for wall time."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _deadline_aware(get, clock_provider):
+    """Wrap a fake `_get` so it honours the deadline exactly like the real one."""
+
+    def _get(url, *, params, deadline):
+        clock_provider._remaining(deadline)   # raises _RefreshDeadline
+        return get(url, params=params, deadline=deadline)
+
+    return _get
+
+
+def test_drain_has_its_own_deadline_after_the_market_wide_pass(
+    tmp_path, monkeypatch,
+):
+    """The market-wide pass spending its whole budget must not starve the
+    drain. Before 2026-09-19 both shared one deadline, so this refresh ended
+    with the watched filing unread and no watermark."""
+    import src.data.smart_money as sm
+
+    clock = _Clock()
+    monkeypatch.setattr(sm.time, "monotonic", clock)
+    provider = _provider(
+        tmp_path, lookback_days=365, refresh_deadline_s=180,
+        watched_drain_deadline_s=859,
+    )
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    day0 = sm.et_today().isoformat()
+
+    def _slow_discover(listed_, deadline, processed, priority, stats):
+        clock.now += 181   # the market-wide pass uses up its own 180 s
+        stats.update(candidates=0, watched_candidates=0, cap_reached=False,
+                     deadline_hit=True, busiest_day_total=0)
+        return []
+
+    monkeypatch.setattr(provider, "_discover", _slow_discover)
+    monkeypatch.setattr(provider, "_get", _deadline_aware(
+        _submissions({"1045810": [("0000000003-26-000003", day0)]}), provider,
+    ))
+    monkeypatch.setattr(
+        provider, "_submission",
+        lambda filing, deadline: (provider._remaining(deadline), ("<xml/>", "u"))[1],
+    )
+    monkeypatch.setattr(provider, "_parse_submission", lambda *a, **k: [])
+
+    result = provider.refresh(["NVDA"])
+
+    assert "0000000003-26-000003" in provider.known_accessions()
+    assert result["watched_drain_deadline_hit"] is False
+    assert result["watched_read_through"] == day0
+    assert provider.read_through_by_cik() == {"1045810": day0}
+
+
+def test_drain_keeps_each_finished_issuer_when_the_budget_runs_out(
+    tmp_path, monkeypatch,
+):
+    """One unfinished issuer must not throw away the others' work, and the
+    next morning must resume, not restart. Smallest residue goes first so
+    the most issuers finish for any budget."""
+    import src.data.smart_money as sm
+
+    clock = _Clock()
+    monkeypatch.setattr(sm.time, "monotonic", clock)
+    provider = _provider(
+        tmp_path, lookback_days=365, watched_drain_deadline_s=10,
+    )
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    monkeypatch.setattr(provider, "_discover", lambda *a, **k: [])
+    day0 = sm.et_today().isoformat()
+    history = {
+        # NVDA: 3 unread. AAPL: 1 unread — read first.
+        "1045810": [(f"0000000001-26-00000{n}", day0) for n in (1, 2, 3)],
+        "320193": [("0000000002-26-000001", day0)],
+    }
+    monkeypatch.setattr(
+        provider, "_get", _deadline_aware(_submissions(history), provider),
+    )
+    reads: list[str] = []
+
+    def _submission(filing, deadline):
+        provider._remaining(deadline)
+        reads.append(filing["accession"])
+        clock.now += 4   # each read costs 4 s of a 10 s budget
+        return "<xml/>", "u"
+
+    monkeypatch.setattr(provider, "_submission", _submission)
+    monkeypatch.setattr(provider, "_parse_submission", lambda *a, **k: [])
+
+    first = provider.refresh(["NVDA", "AAPL"])
+
+    assert reads[0] == "0000000002-26-000001", "smallest residue first"
+    assert first["watched_drain_deadline_hit"] is True
+    assert provider.read_through_by_cik() == {"320193": day0}
+    assert first["watched_names"] == 2
+    assert first["watched_names_read_through"] == 1
+    assert first["watched_names_unread"] == ["NVDA"]
+    # The single all-names date must NOT advance on a partial drain.
+    assert first["watched_read_through"] == ""
+    assert first["watched_pending_filings"] == 1
+
+    # Next morning: fresh budget, resumes with the one NVDA filing left.
+    reads.clear()
+    clock.now += 10_000
+    second = provider.refresh(["NVDA", "AAPL"])
+    assert reads == ["0000000001-26-000003"]
+    assert provider.read_through_by_cik() == {"320193": day0, "1045810": day0}
+    assert second["watched_names_unread"] == []
+    assert second["watched_read_through"] == day0
+    assert provider.form4_coverage()["unread"] == []
+
+
+def test_combined_provider_surfaces_the_drain_outcome_to_the_pre_open_check(
+    monkeypatch,
+):
+    """Production wraps the Form 4 provider in `CombinedSmartMoneyProvider`.
+    Until 2026-09-19 that wrapper lifted only three counts to the top level,
+    so the pre-open check read an empty read-through date and would have
+    alerted every morning, drain or no drain."""
+    import src.notifier as notifier
+    from src.pipeline import TradingPipeline
+    from src.util.time import et_today
+
+    today = et_today().isoformat()
+
+    class _Form4:
+        def refresh(self, symbols=None):
+            return {
+                "status": "ok", "error": None, "pending_filings": 0,
+                "watched_pending_filings": 0, "discovery_cap_reached": False,
+                "watched_drain_ran": True, "watched_drain_read": 3,
+                "watched_unchecked_names": [], "watched_drain_deadline_hit": False,
+                "watched_read_through": today, "watched_names": 82,
+                "watched_names_read_through": 82, "watched_names_unread": [],
+            }
+
+    combined = CombinedSmartMoneyProvider.__new__(CombinedSmartMoneyProvider)
+    combined.providers = [_Form4()]
+    result = combined.refresh(["NVDA"])
+    assert result["watched_read_through"] == today
+    assert result["watched_names_read_through"] == 82
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    TradingPipeline._alert_form4_backlog_before_open.__get__(object())(result)
+    assert sent == []
+
+
+def test_pre_market_backlog_is_recorded_where_the_desk_records_status():
+    """`discovery_cap_reached` and `watched_pending_filings` were computed
+    every morning and only ever logged. They are now a specialist-evidence
+    row, so successive mornings can be compared from the database."""
+    from types import SimpleNamespace
+    from src.pipeline import TradingPipeline
+
+    rows: list[dict] = []
+
+    class _Db:
+        def insert_specialist_evidence(self, **kwargs):
+            rows.append(kwargs)
+
+    obj = SimpleNamespace(db=_Db())
+    TradingPipeline._record_form4_backlog.__get__(obj)("run-1", {
+        "watched_pending_filings": 4, "discovery_cap_reached": True,
+        "watched_names": 82, "watched_names_read_through": 60,
+        "watched_names_unread": ["WMT"],
+    })
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "form4_backlog"
+    payload = json.loads(rows[0]["evidence_json"])
+    assert payload["watched_pending_filings"] == 4
+    assert payload["discovery_cap_reached"] is True
+    assert payload["watched_names_read_through"] == 60
+
+
+def test_drain_budget_fits_inside_the_job_that_runs_it():
+    """The drain budget is derived from a measurement, and it must also fit
+    inside the systemd job, or systemd kills the job mid-write and the
+    earnings step after it never runs. Every term below is cited at
+    src/config.py::SmartMoneyConfig.watched_drain_deadline_s."""
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    from src.config import SmartMoneyConfig
+
+    root = Path(__file__).resolve().parent.parent
+    unit = (root / "scripts/systemd/quant-agent-earnings_preprocess.service").read_text()
+    timeout = int(re.search(r"^TimeoutStartSec=(\d+)$", unit, re.M).group(1))
+    deployed = yaml.safe_load((root / "config/settings.yaml").read_text())["smart_money"]
+    startup_s = 2             # 2026-09-18 journal, 12:00:39 -> 12:00:41 UTC
+    after_refresh_max_s = 147  # 2026-09-17 journal, 12:03:14 -> 12:05:41 UTC
+    for source in (deployed, SmartMoneyConfig().model_dump()):
+        total = (
+            startup_s + float(source["refresh_deadline_s"])
+            + float(source["watched_drain_deadline_s"]) + after_refresh_max_s
+        )
+        assert total <= timeout, (total, timeout)
+    # The config's own ceiling is exactly the room that sum leaves.
+    field = SmartMoneyConfig.model_fields["watched_drain_deadline_s"]
+    le = next(m.le for m in field.metadata if hasattr(m, "le"))
+    assert le == timeout - startup_s - 180 - after_refresh_max_s

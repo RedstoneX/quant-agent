@@ -17,6 +17,7 @@ Nothing here touches the network, the broker, or a real Telegram chat.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -768,3 +769,161 @@ def test_coverage_only_reports_a_broker_it_cannot_build(monkeypatch, capsys):
     monkeypatch.setattr(hb, "run_coverage_check", boom)
     assert hb.main(["--coverage-only"]) == 1
     assert "no credentials" in capsys.readouterr().err
+
+
+# ===========================================================================
+# 7. Every run leaves a durable, identifiable record — board item 131
+#
+# Production, read-only, 2026-09-19: the unit had run 235 times since
+# 2026-09-14 with every exit 0, and had placed stops at four market opens —
+# but all of it lived only in the systemd journal of that one unit. Zero
+# lines reached quant_agent.log and zero rows reached the database, so the
+# board could not tell whether it had ever run.
+# ===========================================================================
+
+def _sweep_rows(database):
+    return [
+        json.loads(r["evidence_json"]) for r in database.conn.execute(
+            "SELECT evidence_json FROM specialist_evidence "
+            "WHERE agent_name = ? AND kind = 'pipeline_event' AND scope = 'run'",
+            ("coverage_sweep",),
+        ).fetchall()
+    ]
+
+
+@pytest.fixture
+def desk_db(tmp_path):
+    from src.storage.db import Database
+
+    database = Database(str(tmp_path / "desk.db"))
+    database.initialize()
+    yield database
+    database.close()
+
+
+def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
+    monkeypatch, db, state_path, desk_db, caplog,
+):
+    import logging
+
+    import scripts.alert_heartbeat as hb
+
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    covered = {"n": 0}
+
+    def _snapshot(symbol, side="sell"):
+        if symbol != "ORCL":
+            return True, []
+        stops = [{"id": "gtc", "qty": 5.0, "stop_price": 137.53}]
+        if covered["n"]:
+            stops.append({"id": "new-day-stop", "qty": 0.3089, "stop_price": 137.53})
+        return True, stops
+
+    def _place(**kwargs):
+        covered["n"] = 1
+        return {"id": "new-day-stop", "uncovered_qty": 0.0}
+
+    broker.snapshot_protective_stops.side_effect = _snapshot
+    broker._submit_protective_stop_retrying.side_effect = _place
+    monkeypatch.setattr(hb, "_build_broker", lambda: broker)
+    monkeypatch.setattr(hb, "_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(hb, "_coverage_db_and_last_buy", lambda: (desk_db, _last_buy))
+    monkeypatch.setattr(hb, "_RUN_ENTRY", "coverage_sweep", raising=False)
+
+    with caplog.at_level(logging.INFO, logger="src.coverage_watchdog"):
+        hb.run_coverage_check(now=_FRI_1005)
+
+    lines = [r.getMessage() for r in caplog.records if "COVERAGE SWEEP" in r.getMessage()]
+    assert len(lines) == 2
+    assert lines[0].endswith("(coverage_sweep): started")
+    assert "repaired" in lines[1] and "positions checked 1" in lines[1]
+    assert "succeeded 1" in lines[1] and "alert none sent" in lines[1]
+
+    rows = _sweep_rows(desk_db)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["outcome"] == "repaired"
+    assert row["entry"] == "coverage_sweep"
+    assert row["positions_checked"] == 1          # SGOV is excluded
+    assert row["repairs_attempted"] == 1
+    assert row["repairs_succeeded"] == 1
+    assert row["repairs_failed"] == 0
+    assert row["repaired"][0]["symbol"] == "ORCL"
+    assert row["gaps_found"] == 0                  # re-read after placing
+    assert row["alerts"] == []
+    assert row["run_id"] in lines[0]
+
+
+def test_a_clean_sweep_run_is_recorded_as_clean(monkeypatch, db, state_path, desk_db):
+    import scripts.alert_heartbeat as hb
+
+    monkeypatch.setattr(hb, "_build_broker", lambda: _orcl_broker(stops=(5.0, 0.3089)))
+    monkeypatch.setattr(hb, "_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(hb, "_coverage_db_and_last_buy", lambda: (desk_db, _last_buy))
+
+    hb.run_coverage_check(now=_SAT_0615)
+
+    [row] = _sweep_rows(desk_db)
+    assert row["outcome"] == "clean"
+    assert row["positions_checked"] == 1 and row["gaps_found"] == 0
+    assert row["repairs_attempted"] == 0 and row["alerts"] == []
+
+
+def test_an_alerting_sweep_run_records_that_the_alert_went_out(
+    monkeypatch, db, state_path, desk_db,
+):
+    import scripts.alert_heartbeat as hb
+
+    monkeypatch.setattr(hb, "_build_broker", lambda: _orcl_broker())
+    monkeypatch.setattr(hb, "_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(hb, "_coverage_db_and_last_buy", lambda: (desk_db, None))
+    with patch("src.notifier.send_owner_alert", return_value=True):
+        hb.run_coverage_check(now=_SAT_0615)
+
+    [row] = _sweep_rows(desk_db)
+    assert row["outcome"] == "gaps_left"
+    assert row["gap_symbols"] == ["ORCL"]
+    assert row["alerts"] == ["exposure alert delivered"]
+
+
+def test_a_sweep_that_cannot_build_its_broker_still_leaves_a_record(
+    monkeypatch, db, state_path, desk_db,
+):
+    import scripts.alert_heartbeat as hb
+
+    def _boom():
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(hb, "_build_broker", _boom)
+    monkeypatch.setattr(hb, "_coverage_db_and_last_buy", lambda: (desk_db, _last_buy))
+    with pytest.raises(RuntimeError):
+        hb.run_coverage_check(now=_SAT_0615)
+
+    [row] = _sweep_rows(desk_db)
+    assert row["outcome"] == "could_not_run"
+    assert "no credentials" in row["reason"]
+
+
+def test_the_sweep_process_writes_to_the_desk_log_file(tmp_path):
+    """The unit's own process must reach `quant_agent.log`, the log the desk
+    actually writes, not only its systemd journal."""
+    import logging
+
+    import scripts.alert_heartbeat as hb
+
+    root = logging.getLogger()
+    before_handlers, before_level = list(root.handlers), root.level
+    try:
+        hb._attach_desk_log(tmp_path)
+        logging.getLogger("src.coverage_watchdog").info(
+            "COVERAGE SWEEP coverage_sweep-test (coverage_sweep): started",
+        )
+    finally:
+        for h in root.handlers[:]:
+            if h not in before_handlers:
+                h.close()
+                root.removeHandler(h)
+        root.setLevel(before_level)
+    text = (tmp_path / "quant_agent.log").read_text()
+    assert "[INFO] src.coverage_watchdog: COVERAGE SWEEP coverage_sweep-test" in text
