@@ -137,12 +137,16 @@ def test_the_most_recent_cluster_is_the_one_recorded():
 # provider: stamped on universe rows only, no effect on admission or order
 # --------------------------------------------------------------------------
 
-def _provider_row(*, symbol, owner, value, accession):
-    disclosed = date.today()
+def _provider_row(
+    *, symbol, owner, value, accession,
+    transaction_date=None, disclosure_date=None,
+):
+    disclosed = disclosure_date or date.today()
+    txn = transaction_date if transaction_date is not None else disclosed - timedelta(days=2)
     return SmartMoneyObservation(
         symbol=symbol, stream="insider", actor=f"Owner {owner}",
         actor_cik=owner, actor_roles=["director"], direction="buy",
-        transaction_date=disclosed - timedelta(days=2),
+        transaction_date=txn,
         disclosure_date=disclosed,
         accepted_at=datetime.combine(disclosed, datetime.min.time(), tzinfo=ET),
         source_url=f"https://www.sec.gov/{accession}.txt",
@@ -260,3 +264,156 @@ def test_the_lift_never_raises_low_and_high_stays_high():
 def test_the_lift_does_not_apply_to_a_bearish_or_neutral_read():
     assert _finding(stance="bearish").to_verdict().conviction == "medium"
     assert _finding(stance="neutral").to_verdict().conviction == "medium"
+
+
+# --------------------------------------------------------------------------
+# item 124's second DONE-WHEN criterion, re-derived rather than asserted.
+#
+# No real production Form 4 cache at the scale of the 2026-09-19 measurement
+# (15,068 insider rows, one year) was reachable from this checkout — only a
+# 5-row local dev snapshot exists on disk, far too small to exercise
+# ``max_observations`` (default 40) at all. What follows instead runs the
+# REAL ``SECForm4Provider.fetch()`` pipeline (not a reimplementation of its
+# sort) over synthetic rows sized to match the production shape the
+# measurement above described: a set of individually-material opportunistic
+# buys plus a smaller cluster whose members are each below the per-symbol
+# materiality threshold on their own. This is evidence about the code's
+# actual behaviour, not a fixture of real filings, and is reported as such.
+# --------------------------------------------------------------------------
+
+def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_the_seat_sees_it(tmp_path):
+    """Board item 124's DONE-WHEN #2 is NOT met: a cluster's own rows are not
+    protected in ``SECForm4Provider.fetch``'s final sort, so when enough
+    individually-material opportunistic buys compete for the same
+    ``max_observations`` cap, a below-threshold cluster (rescued into
+    ``cluster_survivors`` by the two-owner window rule, and simultaneously a
+    same-day opportunistic ``insider_purchase_clusters`` cluster) is the
+    first thing cut. The sort key in ``SECForm4Provider.fetch`` is
+    ``(not transient_admission_eligible, not in_core_universe,
+    -signal_weight, -transaction_value_usd, -accepted_at)`` — nothing in it
+    ever looks at ``purchase_cluster``.
+    """
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    today = date.today()
+    rows = []
+    # 40 solo buys, each alone above the $100k core threshold, distinct
+    # owners and accessions, far enough from the rescue pair's date (more
+    # than cluster_window_days=2) to form their own separate window.
+    for i in range(40):
+        rows.append(_provider_row(
+            symbol="CORE", owner=f"solo-{i}", value=500_000,
+            accession=f"0000000100-26-{i:06d}",
+            transaction_date=today - timedelta(days=10),
+            disclosure_date=today,
+        ))
+    # Two distinct insiders, same day, each below the $100k threshold alone
+    # ($60k) but $120k combined -- rescued by cluster_survivors's window
+    # rule, and independently a same-day opportunistic purchase cluster
+    # (the fact that lifts conviction).
+    rows.append(_provider_row(
+        symbol="CORE", owner="rescue-1", value=60_000,
+        accession="0000000200-26-000001",
+        transaction_date=today - timedelta(days=1), disclosure_date=today,
+    ))
+    rows.append(_provider_row(
+        symbol="CORE", owner="rescue-2", value=60_000,
+        accession="0000000200-26-000002",
+        transaction_date=today - timedelta(days=1), disclosure_date=today,
+    ))
+    provider.observations_path.write_text(json.dumps(
+        [row.model_dump(mode="json") for row in rows]
+    ))
+    got, error = provider.fetch(["CORE"])
+    assert error is None
+    assert len(got) == provider.max_observations == 40
+
+    rescued = [row for row in got if row.actor_cik in ("rescue-1", "rescue-2")]
+    # This assertion documents the CURRENT, UNFIXED behaviour: the rescue
+    # pair is real (both rows would independently show up as a cluster) but
+    # is crowded out by 40 higher-dollar solo buys before the seat ever
+    # receives it, so the cluster's own rows do NOT survive the truncation.
+    # If this assertion starts failing, item 124's DONE-WHEN #2 may finally
+    # be met and should be re-examined against real data before closing it.
+    assert rescued == [], (
+        "cluster-rescued rows unexpectedly survived truncation — re-check "
+        "item 124's second DONE-WHEN criterion against this result"
+    )
+
+    # The cluster fact itself is real and was computed correctly (confirming
+    # the defect is specifically about the SORT, not about cluster
+    # detection): had the rescue pair survived, they would have carried it.
+    # ``insider_purchase_clusters`` only counts rows already classified
+    # opportunistic (`fetch` stamps this; these raw rows have not been
+    # through the classifier, so stamp them the same way here).
+    stamped = [row.model_copy(update={"signal_class": "opportunistic"}) for row in rows]
+    clusters = insider_purchase_clusters(stamped, universe={"CORE"}, today=today)
+    assert clusters["CORE"].distinct_insiders == 2
+    assert clusters["CORE"].combined_value_usd == 120_000
+
+
+# --------------------------------------------------------------------------
+# board item 124, adversary finding: does the routine/opportunistic
+# classifier actually keep an ESPP-style recurring cluster from lifting
+# conviction? (docs/INCIDENT_HISTORY.md's 2026-09-19 entry found 9 of 15
+# measured cluster-days were TSM's employee stock purchase plan, and noted
+# the routine test only catches a participant once enough prior months are
+# on record.) These tests run the real classifier and cluster function
+# together, rather than asserting `signal_class="routine"` by hand as the
+# tests above do.
+# --------------------------------------------------------------------------
+
+def test_an_established_recurring_monthly_buyer_is_excluded_from_the_cluster():
+    """Two insiders each with four prior monthly purchases of the same small
+    dollar amount (an ESPP-shaped pattern) buy again, same day, same symbol.
+    `classify_transaction`'s recurring-cadence rule should label both
+    ROUTINE off their own trade history, and `insider_purchase_clusters`
+    must then find no cluster -- the exclusion this feature depends on to
+    avoid an ESPP false positive.
+    """
+    from src.data.insider_signal import InsiderHistory, InsiderPriorTrade, classify_transaction
+
+    today = date(2026, 9, 19)
+    history = InsiderHistory({
+        ("espp-1", "TSM"): [
+            InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
+            for d in (120, 90, 60, 30)
+        ],
+        ("espp-2", "TSM"): [
+            InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
+            for d in (121, 91, 61, 31)
+        ],
+    })
+    newest = [
+        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000,
+             accession="espp-1-newest"),
+        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500,
+             accession="espp-2-newest"),
+    ]
+    verdicts = [classify_transaction(row, history) for row in newest]
+    assert [v.label for v in verdicts] == ["routine", "routine"]
+    assert all(v.reason == "recurring_cadence" for v in verdicts)
+
+    stamped = [
+        row.model_copy(update={"signal_class": v.label})
+        for row, v in zip(newest, verdicts)
+    ]
+    clusters = insider_purchase_clusters(stamped, universe={"TSM"}, today=today)
+    assert "TSM" not in clusters
+
+
+def test_a_brand_new_participants_first_purchase_has_no_history_to_classify_routine():
+    """Documents a real, pre-existing, structural limit (not introduced by
+    this PR, and already stated in docs/INCIDENT_HISTORY.md): a purchase
+    cannot be recognised as part of a recurring pattern before any pattern
+    exists. An insider's first-ever recorded purchase, with no prior trades
+    in the history index, is classified opportunistic even if it happens to
+    be the start of a routine programme -- this is inherent to a
+    history-based classifier, not something last-mile-fixable by widening a
+    threshold, and is left open on the board rather than fixed here.
+    """
+    from src.data.insider_signal import InsiderHistory, classify_transaction
+
+    today = date(2026, 9, 19)
+    first_ever = _buy(owner="new-participant", symbol="TSM", day=today, value=4_000)
+    verdict = classify_transaction(first_ever, InsiderHistory({}))
+    assert verdict.label == "opportunistic"

@@ -369,7 +369,7 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: 4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5 ATR
 #: research pre-filter; and the 5% preview size. No number was added and
 #: none changed -- the debt was always there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 146
+MAX_ARBITRARY_ENTRIES = 147  # 2026-09-20, board item 124 adversary review: +1. `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was `sourced` against an SSRN URL that returns HTTP 403 to everyone, including the author -- a citation nobody can open is not a source under this ledger's own rule. Relabelled `arbitrary` with its open question stated; no value changed. Was 146.
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not

@@ -1246,16 +1246,40 @@ numbers:
       trade.
   - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
     value: 2
-    status: sourced
+    status: arbitrary
     site: src/data/smart_money_cluster.py
-    source: >-
-      https://papers.ssrn.com/abstract=2781761 (Alldredge & Blank, J.
-      Financial Research 42(2), 2019), abstract: a purchase "on the same day
-      as another insider purchase at the same company" -- the insider plus
-      one other, so two distinct insiders is the definition, not a tuned
-      threshold. The SSRN page returned HTTP 403 on 2026-09-19; the wording
-      is the abstract as quoted in search results. Definition site:
-      src/data/smart_money_cluster.py (board item 124).
+    note: >-
+      CORRECTED 2026-09-20 (adversary review of board item 124): this was
+      marked `sourced` against https://papers.ssrn.com/abstract=2781761
+      (Alldredge & Blank, J. Financial Research 42(2), 2019). That page (and
+      the Wiley mirror) returned HTTP 403 on 2026-09-19 and again on
+      2026-09-20 -- nobody, including the author, can open it. The value (2
+      distinct insiders) reads as the abstract's own definition ("a purchase
+      on the same day as another insider purchase at the same company") only
+      because a search engine's cached snippet of the abstract was quoted
+      back, not because the paper was read. A citation nobody can open does
+      not meet this ledger's own bar ("give a URL... a non-author can
+      open"), whatever the snippet says, so this is relabelled `arbitrary`
+      rather than left `sourced` against a dead link. The PR that shipped
+      this feature separately corrected three OTHER figures it had been
+      citing from this same paper ("within ~2 days", "~2.1%/month", "0.9
+      percentage points above solitary buys") after finding those specific
+      three were from a secondary summary, not the abstract -- see
+      docs/RESEARCH_FINDINGS.md and docs/INCIDENT_HISTORY.md's 2026-09-19
+      entry. This entry was not part of that correction and should have
+      been.
+    open_question: >-
+      Does Alldredge & Blank (2019) actually define a cluster as two or more
+      distinct insiders, or is that reconstruction from a search snippet
+      wrong -- and is two the right count, or would three change the
+      measured 23% same-day-clustering rate materially? Answerable by
+      reading the actual paper (library access, a paid copy, or a version
+      hosted somewhere that does not 403) rather than by another web search.
+    cost_while_unanswered: >-
+      Every same-day insider purchase cluster this feature detects, and
+      therefore every medium-to-high conviction lift it can produce, is
+      gated on a threshold nobody has verified against the source it is
+      attributed to.
   - id: src.data.technical.ATR_PERIOD
     value: 14
     status: sourced
