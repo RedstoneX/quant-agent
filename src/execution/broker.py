@@ -1663,6 +1663,13 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Called with the facts of every protective stop the kill switch
+    #: refuses (see `_submit_stop_limit_order`). The broker holds no
+    #: database, so the owner of one wires this — `TradingPipeline` does, to
+    #: `src/execution/exit_path_records.record_protective_stop_blocked`.
+    #: None (the default) records nothing, exactly as before. Recording
+    #: only: its result and any exception it raises are ignored.
+    protective_stop_block_recorder: "object | None" = None
     #: Live `trade_updates` websocket feed. Declared here, FALSE, for the
     #: same reason as `_kill_switch_path` above: an instance built without
     #: __init__ must read the safe value rather than raise. Fail-closed
@@ -1891,6 +1898,39 @@ class AlpacaBroker:
             "name": name,
             "exchange": exchange,
         }
+
+    def list_assets(self) -> list[dict]:
+        """Every ACTIVE US-equity asset record, raw, one read-only GET.
+
+        The universe screen's candidate source (`src/universe_screen.py`).
+        Raw REST rather than the SDK's `get_all_assets` because the pinned
+        alpaca-py (0.44) `Asset` model has no `borrow_status`, the field
+        Alpaca now names as the borrow flag (it deprecated `easy_to_borrow`
+        on 2026-06-22 with a 2026-09-22 sunset —
+        https://docs.alpaca.markets/reference/get-v2-assets-1). Raises on
+        failure: an empty list would read as "every admitted name was
+        delisted", which it is not.
+        """
+        raw = self.client.get(
+            "/assets", {"status": "active", "asset_class": "us_equity"},
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
+        return [item for item in raw if isinstance(item, dict)]
+
+    def get_asset_record(self, symbol: str) -> dict | None:
+        """One raw asset record; None ONLY when the broker says it does not
+        exist (HTTP 404/422). Any other failure raises, so a network blip is
+        never mistaken for a delisting."""
+        alpaca_symbol = _alpaca_symbol(_internal_symbol(_alpaca_symbol(symbol)))
+        try:
+            raw = self.client.get(f"/assets/{alpaca_symbol}")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in (404, 422):
+                return None
+            raise
+        return raw if isinstance(raw, dict) else None
 
     def get_shortability(self, symbol: str) -> dict:
         """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
@@ -5293,7 +5333,28 @@ class AlpacaBroker:
                 "for %s qty=%s stop=$%.4f.",
                 self._kill_switch_path, symbol, qty, stop_price,
             )
-            return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
+            # Until 2026-09-19 this refusal left no record, and the repair
+            # path told the owner the BROKER had refused the stop. The
+            # durable row goes through the recorder the database's owner
+            # wires in; `detail` is the plain sentence any caller can show.
+            from src.execution.exit_path_records import kill_switch_blocked_text
+            recorder = self.protective_stop_block_recorder
+            if recorder is not None:
+                try:
+                    recorder(
+                        symbol=symbol, qty=qty, stop_price=stop_price,
+                        side=side, kill_switch_path=str(self._kill_switch_path),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never trading authority
+                    logger.warning(
+                        "kill-switch block record for %s could not be "
+                        "written: %s", symbol, exc,
+                    )
+            return {
+                "id": None, "status": "kill_switch_halted", "symbol": symbol,
+                "blocked_by": "kill_switch",
+                "detail": kill_switch_blocked_text(symbol),
+            }
         # docs/WORK.md item 88 — the LAST authority before the broker, for
         # the callers that reach this directly (the partial-exit reprotect
         # and the restore paths) rather than through

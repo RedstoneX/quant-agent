@@ -33,7 +33,10 @@ from src.execution.stop_records import (
 logger = logging.getLogger(__name__)
 
 
-def _refuse(outcome: dict | None, reason: str) -> bool:
+def _refuse(
+    outcome: dict | None, reason: str, *, code: str = "",
+    record: dict | None = None, **extra,
+) -> bool:
     """Record WHY this repair did not happen, then report it as not repaired.
 
     docs/WORK.md item 88. Every `return False` in this function is one of
@@ -44,9 +47,23 @@ def _refuse(outcome: dict | None, reason: str) -> bool:
     all, and a 'partial' gap carried the refusal no further than a log
     line. `reason` is a plain sentence, owner-facing, stamped onto the
     caller's gap dict when it supplies one.
+
+    `record` carries what the durable row needs (db, symbol, qty, what the
+    broker already held). Until 2026-09-19 a refusal lived only in that
+    in-memory dict, a log line and a one-shot Telegram, so the refusal that
+    left ~$223 of shares unprotected on 2026-09-18 could not be counted or
+    audited afterwards. Every refusal now also writes one
+    `kind='stop_repair_refusal'` row (`src/execution/exit_path_records.py`).
+    The write never changes the return value.
     """
     if isinstance(outcome, dict):
         outcome["repair_refusal"] = reason
+    if record is not None:
+        from src.execution.exit_path_records import record_stop_repair_refusal
+        record_stop_repair_refusal(
+            record.get("db"), code=code, reason=reason,
+            **{k: v for k, v in record.items() if k != "db"}, **extra,
+        )
     return False
 
 
@@ -59,6 +76,8 @@ def repair_stop_coverage(
     is_short: bool,
     db: Any = None,
     outcome: dict | None = None,
+    resting_stops: list | None = None,
+    caller: str = "",
 ) -> bool:
     """Best-effort: re-place protective stop coverage on an uncovered
     position using the stop level recorded on its last opening row (BUY for
@@ -117,6 +136,15 @@ def repair_stop_coverage(
     """
     if uncovered_qty <= 0:
         return False
+    # What the durable refusal row carries (see `_refuse`). `held_qty` /
+    # `covered_qty` come off the caller's gap dict when it has them.
+    gap = outcome if isinstance(outcome, dict) else {}
+    rec = {
+        "db": db, "symbol": symbol, "uncovered_qty": uncovered_qty,
+        "is_short": is_short, "caller": caller,
+        "held_qty": gap.get("held_qty"), "covered_qty": gap.get("covered_qty"),
+        "resting_stops": resting_stops,
+    }
     opening = "SHORT" if is_short else "BUY"
     protective_side = "buy" if is_short else "sell"
     try:
@@ -129,6 +157,7 @@ def repair_stop_coverage(
         return _refuse(
             outcome,
             f"the archive could not be read for the recorded {opening} stop",
+            code="archive_unreadable", record=rec
         )
     # docs/WORK.md item 88 — the two cases this used to collapse into one
     # sentence. "No stop was ever recorded" and "a stop was recorded and its
@@ -152,6 +181,7 @@ def repair_stop_coverage(
             outcome,
             f"no stop level was ever recorded on the {opening} row, so "
             f"there is no reviewed level to restore",
+            code="no_recorded_stop", record=rec
         )
     if stop_state != STOP_USABLE:
         logger.error(
@@ -164,6 +194,7 @@ def repair_stop_coverage(
             outcome,
             f"the recorded {opening} stop level is {recorded!r}, which "
             f"cannot be a stop price — the archive row is corrupt",
+            code="recorded_stop_unusable", record=rec
         )
     # The wrong-side test below decides whether putting this stop back would
     # fire it instantly — i.e. sell the position at market. That test is only
@@ -195,11 +226,13 @@ def repair_stop_coverage(
         return _refuse(
             outcome, "the live price could not be read, so the recorded stop "
             "could not be checked against the tape",
+            code="price_unreadable", record=rec
         )
     if not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
         return _refuse(
             outcome, "the broker returned no usable live price, so the "
             "recorded stop could not be checked against the tape",
+            code="price_unusable", record=rec
         )
     if stamped is not None and not stamped.is_today_print:
         logger.warning(
@@ -211,6 +244,7 @@ def repair_stop_coverage(
         return _refuse(
             outcome, "there is no trade print from today to check the "
             "recorded stop against",
+            code="no_trade_print_today", record=rec
         )
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
@@ -228,6 +262,7 @@ def repair_stop_coverage(
             f"the recorded stop ${stop_price:,.2f} is already on the live-"
             f"price side of ${price:,.2f}, so restoring it would exit the "
             f"position at market — that is the reviewer's decision",
+            code="would_fire_immediately", record=rec, stop_price=stop_price
         )
     # Spec §11.1 guard 1 belongs here too. This was a single bare
     # `_submit_stop_limit_order` call with NO retry burst at all — a
@@ -249,6 +284,24 @@ def repair_stop_coverage(
         side=protective_side,
     )
     from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+    from src.execution.exit_path_records import (
+        is_kill_switch_block, kill_switch_blocked_text,
+    )
+    if is_kill_switch_block(result):
+        # The desk's own kill switch refused the order before it reached the
+        # broker. This used to fall into the branch below and tell the owner
+        # "the broker did not accept a protective stop after every retry" —
+        # the wrong cause, and the wrong place to look. Same outcome (not
+        # repaired, gap stays flagged); only the words and the record differ.
+        logger.error(
+            "coverage repair BLOCKED BY KILL SWITCH for %s (%.4f uncovered, "
+            "stop $%.2f) — nothing was sent to the broker",
+            symbol, uncovered_qty, stop_price,
+        )
+        return _refuse(
+            outcome, kill_switch_blocked_text(symbol),
+            code="kill_switch", record=rec, stop_price=stop_price,
+        )
     if result is None or not accepted_stop_order(result):
         logger.error(
             "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f) — "
@@ -259,6 +312,7 @@ def repair_stop_coverage(
             outcome,
             f"the broker did not accept a protective stop at "
             f"${stop_price:,.2f} after every retry",
+            code="broker_did_not_accept", record=rec, stop_price=stop_price
         )
     residual = 0.0
     try:
@@ -284,6 +338,13 @@ def repair_stop_coverage(
             outcome,
             f"only {uncovered_qty - residual:.4f} of {uncovered_qty:.4f} "
             f"uncovered share(s) could be covered",
+            code="partial_cover", record=rec, stop_price=stop_price,
+            placed={
+                k: result.get(k) for k in (
+                    "id", "covered_qty", "uncovered_qty", "gtc_qty",
+                    "day_qty", "gtc_stop_id", "day_stop_id",
+                )
+            },
         )
     logger.warning(
         "COVERAGE REPAIRED: %s — placed protective %s stop-limit coverage "

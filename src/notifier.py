@@ -1349,6 +1349,66 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
     return lines
 
 
+def describe_universe_changes(block: Any) -> list[str]:
+    """The owner-facing account of what the universe screen changed.
+
+    Owner design 2026-09-01: "the owner must never discover the universe
+    changed by accident" — every addition, flag and removal since the last
+    morning message, in plain words. Removals, flags and held names kept
+    past a failed check get one line EACH with the reason (they are the ones
+    that matter and are few); additions are one line of names, clipped,
+    because the first weeks can add hundreds. Silent only when the screen
+    is off (no block). With it on and nothing changed, it says so.
+    """
+    if not isinstance(block, dict):
+        return []
+    from src.universe_screen import describe_event, plain_reasons
+
+    events = [e for e in (block.get("events") or []) if isinstance(e, dict)]
+    admitted = block.get("admitted_count")
+    flagged = block.get("flagged_count")
+    size = (
+        f" \u2014 {admitted} screened stock(s) on the list, {flagged} flagged"
+        if isinstance(admitted, int) and isinstance(flagged, int) else ""
+    )
+    if not events:
+        return [f"\U0001f50e Stock list: no changes since the last morning{size}"]
+    out = [f"\U0001f50e Stock list changed: {len(events)} change(s){size}"]
+    grouped = {
+        "added": "Added {n} (passed every check): ",
+        "cleared": "Flag cleared on {n} (passing again): ",
+    }
+    for action, label in grouped.items():
+        names = [str(e.get("symbol", "?")) for e in events if e.get("action") == action]
+        if names:
+            out.append(_clip_text(
+                "\u2022 " + label.format(n=len(names)) + ", ".join(names), 600,
+            ))
+    flagged_events = [e for e in events if e.get("action") == "flagged"]
+    if flagged_events:
+        out.append(_clip_text(
+            f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
+            "next week): " + "; ".join(
+                "{} ({})".format(
+                    e.get("symbol", "?"), plain_reasons(e.get("reasons") or []),
+                )
+                for e in flagged_events
+            ), 600,
+        ))
+    for event in events:
+        if event.get("action") in ("removed", "removal_deferred_held"):
+            out.append(_clip_text(f"\u2022 {describe_event(event)}", 300))
+    return out
+
+
+def _append_universe_changes(lines: list[str], result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    block = describe_universe_changes(result.get("universe_changes"))
+    if block:
+        _new_section(lines, *block)
+
+
 def _append_evidence_freshness(lines: list[str], result: dict) -> None:
     """Put the freshness disclosure into a session message body."""
     if not isinstance(result, dict):
@@ -1783,6 +1843,8 @@ def format_session_result(
     if mode in ("morning", "midday", "close", "once"):
         _new_block(lines, _append_trade_session_body, result)
         _append_evidence_freshness(lines, result)
+        if mode in ("morning", "once"):
+            _append_universe_changes(lines, result)
     elif mode == "evening":
         _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":

@@ -2714,6 +2714,28 @@ class Database:
             latest.setdefault(row["symbol"], row)
         return latest
 
+    def get_latest_symbol_evidence(self, kind: str, symbols) -> dict[str, dict]:
+        """Newest `specialist_evidence` row of `kind` per symbol, as
+        {symbol: row}. Generic twin of `get_prior_position_review_metrics`
+        for the stop-side records in `src/execution/exit_path_records.py`,
+        which compare a new reason against the last one on file."""
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp, run_id FROM specialist_evidence "
+            f"WHERE kind=? AND symbol IN ({placeholders}) "
+            "ORDER BY timestamp DESC, id DESC"
+        )
+        with self._lock:
+            rows = self.conn.execute(sql, (kind, *wanted)).fetchall()
+        latest: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            latest.setdefault(row["symbol"], row)
+        return latest
+
     # --- Holding-discipline structural-protection memory (spec item 25,
     # owner refinements 2026-09-04) ------------------------------------
     #
