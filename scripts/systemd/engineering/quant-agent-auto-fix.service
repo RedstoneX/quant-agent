@@ -1,0 +1,62 @@
+# Auto-fix session — started by quant-agent-auto-fix.path, never by a clock.
+#
+# The trigger is the desk health report finishing, not a time of day. The
+# report's own last step writes a marker; the .path unit watches it. Read that
+# unit's header for why, and `scripts/run_log_health_report.sh` for the handoff
+# itself.
+#
+# SHIPPED DISABLED ON PURPOSE. Every other unit in this directory is installed
+# with `enable --now`. This one is not, and must not be, until a human has
+# watched a rehearsal run end and decided to start it. It is the first thing on
+# this desk that changes code without a person in the loop; turning that on is
+# a deliberate act, not a side effect of a deploy.
+#
+# Install (does NOT start it):
+#   cp scripts/systemd/quant-agent-auto-fix.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+# The handoff directory, once, as root (the report writes it as qamc; this
+# service's user only has to read it):
+#   sudo install -d -o qamc -g qamc -m 0755 /var/lib/quant-agent/handoff
+# Rehearse, supervised, before ever enabling:
+#   /home/ubuntu/projects/quant-agent/scripts/run_auto_fix_session.sh --rehearse
+# Only then, and only on an explicit decision:
+#   systemctl --user enable --now quant-agent-auto-fix.path
+#
+# Until that last line is run, the handoff is inert end to end: the report
+# writes a marker into a directory that does not exist yet (a silent no-op),
+# and nothing is watching it if it does.
+#
+# RUNS AS `ubuntu`, NOT `qamc` — this is a USER unit under ubuntu's systemd
+# instance, unlike quant-agent-log-health.service which runs under qamc's. The
+# split is the safety property, not an accident of where the token lives: the
+# account that trades must not hold a credential that can rewrite the code that
+# trades. `docs/WORK.md`: "Work as `ubuntu`, never as `qamc`."
+[Unit]
+Description=quant-agent unattended auto-fix session (LLM, git, opens PRs — never deploys)
+# Advisory only; the timer's 20-minute gap after each health report is what
+# actually keeps them from overlapping. A user unit cannot order against a
+# unit in another user's systemd instance at all, which is exactly why the
+# separation is expressed in the schedule rather than here.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/projects/quant-agent
+# The wrapper does everything: pulls the OAuth token out of ubuntu's ~/.bashrc
+# (a user service does not source it), captures a read-only health snapshot,
+# builds a throwaway worktree off a freshly-fetched origin/main, runs one
+# bounded `claude --print` session inside it, and removes the worktree on the
+# way out whatever happened.
+ExecStart=/home/ubuntu/projects/quant-agent/scripts/run_auto_fix_session.sh
+# 1500s against the wrapper's own 1200s `timeout`. Ours must fire FIRST so the
+# cleanup trap runs and the worktree is removed; systemd's is the backstop for
+# a wrapper that dies before it can kill its own child. This CLI version
+# (2.1.275) has no `--max-turns`, so wall-clock is the only real cap on the
+# session loop — which is why there are two of them.
+TimeoutStartSec=1500
+# A failed auto-fix run is a non-event: no fix was made, nothing was left
+# behind, the next report still reaches the owner. It is deliberately NOT
+# alerted, because an alert nobody needs to act on is how the alerts that
+# matter get ignored. The journal carries it.
+SuccessExitStatus=0 1 124 137
+StandardOutput=journal
+StandardError=journal
