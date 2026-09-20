@@ -4348,9 +4348,10 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
 
 
 # === Congressional-trading owner-facing wording must track the real switch ===
-# `congress_enabled` (src/config.py) is off by default and has never been
-# turned on. The pre-market smart-money refresh log line must say so
-# honestly instead of always claiming both sources ran.
+# `congress_enabled` (src/config.py) was switched on 2026-09-20 per owner
+# ruling (docs/INCIDENT_HISTORY.md, that date). The pre-market smart-money
+# refresh log line must say so honestly instead of always claiming both
+# sources ran, whichever way the switch sits.
 
 def test_smart_money_refresh_sources_word_when_congress_off():
     from src.pipeline import _smart_money_refresh_sources_word
@@ -4368,13 +4369,13 @@ def test_smart_money_refresh_sources_word_when_congress_on():
 
 
 def test_smart_money_refresh_sources_word_matches_repo_default_config():
-    """Revert-and-fail: if the log line goes back to a hard-coded
-    "SEC Form 4 + congressional" regardless of the switch, this fails
-    against the repo's own default (congressional cross-check off)."""
+    """Revert-and-fail: if the log line goes back to a hard-coded string
+    regardless of the switch, this fails against the repo's own default
+    (congressional cross-check on, since 2026-09-20's owner ruling)."""
     from src.config import SmartMoneyConfig
     from src.pipeline import _smart_money_refresh_sources_word
 
     default_congress_enabled = SmartMoneyConfig().congress_enabled
-    assert default_congress_enabled is False
+    assert default_congress_enabled is True
     word = _smart_money_refresh_sources_word(default_congress_enabled)
-    assert "congressional" not in word or "switched off" in word
+    assert word == "SEC Form 4 + congressional"

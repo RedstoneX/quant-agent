@@ -1164,12 +1164,12 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 #
 # "smart_money" is deliberately NOT a fixed string here. Congressional
 # trading disclosures (`src/data/congressional_trading.py`) are gated by
-# `config.smart_money.congress_enabled`, off by default and never yet
-# turned on (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 entry). Naming
-# "congressional" in this label when that switch is off would tell the
-# owner the desk reads a feed it never actually reads. `_smart_money_seat_
-# label` below reads the real switch at call time, so the wording can
-# never drift from what the running desk actually does.
+# `config.smart_money.congress_enabled`, switched ON 2026-09-20 per owner
+# ruling (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 and 2026-09-20
+# entries). Naming "congressional" in this label when that switch is off
+# would tell the owner the desk reads a feed it never actually reads.
+# `_smart_money_seat_label` below reads the real switch at call time, so
+# the wording can never drift from what the running desk actually does.
 _SEAT_WORDS: dict[str, str] = {
     "macro": "the market-backdrop research",
     "tech": "the chart research",
@@ -1189,8 +1189,10 @@ def _congress_enabled_now() -> bool:
     not otherwise carry a config object, and several read stored historical
     run data with no config in scope at all. Any failure to read it
     (missing file in a test environment, credential delivery issues, bad
-    yaml) falls back to the field's own documented default, `False` — a
-    wording helper must never raise or break an alert.
+    yaml) conservatively assumes the switch is off, `False`, regardless of
+    the field's own live default — a wording helper must never raise or
+    break an alert, and must never claim a feed is running when it could
+    not actually confirm the setting.
     """
     # Reads only the one key, NOT through `load_config`: that also collects
     # the systemd-delivered broker credentials, which a wording helper has
@@ -1345,6 +1347,66 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
             f"{_seat_list_words(unknown)}"
         )
     return lines
+
+
+def describe_universe_changes(block: Any) -> list[str]:
+    """The owner-facing account of what the universe screen changed.
+
+    Owner design 2026-09-01: "the owner must never discover the universe
+    changed by accident" — every addition, flag and removal since the last
+    morning message, in plain words. Removals, flags and held names kept
+    past a failed check get one line EACH with the reason (they are the ones
+    that matter and are few); additions are one line of names, clipped,
+    because the first weeks can add hundreds. Silent only when the screen
+    is off (no block). With it on and nothing changed, it says so.
+    """
+    if not isinstance(block, dict):
+        return []
+    from src.universe_screen import describe_event, plain_reasons
+
+    events = [e for e in (block.get("events") or []) if isinstance(e, dict)]
+    admitted = block.get("admitted_count")
+    flagged = block.get("flagged_count")
+    size = (
+        f" \u2014 {admitted} screened stock(s) on the list, {flagged} flagged"
+        if isinstance(admitted, int) and isinstance(flagged, int) else ""
+    )
+    if not events:
+        return [f"\U0001f50e Stock list: no changes since the last morning{size}"]
+    out = [f"\U0001f50e Stock list changed: {len(events)} change(s){size}"]
+    grouped = {
+        "added": "Added {n} (passed every check): ",
+        "cleared": "Flag cleared on {n} (passing again): ",
+    }
+    for action, label in grouped.items():
+        names = [str(e.get("symbol", "?")) for e in events if e.get("action") == action]
+        if names:
+            out.append(_clip_text(
+                "\u2022 " + label.format(n=len(names)) + ", ".join(names), 600,
+            ))
+    flagged_events = [e for e in events if e.get("action") == "flagged"]
+    if flagged_events:
+        out.append(_clip_text(
+            f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
+            "next week): " + "; ".join(
+                "{} ({})".format(
+                    e.get("symbol", "?"), plain_reasons(e.get("reasons") or []),
+                )
+                for e in flagged_events
+            ), 600,
+        ))
+    for event in events:
+        if event.get("action") in ("removed", "removal_deferred_held"):
+            out.append(_clip_text(f"\u2022 {describe_event(event)}", 300))
+    return out
+
+
+def _append_universe_changes(lines: list[str], result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    block = describe_universe_changes(result.get("universe_changes"))
+    if block:
+        _new_section(lines, *block)
 
 
 def _append_evidence_freshness(lines: list[str], result: dict) -> None:
@@ -1781,6 +1843,8 @@ def format_session_result(
     if mode in ("morning", "midday", "close", "once"):
         _new_block(lines, _append_trade_session_body, result)
         _append_evidence_freshness(lines, result)
+        if mode in ("morning", "once"):
+            _append_universe_changes(lines, result)
     elif mode == "evening":
         _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":
