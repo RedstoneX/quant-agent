@@ -213,6 +213,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-09-19, board item 124: the research-defined insider purchase
+    # cluster now lifts the smart-money seat's conviction, so its definition
+    # is on the path from a verdict to an order.
+    "src/data/smart_money_cluster.py",
     # The indicator and level units. Every ATR multiple and every stop the
     # ledger tracks is a multiple of `technical.ATR_PERIOD`, and levels are
     # where stops are placed; watching the multiplier and not the unit was
@@ -365,7 +369,7 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: 4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5 ATR
 #: research pre-filter; and the 5% preview size. No number was added and
 #: none changed -- the debt was always there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 146
+MAX_ARBITRARY_ENTRIES = 148  # 2026-09-20, board item 124 cross-symbol crowd-out fix: +1 for the new `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` (the reserved-slot bound), recorded honestly as `arbitrary` with its open question stated -- no measurement yet backs it. Was 147, the same day, for the adversary review below: `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was `sourced` against an SSRN URL that returns HTTP 403 to everyone, including the author -- a citation nobody can open is not a source under this ledger's own rule. Relabelled `arbitrary` with its open question stated; no value changed. Was 146.
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not

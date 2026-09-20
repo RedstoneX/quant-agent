@@ -1244,6 +1244,72 @@ numbers:
       Part of the data-hygiene filter that drops an implausible bar before the
       scan runs; it decides what counts as a bad PRINT, not what counts as a
       trade.
+  - id: src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS
+    value: 5
+    status: arbitrary
+    site: src/data/smart_money_cluster.py
+    note: >-
+      Board item 124, corrected defect axis (2026-09-20): the previously
+      proposed fix (adjusting the shared row-level sort key in
+      `SECForm4Provider.fetch`) was found unsafe on review -- wrong
+      signal-weight values, a nonexistent flag, and it would have overridden
+      dollar-value ordering entirely rather than narrowly tie-breaking. The
+      fix actually shipped instead reserves a small, bounded number of
+      `max_observations` slots so a genuinely clustered symbol cannot be
+      crowded out entirely by unrelated higher-dollar buys on OTHER symbols
+      (`_reserve_cluster_symbols`). 5 is an undderived round number picked
+      only to keep the reservation small relative to `max_observations`
+      (=40): nothing measures how many genuine same-day clusters occur on a
+      typical day, so this cap could as easily starve a legitimately busy
+      cluster day as protect a quiet one.
+    open_question: >-
+      How many genuine same-day opportunistic purchase clusters occur across
+      the watched/core universe on a typical day -- read that off production
+      `insider_purchase_clusters` output before treating 5 as anything but a
+      placeholder ceiling?
+    cost_while_unanswered: >-
+      Set too low, a day with more than 5 genuine clusters loses the
+      cross-symbol crowd-out protection for the excess ones, silently
+      reproducing the original defect for those symbols. Set too high, the
+      reservation could itself crowd out non-cluster rows that would
+      otherwise have made the cut -- the exact failure mode this fix exists
+      to avoid on the other side.
+  - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
+    value: 2
+    status: arbitrary
+    site: src/data/smart_money_cluster.py
+    note: >-
+      CORRECTED 2026-09-20 (adversary review of board item 124): this was
+      marked `sourced` against https://papers.ssrn.com/abstract=2781761
+      (Alldredge & Blank, J. Financial Research 42(2), 2019). That page (and
+      the Wiley mirror) returned HTTP 403 on 2026-09-19 and again on
+      2026-09-20 -- nobody, including the author, can open it. The value (2
+      distinct insiders) reads as the abstract's own definition ("a purchase
+      on the same day as another insider purchase at the same company") only
+      because a search engine's cached snippet of the abstract was quoted
+      back, not because the paper was read. A citation nobody can open does
+      not meet this ledger's own bar ("give a URL... a non-author can
+      open"), whatever the snippet says, so this is relabelled `arbitrary`
+      rather than left `sourced` against a dead link. The PR that shipped
+      this feature separately corrected three OTHER figures it had been
+      citing from this same paper ("within ~2 days", "~2.1%/month", "0.9
+      percentage points above solitary buys") after finding those specific
+      three were from a secondary summary, not the abstract -- see
+      docs/RESEARCH_FINDINGS.md and docs/INCIDENT_HISTORY.md's 2026-09-19
+      entry. This entry was not part of that correction and should have
+      been.
+    open_question: >-
+      Does Alldredge & Blank (2019) actually define a cluster as two or more
+      distinct insiders, or is that reconstruction from a search snippet
+      wrong -- and is two the right count, or would three change the
+      measured 23% same-day-clustering rate materially? Answerable by
+      reading the actual paper (library access, a paid copy, or a version
+      hosted somewhere that does not 403) rather than by another web search.
+    cost_while_unanswered: >-
+      Every same-day insider purchase cluster this feature detects, and
+      therefore every medium-to-high conviction lift it can produce, is
+      gated on a threshold nobody has verified against the source it is
+      attributed to.
   - id: src.data.technical.ATR_PERIOD
     value: 14
     status: sourced

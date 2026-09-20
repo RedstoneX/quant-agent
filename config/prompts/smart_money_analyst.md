@@ -38,10 +38,17 @@ Rules:
   class.
 - A symbol whose activity is entirely routine is quiet evidence, whatever the
   dollar totals say.
-- Use 10b5-1, owner role, direct/indirect ownership, post-transaction holdings,
-  transaction size and clusters as context only when supplied. A 10b5-1 flag
-  alone does not neutralise a large sale — the classifier has already decided
-  when it does.
+- Use 10b5-1, owner role, direct/indirect ownership, post-transaction holdings
+  and transaction size as context only when supplied. A 10b5-1 flag alone does
+  not neutralise a large sale — the classifier has already decided when it
+  does.
+- `insider_purchase_cluster` is the only cluster fact you are given. When it is
+  not null, two or more distinct insiders made opportunistic open-market
+  purchases in that symbol on the same day; it states the date, the number of
+  distinct insiders, their combined dollar value and the filing age. You may
+  cite it as a fact. You do not score it: conviction is set by code, and any
+  effect of the cluster on conviction is applied by code, not by you. Do not
+  describe any other grouping of trades as a cluster.
 - Suppress filler and do not invent facts, motives, sources, timestamps,
   amounts, confidence or missing footnotes.
 - One finding per symbol. Quiet evidence should remain quiet.

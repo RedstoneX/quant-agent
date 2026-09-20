@@ -212,6 +212,69 @@ ladder that enforces them.
 
 ---
 
+### 2026-09-19 — the insider seat was told to use "clusters" that nothing supplied; a real same-day buying cluster now lifts its conviction one rung (board item 124)
+
+**What broke, in one line:** the insider seat's instructions told it to use
+insider-buying clusters "when supplied", nothing ever supplied one, and the
+code's own "cluster" was a looser two-day, buy-or-sell grouping that the
+research note justified with figures the paper's abstract does not contain.
+
+**What the sources actually say (checked 2026-09-19).** Alldredge & Blank
+(J. Financial Research 2019, SSRN 2781761) — abstract only, the SSRN and
+Wiley pages returned HTTP 403: about 23% of insider purchases happen on the
+SAME DAY as another insider's purchase at the same company, and clustered
+purchases are followed by abnormal returns above 2% over the next month. The
+"within ~2 days", "~2.1%" and "0.9 percentage points above solitary buys"
+figures the desk had been citing come from a secondary summary (IBKR Campus),
+not the abstract. Cohen, Malloy & Pomorski (NBER w16454, abstract fetched):
+opportunistic trades earn 82 basis points a month, routine trades
+"essentially zero". Nothing in either supports a SELLING cluster, and
+nothing supports a congressional one.
+
+**Measured before building (production cache, read-only, 2026-09-19).**
+Disclosures 2025-09-18 to 2026-09-18, 15,068 insider rows, 311 open-market
+purchases in the 101-name configured universe. Same-day clusters of two or
+more distinct insiders with opportunistic purchases: 15 cluster-days in 5
+names. Six are ordinary buying by named officers and directors (GME three
+days, MRVL, NKE, PFE). The other nine are TSM: dozens of TSMC officers buying
+$3,000-5,000 each of the Taiwan-listed shares on the same day every month —
+an employee purchase programme, which the routine test only catches once an
+insider has enough prior months on record, so the newest participants still
+read as opportunistic. That is a limit of the existing routine test, left
+as found.
+
+**What changed.**
+- A cluster is now computed in code: two or more distinct insiders,
+  opportunistic open-market purchases, same symbol, same transaction date,
+  configured universe only. It is recorded on the symbol's rows as a fact
+  (date, number of insiders, combined dollars, filing age) and shown to the
+  seat as one named field.
+- Its only effect: a bullish insider read at medium conviction becomes high.
+  Low stays low, bearish and neutral reads are untouched, the model does not
+  score it, and it changes no sort order and no admission.
+- The seat's prompt now names that one field and says conviction is set by
+  code.
+- The older two-day grouping was kept as what it actually is — a rule for
+  which rows the seat gets to see as context, for sells and for Congress too
+  — and its comments no longer call it the research cluster. Narrowing it
+  would have silently removed rows the seat and the operator see today.
+- `docs/RESEARCH_FINDINGS.md` corrected to what the abstract states.
+
+**What was deliberately not done.** No sell-side cluster. No congressional
+cluster. No age limit on how long a cluster can lift conviction — the source
+measures the following month, but choosing a cutoff was not part of the
+decided design. No fix to the TSM employee-plan false positive.
+
+### 2026-09-20 — three false or unproven claims from the 2026-09-19 entry above, corrected on adversary review
+
+**What broke, in one line:** item 124 was closed on 2026-09-19 on a claim about the code that was false, a number-ledger entry was left `sourced` against a citation that returns HTTP 403 to everyone, and the TSM employee-plan false positive named above as "no fix" was never actually checked against the real classifier.
+
+**The false closure claim, and the correction.** Item 124 was retired with the reasoning that the PR's `sorted(..., key=lambda item: (..., -item.signal_weight, ...))` in `SECForm4Provider.fetch` was added by this PR to keep a cluster's rows from being cut when `max_observations` (default 40) binds. Checked against `git show f3aeba46 -- src/data/smart_money.py`: that sort key existed on main since 2026-08-28 (`feat(smart-money): classify Form 4 trades routine vs opportunistic`), before this PR touched the file at all, and this PR's own commit message says "no change to sort order or admission." Item 124's second DONE-WHEN criterion — a cluster's own rows surviving the three truncations, demonstrated rather than asserted — was never actually met. Item 124 is reopened on `docs/WORK.md` with that criterion still open. A new test, `tests/test_insider_purchase_cluster.py::test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_the_seat_sees_it`, runs the real `fetch()` pipeline and confirms the failure mode directly: a genuine 2-insider, $120k same-day cluster (each member individually below the $100k threshold) is completely absent from the seat's payload once 40 higher-dollar unrelated buys are also present, because nothing in the sort key looks at cluster membership. No production-scale cache (the kind the 2026-09-19 measurement below used, 15,068 rows over a year) was reachable to say how often this actually binds in practice; the test is synthetic, sized off that measurement's own `max_observations`, and is reported as synthetic rather than as a real-data measurement.
+
+**The number-ledger entry.** `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` (value 2) was recorded `status: sourced` against `https://papers.ssrn.com/abstract=2781761`, the same Alldredge & Blank page that returned HTTP 403 to this PR's own fetch attempts. A source nobody can open does not meet this ledger's stated bar ("give a URL... a non-author can open"), whatever a search engine's cached snippet of the abstract says the paper claims. Relabelled `arbitrary` with the open question and cost stated (`config/number_ledger.yaml`); `MAX_ARBITRARY_ENTRIES` raised 146 -> 147 in the same commit (`src/number_sources.py`), with the test that hardcodes the ratchet's history (`tests/test_number_sources.py::test_the_arbitrary_count_is_an_equality_not_a_ceiling`) updated to match. No value changed. This is separate from the three OTHER Alldredge & Blank figures ("within ~2 days", "~2.1%/month", "0.9 percentage points above solitary buys") that the 2026-09-19 entry above already correctly retracted after finding they came from a secondary summary, not the abstract — that correction was real and is not touched here.
+
+**The TSM employee-plan false positive, checked rather than left as a bare "no fix".** `insider_purchase_clusters` already excludes routine rows from the research-defined cluster: `_cluster_member` in `src/data/smart_money_cluster.py` requires `signal_class == "opportunistic"`, and `classify_transaction` (`src/data/insider_signal.py`) has both a 3-calendar-year rule and a recurring-cadence rule (>=3 prior trades, ~20-120 day mean gap, low dispersion) that label a repeat monthly buyer ROUTINE. Two new tests exercise the real classifier and cluster function together rather than asserting the label by hand: `test_an_established_recurring_monthly_buyer_is_excluded_from_the_cluster` builds two insiders with four prior monthly purchases each (an ESPP-shaped pattern), confirms both are labelled `routine` via `recurring_cadence`, and confirms `insider_purchase_clusters` finds no cluster for them. `test_a_brand_new_participants_first_purchase_has_no_history_to_classify_routine` documents the real, pre-existing, structural limit the 2026-09-19 measurement below found in production (some of the newest TSM participants still read as opportunistic): a purchase cannot be recognised as routine before enough of its own history exists to show the pattern. That limit is inherent to a history-based classifier, is not new to this PR, and is left open rather than fixed here.
+
 ### 2026-09-19 — Universe expansion and pruning built (the 2026-09-01 design), shipped switched off
 
 **What changed, in one line:** the desk can now add stocks that pass standard
@@ -12719,4 +12782,20 @@ reported success on its own.
 **Item 112 — what was already there, and what was added.** The item was partly stale: since it was filed, `_alert_owner_delever_incomplete` sets `delever_incomplete` on the session's leverage record, and the session message already shows a plain-words line when it is set. What was still missing was a durable record of the failure. A de-lever that ends over its ceiling now writes one run-scoped row to the existing lifecycle-event stream (`specialist_evidence`, `agent_name='pipeline'`, `kind='pipeline_event'`, `stage='gross_delever'`, `outcome='still_over_ceiling'`) holding the gross exposure and equity before, the ceiling, the gross exposure after, and for each order the symbol, side, quantity, broker order id, final broker status and whether its stop coverage was confirmed. It is deliberately NOT written to `agent_logs`: that is the paid-model ledger, and the cost circuit refuses a same-day `agent_logs` row whose run has no budget session — which a write from the pre-agent preamble could produce. No alert, no selling and no sizing were added; whether a failed de-lever should do anything more is still the owner's decision recorded on the item.
 
 **Tests.** `tests/test_gross_exposure_ladder.py`: two timeline tests (one per loop) fail on the pre-fix code and pass on the fix; the shortfall-row test fails with the write removed. A failing write is shown not to affect the de-lever.
+
+---
+
+### 2026-09-20 — an insider-cluster fix was closed on a false claim, re-opened on the real defect, then fixed for one of its two axes (board item 124)
+
+**In plain words:** a change meant to stop the insider-buying-cluster feature from losing its signal was marked done twice in one day before it actually was. The first time, it was closed on a claim that turned out to be false when checked against the code's own history. The second time, the real defect was found to have two separate shapes, and only one of them is actually fixed — the other is left open on the board rather than glossed over a third time.
+
+**The false closure.** Item 124 was retired with the claim that a sort-key line in `SECForm4Provider.fetch` — `sorted(..., key=lambda item: (..., -item.signal_weight, ...))` — was newly added by the item's own PR to protect a cluster's rows from truncation. Checked against `git show f3aeba46 -- src/data/smart_money.py`: that sort key existed on main since 2026-08-28, predates the PR, and the PR's own commit message says plainly "no change to sort order or admission." Nothing in that key looks at `purchase_cluster` at all. The claim did not survive being checked against the one thing it was about.
+
+**The corrected defect axis.** Re-derivation found the real problem is CROSS-symbol crowd-out: a stock's rows can lose the whole cluster signal if they are pushed out of the top `max_observations` (=40) by unrelated, higher-dollar trades on OTHER symbols — not a within-symbol tie-break, which is a separate and still-open problem (see below). A first proposed fix — give cluster membership a tie-break term inside the shared sort key — was reviewed before being written and rejected: it cited signal weights ({0.0, 0.4, 0.8}) that do not match the real weights ({opportunistic: 1.0, indeterminate: 0.5, routine: 0.0}), referenced a flag (`is_cluster_rescued`) that does not exist anywhere in the codebase, and would have fully overridden dollar-value ordering rather than narrowly tie-breaking, since every competing opportunistic row already ties at the top weight.
+
+**The fix that shipped.** Following the review's recommendation — reserve a slot per clustered symbol rather than touch the shared sort key everything else relies on — `src/data/smart_money_cluster.py::reserve_cluster_symbols` runs after the existing dollar-value sort in `SECForm4Provider.fetch` and guarantees at least one surviving row for any symbol with a genuine same-day opportunistic cluster (`insider_purchase_clusters`, unchanged), displacing at most `MAX_CLUSTER_RESERVED_SLOTS` (5) non-cluster rows to do it. That bound is recorded honestly as `arbitrary` in `config/number_ledger.yaml`, with the open question stated (how many genuine same-day clusters occur on a typical day) rather than presented as measured — the same honesty standard the ledger already holds `max_observations` to. `MAX_ARBITRARY_ENTRIES` in `src/number_sources.py` moved from 147 to 148 for this one genuinely new number.
+
+**Proof, not just assertion.** `tests/test_insider_purchase_cluster.py::test_a_cluster_survives_cross_symbol_crowd_out_by_unrelated_higher_dollar_buys` runs the real `fetch()` pipeline: a symbol with ONLY its two cluster-member rows (no other row for that symbol exists anywhere in the cache) survives 45 unrelated symbols' higher-dollar buys filling every other slot, AND — the assertion that was missing before this fix — the surviving row carries the stamped `purchase_cluster` fact, which is what `SmartMoneyFinding.purchase_cluster()` actually reads to lift conviction. A companion test proves the reservation is bounded: with 10 competing clustered symbols only 5 (`MAX_CLUSTER_RESERVED_SLOTS`) get a reserved slot, so a busy cluster day cannot crowd out the whole dollar-sorted list in turn. A third test confirms a routine-classified same-day pair never reaches `insider_purchase_clusters`'s output at all, so it is structurally impossible for a routine cluster to claim a reserved slot — no separate exclusion gate was needed.
+
+**What is still open, on the record.** The pre-existing test `tests/test_insider_purchase_cluster.py::test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_the_seat_sees_it` still asserts, unchanged, that a clustered symbol whose OWN non-cluster rows already fill the cap still loses its cluster rows to truncation — within-symbol crowd-out. The reservation fix deliberately does not touch this case: the symbol already counts as "present" in the surviving set, so nothing is reserved, and reserving on top of an already-present symbol would be exactly the within-symbol tie-break the first, rejected fix attempted. That needs its own, separately reviewed change. Neither this test nor the new cross-symbol one runs against real production-scale cached observations (the 2026-09-19 measurement's 15,068-row year was not reachable from this checkout); both are synthetic, sized off that measurement's own numbers, and reported as such. Board item 124 is left open rather than closed a third time.
 

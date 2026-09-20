@@ -16,7 +16,7 @@
 **Routine versus opportunistic is the whole ballgame.** Cohen, Malloy & Pomorski, *Decoding Inside Information* (Journal of Finance, 2012): more than half of insider trades are "routine" — the same insider trading in the same calendar month for three or more consecutive years — and these carry **zero predictive power**. Removing them leaves opportunistic trades generating roughly **82bps/month** value-weighted abnormal return.
 <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1692517>
 
-**Cluster buying replicates well.** Alldredge & Blank (Journal of Financial Research, 2019): purchases clustered within ~2 days of a colleague's trade earn ~2.1%/month, about 0.9pp above solitary buys. Kang, Kim & Wang: 3.8% versus 2.0% over 21 trading days, widening at 90 days.
+**Cluster buying replicates well.** Alldredge & Blank (Journal of Financial Research 42(2), 2019; SSRN 2781761). What the abstract states (the SSRN and Wiley pages returned HTTP 403 on 2026-09-19, so this is the abstract as quoted in search results, not the paper): about 23% of insider purchases occur on the **same day** as another insider purchase at the same company, and clustered purchases are followed by abnormal returns **in excess of 2% over the subsequent month**. CORRECTED 2026-09-19: this line previously said "within ~2 days", "~2.1%/month" and "about 0.9pp above solitary buys". Those three figures are not in the abstract; they appear in a secondary summary (IBKR Campus, *What Corporate Insider Buying Can Tell Investors*) and could not be checked against the paper. The desk's research-defined cluster is therefore the abstract's same-day measure (`src/data/smart_money_cluster.py::insider_purchase_clusters`, board item 124). Kang, Kim & Wang: 3.8% versus 2.0% over 21 trading days, widening at 90 days (not re-checked 2026-09-19).
 <https://onlinelibrary.wiley.com/doi/10.1111/jfir.12172>
 
 **Role matters, and not as expected.** CFO purchases outperform CEO purchases — CFOs see the numbers first. Trades by "star" CEOs carry no signal.
@@ -73,7 +73,7 @@ QAMC already filters to P/S and to non-derivative rows (`src/data/smart_money.py
    even though 94 symbols' entire dollar volume is now correctly
    down-weighted to $0 in the analyst's ranking sum — see `docs/WORK.md`
    "Landed" for the full before/after.
-2. **Cluster confirmation** — already partly present; rank clusters above solitary buys rather than merely detecting them.
+2. **Cluster confirmation** — shipped 2026-09-19 (board item 124) as a deterministic fact and a medium-to-high conviction lift only. Ranking clusters above solitary buys was deliberately NOT done: a cluster must not raise the sort priority of, or admit, any symbol; admission belongs to the universe screen.
 3. **Purchase as a percentage of the insider's existing holdings** — the raw fields are already captured, the ratio simply is not computed.
 4. **Role weighting** — upweight CFO and non-celebrity officers.
 5. **Small/mid-cap tilt.**
