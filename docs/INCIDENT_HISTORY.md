@@ -22,6 +22,78 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — the owner's ruling on congressional trading evidence had gone undocumented for a day, and the weighting code did not yet match it; both are fixed and the feed is now switched on
+
+**In plain words:** Rex ruled on 2026-09-19 that congressional (House/Senate)
+trading disclosures are real evidence and must count toward the desk's
+decisions — never thrown out just because published research doubts their
+average edge. His own words: "insider trading and congressional trading are
+just one piece, one point of information. Clustering makes it more than one
+point of information, and the rest of the other agents put in their piece of
+the greater puzzle that needs to be sorted out by the PM." That ruling was
+never written down anywhere in the repo, and a resume attempt today
+(docs/WORK.md item 161) wasted time because of it. It is now written down,
+here, and the code was brought in line with it before the feed was switched
+on for the first time.
+
+**The four rules the ruling implies, and what each one needed:**
+
+1. **Congressional evidence must never be fully zeroed out on research
+   grounds** (the desk's own doctrine cites Belmont et al., NBER w26975, as a
+   documented reason for *caution*, not exclusion). Already correct in the
+   scoring itself — a lone, non-clustered disclosure was already downgraded
+   to "historical"/low conviction rather than dropped. What was NOT correct:
+   the feed's own on/off switch, `SmartMoneyConfig.congress_enabled`, was
+   still `False`, which zeroed out the entire stream at the source. Fixed by
+   switching it `True` in `src/config.py` and `config/feature_flags.yaml`.
+2. **Congressional evidence is a confirmatory ceiling only** — it may raise a
+   thesis's conviction, never alone reach "actionable" present-tense trading
+   evidence, and never alone admit a new symbol. The admission half was
+   already correct (`transient_admission_eligible` was already hard-set
+   `False` for a pure-congressional finding). The conviction-ceiling half was
+   NOT: a congressional-only finding whose model-assigned role was
+   "actionable" reached full ("high") conviction with nothing to stop it.
+   Fixed in `SmartMoneyFinding.deterministic_eligibility` (`src/models.py`):
+   an "actionable" role on a pure-congressional finding is now downgraded to
+   "confirmatory" (medium conviction).
+3. **A same-day cluster of multiple members trading the same name lifts
+   conviction by at most one step, never compounding per additional
+   member.** The same fix as rule 2 covers this: conviction here is a
+   3-rung categorical scale (historical/contradictory = low, confirmatory =
+   medium, actionable = high), and capping the ceiling at "confirmatory"
+   means a 2-member cluster and a 10-member cluster land on the identical
+   rung — there was never a numeric per-member multiplier to remove, but
+   nothing previously stopped a cluster's role from reaching the top rung
+   directly (a two-step jump from the ineligible floor). Now it cannot.
+4. **Only real, disclosed trade dates count — never an inferred or estimated
+   one.** Checked and already correct: `_date_verdict` in
+   `src/data/congressional_trading.py` reads the transaction date straight
+   from the source row and drops (never repairs) a missing or implausible
+   one. The one estimate in this file (`disclosure_date` for a
+   congresswatch-only row, which carries no filing-date field at all) is a
+   *disclosure*-date estimate, not a trade-date one, and is explicitly
+   flagged `disclosure_date_estimated=True` — a different, honestly-labelled
+   fact, not a violation of this rule.
+
+**Also found and removed, not part of the ruling:** a parked, uncommitted-review
+WIP on this branch (member-identity/asset-class grouping for the same feed)
+referenced row keys its own normalizers never populated and broke 11 of the
+module's own tests. It predated this task and was unrelated to evidence
+weighting, so it was reverted rather than finished or extended.
+
+**Tests:** `tests/test_congressional_trading.py` gained 4 new tests, one per
+rule above (50 passed total in that file). `tests/test_feature_flags.py`,
+`tests/test_notifier.py`, `tests/test_pipeline.py`, `tests/test_evidence_gate.py`
+and `tests/test_trader_feed.py` were updated where they asserted the old
+off-by-default wording/state (457 passed across those five files).
+
+**Retires docs/WORK.md item 161** (see that file's retired-numbers line):
+its concern — history entries describing the feed as running before it ever
+was — is now resolved the strong way, by the feed actually running, rather
+than by adding a "still off" note to old entries.
+
+---
+
 ### 2026-09-19 — the congressional-trading feed would have re-read every disclosure it had ever seen, every morning, and nothing would have said when its copy was old (fixed before it was ever switched on)
 
 **In plain words:** the congressional-trading feed has never run in production (its switch is off). Before the owner switches it on, he asked for it to work like the insider feed, not "read everything again over and over again every day". As built, every morning it downloaded both public sources whole, re-parsed all ~13,000 rows and rebuilt every observation from scratch. If a source was down it quietly re-read yesterday's saved file, and its only trace was a nested entry inside the Form 4 log line. It now downloads a file only when that file has changed, and it processes each disclosure once, ever. When a copy is old it says how old, and every refresh leaves a named log line, a durable record and lines the morning health report classifies.
