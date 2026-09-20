@@ -22,6 +22,81 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — the only seat allowed to halt the desk was told it sees half the price history it is actually sent
+
+**In plain words:** the technical analyst is the one seat that can stop the
+desk trading. Its standing instruction sheet told it that it was being shown
+the last 20 days of price bars for each stock. The code had been attaching 40.
+So the seat was reading gaps, pivots and short-term structure off a window
+twice the size it believed it had, and was being asked to judge "recent" using
+a definition nobody had told it.
+
+**How long, and how it survived two attempts to catch it.** The mismatch was
+visible on the board as item 98 and was named in item 99 as well. Two earlier
+pull requests (#464 and #467) were both filed against this exact class of
+defect — an instruction sheet describing machinery that had since changed —
+and neither one touched the technical sheet's bar count. That is the reason
+this write-up exists: the failure was not noticing it, it was noticing it
+twice and shipping a fix that went somewhere else.
+
+**What was wrong, precisely.** Five statements in
+`config/prompts/tech_analyst.md`, not the three the board item listed: the
+input list, the note explaining what the window is for, the support/resistance
+instruction, the stop-anchoring paragraph, and the inputs footer. Three were
+named on the board; two more stated the same wrong count and were found while
+fixing the first three. One further "20" in the same file — the rule telling
+the seat to return `neutral` when a name has fewer than 20 bars of history —
+is a minimum-history floor, is correct, and was deliberately left alone.
+
+**What shipped.** The count now has one home. The sheet carries a
+`{{tech.bars_per_symbol}}` placeholder and the technical analyst substitutes
+the value from its own `_BARS_PER_SYMBOL` constant when it assembles the
+prompt, so changing the slice changes what the model is told. It is
+deliberately NOT routed through the existing `{{risk.*}}` rendering used by
+the risk manager and portfolio manager: that mechanism raises when a
+placeholder will not resolve, which is right for a risk limit read off live
+settings and wrong here, because a raise on this particular seat is a halted
+desk and a bar count is a code constant rather than an operator-tunable
+setting. The silent-failure risk that choice creates is covered in CI instead.
+
+**What would catch it next time, and what the first attempt at that missed.**
+`tests/test_tech_analyst_bar_count.py` names no bar count. It renders the real
+sheet against counts the repo has never used and requires every claim to move
+with the constant; it fails if any literal count is typed back in, in digits or
+spelled out, as bars, sessions, trading days or candles; and it builds a real
+user message and reads which bars actually came out. The first draft of that
+test was weaker in three ways, all found by adversary review before the change
+was opened rather than after:
+
+1. A placeholder written with spaces inside the braces stopped substituting and
+   every test still passed — literal template syntax would have shipped to the
+   seat. The renderer now matches a pattern rather than an exact string, and
+   the test fails on any surviving braces rather than on one spelling.
+2. Sending the OLDEST 40 bars instead of the most recent passed every check,
+   because the check asked only whether the constant appeared in some slice.
+   The test now reads the assembled message and asserts which bars were sent.
+3. It scanned only the prompt FILE. `docs/OUTCOME.md` already records that
+   neither confirmed prompt-drift defect ever lived in a prompt file — both
+   were Python-assembled strings — so the test now scans the assembled user
+   message too.
+
+**Known and accepted.** When a symbol has fewer than 40 bars available, the
+user message honestly reports the real count while the system prompt states
+the full window; the per-request line is the more specific of the two. And
+`{{tech.bars_per_symbol}}` matches the `{{risk.*}}` placeholder pattern
+without resolving through it, so routing this sheet through `LiveLimitPrompt`
+in future would raise at construction; a warning to that effect now sits in
+`src/agents/prompt_limits.py` beside the namespace it would trip.
+
+**Found while fixing it, not fixed:** the same sentence also tells the seat
+"indicators are computed from ~120 days of history upstream". The tech path
+fetches `trading.lookback_days`, which has been 1800 calendar days since
+2026-08-27. That claim is wrong by a much larger factor than the bar count was
+and was left untouched — it is a separate defect on a seat that can halt the
+desk, and it is filed as board item 168 rather than folded in here.
+
+---
+
 ### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
 
 **In plain words:** an item on the open-work list asking to fix a bug — a

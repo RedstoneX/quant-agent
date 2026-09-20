@@ -44,6 +44,15 @@ PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-
 
 #: The only namespace that resolves today. A second seat's sheet would add
 #: its own here rather than reaching into arbitrary attributes.
+#:
+#: WARNING before you route another sheet through `LiveLimitPrompt`.
+#: `config/prompts/tech_analyst.md` already carries `{{tech.bars_per_symbol}}`,
+#: which `PLACEHOLDER_RE` matches but this module cannot resolve. That sheet is
+#: rendered by `src/agents/tech_analyst.py` instead (a code constant, not a
+#: settings key, and that seat is the only one allowed to halt the desk — the
+#: raise below would be a halt). Sending it through here without first adding a
+#: `tech` namespace raises `PromptPlaceholderError` at agent construction. Board
+#: item 107(c) proposes widening the rendering mechanism; this is the trap in it.
 RISK_NAMESPACE = "risk"
 
 #: Computed properties of `RiskConfig` that are legitimate placeholder
