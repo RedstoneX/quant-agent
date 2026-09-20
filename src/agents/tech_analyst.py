@@ -10,7 +10,7 @@ from src.data.levels import (
     format_levels_block,
     structure_coverage,
 )
-from src.models import TechAnalysisResult, parse_telemetry
+from src.models import TechAnalysisResult, TechAnalystAnswer, parse_telemetry
 from src.token_budget import pack_to_budget, size_model_for_agent
 
 logger = logging.getLogger(__name__)
@@ -117,22 +117,32 @@ def _merge_agent_results(first: AgentResult, second: AgentResult) -> AgentResult
 
 
 class TechAnalystAgent(BaseAgent):
-    # NOT set: this agent's top-level response is a JSON ARRAY of
-    # TechAnalysisResult (one per symbol), not a single object — OpenAI/
-    # OpenRouter strict structured-output schemas require an object root.
-    # TechAnalysisResult also carries Python-set free-form maps
-    # (`computed_level_touches`) that cannot be strictified. Never-blank
-    # enforcement is the after-validator (actionable ratings require a
-    # real thesis_invalid_if) plus the existing one-shot missing-symbol
-    # retry; a wrapper result_model would not express "required iff not
-    # neutral".
+    # Item 157 (docs/WORK.md; from #538's write-up): the seat used to send
+    # NO response_format on either route because its answer is a JSON ARRAY
+    # of TechAnalysisResult (one per symbol) and OpenAI/OpenRouter/Google-
+    # compat strict schemas require an object root, and TechAnalysisResult
+    # itself mixed in eight Python-set fields (atr_14, computed_levels,
+    # computed_level_touches, levels_coverage, signal_bar_low,
+    # signal_bar_high, bars_available, signal_age_days) the model never
+    # sees. `TechAnalystAnswer` (src/models.py) is the wrapper object
+    # `{"results": [...]}` sent as the schema instead, built purely from
+    # `TechAnalystAnswerItem` — the model-facing subset. Excluding those
+    # eight fields also removes `computed_level_touches`, the one free-form
+    # map that used to force strict=false: measured 2026-09-20 via
+    # `_response_format_for(TechAnalystAnswer)`, the resulting schema
+    # qualifies for strict=true (see tests/test_tech_schema.py).
     #
-    # Consequence, checked 2026-09-19: the seat is sent WITHOUT a response
-    # format on BOTH routes, Google-direct included — `_openai_wire_call`
-    # attaches one only when `result_model` is set. Its defence against a
-    # garbled row is therefore the per-row parse in `_analyze_chunk`
-    # (AgentResult.parse_json_rows), not constrained decoding.
-    result_model = None
+    # Never-blank enforcement is still the after-validator (actionable
+    # ratings require a real thesis_invalid_if) plus the existing one-shot
+    # missing-symbol retry; the schema only bounds SHAPE, not that
+    # cross-field rule.
+    #
+    # `_analyze_chunk` unwraps the `results` key via
+    # `AgentResult.parse_json_rows(list_field="results")` before the
+    # existing per-row salvage runs (#538) — a provider that ignores or
+    # only partially honours the schema still gets salvaged exactly as
+    # before; a bare list (any legacy stored answer) is still accepted too.
+    result_model = TechAnalystAnswer
 
     @property
     def name(self) -> str:
@@ -347,7 +357,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             + macro_context
             + "\n\n"
             + "\n\n".join(sections)
-            + "\n\nRespond with a JSON array — one object per symbol, in any order."
+            + "\n\nRespond with a single JSON object of the shape "
+              '{"results": [ ... ]} — one element of "results" per symbol, '
+              "in any order."
         )
 
     def analyze_batch(
@@ -691,7 +703,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # only, never every well-formed row beside it (2026-09-17 14:31
         # `intra_check-26f52bf2` lost ORCL and ETN although both attempts
         # returned them well-formed). See AgentResult.parse_json_rows.
-        salvage = result.parse_json_rows(key_field="symbol")
+        salvage = result.parse_json_rows(key_field="symbol", list_field="results")
         parsed = None if salvage is None else salvage.rows
         malformed_rows = [] if salvage is None else salvage.malformed
         if _malformed_sink is None:

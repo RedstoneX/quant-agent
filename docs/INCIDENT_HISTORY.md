@@ -12878,3 +12878,100 @@ here made the first one a precondition of the second. See
 principle.
 
 ---
+
+### 2026-09-20 — the technical seat's answer now has a schema mechanism; the Google route's live enforcement of it is still unproven
+
+**In plain words:** item 157 asked for four things: a wrapper object around
+the technical seat's answer (the answer is a list; a strict schema needs an
+object), a model-facing schema covering only what the model actually fills
+in, an honest call on where a free-form field forces `strict=false`, and a
+real network call proving the Google route enforces whatever schema is sent
+rather than silently accepting it. The first three are done. The fourth is
+not: this box's Google credential is a placeholder, not a real key, so no
+genuine live call was possible.
+
+**What changed.** `TechAnalysisResult` (src/models.py) mixed the eight
+fields the LLM actually emits with eight fields the desk fills in itself
+after the call (`atr_14`, `computed_levels`, `computed_level_touches`,
+`levels_coverage`, `signal_bar_low`, `signal_bar_high`, `bars_available`,
+`signal_age_days`). The model-emitted fields are now their own class,
+`TechAnalystAnswerItem`; `TechAnalysisResult` inherits from it and adds only
+the eight desk-filled fields back, so nothing downstream that reads a
+`TechAnalysisResult` changed shape. `TechAnalystAnswer` wraps a list of
+`TechAnalystAnswerItem` as `{"results": [...]}` — the object a strict
+`json_schema` response format requires at its root — and `TechAnalystAgent`
+now declares it as `result_model`, which `_openai_wire_call` picks up on
+BOTH of the seat's routes (Google direct primary, OpenRouter fallback) since
+neither the model class nor the wire code care which route is live.
+
+**A finding that corrects the write-up's own assumption.** #538's write-up
+expected the eventual schema to need `strict=false` for one free-form map
+field (`computed_level_touches`). Excluding the eight desk-filled fields
+from the model-facing schema also excludes that map — it was never something
+the model needed to see. Measured directly (`_response_format_for
+(TechAnalystAnswer)`, `tests/test_tech_schema.py`): the resulting schema
+qualifies for `strict=true`, not `strict=false`. The assumption in the
+board item was reasonable before this design existed and wrong once it did;
+recorded here rather than silently corrected.
+
+**Parsing.** `AgentResult.parse_json_rows` (src/agents/base.py) gained an
+opt-in `list_field` parameter: when the parsed answer is a dict carrying
+that key as a list, that list is what gets salvaged row by row (#538's
+existing per-row salvage is unchanged beneath it — a malformed row inside
+the wrapper still costs only itself, `tests/test_tech_schema.py::
+test_one_broken_row_inside_the_wrapper_still_costs_only_itself`). A bare
+list — any already-stored answer, or a route that ignores the schema
+entirely — is still accepted exactly as before; no caller that doesn't pass
+`list_field` sees any behavior change.
+
+**Not done, and not claimed as done.** Whether Google AI Studio's
+OpenAI-compatible endpoint actually ENFORCES a sent `json_schema` (rejects
+or corrects a violation) as opposed to merely accepting the field and
+ignoring it has never been tried on a live call — #538's write-up flagged
+this as untried, and it is still untried. This dev box's `GOOGLE_API_KEY` in
+`.env` is `placeholder-managed-by-onecli`: readable text, no `AIza` prefix,
+not a credential that can reach the provider (confirmed: a live call against
+it returned `400 INVALID_ARGUMENT: Please pass a valid API key`). The real
+key is injected by OneCLI on the production box, not present in this
+checkout. `tests/test_tech_schema_live.py` carries the adversarial live
+check — it asks the model to violate the schema's enum, its
+`additionalProperties: false`, and a required field, all at once, and skips
+itself unless a live-looking key (`AIza...`, 35+ chars) is present in the
+environment — ready to run the moment one is. Item 157 stays open on the
+board until that call actually happens.
+
+**What the qamc-adversary review caught before merge.** Two real regressions
+in the first draft, both fixed:
+1. `thesis_invalid_if` was annotated as a bare `str` in the model-facing
+   schema. Today's model legitimately nulls this field on ~2% of actionable
+   rows to mean "no stated falsifier" (the `SOFT_EXIT_UNKNOWN` path, already
+   handled in Python); a bare-`str` wire schema has no `null` branch, so a
+   provider genuinely enforcing it could no longer let the model say that —
+   it would have to invent a plausible-sounding falsifier just to satisfy
+   the type, which is worse than the honest null it replaces. Retyped
+   `str | None` so the wire schema matches what the field already tolerates
+   at the Python layer; the before-validator's normalization is unchanged.
+2. `parse_json_rows`'s fragment-recovery scan (used only when the whole
+   answer fails to parse as JSON) picked the LAST array-of-objects anywhere
+   in the raw text, unaware of `list_field`. With the wrapper object, any
+   OTHER array-of-objects appearing after `results` in a broken answer — a
+   stray self-correction fragment, a sibling key — could silently outrank
+   the real rows. The scan now looks for the array that is the value of
+   `list_field` first, and only falls back to the unrestricted scan when no
+   such labelled array exists (a bare legacy list, or a route ignoring the
+   schema).
+
+Both are covered by new regression tests in `tests/test_tech_schema.py`.
+
+**A third regression, self-caught by the full test suite rather than the
+adversary review.** Fixing finding 1 above (retyping `thesis_invalid_if` to
+`str | None`) moved the field out of `LLMOutputModel`'s generic
+null-droppable-field telemetry (`_null_droppable_fields` only catches a
+field whose annotation still REJECTS None — this one, once widened, no
+longer qualifies), silently dropping `test_null_coercion_is_recorded_in_
+parse_telemetry`'s count of one. The field's own validator now records the
+coercion directly (`parse_telemetry.record_null_coercion`), so an explicit
+null on this field is still counted exactly as before. Caught by running
+the full suite before opening the PR, not by inspection.
+
+---

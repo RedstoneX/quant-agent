@@ -949,7 +949,32 @@ class TechReasoningChain(LLMOutputModel):
     support_resistance: str = Field(min_length=1)    # key levels from indicators + recent pivots
 
 
-class TechAnalysisResult(LLMOutputModel):
+class TechAnalystAnswerItem(LLMOutputModel):
+    """The part of a technical-seat row the MODEL actually fills in.
+
+    Item 157 (docs/WORK.md; from #538's write-up): `TechAnalysisResult`
+    below mixes these LLM-emitted fields with eight fields the desk fills in
+    itself after the call (`atr_14`, `computed_levels`,
+    `computed_level_touches`, `levels_coverage`, `signal_bar_low`,
+    `signal_bar_high`, `bars_available`, `signal_age_days`). A strict
+    model-facing schema cannot require the model to emit fields it never
+    sees, so this class is exactly what is sent to the provider as the
+    response schema (via `TechAnalystAnswer` below). Nothing actually
+    constructs a `TechAnalystAnswerItem` in the parsing path today —
+    `TechAnalystAgent._analyze_chunk` still builds `TechAnalysisResult(**item)`
+    directly, same as before this split — so this class's only live job is
+    shaping the wire schema; `TechAnalysisResult` adds the eight desk-filled
+    fields on top for internal use once the row is enriched.
+
+    Splitting the python-set fields out of the model-facing schema also
+    removes `computed_level_touches` — the one free-form `dict[float, int]`
+    map that used to force `strict=false` on the whole thing (see
+    `_has_free_form_map` in src/agents/base.py). Whether that actually
+    yields `strict=true` in practice is verified, not assumed — see
+    `_response_format_for(TechAnalystAnswer)` and the live-call check in
+    tests/test_tech_schema_live.py.
+    """
+
     symbol: str
     rating: Literal["strong_buy", "buy", "neutral", "sell", "strong_sell"]
     conviction: Literal["high", "medium", "low"] = "medium"
@@ -968,6 +993,100 @@ class TechAnalysisResult(LLMOutputModel):
     # (no trade is being proposed) but not for an actionable rating.
     support_levels: list[float] = Field(default_factory=list)
     resistance_levels: list[float] = Field(default_factory=list)
+    # How the position must be MANAGED, decided at entry from the chart:
+    #   "range"    — clear structure on both sides. Fixed target is meaningful;
+    #                thesis_progress and pace are valid measurements.
+    #   "breakout" — no overhead structure (highs, clean break). The target is
+    #                a MEASURED MOVE reference, not a level anyone is defending;
+    #                the position is managed by trailing and progress/pace must
+    #                be disabled downstream (see QAMC_REMEDIATION_SPEC Phase 3).
+    setup_type: Literal["range", "breakout"] | None = None
+    # The analyst's own estimate of how many trading sessions this thesis needs
+    # to resolve. Pinned at entry and never recomputed. This replaces the
+    # self-referential `avg_hold_days` calibration that made `pace` a feedback
+    # loop: selling quickly shrank the average, which made every position look
+    # stalled, which drove more selling.
+    expected_horizon_sessions: int | None = None
+    reasoning_chain: TechReasoningChain
+    reasoning: str  # 1-sentence summary; reasoning_chain carries the full analysis
+    # Soft exit signal separate from the hard stop_loss. Example:
+    # "MACD histogram turns negative for 2 consecutive closes" — lets PM / midday
+    # exit BEFORE the broker stop fires, saving the 3-5% typically given up
+    # between thesis-break and stop-trigger.
+    # MEASURED 2026-09-01: models emit `"thesis_invalid_if": null` on about 2% of
+    # candidates (42 explicit nulls in 2,056 field occurrences across two weeks
+    # of production responses, most recently the morning of 2026-09-01). Every
+    # OTHER field they null here is typed `| None` and tolerates it; this one
+    # was a bare `str`, so pydantic rejected the null and the WHOLE candidate
+    # was dropped with "Failed to parse tech analysis item". A silently
+    # discarded analysis is an idea the desk never gets to consider, which is
+    # the under-deployment problem arriving by a side door. Found by the
+    # rehearsal rig, confirmed against the production database.
+    #
+    # Typed `| None` (item 157 adversary review, 2026-09-20), NOT bare `str`,
+    # even though the `mode="before"` validator below already tolerates a
+    # runtime `None` regardless of the annotation. The annotation is what
+    # `model_json_schema()` — and therefore the schema actually SENT to a
+    # constrained-decoding provider — is built from. A bare `str` schema has
+    # no `null` branch, so a provider that genuinely enforces the schema
+    # could no longer let the model say "I don't know" here at all: it would
+    # have to invent a plausible-looking falsifier just to satisfy the type,
+    # which is worse than the null this field exists to record honestly.
+    # `str | None` keeps the wire schema truthful to what the model may
+    # legitimately mean, while the validator still normalizes that null down
+    # to `""` (neutral) or `SOFT_EXIT_UNKNOWN` (actionable) exactly as today.
+    thesis_invalid_if: str | None = ""
+
+    @field_validator("thesis_invalid_if", mode="before")
+    @classmethod
+    def _null_thesis_invalid_if_is_blank(cls, v, info: ValidationInfo):
+        """An absent soft-exit signal is blank, never a reason to bin the read.
+
+        A stated non-empty string is never replaced. Explicit null on an
+        actionable rating records `unknown` (not a falsifier). Neutral
+        stays empty, matching the prompt.
+
+        Item 157 (2026-09-20): this field's annotation moved from bare `str`
+        to `str | None` so the model-facing wire SCHEMA can express the null
+        this validator has always tolerated at the Python layer (see the
+        field's own comment). That moved it out of `LLMOutputModel`'s generic
+        `_null_droppable_fields` set — which only catches fields whose
+        annotation still REJECTS None — so the generic mechanism's
+        `parse_telemetry.record_null_coercion` call no longer fires for it.
+        Recorded here instead, so "the model sent an explicit null here" is
+        still counted exactly as before, whatever the eventual value becomes.
+        """
+        if isinstance(v, str) and v.strip():
+            return v
+        if v is None:
+            parse_telemetry.record_null_coercion(cls.__name__, "thesis_invalid_if")
+        rating = str((info.data or {}).get("rating") or "").strip().lower()
+        if v is None and rating not in ("", "neutral"):
+            return SOFT_EXIT_UNKNOWN
+        return "" if v is None or v == "" else v
+
+
+class TechAnalystAnswer(LLMOutputModel):
+    """Wrapper object the technical seat's schema-enforced routes are asked
+    to return: `{"results": [...]}` rather than a bare JSON array.
+
+    Item 157: OpenAI/OpenRouter/Google-compat strict `json_schema` response
+    formats require an OBJECT at the schema root (`_strictify_schema` in
+    src/agents/base.py only ever strictifies `type: object` nodes); the
+    seat's answer was a bare list, so no schema could ever be attached to
+    it. This wrapper is the model-facing top level; `results` is unwrapped
+    back to the underlying list by `AgentResult.parse_json_rows(...,
+    list_field="results")` before the existing per-row salvage runs, so a
+    provider that ignores or partially honours the schema (any legacy
+    stored answer, the non-schema-enforcing failover path, a model that
+    just answers with a bare array anyway) is still parsed exactly as
+    before.
+    """
+
+    results: list[TechAnalystAnswerItem] = Field(default_factory=list)
+
+
+class TechAnalysisResult(TechAnalystAnswerItem):
     # PYTHON-SET, not LLM-emitted (same pattern as `atr_14` below): every
     # level `src/data/levels.py::find_structural_levels` found over the full
     # fetched history, supports and resistances unioned into one list of bare
@@ -1015,53 +1134,6 @@ class TechAnalysisResult(LLMOutputModel):
     signal_bar_low: float | None = None
     signal_bar_high: float | None = None
     bars_available: int | None = None
-    # How the position must be MANAGED, decided at entry from the chart:
-    #   "range"    — clear structure on both sides. Fixed target is meaningful;
-    #                thesis_progress and pace are valid measurements.
-    #   "breakout" — no overhead structure (highs, clean break). The target is
-    #                a MEASURED MOVE reference, not a level anyone is defending;
-    #                the position is managed by trailing and progress/pace must
-    #                be disabled downstream (see QAMC_REMEDIATION_SPEC Phase 3).
-    setup_type: Literal["range", "breakout"] | None = None
-    # The analyst's own estimate of how many trading sessions this thesis needs
-    # to resolve. Pinned at entry and never recomputed. This replaces the
-    # self-referential `avg_hold_days` calibration that made `pace` a feedback
-    # loop: selling quickly shrank the average, which made every position look
-    # stalled, which drove more selling.
-    expected_horizon_sessions: int | None = None
-    reasoning_chain: TechReasoningChain
-    reasoning: str  # 1-sentence summary; reasoning_chain carries the full analysis
-    # Soft exit signal separate from the hard stop_loss. Example:
-    # "MACD histogram turns negative for 2 consecutive closes" — lets PM / midday
-    # exit BEFORE the broker stop fires, saving the 3-5% typically given up
-    # between thesis-break and stop-trigger.
-    # MEASURED 2026-09-01: models emit `"thesis_invalid_if": null` on about 2% of
-    # candidates (42 explicit nulls in 2,056 field occurrences across two weeks
-    # of production responses, most recently the morning of 2026-09-01). Every
-    # OTHER field they null here is typed `| None` and tolerates it; this one
-    # was a bare `str`, so pydantic rejected the null and the WHOLE candidate
-    # was dropped with "Failed to parse tech analysis item". A silently
-    # discarded analysis is an idea the desk never gets to consider, which is
-    # the under-deployment problem arriving by a side door. Found by the
-    # rehearsal rig, confirmed against the production database.
-    thesis_invalid_if: str = ""
-
-    @field_validator("thesis_invalid_if", mode="before")
-    @classmethod
-    def _null_thesis_invalid_if_is_blank(cls, v, info: ValidationInfo):
-        """An absent soft-exit signal is blank, never a reason to bin the read.
-
-        A stated non-empty string is never replaced. Explicit null on an
-        actionable rating records `unknown` (not a falsifier). Neutral
-        stays empty, matching the prompt.
-        """
-        if isinstance(v, str) and v.strip():
-            return v
-        rating = str((info.data or {}).get("rating") or "").strip().lower()
-        if v is None and rating not in ("", "neutral"):
-            return SOFT_EXIT_UNKNOWN
-        return "" if v is None or v == "" else v
-
     # Days since this rating was first issued (unchanged). Python-computed from
     # TechStore after TechAnalystAgent returns; None on first run or when the
     # symbol wasn't in yesterday's cache. Fresh=1 means "new today", 7+=stale.

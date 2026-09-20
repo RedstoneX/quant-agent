@@ -336,10 +336,9 @@ DONE WHEN:
 DONE WHEN:
   - [ ] guard 1b inside `_apply_risk_modifications` covers SHORT as well as BUY, `_revert_entry_size_increases` is deleted, and the no-op test is retired with it
 
-**157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented. Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
+**157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up. PARTIALLY DONE 2026-09-20 (PR TBD, see docs/INCIDENT_HISTORY.md for detail).** The schema mechanism (wrapper object `TechAnalystAnswer`, model-facing-only `TechAnalystAnswerItem`, `strict=true` — stricter than the write-up expected once the eight desk-filled fields are excluded) now ships, adversary-reviewed with two real regressions caught and fixed (`thesis_invalid_if` schema type, a fragment-scan sibling-array risk). Not done: a live call confirming the Google route actually enforces it — this box's `GOOGLE_API_KEY` is a placeholder, not a real credential; `tests/test_tech_schema_live.py` is ready and skips itself until one is present.
 DONE WHEN:
-  - [ ] a live call confirms whether the Google route enforces a sent response schema
-  - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
+  - [ ] a live call confirms whether the Google route enforces a sent response schema — run `tests/test_tech_schema_live.py` with a real `GOOGLE_API_KEY` and record the result here
 
 **158. The technical seat's per-stock drop reasons live only in the log and as a count, not per stock in the database — filed 2026-09-19.** #538 logs each dropped stock with symbol and reason and counts it, but writes nothing against the stock's own database row, so a later reader cannot tell why a name is absent without the log.
 DONE WHEN:
