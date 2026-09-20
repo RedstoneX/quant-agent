@@ -3968,13 +3968,56 @@ class TradingPipeline:
         """The broker holds no database, so a protective stop its kill
         switch refuses is recorded through this pipeline's one
         (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
-        Recording only — see `AlpacaBroker.protective_stop_block_recorder`.
-        `self.db` is read at call time, not captured, so a later swap of the
-        handle is honoured."""
+        Also pages the owner (`_alert_owner_kill_switch_blocked`) — a
+        recorded row nobody reads is not an alert, and until this was
+        wired a kill-switch refusal left the position naked with no owner
+        notice at all. `self.db` is read at call time, not captured, so a
+        later swap of the handle is honoured."""
         from src.execution.exit_path_records import record_protective_stop_blocked
-        self.broker.protective_stop_block_recorder = (
-            lambda **facts: record_protective_stop_blocked(self.db, **facts)
-        )
+
+        def _on_blocked(**facts) -> None:
+            record_protective_stop_blocked(self.db, **facts)
+            self._alert_owner_kill_switch_blocked(**facts)
+
+        self.broker.protective_stop_block_recorder = _on_blocked
+
+    @staticmethod
+    def _alert_owner_kill_switch_blocked(
+        *, symbol: str, qty: float = 0.0, stop_price: float = 0.0,
+        side: str = "", kill_switch_path: str = "", **_ignored,
+    ) -> None:
+        """Page the owner the first time today the desk's own kill switch
+        blocks a protective stop for `symbol`. Never raises — see
+        `AlpacaBroker._submit_stop_limit_order`, which already swallows
+        whatever this callback does.
+
+        Deduped per symbol per trading day (`claim_kill_switch_block_alert`)
+        the same way the repair-failure and elected-unfilled alerts are: a
+        kill switch left on all session would otherwise page once per
+        retry of every symbol it touches.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import claim_kill_switch_block_alert
+            from src.execution.exit_path_records import kill_switch_blocked_text
+
+            fresh = claim_kill_switch_block_alert([symbol])
+            if not fresh:
+                return
+            _notifier.send_owner_alert(
+                "🔴 KILL SWITCH BLOCKED A PROTECTIVE STOP\n"
+                f"{kill_switch_blocked_text(symbol)}\n"
+                f"qty={qty} side={side} stop=${stop_price}\n"
+                "Nothing was sent to the broker, so nothing is standing "
+                "watch over this position right now. Turn off the kill "
+                "switch and place the stop by hand, or flatten the "
+                "position. Reported at most once per trading day.",
+                symbols=fresh,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "kill-switch-block owner alert failed for %s: %s", symbol, exc,
+            )
 
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
