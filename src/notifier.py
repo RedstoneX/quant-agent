@@ -1164,12 +1164,12 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 #
 # "smart_money" is deliberately NOT a fixed string here. Congressional
 # trading disclosures (`src/data/congressional_trading.py`) are gated by
-# `config.smart_money.congress_enabled`, off by default and never yet
-# turned on (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 entry). Naming
-# "congressional" in this label when that switch is off would tell the
-# owner the desk reads a feed it never actually reads. `_smart_money_seat_
-# label` below reads the real switch at call time, so the wording can
-# never drift from what the running desk actually does.
+# `config.smart_money.congress_enabled`, switched ON 2026-09-20 per owner
+# ruling (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 and 2026-09-20
+# entries). Naming "congressional" in this label when that switch is off
+# would tell the owner the desk reads a feed it never actually reads.
+# `_smart_money_seat_label` below reads the real switch at call time, so
+# the wording can never drift from what the running desk actually does.
 _SEAT_WORDS: dict[str, str] = {
     "macro": "the market-backdrop research",
     "tech": "the chart research",
@@ -1189,8 +1189,10 @@ def _congress_enabled_now() -> bool:
     not otherwise carry a config object, and several read stored historical
     run data with no config in scope at all. Any failure to read it
     (missing file in a test environment, credential delivery issues, bad
-    yaml) falls back to the field's own documented default, `False` — a
-    wording helper must never raise or break an alert.
+    yaml) conservatively assumes the switch is off, `False`, regardless of
+    the field's own live default — a wording helper must never raise or
+    break an alert, and must never claim a feed is running when it could
+    not actually confirm the setting.
     """
     # Reads only the one key, NOT through `load_config`: that also collects
     # the systemd-delivered broker credentials, which a wording helper has

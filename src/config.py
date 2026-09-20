@@ -1429,11 +1429,14 @@ class SmartMoneyConfig(BaseModel):
     # `src/data/congressional_trading.py::CongressionalTradingProvider`.
     # Two independent free, credentialless sources are cross-checked against
     # each other rather than trusted singly: both are single-operator, young
-    # projects with no track record. Off by default, same conservative
-    # rollout pattern as other new autonomous-decision surfaces in this
-    # file (see `intra_check.enabled` above) — an operator opts in
-    # deliberately after reviewing the PR.
-    congress_enabled: bool = False
+    # projects with no track record. Switched on 2026-09-20 per owner
+    # ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, that date): congressional
+    # trading disclosures are evidence and must be weighted by the PM, never
+    # zeroed out on research grounds — see `SmartMoneyFinding
+    # .deterministic_eligibility`'s congressional branch (src/models.py) for
+    # the confirmatory-ceiling and cluster-cap enforcement that ships with
+    # this flip.
+    congress_enabled: bool = True
     congress_kadoa_url: str = (
         "https://raw.githubusercontent.com/kadoa-org/"
         "congress-trading-monitor/main/public/data/trades.json"
