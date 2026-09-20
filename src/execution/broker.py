@@ -4966,6 +4966,14 @@ class AlpacaBroker:
 
         Returns the broker's response dict, or None when every attempt
         failed. Never raises.
+
+        A kill-switch refusal does NOT raise (`_submit_stop_limit_order`
+        returns a dict with `id=None`) — until this check existed that fell
+        straight through to the success branch below and was logged and
+        returned as a PLACED stop. The switch is a stable ops halt, not a
+        transient broker error, so this does not burn the retry burst on
+        it: one refusal is reported as blocked and the leg fails now,
+        exactly as if the broker itself had refused every attempt.
         """
         attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
         last_exc: BaseException | None = None
@@ -4988,6 +4996,15 @@ class AlpacaBroker:
                     ]
                     time.sleep(delay)
                 continue
+            from src.execution.exit_path_records import is_kill_switch_block
+            if is_kill_switch_block(order):
+                logger.critical(
+                    "protective stop [%s] for %s qty=%.4f BLOCKED by the "
+                    "desk's own kill switch — nothing was sent to the "
+                    "broker; NOT reporting this as placed.",
+                    leg, symbol, qty,
+                )
+                return None
             if attempt > 1:
                 logger.warning(
                     "protective stop [%s] placed for %s on attempt %d/%d — the "
@@ -5414,10 +5431,23 @@ class AlpacaBroker:
         placed: list[dict] = []
         for leg_qty in legs:
             try:
-                placed.append(self._submit_stop_limit_order(
+                leg_order = self._submit_stop_limit_order(
                     symbol=symbol, qty=leg_qty, stop_price=stop_price,
                     limit_price=limit_price, side=side,
-                ))
+                )
+                # A kill-switch refusal does not raise (`id=None` dict) —
+                # this docstring's own "either worked or raised" contract
+                # means a refusal MUST become an exception here too, or the
+                # caller (replace_stop_loss) logs and returns it as a
+                # placed trailing stop. Raising drives the same
+                # already-placed-leg rollback below as any other failure.
+                from src.execution.exit_path_records import is_kill_switch_block
+                if is_kill_switch_block(leg_order):
+                    raise RuntimeError(
+                        f"protective stop leg for {symbol} qty={leg_qty} "
+                        f"blocked by the desk's own kill switch"
+                    )
+                placed.append(leg_order)
             except Exception:
                 for done in placed:
                     try:
@@ -5526,20 +5556,37 @@ class AlpacaBroker:
                 )
                 continue
             try:
-                self._submit_stop_limit_order(
+                restore_result = self._submit_stop_limit_order(
                     symbol=symbol,
                     qty=spec["qty"],
                     stop_price=spec["stop_price"],
                     limit_price=spec.get("limit_price"),
                     side=side,
                 )
-                restored += 1
             except Exception as exc:
                 logger.error(
                     "replace_stop_loss: failed to restore prior stop for %s @ $%.2f: %s",
                     symbol, spec["stop_price"], exc,
                 )
                 failed_specs.append(spec)
+                continue
+            # A kill-switch refusal does not raise — it comes back as a
+            # dict with `id=None` — so without this check the loop above
+            # counted a refused restore as `restored += 1`, and the caller
+            # (the WAL drain, and replace_stop_loss's own rollback) then
+            # treated the position as re-covered and discharged its
+            # recovery row over a stop that was never sent to the broker.
+            from src.execution.exit_path_records import is_kill_switch_block
+            if is_kill_switch_block(restore_result):
+                logger.critical(
+                    "replace_stop_loss: restore of prior stop for %s @ "
+                    "$%.2f BLOCKED by the desk's own kill switch — NOT "
+                    "counting this as restored; the position stays flagged "
+                    "uncovered.", symbol, spec["stop_price"],
+                )
+                failed_specs.append(spec)
+                continue
+            restored += 1
         if restored:
             new_submits = restored - skipped_already_alive
             if skipped_already_alive:

@@ -22,6 +22,56 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — a kill-switch-blocked protective stop was reported as placed or restored, and nobody was told the position was naked
+
+**What broke, in one line:** when the desk's own kill switch refused to let
+a protective stop reach the broker, three callers read "no exception" as
+"it worked" — the entry's own record said the new stop was `placed`, a
+crash-recovery restore counted the same refusal as `restored`, and a
+scale-in's recovery row was discharged as if the position were covered
+again. No owner alert fired on any of the three. This is the first two
+bullets the 2026-09-19 entry below found and deliberately left unfixed.
+
+**Where it lived.** `AlpacaBroker._submit_stop_limit_order` refuses a
+kill-switch-halted stop by RETURNING `{"id": None, "status":
+"kill_switch_halted"}` rather than raising. Three callers never checked the
+id before treating that as success:
+- `_submit_stop_leg_retrying` (entry protection, scale-in rearm, the
+  session repair) logged "placed" and returned the blocked dict as the
+  placed order — which is also what fed the hybrid fractional split's
+  `covered_qty`/`uncovered_qty` and what `drain_scale_in_row` read as
+  "coverage confirmed" for a scale-in's write-ahead row.
+- `_restore_stop_orders` (the WAL crash-recovery drain, and
+  `replace_stop_loss`'s own rollback) did `restored += 1` unconditionally
+  after the call returned without raising.
+- `_submit_stop_legs` (`replace_stop_loss`'s own new-stop submit)
+  appended the blocked dict to its `placed` list, breaking its own
+  documented "the submit either worked or it raised" contract.
+
+**Fix.** All three now check the result for the kill-switch shape before
+treating it as success: the leg-retry path returns `None` (a block does not
+burn the retry burst — the switch is a stable ops halt, not a transient
+broker error) and logs that it was BLOCKED, never placed; the restore path
+adds the spec to `failed_specs` instead of counting it, so
+`_restore_after_unconfirmed_sell` returns `ok=False` and
+`_drain_pending_protection_restores` leaves the recovery row in place
+until a real stop lands; the new-stop submit now raises, which drives the
+same already-placed-leg rollback any other submit failure does. A new
+owner alert (`TradingPipeline._alert_owner_kill_switch_blocked`, wired
+beside the existing `protective_stop_blocked` record) pages once per
+symbol per trading day the first time this happens, naming the kill
+switch and the symbol.
+
+**What would catch it next time:** `tests/test_kill_switch_stop_reporting.py`
+pins that a block is never returned as a placed order (whole-share and
+fractional-hybrid), that `_submit_stop_legs` raises instead of accepting
+it, that a scale-in rearm reads it as uncovered, that the WAL restore path
+reports failure instead of success at both the unit and the drain level,
+and that the owner alert fires once per symbol per day and never changes
+the refusal itself when the alert fails to send.
+
+---
+
 ### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
 
 **What broke, in one line:** when a stop did not trail, when the desk refused
@@ -65,12 +115,12 @@ break a streak they have nothing to do with — the same reason board item 164
 kept approved exits out of it.
 
 **Found on the way, NOT fixed (each changes behaviour, not just recording):**
-- When the kill switch blocks the stop placed right after an entry fills, the
-  entry's own record says the protection was `placed`, no owner alert fires,
-  and a scale-in's write-ahead row is discharged as if covered. The new
-  `protective_stop_blocked` row is now the only true record of it.
-- Restoring stops after a failed sell or replace counts a kill-switch refusal
-  as "restored".
+- **FIXED 2026-09-20, see that entry above.** When the kill switch blocks the
+  stop placed right after an entry fills, the entry's own record says the
+  protection was `placed`, no owner alert fires, and a scale-in's
+  write-ahead row is discharged as if covered.
+- **FIXED 2026-09-20, see that entry above.** Restoring stops after a failed
+  sell or replace counts a kill-switch refusal as "restored".
 - The ex-dividend stop shift skips several cases with only a log line, and a
   shift the broker did not accept with nothing at all.
 - The partial-exit re-protect's "no accepted order id" leaves a retry row
