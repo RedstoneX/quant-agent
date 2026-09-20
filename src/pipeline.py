@@ -1134,6 +1134,9 @@ class TradingPipeline:
         self.smart_money_provider = CombinedSmartMoneyProvider(
             [sec_form4_provider, congress_provider]
         )
+        # The universe screen's pending-takeover check reads the same SEC
+        # client (same rate limiter, same User-Agent, same CIK cache).
+        self.sec_form4_provider = sec_form4_provider
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
             model=config.llm.meta_reflector_model,
@@ -1196,6 +1199,7 @@ class TradingPipeline:
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
+        self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in
             # tests/conftest.py. This flag is false in every application run.
@@ -1277,6 +1281,7 @@ class TradingPipeline:
             smart_money_analyst=self.smart_money_analyst,
             admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
             admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
+            admit_screened_universe_fn=self._admit_screened_universe_symbols,
             event_calendar=self.event_calendar,
             fomc_calendar=self.fomc_calendar,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
@@ -2098,6 +2103,8 @@ class TradingPipeline:
         ``price_below_minimum``, ``dollar_volume_below_minimum``,
         ``unresolved_sector``.
         """
+        if self._universe_screen_enabled():
+            return self._evaluate_screened_admission(symbol, context=context)
         cfg = self.config.smart_money
         broker_fact = self.broker.get_transient_equity_eligibility(symbol)
         if not broker_fact.get("eligible"):
@@ -2153,6 +2160,225 @@ class TradingPipeline:
             "sector": sector,
             "broker": broker_fact,
         }
+
+    # ------------------------------------------------------------------
+    # Universe expansion and pruning (src/universe_screen.py). Everything
+    # below is inert while `universe_screen.enabled` is off.
+    # ------------------------------------------------------------------
+
+    def _universe_screen_enabled(self) -> bool:
+        cfg = getattr(getattr(self, "config", None), "universe_screen", None)
+        return bool(getattr(cfg, "enabled", False))
+
+    def _universe_screen_sources(self, deadline: float, listed: dict | None = None):
+        """The screen's read path: broker asset directory, yfinance bars and
+        company profile, SEC filing history. Every source is read-only."""
+        from src.execution.broker import _canonicalize_sector
+        from src.universe_screen import HISTORY_FETCH_DAYS, ScreenSources
+
+        def _profile(symbol: str):
+            raw = self.market.get_company_profile(symbol)
+            if raw is None:
+                return None
+            sector = _canonicalize_sector(raw.get("sector_raw"))
+            if sector == "Unknown":
+                sector = _get_sector(symbol) or "Unknown"
+            return {"market_cap_usd": raw.get("market_cap_usd"), "sector": sector}
+
+        def _filings(symbol: str):
+            provider = getattr(self, "sec_form4_provider", None)
+            if provider is None:
+                raise RuntimeError("SEC provider not configured")
+            return provider.recent_filings(symbol, deadline, listed=listed)
+
+        return ScreenSources(
+            get_asset=self.broker.get_asset_record,
+            get_bars=lambda symbol: self.market.get_ohlcv(symbol, HISTORY_FETCH_DAYS),
+            get_profile=_profile,
+            get_filings=_filings,
+        )
+
+    def _evaluate_screened_admission(
+        self, symbol: str, *, context: str,
+    ) -> tuple[bool, str | None, dict]:
+        """The side-door gate when the universe screen is on: the SAME
+        `screen_symbol` the weekly screen runs, so a Form 4 purchase or a
+        seat's nomination can never admit a name the screen would refuse.
+        Same return shape as the legacy gate it replaces."""
+        import time as _time
+
+        from src.universe_screen import ScreenThresholds, screen_symbol
+
+        # Only the SEC reads take a deadline (the broker and yfinance reads
+        # carry their own timeouts): at most the ticker-map refresh plus the
+        # issuer filing history, one request timeout each.
+        deadline = _time.monotonic() + float(self.config.smart_money.request_timeout_s) * 2
+        result = screen_symbol(
+            symbol, self._universe_screen_sources(deadline),
+            ScreenThresholds.from_config(self.config),
+        )
+        if not result.passed:
+            logger.info(
+                "UNIVERSE_SCREEN %s admission rejected %s: %s",
+                context, symbol, ", ".join(result.failures),
+            )
+            return False, result.reason, {}
+        measured = dict(result.measured)
+        return True, None, {
+            "last_price": measured.get("last_price"),
+            "sector": measured.get("sector"),
+            "screen": "universe_screen",
+            "screen_measured": measured,
+        }
+
+    def _form4_admission_is_current(self, observation) -> bool:
+        """The Form 4 door's age gate, restored (screen on only).
+
+        `lookback_days` went 7 -> 365 on 2026-09-11 and the provider's
+        "stale" label is "older than lookback_days", so since then nothing
+        inside the cache is ever stale and a 364-day-old purchase could
+        admit a symbol (RSG came in that way). The bound is the desk's OWN
+        horizon: a purchase disclosed more trading sessions ago than
+        `risk.max_target_horizon_sessions` is older than the longest move
+        the desk will claim a target for, so it cannot be the reason to
+        open a new name now. Sessions are counted with the same weekday
+        counter the desk's horizon arithmetic uses.
+        """
+        from src.trading_calendar import trading_sessions_held
+        from src.util.time import et_today
+
+        disclosed = getattr(observation, "disclosure_date", None)
+        if not isinstance(disclosed, date):
+            return False
+        horizon = int(self.config.risk.max_target_horizon_sessions)
+        return trading_sessions_held(disclosed, et_today()) <= horizon
+
+    def _admit_screened_universe_symbols(self, positions=None) -> tuple[set[str], dict[str, dict]]:
+        """This session's share of the screened universe (screen on only).
+
+        Every held admitted name, plus at most `nominations.
+        max_per_seat_per_run` others, rotated least-recently-offered first —
+        the screen is one more source of candidates and is capped like one
+        seat, so the portfolio manager's bill is a number that is set.
+        """
+        if not self._universe_screen_enabled():
+            return set(), {}
+        from src.universe_screen import UniverseStore, select_for_run
+        from src.util.time import et_today
+
+        store = UniverseStore(self.config.universe_screen.data_dir)
+        state = store.load()
+        held = {
+            str(getattr(p, "symbol", "") or "").strip().upper()
+            for p in (positions or [])
+        }
+        configured = {str(s).strip().upper() for s in self.config.trading.universe}
+        chosen = select_for_run(
+            state, held=held,
+            cap=int(self.config.nominations.max_per_seat_per_run),
+            today=et_today(),
+        )
+        chosen = {s: d for s, d in chosen.items() if s not in configured}
+        if chosen:
+            store.save(state)
+        return set(chosen), chosen
+
+    def _run_universe_screen(self, run_id: str) -> dict | None:
+        """The weekly screen's incremental pass, run after the evening report
+        (screen on only). Never raises: a failure costs tonight's pass,
+        never the evening push. Every change is logged under
+        `UNIVERSE_CHANGE`, kept in the state file until the morning message
+        shows it, and written to the evidence record now."""
+        if not self._universe_screen_enabled():
+            return None
+        import json as _json
+        import time as _time
+
+        from src.pipeline_stages import _persist_evidence
+        from src.universe_screen import (
+            HISTORY_FETCH_DAYS, ScreenThresholds, UniverseStore, run_screen,
+        )
+        from src.util.time import et_today
+
+        cfg = self.config.universe_screen
+        deadline = _time.monotonic() + float(cfg.screen_deadline_s)
+        store = UniverseStore(cfg.data_dir)
+        try:
+            state = store.load()
+            assets = self.broker.list_assets()
+            held = {p.symbol.strip().upper() for p in self.broker.get_positions()}
+            listed = None
+            provider = getattr(self, "sec_form4_provider", None)
+            if provider is not None:
+                try:
+                    listed = provider.listed_map(deadline)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("universe screen: SEC ticker map unavailable: %s", exc)
+            run = run_screen(
+                state,
+                assets=assets,
+                sources=self._universe_screen_sources(deadline, listed=listed),
+                get_bars_batch=lambda chunk: self.market.get_ohlcv_batch(
+                    chunk, HISTORY_FETCH_DAYS,
+                ),
+                th=ScreenThresholds.from_config(self.config),
+                today=et_today(),
+                held=held,
+                configured=self.config.trading.universe,
+                deadline=deadline,
+                batch_size=int(cfg.bars_batch_size),
+                confirm_missing_asset=self.broker.get_asset_record,
+            )
+            store.save(state)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("UNIVERSE_SCREEN pass failed (non-fatal): %s", exc)
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        for event in run.events:
+            _persist_evidence(
+                self.db, run_id=run_id, agent_name="universe_screen",
+                kind="universe_change", scope="symbol", symbol=event.get("symbol"),
+                evidence_json=_json.dumps(event, sort_keys=True),
+            )
+        summary = run.summary()
+        _persist_evidence(
+            self.db, run_id=run_id, agent_name="universe_screen",
+            kind="universe_screen_run", scope="run",
+            evidence_json=_json.dumps(
+                {k: v for k, v in summary.items() if k != "events"}, sort_keys=True,
+            ),
+        )
+        logger.info(
+            "UNIVERSE_SCREEN pass: %d candidates, %d screened, %d passed, %d "
+            "unreadable, %d change(s), deadline %s",
+            run.candidates, run.screened, run.passed, run.inconclusive,
+            len(run.events), "hit" if run.deadline_hit else "not hit",
+        )
+        return summary
+
+    def _attach_universe_changes(self, result) -> None:
+        """Hand the screen's unreported changes to the morning message, then
+        mark them shown. Screen on only; fail-soft."""
+        if not isinstance(result, dict) or not self._universe_screen_enabled():
+            return
+        from src.universe_screen import UniverseStore
+
+        try:
+            store = UniverseStore(self.config.universe_screen.data_dir)
+            state = store.load()
+            events = list(state.get("events") or [])
+            result["universe_changes"] = {
+                "events": events,
+                "admitted_count": len(state.get("admitted") or {}),
+                "flagged_count": sum(
+                    1 for r in (state.get("admitted") or {}).values()
+                    if r.get("status") == "flagged"
+                ),
+            }
+            if events:
+                state["events"] = []
+                store.save(state)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("universe changes could not be attached: %s", exc)
 
     def _admit_nominated_external_symbols(
         self,
@@ -2213,6 +2439,7 @@ class TradingPipeline:
             for symbol in self.config.trading.universe
             if str(symbol).strip()
         }
+        screen_on = self._universe_screen_enabled()
         grouped: dict[str, list] = {}
         for observation in observations or []:
             symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
@@ -2221,6 +2448,14 @@ class TradingPipeline:
             if str(getattr(observation, "transaction_code", "") or "").upper() != "P":
                 continue
             if not bool(getattr(observation, "admission_eligible", False)):
+                continue
+            if screen_on and not self._form4_admission_is_current(observation):
+                logger.info(
+                    "UNIVERSE_SCREEN SEC transient admission skipped %s: purchase "
+                    "disclosed %s, older than the desk's %d-session horizon",
+                    symbol, getattr(observation, "disclosure_date", "?"),
+                    int(self.config.risk.max_target_horizon_sessions),
+                )
                 continue
             grouped.setdefault(symbol, []).append(observation)
 
@@ -3299,7 +3534,7 @@ class TradingPipeline:
                     )
                     repaired = self._repair_stop_coverage(
                         symbol, held - covered, is_short=is_short,
-                        outcome=gap,
+                        outcome=gap, resting_stops=list(specs or []),
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3364,6 +3599,7 @@ class TradingPipeline:
                     )
                 gap["repaired"] = self._repair_stop_coverage(
                     symbol, held - covered, is_short=is_short, outcome=gap,
+                    resting_stops=list(specs or []),
                 )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
@@ -3728,9 +3964,21 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
 
+    def _wire_protective_stop_block_recorder(self) -> None:
+        """The broker holds no database, so a protective stop its kill
+        switch refuses is recorded through this pipeline's one
+        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
+        Recording only — see `AlpacaBroker.protective_stop_block_recorder`.
+        `self.db` is read at call time, not captured, so a later swap of the
+        handle is honoured."""
+        from src.execution.exit_path_records import record_protective_stop_blocked
+        self.broker.protective_stop_block_recorder = (
+            lambda **facts: record_protective_stop_blocked(self.db, **facts)
+        )
+
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
-        outcome: dict | None = None,
+        outcome: dict | None = None, resting_stops: list | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
@@ -3772,6 +4020,8 @@ class TradingPipeline:
             is_short=is_short,
             db=self.db,
             outcome=outcome,
+            resting_stops=resting_stops,
+            caller="session_coverage_reconcile",
         )
 
     def _submit_protected_sell(
@@ -10304,13 +10554,33 @@ class TradingPipeline:
         Every proposal is bounded by `src/risk/trailing.py`: ratchet upward
         only, a minimum move worth an order, and never inside one ordinary
         day's range. Returns the broker orders placed.
+
+        Every evaluation also names WHY its position did or did not trail,
+        and that reason is written to `specialist_evidence`
+        (`kind='trail_state'`) whenever it differs from the last one on file
+        for that stock — so a stop that has never trailed has a findable
+        reason, without a row per stock per tick. Recording only: nothing
+        here reads the record back to decide anything but whether to write.
         """
         from src.execution.stop_records import (
             recorded_initial_stop, replace_stop_and_record,
         )
-        from src.risk.trailing import compute_trailing_stop
+        from src.execution.exit_path_records import (
+            last_trail_states, record_trail_state_if_changed,
+        )
+        from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
 
         orders: list[dict] = []
+        last_codes = last_trail_states(
+            self.db, [getattr(p, "symbol", "") for p in positions],
+        )
+
+        def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
+            record_trail_state_if_changed(
+                self.db, last_codes, run_id=run_id, symbol=symbol,
+                code=code, detail=detail, **facts,
+            )
+
         try:
             from src.execution.scale_in import pending_protection_symbols
             pending_syms = pending_protection_symbols(self.db)
@@ -10325,18 +10595,22 @@ class TradingPipeline:
                     "would race the cancel/rearm sequence",
                     symbol,
                 )
+                _note(symbol, "protection_restore_in_flight")
                 continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                _note(symbol, "opening_row_lookup_failed", str(e))
                 continue
             if not buy:
+                _note(symbol, "no_opening_buy_row")
                 continue
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: stop lookup failed for %s: %s", symbol, e)
+                _note(symbol, "live_stop_lookup_failed", str(e))
                 continue
 
             # Only bars SINCE ENTRY matter: a swing low from before the
@@ -10353,7 +10627,7 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
 
-            proposal = compute_trailing_stop(
+            evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
                 entry=position.avg_entry,
@@ -10375,7 +10649,15 @@ class TradingPipeline:
                 # after a trail. Powers the Type A +1R breakeven ratchet.
                 initial_stop=recorded_initial_stop(buy),
             )
+            proposal = evaluation.proposal
             if proposal is None:
+                _note(
+                    symbol, evaluation.code,
+                    current_stop=current_stop,
+                    current_price=position.current_price,
+                    entry=position.avg_entry,
+                    setup_type=(buy or {}).get("setup_type"),
+                )
                 continue
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
@@ -10388,11 +10670,24 @@ class TradingPipeline:
                     "trail: replace_stop_loss failed for %s (%s) — the OLD "
                     "stop remains in force", symbol, e,
                 )
+                _note(
+                    symbol, "replace_raised", str(e),
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _note(
+                    symbol, "replace_not_accepted",
+                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
+            _note(
+                symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                proposed_stop=proposal.new_stop, current_stop=current_stop,
+            )
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")
             orders.append(order)
@@ -12393,6 +12688,7 @@ class TradingPipeline:
         self._last_evidence_freshness = None
         result = self._run_morning_body()
         self._attach_evidence_freshness(result)
+        self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
         return result
 
@@ -16152,6 +16448,10 @@ class TradingPipeline:
         audit record, never the evening push.
         """
         result = self._run_evening_body()
+        if isinstance(result, dict) and result.get("status") != "market_holiday":
+            screen = self._run_universe_screen(result.get("run_id") or "evening")
+            if screen is not None:
+                result["universe_screen"] = screen
         self._persist_evening_report(result)
         return result
 

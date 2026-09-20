@@ -250,6 +250,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     # `not-trade-governing` once seen; the truncation caps and rank tables
     # that shape what evidence a verdict is built from are not.
     "src/agents",
+    # 2026-09-19: the universe admission screen. Every threshold that decides
+    # whether a symbol may be traded at all lives here or in
+    # `UniverseScreenConfig`.
+    "src/universe_screen.py",
 )
 
 #: Config classes inside scoped files whose numeric field defaults are sites.
@@ -268,6 +272,7 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "SmartMoneyConfig",
     "NominationConfig",
     "EventRiskConfig",
+    "UniverseScreenConfig",
 )
 SCOPED_CONFIG_MODULE = "src/config.py"
 

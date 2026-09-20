@@ -22,6 +22,69 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — item 85 checked against current main and found already fixed, not open
+
+**In plain words.** The board still listed a live-money defect — the
+portfolio manager and the position reviewer being told the account had no
+margin, and its cash as a hard spending limit, while margin was actually
+enabled and real room existed. Re-checking it against the code as it
+stands on main today found the fix was already shipped and already had
+its own regression tests; the board entry was simply never retired.
+
+**What the item asked for.** Filed 2026-09-17 against a real incident: with
+cash at -$916, the manager was told it had negative capital and no margin
+and correctly refused a confirmed BUY, while the account actually held
+about $8,000 of ladder headroom (equity $9,736, holdings $10,652, 2x
+ceiling). The item's own text noted the PROMPT wording half shipped the
+same night in #452, and left open whether "the figures themselves" — the
+actual headroom numbers, not just corrected wording — reach the seat.
+
+**What checking against main found.** They do, and did before this change.
+`DecisionStage.run` (`src/pipeline_stages.py`) and
+`TradingPipeline._run_position_review_body` (`src/pipeline.py`) both call
+`_entry_deployment_budget` — the exact §11.2 computation execution's submit
+loop sizes real orders against — and thread its `margin_headroom_usd`,
+`margin_ladder_backed`, `margin_ladder_multiple` and `margin_ladder_rung`
+straight into `PortfolioManagerAgent.decide` and
+`PositionReviewerAgent.review`. Both prompt builders render a "Margin
+Capacity" section with that real dollar figure when the ladder resolved,
+and an honest "could not be resolved... treat as unknown, not zero" when it
+did not — never a fabricated number and never a silent "no margin". The
+underlying hard-block gate (`RiskRuleEngine.check`'s `cash_only` rule) is
+also unaffected by the sign of cash once `allow_margin` is true; it is
+gated on the config flag, not on whether cash happens to be negative, and
+the actual limiter for a levered BUY is the gross-exposure ladder, exactly
+as this item wanted.
+
+**This was independently reconfirmed, not just inherited from #452.** The
+2026-09-18 write-up above (item 133) says directly: "the manager had been
+told the account had no margin while margin was enabled... both were
+prompt falsehoods, both were corrected before this work started, and both
+were confirmed on the main branch rather than taken on trust." Item 85's
+board text was never updated to reflect that second confirmation.
+
+**Coverage already existed.** `tests/test_margin_policy.py` carried
+`test_pm_prompt_never_says_no_margin_when_margin_enabled`,
+`test_pm_prompt_margin_section_discloses_ladder_headroom`,
+`test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget` (a
+source-level pin on the wiring itself) and the same trio mirrored for the
+reviewer — all built on the incident's own numbers (cash -$915.83, equity
+$9,736, headroom $11,434.37 at a 2.0x ceiling). This change adds one more:
+`test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy`
+exercises the actual hard-block gate (not just the prompt) with the
+incident's figures, confirming `cash_only` never fires once margin is on
+and a BUY with real ladder headroom is not refused.
+
+**What was NOT found.** No code path was found where a stale cache, a
+wrong account field, a sign error, or a race with a pending order feeds a
+wrong buying-power number into a risk or sizing gate — the specific
+mechanisms this kind of defect usually takes. If one exists, it is not on
+any of the four call sites (PM decide, PM re-ask, reviewer review, reviewer
+re-ask) that build these prompts, and not in the hard gate or the §11.2
+ladder that enforces them.
+
+---
+
 ### 2026-09-19 — the insider seat was told to use "clusters" that nothing supplied; a real same-day buying cluster now lifts its conviction one rung (board item 124)
 
 **What broke, in one line:** the insider seat's instructions told it to use
@@ -74,6 +137,163 @@ as found.
 cluster. No age limit on how long a cluster can lift conviction — the source
 measures the following month, but choosing a cutoff was not part of the
 decided design. No fix to the TSM employee-plan false positive.
+
+### 2026-09-19 — Universe expansion and pruning built (the 2026-09-01 design), shipped switched off
+
+**What changed, in one line:** the desk can now add stocks that pass standard
+filters and drop ones that stop passing, instead of trading only a
+hand-typed list — built exactly to the owner's 2026-09-01 design, and left
+OFF until he turns it on.
+
+**Why now.** The owner restated it 2026-09-19: add stocks with "a certain
+amount of liquidity, a certain minimum price ... filter out the garbage, the
+penny stocks, the highly speculative", and remove the ones that stop
+passing. The design had sat unbuilt for 18 days.
+
+**Where each line comes from** (all in `config/number_ledger.yaml`; no
+arbitrary row was added):
+- minimum price $5 — SEC Rule 3a51-1(d), the legal definition of a penny
+  stock;
+- minimum company size $30M — the Russell US indexes' eligibility floor;
+- spread — estimated from a year of daily highs and lows (Corwin & Schultz,
+  J. Finance 2012), and half of it must sit inside the desk's own
+  entry-slippage belt (40 bps today), because a name whose ordinary cost to
+  cross is past that belt is one the execution stage refuses to buy;
+- volatility ceiling — ATR/price at most 0.5 / the minimum stop multiple
+  (20% today): past it, the desk's own minimum stop lands below half the
+  price, which the midday sanity rule refuses as a typo;
+- a year of history — a calendar year of bars AND the 210 bars the 200-day
+  average and its slope need;
+- shortable / easy to borrow, active, tradable, listed, not a warrant / unit
+  / right — the broker's own asset flags;
+- pending takeover — the issuer's own SEC filings: a merger proxy or
+  tender-offer filing not followed by a termination 8-K;
+- the per-morning cap — `nominations.max_per_seat_per_run` (3): the screen
+  is one more candidate source and is capped like one seat.
+
+**What differs from the 2026-09-01 design, and why:**
+1. *The hand-typed list is not screened or pruned.* The design prunes "the
+   universe"; the build prunes only what the screen itself added. Removing a
+   hand-typed name would mean editing the owner's config file from code. A
+   hand-typed name is therefore never removed, and none is reported.
+2. *Spread is estimated from daily bars, not read from quotes.* This account
+   sees IEX quotes only, which are routinely absurd (CCJ once showed a 15%
+   spread). The first estimator variant tried (floor each day's estimate at
+   zero, then average) read AAPL at 25.6 bps and TSLA at 44 bps — that is
+   volatility, not trading cost — and would have refused most volatile
+   large caps. The build averages first and floors the average, which reads
+   AAPL 0.2, TSLA 5.7, and still refuses an illiquid name at 64 bps
+   (measured 2026-09-19).
+3. *A resolved sector is still required* — kept from the old side-door gate
+   because the sector cap needs one. Not in the design.
+4. *Funds, preferreds and depositary receipts stay excluded* — kept from the
+   old side-door gate. The design names only warrants, units and rights.
+5. *Unreadable is not a failure.* A data outage neither admits a name nor
+   counts toward removing one; the design did not say.
+6. *Screened names reach the morning session only*, the same lane the Form 4
+   admissions use. The intraday scan still watches only the hand-typed list.
+7. *The Form 4 side door got its age gate back* (behind the same switch).
+   Since `lookback_days` went 7 -> 365 on 2026-09-11 nothing in the cache was
+   ever "stale", so a 364-day-old purchase could admit a name (RSG). Now a
+   purchase must have been disclosed within `risk.max_target_horizon_sessions`
+   (60) sessions — the desk's own longest target horizon. That base is itself
+   arbitrary in the ledger.
+
+**How it runs.** At the end of each evening session, an incremental pass
+(budget 900 s; the evening body measured 173 s against a 1,260 s job limit)
+reads the broker's active asset list, settles every name that fails on the
+asset flags alone for free, then reads bars in batches, then company size and
+SEC filings for survivors. Each symbol is screened at most once per ISO week;
+delisted/halted admitted names are checked every evening. State lives in
+`data/universe/universe_state.json`; each change is logged as
+`UNIVERSE_CHANGE`, written to `specialist_evidence`, and listed in the next
+morning's Telegram message below the P&L block.
+
+**Dry run, 2026-09-19, in isolation (scratch directory, no production
+write).** The broker asset list could NOT be read (no credentials usable
+read-only), so the candidate list was SEC's public listed-ticker file with
+the broker's borrow and tradability flags ASSUMED true — so the numbers
+below overstate what will pass. A random 1,000 of its 7,631 tickers:
+266 passed, 124 unreadable (company-data lookups throttled), 610 failed —
+most often no price history (203), under $5 (176), under a year of history
+(120), pending takeover (35), wide spread (21). Extrapolated, roughly 2,300
+names would be admitted [estimate: 266/876 x 7,631]; at 3 per morning the
+rotation would take years to cycle, so a ranking rule is likely needed
+before the switch goes on.
+
+**Found while building, NOT fixed (pre-existing):**
+- Alpaca deprecated the `easy_to_borrow` asset flag on 2026-06-22 and sunsets
+  it on **2026-09-22**. `AlpacaBroker.get_shortability` reads only that flag
+  and fails closed, so after the sunset every short may be refused as "not
+  shortable". The screen reads the replacement (`borrow_status`); the short
+  gate does not.
+- The old side-door gate's name filter matches the substring `" unit"`, so
+  "First United Corp" reads as a unit. The screen uses word boundaries.
+- SPAC shells (trading flat at trust value) and closed-end funds pass the
+  screen as designed; the design names neither.
+
+### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
+
+**What broke, in one line:** when a stop did not trail, when the desk refused
+to put a missing stop back, and when the desk's own kill switch blocked a
+protective stop, the only trace was a log line — and in the last case the
+owner's alert said the broker had refused it.
+
+**Where this came from.** The 2026-09-18 audit of gates that decide and
+record nothing. All three were checked on main before anything changed, and
+all three were real:
+
+1. **Trailing stop.** Every "no trail this time" returned nothing and the
+   caller moved on, so a position whose stop never trailed was invisible —
+   including one with no opening row at all, which was skipped without even
+   a log line.
+2. **Stop-repair refusal.** A reason sentence on an in-memory dict, a log
+   line and a one-shot Telegram. This is the path that left ~$223 of shares
+   unprotected on 2026-09-18 ("only X of Y uncovered shares could be
+   covered"); afterwards it could not be counted or trended.
+3. **Kill switch blocking a protective stop.** No record at all, and the
+   repair's alert fell through to "the broker did not accept a protective
+   stop after every retry" — the broker was never asked.
+
+**What changed — recording only.** No stop trails, is repaired or is blocked
+any differently; no threshold moved. Each is now a row in the desk's existing
+evidence table (`specialist_evidence`) under its own kind:
+- `trail_state` — why the stop did or did not trail, written only when the
+  reason differs from the last one on file for that stock, so a stop stuck
+  for the same reason all month leaves one row, not one per check.
+- `stop_repair_refusal` — every refusal, with the stock, the uncovered
+  quantity, the reason, how much was held and covered, and the stop orders
+  already resting at the broker.
+- `protective_stop_blocked` — every protective stop the kill switch refused,
+  from every path that places one. The repair's alert now says plainly that
+  the desk's own kill switch blocked the stop, for which stock.
+
+**One placement that was deliberate.** None of these is a `pipeline_event`.
+The jam alarm reads every per-stock `pipeline_event` as "the session
+considered this stock as a new idea"; stop-side rows filed there could join or
+break a streak they have nothing to do with — the same reason board item 164
+kept approved exits out of it.
+
+**Found on the way, NOT fixed (each changes behaviour, not just recording):**
+- When the kill switch blocks the stop placed right after an entry fills, the
+  entry's own record says the protection was `placed`, no owner alert fires,
+  and a scale-in's write-ahead row is discharged as if covered. The new
+  `protective_stop_blocked` row is now the only true record of it.
+- Restoring stops after a failed sell or replace counts a kill-switch refusal
+  as "restored".
+- The ex-dividend stop shift skips several cases with only a log line, and a
+  shift the broker did not accept with nothing at all.
+- The partial-exit re-protect's "no accepted order id" leaves a retry row
+  but not the reason, which is a log line only.
+- Already known from the audit: the stop-level reconcile overwrites a wrong
+  recorded stop with no history, the scale-in rearm refusal and four cash-park
+  skips are log-only.
+
+**What would catch it next time:** each new row has a test that fails when
+the line writing it is removed (checked by removing each in turn). Nothing
+mechanical yet stops a new stop-side branch from discarding its decision.
+
+---
 
 ### 2026-09-19 — the congressional-trading feed would have re-read every disclosure it had ever seen, every morning, and nothing would have said when its copy was old (fixed before it was ever switched on)
 
@@ -9343,6 +9563,11 @@ targets, that check may now be too easy to pass and stop discriminating.
 
 **Universe expansion and pruning — DESIGN AGREED WITH THE OWNER 2026-09-01,
 never written down until now. Not built. Do not redesign it; implement this.**
+
+**STATUS 2026-09-19: BUILT, behind `universe_screen.enabled` (shipped OFF).
+"Not built" above is historical. What was built and every place it differs
+from this design: the 2026-09-19 entry "Universe expansion and pruning built"
+near the top of this file.**
 
 Today the 101-symbol universe is a hand-written list. Symbols CAN be added
 dynamically but only narrowly: up to 3/run via SEC Form 4 smart-money

@@ -540,12 +540,15 @@ def replace_missing_stops(
         # repair and send the owner to the journal to work out which one did
         # — including the case this item is about, a recorded stop of zero,
         # which reads as "no recorded stop level" and is not the same thing.
-        repair: dict = {}
+        # `held_qty` / `covered_qty` / the resting orders ride along so a
+        # refusal's durable row says what the broker already held.
+        repair: dict = {"held_qty": gap.held_qty, "covered_qty": covered_now}
         try:
             placed = repair_stop_coverage(
                 broker=broker, last_buy=last_buy,
                 symbol=gap.symbol, uncovered_qty=shortfall,
                 is_short=gap.is_short, db=db, outcome=repair,
+                resting_stops=list(specs or []), caller="coverage_sweep",
             )
         except Exception as exc:  # noqa: BLE001
             outcomes.append(RepairOutcome(

@@ -4409,3 +4409,71 @@ numbers:
     note: >-
       Unit default for a quantity (src/risk/trailing.py:347); both callers
       pass the real quantity.
+  # --- 2026-09-19: universe expansion and pruning (src/universe_screen.py) --
+  # The screen's price, size and borrow lines are published rules; its
+  # spread and volatility lines are DERIVED at run time from existing
+  # entries (execution.max_entry_slippage_bps, risk.min_stop_atr_multiple)
+  # and so add no site of their own; the per-session cap is
+  # nominations.max_per_seat_per_run, read at run time. No arbitrary row
+  # was added by this feature.
+  - id: src.config.UniverseScreenConfig.min_price_usd
+    value: 5
+    status: sourced
+    site: src/config.py
+    source: >-
+      SEC Rule 3a51-1(d), 17 CFR 240.3a51-1: a security that "has a price of
+      five dollars or more" is excluded from the definition of penny stock.
+      https://www.law.cornell.edu/cfr/text/17/240.3a51-1 (fetched
+      2026-09-19). The owner's instruction was to filter out penny stocks;
+      this is the statutory line for one. Price here is the last completed
+      daily close.
+  - id: src.config.UniverseScreenConfig.min_market_cap_usd
+    value: 30000000
+    status: sourced
+    site: src/config.py
+    source: >-
+      FTSE Russell US indexes methodology overview, ineligible securities:
+      "Companies under $30 Million in total market capitalization".
+      https://www.lseg.com/content/dam/ftse-russell/en_us/documents/other/ftse-russell-us-indexes-methodology-overview-cut-sheet.pdf
+      (fetched 2026-09-19). The floor of the Russell 3000E, the broadest
+      published US investable-equity index. Market capitalisation is read
+      from yfinance at screen time.
+  - id: src.config.UniverseScreenConfig.screen_deadline_s
+    value: 900
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Wall-clock budget for one incremental screening pass at the end of
+      the evening session. Decides how many symbols are screened TONIGHT,
+      never whether one passes; an unfinished pass resumes next evening.
+      Derivation at src/config.py (UniverseScreenConfig): evening job
+      TimeoutStartSec=1260, evening body measured 173 s on 2026-09-19.
+  - id: src.config.UniverseScreenConfig.bars_batch_size
+    value: 50
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Symbols per multi-ticker daily-bar download. A fetch batch size: it
+      changes how many requests a pass makes, never a screen verdict.
+  - id: src.universe_screen.HISTORY_FETCH_DAYS
+    value: 400
+    status: not-trade-governing
+    site: src/universe_screen.py
+    note: >-
+      Calendar days of daily bars requested per symbol. A fetch window, not
+      a threshold: the one-year history test is a calendar comparison
+      between the first and last bar, and this only has to reach past a
+      year. It never decides a verdict unless set BELOW a year, which would
+      fail every symbol's history test visibly.
+  - id: src.universe_screen.STOP_SANITY_FLOOR_FRACTION
+    value: 0.5
+    status: derived
+    site: src/universe_screen.py
+    derived_from: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
+    base_value: 0.5
+    note: >-
+      The midday stop-sanity floor (a stop under half the price is refused
+      as a typo), restated so the screen's volatility ceiling can be read
+      from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
+      20% at today's values). Inherits that entry's arbitrary status and
+      open question.

@@ -781,6 +781,44 @@ class SECForm4Provider:
             out.append((text, str(filed or "").strip()[:10]))
         return out
 
+    def recent_filings(
+        self, symbol: str, deadline: float, listed: dict | None = None,
+    ) -> list[tuple[str, str, str]] | None:
+        """(form, filing_date, items) for an issuer's recent filings.
+
+        The universe screen's pending-takeover check
+        (`src/universe_screen.py::pending_takeover`). One GET of the issuer's
+        `filings.recent` block — at least a year or the last 1,000 filings
+        per SEC's own documentation (see `_submissions_form4`). Returns None
+        when the symbol maps to no SEC issuer on a listed exchange; raises
+        when SEC could not be read.
+        """
+        wanted = _symbol(symbol)
+        if listed is None:  # pass `listed_map()` in when screening many
+            listed = self._listed_map(deadline)
+        cik = next(
+            (c for c, tickers in listed.items() if wanted in tickers), None,
+        )
+        if cik is None:
+            return None
+        url = f"{self.submissions_url}/CIK{int(cik):010d}.json"
+        payload = self._get(url, params=None, deadline=deadline).json()
+        filings = payload.get("filings", {}) if isinstance(payload, dict) else {}
+        recent = filings.get("recent", {}) if isinstance(filings, dict) else {}
+        if not isinstance(recent, dict):
+            return []
+        forms = recent.get("form", []) or []
+        dates = recent.get("filingDate", []) or []
+        items = recent.get("items", []) or [""] * len(forms)
+        return [
+            (str(form or "").strip(), str(filed or "").strip()[:10], str(item or ""))
+            for form, filed, item in zip(forms, dates, items)
+        ]
+
+    def listed_map(self, deadline: float) -> dict[str, dict[str, str]]:
+        """Public read of the cached SEC CIK -> {ticker: exchange} map."""
+        return self._listed_map(deadline)
+
     def watched_form4_index(
         self, ciks, deadline: float,
     ) -> tuple[dict[str, list[tuple[str, str]]], list[str]]:
