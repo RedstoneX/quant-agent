@@ -59,8 +59,8 @@
 
 flags:
   - id: src.config.SmartMoneyConfig.congress_enabled
-    effective_value: false
-    code_default: false
+    effective_value: true
+    code_default: true
     intentional: true
     reason: >-
       Deliberate dark-deploy: two single-operator, no-track-record free
@@ -73,10 +73,17 @@ flags:
       2026-09-19: rebuilt ahead of the owner's review to read incrementally
       (each disclosure processed once; unchanged files not re-downloaded),
       with a per-source cache manifest, stale copies labelled with their
-      age, a recorded refresh count, and health-report patterns. Still off
-      until the owner switches it on.
-    decided: "2026-09-04"
-    source: "commit f5f0eec2 (#271); src/config.py:1394"
+      age, a recorded refresh count, and health-report patterns.
+      2026-09-20: switched ON per owner ruling 2026-09-19 (see
+      docs/INCIDENT_HISTORY.md, that date) — congressional evidence must be
+      weighted by the PM, never zeroed out on research grounds. Weighting
+      was brought into line with that ruling first: a pure-congressional
+      finding can never reach "actionable" (confirmatory ceiling only, so a
+      same-day cluster of members lifts conviction at most one step, not
+      compounding per member) and still cannot alone admit a new symbol
+      (`transient_admission_eligible` stays false for it).
+    decided: "2026-09-20"
+    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config.py:1436"
 
   - id: src.config.CashSweepConfig.enabled
     effective_value: false
