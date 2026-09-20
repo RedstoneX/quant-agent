@@ -1760,8 +1760,19 @@ class SmartMoneyFinding(LLMOutputModel):
                 and len(directional) == 1
                 and all(o.lag_days <= 45 for o in self.observations)
             )
+            # Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20
+            # entry): congressional disclosures are evidence and must never
+            # be zeroed out, but their ceiling is "confirmatory" — they may
+            # raise a thesis's conviction, never alone reach "actionable"
+            # present-tense trading evidence. A same-day cluster of several
+            # members (the >=2-actor gate above) therefore lifts conviction
+            # by AT MOST ONE step, historical/low -> confirmatory/medium; it
+            # is capped here, not scaled by how many members clustered, so a
+            # 2-member and a 10-member cluster land on the same rung.
             if not self.support_eligible:
                 self.economic_role = "historical"
+            elif self.economic_role == "actionable":
+                self.economic_role = "confirmatory"
             self.transient_admission_eligible = False
             return self
 
