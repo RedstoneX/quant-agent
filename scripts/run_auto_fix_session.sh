@@ -93,12 +93,34 @@ fi
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/auto-fix-XXXXXX")"
 SNAPSHOT="${WORKDIR}/health_snapshot.txt"
 WT=""
+BRANCH=""
 
 cleanup() {
     local status=$?
     if [[ -n "$WT" && -d "$WT" ]]; then
         git -C "$ENGINEERING_ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || rm -rf "$WT"
         git -C "$ENGINEERING_ROOT" worktree prune >/dev/null 2>&1 || true
+    fi
+    # `worktree remove` does NOT delete the branch, and four of them piled up
+    # in the engineering checkout during this wrapper's own first rehearsals.
+    # Twice a day, that is a branch list nobody can read inside a month.
+    #
+    # Deleted only when it is safe to: either the run made no commit at all
+    # (the common case — most runs find nothing), or the work is already on the
+    # remote and the local ref is just clutter. A branch carrying unpushed
+    # commits is LEFT ALONE and said so loudly: that is the one case where the
+    # ref is the only copy of the work, and a tidy-up that can destroy a
+    # session's output is worse than an untidy branch list.
+    if [[ -n "$BRANCH" ]] && git -C "$ENGINEERING_ROOT" rev-parse --verify --quiet "$BRANCH" >/dev/null 2>&1; then
+        local ahead pushed
+        ahead="$(git -C "$ENGINEERING_ROOT" rev-list --count "${BASE_REF}..${BRANCH}" 2>/dev/null || echo 0)"
+        pushed=0
+        git -C "$ENGINEERING_ROOT" rev-parse --verify --quiet "origin/${BRANCH}" >/dev/null 2>&1 && pushed=1
+        if [[ "$ahead" == "0" || "$pushed" == "1" ]]; then
+            git -C "$ENGINEERING_ROOT" branch -D "$BRANCH" >/dev/null 2>&1 || true
+        else
+            log "KEEPING branch ${BRANCH}: ${ahead} unpushed commit(s), not mine to delete"
+        fi
     fi
     rm -rf "$WORKDIR"
     return $status
