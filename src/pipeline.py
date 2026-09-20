@@ -15457,14 +15457,34 @@ class TradingPipeline:
         # Fail CLOSED on a missing record, matching the morning seat in
         # src/pipeline_stages.py: a refresh that ran a Form 4 pass and
         # recorded no coverage answered the question not at all, which is
-        # not the same as answering it well. Only a refresh carrying the
-        # Form 4 drain keys is held to this — a wrapper with no Form 4
-        # provider is not silently failing, it has nothing to say.
+        # not the same as answering it well. A refresh that carries the
+        # Form 4 drain keys is held to this, and so is one that reports an
+        # error — a sub-provider that raised outright produces neither the
+        # drain keys nor a coverage record, and that is the LOUDEST case,
+        # not an exemption. A wrapper with no Form 4 provider and no error
+        # is not silently failing; it has nothing to say.
         edgar = refresh.get("edgar_coverage")
+        form4_answered = "watched_drain_ran" in refresh or bool(refresh.get("error"))
         edgar_unverified = (
-            "watched_drain_ran" in refresh
+            form4_answered
             and not (isinstance(edgar, dict) and edgar.get("verified"))
         )
+        record = edgar if isinstance(edgar, dict) else {}
+        # Reported whether or not anything is wrong. The market-wide scan is
+        # bounded by its own deadline and in production reaches a minority
+        # of the lookback window, so "how much of the window did we check"
+        # is a fact the owner needs on an ORDINARY morning — rendering it
+        # only on the failure branch would have shown him the honest number
+        # exactly when it was least representative.
+        coverage_line = (
+            "Insider-filing coverage this morning: read "
+            f"{record.get('enumerated', 0)} of {record.get('edgar_total', 0)} "
+            "filings the service reported, across "
+            f"{record.get('days_queried', 0)} of "
+            f"{record.get('days_in_window', 0)} days looked at."
+        ) if record else ""
+        if coverage_line:
+            logger.info("PRE-OPEN: %s", coverage_line)
         if (
             read_through == today and not watched_pending and not unchecked
             and not edgar_unverified
@@ -15472,16 +15492,12 @@ class TradingPipeline:
             return
         why: list[str] = []
         if edgar_unverified:
-            record = edgar if isinstance(edgar, dict) else {}
             reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) \
                 or "no coverage was recorded at all"
             why.append(
                 "the filing service did not account for how many filings "
-                "existed, so a quiet day and a failed read cannot be told "
-                f"apart ({reasons}; read {record.get('enumerated', 0)} of "
-                f"{record.get('edgar_total', 0)} filings it reported, across "
-                f"{record.get('days_queried', 0)} of "
-                f"{record.get('days_in_window', 0)} days looked at)",
+                f"existed, so a quiet day and a failed read cannot be told "
+                f"apart ({reasons})",
             )
         if names:
             why.append(
@@ -15518,6 +15534,10 @@ class TradingPipeline:
             + ". Until it does, the desk still makes its trading decisions "
             "but without complete insider evidence, and each decision "
             "records that. Existing positions and their stops are unaffected."
+            # Carried whatever the reason for the alert, not only when
+            # coverage itself is the complaint — the counts are the context
+            # for every other line above them.
+            + (f" {coverage_line}" if coverage_line else "")
         )
         logger.error("PRE-OPEN: %s", text)
         try:

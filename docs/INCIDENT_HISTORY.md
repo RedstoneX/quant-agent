@@ -101,6 +101,31 @@ best-behaved ones. It was filed as its own board item rather than folded in,
 because it changes what evidence is allowed to support a position — a
 live-money rule — where this change only altered what gets reported.
 
+**A second review round, with the network on this time, found three more and
+all three are now fixed.** First: removing the percentage rule had left the
+original symptom alive in a milder form — a day where almost nothing was
+readable still reported a clean read, with only the reported fraction to show
+for it. The replacement needs no invented number either: a day the read
+claims to have gone all the way through is now checked against the count it
+went through, and a shortfall means it did not. Second: the filing service
+caps its own count at ten thousand and says so in the response, and the code
+was reading that ceiling as if it were an exact number — so the busiest day of
+the year would have read as fully covered while everything past the cap went
+unseen. It now refuses to treat "at least this many" as a count. Third: the
+honest figure for how much of the year the morning read actually reaches is
+around a fifth of it, and it was only being shown to the owner on the
+mornings something had already gone wrong. It now rides on every one of those
+messages and is written to the log on every pass.
+
+**The cost of that first fix, stated rather than buried.** One unreadable row
+on a day the read claims to have completed is now enough to mark the insider
+seat incomplete. That is deliberate, and it is justified by measurement rather
+than taste: the review walked three real days of filings — nearly four
+thousand rows — and found every single one well formed, with the distinct
+count matching the service's own count exactly. If this ever does start firing
+on ordinary traffic, that is worth knowing about the filing service, not a
+reason to soften the rule into a percentage.
+
 **What would catch it next time.** The generalisable lesson is the one this
 desk keeps relearning under different names: a provider's own count of what
 it holds is the only honest denominator, and a status derived without one is

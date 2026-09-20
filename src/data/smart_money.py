@@ -182,6 +182,7 @@ UNVERIFIED_EDGAR_REASONS = frozenset({
     "edgar_hits_malformed",
     "edgar_total_changed",
     "edgar_coverage_stale",
+    "edgar_rows_unreadable",
 })
 
 
@@ -194,11 +195,21 @@ def _edgar_total(hits_block: object) -> int | None:
     day on which nobody filed. A negative or non-integer count is also
     None — EDGAR cannot have filed a negative number of forms, so a body
     saying so is a body this code does not understand.
+
+    ``relation`` is read, not ignored. EFTS caps the count it reports and
+    then says so: ``{"value": 10000, "relation": "gte"}`` means "at least
+    this many", not "this many". Taking it as exact would let the scan page
+    to the cap, decide it had read the day through, and report complete
+    coverage of a day it had only read the head of. "At least N" is EDGAR
+    declining to give a denominator, so it is treated as no denominator.
     """
     if not isinstance(hits_block, dict):
         return None
     raw = hits_block.get("total")
     if isinstance(raw, dict):
+        relation = str(raw.get("relation") or "eq").strip().lower()
+        if relation not in {"eq", ""}:
+            return None
         raw = raw.get("value")
     if isinstance(raw, bool) or raw is None:
         return None
@@ -223,9 +234,11 @@ def _well_formed_hit(hit: object) -> bool:
     source = hit.get("_source")
     if not isinstance(source, dict):
         return False
-    if not _ACCESSION_RE.fullmatch(str(source.get("adsh") or "")):
+    if not _ACCESSION_RE.fullmatch(str(source.get("adsh") or "").strip()):
         return False
-    return str(source.get("form") or "") in {"4", "4/A"}
+    # Whitespace-tolerant on purpose: this feeds an EXACT shortfall check,
+    # so a stray space in a real EDGAR row must not read as an unusable one.
+    return str(source.get("form") or "").strip() in {"4", "4/A"}
 
 
 def blank_edgar_coverage() -> dict:
@@ -628,12 +641,18 @@ class SECForm4Provider:
         # being queried. It was read for pagination and discarded, so a
         # silently-broken fetch (HTTP 200, no usable body) produced exactly
         # the same evidence as a genuinely quiet day: zero rows, no error.
-        # These three structures keep it, per day slice:
+        # These structures keep it, per day slice:
         #
         #   `day_total`      day -> EDGAR's own count, ONLY when it parsed
         #                    as an integer. A day missing here is a day
         #                    whose denominator could not be read at all.
-        #   `day_enumerated` day -> how many hit rows this scan walked.
+        #   `day_rows`       day -> how many rows came back, repeats and
+        #                    unusable rows included.
+        #   `day_usable`     day -> the DISTINCT accessions this scan could
+        #                    actually read. Coverage is counted from this,
+        #                    never from `day_rows`, so a repeated page or a
+        #                    page of junk lowers the reported fraction
+        #                    instead of being counted as coverage.
         #   `coverage_reasons` named, machine-checkable reasons a slice was
         #                    not read to EDGAR's own count. Reported; no
         #                    threshold is derived from any of it.
@@ -642,6 +661,7 @@ class SECForm4Provider:
         day_usable: dict[str, set[str]] = {}
         coverage_reasons: set[str] = set()
         queried_days: set[str] = set()
+        exhausted_days: set[str] = set()
         days_in_window = self.lookback_days + 1
 
         def _budget_spent() -> bool:
@@ -766,7 +786,16 @@ class SECForm4Provider:
                         break
                     if int(params["from"]) >= pinned_total:
                         # Read through EDGAR's own count for this day. This
-                        # is the ONLY clean way out of the slice.
+                        # is the ONLY clean way out of the slice — and the
+                        # claim it makes is checked below against how many
+                        # of those filings were actually readable.
+                        #
+                        # Not claimed when the budget ran out inside the
+                        # page just walked: the scan stopped reading rows
+                        # part-way, so the day was not read through and its
+                        # shortfall is the cap's, named as the cap's.
+                        if not _budget_spent():
+                            exhausted_days.add(day)
                         break
                     if len(hits) < int(params["size"]):
                         # A short page while EDGAR's own count says there is
@@ -802,6 +831,18 @@ class SECForm4Provider:
         # degraded on any EDGAR hiccup.
         if any(rows and not day_usable.get(day) for day, rows in day_rows.items()):
             coverage_reasons.add("edgar_hits_malformed")
+        # A day the scan paged all the way through EDGAR's own count and
+        # still could not read that many filings out of it. EXACT, not a
+        # cut point: the claim "I read this day through" is checked against
+        # the count the day was read against, and nothing here picks a
+        # fraction. Only days that ended by exhaustion are held to it — a
+        # day the cap or the deadline stopped never claimed to be complete,
+        # and its shortfall is named by its own reason instead.
+        if any(
+            len(day_usable.get(day) or ()) < (day_total.get(day) or 0)
+            for day in exhausted_days
+        ):
+            coverage_reasons.add("edgar_rows_unreadable")
         if stats is not None:
             stats["candidates"] = len(seen)
             stats["watched_candidates"] = len(watched_seen)

@@ -266,11 +266,17 @@ def test_a_page_of_garbage_rows_cannot_buy_a_clean_status(tmp_path, monkeypatch)
     assert "edgar_hits_malformed" in coverage["reasons"]
 
 
-def test_one_odd_row_among_good_ones_does_not_flip_the_seat(tmp_path, monkeypatch):
-    """The other side of that guard, stated so nobody tightens it by
-    accident: a single malformed row is EDGAR's business. Firing on one
-    would make the seat degraded on any one-off oddity, and a seat that
-    cries wolf daily is a seat nobody reads."""
+def test_a_single_unreadable_row_is_also_a_shortfall(tmp_path, monkeypatch):
+    """The cost of the exact condition, stated plainly rather than hidden:
+    ONE unreadable row on a day the scan claims to have read through makes
+    that claim false, so the seat goes partial. Deliberate, and justified by
+    measurement rather than by taste — a review walked three real EDGAR days
+    (2026-09-18, 2026-09-17, 2026-01-05; 3,947 rows) and found every row's
+    accession well formed, every form either 4 or 4/A, and distinct
+    accessions exactly equal to EDGAR's own count on all three. An "EDGAR
+    oddity" is a hypothesis; a shortfall is a measurement. If this ever does
+    start firing on ordinary traffic, that is evidence about EDGAR worth
+    having, not a reason to soften the condition into a fraction."""
     provider = _provider(tmp_path, lookback_days=0)
     day = et_today().isoformat()
     rows = [_hit(_accession(1)), {"_source": {"adsh": "junk", "form": "3"}}]
@@ -278,8 +284,58 @@ def test_one_odd_row_among_good_ones_does_not_flip_the_seat(tmp_path, monkeypatc
         (day, 0): {"hits": {"hits": rows, "total": {"value": 2}}},
     })
 
-    assert coverage["verified"] is True
+    assert coverage["verified"] is False
+    assert "edgar_rows_unreadable" in coverage["reasons"]
+    # ...but NOT the whole-day guard, which is a different statement.
     assert "edgar_hits_malformed" not in coverage["reasons"]
+
+
+def test_a_cap_bound_day_is_not_held_to_the_shortfall_check(tmp_path, monkeypatch):
+    """The shortfall check applies only to a day the scan CLAIMS to have
+    read through. A day the budget stopped part-way never made that claim,
+    and holding it to one would mark the seat degraded every morning — the
+    harm board item 126 names in its own text."""
+    provider = _provider(tmp_path, lookback_days=0, max_filings_per_refresh=2)
+    day = et_today().isoformat()
+    hits = [_hit(_accession(i)) for i in range(1, 11)]
+    _found, _stats, coverage = _scan(provider, monkeypatch, {
+        (day, 0): {"hits": {"hits": hits, "total": {"value": 10}}},
+    })
+
+    assert "scan_cap_reached" in coverage["reasons"]
+    assert "edgar_rows_unreadable" not in coverage["reasons"]
+    assert coverage["verified"] is True
+
+
+def test_edgars_at_least_count_is_not_a_count(tmp_path, monkeypatch):
+    """EFTS caps `hits.total.value` at 10,000 and says so with
+    `relation: "gte"` — "at least this many", not "this many" [measured
+    against efts.sec.gov during review: a month-wide forms=4 query returns
+    exactly {"value": 10000, "relation": "gte"}]. Reading that as an exact
+    count would let the scan page to the cap, take the "read through EDGAR's
+    own count" branch, and report complete coverage of a day whose true size
+    it never learned — this item's defect, reappearing inside the branch
+    labelled clean. "At least N" is EDGAR declining to give a denominator."""
+    provider = _provider(tmp_path, lookback_days=0, max_filings_per_refresh=50_000)
+    day = et_today().isoformat()
+    _found, _stats, coverage = _scan(provider, monkeypatch, {
+        (day, 0): {"hits": {
+            "hits": [_hit(_accession(i)) for i in range(1, 101)],
+            "total": {"value": 10000, "relation": "gte"},
+        }},
+    })
+
+    assert coverage["verified"] is False
+    assert "edgar_total_unreadable" in coverage["reasons"]
+    # ...and an explicit `eq` is read exactly as a bare value is.
+    _found, _stats, exact = _scan(provider, monkeypatch, {
+        (day, 0): {"hits": {
+            "hits": [_hit(_accession(1))],
+            "total": {"value": 1, "relation": "eq"},
+        }},
+    })
+    assert exact["verified"] is True
+    assert exact["edgar_total"] == 1
 
 
 def test_deep_pagination_cut_off_short_of_the_count_is_not_verified(
@@ -534,16 +590,24 @@ def test_a_replayed_page_cannot_buy_full_coverage(tmp_path, monkeypatch):
     assert coverage["rows_received"] == 1000
     assert coverage["enumerated"] == 100
     assert coverage["ratio"] == 0.1
+    # And the day claimed to be read through while 900 of the 1,000 filings
+    # EDGAR reported were never seen, so the claim is refused outright.
+    assert coverage["verified"] is False
+    assert "edgar_rows_unreadable" in coverage["reasons"]
 
 
 def test_junk_rows_do_not_count_as_coverage_even_beside_a_good_one(
     tmp_path, monkeypatch,
 ):
-    """The earlier guard fired only when EVERY row on a page was junk, so
-    99 junk rows plus one good one read as full coverage — a 100% rule
-    wearing a structural shape, which this desk forbids. Readable rows are
-    now counted directly, so the ratio tells the truth with no cut point in
-    it anywhere."""
+    """The first guard fired only when EVERY row on a page was junk, so 99
+    junk rows plus one good one read as full coverage — a 100% rule wearing
+    a structural shape, which this desk forbids. Readable rows are counted
+    directly instead, so the ratio tells the truth with no cut point in it
+    anywhere. The SECOND review round then pointed out that reporting an
+    honest 0.01 while still calling the read verified leaves the original
+    symptom alive in milder form, so the shortfall itself is now named:
+    a day the scan paged all the way through EDGAR's own count and could
+    not read that many filings out of it did not read that day through."""
     provider = _provider(tmp_path, lookback_days=0, max_filings_per_refresh=5000)
     day = et_today().isoformat()
     rows = [{"_source": {"adsh": "junk", "form": "10-K"}} for _ in range(99)]
@@ -555,10 +619,8 @@ def test_junk_rows_do_not_count_as_coverage_even_beside_a_good_one(
     assert coverage["rows_received"] == 100
     assert coverage["enumerated"] == 1
     assert coverage["ratio"] == 0.01
-    # The read is still ACCOUNTED FOR — everything EDGAR offered came back
-    # and one row of it was usable. That is a different statement from "the
-    # read cannot be accounted for", and the ratio is what carries it.
-    assert coverage["verified"] is True
+    assert coverage["verified"] is False
+    assert "edgar_rows_unreadable" in coverage["reasons"]
 
 
 def test_a_day_of_nothing_but_junk_is_not_verified(tmp_path, monkeypatch):
@@ -665,3 +727,98 @@ def test_yesterdays_coverage_is_not_todays(tmp_path):
     edgar = provider.form4_coverage()["edgar"]
     assert edgar["verified"] is False
     assert "edgar_coverage_stale" in edgar["reasons"]
+
+
+def test_the_alert_carries_the_coverage_counts_whatever_it_is_about(monkeypatch):
+    """Second review round: the window figure only reached the owner on the
+    branch where coverage itself was the complaint, so on an ordinary
+    morning the honest "how much of the window did we actually check"
+    number reached nobody. It now rides on every one of these alerts, and
+    is logged on every pass."""
+    import src.notifier as notifier
+    from src.pipeline import TradingPipeline
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
+
+    # The complaint is unread filings, NOT coverage — coverage is verified.
+    alert({
+        "watched_read_through": et_today().isoformat(),
+        "watched_pending_filings": 3, "watched_unchecked_names": [],
+        "discovery_cap_reached": False, "watched_names": 4,
+        "watched_names_read_through": 4, "watched_drain_ran": True,
+        "watched_drain_deadline_hit": False,
+        "edgar_coverage": {
+            "verified": True, "reasons": [], "enumerated": 435,
+            "edgar_total": 435, "days_queried": 76, "days_in_window": 366,
+            "window_fraction": 0.2077,
+        },
+    })
+    assert len(sent) == 1
+    assert "still unread" in sent[0]
+    assert "read 435 of 435 filings" in sent[0]
+    assert "76 of 366 days" in sent[0]
+
+
+def test_a_form4_provider_that_blew_up_still_answers_for_coverage(monkeypatch):
+    """A sub-provider that raises outright is replaced with a
+    `provider_error` dict carrying neither the drain keys nor a coverage
+    record, so scoping the coverage clause on the drain keys alone left the
+    loudest case saying nothing about coverage — in a change made to stop
+    coverage failing silently."""
+    import src.notifier as notifier
+    from src.pipeline import TradingPipeline
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
+
+    alert({"status": "provider_error", "error": "0:SECForm4Provider:boom"})
+    assert len(sent) == 1
+    assert "no coverage was recorded at all" in sent[0]
+
+
+def test_the_combined_merge_treats_days_as_a_window_not_a_quantity():
+    """Second review round: `days_queried` used 0 as both "unset" and a real
+    value, so a provider that legitimately queried zero days was overwritten
+    instead of min'd; and `days_with_total` was summed beside a min'd
+    `days_queried`, which could claim more days with a readable count than
+    days queried at all."""
+    from src.data.congressional_trading import (
+        CombinedSmartMoneyProvider,
+        _form4_drain_summary,
+    )
+
+    wide = {"known": True, "verified": True, "reasons": [], "edgar_total": 10,
+            "enumerated": 10, "rows_received": 10, "ratio": 1.0,
+            "days_queried": 76, "days_in_window": 366, "days_with_total": 76,
+            "window_fraction": 0.2077}
+    none_at_all = {**wide, "days_queried": 0, "days_with_total": 0,
+                   "days_in_window": 15, "edgar_total": 0, "enumerated": 0}
+
+    def _sub(edgar):
+        class _P:
+            def form4_coverage(self):
+                return {"known": True, "as_of": "2026-09-21", "watched": 2,
+                        "read_through": 2, "unread": [], "edgar": edgar}
+        return _P()
+
+    combined = CombinedSmartMoneyProvider.__new__(CombinedSmartMoneyProvider)
+    combined.providers = [_sub(wide), _sub(none_at_all)]
+    edgar = combined.form4_coverage()["edgar"]
+
+    assert edgar["days_queried"] == 0
+    assert edgar["days_in_window"] == 366
+    assert edgar["days_with_total"] <= edgar["days_queried"]
+    assert edgar["window_fraction"] == 0.0
+
+    # The same fact, read the same way one layer down: a Form 4 result with
+    # no coverage record must DRAG the merged verdict, not be skipped.
+    summary = _form4_drain_summary([
+        {"watched_drain_ran": True, "watched_read_through": "2026-09-21",
+         "edgar_coverage": dict(wide)},
+        {"watched_drain_ran": True, "watched_read_through": "2026-09-21"},
+    ])
+    assert summary["edgar_coverage"]["verified"] is False
+    assert "never_recorded" in summary["edgar_coverage"]["reasons"]

@@ -1072,9 +1072,17 @@ def _form4_drain_summary(results) -> dict:
     # dict for the same reason the counts above are: nested, it reaches only
     # the log line, and the pre-open check and the session record read the
     # top level. Verified only if every Form 4 provider verified its own.
+    # A Form 4 provider that recorded NO coverage is substituted with the
+    # blank record, not skipped. Skipping it let a provider that answered
+    # the coverage question not at all be carried by one that did — the
+    # same read-one-fact-in-two-directions defect this change fixed one
+    # layer up, in `_alert_form4_backlog_before_open`.
+    from src.data.smart_money import blank_edgar_coverage
+
     edgars = [
-        r.get("edgar_coverage") for r in form4
-        if isinstance(r.get("edgar_coverage"), dict)
+        r.get("edgar_coverage") if isinstance(r.get("edgar_coverage"), dict)
+        else blank_edgar_coverage()
+        for r in form4
     ]
     edgar_total = sum(int(e.get("edgar_total") or 0) for e in edgars)
     enumerated = sum(int(e.get("enumerated") or 0) for e in edgars)
@@ -1096,7 +1104,12 @@ def _form4_drain_summary(results) -> dict:
         "window_fraction": (
             round(days_queried / days_in_window, 4) if days_in_window > 0 else None
         ),
-        "days_with_total": sum(int(e.get("days_with_total") or 0) for e in edgars),
+        # Also a day count, so also min — summing it beside a min'd
+        # `days_queried` produced merged records claiming more days with a
+        # readable count than days queried at all.
+        "days_with_total": min(
+            (int(e.get("days_with_total") or 0) for e in edgars), default=0,
+        ),
     }
     return {
         "edgar_coverage": edgar_coverage,
@@ -1322,6 +1335,9 @@ class CombinedSmartMoneyProvider:
         # at all reports never_recorded, which reads as unverified.
         edgar_reasons: set[str] = set()
         edgar_verified: list[bool] = []
+        edgar_days_queried: list[int] = []
+        edgar_days_in_window: list[int] = []
+        edgar_days_with_total: list[int] = []
         for provider in self.providers:
             probe = getattr(provider, "form4_coverage", None)
             if not callable(probe):
@@ -1345,28 +1361,32 @@ class CombinedSmartMoneyProvider:
             edgar_reasons.update(
                 str(r) for r in (sub_edgar.get("reasons") or []) if str(r).strip()
             )
-            for key in ("edgar_total", "enumerated", "rows_received",
-                        "days_with_total"):
+            for key in ("edgar_total", "enumerated", "rows_received"):
                 try:
                     merged["edgar"][key] += int(sub_edgar.get(key) or 0)
                 except (TypeError, ValueError):
                     pass
             # Days are a WINDOW, not a quantity: summing them across
-            # providers makes the queried/window fraction meaningless. The
-            # merged fraction is a lower bound — the fewest days any
-            # provider reached, over the widest window any of them meant.
-            try:
-                sub_queried = int(sub_edgar.get("days_queried") or 0)
-                sub_window = int(sub_edgar.get("days_in_window") or 0)
-            except (TypeError, ValueError):
-                sub_queried = sub_window = 0
-            merged["edgar"]["days_queried"] = (
-                sub_queried if merged["edgar"]["days_queried"] == 0
-                else min(merged["edgar"]["days_queried"], sub_queried)
-            )
-            merged["edgar"]["days_in_window"] = max(
-                merged["edgar"]["days_in_window"], sub_window,
-            )
+            # providers makes the queried/window fraction meaningless, and
+            # summing `days_with_total` beside a min'd `days_queried` made
+            # merged records claiming more days with a readable count than
+            # days queried at all. Collected and reduced after the loop, so
+            # a provider that legitimately queried ZERO days is min'd like
+            # any other rather than read as "nothing recorded yet".
+            for key, sink in (
+                ("days_queried", edgar_days_queried),
+                ("days_in_window", edgar_days_in_window),
+                ("days_with_total", edgar_days_with_total),
+            ):
+                try:
+                    sink.append(int(sub_edgar.get(key) or 0))
+                except (TypeError, ValueError):
+                    sink.append(0)
+        # The merged fraction is a lower bound: the fewest days any provider
+        # reached, over the widest window any of them meant.
+        merged["edgar"]["days_queried"] = min(edgar_days_queried, default=0)
+        merged["edgar"]["days_in_window"] = max(edgar_days_in_window, default=0)
+        merged["edgar"]["days_with_total"] = min(edgar_days_with_total, default=0)
         merged["known"] = found
         merged["unread"] = sorted(set(merged["unread"]))
         merged["edgar"]["known"] = bool(edgar_verified)
