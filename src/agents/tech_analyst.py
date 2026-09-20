@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
@@ -23,6 +24,37 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "tech
 # longer come from this window — they are computed in Python over the full
 # history (see src/data/levels.py), so this stays small on purpose.
 _BARS_PER_SYMBOL = 40
+
+# The standing sheet states the size of that window back to the model, in five
+# places. It used to state it as a hand-typed "20" while this constant said 40,
+# so for as long as the two disagreed the only seat allowed to halt the desk was
+# being told the wrong thing about its own inputs — it read pivots, gaps and
+# micro-structure off a window twice the size it believed it had (board item 98;
+# neither PR #464 nor #467 caught it). The count now has ONE home: the sheet
+# carries this placeholder and the value is substituted from the constant below
+# at prompt-assembly time, so changing the slice changes what the model is told.
+#
+# Deliberately NOT routed through `src/agents/prompt_limits.py`: that module
+# resolves `{{risk.*}}` against live settings and RAISES on anything it cannot
+# resolve. Raising is right for a risk limit; on this seat a raise is a halted
+# desk, and a bar count is a code constant, not an operator-tunable setting.
+# Substitution here cannot fail. What CAN happen is the placeholder being edited
+# away and a literal typed back in, which is the original defect returning — and
+# that is caught in CI by `tests/test_tech_analyst_bar_count.py`, not at run time.
+_BARS_PLACEHOLDER = "{{tech.bars_per_symbol}}"
+
+#: Matched as a pattern, not compared as a string. A bare `str.replace` stops
+#: substituting the moment someone writes `{{ tech.bars_per_symbol }}` with
+#: spaces, or the sheet gets rewrapped — and the failure is silent, shipping
+#: literal template syntax to the seat. `prompt_limits.PLACEHOLDER_RE` learned
+#: this already and tolerates the same whitespace; so does this.
+_BARS_PLACEHOLDER_RE = re.compile(r"\{\{\s*tech\.bars_per_symbol\s*\}\}")
+
+
+def render_bars_per_symbol(text: str, bars: int = _BARS_PER_SYMBOL) -> str:
+    """Substitute the bar-window placeholder with the count the code sends."""
+    return _BARS_PLACEHOLDER_RE.sub(str(bars), text)
+
 
 # Ceiling on ONE request's predicted tokens. Chosen from measurement, not
 # taste: at 45k a 53-symbol universe packs into 5 requests with a ~44k peak
@@ -141,7 +173,7 @@ class TechAnalystAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
+            return render_bars_per_symbol(PROMPT_PATH.read_text())
         return "You are a technical analyst. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:

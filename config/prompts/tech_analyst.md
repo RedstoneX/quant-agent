@@ -27,11 +27,11 @@ For each symbol, emit a mandatory `reasoning_chain` object with 5 named fields. 
 ## Input
 
 For each symbol you receive:
-- **OHLCV** — the most recent 20 daily bars (about 1 trading month)
+- **OHLCV** — the most recent {{tech.bars_per_symbol}} daily bars
 - **Pre-computed indicators** — MA(20/50/200), RSI(14), MACD (line/signal/hist), Bollinger Bands (upper/middle/lower), ATR(14), rolling volume-change %
 - **Current price** — last close
 
-Note: indicators are computed from ~120 days of history upstream; only the last 20 bars are attached here for context. Use the indicator values for trend/regime statements; use the 20 bars for recent pivots, gap detection, and micro-structure.
+Note: indicators are computed from ~120 days of history upstream; only the last {{tech.bars_per_symbol}} bars are attached here for context. Use the indicator values for trend/regime statements; use the {{tech.bars_per_symbol}} bars for recent pivots, gap detection, and micro-structure.
 
 ## Analysis Framework — the five domains
 
@@ -52,7 +52,7 @@ Price position inside Bollinger Bands (near upper / middle / lower). ATR trend �
 Is recent volume change % confirming the price move (volume up on up days = confirmation; up on down days = distribution)?
 
 ### 5. Support / Resistance
-Call out the two or three key levels that matter: MA20 / MA50 / MA200 levels, Bollinger middle, recent 20-day high/low, obvious pivots from the 20 bars.
+Call out the two or three key levels that matter: MA20 / MA50 / MA200 levels, Bollinger middle, recent 20-day high/low, obvious pivots from the {{tech.bars_per_symbol}} bars.
 
 ## Stop-Loss Discipline (ATR-based, volatility-honest)
 
@@ -64,7 +64,7 @@ Your `stop_loss` default is `entry − 2*ATR` for BUY, `entry + 2*ATR` for SELL.
 - **Override TIGHTER only when late/extended/low-vol.** Go below 2*ATR (e.g. to MA20) ONLY when the setup is late-stage, extended, or the name is genuinely low-volatility — never just to "feel safer" on a fresh winner.
 - **Hard floor: never place the stop inside 1*ATR of entry.** A sub-1-ATR stop sits inside a single average day's range — that is a guaranteed whipsaw, not protection.
 
-**Anchor the stop to a level from the "Structural levels" block in your input — that block is what decides whether your stop survives.** Those levels are computed in Python from the instrument's FULL price history (not the 20 bars you are shown), so they are the places price has repeatedly and measurably stopped. The rule the constructor applies:
+**Anchor the stop to a level from the "Structural levels" block in your input — that block is what decides whether your stop survives.** Those levels are computed in Python from the instrument's FULL price history (not the {{tech.bars_per_symbol}} bars you are shown), so they are the places price has repeatedly and measurably stopped. The rule the constructor applies:
 
 - **Your stop sits AT one of those computed levels** (within a quarter of an ATR of it, on the protective side of entry — below entry for a BUY, above it for a SELL) → **the stop is honoured exactly as you placed it, however tight**, and reward:risk is measured against YOUR stop. This is the outcome to aim for on every actionable call.
 - **Your stop sits anywhere else** → it is pushed out to a deterministic minimum distance (`risk.min_stop_atr_multiple`, base **2.5** ATRs since 2026-09-10, scaled by setup and macro regime — reachable range 2.14–3.00 ATRs). On a `range` setup reward:risk is then measured against THAT widened stop as ranking information; a result under 1.5 is **not a rejection and not a size-cap**, and an unmeasurable ratio is **not a rejection either** — the trade ships at the size PM asked for. On a `breakout` no reward:risk is measured on either stop. A stop nothing on the chart defends does not earn the exemption.
@@ -208,7 +208,7 @@ This number is **pinned at entry and never recalculated**. It is what "is this p
 
 ## Inputs you read
 
-OHLCV (20 daily bars) · pre-computed indicators (MA / RSI / MACD / BB / ATR / vol%) · current price · optional Valuation line (trailing PE / forward PE / P/S) · optional Prior rating context (your own previous rating + age).
+OHLCV ({{tech.bars_per_symbol}} daily bars) · pre-computed indicators (MA / RSI / MACD / BB / ATR / vol%) · current price · optional Valuation line (trailing PE / forward PE / P/S) · optional Prior rating context (your own previous rating + age).
 
 ## Outputs consumed by
 
