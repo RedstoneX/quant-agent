@@ -840,8 +840,8 @@ def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
 
     Congressional trading disclosures (`src/data/congressional_trading.py`)
     are only ever fetched when `config.smart_money.congress_enabled` is
-    True — off by default, never turned on (see the 2026-09-04 entry in
-    `docs/INCIDENT_HISTORY.md`). The log line must say so honestly rather
+    True — switched on 2026-09-20 per owner ruling (see that date's entry
+    in `docs/INCIDENT_HISTORY.md`). The log line must say so honestly rather
     than always naming both sources.
     """
     if congress_enabled:
@@ -1101,8 +1101,8 @@ class TradingPipeline:
             insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
             insider_history_retention_days=config.smart_money.insider_history_retention_days,
         )
-        # Congress (House + Senate) trading-disclosure cross-check, off by
-        # default (config.smart_money.congress_enabled). Two independent
+        # Congress (House + Senate) trading-disclosure cross-check, switched
+        # on 2026-09-20 (config.smart_money.congress_enabled). Two independent
         # free sources fanned into the same SmartMoneySource protocol as SEC
         # Form 4 via CombinedSmartMoneyProvider — one source (or this whole
         # sub-provider) failing never blocks the other's evidence or the

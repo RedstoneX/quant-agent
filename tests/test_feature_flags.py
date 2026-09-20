@@ -52,19 +52,22 @@ def test_every_boolean_switch_is_declared_and_current() -> None:
     )
 
 
-def test_congress_enabled_is_declared_off_and_the_reason_is_on_record() -> None:
-    """The specific regression this file exists to prevent. If this switch
-    is ever flipped on in `config/settings.yaml` without this declaration
-    being updated, `test_every_boolean_switch_is_declared_and_current` above
-    catches the drift; this test additionally pins today's known-good state
-    so a change here is never silent even if someone edits the declaration
-    file by hand to match a change to settings.yaml.
+def test_congress_enabled_is_declared_on_and_the_reason_is_on_record() -> None:
+    """The specific regression this file exists to prevent. Switched on
+    2026-09-20 per owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, that
+    date): congressional evidence must be weighted by the PM, never zeroed
+    out. If this switch is ever flipped again in `config/settings.yaml`
+    without this declaration being updated,
+    `test_every_boolean_switch_is_declared_and_current` above catches the
+    drift; this test additionally pins today's known-good state so a change
+    here is never silent even if someone edits the declaration file by hand
+    to match a change to settings.yaml.
     """
     declarations = load_declarations()
     entry = declarations["src.config.SmartMoneyConfig.congress_enabled"]
-    assert entry["effective_value"] is False
+    assert entry["effective_value"] is True
     live = effective_values()
-    assert live["src.config.SmartMoneyConfig.congress_enabled"] is False
+    assert live["src.config.SmartMoneyConfig.congress_enabled"] is True
 
 
 def test_every_declared_switch_carries_a_reason_and_an_intentional_flag() -> None:
