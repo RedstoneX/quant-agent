@@ -182,6 +182,201 @@ _ALPACA_STREAM_RECONNECT_MAX_S = 30.0
 # Risk approved, before the first BUY hit the tape).
 _ALPACA_STREAM_AUTH_DEADLINE_S = _ALPACA_STREAM_RECONNECT_MAX_S
 
+# THE trade_updates AUTH FORMAT, AND WHY THIS MODULE SENDS THE FRAME.
+#
+# alpaca-py builds the auth payload itself, in
+# `alpaca/trading/stream.py::TradingStream._auth`, as
+#   {"action":"authenticate","data":{"key_id":K,"secret_key":S}}
+# Alpaca's own authorization reply says that form is being DEPRECATED in
+# favour of
+#   {"action":"auth","key":K,"secret":S}
+# Measured against the live paper broker 2026-09-18: both forms return
+# `status: authorized`, and the deprecated one carries the notice.
+#
+# A dependency bump would be the right fix and there is nothing to bump to:
+# alpaca-py 0.44.0, the newest release on PyPI on that date, still sends the
+# deprecated form. So the choice is between sending a frame the counterparty
+# has told us it is retiring, or sending the current one ourselves. The desk
+# sends the current one, on the smallest possible surface: ONE frame, with
+# alpaca-py's own verdict rule (`data.status == "authorized"`) unchanged, on
+# a per-instance wrapper. Nothing in site-packages is edited.
+#
+# THE FALLBACK IS LOAD-BEARING AND STAYS. The current form is proven on
+# `paper-api.alpaca.markets` and nowhere else; the desk has exactly one
+# account and cannot show it is accepted everywhere the old one is. So a
+# refusal of the current form marks the stream and the NEXT handshake sends
+# the deprecated form on a fresh socket — see `_fell_back_to_deprecated_auth`
+# for why it is not re-sent on the same socket. Either way the reconnect
+# ceiling bounds the sequence, the owner is told once in plain English, and
+# fills fall back to the bounded REST path. Retire the fallback only when
+# the current form is proven on every host the desk authenticates against.
+_STREAM_AUTH_DEPRECATION_MARKER = "deprecat"
+_stream_auth_deprecation_logged = False
+_stream_current_auth_format_logged = False
+
+
+# ---------------------------------------------------------------------------
+# Reconnect CEILINGS. Why these exist (2026-09-18 audit of the retained logs).
+#
+# On 2026-09-15 this socket logged 32,896 handshake attempts in ONE day
+# [measured: `grep -c "starting trading websocket connection"` across
+# quant_agent.log.2/.3], 32,666 of which Alpaca rejected with HTTP 429
+# [measured, same grep on "restarting connection: server rejected WebSocket
+# connection: HTTP 429"]. The first twelve attempts are stamped
+# 13:38:30.698 -> 13:38:31.076 — about THIRTY handshakes per second.
+#
+# The retry loop was NOT ours. `alpaca.trading.stream.TradingStream.
+# _run_forever` (alpaca-py 0.43.5, the installed version) catches every
+# exception and closes with `finally: await asyncio.sleep(0.01)` — a flat
+# 10ms, no backoff of any kind, and no attempt ceiling. That is why six
+# previous pull requests adjusted OUR timing and changed nothing: our
+# timing was never in that loop.
+#
+# `_install_trading_stream_reconnect_guard` (below) fixed the RATE on
+# 2026-09-18 and is measurably working: the 2026-09-17 14:24:54 burst is
+# spaced 0.9s, 1.3s, 3.3s, 7.8s, 14.2s, 30.0s, and the whole day logged 50
+# attempts instead of 32,896 [measured]. What it did NOT add is a ceiling.
+# The attempt counter is a closure local, so it resets to zero on every new
+# hub, and a socket that can never authenticate retries at the 30s cap
+# forever. That is still an unbounded account-level liability, just a
+# slower one. These three constants close it.
+# ---------------------------------------------------------------------------
+
+#: Handshake attempts one socket session may spend before it gives up for good.
+#: SOURCE (derived, not chosen): the equal-jitter curve below runs off
+#: alpaca-py's own reconnect bounds, 1.0s min / 30.0s max, so the capped
+#: term goes 1, 2, 4, 8, 16, 30 — it SATURATES at attempt 6. Past saturation
+#: every further attempt waits the identical interval and has already failed
+#: identically, so it can learn nothing new; it only spends the account's
+#: rate-limit budget. Cross-checked against the measured 2026-09-17 14:24
+#: burst, which reached the 30s plateau at attempt 6.
+_STREAM_ATTEMPT_CEILING_PER_SESSION = 6
+
+#: Handshake attempts this PROCESS may spend across all sessions in one day.
+#: SOURCE: Alpaca publishes the trading API limit as "200 requests per
+#: minute, per account" (alpaca.markets/support/usage-limit-api-calls). The
+#: limit is account-wide, so a websocket storm spends the same budget the
+#: order path needs. One single minute's published allowance is therefore
+#: the whole DAY's budget for this socket, which is optional comfort — the
+#: bounded REST fill path does the same job more slowly. Cross-checked
+#: against measured behaviour so it cannot fire spuriously: 2026-09-16 spent
+#: 56 attempts and 2026-09-17 spent 50, both comfortably inside it, while
+#: the 2026-09-15 storm of 32,896 is 164x over it.
+_STREAM_ATTEMPT_CEILING_PER_DAY = 200
+
+#: Stand-down after the broker answers HTTP 429, in seconds.
+#: SOURCE: Alpaca states the limit as 200 requests per MINUTE. A retry
+#: inside the same minute that produced the 429 is asking the identical
+#: question of the identical exhausted window, so it cannot succeed — it can
+#: only deepen the throttle. A rate-limit rejection therefore stands down
+#: for the full published window rather than the 30s TRANSPORT cap, which is
+#: sized for a dropped connection and is the wrong instrument here. A
+#: server-sent Retry-After always wins over this when it is longer.
+_STREAM_RATE_LIMIT_STAND_DOWN_S = 60.0
+
+
+class _StreamAttemptBudget:
+    """Process-wide, day-keyed ceiling on trade_updates handshake attempts.
+
+    Deliberately module-level rather than per-hub. The 2026-09-18 backoff
+    guard kept its attempt counter in a closure, so every new hub started
+    again from zero and nothing ever accumulated across a day — which is
+    exactly how an unbounded loop hides behind a bounded-looking one.
+
+    Fail-CLOSED on the socket, not on the desk: exhausting the budget shuts
+    the OPTIONAL fast path and leaves the bounded REST fill-confirmation
+    path, which is what runs whenever this socket is off anyway.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._day: str | None = None
+        self._attempts = 0
+        self._alerted_day: str | None = None
+
+    def _roll(self, today: str) -> None:
+        if self._day != today:
+            self._day = today
+            self._attempts = 0
+
+    def record_attempt(self, today: str | None = None) -> int:
+        """Count one handshake failure; return attempts spent today."""
+        day = today or date.today().isoformat()
+        with self._lock:
+            self._roll(day)
+            self._attempts += 1
+            return self._attempts
+
+    def day_exhausted(self, today: str | None = None) -> bool:
+        day = today or date.today().isoformat()
+        with self._lock:
+            self._roll(day)
+            return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
+
+    def attempts_today(self, today: str | None = None) -> int:
+        day = today or date.today().isoformat()
+        with self._lock:
+            self._roll(day)
+            return self._attempts
+
+    def claim_alert(self, today: str | None = None) -> bool:
+        """True exactly ONCE per day, for the caller that should page the owner."""
+        day = today or date.today().isoformat()
+        with self._lock:
+            self._roll(day)
+            if self._alerted_day == day:
+                return False
+            self._alerted_day = day
+            return True
+
+    def reset(self) -> None:
+        with self._lock:
+            self._day = None
+            self._attempts = 0
+            self._alerted_day = None
+
+
+#: One budget per process. The socket is account-wide and so is the limit
+#: it spends, so a per-broker-instance budget would not bound anything.
+_STREAM_ATTEMPT_BUDGET = _StreamAttemptBudget()
+
+
+def _stream_giveup_owner_message(reason: str) -> str:
+    """The owner-facing wording. Plain English, no jargon, no identifiers.
+
+    Says WHAT stopped, WHAT still works, and that nothing is required of
+    him — the desk keeps trading either way. He reads this on a phone.
+    """
+    return (
+        "Instant fill alerts switched off for today. "
+        f"The broker kept refusing the live connection ({reason}), so the desk "
+        "has stopped retrying it to avoid being rate-limited on the account. "
+        "Trading is unaffected: fills are being confirmed the slower way "
+        "instead, by checking with the broker on a timer. "
+        "It retries automatically tomorrow. Nothing for you to do."
+    )
+
+
+def _alert_stream_gave_up(reason: str) -> None:
+    """Loud, ONCE a day, on the log and to the owner. Never per attempt."""
+    if not _STREAM_ATTEMPT_BUDGET.claim_alert():
+        return
+    message = _stream_giveup_owner_message(reason)
+    logger.error(
+        "trade_updates websocket GIVING UP for today after %d handshake "
+        "attempts (%s) — falling back to the bounded REST fill path. %s",
+        _STREAM_ATTEMPT_BUDGET.attempts_today(), reason, message,
+    )
+    try:
+        from src.notifier import send_owner_alert
+
+        send_owner_alert(message)
+    except Exception:  # noqa: BLE001 - never let the alert sink break execution
+        logger.warning(
+            "could not push the trade_updates give-up alert to the owner",
+            exc_info=True,
+        )
+
 
 @dataclass(frozen=True)
 class LivePrice:
@@ -485,6 +680,17 @@ class _TradeUpdatesHub:
         return thread is not None and thread.is_alive()
 
 
+class TradeStreamGaveUp(Exception):
+    """The socket has stopped retrying for the day and will not reopen.
+
+    Distinct from `TradeStreamAuthRejected`: that says the broker refused
+    a credential, this says the DESK refused to keep asking. Callers treat
+    it like any other handshake failure and fall through to the bounded
+    REST fill path; it exists so the log and the tests can tell "we gave
+    up" apart from "it failed again".
+    """
+
+
 class TradeStreamAuthRejected(Exception):
     """The broker REFUSED the trade_updates credential, in the broker's own words.
 
@@ -586,8 +792,11 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
     reimplementation of the auth protocol: the SDK's own `_auth` still
     sends the frame and still decides the outcome. We only (a) record the
     first frame the socket hands back during auth, via a one-shot wrapper
-    on this instance's `recv`, and (b) translate the SDK's information-free
-    `ValueError` into `TradeStreamAuthRejected` carrying that frame.
+    on this instance's `recv`, (b) translate the SDK's information-free
+    `ValueError` into `TradeStreamAuthRejected` carrying that frame, and
+    (c) on SUCCESS, surface any deprecation notice the broker put in that
+    same frame instead of discarding it — see
+    `_note_stream_auth_deprecation` and `_STREAM_AUTH_DEPRECATION_MARKER`.
 
     Both wrappers are per-instance attributes on objects this module
     constructed. Nothing in site-packages is edited. No timeout, retry
@@ -599,6 +808,26 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
     original_auth = getattr(stream, "_auth", None)
     if not callable(original_auth):
         return
+
+    async def _send_current_auth_format() -> None:
+        """Send the format Alpaca asks for, and apply the SDK's own verdict.
+
+        Identical decision rule to alpaca-py's `_auth` — `data.status` must
+        read `authorized`, otherwise `ValueError`, which is what every
+        caller and test in this module already expects. Only the frame
+        differs, because only the frame is what the broker deprecated.
+        """
+        ws_now = getattr(stream, "_ws", None)
+        await ws_now.send(json.dumps({
+            "action": "auth",
+            "key": getattr(stream, "_api_key", None),
+            "secret": getattr(stream, "_secret_key", None),
+        }))
+        raw = await ws_now.recv()
+        msg = json.loads(raw)
+        data = msg.get("data") or {}
+        if data.get("status") != "authorized":
+            raise ValueError("failed to authenticate")
 
     async def _auth():
         captured: dict[str, object] = {}
@@ -629,9 +858,58 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             except Exception:  # noqa: BLE001
                 original_recv = None
 
+        # WHICH FRAME THIS HANDSHAKE SENDS. New form unless a previous
+        # handshake on THIS stream was refused with it — see
+        # `_fell_back_to_deprecated_auth`.
+        use_deprecated = bool(getattr(stream, "_qamc_auth_fallback", False))
+        if getattr(stream, "_ws", None) is None:
+            # No socket to send our own frame on. Hand the whole handshake
+            # back to the vendor rather than raise a shape error the
+            # reconnect guard would report as a broker fault.
+            use_deprecated = True
+        attempt_auth = original_auth if use_deprecated else _send_current_auth_format
         try:
-            await original_auth()
+            # BOUND THE HANDSHAKE. alpaca-py's `_auth` awaits `self._ws.recv()`
+            # with NO timeout (verified in 0.43.5 and 0.44.0), while its own
+            # `_consume` bounds the identical call at 5s. So a broker that
+            # stops ANSWERING — which is one way the deprecated auth format
+            # could be retired — parks this thread in `_auth` forever: no
+            # exception, so the reconnect guard never counts a failure, the
+            # session ceiling never engages, the owner is never told, and
+            # `trade_updates_started()` keeps reporting a live hub. Fill waits
+            # would still fall to REST on their own deadline, so the desk
+            # survives; the socket would just lie about being up.
+            #
+            # Same budget the hub already gives the handshake
+            # (`_ALPACA_STREAM_AUTH_DEADLINE_S`), not a second clock. A
+            # timeout raises out of `_start_ws`, which is exactly the shape
+            # the ceiling already counts and gives up on.
+            await asyncio.wait_for(
+                attempt_auth(), timeout=_ALPACA_STREAM_AUTH_DEADLINE_S,
+            )
+        except asyncio.TimeoutError as exc:
+            message, status = _parse_stream_auth_reply(captured.get("raw"))
+            raise TradeStreamAuthRejected(
+                broker_message=(
+                    message
+                    or "no reply to the authentication frame within "
+                       f"{_ALPACA_STREAM_AUTH_DEADLINE_S:.0f}s"
+                ),
+                broker_status=status or "no reply",
+                credential=getattr(stream, "_api_key", None),
+                cause=exc,
+            ) from exc
         except ValueError as exc:
+            if not use_deprecated:
+                # The CURRENT format was refused. Do NOT re-send on this
+                # socket: Alpaca closes a connection it refused, so a second
+                # frame here would fail for a reason that has nothing to do
+                # with the format and would look like a credential problem.
+                # Mark the stream instead; the reconnect guard's next
+                # handshake opens a fresh socket and sends the deprecated
+                # form, which is the one measured to work today. The ceiling
+                # still bounds the whole sequence.
+                _fell_back_to_deprecated_auth(stream, captured.get("raw"))
             message, status = _parse_stream_auth_reply(captured.get("raw"))
             raise TradeStreamAuthRejected(
                 broker_message=message,
@@ -639,10 +917,93 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
                 credential=getattr(stream, "_api_key", None),
                 cause=exc,
             ) from exc
+        else:
+            if not use_deprecated:
+                _note_current_auth_format_accepted()
+            _note_stream_auth_deprecation(captured.get("raw"))
         finally:
             _restore()
 
     stream._auth = _auth
+
+
+def _fell_back_to_deprecated_auth(stream: object, raw: object) -> None:
+    """Mark a stream so its NEXT handshake sends the deprecated auth frame.
+
+    Loud, because this is the fail-visible half of the migration: the desk
+    is now sending a format the broker has said it is retiring, and the
+    only alternative to saying so is silently degrading.
+
+    Marked per-stream rather than per-process: a refusal is evidence about
+    the socket in front of us, and a process-wide latch would pin every
+    later socket to the old form on one bad handshake.
+    """
+    try:
+        setattr(stream, "_qamc_auth_fallback", True)
+    except Exception:  # noqa: BLE001
+        return
+    message, status = _parse_stream_auth_reply(raw)
+    logger.warning(
+        "trade_updates auth: the CURRENT format {\"action\":\"auth\"} was "
+        "refused (broker said: %s; broker status: %s) — the next handshake "
+        "falls back to the deprecated format on a fresh socket. If the "
+        "credential is good, this means the current format is not accepted "
+        "here and the fallback is load-bearing.",
+        message or "no message returned",
+        status or "not stated",
+    )
+
+
+def _note_current_auth_format_accepted() -> None:
+    """Record, once per process, that the non-deprecated frame was accepted.
+
+    Without this line there is no positive evidence in the desk's own log
+    that the migration took — only the absence of a failure, which is what
+    let a socket that never authenticated look healthy for three days.
+    """
+    global _stream_current_auth_format_logged
+    if _stream_current_auth_format_logged:
+        return
+    _stream_current_auth_format_logged = True
+    logger.info(
+        "trade_updates authenticated with the CURRENT auth format "
+        "({\"action\":\"auth\"}) — the deprecated format alpaca-py builds "
+        "was not used",
+    )
+
+
+def _note_stream_auth_deprecation(raw: object) -> None:
+    """Log Alpaca's deprecation notice once per process, in its own words.
+
+    The authorization reply to a SUCCESSFUL handshake was captured for the
+    refusal path and then thrown away, so the broker telling us our auth
+    format is going away reached the desk and left no trace. That is a
+    silent degradation waiting to happen: the day Alpaca enforces it, the
+    only record would be a handshake that stopped working.
+
+    WARNING, not ERROR: nothing is broken yet and nothing is required of
+    anyone today. Once per process, never per attempt — the 2026-09-15
+    storm is what a per-attempt line costs. Never raises, never carries a
+    credential (the reply frame contains neither).
+    """
+    global _stream_auth_deprecation_logged
+    if _stream_auth_deprecation_logged:
+        return
+    try:
+        message, _status = _parse_stream_auth_reply(raw)
+    except Exception:  # noqa: BLE001 - a diagnostic must not break the handshake
+        return
+    if not message or _STREAM_AUTH_DEPRECATION_MARKER not in message.lower():
+        return
+    _stream_auth_deprecation_logged = True
+    logger.warning(
+        "trade_updates auth format is DEPRECATED by the broker — broker "
+        "said: %s. The payload is built by alpaca-py "
+        "(TradingStream._auth), not by this desk, and the newest release "
+        "still sends the old form; the handshake is accepted today. See "
+        "_STREAM_AUTH_DEPRECATION_MARKER in this module.",
+        message,
+    )
 
 
 def _stream_http_status(exc: BaseException) -> int | None:
@@ -732,8 +1093,18 @@ def _trading_stream_reconnect_delay(
     1s/30s equal-jitter curve.
     """
     hint = _stream_retry_after_seconds(exc)
+    rate_limited = _stream_http_status(exc) == 429
     if hint is not None:
-        return hint
+        # A 429 never waits LESS than the published rate-limit window, even
+        # when the server asks for less: retrying inside the window that
+        # produced it cannot clear it. See _STREAM_RATE_LIMIT_STAND_DOWN_S.
+        return max(hint, _STREAM_RATE_LIMIT_STAND_DOWN_S) if rate_limited else hint
+    if rate_limited:
+        # Rate limiting is an ACCOUNT-level fault, not a transport one. The
+        # transport curve below is sized for a dropped connection and is the
+        # wrong instrument: retrying fast is precisely what produced the
+        # 32,666 rejections of 2026-09-15.
+        return _STREAM_RATE_LIMIT_STAND_DOWN_S
     min_b = float(getattr(stream, "_reconnect_min_backoff", 0) or 0) if stream else 0.0
     max_b = float(getattr(stream, "_reconnect_max_backoff", 0) or 0) if stream else 0.0
     if min_b <= 0:
@@ -778,6 +1149,22 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
         if event is None:
             event = asyncio.Event()
             setattr(stream, "_reconnect_stop", event)
+        if _STREAM_ATTEMPT_BUDGET.day_exhausted():
+            # The day's budget is already gone, so do not spend a handshake
+            # to rediscover that. Checked BEFORE the attempt: without this a
+            # new hub still costs one rejection every time it opens, which
+            # is how a "bounded" loop stays unbounded in aggregate.
+            try:
+                setattr(stream, "_should_run", False)
+            except Exception:  # noqa: BLE001
+                pass
+            event.set()
+            _alert_stream_gave_up("the daily retry budget is spent")
+            raise TradeStreamGaveUp(
+                "trade_updates retry budget for today is spent "
+                f"({_STREAM_ATTEMPT_CEILING_PER_DAY} handshake attempts) — "
+                "fills are confirmed by the bounded REST path"
+            )
         try:
             await original_start()
             failures = 0
@@ -810,6 +1197,43 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 except Exception:
                     pass
             failures += 1
+            spent_today = _STREAM_ATTEMPT_BUDGET.record_attempt()
+            status = _stream_http_status(exc)
+            # CEILINGS. Either one being reached ends the socket for good --
+            # the session ceiling because the backoff curve has saturated and
+            # further attempts cannot learn anything new, the daily ceiling
+            # because the account's published rate-limit budget belongs to
+            # the order path. Both are checked BEFORE the sleep so an
+            # exhausted budget never buys another wait.
+            if (
+                failures >= _STREAM_ATTEMPT_CEILING_PER_SESSION
+                or _STREAM_ATTEMPT_BUDGET.day_exhausted()
+            ):
+                if isinstance(exc, TradeStreamAuthRejected):
+                    reason = "it rejected our credential"
+                elif status == 429:
+                    reason = "it rate-limited us"
+                else:
+                    reason = "the connection would not open"
+                # Stop the SDK's own loop. `TradingStream._run_forever`
+                # re-checks `_should_run` at the top of every iteration and
+                # returns when it is false, so this ends the retry loop
+                # without abandoning the SDK's public run()/stop() contract.
+                try:
+                    setattr(stream, "_should_run", False)
+                except Exception:  # noqa: BLE001
+                    pass
+                event.set()
+                logger.warning(
+                    "trade_updates websocket give-up: %d attempts this "
+                    "session (ceiling %d), %d today (ceiling %d), last "
+                    "status=%s",
+                    failures, _STREAM_ATTEMPT_CEILING_PER_SESSION,
+                    spent_today, _STREAM_ATTEMPT_CEILING_PER_DAY,
+                    status if status is not None else "unknown",
+                )
+                _alert_stream_gave_up(reason)
+                raise
             delay = _trading_stream_reconnect_delay(failures, exc, stream)
             now = time.monotonic()
             # Log at most once per wait: a 10ms loop otherwise reprints the
@@ -830,7 +1254,6 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                         failures, delay,
                     )
                 else:
-                    status = _stream_http_status(exc)
                     logger.warning(
                         "trade_updates websocket handshake failed "
                         "(status=%s, attempt %d); reconnect in %.1fs",
@@ -1240,6 +1663,13 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Called with the facts of every protective stop the kill switch
+    #: refuses (see `_submit_stop_limit_order`). The broker holds no
+    #: database, so the owner of one wires this — `TradingPipeline` does, to
+    #: `src/execution/exit_path_records.record_protective_stop_blocked`.
+    #: None (the default) records nothing, exactly as before. Recording
+    #: only: its result and any exception it raises are ignored.
+    protective_stop_block_recorder: "object | None" = None
     #: Live `trade_updates` websocket feed. Declared here, FALSE, for the
     #: same reason as `_kill_switch_path` above: an instance built without
     #: __init__ must read the safe value rather than raise. Fail-closed
@@ -1468,6 +1898,39 @@ class AlpacaBroker:
             "name": name,
             "exchange": exchange,
         }
+
+    def list_assets(self) -> list[dict]:
+        """Every ACTIVE US-equity asset record, raw, one read-only GET.
+
+        The universe screen's candidate source (`src/universe_screen.py`).
+        Raw REST rather than the SDK's `get_all_assets` because the pinned
+        alpaca-py (0.44) `Asset` model has no `borrow_status`, the field
+        Alpaca now names as the borrow flag (it deprecated `easy_to_borrow`
+        on 2026-06-22 with a 2026-09-22 sunset —
+        https://docs.alpaca.markets/reference/get-v2-assets-1). Raises on
+        failure: an empty list would read as "every admitted name was
+        delisted", which it is not.
+        """
+        raw = self.client.get(
+            "/assets", {"status": "active", "asset_class": "us_equity"},
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
+        return [item for item in raw if isinstance(item, dict)]
+
+    def get_asset_record(self, symbol: str) -> dict | None:
+        """One raw asset record; None ONLY when the broker says it does not
+        exist (HTTP 404/422). Any other failure raises, so a network blip is
+        never mistaken for a delisting."""
+        alpaca_symbol = _alpaca_symbol(_internal_symbol(_alpaca_symbol(symbol)))
+        try:
+            raw = self.client.get(f"/assets/{alpaca_symbol}")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in (404, 422):
+                return None
+            raise
+        return raw if isinstance(raw, dict) else None
 
     def get_shortability(self, symbol: str) -> dict:
         """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
@@ -4870,7 +5333,28 @@ class AlpacaBroker:
                 "for %s qty=%s stop=$%.4f.",
                 self._kill_switch_path, symbol, qty, stop_price,
             )
-            return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
+            # Until 2026-09-19 this refusal left no record, and the repair
+            # path told the owner the BROKER had refused the stop. The
+            # durable row goes through the recorder the database's owner
+            # wires in; `detail` is the plain sentence any caller can show.
+            from src.execution.exit_path_records import kill_switch_blocked_text
+            recorder = self.protective_stop_block_recorder
+            if recorder is not None:
+                try:
+                    recorder(
+                        symbol=symbol, qty=qty, stop_price=stop_price,
+                        side=side, kill_switch_path=str(self._kill_switch_path),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never trading authority
+                    logger.warning(
+                        "kill-switch block record for %s could not be "
+                        "written: %s", symbol, exc,
+                    )
+            return {
+                "id": None, "status": "kill_switch_halted", "symbol": symbol,
+                "blocked_by": "kill_switch",
+                "detail": kill_switch_blocked_text(symbol),
+            }
         # docs/WORK.md item 88 — the LAST authority before the broker, for
         # the callers that reach this directly (the partial-exit reprotect
         # and the restore paths) rather than through

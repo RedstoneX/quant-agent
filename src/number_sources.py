@@ -70,14 +70,42 @@ reviewed one-line edit that says so. (This is also the answer to
 there is nothing there for either check to see.)
 
 Inside a scoped file the structural rules are:
-  * (a) module-level UPPER_CASE names bound to a number, and
-  * (b) numeric defaults on fields of a class whose name ends in `Config`.
+  * (a) module-level UPPER_CASE names bound to a number;
+  * (b) numeric defaults on fields of a class whose name ends in `Config`;
+  * (c) numeric defaults on function and method PARAMETERS
+    (`max_pct: float = 5.0`), id `module.Qual.name(param)`;
+  * (d) numeric attributes on ANY class, annotated or not
+    (`STOP_LIMIT_BUFFER_PCT = 0.03` inside the broker class), id
+    `module.Qual.attr`; and
+  * (e) inline MULTIPLIER/DIVISOR literals in the band `FACTOR_BAND`
+    ([0.5, 2.0), excluding +-1): `round(price * 0.995, 2)`,
+    `deficit * 1.02`, `price * (1.01 if cover else 0.99)`. Id
+    `module.Qual.function:factor[N]`, N counting such literals in that
+    function in source order.
 
-Rule (b) is what makes a bare dataclass default catchable without flagging
-every dataclass default in the repo. `*Config` is already this codebase's
-settled name for "the tunables", and every result/DTO dataclass in the same
-files (`GrossCeilingOutcome`, `PortfolioVolEstimate`, `SizingDecision`) is
-excluded by it without a special case.
+Rules (c)-(e) were added 2026-09-19 because (a)/(b) left live trade numbers
+invisible: the queued-earnings weight cap and the correlated-cluster cap were
+parameter defaults, the 3% stop-limit buffer was a class attribute, and board
+item 138's 0.5%/1% order-price buffers were inline arithmetic. (c)-(e) apply
+only to scoped modules, not to `src/config.py`'s named classes and not to the
+unscoped sentinel, whose count stays defined as module-level constants.
+
+Why (e) is a band and not "every literal". Every literal operand of
+arithmetic in scope was listed on 2026-09-19: about seventy, and outside the
+band they are unit conversions (10_000 bps, 365 days, 60 s, 1_000_000), float
+epsilons and query paddings; inside it, every one was an order-price or
+sizing margin. A literal whose other operand is also a literal (`365 * 5`) is
+constant arithmetic, not a margin, and is skipped. Renumbering is a feature:
+adding a factor above an existing one in the same function shifts N and
+fails the gate, which puts the neighbouring entries back in front of a
+reviewer.
+
+Rule (b) predates (d) and is kept because `*Config` is this codebase's
+settled name for "the tunables". Rule (d) widens it to every class; it did
+not bury the signal, because result/DTO dataclasses (`GrossCeilingOutcome`,
+`PortfolioVolEstimate`, `SizingDecision`) default their numbers to zero,
+which is never a site. Measured 2026-09-19: rule (d) found 19 sites in
+scope, one of them a DTO counter (`AgentResult.provider_requests = 1`).
 
 "Bound to a number" means bound to a number however it is spelled. A default
 written as a NAME (`min_position_risk_pct: float = STARTER_POSITION_RISK_PCT`)
@@ -136,6 +164,15 @@ as if it covered more:
     merges and were re-checked by hand. Prefer a URL where one exists.
   * A number computed at run time from live inputs, or a `default_factory`
     whose number lives in a function body.
+  * Inline literals OUTSIDE rule (e)'s band or shape. Measured 2026-09-19:
+    comparison thresholds (`abs(volume_change_pct) > 50`), additive offsets,
+    divisors like the `/ 10.0` in `src/data/levels.py`'s level strength
+    (board item 148), fallback arguments (`_risk_number(x, 25.0)`,
+    `kwargs.get(k, 25.0)`), and keyword literals passed at a call site
+    (`lookback_days=5`) are all invisible. Catching them by value needs a
+    list of "boring" numbers, which is itself an arbitrary list; the honest
+    fix per site is to hoist the literal to a named constant, which (a)
+    then sees.
   * A number in prompt PROSE. Measured 2026-09-18: ~1,825 numeric tokens
     across `config/prompts/*.md`, overwhelmingly dates and list numbering.
     That is board item 105 and it is not solvable this way.
@@ -187,6 +224,32 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/pipeline_stages.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
+    # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
+    # scope rule's own words ("every module on the path from a seat's
+    # verdict to a broker order") named this file and it was not here.
+    # `stop_repair.py` and `coverage_watchdog.py` are the repair/alarm path
+    # for a protective stop that failed to place. `stop_repair.py` still
+    # defines no module-level numeric constant (see the docstring note this
+    # entry used to require); scoping it adds nothing today but stops a
+    # future one arriving unseen.
+    "src/execution/broker.py",
+    "src/execution/stop_repair.py",
+    "src/coverage_watchdog.py",
+    # The pipeline's own decision/execution glue. `_clamp_queued_earnings_
+    # buys`' `max_pct=5.0` is a function-parameter default and the de-lever
+    # and midday order-price buffers are inline multipliers; rules (c) and
+    # (e) see them since 2026-09-19.
+    "src/pipeline.py",
+    # Every seat's prompt-construction and LLM-call code -- the path from
+    # evidence to a seat's verdict the scope rule names. Most of what lives
+    # here is LLM plumbing (timeouts, retries, token budgets) that is
+    # `not-trade-governing` once seen; the truncation caps and rank tables
+    # that shape what evidence a verdict is built from are not.
+    "src/agents",
+    # 2026-09-19: the universe admission screen. Every threshold that decides
+    # whether a symbol may be traded at all lives here or in
+    # `UniverseScreenConfig`.
+    "src/universe_screen.py",
 )
 
 #: Config classes inside scoped files whose numeric field defaults are sites.
@@ -205,6 +268,7 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "SmartMoneyConfig",
     "NominationConfig",
     "EventRiskConfig",
+    "UniverseScreenConfig",
 )
 SCOPED_CONFIG_MODULE = "src/config.py"
 
@@ -262,14 +326,53 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: that day the cap binding is what refused a trading decision. Correcting a
 #: misclassification upward is the ratchet working; the debt was always
 #: there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 87
+#: 2026-09-18: 87 -> 88, the SAME correction to the SAME sentence one row
+#: over. `refresh_deadline_s` carried that identical claim, and the same day
+#: it was the deadline the intraday research-freshness check ran out of
+#: while deciding whether the tick could decide at all (measured on the live
+#: desk: the check went 39.6s -> 180.3s and hit this deadline on three
+#: ticks). Again no number was added and none was loosened -- an unrecorded
+#: debt was written down. That the same falsified sentence sat on two rows
+#: is itself the finding: it is boilerplate, and boilerplate is not a
+#: classification.
+#: 2026-09-19: 88 -> 106, board item 130. Scoping `src/execution/broker.py`,
+#: `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` admitted
+#: 47 new structural sites (0 in `src/execution/stop_repair.py`, which still
+#: defines no module-level numeric constant); 18 are `arbitrary`: the
+#: stop-placement retry ceiling and backoff pair item 129 already found
+#: unjustified (3 sites), the smart-money role/freshness/signal-class rank
+#: tables that order which insider findings reach synthesis (8 sites --
+#: ordering DIRECTION has a research citation, the point values do not),
+#: six smart-money prompt-truncation caps that drop findings/text/
+#: transactions with no downstream flag that anything was dropped (the same
+#: shape as the `max_filings_per_refresh` correction two entries above, so
+#: classified the cautious way up front rather than after a counter-
+#: example), and the technical seat's bars-per-symbol window (1 site). The
+#: other 29 are `not-trade-governing`: reconnect/timeout/retry/batch-size
+#: plumbing on a fill-notification socket or an LLM call, and two
+#: floating-point epsilons guarding representation error rather than
+#: choosing a policy value. No value was changed by this pass.
+#: 2026-09-19: 106 -> 146. The scanner learned rules (c), (d) and (e)
+#: (parameter defaults, attributes on any class, near-one inline
+#: multipliers). 98 sites that were always live and never visible now carry
+#: entries: 40 arbitrary, 29 derived, 29 not-trade-governing. The 40: fifteen
+#: JSON-fragment anchor weights that choose which part of a seat's reply is
+#: parsed (a stale table emptied a morning's trades on 2026-08-17/20);
+#: fourteen feedback-memory windows and caps that decide what a trading seat
+#: is shown; board item 138's buffers (3% stop-limit, 1% de-lever, 0.5%
+#: exit, the 2% ask/bid skip multiple and the 2% sweep-sale cushion); the
+#: queued-earnings 5% weight cap; the 50% correlated-cluster advisory; the
+#: 4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5 ATR
+#: research pre-filter; and the 5% preview size. No number was added and
+#: none changed -- the debt was always there, unrecorded.
+MAX_ARBITRARY_ENTRIES = 146
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not
 #: chosen. The build fails if it RISES, so a trade number cannot be parked
 #: outside scope silently. Raising it is a reviewed line that says a new
 #: unscoped constant was looked at and is not trade-governing.
-MAX_UNSCOPED_NUMERIC_SITES = 189  # 2026-09-18: +1 for `src/trader_feed.py::_COMPANY_NAME_CAP` — how many company names one Telegram message looks up from cache; presentation only, governs no trade.
+MAX_UNSCOPED_NUMERIC_SITES = 147  # 2026-09-19: +2, and they are this module's own `FACTOR_BAND` (0.5, 2.0) -- the classifier band rule (e) uses to tell a price/size margin from a unit conversion. It governs what the gate sees, not any trade. Was 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
 
 #: Paths under `src/` the unscoped sentinel does not count: generated code and
 #: vendored trees have no author to ask.
@@ -529,6 +632,149 @@ def _scan_module(
                         NumberSite(site_id, rel, lineno or body_node.lineno, value)
                     )
 
+    if config_classes is None:
+        sites.extend(_scan_extended_shapes(tree, module, rel, names, local))
+
+    return sites
+
+
+#: Rule (e)'s band. A literal in [0.5, 2.0), other than 1.0, used as a
+#: multiplier or divisor is a price or size scaled by a policy margin — a
+#: limit 0.5% through the market, a 2% proceeds cushion, a 1.25 ATR noise
+#: floor. The band is a CLASSIFIER, not a trade number: it was chosen by
+#: listing every literal operand of arithmetic in scope on 2026-09-19 (about
+#: seventy) and finding that everything outside it is a unit conversion
+#: (10_000 bps, 365 days, 60 s, 1_000_000), a float epsilon, or a query
+#: padding, while everything inside it is an order-price or sizing margin.
+#: 2.0 itself is excluded because halving/doubling is overwhelmingly an
+#: identity of the arithmetic (a midpoint) rather than a chosen margin.
+FACTOR_BAND: tuple[float, float] = (0.5, 2.0)
+
+
+def _qualified_scopes(tree: ast.Module):
+    """Yield `(node, qualname)` for every function and class in the module.
+
+    `qualname` is the dotted chain of enclosing class and function names,
+    the same path a reader would use to find the definition.
+    """
+
+    def visit(node: ast.AST, prefix: str):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                qual = f"{prefix}.{child.name}" if prefix else child.name
+                yield child, qual
+                yield from visit(child, qual)
+            else:
+                yield from visit(child, prefix)
+
+    yield from visit(tree, "")
+
+
+def _factor_operands(node: ast.AST) -> list[ast.AST]:
+    """The operand itself, or both branches of `(a if cond else b)`."""
+    if isinstance(node, ast.IfExp):
+        return _factor_operands(node.body) + _factor_operands(node.orelse)
+    return [node]
+
+
+def _own_nodes(func: ast.AST):
+    """Every node in `func`'s body that is not inside a nested def or class.
+
+    A nested function's literals belong to that function's own qualname, so
+    an edit inside one never renumbers the other's sites.
+    """
+    stack = list(ast.iter_child_nodes(func))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _scan_extended_shapes(
+    tree: ast.Module,
+    module: str,
+    rel: str,
+    names: dict[str, float],
+    local: dict[str, float],
+) -> list[NumberSite]:
+    """Rules (c), (d) and (e): the shapes rules (a)/(b) cannot see.
+
+    Applied only inside a scoped module — never to `src/config.py`'s named
+    classes and never to the unscoped sentinel, whose count is defined as
+    module-level constants and would otherwise jump for no reason.
+    """
+    sites: list[NumberSite] = []
+    for node, qual in _qualified_scopes(tree):
+        # (c) numeric defaults on function and method parameters.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            positional = list(args.posonlyargs) + list(args.args)
+            pairs = list(zip(positional[len(positional) - len(args.defaults):], args.defaults))
+            pairs += [
+                (arg, default)
+                for arg, default in zip(args.kwonlyargs, args.kw_defaults)
+                if default is not None
+            ]
+            for arg, default in pairs:
+                base = f"{module}.{qual}({arg.arg})"
+                for site_id, value, lineno in _leaves(default, base, names, local):
+                    if value not in NEUTRAL_VALUES:
+                        sites.append(NumberSite(site_id, rel, lineno or node.lineno, value))
+
+            # (e) inline multiplier/divisor literals in the near-one band.
+            ordinal = 0
+            found: list[tuple[int, int, float]] = []
+            for inner in _own_nodes(node):
+                if not isinstance(inner, ast.BinOp) or not isinstance(
+                    inner.op, (ast.Mult, ast.Div)
+                ):
+                    continue
+                for side, other in ((inner.left, inner.right), (inner.right, inner.left)):
+                    if _numeric(other) is not None:
+                        # Constant arithmetic (`365 * 5`) is one folded number,
+                        # not a margin applied to a price.
+                        continue
+                    for operand in _factor_operands(side):
+                        value = _numeric(operand)
+                        # +-1 is the identity or a sign flip, never a margin.
+                        if value is None or abs(value) == 1.0:
+                            continue
+                        low, high = FACTOR_BAND
+                        if low <= abs(value) < high:
+                            found.append((operand.lineno, operand.col_offset, value))
+            for lineno, _col, value in sorted(found):
+                sites.append(
+                    NumberSite(f"{module}.{qual}:factor[{ordinal}]", rel, lineno, value)
+                )
+                ordinal += 1
+
+        # (d) numeric attributes on any class. A `*Config` class's annotated
+        # fields are rule (b) already; its un-annotated attributes are not,
+        # so those are picked up here too.
+        if isinstance(node, ast.ClassDef):
+            is_config = node.name.endswith(CONFIG_CLASS_SUFFIX)
+            for body_node in node.body:
+                if isinstance(body_node, ast.AnnAssign):
+                    if is_config or not isinstance(body_node.target, ast.Name):
+                        continue
+                    default = _field_default(body_node)
+                    targets = [body_node.target]
+                elif isinstance(body_node, ast.Assign):
+                    default = body_node.value
+                    targets = [t for t in body_node.targets if isinstance(t, ast.Name)]
+                else:
+                    continue
+                if default is None:
+                    continue
+                for target in targets:
+                    base = f"{module}.{qual}.{target.id}"
+                    for site_id, value, lineno in _leaves(default, base, names, local):
+                        if value not in NEUTRAL_VALUES:
+                            sites.append(
+                                NumberSite(site_id, rel, lineno or body_node.lineno, value)
+                            )
     return sites
 
 

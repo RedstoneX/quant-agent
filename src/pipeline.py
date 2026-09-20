@@ -834,6 +834,21 @@ def build_constructor_config(config, risk_engine_config):
             ),
     )
 
+
+def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
+    """What the pre-market smart-money refresh log line should say it read.
+
+    Congressional trading disclosures (`src/data/congressional_trading.py`)
+    are only ever fetched when `config.smart_money.congress_enabled` is
+    True — switched on 2026-09-20 per owner ruling (see that date's entry
+    in `docs/INCIDENT_HISTORY.md`). The log line must say so honestly rather
+    than always naming both sources.
+    """
+    if congress_enabled:
+        return "SEC Form 4 + congressional"
+    return "SEC Form 4 only (congressional cross-check switched off)"
+
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -1068,6 +1083,7 @@ class TradingPipeline:
             user_agent=config.smart_money.user_agent,
             request_timeout_s=config.smart_money.request_timeout_s,
             refresh_deadline_s=config.smart_money.refresh_deadline_s,
+            watched_drain_deadline_s=config.smart_money.watched_drain_deadline_s,
             requests_per_second=config.smart_money.requests_per_second,
             lookback_days=config.smart_money.lookback_days,
             max_filings_per_refresh=config.smart_money.max_filings_per_refresh,
@@ -1085,8 +1101,8 @@ class TradingPipeline:
             insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
             insider_history_retention_days=config.smart_money.insider_history_retention_days,
         )
-        # Congress (House + Senate) trading-disclosure cross-check, off by
-        # default (config.smart_money.congress_enabled). Two independent
+        # Congress (House + Senate) trading-disclosure cross-check, switched
+        # on 2026-09-20 (config.smart_money.congress_enabled). Two independent
         # free sources fanned into the same SmartMoneySource protocol as SEC
         # Form 4 via CombinedSmartMoneyProvider — one source (or this whole
         # sub-provider) failing never blocks the other's evidence or the
@@ -1099,6 +1115,9 @@ class TradingPipeline:
                 data_dir=config.smart_money.congress_data_dir,
                 user_agent=config.smart_money.user_agent,
                 request_timeout_s=config.smart_money.congress_request_timeout_s,
+                # Declared in config since 2026-09-04 and never passed until
+                # 2026-09-19: the feed's own time budget, separate from Form 4's.
+                refresh_deadline_s=config.smart_money.congress_refresh_deadline_s,
                 max_trades_per_source=config.smart_money.congress_max_trades_per_source,
                 assumed_max_disclosure_lag_days=(
                     config.smart_money.congress_assumed_max_disclosure_lag_days
@@ -1115,6 +1134,9 @@ class TradingPipeline:
         self.smart_money_provider = CombinedSmartMoneyProvider(
             [sec_form4_provider, congress_provider]
         )
+        # The universe screen's pending-takeover check reads the same SEC
+        # client (same rate limiter, same User-Agent, same CIK cache).
+        self.sec_form4_provider = sec_form4_provider
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
             model=config.llm.meta_reflector_model,
@@ -1177,6 +1199,7 @@ class TradingPipeline:
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
+        self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in
             # tests/conftest.py. This flag is false in every application run.
@@ -1258,6 +1281,7 @@ class TradingPipeline:
             smart_money_analyst=self.smart_money_analyst,
             admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
             admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
+            admit_screened_universe_fn=self._admit_screened_universe_symbols,
             event_calendar=self.event_calendar,
             fomc_calendar=self.fomc_calendar,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
@@ -2079,6 +2103,8 @@ class TradingPipeline:
         ``price_below_minimum``, ``dollar_volume_below_minimum``,
         ``unresolved_sector``.
         """
+        if self._universe_screen_enabled():
+            return self._evaluate_screened_admission(symbol, context=context)
         cfg = self.config.smart_money
         broker_fact = self.broker.get_transient_equity_eligibility(symbol)
         if not broker_fact.get("eligible"):
@@ -2134,6 +2160,225 @@ class TradingPipeline:
             "sector": sector,
             "broker": broker_fact,
         }
+
+    # ------------------------------------------------------------------
+    # Universe expansion and pruning (src/universe_screen.py). Everything
+    # below is inert while `universe_screen.enabled` is off.
+    # ------------------------------------------------------------------
+
+    def _universe_screen_enabled(self) -> bool:
+        cfg = getattr(getattr(self, "config", None), "universe_screen", None)
+        return bool(getattr(cfg, "enabled", False))
+
+    def _universe_screen_sources(self, deadline: float, listed: dict | None = None):
+        """The screen's read path: broker asset directory, yfinance bars and
+        company profile, SEC filing history. Every source is read-only."""
+        from src.execution.broker import _canonicalize_sector
+        from src.universe_screen import HISTORY_FETCH_DAYS, ScreenSources
+
+        def _profile(symbol: str):
+            raw = self.market.get_company_profile(symbol)
+            if raw is None:
+                return None
+            sector = _canonicalize_sector(raw.get("sector_raw"))
+            if sector == "Unknown":
+                sector = _get_sector(symbol) or "Unknown"
+            return {"market_cap_usd": raw.get("market_cap_usd"), "sector": sector}
+
+        def _filings(symbol: str):
+            provider = getattr(self, "sec_form4_provider", None)
+            if provider is None:
+                raise RuntimeError("SEC provider not configured")
+            return provider.recent_filings(symbol, deadline, listed=listed)
+
+        return ScreenSources(
+            get_asset=self.broker.get_asset_record,
+            get_bars=lambda symbol: self.market.get_ohlcv(symbol, HISTORY_FETCH_DAYS),
+            get_profile=_profile,
+            get_filings=_filings,
+        )
+
+    def _evaluate_screened_admission(
+        self, symbol: str, *, context: str,
+    ) -> tuple[bool, str | None, dict]:
+        """The side-door gate when the universe screen is on: the SAME
+        `screen_symbol` the weekly screen runs, so a Form 4 purchase or a
+        seat's nomination can never admit a name the screen would refuse.
+        Same return shape as the legacy gate it replaces."""
+        import time as _time
+
+        from src.universe_screen import ScreenThresholds, screen_symbol
+
+        # Only the SEC reads take a deadline (the broker and yfinance reads
+        # carry their own timeouts): at most the ticker-map refresh plus the
+        # issuer filing history, one request timeout each.
+        deadline = _time.monotonic() + float(self.config.smart_money.request_timeout_s) * 2
+        result = screen_symbol(
+            symbol, self._universe_screen_sources(deadline),
+            ScreenThresholds.from_config(self.config),
+        )
+        if not result.passed:
+            logger.info(
+                "UNIVERSE_SCREEN %s admission rejected %s: %s",
+                context, symbol, ", ".join(result.failures),
+            )
+            return False, result.reason, {}
+        measured = dict(result.measured)
+        return True, None, {
+            "last_price": measured.get("last_price"),
+            "sector": measured.get("sector"),
+            "screen": "universe_screen",
+            "screen_measured": measured,
+        }
+
+    def _form4_admission_is_current(self, observation) -> bool:
+        """The Form 4 door's age gate, restored (screen on only).
+
+        `lookback_days` went 7 -> 365 on 2026-09-11 and the provider's
+        "stale" label is "older than lookback_days", so since then nothing
+        inside the cache is ever stale and a 364-day-old purchase could
+        admit a symbol (RSG came in that way). The bound is the desk's OWN
+        horizon: a purchase disclosed more trading sessions ago than
+        `risk.max_target_horizon_sessions` is older than the longest move
+        the desk will claim a target for, so it cannot be the reason to
+        open a new name now. Sessions are counted with the same weekday
+        counter the desk's horizon arithmetic uses.
+        """
+        from src.trading_calendar import trading_sessions_held
+        from src.util.time import et_today
+
+        disclosed = getattr(observation, "disclosure_date", None)
+        if not isinstance(disclosed, date):
+            return False
+        horizon = int(self.config.risk.max_target_horizon_sessions)
+        return trading_sessions_held(disclosed, et_today()) <= horizon
+
+    def _admit_screened_universe_symbols(self, positions=None) -> tuple[set[str], dict[str, dict]]:
+        """This session's share of the screened universe (screen on only).
+
+        Every held admitted name, plus at most `nominations.
+        max_per_seat_per_run` others, rotated least-recently-offered first —
+        the screen is one more source of candidates and is capped like one
+        seat, so the portfolio manager's bill is a number that is set.
+        """
+        if not self._universe_screen_enabled():
+            return set(), {}
+        from src.universe_screen import UniverseStore, select_for_run
+        from src.util.time import et_today
+
+        store = UniverseStore(self.config.universe_screen.data_dir)
+        state = store.load()
+        held = {
+            str(getattr(p, "symbol", "") or "").strip().upper()
+            for p in (positions or [])
+        }
+        configured = {str(s).strip().upper() for s in self.config.trading.universe}
+        chosen = select_for_run(
+            state, held=held,
+            cap=int(self.config.nominations.max_per_seat_per_run),
+            today=et_today(),
+        )
+        chosen = {s: d for s, d in chosen.items() if s not in configured}
+        if chosen:
+            store.save(state)
+        return set(chosen), chosen
+
+    def _run_universe_screen(self, run_id: str) -> dict | None:
+        """The weekly screen's incremental pass, run after the evening report
+        (screen on only). Never raises: a failure costs tonight's pass,
+        never the evening push. Every change is logged under
+        `UNIVERSE_CHANGE`, kept in the state file until the morning message
+        shows it, and written to the evidence record now."""
+        if not self._universe_screen_enabled():
+            return None
+        import json as _json
+        import time as _time
+
+        from src.pipeline_stages import _persist_evidence
+        from src.universe_screen import (
+            HISTORY_FETCH_DAYS, ScreenThresholds, UniverseStore, run_screen,
+        )
+        from src.util.time import et_today
+
+        cfg = self.config.universe_screen
+        deadline = _time.monotonic() + float(cfg.screen_deadline_s)
+        store = UniverseStore(cfg.data_dir)
+        try:
+            state = store.load()
+            assets = self.broker.list_assets()
+            held = {p.symbol.strip().upper() for p in self.broker.get_positions()}
+            listed = None
+            provider = getattr(self, "sec_form4_provider", None)
+            if provider is not None:
+                try:
+                    listed = provider.listed_map(deadline)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("universe screen: SEC ticker map unavailable: %s", exc)
+            run = run_screen(
+                state,
+                assets=assets,
+                sources=self._universe_screen_sources(deadline, listed=listed),
+                get_bars_batch=lambda chunk: self.market.get_ohlcv_batch(
+                    chunk, HISTORY_FETCH_DAYS,
+                ),
+                th=ScreenThresholds.from_config(self.config),
+                today=et_today(),
+                held=held,
+                configured=self.config.trading.universe,
+                deadline=deadline,
+                batch_size=int(cfg.bars_batch_size),
+                confirm_missing_asset=self.broker.get_asset_record,
+            )
+            store.save(state)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("UNIVERSE_SCREEN pass failed (non-fatal): %s", exc)
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        for event in run.events:
+            _persist_evidence(
+                self.db, run_id=run_id, agent_name="universe_screen",
+                kind="universe_change", scope="symbol", symbol=event.get("symbol"),
+                evidence_json=_json.dumps(event, sort_keys=True),
+            )
+        summary = run.summary()
+        _persist_evidence(
+            self.db, run_id=run_id, agent_name="universe_screen",
+            kind="universe_screen_run", scope="run",
+            evidence_json=_json.dumps(
+                {k: v for k, v in summary.items() if k != "events"}, sort_keys=True,
+            ),
+        )
+        logger.info(
+            "UNIVERSE_SCREEN pass: %d candidates, %d screened, %d passed, %d "
+            "unreadable, %d change(s), deadline %s",
+            run.candidates, run.screened, run.passed, run.inconclusive,
+            len(run.events), "hit" if run.deadline_hit else "not hit",
+        )
+        return summary
+
+    def _attach_universe_changes(self, result) -> None:
+        """Hand the screen's unreported changes to the morning message, then
+        mark them shown. Screen on only; fail-soft."""
+        if not isinstance(result, dict) or not self._universe_screen_enabled():
+            return
+        from src.universe_screen import UniverseStore
+
+        try:
+            store = UniverseStore(self.config.universe_screen.data_dir)
+            state = store.load()
+            events = list(state.get("events") or [])
+            result["universe_changes"] = {
+                "events": events,
+                "admitted_count": len(state.get("admitted") or {}),
+                "flagged_count": sum(
+                    1 for r in (state.get("admitted") or {}).values()
+                    if r.get("status") == "flagged"
+                ),
+            }
+            if events:
+                state["events"] = []
+                store.save(state)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("universe changes could not be attached: %s", exc)
 
     def _admit_nominated_external_symbols(
         self,
@@ -2194,6 +2439,7 @@ class TradingPipeline:
             for symbol in self.config.trading.universe
             if str(symbol).strip()
         }
+        screen_on = self._universe_screen_enabled()
         grouped: dict[str, list] = {}
         for observation in observations or []:
             symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
@@ -2202,6 +2448,14 @@ class TradingPipeline:
             if str(getattr(observation, "transaction_code", "") or "").upper() != "P":
                 continue
             if not bool(getattr(observation, "admission_eligible", False)):
+                continue
+            if screen_on and not self._form4_admission_is_current(observation):
+                logger.info(
+                    "UNIVERSE_SCREEN SEC transient admission skipped %s: purchase "
+                    "disclosed %s, older than the desk's %d-session horizon",
+                    symbol, getattr(observation, "disclosure_date", "?"),
+                    int(self.config.risk.max_target_horizon_sessions),
+                )
                 continue
             grouped.setdefault(symbol, []).append(observation)
 
@@ -2579,6 +2833,7 @@ class TradingPipeline:
         decisions: list[TradeDecision],
         modifications,
         symbols_bars: dict | None = None,
+        unapplied: list[dict] | None = None,
     ) -> tuple[list[TradeDecision], list[dict]]:
         """Apply RM-proposed field modifications to decisions.
 
@@ -2610,6 +2865,18 @@ class TradingPipeline:
            governing the validation-failure branch below, and it does not
            require inventing a new rejection channel for something the
            schema already has one for.
+        1b. **A BUY's `allocation_pct` may only be reduced.** This seat exists
+           to be MORE protective than the constructor, and nothing enforced
+           that: `RiskModification.new_value` is unbounded. On a BUY that adds
+           to a held name the field is an INCREMENT on top of the existing
+           weight, so an upward edit grows the position by more than the
+           number reads (2026-09-18: an edit believed to cut a name to 30%
+           left it at 50.8%). An increase is reverted and recorded in
+           `rejected_mods` — same posture as guard 1, the trade still ships at
+           the constructor's size. Checked AFTER schema validation, unlike
+           guard 1: an out-of-range value (allocation_pct > 100) must keep
+           hitting the validation branch below and DROP the decision, which is
+           stricter still. This guard governs only the values Pydantic accepts.
         2. **A stop/target edit cannot bypass the checks a fresh decision
            would have to clear.** The constructor measures reward:risk on a
            range setup (refusing only an UNMEASURABLE ratio — a computed
@@ -2636,6 +2903,16 @@ class TradingPipeline:
         DROPPED outright by a validation failure — so the caller can persist
         a visible pipeline event for each one instead of the edit just
         disappearing.
+
+        `unapplied` (board item 164, 2026-09-19) is an optional sink for the
+        three outcomes `rejected_mods` deliberately does NOT carry, each of
+        which used to reach the log only: a decision DROPPED because the
+        edit failed schema validation (`outcome="dropped"`), an edit naming
+        a field this method cannot modify, and an edit naming a symbol with
+        no decision in the plan (both `outcome="modification_not_applied"`).
+        Each entry names the symbol, the gate, the value asked for and the
+        seat's own reason. Recording only — nothing here changes what is
+        applied, reverted or dropped.
         """
         updated_decisions: list[TradeDecision | None] = list(decisions)
         modifiable_fields = {"allocation_pct", "entry_price", "stop_loss", "take_profit"}
@@ -2648,6 +2925,22 @@ class TradingPipeline:
                 mod = type(mod)(**{**mod.model_dump(), "field": field})
             if mod.field not in modifiable_fields:
                 logger.warning("Risk mod ignored: unknown field '%s'", mod.field)
+                if unapplied is not None:
+                    unapplied.append({
+                        "symbol": mod.symbol, "field": mod.field,
+                        "outcome": "modification_not_applied",
+                        "gate": "rm_modification_unknown_field",
+                        "requested": mod.new_value,
+                        "seat_reason": mod.reason,
+                        "reason": (
+                            f"RM modification NOT APPLIED: {mod.symbol}.{mod.field} "
+                            f"-> {mod.new_value} names a field the desk cannot "
+                            f"modify (modifiable: "
+                            f"{', '.join(sorted(modifiable_fields))}). The "
+                            f"decision is unchanged. RM reason given: "
+                            f"{mod.reason!r}"
+                        ),
+                    })
                 continue
 
             for idx, decision in enumerate(updated_decisions):
@@ -2694,7 +2987,68 @@ class TradingPipeline:
                         "DROPPING decision (RM intended a protection we cannot apply)",
                         mod.symbol, mod.field, mod.original_value, mod.new_value, exc,
                     )
+                    if unapplied is not None:
+                        errors = "; ".join(
+                            f"{'.'.join(str(p) for p in err.get('loc', ()))}: "
+                            f"{err.get('msg', '')}"
+                            for err in exc.errors()
+                        )
+                        unapplied.append({
+                            "symbol": decision.symbol, "field": mod.field,
+                            "outcome": "dropped",
+                            "gate": "rm_modification_schema_invalid",
+                            "action": decision.action,
+                            "before": getattr(decision, mod.field, None),
+                            "requested": mod.new_value,
+                            "seat_reason": mod.reason,
+                            "reason": (
+                                f"{decision.action} {decision.symbol} DROPPED: "
+                                f"the RM edit {mod.field} "
+                                f"{getattr(decision, mod.field, None)} -> "
+                                f"{mod.new_value} fails the order schema "
+                                f"({errors}), and a protection the seat asked "
+                                f"for that cannot be applied is not assumed "
+                                f"safe to skip. RM reason given: {mod.reason!r}"
+                            ),
+                        })
                     updated_decisions[idx] = None
+                    break
+
+                # Guard 1b — an `allocation_pct` edit on a BUY may only
+                # REDUCE. The Risk Manager's stated job at this seat is to be
+                # MORE protective than the constructor; nothing in the schema
+                # enforced that for this field (`RiskModification.new_value`
+                # is unbounded and `TradeDecision.allocation_pct` only clamps
+                # 0-100), so a larger number sailed through as a
+                # "protection". Compounding it, on a BUY that ADDS the field
+                # is an INCREMENT on top of the existing holding, so an
+                # upward edit grows the position by more than the number
+                # suggests — observed 2026-09-18, where an edit the seat
+                # believed cut a name to 30% left it at 50.8%. The prompt now
+                # states the increment and the resulting weight; this guard is
+                # the part that holds regardless of what the model reasons.
+                if (
+                    decision.action == "BUY"
+                    and mod.field == "allocation_pct"
+                    and float(mod.new_value) > decision.allocation_pct
+                ):
+                    reason = (
+                        f"RM modification would INCREASE {mod.symbol}'s BUY "
+                        f"allocation_pct ({decision.allocation_pct:.2f} -> "
+                        f"{mod.new_value:.2f}). Reverted — the risk seat may "
+                        f"only reduce a BUY's size, never enlarge it; on an "
+                        f"add this field is an increment, so an upward edit "
+                        f"grows the position by more than the number reads. "
+                        f"RM reason given: {mod.reason!r}"
+                    )
+                    logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
+                    rejected_mods.append({
+                        "symbol": mod.symbol,
+                        "field": mod.field,
+                        "reason": reason,
+                    })
+                    # updated_decisions[idx] already holds the unmodified
+                    # decision — the BUY ships at the constructor's size.
                     break
 
                 # Guard 2 — a stop/target edit on a BUY/SHORT must not ship
@@ -2725,6 +3079,20 @@ class TradingPipeline:
                 break
             else:
                 logger.warning("Risk mod ignored: no matching decision for '%s'", mod.symbol)
+                if unapplied is not None:
+                    unapplied.append({
+                        "symbol": mod.symbol, "field": mod.field,
+                        "outcome": "modification_not_applied",
+                        "gate": "rm_modification_no_matching_decision",
+                        "requested": mod.new_value,
+                        "seat_reason": mod.reason,
+                        "reason": (
+                            f"RM modification NOT APPLIED: {mod.symbol} has no "
+                            f"decision left in the plan to edit ({mod.field} -> "
+                            f"{mod.new_value}), so nothing changed. RM reason "
+                            f"given: {mod.reason!r}"
+                        ),
+                    })
 
         return [d for d in updated_decisions if d is not None], rejected_mods
 
@@ -3166,7 +3534,7 @@ class TradingPipeline:
                     )
                     repaired = self._repair_stop_coverage(
                         symbol, held - covered, is_short=is_short,
-                        outcome=gap,
+                        outcome=gap, resting_stops=list(specs or []),
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3231,6 +3599,7 @@ class TradingPipeline:
                     )
                 gap["repaired"] = self._repair_stop_coverage(
                     symbol, held - covered, is_short=is_short, outcome=gap,
+                    resting_stops=list(specs or []),
                 )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
@@ -3595,9 +3964,21 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
 
+    def _wire_protective_stop_block_recorder(self) -> None:
+        """The broker holds no database, so a protective stop its kill
+        switch refuses is recorded through this pipeline's one
+        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
+        Recording only — see `AlpacaBroker.protective_stop_block_recorder`.
+        `self.db` is read at call time, not captured, so a later swap of the
+        handle is honoured."""
+        from src.execution.exit_path_records import record_protective_stop_blocked
+        self.broker.protective_stop_block_recorder = (
+            lambda **facts: record_protective_stop_blocked(self.db, **facts)
+        )
+
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
-        outcome: dict | None = None,
+        outcome: dict | None = None, resting_stops: list | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
@@ -3639,6 +4020,8 @@ class TradingPipeline:
             is_short=is_short,
             db=self.db,
             outcome=outcome,
+            resting_stops=resting_stops,
+            caller="session_coverage_reconcile",
         )
 
     def _submit_protected_sell(
@@ -3786,7 +4169,11 @@ class TradingPipeline:
         for prot in pending_protections:
             if wait:
                 try:
-                    self.broker.wait_for_order_terminal(prot["order_id"])
+                    # Kept on the intent so a caller can record the outcome
+                    # (the gross-exposure de-lever's shortfall row, item 112).
+                    prot["terminal_status"] = self.broker.wait_for_order_terminal(
+                        prot["order_id"],
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "%s: wait failed for %s order %s: %s — finalize will "
@@ -3800,6 +4187,7 @@ class TradingPipeline:
                 prot["position_qty_before_sell"], prot["specs"],
                 wal_row_id=prot.get("wal_row_id"), **side_kwargs,
             )
+            prot["coverage_confirmed"] = bool(ok)
             if not ok:
                 logger.warning(
                     "%s: finalize for %s (order %s) did not confirm stop "
@@ -10166,13 +10554,33 @@ class TradingPipeline:
         Every proposal is bounded by `src/risk/trailing.py`: ratchet upward
         only, a minimum move worth an order, and never inside one ordinary
         day's range. Returns the broker orders placed.
+
+        Every evaluation also names WHY its position did or did not trail,
+        and that reason is written to `specialist_evidence`
+        (`kind='trail_state'`) whenever it differs from the last one on file
+        for that stock — so a stop that has never trailed has a findable
+        reason, without a row per stock per tick. Recording only: nothing
+        here reads the record back to decide anything but whether to write.
         """
         from src.execution.stop_records import (
             recorded_initial_stop, replace_stop_and_record,
         )
-        from src.risk.trailing import compute_trailing_stop
+        from src.execution.exit_path_records import (
+            last_trail_states, record_trail_state_if_changed,
+        )
+        from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
 
         orders: list[dict] = []
+        last_codes = last_trail_states(
+            self.db, [getattr(p, "symbol", "") for p in positions],
+        )
+
+        def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
+            record_trail_state_if_changed(
+                self.db, last_codes, run_id=run_id, symbol=symbol,
+                code=code, detail=detail, **facts,
+            )
+
         try:
             from src.execution.scale_in import pending_protection_symbols
             pending_syms = pending_protection_symbols(self.db)
@@ -10187,18 +10595,22 @@ class TradingPipeline:
                     "would race the cancel/rearm sequence",
                     symbol,
                 )
+                _note(symbol, "protection_restore_in_flight")
                 continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                _note(symbol, "opening_row_lookup_failed", str(e))
                 continue
             if not buy:
+                _note(symbol, "no_opening_buy_row")
                 continue
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: stop lookup failed for %s: %s", symbol, e)
+                _note(symbol, "live_stop_lookup_failed", str(e))
                 continue
 
             # Only bars SINCE ENTRY matter: a swing low from before the
@@ -10215,7 +10627,7 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
 
-            proposal = compute_trailing_stop(
+            evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
                 entry=position.avg_entry,
@@ -10237,7 +10649,15 @@ class TradingPipeline:
                 # after a trail. Powers the Type A +1R breakeven ratchet.
                 initial_stop=recorded_initial_stop(buy),
             )
+            proposal = evaluation.proposal
             if proposal is None:
+                _note(
+                    symbol, evaluation.code,
+                    current_stop=current_stop,
+                    current_price=position.current_price,
+                    entry=position.avg_entry,
+                    setup_type=(buy or {}).get("setup_type"),
+                )
                 continue
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
@@ -10250,11 +10670,24 @@ class TradingPipeline:
                     "trail: replace_stop_loss failed for %s (%s) — the OLD "
                     "stop remains in force", symbol, e,
                 )
+                _note(
+                    symbol, "replace_raised", str(e),
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _note(
+                    symbol, "replace_not_accepted",
+                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    proposed_stop=proposal.new_stop, current_stop=current_stop,
+                )
                 continue
+            _note(
+                symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                proposed_stop=proposal.new_stop, current_stop=current_stop,
+            )
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")
             orders.append(order)
@@ -10643,6 +11076,10 @@ class TradingPipeline:
                     "AI Risk approved %d exit(s): %s",
                     len(decisions), (verdict.reasoning or "")[:200],
                 )
+                self._record_exit_review_approvals(
+                    decisions, set(), verdict, run_id=run_id,
+                    original_action_by_symbol=original_action_by_symbol,
+                )
                 return set(), verdict
         else:
             veto_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
@@ -10669,7 +11106,50 @@ class TradingPipeline:
                 detail=(veto_reasons[symbol] or "")[:400],
                 layer="ai_risk",
             )
+        # The exits the seat let through beside the ones it vetoed.
+        self._record_exit_review_approvals(
+            decisions, vetoed, verdict, run_id=run_id,
+            original_action_by_symbol=original_action_by_symbol,
+        )
         return vetoed, verdict
+
+    def _record_exit_review_approvals(
+        self, decisions, vetoed: set, verdict, *, run_id: str,
+        original_action_by_symbol: dict,
+    ) -> None:
+        """One durable per-symbol row for every exit the AI Risk seat
+        APPROVED on the exit-review path. Never raises.
+
+        Board item 164 (2026-09-19). A veto here was already durable
+        (`intraday_evaluations` plus an `exit_refusal` row), but an approval
+        reached `agent_logs` only — one raw model response per run, with no
+        per-symbol row saying "this exit was reviewed and let through, and
+        why". Written to the exit path's own per-symbol record
+        (`src/risk/exit_refusal.py`), which already carries non-drop
+        outcomes (`dropped=False`, the fail-open codes) — NOT to the
+        `pipeline_event` stream, because `src/refusal_signature.py` counts
+        any surviving `pipeline_event` as the session having taken an idea,
+        and an exit is not one. `ExitRiskVerdict` has no per-symbol approval
+        reason, so the detail is the seat's own run-level reasoning, marked
+        as such. Recording only: the returned veto set is unchanged.
+        """
+        from src.risk.exit_refusal import CODE_AI_RISK_APPROVED
+
+        category = getattr(verdict, "reason_category", None)
+        for d in decisions:
+            if d.symbol in vetoed:
+                continue
+            self._record_exit_refusal(
+                symbol=d.symbol, run_id=run_id,
+                action=original_action_by_symbol.get(d.symbol, d.action),
+                code=CODE_AI_RISK_APPROVED, dropped=False,
+                detail=(
+                    f"approved by the risk seat (category {category!r}; no "
+                    f"per-symbol reason in the verdict, run-level reasoning "
+                    f"follows): {verdict.reasoning or ''}"
+                ),
+                layer="ai_risk",
+            )
 
     def _midday_execute_llm_actions(
         self, positions, review, run_id: str,
@@ -10702,7 +11182,6 @@ class TradingPipeline:
         signal for this path to act on.
         """
         orders: list[dict] = []
-        pending_protections: list[dict] = []
         _priority = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
@@ -11076,6 +11555,7 @@ class TradingPipeline:
                 logger.warning("Midday: skipping %s %s — no matching position",
                                act, symbol)
                 continue
+            prot = None
             try:
                 if act == "TRAIL_STOP":
                     try:
@@ -11210,7 +11690,6 @@ class TradingPipeline:
                 if sale is None:
                     continue
                 order, prot = sale
-                pending_protections.append(prot)
                 orders.append(order)
                 self.db.insert_trade(
                     symbol=symbol, action=act, qty=qty,
@@ -11227,9 +11706,18 @@ class TradingPipeline:
                 )
             except Exception as e:
                 logger.error("Midday order failed for %s: %s", symbol, e)
-        self._finalize_pending_protections(
-            pending_protections, context="Midday reviewer",
-        )
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops — the same per-name
+            # discipline the de-lever loops got (docs/WORK.md item 111).
+            # Finalizing the batch once after the loop left every earlier
+            # symbol with no protective stop while later symbols were
+            # cancelled, submitted and waited on. Runs even when the ledger
+            # write above raised: the stops are off and the order is live.
+            # Which names exit, how much and at what limit are unchanged.
+            if prot is not None:
+                self._finalize_pending_protections(
+                    [prot], context="Midday reviewer",
+                )
         return orders
 
     def _force_delever(self, ctx: RunContext) -> list[dict]:
@@ -11326,7 +11814,6 @@ class TradingPipeline:
         )
 
         orders: list[dict] = []
-        pending_protections: list[dict] = []
         projected_proceeds = 0.0
         for p in targets:
             if projected_proceeds >= deficit:
@@ -11361,7 +11848,6 @@ class TradingPipeline:
             if sale is None:
                 continue
             order, prot = sale
-            pending_protections.append(prot)
             try:
                 # Count the proceeds BEFORE the ledger write: the SELL is
                 # already live at the broker, so its cash is coming whether or
@@ -11400,13 +11886,16 @@ class TradingPipeline:
                     "live at the broker; its proceeds are already counted so the "
                     "sweep will not over-liquidate", p.symbol, e,
                 )
-
-        # Block the session until fills land so the post-refresh cash is real.
-        # Then finalize protection — if any limit didn't fill, restore the
-        # original stop coverage so the position isn't left naked.
-        self._finalize_pending_protections(
-            pending_protections, context="FORCE DE-LEVER",
-        )
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops (docs/WORK.md item
+            # 111). Finalizing the whole batch after the loop left every
+            # earlier symbol with no protective stop while later symbols were
+            # being cancelled, submitted and waited on. Which positions are
+            # sold, and how much, is unchanged: `projected_proceeds` above is
+            # booked at submit time, never from the fill.
+            self._finalize_pending_protections(
+                [prot], context="FORCE DE-LEVER",
+            )
 
         # Refresh ctx so downstream stages see post-sell truth.
         try:
@@ -11605,6 +12094,9 @@ class TradingPipeline:
             logger.warning("gross-exposure de-lever: entry-order cancel failed: %s", exc)
 
         positions_by_symbol = {p.symbol: p for p in ctx.positions}
+        # The equity the ceiling was measured against, kept for the item-112
+        # shortfall record (ctx.total_value is overwritten by the refresh).
+        equity_before = ctx.total_value
         orders: list[dict] = []
         pending_protections: list[dict] = []
         for trim in outcome.trims:
@@ -11667,9 +12159,18 @@ class TradingPipeline:
                     "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — "
                     "the order may still be live at the broker", trim.symbol, e,
                 )
-        if pending_protections:
+            # Rebuild THIS symbol's stop coverage on its actual fill before
+            # the loop cancels the next symbol's stops (docs/WORK.md item
+            # 111). Finalizing the batch once after the loop left every
+            # earlier symbol with no protective stop while the later ones were
+            # cancelled, submitted and waited on — and the ladder only fires
+            # in a drawdown. The trims themselves (which names, how much, at
+            # what limit) were all fixed by `apply_gross_ceiling` before the
+            # loop began and are unchanged.
+            protection["trim_action"] = trim.action
+            protection["trim_qty"] = qty
             self._finalize_pending_protections(
-                pending_protections, context="GROSS-EXPOSURE DE-LEVER",
+                [protection], context="GROSS-EXPOSURE DE-LEVER",
             )
         try:
             account = self.broker.get_account()
@@ -11682,9 +12183,84 @@ class TradingPipeline:
             # now exists, not the one that triggered the de-lever.
             self._resolve_gross_ceiling(ctx)
             self._alert_owner_delever_incomplete(ctx)
+            self._record_delever_shortfall(
+                ctx, held_gross_before=outcome.held_gross,
+                ceiling_usd_before=outcome.ceiling_usd,
+                equity_before=equity_before, protections=pending_protections,
+            )
         except Exception as e:  # noqa: BLE001
             logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
         return orders
+
+    def _record_delever_shortfall(
+        self, ctx: RunContext, *, held_gross_before: float,
+        ceiling_usd_before: float | None,
+        equity_before: float | None, protections: list[dict],
+    ) -> None:
+        """Durable record of a gross-exposure de-lever that finished with the
+        book STILL over its ceiling (docs/WORK.md item 112).
+
+        `_alert_owner_delever_incomplete` already sets the flag the session
+        message reads; what nothing kept was the evidence — the book before
+        and after, the ceiling, and what each order actually did — so a
+        failed de-lever could not be reviewed after the log rotated. This
+        writes ONE row in the desk's existing lifecycle-event stream
+        (`specialist_evidence`, `agent_name='pipeline'`,
+        `kind='pipeline_event'`, `scope='run'` — the same shape
+        `_record_pipeline_event` and the stop-out reconciler use), NOT in
+        `agent_logs`: that table is the paid-model ledger, and the cost
+        circuit refuses a same-day `agent_logs` row whose run has no budget
+        session, which a pre-agent preamble write could produce.
+
+        Observability only: no order, alert, sizing or sequencing depends on
+        it, it writes nothing when the book cleared its ceiling, and it never
+        raises.
+        """
+        leverage = ctx.leverage or {}
+        if not leverage.get("delever_incomplete"):
+            return
+        try:
+            import json
+            gross_before_x = (
+                held_gross_before / equity_before
+                if isinstance(equity_before, (int, float)) and equity_before > 0
+                else None
+            )
+            order_rows = [
+                {
+                    "symbol": p.get("symbol"),
+                    "action": p.get("trim_action"),
+                    "qty_submitted": p.get("trim_qty"),
+                    "broker_order_id": p.get("order_id"),
+                    "terminal_status": p.get("terminal_status"),
+                    "stop_coverage_confirmed": p.get("coverage_confirmed"),
+                }
+                for p in protections
+            ]
+            payload = {
+                "stage": "gross_delever", "outcome": "still_over_ceiling",
+                "reason": leverage.get("reason") or "",
+                "rung": leverage.get("rung"),
+                "gross_usd_before": held_gross_before,
+                "gross_x_before": gross_before_x,
+                "equity_before": equity_before,
+                "ceiling_usd_before": ceiling_usd_before,
+                "gross_usd_after": leverage.get("gross_usd"),
+                "gross_x_after": leverage.get("gross_x"),
+                "ceiling_x": leverage.get("ceiling_x"),
+                "orders": order_rows,
+            }
+            self.db.insert_specialist_evidence(
+                run_id=ctx.run_id, agent_name="pipeline", kind="pipeline_event",
+                scope="run", symbol=None,
+                decision_id=getattr(ctx, "decision_id", None),
+                evidence_json=json.dumps(payload, sort_keys=True, default=str),
+            )
+        except Exception as exc:  # noqa: BLE001 — evidence is never trading authority
+            logger.warning(
+                "GROSS-EXPOSURE DE-LEVER: could not persist the shortfall "
+                "record for run %s: %s", ctx.run_id, exc,
+            )
 
     def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
         """Flag it when the gross-exposure de-lever did not work.
@@ -11946,10 +12522,29 @@ class TradingPipeline:
         lost did not. See `src/evidence_gate.py` for why no count is used and
         why the counting half of the owner's design is deliberately unbuilt.
 
+        WHICH LOST SEAT ACTUALLY STOPS THE RUN is an owner mandate decision
+        of 2026-09-18 — "Only technical analysis can stop the desk" — and
+        lives in `evidence_gate.BLOCKING_SEATS`, not here. A lost ADVISORY
+        seat is recorded in the same durable rows, logged loudly, carried in
+        the result so the unsuppressible data-quality alert still fires, and
+        named in the freshness disclosure. It does not halt trading.
+
+        EVERY DECISION DISCLOSES ITS OWN EVIDENCE FRESHNESS. With the other
+        seats advisory a decision can rest on one freshly-read seat plus a
+        carried-forward book, and every carried seat reports green; this is
+        the one path every decision passes through, so the count of seats
+        read on THIS tick is computed here and handed to the owner's message
+        and the durable record. Disclosure, not a threshold — there is no
+        minimum fresh count anywhere and none may be invented.
+
         THE SKIP IS LOUD, by three independent paths, because retired item 11
         was this desk producing nothing for a whole day with nobody noticing
         (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
-          - its own standalone owner alert, sent here;
+          - its own standalone owner alert, sent here — MORNING ONLY as of
+            2026-09-18. On an intra_check tick the session message below is
+            guaranteed to speak (`evidence_gate_skip` is actionable on the
+            trader feed and is in none of its silent-status sets), so this
+            alert only duplicated it, one minute apart, word for word;
           - `notifier.maybe_alert_data_quality`, which fires from main.py's
             finally block on the `data_status` carried in the result and
             cannot be suppressed by a mode's noise policy;
@@ -11988,9 +12583,34 @@ class TradingPipeline:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("evidence gate: event write failed: %s", exc)
 
+        # Disclosure, carried out of here by `_attach_evidence_freshness` on
+        # every return path of the session wrappers. Stored on the pipeline
+        # as well as on ctx because the result dicts are built in dozens of
+        # places and the wrappers are the two that see all of them.
+        try:
+            self._last_evidence_freshness = verdict.freshness.to_evidence()
+            self._last_decision_data_status = dict(verdict.data_status)
+            ctx.evidence_freshness = dict(self._last_evidence_freshness)
+        except Exception as exc:  # noqa: BLE001 — never break the decision
+            logger.warning("evidence gate: freshness record failed: %s", exc)
+        logger.info("EVIDENCE FRESHNESS — %s", verdict.freshness.summary)
+
         evidence = verdict.to_evidence()
         _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
         if not verdict.skip:
+            if verdict.advisory_lost:
+                # Owner mandate 2026-09-18: only the technical seat halts the
+                # desk. An advisory seat losing its answer is still a real
+                # fault and is still said out loud — here, in the durable row
+                # above, and by `notifier.maybe_alert_data_quality`, which
+                # reads the `data_status` the wrappers now attach to every
+                # result. What it no longer does is stop trading.
+                logger.error(
+                    "evidence gate: ADVISORY seat(s) lost their answer and the "
+                    "decision PROCEEDED (owner mandate 2026-09-18, only the "
+                    "technical seat blocks): %s",
+                    {s: verdict.data_status.get(s) for s in verdict.advisory_lost},
+                )
             if verdict.unclassified:
                 logger.error(
                     "evidence gate: unclassified seat status this run: %s",
@@ -12005,6 +12625,7 @@ class TradingPipeline:
                 _record(
                     symbol, "not_decided", "evidence_gate_skip",
                     lost_seats=list(verdict.lost),
+                    blocking_lost_seats=list(verdict.blocking_lost),
                     data_status=dict(verdict.data_status),
                 )
         # Legit PM-less completion — same reason `no_data` records one: the
@@ -12017,26 +12638,37 @@ class TradingPipeline:
         # morning's status with a later refusal.
         if session == "morning":
             _dc.write_status("morning", "evidence_gate_skip")
-        try:
-            from src.notifier import seat_words, send_owner_alert
+        # The owner was told the same skip TWICE, one minute apart, on
+        # 2026-09-18 11:19 ET: once by this standalone alert and once by the
+        # intraday tick's own message. On an intra_check tick the tick
+        # message is guaranteed to speak — `evidence_gate_skip` is in
+        # `trader_feed._intraday_tick_actionable`'s list and in neither
+        # `_BASE_ONLY_STATUSES` nor `_INTRADAY_SILENT_STATUSES`, so the
+        # "a quiet tick is silent" policy that this standalone alert exists
+        # to defeat cannot apply to a skip. The tick message also carries
+        # P&L and the book, which this one cannot. So the tick message
+        # speaks for an intraday skip and this alert stays quiet; the skip
+        # is not silenced anywhere, and the morning path (whose own session
+        # message is a different renderer) keeps its alert unchanged.
+        if session == "morning":
+            try:
+                from src.notifier import describe_skipped_decision, send_owner_alert
 
-            # Seat names in words (board item 89: internal component names).
-            send_owner_alert(
-                "DECISION SKIPPED — no answer from "
-                f"{', '.join(seat_words(s) for s in verdict.lost)} "
-                f"(run {run_id})\n"
-                f"{verdict.reason}\n"
-                "WHAT THIS MEANS FOR YOU: nothing was traded and no Portfolio "
-                "Manager call was paid for. Every position keeps the stop it "
-                "already had. The next scheduled decision opportunity tries "
-                "again; there is nothing for you to do."
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("evidence gate: owner alert failed: %s", exc)
+                # Plain words only — no run id, no seat key, no state token
+                # and no `verdict.reason`. The machine reason is unchanged in
+                # the result dict, the event rows and the log line above.
+                send_owner_alert("\n".join(
+                    describe_skipped_decision(verdict.lost, verdict.data_status)
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("evidence gate: owner alert failed: %s", exc)
         return {
             "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
             "data_status": dict(ctx.data_status),
             "lost_seats": list(verdict.lost),
+            "blocking_lost_seats": list(verdict.blocking_lost),
+            "advisory_lost_seats": list(verdict.advisory_lost),
+            "evidence_freshness": verdict.freshness.to_evidence(),
             "reason": verdict.reason,
         }
 
@@ -12053,9 +12685,43 @@ class TradingPipeline:
         re-read without paying for a fresh run. Fail-soft — a storage
         problem costs the audit record, never the morning push.
         """
+        self._last_evidence_freshness = None
         result = self._run_morning_body()
+        self._attach_evidence_freshness(result)
+        self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
         return result
+
+    def _attach_evidence_freshness(self, result) -> None:
+        """Carry this run's evidence-freshness disclosure out to the owner.
+
+        Owner mandate 2026-09-18 made every seat but the technical one
+        advisory, so a decision can now rest on ONE freshly-read seat plus a
+        carried-forward book — and every carried seat reports green. The
+        disclosure is computed once, by the evidence gate, on the single
+        path every decision passes through; this hands it to the message
+        renderer and to the durable session report.
+
+        Disclosure only. It states how much was read on this tick; it never
+        judges the count and there is no minimum — that number is the
+        owner's (docs/WORK.md item 20). Fail-soft: a problem here costs the
+        disclosure line, never the session.
+        """
+        if not isinstance(result, dict):
+            return
+        record = getattr(self, "_last_evidence_freshness", None)
+        if isinstance(record, dict) and "evidence_freshness" not in result:
+            result["evidence_freshness"] = dict(record)
+        # A lost ADVISORY seat no longer halts the run, so the one alert
+        # that cannot be silenced by a mode's noise policy
+        # (`notifier.maybe_alert_data_quality`, fired from main.py's finally
+        # block) must be able to see it. It reads `result["data_status"]`,
+        # which the intra_check result paths never carried — before the
+        # mandate change they did not have to, because a lost seat there
+        # halted the run instead.
+        status = getattr(self, "_last_decision_data_status", None)
+        if isinstance(status, dict) and status and "data_status" not in result:
+            result["data_status"] = dict(status)
 
     def _persist_session_report(self, mode: str, result: dict) -> None:
         """Write a morning/midday/close result dict verbatim, keyed by
@@ -13701,17 +14367,31 @@ class TradingPipeline:
                     smart_money_refresh = self.smart_money_provider.refresh(watched)
                 except TypeError:
                     smart_money_refresh = self.smart_money_provider.refresh()
-                logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
-                # Backlog depth, named in its own line: `refresh` runs once a
-                # day pre-market, so a residue cannot drain until tomorrow,
-                # and an unread Form 4 is what the research-expiry peek reads
-                # as a new filing. Report-only — no threshold, no alert.
                 logger.info(
-                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s cap_reached=%s",
+                    "Smart-money refresh (%s): %s",
+                    _smart_money_refresh_sources_word(self.config.smart_money.congress_enabled),
+                    smart_money_refresh,
+                )
+                # Backlog depth and watched-name coverage, named in their own
+                # line: `refresh` runs once a day pre-market, so a residue
+                # cannot drain until tomorrow.
+                logger.info(
+                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
+                    "cap_reached=%s watched_read_through=%s/%s drain_deadline_hit=%s",
                     smart_money_refresh.get("pending_filings"),
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
+                    smart_money_refresh.get("watched_names_read_through"),
+                    smart_money_refresh.get("watched_names"),
+                    smart_money_refresh.get("watched_drain_deadline_hit"),
                 )
+                # ...and RECORDED where the desk records its status. Until
+                # 2026-09-19 these counts existed only in a log line and the
+                # job's stdout, so no one could ask the database whether the
+                # backlog was draining from one morning to the next.
+                self._record_form4_backlog(run_id, smart_money_refresh)
+                self._record_congressional_refresh(run_id, smart_money_refresh)
+                self._alert_form4_backlog_before_open(smart_money_refresh)
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
                 smart_money_refresh = {
@@ -13893,7 +14573,12 @@ class TradingPipeline:
         roughly every 30 minutes, so a date-keyed row would keep only the
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
+        self._last_evidence_freshness = None
+        self._intra_preamble_deferred = ""
         result = self._run_intra_check_body()
+        if isinstance(result, dict) and self._intra_preamble_deferred:
+            result["preamble_deferred"] = self._intra_preamble_deferred
+        self._attach_evidence_freshness(result)
         self._persist_intra_check_report(result)
         return result
 
@@ -13940,59 +14625,99 @@ class TradingPipeline:
 
         self._activate_cost_session(run_id, "intra_check")
 
-        # Drain orphaned protection-restore intents — intra runs every
-        # 30 min so this is the most frequent recovery opportunity for
-        # bails that landed during morning. Codex r8 #2.
-        self._drain_pending_protection_restores()
-        self._drain_pending_repegs()
-        # Broker-truth coverage audit + auto-repair every tick (audit round
-        # 2): an entry that fills after place_entry_protection's wait, or a
-        # repair that failed once, otherwise stayed naked until the NEXT
-        # session — hours. On the intra cadence the naked window is ≤30 min.
-        # Read-only when coverage is fine; ~1 broker call per held long.
-        # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
-        # the 30-minute sweep — the tightest cadence this audit runs on, and
-        # the one the fractional decision leans on — was the one caller whose
-        # findings never reached the operator's feed at all. Carried into the
-        # result dict now, exactly as every other session already does.
+        # Board item 127 (2026-09-19). Every write below reaches the broker,
+        # and `intra_check` is exempt from the wrapper's session lock (item
+        # 128), so this whole preamble used to run with no lock at all. It
+        # now runs only while this process holds the same advisory flock the
+        # paid scan below takes (`_intraday_scan_process_lock`) — which the
+        # standalone coverage sweep's repair pass also takes — and only while
+        # no morning/midday/close session owns the desk
+        # (`_blocking_owner_session`, the check the paid scan already uses).
+        # A live session runs this same preamble itself near the start of its
+        # own run, and it may be in the middle of cancelling stops to sell; a
+        # stop added here in that window is the worst pairing item 127 names.
+        # Deferring skips only this tick's preamble: the loss check below
+        # still runs every tick, and the next tick re-reads the broker.
         coverage_gaps: list[dict] = []
-        try:
-            coverage_gaps = self._reconcile_stop_coverage()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
-        # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
-        self._release_retired_cash_park(run_id)
-        self._reconcile_orphan_pending_submits()  # audit F4
-        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
-        # every ~30 min, so this is the tightest window this reconciler
-        # runs on — a stop that fires mid-session is written back within
-        # one tick instead of sitting unrecorded until the next scheduled
-        # session hours later.
-        try:
-            self._reconcile_stop_out_fills(run_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+        preamble_deferred = ""
+        with self._intraday_scan_process_lock() as preamble_lock:
+            if not preamble_lock:
+                preamble_deferred = (
+                    "another desk process holds the broker-write lock"
+                )
+            else:
+                blocking = self._blocking_owner_session()
+                if blocking == "unreadable":
+                    preamble_deferred = (
+                        "the active-session owner file could not be read "
+                        "(fail closed)"
+                    )
+                elif blocking is not None:
+                    preamble_deferred = (
+                        f"a live {blocking} session owns the desk and runs "
+                        "this same reconcile itself"
+                    )
+            if preamble_deferred:
+                logger.warning(
+                    "Intra check: broker-writing preamble DEFERRED this tick — "
+                    "%s. No drain, repair, release or reconcile ran; the loss "
+                    "check still runs.", preamble_deferred,
+                )
+            else:
+                # Drain orphaned protection-restore intents — intra runs every
+                # 30 min so this is the most frequent recovery opportunity for
+                # bails that landed during morning. Codex r8 #2.
+                self._drain_pending_protection_restores()
+                self._drain_pending_repegs()
+                # Broker-truth coverage audit + auto-repair every tick (audit round
+                # 2): an entry that fills after place_entry_protection's wait, or a
+                # repair that failed once, otherwise stayed naked until the NEXT
+                # session — hours. On the intra cadence the naked window is ≤30 min.
+                # Read-only when coverage is fine; ~1 broker call per held long.
+                # Spec §11.1 guard 3: the return value used to be DISCARDED here, so
+                # the 30-minute sweep — the tightest cadence this audit runs on, and
+                # the one the fractional decision leans on — was the one caller whose
+                # findings never reached the operator's feed at all. Carried into the
+                # result dict now, exactly as every other session already does.
+                try:
+                    coverage_gaps = self._reconcile_stop_coverage()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
+                # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
+                self._release_retired_cash_park(run_id)
+                self._reconcile_orphan_pending_submits()  # audit F4
+                # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
+                # every ~30 min, so this is the tightest window this reconciler
+                # runs on — a stop that fires mid-session is written back within
+                # one tick instead of sitting unrecorded until the next scheduled
+                # session hours later.
+                try:
+                    self._reconcile_stop_out_fills(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
 
-        # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
-        # table still read 'submitted' half an hour later. The stop-coverage
-        # and stop-out reconcilers just above only watch protective/broker-
-        # initiated exits — neither one asks the broker about the fate of an
-        # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
-        # 'submitted' in the trades table). `run_morning` and the midday/
-        # close review both call `_reconcile_fills` for exactly that reason;
-        # this tick — the one that runs every ~30 minutes and is therefore
-        # the tightest window available to close that gap between sessions
-        # — never did. The live fill-notification websocket never
-        # authenticates on this host (placeholder credential, frozen pending
-        # an owner decision — see broker.py), so in production this always
-        # resolves through `_reconcile_fills`'s own bounded REST lookup
-        # (`broker.get_order_fill_info`), never the socket. Unscoped
-        # (no run_id) so a still-'submitted' row from ANY earlier session
-        # today is picked up, not just ones this tick itself created.
-        try:
-            self._reconcile_fills()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
+                # table still read 'submitted' half an hour later. The stop-coverage
+                # and stop-out reconcilers just above only watch protective/broker-
+                # initiated exits — neither one asks the broker about the fate of an
+                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
+                # 'submitted' in the trades table). `run_morning` and the midday/
+                # close review both call `_reconcile_fills` for exactly that reason;
+                # this tick — the one that runs every ~30 minutes and is therefore
+                # the tightest window available to close that gap between sessions
+                # — never did. The live fill-notification websocket never
+                # authenticates on this host (placeholder credential, frozen pending
+                # an owner decision — see broker.py), so in production this always
+                # resolves through `_reconcile_fills`'s own bounded REST lookup
+                # (`broker.get_order_fill_info`), never the socket. Unscoped
+                # (no run_id) so a still-'submitted' row from ANY earlier session
+                # today is picked up, not just ones this tick itself created.
+                try:
+                    self._reconcile_fills()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+
+        self._intra_preamble_deferred = preamble_deferred
 
         try:
             account = self.broker.get_account()
@@ -14272,17 +14997,19 @@ class TradingPipeline:
 
         Deliberately NOT a new service/daemon/timer — a plain advisory
         `flock` on a local file, the same idea as the wrapper's existing
-        `mkdir`-based session lock, and it applies ONLY to the new
-        opportunity-discovery path. Loss protection keeps its exemption and
-        never touches this. The lock is released on process exit even if we
+        `mkdir`-based session lock. Since 2026-09-19 (board item 127) it
+        also guards `intra_check`'s broker-writing preamble, and the
+        standalone coverage sweep's repair pass takes the same file
+        (`src.coverage_watchdog.repair_lock`). Loss protection keeps its
+        exemption and never touches this. The lock is released on process exit even if we
         are SIGKILLed, so a killed run cannot wedge it.
         """
         import fcntl
 
-        lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
         fh = None
         acquired = False
         try:
+            lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
             try:
@@ -14611,6 +15338,166 @@ class TradingPipeline:
             return False
         return newer_material_wire(frozenset(covered), fetched)
 
+    def _record_form4_backlog(self, run_id: str, refresh: dict) -> None:
+        """Persist the pre-market Form 4 backlog and coverage. Never raises."""
+        if not isinstance(refresh, dict):
+            return
+        import json as _json
+        keys = (
+            "status", "pending_filings", "watched_pending_filings",
+            "discovery_cap_reached", "watched_read_through",
+            "watched_names", "watched_names_read_through",
+            "watched_names_unread", "watched_unchecked_names",
+            "watched_drain_ran", "watched_drain_read",
+            "watched_drain_deadline_hit", "error",
+        )
+        _persist_evidence(
+            getattr(self, "db", None), run_id=run_id,
+            agent_name="smart_money_refresh", kind="form4_backlog", scope="run",
+            evidence_json=_json.dumps(
+                {k: refresh.get(k) for k in keys}, sort_keys=True, default=str,
+            ),
+        )
+
+    def _record_congressional_refresh(self, run_id: str, refresh: dict) -> None:
+        """Persist the congressional refresh's counts. Never raises.
+
+        Same record as the Form 4 backlog above: per source fetched, already
+        seen, processed, new, dropped by reason, watermark before/after,
+        duration, and how old the newest disclosure and each source's copy
+        are. Nothing is written when the congressional feed is switched off.
+        """
+        summary = refresh.get("congressional") if isinstance(refresh, dict) else None
+        if not isinstance(summary, dict):
+            return
+        import json as _json
+        _persist_evidence(
+            getattr(self, "db", None), run_id=run_id,
+            agent_name="smart_money_refresh", kind="congressional_refresh",
+            scope="run",
+            evidence_json=_json.dumps(summary, sort_keys=True, default=str),
+        )
+
+    def _alert_form4_backlog_before_open(self, refresh: dict) -> None:
+        """Say BEFORE the open that today's insider evidence is incomplete.
+
+        `refresh` has always computed the backlog numbers and the pipeline
+        had only ever logged them. A returned value nobody catches is a
+        check that does not exist — on 2026-09-18 the cap bound at the
+        pre-market refresh, and the first anyone knew of it was six lost
+        decision windows later.
+
+        The condition is coverage: every watched name read through today,
+        nothing unread, nothing unchecked. Anything else means the insider
+        seat cannot be current on every tick today. Since PR #535 that seat
+        is advisory — it no longer stops the desk — so the alert says the
+        desk decides WITHOUT complete insider evidence, not that it refuses.
+        """
+        if not isinstance(refresh, dict):
+            return
+        from src.util.time import et_today
+        read_through = str(refresh.get("watched_read_through") or "").strip()[:10]
+        today = et_today().isoformat()
+        watched_pending = int(refresh.get("watched_pending_filings") or 0)
+        unchecked = list(refresh.get("watched_unchecked_names") or [])
+        cap_reached = bool(refresh.get("discovery_cap_reached"))
+        names = int(refresh.get("watched_names") or 0)
+        names_read = int(refresh.get("watched_names_read_through") or 0)
+        if read_through == today and not watched_pending and not unchecked:
+            return
+        why: list[str] = []
+        if names:
+            why.append(
+                f"{names_read} of our {names} companies have every insider "
+                "filing read",
+            )
+        if watched_pending:
+            why.append(
+                f"{watched_pending} company filing(s) on names we hold are "
+                "still unread",
+            )
+        if unchecked:
+            why.append(
+                f"{len(unchecked)} of our own companies could not be checked "
+                "at all",
+            )
+        if bool(refresh.get("watched_drain_deadline_hit")):
+            why.append(
+                "the morning read of our own companies ran out of time; it "
+                "resumes where it stopped tomorrow morning",
+            )
+        if cap_reached:
+            why.append(
+                "the morning read stopped at its own limit before finishing",
+            )
+        if not why:
+            why.append(
+                "the morning read did not confirm it finished"
+                + (f" (last confirmed {read_through})" if read_through else ""),
+            )
+        text = (
+            "Insider-filing check did not finish this morning: "
+            + "; ".join(why)
+            + ". Until it does, the desk still makes its trading decisions "
+            "but without complete insider evidence, and each decision "
+            "records that. Existing positions and their stops are unaffected."
+        )
+        logger.error("PRE-OPEN: %s", text)
+        try:
+            from src.notifier import send_owner_alert
+            send_owner_alert(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Form 4 backlog pre-open alert failed to send: %s", exc)
+
+    def _form4_freshness(self, ctx=None, symbols=None) -> dict:
+        """"Has anything been FILED on a watched name since our last read?"
+
+        The ONLY freshness question the decision tick asks. It is answered
+        from each watched issuer's own SEC filing history — O(watched names)
+        plain GETs — not from a full-text crawl of the whole filing stream.
+        The crawl answers a different question ("is there a filing I have
+        not read?"), belongs to the pre-market producing step, and ran
+        inside every decision tick until 2026-09-18, where it cost six
+        consecutive decision windows.
+
+        Returns the provider verdict unchanged. A provider that cannot
+        answer returns ``ok=False``, and the caller MUST treat that as
+        unknown freshness rather than as "nothing new".
+        """
+        provider = getattr(self, "smart_money_provider", None)
+        probe = getattr(provider, "form4_freshness", None)
+        if not callable(probe):
+            # No probe at all is not a silent pass. The seat's freshness is
+            # unknown, and unknown loses the seat at the evidence gate.
+            return {
+                "ok": False, "new_filings": [], "read_through": "",
+                "checked": 0, "unchecked": [],
+                "reason": "provider cannot answer Form 4 freshness",
+            }
+        if symbols is None:
+            symbols = self._watched_research_symbols(ctx=ctx)
+        try:
+            try:
+                result = probe(symbols)
+            except TypeError:
+                result = probe()
+        except Exception as exc:  # noqa: BLE001
+            # Logged here, not only returned: the caller logs only when it
+            # holds findings, so an empty-seat tick used to lose this.
+            logger.warning(
+                "Form 4 freshness probe raised %s: %s", type(exc).__name__, exc,
+            )
+            return {
+                "ok": False, "new_filings": [], "read_through": "",
+                "checked": 0, "unchecked": [],
+                "reason": f"freshness probe raised {type(exc).__name__}: {exc}",
+            }
+        return result if isinstance(result, dict) else {
+            "ok": False, "new_filings": [], "read_through": "",
+            "checked": 0, "unchecked": [],
+            "reason": "freshness probe returned no verdict",
+        }
+
     def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
         """Currently visible Form 4 accessions for names we watch."""
         provider = getattr(self, "smart_money_provider", None)
@@ -14627,7 +15514,14 @@ class TradingPipeline:
             except TypeError:
                 found = peek()
             return {str(a).strip() for a in (found or []) if str(a).strip()}
-        except Exception:  # noqa: BLE001 — failed peek ≠ new filing
+        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
+            # No live caller since PR #529 (the decision tick uses
+            # `_form4_freshness`). Still: a swallowed failure here returned
+            # "nothing new" with no trace at all. Say so.
+            logger.warning(
+                "Form 4 accession peek failed, returning no accessions: %s: %s",
+                type(exc).__name__, exc,
+            )
             return set()
 
     def _form4_known_accessions(self) -> set[str]:
@@ -14901,12 +15795,52 @@ class TradingPipeline:
             logger.warning("Intraday scan: insider remember failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=False)
         same_session = self._insider_same_session(findings)
-        new_form4 = False
-        try:
-            incoming = set(self._peek_new_form4_accessions(ctx=ctx) or [])
-            new_form4 = bool(incoming - set(accessions))
-        except Exception:  # noqa: BLE001
-            new_form4 = False
+        # The freshness ladder, written down deliberately because the old
+        # code fell the wrong way at every rung. Previously a failed peek
+        # was swallowed and became `new_form4=False`, i.e. "nothing new",
+        # i.e. REUSE — so a broken network let the desk decide on research
+        # it never checked was current, while a WORKING network that found
+        # the desk's own unread backlog refused the decision. Backwards in
+        # both directions. Now:
+        #
+        #   every watched name read through, nothing unread  -> reuse
+        #   a read-through name has an unread filing          -> expired (real)
+        #   probe failed or partial, or any watched name not
+        #   yet fully read (per-issuer coverage)              -> expired
+        #
+        # Expiry is per tick and the probe is cheap, so an unknown costs one
+        # window and the next tick re-asks. Coverage only grows: the
+        # pre-market drain records each issuer as it finishes it. Reuse on an unknown would put a
+        # decision on evidence nobody checked, which the evidence gate
+        # exists to prevent and which no later tick can undo.
+        freshness = self._form4_freshness(ctx=ctx)
+        probe_ok = bool(freshness.get("ok"))
+        incoming = {
+            str(a).strip() for a in (freshness.get("new_filings") or [])
+            if str(a).strip()
+        }
+        new_form4 = bool(incoming - set(accessions))
+        # Fail closed whenever the probe cannot call the seat current —
+        # including when the remembered answer is EMPTY. CORRECTED
+        # 2026-09-19: this used to expire only a seat holding findings, on
+        # the stated ground that `insider_reuse` "already classifies an
+        # empty payload as lost". It does not: an empty list is BLANK, and
+        # BLANK reuses as `chose_not_to_refetch` — "Form 4 filings
+        # remembered; no new filing", an integrity-clean status. An empty
+        # answer is still a claim ("no material insider activity on any
+        # watched name"), and it is exactly as uncheckable as a full one
+        # when the probe failed or some watched names were never fully
+        # read. `not ok` now covers both: a failed or partial probe, and
+        # partial COVERAGE (`unread_names`), whose reason says how many
+        # names are not yet read. A desk with NO insider provider at all has
+        # no seat to be stale about, so an empty answer there is left alone.
+        has_provider = getattr(self, "smart_money_provider", None) is not None
+        if not probe_ok and (findings or has_provider):
+            logger.warning(
+                "Intraday scan: insider seat cannot be called current, "
+                "expires this tick — %s", freshness.get("reason") or "no reason",
+            )
+            return CarryForward(findings, "expired", same_session=same_session)
         verdict = insider_reuse(
             findings if findings else [],
             same_session=same_session,
@@ -15514,6 +16448,10 @@ class TradingPipeline:
         audit record, never the evening push.
         """
         result = self._run_evening_body()
+        if isinstance(result, dict) and result.get("status") != "market_holiday":
+            screen = self._run_universe_screen(result.get("run_id") or "evening")
+            if screen is not None:
+                result["universe_screen"] = screen
         self._persist_evening_report(result)
         return result
 

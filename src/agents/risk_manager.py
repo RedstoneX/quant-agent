@@ -112,6 +112,34 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 earnings=None, events=None, coverage=None, horizon_days=0,
             ).strip()
 
+        # audit round 2 #5: RM's rr_audit / sizing_sanity / concentration
+        # checks were running blind — no equity, no cash, no per-position
+        # weights. When the caller doesn't pass total_value, approximate the
+        # denominator with the sum of listed position values (understates
+        # true equity by the cash balance — flagged in the header).
+        #
+        # Computed HERE, above `_fmt_decision`, rather than at its original
+        # site below the decisions block: the BUY-that-adds line needs the
+        # same denominator to state a resulting weight, and a second copy of
+        # this fallback is exactly the kind of drift that produced the defect
+        # that line exists to fix.
+        approx_book = sum(p.market_value for p in positions) if positions else 0.0
+        denom = total_value if (total_value or 0) > 0 else approx_book
+
+        # Raw (unlevered) dollars already held per symbol, for the
+        # entry-that-adds line below. Raw because `weight_pct_of` applies the
+        # gross multiplier itself — pre-multiplying here would square it.
+        # SIGNED: a short position carries a negative `market_value`, and the
+        # SHORT branch below needs that sign to tell "adding to a short I
+        # already hold" from "shorting a name I am long" (board item 135).
+        held_raw_by_symbol: dict[str, float] = {}
+        for _p in positions or []:
+            _sym = str(getattr(_p, "symbol", "") or "").strip().upper()
+            if _sym:
+                held_raw_by_symbol[_sym] = (
+                    held_raw_by_symbol.get(_sym, 0.0) + (_p.market_value or 0.0)
+                )
+
         # audit round 2 #6: allocation_pct has TWO meanings — %-of-portfolio
         # for BUY vs %-of-current-position for SELL (100 = full close,
         # 0 = skip). Rendering both with the same "% allocation" template
@@ -130,6 +158,119 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 )
             else:
                 alloc = f"{d.allocation_pct}% of portfolio"
+                # 2026-09-18: a THIRD meaning of this field, never noticed by
+                # the audit that wrote the comment above. For a BUY that OPENS
+                # a position "% of portfolio" is true. For a BUY that ADDS to
+                # one already held, the constructor sizes an INCREMENT —
+                # `name_headroom_pct = (max_position_pct - current_pct) /
+                # gross_mul` (`portfolio_constructor.py`) — so the same label
+                # understates the resulting position by the whole existing
+                # holding. Live consequence: this seat was shown "44.23% of
+                # portfolio" for an add to a name already at 20.77%, objected
+                # that 44.23 was over-concentrated, wrote 30 — and the
+                # pipeline applied 30 as an increment, landing the position at
+                # 50.8%, LARGER than the number it had just rejected.
+                #
+                # The resulting weight is computed with `weight_pct_of`, the
+                # ONE definition of a gross-leverage weight in this codebase
+                # and the same function `max_position_pct` is measured with.
+                # NOT the raw `market_value / denom` used for the position
+                # lines further down: for a 3x name those two differ by 3x,
+                # and stating a non-gross "resulting weight" next to a
+                # gross-measured ceiling would just relocate the lie.
+                #
+                # Deliberately NOT stated as "write 9.23 to land on 30" — this
+                # seat produced two contradictory hand-computed R/R figures in
+                # one response on 2026-08-31, which is why R/R is pre-computed
+                # for it twelve lines below. Arithmetic on the live sizing path
+                # is bounded in Python instead: `_apply_risk_modifications`
+                # refuses an allocation_pct edit on a BUY that INCREASES size.
+                #
+                # 2026-09-18, board items 135 and 137 — two gaps left behind
+                # by the change above, both of which let the RAW number on
+                # this row differ from the GROSS number the ceiling measures:
+                #
+                #   135 — the branch was `d.action == "BUY"`. A SHORT that
+                #         ADDS to a short already held is sized by the SAME
+                #         cumulative arithmetic in the constructor
+                #         (`name_headroom_pct = (max_position_pct -
+                #         current_short_gross_pct) / gross_mul`, the mirror of
+                #         the long clamp), so the label understated a short
+                #         add by the whole existing short. Nothing in the
+                #         renderer or the guard covered it.
+                #
+                #   137 — even on a FRESH open with no holding at all,
+                #         `allocation_pct` is RAW NOTIONAL. For a 3x fund
+                #         (`ETF_LEVERAGE` in src/quantities.py — SQQQ -3.0,
+                #         SDS -2.0, both in the configured universe) 21.67%
+                #         "of portfolio" is 65% of gross exposure, i.e. the
+                #         whole single-name ceiling. The constructor already
+                #         divides its headroom by `gross_mul`, so it sizes
+                #         correctly; only the number SHOWN to this seat was
+                #         un-levered, and the seat is asked to judge it
+                #         against a gross-measured ceiling.
+                #
+                # Both are stated from the SAME `weight_pct_of` the clamp
+                # uses. No constant is introduced: the multiple comes from
+                # `ETF_LEVERAGE`, the ceiling from `RiskConfig`, the weights
+                # from the equity denominator already rendered below.
+                held_raw = held_raw_by_symbol.get(
+                    str(d.symbol or "").strip().upper(), 0.0
+                )
+                if d.action in ("BUY", "SHORT") and denom > 0:
+                    from src.risk.rules import _gross_multiplier, weight_pct_of
+                    # Same-side only. A SHORT proposed against a name the desk
+                    # is LONG is a reduction of net exposure, not an add to a
+                    # short, and the constructor does not route it through the
+                    # short builder's cumulative clamp — so claiming it adds
+                    # to an existing position would be a new false statement.
+                    same_side_raw = (
+                        held_raw
+                        if (d.action == "BUY" and held_raw > 0)
+                        or (d.action == "SHORT" and held_raw < 0)
+                        else 0.0
+                    )
+                    # Unsigned throughout: `max_position_pct` is measured on
+                    # gross magnitude, which is why the short clamp takes
+                    # `abs(current_pct)`. weight_pct_of is signed.
+                    held_pct = abs(weight_pct_of(same_side_raw, d.symbol, denom))
+                    increment_pct = abs(
+                        weight_pct_of(
+                            denom * (d.allocation_pct / 100.0), d.symbol, denom,
+                        )
+                    )
+                    resulting_pct = held_pct + increment_pct
+                    gross_mul = _gross_multiplier(
+                        str(d.symbol or "").strip().upper()
+                    )
+                    side_word = "position" if d.action == "BUY" else "short"
+                    if held_pct > 0:
+                        alloc = (
+                            f"ADD of {d.allocation_pct}% of portfolio — this is an "
+                            f"INCREMENT, not the resulting weight. {d.symbol} is "
+                            f"already {held_pct:.2f}% of the book, so filling this "
+                            f"order leaves the {side_word} at {resulting_pct:.2f}% "
+                            f"(gross-leverage weight — the same measure "
+                            f"`max_position_pct` is checked against). If you edit "
+                            f"this `allocation_pct` it is applied as an INCREMENT "
+                            f"too, on top of the {held_pct:.2f}% already held — it "
+                            f"is not the position size you are setting. An edit "
+                            f"that raises it is refused by the engine; only a "
+                            f"reduction is applied"
+                        )
+                    elif gross_mul != 1.0:
+                        alloc = (
+                            f"{d.allocation_pct}% of portfolio in RAW NOTIONAL — "
+                            f"{d.symbol} is a {gross_mul:g}x fund, so this order "
+                            f"opens {increment_pct:.2f}% of GROSS exposure, which "
+                            f"is the measure `max_position_pct` is checked "
+                            f"against. Judge the size on {increment_pct:.2f}%, not "
+                            f"on {d.allocation_pct}%. An edit to this "
+                            f"`allocation_pct` is also read as raw notional and is "
+                            f"multiplied by {gross_mul:g} the same way; an edit "
+                            f"that raises it is refused by the engine, only a "
+                            f"reduction is applied"
+                        )
             # R/R is rendered from `TradeDecision.reward_risk`, a Python
             # computed field — NOT left for the model to divide out of the
             # prices below. On 2026-08-31 this seat was given bare prices,
@@ -167,13 +308,6 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             _fmt_decision(d) for d in portfolio_decision.decisions
         )
 
-        # audit round 2 #5: RM's rr_audit / sizing_sanity / concentration
-        # checks were running blind — no equity, no cash, no per-position
-        # weights. When the caller doesn't pass total_value, approximate the
-        # denominator with the sum of listed position values (understates
-        # true equity by the cash balance — flagged in the header).
-        approx_book = sum(p.market_value for p in positions) if positions else 0.0
-        denom = total_value if (total_value or 0) > 0 else approx_book
         if (total_value or 0) > 0:
             cash_bit = ""
             if cash is not None:

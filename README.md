@@ -252,6 +252,15 @@ a live item vanish. See the "Operational facts" note in `docs/WORK.md` for
 what a refusal looks like and how to tell a missing driver from a genuine
 one.
 
+**Trust its refusal, but check its success.** On 2026-09-18 the resolver was
+caught merging a real conflict, correctly handing back one sentence it judged
+unsafe to merge automatically — and, in the same run, silently dropping a
+whole unrelated item block while still reporting that it had succeeded. It
+was only caught because the person running it happened to re-read their own
+item back out of the file afterwards. Always do that: after any run that
+reports success rather than a refusal, re-read the item you expect to be
+there. See `docs/INCIDENT_HISTORY.md`, 2026-09-18, for the full defect.
+
 ### Configure
 
 1. Create `.env` (set `chmod 600` after — these are secrets):
@@ -530,6 +539,8 @@ Exit codes: `0` fine, `1` you declined the prompt, `2` bad invocation, `3` **not
 - **Sector ETFs**: XLF, XLE, XLV, XLI, XLP, XLY, XLU, XLRE, XLB, SMH, DRAM
 - **Inverse ETFs**: SH, SDS, PSQ, SQQQ (leverage-corrected in risk engine)
 - **Individual stocks**: AAPL, MSFT, GOOGL, AMZN, NVDA, META, AVGO, JPM, CAT, plus ~80 single names across tech, energy / oil, infrastructure, consumer, healthcare, financials, and power-transition themes
+
+**Screened additions (built 2026-09-19, OFF until `universe_screen.enabled` is set).** `src/universe_screen.py` screens the broker's active US-equity list incrementally at the end of each evening session (each symbol at most once a week) and keeps the names that pass in `data/universe/universe_state.json`. Criteria: a year of price history, $5 minimum price (SEC penny-stock line), estimated bid-ask spread inside the desk's entry-slippage belt, shortable and easy to borrow, not a warrant/unit/right/preferred/receipt/fund, no pending takeover, a volatility ceiling derived from the desk's own stop rules, $30M minimum company size (Russell index floor), and a resolved sector. No earnings-date requirement, no maximum price. An admitted name that fails one weekly screen is flagged, two consecutive is removed; delisted/halted is removed at once; a held name is never removed. Each morning session receives every held screened name plus at most `nominations.max_per_seat_per_run` others. Every change is logged (`UNIVERSE_CHANGE`), written to `specialist_evidence` (`agent_name = universe_screen`), and listed in the next morning Telegram message. The hand-typed list above is never screened or pruned. With the switch on, the SEC Form 4 and nomination side doors run the same screen, and a Form 4 purchase must have been disclosed within `risk.max_target_horizon_sessions` sessions.
 
 ## Project Structure
 

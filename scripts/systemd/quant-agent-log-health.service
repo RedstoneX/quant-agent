@@ -1,0 +1,28 @@
+# Log-health report — pairs with quant-agent-log-health.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-log-health.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-log-health.timer
+[Unit]
+Description=quant-agent log-health report (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Read-only apart from its own watermark file: it parses the app log and its
+# rotations, reads docs/WORK.md to find out what is already tracked, and pushes
+# one plain-English verdict to Telegram. No broker call, no model call, no git.
+# Safe to fire while a trading session is running, which is why it takes no
+# part in run_if_et_window.sh's cross-mode session lock.
+#
+# Through the wrapper, NOT the venv Python directly: the script sends a
+# Telegram message and the qamc systemd user environment carries no TELEGRAM_*
+# variables. Same reason run_drift_check.sh and run_unit_drift_check.sh exist.
+ExecStart=/home/qamc/quant-agent/scripts/run_log_health_report.sh
+# Exit 1 means the report could not be DELIVERED. That is a real failure worth
+# a red unit — an undelivered report is indistinguishable from a healthy desk,
+# which is the failure this job exists to prevent — so it is deliberately NOT
+# listed as a success status.
+TimeoutStartSec=240
+StandardOutput=journal
+StandardError=journal

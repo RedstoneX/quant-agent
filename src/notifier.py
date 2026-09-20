@@ -565,7 +565,8 @@ class TelegramNotifier:
                 )
 
     def _redact(self, value: object) -> str:
-        """Strip the bot token out of anything headed for the log.
+        """Strip the bot token AND chat id out of anything headed for the
+        log or the durable send record (see `_record_send`).
 
         `requests` embeds the full request URL in HTTPError /
         ConnectionError messages, and ours is
@@ -574,6 +575,12 @@ class TelegramNotifier:
         the systemd journal) on every Telegram failure. A wrong or
         rotated token is the most likely failure, i.e. the token leaked
         exactly when the operator was most likely to share the log.
+
+        The chat id is stripped too (2026-09-18, `_record_send`): it is not
+        a secret the way the token is, but it is a stable per-operator
+        identifier with no reason to sit in a table a future export or
+        support conversation might carry, so it gets the same treatment
+        for free here rather than a second bespoke check at the call site.
 
         Non-raising on purpose: this runs INSIDE the `except` blocks
         below, and `logger.warning("%s", exc)` used to defer `str(exc)`
@@ -586,9 +593,112 @@ class TelegramNotifier:
             text = str(value)
             if self.token:
                 text = text.replace(self.token, "<redacted>")
+            if self.chat_id:
+                text = text.replace(self.chat_id, "<redacted>")
             return text
         except Exception:  # noqa: BLE001
             return "<unprintable error>"
+
+    def _record_send(
+        self,
+        *,
+        kind: str,
+        status: str,
+        text: str,
+        detail: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Durably record one outgoing-message attempt (sent/failed/
+        suppressed) so "what did the desk try to tell the owner, and did
+        it arrive" has a single answer that does not depend on the next
+        message happening to land.
+
+        Table, not a log line (see this file's module docstring for why
+        `send()` never logged a success): `session_reports` /
+        `intra_check_reports` / `evening_reports` (src/storage/db.py) are
+        this project's established home for a run's long, rendered text —
+        never the application log, which is grepped/tailed for operational
+        health and would drown in 4000-char message bodies. This table
+        follows the same shape (payload text + timestamp + a key to find
+        it by) rather than inventing a new convention.
+
+        Same-protection guarantee as the rest of this class: this is
+        called from inside `send()`/`send_document()`'s own try/except
+        (or, for the failure path, adds one more try/except around
+        itself), so a recording bug — a locked DB file, a full disk, a
+        schema mismatch — degrades to a `logger.warning` and the message
+        still sends and the caller still gets its True/False. Recording
+        must never be the reason a send looks like it failed, or the
+        reason a real failure looks like it succeeded.
+
+        Redaction: `text` and `detail` both go through `self._redact`
+        before they touch SQLite. `text` should never carry the token or
+        chat id (they live in the URL/payload, not the message body), but
+        redacting here anyway costs nothing and means one place — not
+        every call site — is responsible for the guarantee tested by
+        `test_record_send_output_never_contains_token_or_chat_id`.
+        """
+        try:
+            import sqlite3
+
+            safe_text = self._redact(text if text is not None else "")
+            safe_detail = self._redact(detail) if detail is not None else None
+            # Belt and suspenders: production's data/ dir always exists by
+            # the time this fires (Database() has already created it), but
+            # a notifier call can in principle be the very first thing a
+            # fresh checkout does (e.g. the live-scheduler startup ping in
+            # main.py, before TradingPipeline/Database is constructed) —
+            # don't let a missing directory be the reason recording fails.
+            _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS notifier_sends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        kind TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        run_id TEXT,
+                        text TEXT NOT NULL,
+                        detail TEXT,
+                        timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts "
+                    "ON notifier_sends(kind, timestamp)"
+                )
+                conn.execute(
+                    "INSERT INTO notifier_sends "
+                    "(kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
+                    (kind, status, run_id, safe_text, safe_detail),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001
+            # Never let a recording failure look like — or cause — a send
+            # failure. See docstring above.
+            logger.warning("notifier: failed to record send (%s/%s): %s", kind, status, exc)
+
+    def _safe_record_send(self, **kwargs) -> None:
+        """Call `_record_send`, wrapped in its own try/except.
+
+        `_record_send` already guards every DB failure it can anticipate
+        internally, but `send()`/`send_document()` call it from inside
+        their own control flow (the success path, and — for failures —
+        an `except` block that must not itself raise). Doubly-defensive
+        on purpose, same reasoning main.py gives for wrapping its own
+        `notifier.send()` call a second time: a bug inside the recording
+        path that `_record_send` did not anticipate must still be unable
+        to reach the caller of `send()`/`send_document()`, which is the
+        one guarantee this whole feature is not allowed to weaken.
+        """
+        try:
+            self._record_send(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notifier: _record_send raised unexpectedly: %s", exc)
 
     def send(
         self,
@@ -597,8 +707,17 @@ class TelegramNotifier:
         link_label: str | None = None,
         symbols: list[str] | None = None,
         preserve_structural_markup: bool = False,
+        kind: str = "generic",
+        run_id: str | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
+
+        `kind` and `run_id` (2026-09-18) label the durable record this
+        call leaves behind (see `_record_send`) — `kind` is a short,
+        caller-chosen tag ("morning", "owner_alert", ...; default
+        "generic" for the many existing callers that have no reason to
+        care), `run_id` ties it back to `agent_logs`/`session_reports`
+        when a run produced this message. Neither changes delivery.
 
         - No-op when not enabled (returns False).
         - Escapes `text` and sends with `parse_mode="HTML"` — a stray
@@ -647,6 +766,7 @@ class TelegramNotifier:
                 "REHEARSAL: suppressed operator alert (%d chars): %s",
                 len(text), text.splitlines()[0][:120] if text else "",
             )
+            self._safe_record_send(kind=kind, status="suppressed", text=text, run_id=run_id)
             return False
 
         payload = self._build_payload(
@@ -661,6 +781,7 @@ class TelegramNotifier:
                 timeout=self.HTTP_TIMEOUT_S,
             )
             response.raise_for_status()
+            self._safe_record_send(kind=kind, status="sent", text=text, run_id=run_id)
             return True
         except Exception as exc:
             # Catch broadly on purpose — TelegramNotifier is a
@@ -668,6 +789,10 @@ class TelegramNotifier:
             # connection reset, a DNS failure, a bad token — none of
             # those should bubble up and crash the trading session.
             logger.warning("Telegram notify failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=text,
+                detail=self._redact(exc), run_id=run_id,
+            )
             return False
 
     def _api_url(self, method: str) -> str:
@@ -856,10 +981,21 @@ class TelegramNotifier:
             return False, f"delete refused: {self._redact(detail)}"
         return True, ""
 
-    def send_document(self, csv_bytes: bytes, filename: str, caption: str = "") -> bool:
-        """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort."""
+    def send_document(
+        self, csv_bytes: bytes, filename: str, caption: str = "",
+        kind: str = "document", run_id: str | None = None,
+    ) -> bool:
+        """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
+
+        Recorded the same way `send()` is (see `_record_send`): the
+        document's bytes are never stored (they are the P&L CSV, not
+        text meant for the "what did we tell the owner" question), only
+        `caption` — the text that actually appears in the chat next to
+        it — plus `filename` so the record still says what went out.
+        """
         if not self.enabled:
             return False
+        recorded_text = f"[document: {filename}] {caption}".strip()
         try:
             response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendDocument",
@@ -868,13 +1004,60 @@ class TelegramNotifier:
                 timeout=30.0,
             )
             response.raise_for_status()
+            self._safe_record_send(kind=kind, status="sent", text=recorded_text, run_id=run_id)
             return True
         except Exception as exc:
             logger.warning("Telegram send_document failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=recorded_text,
+                detail=self._redact(exc), run_id=run_id,
+            )
             return False
 
 
 # === Out-of-band owner alert ===
+
+#: The P&L stand-in every standalone owner alert carries directly under its
+#: heading. Owner, 2026-09-18, verbatim: "all the P&L information has to go
+#: at the very top of every telegram alert, right after the first line,
+#: which is really the heading."
+#:
+#: A standalone alert genuinely CANNOT carry a figure. It fires the instant
+#: a problem is found \u2014 from the credential check, the stop-coverage audit,
+#: a reconciliation mismatch \u2014 on paths that have done no account read, and
+#: a page about a naked position must never block on a broker round-trip or
+#: be able to fail inside one. So the line says exactly that, in one
+#: sentence, rather than being dropped (an absent block reads as a broken
+#: one) or filled with a fabricated zero.
+_ALERT_NO_PNL_LINE = (
+    "\U0001f4c8 P&L: not available in this alert \u2014 it is sent the moment a "
+    "problem is found, before any account is read."
+)
+
+
+def _with_pnl_header(text: str) -> str:
+    """Insert the P&L block directly under an alert's heading line.
+
+    Enforced HERE, in the one funnel every standalone alert already goes
+    through, rather than in each of the eighteen callers that build one.
+    The rule has been restated by the owner more than once and drifts every
+    time it depends on the next author remembering it; a single choke point
+    is the only version of it that holds.
+
+    Never raises \u2014 an alerting bug must not be able to break the thing it
+    reports on. On any fault the original text goes out unchanged.
+    """
+    try:
+        if _ALERT_NO_PNL_LINE in text:
+            return text
+        heading, sep, rest = text.partition("\n")
+        if not sep:
+            return f"{heading}\n{_ALERT_NO_PNL_LINE}"
+        return f"{heading}\n{_ALERT_NO_PNL_LINE}\n{rest}"
+    except Exception:  # noqa: BLE001
+        logger.exception("could not attach the P&L line to an owner alert")
+        return text
+
 
 def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     """Push an alert to the owner NOW, outside the session-result message.
@@ -898,9 +1081,10 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     """
     if not text:
         return False
+    text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
-        return bool(TelegramNotifier().send(text, symbols=symbols))
+        return bool(TelegramNotifier().send(text, symbols=symbols, kind="owner_alert"))
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False
@@ -977,14 +1161,63 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 # each one MEANS in the words a person would use; the key never reaches
 # the message. An unmapped seat or value is DESCRIBED and its raw text is
 # labelled as kept-for-the-record, never paraphrased into a claim.
+#
+# "smart_money" is deliberately NOT a fixed string here. Congressional
+# trading disclosures (`src/data/congressional_trading.py`) are gated by
+# `config.smart_money.congress_enabled`, switched ON 2026-09-20 per owner
+# ruling (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 and 2026-09-20
+# entries). Naming "congressional" in this label when that switch is off
+# would tell the owner the desk reads a feed it never actually reads.
+# `_smart_money_seat_label` below reads the real switch at call time, so
+# the wording can never drift from what the running desk actually does.
 _SEAT_WORDS: dict[str, str] = {
     "macro": "the market-backdrop research",
     "tech": "the chart research",
     "news": "the news research",
     "earnings": "the earnings-filing research",
-    "smart_money": "the insider-and-congressional-trading feed",
     "sector": "the sector research",
 }
+
+
+def _congress_enabled_now() -> bool:
+    """Whether `config.smart_money.congress_enabled` is on right now.
+
+    Read directly from `config/settings.yaml` (the one key, falling back to
+    the pydantic field default) instead of being threaded through as a
+    parameter: this module renders owner-facing text for dozens of call
+    sites (Telegram alerts, the intraday tick, stored-run replays) that do
+    not otherwise carry a config object, and several read stored historical
+    run data with no config in scope at all. Any failure to read it
+    (missing file in a test environment, credential delivery issues, bad
+    yaml) conservatively assumes the switch is off, `False`, regardless of
+    the field's own live default — a wording helper must never raise or
+    break an alert, and must never claim a feed is running when it could
+    not actually confirm the setting.
+    """
+    # Reads only the one key, NOT through `load_config`: that also collects
+    # the systemd-delivered broker credentials, which a wording helper has
+    # no business touching on every alert it renders.
+    try:
+        import yaml
+
+        from src.config import SmartMoneyConfig
+
+        settings_path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
+        with open(settings_path) as f:
+            raw = yaml.safe_load(f) or {}
+        section = raw.get("smart_money") or {}
+        if "congress_enabled" in section:
+            return bool(section["congress_enabled"])
+        return bool(SmartMoneyConfig.model_fields["congress_enabled"].default)
+    except Exception:
+        return False
+
+
+def _smart_money_seat_label(congress_enabled: bool) -> str:
+    """The smart-money seat's plain name, true to what it actually reads."""
+    if congress_enabled:
+        return "the insider-and-congressional-trading feed"
+    return "the insider-trading feed"
 
 _DATA_STATUS_WORDS: dict[str, str] = {
     "failed": "did not return an answer",
@@ -997,12 +1230,32 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     "release_overdue": "is waiting on a scheduled data release that is overdue",
     "symbol_dropped": "dropped at least one symbol from its answer",
     "degraded": "returned a degraded answer",
+    # The four remaining CATEGORY_LOST states in src/evidence_gate.py had no
+    # plain wording, so an evidence-gate skip naming one of them showed the
+    # owner the raw token instead. Each phrase below is read straight off
+    # that module's own comment for the state — not a guess at what it might
+    # mean.
+    "expired": (
+        "had only an out-of-date answer, and this check did not fetch a "
+        "fresh one"
+    ),
+    "content_missing": "answered, but the answer had no content in it",
+    "carry_forward_empty": (
+        "had nothing to carry forward from this morning — the morning never "
+        "wrote an answer for today"
+    ),
+    "carry_forward_failed": (
+        "could not be carried forward from this morning — the lookup itself "
+        "failed"
+    ),
 }
 
 
 def seat_words(seat: Any) -> str:
     """Plain words for one research seat's internal name."""
     key = str(seat or "").strip().lower()
+    if key == "smart_money":
+        return _smart_money_seat_label(_congress_enabled_now())
     return _SEAT_WORDS.get(key) or (
         f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})"
     )
@@ -1024,6 +1277,183 @@ def describe_data_status(bad: dict) -> list[str]:
                 f"{seat_words(seat)} reported a state the desk has no plain "
                 f"wording for (kept for the record: {token or 'blank'})"
             )
+    return lines
+
+
+def _seat_list_words(seats: Any) -> str:
+    """"the chart research and the news research" — never internal keys."""
+    words = [seat_words(seat) for seat in (seats or []) if str(seat).strip()]
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def describe_evidence_freshness(freshness: Any) -> list[str]:
+    """How much of this decision's evidence was read on THIS tick, in words.
+
+    Owner mandate 2026-09-18 made every seat but the chart research
+    advisory. That means a decision can now rest on ONE freshly-read seat
+    plus a book carried over from the morning, and every one of those
+    carried seats reports green. Nothing anywhere said so. This says so.
+
+    It is DISCLOSURE, not a threshold: it states a count, it never judges
+    one. No minimum number of fresh seats exists in this desk and none may
+    be invented here — that number is the owner's (docs/WORK.md item 20).
+
+    Takes the dict produced by `evidence_gate.EvidenceFreshness.to_evidence`
+    and returns [] for anything it cannot read, so a missing or malformed
+    record costs the disclosure line and never the message.
+    """
+    if not isinstance(freshness, dict):
+        return []
+    fresh = [s for s in (freshness.get("fresh_seats") or []) if str(s).strip()]
+    carried = [s for s in (freshness.get("carried_seats") or []) if str(s).strip()]
+    absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
+    unknown = [
+        s for s in (freshness.get("unknown_freshness_seats") or [])
+        if str(s).strip()
+    ]
+    stale = [
+        s for s in (freshness.get("known_out_of_date_seats") or [])
+        if str(s).strip()
+    ]
+    total = len(fresh) + len(carried) + len(absent) + len(unknown)
+    if not total:
+        return []
+    lines = [
+        f"<b>HOW FRESH THIS DECISION'S EVIDENCE WAS</b> "
+        f"({len(fresh)} of {total} research seats read just now)"
+    ]
+    if fresh:
+        lines.append(f"   • read just now: {_seat_list_words(fresh)}")
+    else:
+        lines.append("   • read just now: none of them")
+    if carried:
+        lines.append(
+            f"   • carried over from earlier, not re-read: "
+            f"{_seat_list_words(carried)}"
+        )
+    if stale:
+        lines.append(
+            f"   • already known to be out of date: {_seat_list_words(stale)}"
+        )
+    if absent:
+        lines.append(f"   • no answer at all: {_seat_list_words(absent)}")
+    if unknown:
+        lines.append(
+            f"   • state the desk cannot classify, so not counted as read: "
+            f"{_seat_list_words(unknown)}"
+        )
+    return lines
+
+
+def describe_universe_changes(block: Any) -> list[str]:
+    """The owner-facing account of what the universe screen changed.
+
+    Owner design 2026-09-01: "the owner must never discover the universe
+    changed by accident" — every addition, flag and removal since the last
+    morning message, in plain words. Removals, flags and held names kept
+    past a failed check get one line EACH with the reason (they are the ones
+    that matter and are few); additions are one line of names, clipped,
+    because the first weeks can add hundreds. Silent only when the screen
+    is off (no block). With it on and nothing changed, it says so.
+    """
+    if not isinstance(block, dict):
+        return []
+    from src.universe_screen import describe_event, plain_reasons
+
+    events = [e for e in (block.get("events") or []) if isinstance(e, dict)]
+    admitted = block.get("admitted_count")
+    flagged = block.get("flagged_count")
+    size = (
+        f" \u2014 {admitted} screened stock(s) on the list, {flagged} flagged"
+        if isinstance(admitted, int) and isinstance(flagged, int) else ""
+    )
+    if not events:
+        return [f"\U0001f50e Stock list: no changes since the last morning{size}"]
+    out = [f"\U0001f50e Stock list changed: {len(events)} change(s){size}"]
+    grouped = {
+        "added": "Added {n} (passed every check): ",
+        "cleared": "Flag cleared on {n} (passing again): ",
+    }
+    for action, label in grouped.items():
+        names = [str(e.get("symbol", "?")) for e in events if e.get("action") == action]
+        if names:
+            out.append(_clip_text(
+                "\u2022 " + label.format(n=len(names)) + ", ".join(names), 600,
+            ))
+    flagged_events = [e for e in events if e.get("action") == "flagged"]
+    if flagged_events:
+        out.append(_clip_text(
+            f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
+            "next week): " + "; ".join(
+                "{} ({})".format(
+                    e.get("symbol", "?"), plain_reasons(e.get("reasons") or []),
+                )
+                for e in flagged_events
+            ), 600,
+        ))
+    for event in events:
+        if event.get("action") in ("removed", "removal_deferred_held"):
+            out.append(_clip_text(f"\u2022 {describe_event(event)}", 300))
+    return out
+
+
+def _append_universe_changes(lines: list[str], result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    block = describe_universe_changes(result.get("universe_changes"))
+    if block:
+        _new_section(lines, *block)
+
+
+def _append_evidence_freshness(lines: list[str], result: dict) -> None:
+    """Put the freshness disclosure into a session message body."""
+    if not isinstance(result, dict):
+        return
+    block = describe_evidence_freshness(result.get("evidence_freshness"))
+    if block:
+        _new_section(lines, *block)
+
+
+def describe_skipped_decision(
+    lost: Any, data_status: Any, *, include_next_pass: bool = True,
+) -> list[str]:
+    """The owner-facing account of an evidence-gate skip: a bold title line
+    that states the conclusion, then one short bullet per idea.
+
+    The single source of this wording, used by BOTH owner-facing renderers
+    of the same event (the standalone alert in
+    `pipeline._evidence_gate_skip` and the intraday tick banner in
+    src/trader_feed.py), so the two can never drift apart again.
+
+    What it deliberately does NOT do is show `EvidenceVerdict.reason`. That
+    string is the durable machine record — it stays exactly as it is in the
+    database, the event rows and the log, where it is correct — but it
+    carries a source-file reference, an internal seat key, a raw state
+    token and "N seat(s)", none of which mean anything on a phone. Every
+    fact in it is said here in words instead, via `describe_data_status`,
+    which describes an unmapped token rather than guessing at it.
+    """
+    seats = [str(seat) for seat in (lost or []) if seat]
+    status = data_status if isinstance(data_status, dict) else {}
+    bad = {seat: status.get(seat) for seat in seats}
+    lines = ["<b>DECISION SKIPPED — NOTHING WAS TRADED</b>"]
+    detail = describe_data_status(bad) if bad else []
+    if not detail:
+        detail = ["a research seat the desk needed did not return an answer"]
+    lines += [f"   • {sentence}" for sentence in detail]
+    lines += [
+        "   • the desk declined to decide rather than guess",
+        "   • no Portfolio Manager call was paid for",
+        "   • every position keeps the stop it already had",
+    ]
+    if include_next_pass:
+        lines.append(
+            "   • the next scheduled decision tries again — nothing for you to do"
+        )
     return lines
 
 
@@ -1059,10 +1489,13 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     when = fmt_time_12h(et_now())
     detail = "\n".join(f"  • {line}" for line in describe_data_status(bad))
     raw = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
-    run_id = result.get("run_id", "unknown")
+    # Board item 89's run-identifier removal landed on the evening message
+    # only; this alert still carried one. A run id is a database key, not
+    # something the owner can act on — it stays in the log line above and in
+    # every stored row, and leaves the message.
     text = (
         f"DATA QUALITY ALERT — the {mode} session at {when} ran on "
-        f"incomplete research (run {run_id})\n"
+        f"incomplete research\n"
         f"{detail}\n"
         "WHAT THIS MEANS FOR YOU: the Portfolio Manager and the Risk "
         "Manager may have sized or decided this session on incomplete or "
@@ -1215,6 +1648,34 @@ def alert_records_disagree_with_broker(
 # easy to unit-test without the network stub and so main.py can
 # compute the message before deciding to send.
 
+def _pnl_lines_for(result: dict | None, mode: str = "") -> list[str]:
+    """`trader_feed._pnl_section_lines` for whatever this message knows.
+
+    One renderer for the owner's P&L block across BOTH message modules, so
+    the figure and its wording can never differ between two messages sent
+    minutes apart. Never raises: a P&L-rendering fault must not be able to
+    stop the message it leads \u2014 it degrades to the same honest
+    "not available" wording the normal path uses for a missing figure.
+    """
+    if mode == "evening" and isinstance(result, dict):
+        # Evening has its own, richer and 4pm-close-correct block — see
+        # `_evening_pnl_block`. The shared renderer would show the
+        # real-time (after-hours-contaminated) figure instead.
+        try:
+            return _evening_pnl_block(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evening P&L block could not be rendered: %s", exc)
+    try:
+        from src.trader_feed import _pnl_section_lines
+        return _pnl_section_lines(result if isinstance(result, dict) else {})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("P&L block could not be rendered: %s", exc)
+        return [
+            "\U0001f4c8 Today's P&L: not available",
+            "   The figure could not be read while this message was built.",
+        ]
+
+
 def format_session_result(
     mode: str,
     result: dict | None,
@@ -1321,6 +1782,21 @@ def format_session_result(
         f"{humanize_status(status)}  ({timestamp})",
     ]
 
+    # P&L FIRST, directly under the heading \u2014 owner, 2026-09-18, verbatim:
+    # "all the P&L information has to go at the very top of every telegram
+    # alert, right after the first line, which is really the heading." A
+    # REPEAT correction: it kept drifting below whatever block was added
+    # next, so the tests that go with this change assert the POSITION, not
+    # the presence.
+    #
+    # Rendered by the same `trader_feed._pnl_section_lines` every other
+    # message uses, so two messages can never state his P&L differently.
+    # Imported lazily because `trader_feed` imports this module. A mode
+    # that carries no account figures (the pre-open filing reader, a crash
+    # report) renders "not available" plus one sentence saying why \u2014 never
+    # a dropped block and never a fabricated zero.
+    _new_section(lines, *_pnl_lines_for(result, mode))
+
     # Per-session LLM cost (looked up from agent_logs by run_id), the
     # day-to-date spend, and (morning/once only) the prepaid balance and
     # margin-interest lines — one "cost info" section, kept tight against
@@ -1352,18 +1828,30 @@ def format_session_result(
         balance_line = _openrouter_balance_line()
         if balance_line:
             cost_block.append(balance_line)
-        cost_block.extend(_margin_interest_lines())
     _new_section(lines, *cost_block)
+
+    # Margin interest gets its OWN section, not a berth in the cost block
+    # above (owner, 2026-09-18). It sat there since 2026-09-01 and he never
+    # found it: model spend and the prepaid OpenRouter balance are what it
+    # costs to RUN the desk, while this is the price of money the desk
+    # borrowed — a different kind of number, and filing it under running
+    # costs is what made it invisible.
+    if mode in ("morning", "once"):
+        _new_section(lines, *_margin_interest_lines())
 
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
         _new_block(lines, _append_trade_session_body, result)
+        _append_evidence_freshness(lines, result)
+        if mode in ("morning", "once"):
+            _append_universe_changes(lines, result)
     elif mode == "evening":
         _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":
         _new_block(lines, _append_earnings_body, result)
     elif mode == "intra_check":
         _new_block(lines, _append_intra_check_body, result)
+        _append_evidence_freshness(lines, result)
     elif mode == "meta":
         _new_block(lines, _append_meta_body, result)
     elif mode == "daily":
@@ -1840,6 +2328,96 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         _new_section(lines, f"⚠️ degraded: {', '.join(sorted(degraded))}")
 
 
+def _evening_pnl_block(result: dict) -> list[str]:
+    """The evening message's own P&L lines — Daily P&L (4pm-correct where
+    available), equity, and the same day's return against capital actually
+    at risk.
+
+    Lifted OUT of `_append_evening_body` unchanged on 2026-09-18 so it can
+    lead the message rather than sit below the escalation banners and the
+    cost lines (owner: P&L directly under the heading, every message). Not
+    one figure, basis or fallback was altered in the move — this is the
+    same arithmetic in a different place, which is why the existing
+    4pm-vs-real-time regression tests still pin it.
+
+    Deliberately NOT `trader_feed._pnl_section_lines`: that renders the
+    real-time `daily_pnl`, and the evening message must show the official
+    close-to-close figure. Using the shared one here would leak exactly the
+    after-hours number the 4pm path exists to keep out.
+    """
+    lines: list[str] = []
+    # Daily P&L summary — the headline of the evening push. Operator wants to
+    # know "did I make money today" without grepping logs.
+    #
+    # Prefer the TRUE close-to-close ("4pm-to-4pm") P&L the pipeline computed
+    # from Alpaca portfolio_history (pnl_4pm / equity_close = today's official
+    # regular-session close). That's clean of after-hours drift AND free of the
+    # off-by-one trap of differencing account.last_equity (which is the PRIOR
+    # day's close). Fall back to the real-time prior-close→now diff when the
+    # 4pm figures aren't available (API gap / legacy result dicts).
+    daily_pnl = result.get("daily_pnl")
+    total_value = result.get("total_value")
+    pnl_4pm = result.get("pnl_4pm")
+    equity_close = result.get("equity_close")
+
+    _fmt_pnl = _fmt_signed_money
+
+    # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
+    # actually at risk, not just against total equity. "Risk capital" here
+    # is `sum((entry - stop) x shares)` across open positions — audit §1.3's
+    # `budget_risk_dollars` from `src.risk.metrics.portfolio_heat`, reused
+    # (not recomputed) via `TradingPipeline._build_portfolio_heat` and
+    # threaded through evening's result dict as `risk_capital_dollars`.
+    # Equity tells you how the whole book did; this tells you how the
+    # capital that was actually exposed today did — a much bigger number on
+    # a day the book was mostly in cash or mostly stopped-out to breakeven.
+    risk_capital = result.get("risk_capital_dollars")
+
+    def _append_risk_capital_line(pnl: float | None) -> None:
+        if risk_capital is None:
+            return  # heat build failed or wasn't available — say nothing, not a guess
+        if risk_capital <= 0:
+            # A flat book (or a book where every stop has trailed past
+            # entry, releasing all risk) — not a divide-by-zero, and NOT a
+            # fabricated 0%: there was no capital at risk to measure P&L
+            # against today.
+            lines.append("   vs risk capital: n/a — no capital currently at risk (flat book)")
+            return
+        if pnl is None:
+            return
+        risk_pct = pnl / risk_capital * 100
+        risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
+        lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
+
+    if pnl_4pm is not None and equity_close is not None:
+        # baseline = prior official close = equity_close - pnl_4pm.
+        baseline = equity_close - pnl_4pm
+        if baseline > 0:
+            r = pnl_4pm / baseline * 100
+            ret_str = f"+{r:.2f}%" if pnl_4pm >= 0 else f"{r:.2f}%"
+        else:
+            ret_str = "n/a"
+        lines.append(f"💰 Daily P&L: {_fmt_pnl(pnl_4pm)} ({ret_str})  ·  4pm close")
+        lines.append(f"   Equity: ${equity_close:,.2f}")
+        _append_risk_capital_line(pnl_4pm)
+    elif daily_pnl is not None and total_value is not None:
+        # Fallback: real-time diff (prior close → 8pm, includes after-hours).
+        # Return is P&L over PRIOR-day equity (= total_value − daily_pnl); using
+        # current equity would understate losses (denominator includes the draw).
+        prior_equity = total_value - daily_pnl
+        if prior_equity > 0:
+            ret_pct = (daily_pnl / prior_equity) * 100
+            ret_str = f"+{ret_pct:.2f}%" if daily_pnl >= 0 else f"{ret_pct:.2f}%"
+        else:
+            # prior_equity <= 0 → return % undefined; "0.00%" would mislead.
+            ret_str = "n/a"
+        lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
+        lines.append(f"   Equity: ${total_value:,.2f}")
+        _append_risk_capital_line(daily_pnl)
+
+    return lines
+
+
 def _append_evening_body(lines: list[str], result: dict) -> None:
     # === Escalation banners (first thing read, before Daily P&L) ===
     analysis = result.get("analysis")
@@ -1909,76 +2487,11 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
 
     _new_block(lines, _render_escalation_banners)
 
-    # Daily P&L summary — the headline of the evening push. Operator wants to
-    # know "did I make money today" without grepping logs.
-    #
-    # Prefer the TRUE close-to-close ("4pm-to-4pm") P&L the pipeline computed
-    # from Alpaca portfolio_history (pnl_4pm / equity_close = today's official
-    # regular-session close). That's clean of after-hours drift AND free of the
-    # off-by-one trap of differencing account.last_equity (which is the PRIOR
-    # day's close). Fall back to the real-time prior-close→now diff when the
-    # 4pm figures aren't available (API gap / legacy result dicts).
-    daily_pnl = result.get("daily_pnl")
-    total_value = result.get("total_value")
-    pnl_4pm = result.get("pnl_4pm")
-    equity_close = result.get("equity_close")
-
-    _fmt_pnl = _fmt_signed_money
-
-    # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
-    # actually at risk, not just against total equity. "Risk capital" here
-    # is `sum((entry - stop) x shares)` across open positions — audit §1.3's
-    # `budget_risk_dollars` from `src.risk.metrics.portfolio_heat`, reused
-    # (not recomputed) via `TradingPipeline._build_portfolio_heat` and
-    # threaded through evening's result dict as `risk_capital_dollars`.
-    # Equity tells you how the whole book did; this tells you how the
-    # capital that was actually exposed today did — a much bigger number on
-    # a day the book was mostly in cash or mostly stopped-out to breakeven.
-    risk_capital = result.get("risk_capital_dollars")
-
-    def _append_risk_capital_line(pnl: float | None) -> None:
-        if risk_capital is None:
-            return  # heat build failed or wasn't available — say nothing, not a guess
-        if risk_capital <= 0:
-            # A flat book (or a book where every stop has trailed past
-            # entry, releasing all risk) — not a divide-by-zero, and NOT a
-            # fabricated 0%: there was no capital at risk to measure P&L
-            # against today.
-            lines.append("   vs risk capital: n/a — no capital currently at risk (flat book)")
-            return
-        if pnl is None:
-            return
-        risk_pct = pnl / risk_capital * 100
-        risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
-        lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
-
-    _pnl_start = len(lines)
-    if pnl_4pm is not None and equity_close is not None:
-        # baseline = prior official close = equity_close - pnl_4pm.
-        baseline = equity_close - pnl_4pm
-        if baseline > 0:
-            r = pnl_4pm / baseline * 100
-            ret_str = f"+{r:.2f}%" if pnl_4pm >= 0 else f"{r:.2f}%"
-        else:
-            ret_str = "n/a"
-        lines.append(f"💰 Daily P&L: {_fmt_pnl(pnl_4pm)} ({ret_str})  ·  4pm close")
-        lines.append(f"   Equity: ${equity_close:,.2f}")
-        _append_risk_capital_line(pnl_4pm)
-    elif daily_pnl is not None and total_value is not None:
-        # Fallback: real-time diff (prior close → 8pm, includes after-hours).
-        # Return is P&L over PRIOR-day equity (= total_value − daily_pnl); using
-        # current equity would understate losses (denominator includes the draw).
-        prior_equity = total_value - daily_pnl
-        if prior_equity > 0:
-            ret_pct = (daily_pnl / prior_equity) * 100
-            ret_str = f"+{ret_pct:.2f}%" if daily_pnl >= 0 else f"{ret_pct:.2f}%"
-        else:
-            # prior_equity <= 0 → return % undefined; "0.00%" would mislead.
-            ret_str = "n/a"
-        lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
-        lines.append(f"   Equity: ${total_value:,.2f}")
-        _append_risk_capital_line(daily_pnl)
-    _seal_section(lines, _pnl_start)
+    # The evening P&L block is NOT rendered here any more: owner, 2026-09-18,
+    # "all the P&L information has to go at the very top of every telegram
+    # alert, right after the first line, which is really the heading." It now
+    # renders from `_evening_pnl_block` above the escalation banners and above
+    # the cost lines — see `_pnl_lines_for`. Nothing about the figures changed.
 
     # Suggested actions — surfaced HIGH in the message (right after the
     # headline P&L) so the tail-clip truncation in send() can never eat
@@ -2006,7 +2519,10 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     # Position snapshot: total invested + cash + top winners/losers.
     # Helper queries the live DB so this works regardless of how the
     # evening result dict is constructed.
-    _new_block(lines, _append_position_snapshot, total_value)
+    # `total_value` used to be a local of the P&L block that moved to
+    # `_evening_pnl_block` (2026-09-18); read it back from the same key the
+    # block reads, so the snapshot's denominator is unchanged.
+    _new_block(lines, _append_position_snapshot, result.get("total_value"))
 
     _tomorrow_start = len(lines)
     analysis = result.get("analysis")
@@ -2270,8 +2786,15 @@ def _openrouter_balance_line() -> str | None:
 
 
 def _margin_interest_lines() -> list[str]:
-    """['💳 margin interest: $X/day ... — ESTIMATE ...', '   broker check: ...']
-    or `[]` — spec §11.2.
+    """['💳 margin interest: ...', '   broker check: ...'] — spec §11.2.
+
+    ALWAYS returns at least one line outside rehearsal (owner decision,
+    2026-09-18, verbatim: "Yes, every day, even if it's zero, that way I
+    know it's still working"). `margin_interest.format_daily_line` owns
+    that policy and the wording of all four states — real debit, nothing
+    borrowed, cash unreadable, no rate configured; read its docstring for
+    why the spec's original silent-on-zero rule is deliberately overridden
+    and why a missing rate must NOT render as a zero.
 
     Morning-only, like the balance/day-cost lines above: interest accrues
     on the OVERNIGHT debit balance, so the morning snapshot — taken before
@@ -2286,10 +2809,10 @@ def _margin_interest_lines() -> list[str]:
     `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
     "cash negative AND allow_margin False" as a real, live state — so a
     debit balance can exist even with margin disabled, and a short-circuit
-    on `allow_margin` alone would silently miss it. On today's actual
-    zero-debit-balance day this still costs one broker round-trip (spent
-    on `overnight_debit_balance()` returning `0.0`) but produces no line —
-    no noise, correctness over the saved call.
+    on `allow_margin` alone would silently miss it. On a zero-debit day
+    this still costs one broker round-trip (spent on
+    `overnight_debit_balance()` returning `0.0`) and now renders the
+    explicit zero line it proves.
 
     When a debit balance IS present, this also reads the broker's own
     `INT` account activity and reports whether it confirms, denies, or has
@@ -2298,10 +2821,18 @@ def _margin_interest_lines() -> list[str]:
     left open rather than assumed either way.
 
     Never raises: a broker-read failure here must not be able to block the
-    alert — it degrades to `[]`, same as every other line in this module.
-    Suppressed under QAMC_REHEARSAL, same as every other line here that
-    touches the network.
+    alert — it degrades to a line that SAYS the read failed, rather than to
+    silence. Suppressed entirely under QAMC_REHEARSAL, same as every other
+    line here that touches the network: a rehearsal has no live account to
+    report on, so there is no running tracker for a zero to prove alive and
+    the line would be theatre.
     """
+    from src.margin_interest import (
+        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
+        compare_estimate_to_broker_activity, format_daily_line,
+        overnight_debit_balance,
+    )
+
     if _REHEARSAL_MODE:
         return []
     try:
@@ -2310,28 +2841,27 @@ def _margin_interest_lines() -> list[str]:
         rate_pct = cfg.risk.margin_interest_rate_pct
     except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
         logger.warning("margin interest config read failed: %s", exc)
-        return []
+        return [RATE_UNAVAILABLE_LINE]
 
     try:
         from src.api.deps import get_alpaca_credentials, get_alpaca_paper
         from src.execution.broker import AlpacaBroker
-        from src.margin_interest import (
-            build_estimate, compare_estimate_to_broker_activity,
-            format_alert_line, overnight_debit_balance,
-        )
         key, secret = get_alpaca_credentials()
         broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
         account = broker.get_account()
-        debit_balance = overnight_debit_balance(account.get("cash"))
+        cash = account.get("cash")
+        debit_balance = overnight_debit_balance(cash)
         estimate = build_estimate(debit_balance, rate_pct)
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest estimate failed: %s", exc)
-        return []
+        return [UNAVAILABLE_LINE]
 
-    estimate_line = format_alert_line(estimate)
-    if not estimate_line:
-        return []  # None/zero debit balance — silent, per spec's noise policy
-    lines = [estimate_line]
+    # Always exactly one line, zero and fault states included.
+    lines = [format_daily_line(cash, rate_pct)]
+    if estimate is None:
+        # Nothing borrowed: there is no charge to check the broker's own
+        # INT records against, so the second line would have nothing to say.
+        return lines
 
     try:
         activities = broker.get_margin_interest_activities()

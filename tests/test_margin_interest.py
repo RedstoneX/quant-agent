@@ -342,7 +342,13 @@ def test_end_to_end_broker_shows_no_charge(MockTradingClient):
 import src.api.broker_reads as broker_reads  # noqa: E402
 
 
-def test_read_margin_interest_no_debit_balance_is_all_none(monkeypatch):
+def test_read_margin_interest_no_debit_balance_is_an_explicit_zero(monkeypatch):
+    """Was `..._is_all_none`, asserting the API returned nothing at all —
+    which is exactly why the cockpit displayed nothing for 17 days.
+
+    Owner decision 2026-09-18: an explicit zero, with the real configured
+    rate, and `error` None so a caller can tell this apart from a failed
+    read. `label` stays None: a certain zero is not an estimate."""
     from types import SimpleNamespace
     monkeypatch.setattr(
         broker_reads, "get_risk_limits",
@@ -350,10 +356,28 @@ def test_read_margin_interest_no_debit_balance_is_all_none(monkeypatch):
     )
     out = broker_reads.read_margin_interest(1_000.0)
     assert out == {
-        "debit_balance": None, "rate_pct": None, "daily_usd": None,
-        "annual_usd": None, "label": None, "broker_check_note": None,
+        "debit_balance": 0.0, "rate_pct": 6.25, "daily_usd": 0.0,
+        "annual_usd": 0.0, "label": None, "broker_check_note": None,
         "error": None,
     }
+
+
+def test_read_margin_interest_missing_rate_is_a_fault_not_a_zero(monkeypatch):
+    """A deleted or mis-keyed `risk.margin_interest_rate_pct` must reach
+    the cockpit as a FAULT. `build_estimate` returns None for a zero rate
+    exactly as it does for a zero debit, so a naive "None means zero"
+    reading would print a reassuring $0.00 on the one day the owner most
+    needs to know the tracker is broken — the inverse of what his
+    "so I know it's still working" decision asked for."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=0.0),
+    )
+    out = broker_reads.read_margin_interest(-5_000.0)
+    assert out["error"]
+    assert out["daily_usd"] is None
+    assert out["debit_balance"] is None
 
 
 def test_read_margin_interest_reports_a_debit_balance_even_with_margin_disabled(monkeypatch):
@@ -427,7 +451,13 @@ def test_read_margin_interest_int_activity_failure_does_not_hide_the_estimate(mo
 # 7. src/notifier.py::_margin_interest_lines — the morning Telegram wiring.
 # ---------------------------------------------------------------------------
 
-def test_margin_interest_lines_empty_without_a_debit_balance(monkeypatch):
+def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatch):
+    """THE POINT OF THE 2026-09-18 CHANGE. This used to assert `== []`.
+
+    Owner decision, verbatim: "Yes, every day, even if it's zero, that way
+    I know it's still working." A zero must produce a line carrying the
+    measured overnight cash figure, and must NOT carry the ESTIMATE label
+    — nothing borrowed costs nothing at any rate, which is measured."""
     import src.notifier as n
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(
@@ -445,7 +475,13 @@ def test_margin_interest_lines_empty_without_a_debit_balance(monkeypatch):
             get_margin_interest_activities=lambda: [],
         ),
     )
-    assert n._margin_interest_lines() == []
+    lines = n._margin_interest_lines()
+    assert len(lines) == 1
+    assert lines[0] == (
+        "💳 margin interest: $0.00/day — overnight cash $1,000.00, "
+        "nothing borrowed"
+    )
+    assert "ESTIMATE" not in lines[0]
 
 
 def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(monkeypatch):
@@ -495,4 +531,111 @@ def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch):
     def boom():
         raise RuntimeError("credentials gateway down")
     monkeypatch.setattr("src.api.deps.get_alpaca_credentials", boom)
-    assert n._margin_interest_lines() == []
+    # Still never raises — but it now SAYS the read failed instead of
+    # degrading to silence (2026-09-18): silence is indistinguishable from
+    # a dead tracker, which is the whole defect being fixed. Crucially NOT
+    # the zero line: "not available" and "$0.00" are different claims.
+    from src.margin_interest import UNAVAILABLE_LINE
+    assert n._margin_interest_lines() == [UNAVAILABLE_LINE]
+    assert "$0.00" not in UNAVAILABLE_LINE
+
+
+# ---------------------------------------------------------------------------
+# 9. "Every day, even if it's zero" — owner decision 2026-09-18
+# ---------------------------------------------------------------------------
+# Verbatim: "Yes, every day, even if it's zero, that way I know it's still
+# working." These pin the FOUR states `format_daily_line` must keep apart.
+# `build_estimate` collapses two of them (no debit, no rate) into a single
+# `None`, which is why the always-speak policy lives in its own function and
+# not in `format_alert_line`.
+
+def test_format_daily_line_says_the_zero_with_the_measured_cash_figure():
+    """The zero is the evidence the tracker still runs, so it must SPEAK —
+    and it carries the real overnight cash balance rather than a bare
+    "$0.00", because a constant string is indistinguishable from a stuck
+    one while a balance that moves day to day is not."""
+    from src.margin_interest import format_daily_line
+    line = format_daily_line(4_812.33, 6.25)
+    assert line == (
+        "💳 margin interest: $0.00/day — overnight cash $4,812.33, "
+        "nothing borrowed"
+    )
+    # A certain zero is not an estimate — nothing borrowed costs nothing at
+    # any rate at all. The label stays on the figure that IS a projection.
+    assert "ESTIMATE" not in line
+
+
+def test_format_daily_line_does_not_claim_nothing_was_borrowed_below_the_floor():
+    """MARGIN_DEFICIT_FLOOR_USD means a 99-cent overnight deficit is
+    ignored as settlement noise. Money WAS borrowed there, so the line must
+    not assert that none was — it shows the measured figure and says the
+    amount is too small to charge on."""
+    from src.margin_interest import format_daily_line
+    line = format_daily_line(-0.99, 6.25)
+    assert line == (
+        "💳 margin interest: $0.00/day — overnight cash -$0.99, "
+        "too small to charge on"
+    )
+    assert "nothing borrowed" not in line
+
+
+def test_format_daily_line_still_renders_a_real_debit_exactly_as_before():
+    """The non-zero line is UNCHANGED by the visibility work — same figures,
+    same wording, ESTIMATE label verbatim."""
+    from src.margin_interest import (
+        ESTIMATE_LABEL, build_estimate, format_alert_line, format_daily_line,
+    )
+    line = format_daily_line(-5_729.0, 6.25)
+    assert line == format_alert_line(build_estimate(5_729.0, 6.25))
+    assert line.startswith("💳 margin interest: $0.99/day (~$358/yr) on $5,729")
+    assert "carried overnight at 6.25%" in line
+    assert ESTIMATE_LABEL in line
+
+
+def test_format_daily_line_calls_a_missing_rate_a_fault_not_a_zero():
+    """A deleted or mis-keyed rate must NOT print a reassuring zero on the
+    one day the owner most needs to know the tracker is broken — that is
+    the inverse of what "so I know it's still working" asked for."""
+    from src.margin_interest import RATE_UNAVAILABLE_LINE, format_daily_line
+    for bad_rate in (None, 0.0, -1.0):
+        assert format_daily_line(-5_729.0, bad_rate) == RATE_UNAVAILABLE_LINE
+    assert "$0.00" not in RATE_UNAVAILABLE_LINE
+
+
+def test_format_daily_line_calls_an_unreadable_cash_balance_a_fault():
+    from src.margin_interest import UNAVAILABLE_LINE, format_daily_line
+    assert format_daily_line(None, 6.25) == UNAVAILABLE_LINE
+    assert "$0.00" not in UNAVAILABLE_LINE
+
+
+def test_format_alert_line_keeps_its_silent_contract():
+    """Guard: the always-speak policy must NOT have been pushed down into
+    the shared formatter, which cannot tell "no debit" from "no rate"."""
+    from src.margin_interest import build_estimate, format_alert_line
+    assert format_alert_line(None) is None
+    assert format_alert_line(build_estimate(0.0, 6.25)) is None
+
+
+def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypatch):
+    """Owner, 2026-09-18: it sat with model spend and the prepaid balance
+    since 2026-09-01 and he never found it. Borrowed money is not an
+    operating expense, and filing it under running costs is what made it
+    invisible. Asserts a blank separator line between the two."""
+    import src.notifier as n
+
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(n, "_session_cost_line", lambda run_id: "🧠 AI cost: $0.12")
+    monkeypatch.setattr(n, "_day_cost_line", lambda: "📅 today: $0.34")
+    monkeypatch.setattr(n, "_openrouter_balance_line", lambda: "🔋 OpenRouter: $7.10 left")
+    monkeypatch.setattr(
+        n, "_margin_interest_lines",
+        lambda: ["💳 margin interest: $0.00/day — overnight cash $1,000.00, nothing borrowed"],
+    )
+    msg = n.format_session_result("morning", {"status": "ok", "run_id": "r"}, 5.0)
+    lines = msg.split("\n")
+    balance_at = next(i for i, ln in enumerate(lines) if "OpenRouter" in ln)
+    margin_at = next(i for i, ln in enumerate(lines) if "margin interest" in ln)
+    assert margin_at > balance_at
+    assert any(not lines[i].strip() for i in range(balance_at + 1, margin_at)), (
+        "margin interest is still glued to the running-cost block"
+    )

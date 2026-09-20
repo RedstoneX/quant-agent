@@ -1,0 +1,41 @@
+# Twice a trading day: once before the desk trades, once after it has stopped.
+[Unit]
+Description=quant-agent log-health report — 08:55 and 16:30 ET, Mon-Fri
+
+[Timer]
+# 08:55 ET — thirty-five minutes before the morning session's 09:30 window
+# opens, and five minutes after the unit-drift check at 08:50. The ordering is
+# the point: the three pre-open checks read together answer "is the box on the
+# right code", "are the right jobs installed", and then "did anything the desk
+# ran overnight actually fail". A dead news feed or a broker that will not
+# accept the desk has to be known BEFORE it trades on what that feed returned,
+# not discovered afterwards from the day's decisions. It also sits after the
+# earnings pre-processing window opens at 08:00, so a pre-market filing run
+# that died is inside the report rather than just missing from it.
+OnCalendar=Mon-Fri 08:55 America/New_York
+# 16:30 ET — half an hour after the 16:00 close, which is both the end of the
+# regular session and the end of the `close` session's own window. The gap
+# covers the close session's 20-minute outer kill, so a close run that hung to
+# its ceiling has finished and its failure is in this report rather than held
+# over. The evening session (20:00-22:00 ET) therefore falls into the NEXT
+# morning's window — deliberately: the watermark makes that continuous, and a
+# broken evening is still reported before the desk next trades, which is the
+# only deadline that matters.
+OnCalendar=Mon-Fri 16:30 America/New_York
+# Mon-Fri, unlike the drift checks. Those exist because code gets merged at the
+# weekend; this one reports on what the desk DID, and the desk does not trade
+# at the weekend. A Saturday report would carry nothing actionable, while the
+# Monday 08:55 run still covers the whole weekend — the watermark carries the
+# window forward from Friday's 16:30 with no gap and nothing counted twice.
+#
+# systemd resolves the IANA zone, so both stay New York time across DST.
+# Persistent: a firing missed because the box was down runs on boot. The
+# watermark means the catch-up run covers the time it missed, not just the
+# moment it woke up.
+Persistent=true
+# The report does not care about the exact minute; letting systemd batch this
+# with the other morning checks is free.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

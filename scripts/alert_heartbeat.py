@@ -338,6 +338,43 @@ def run_status() -> tuple[int, str]:
     return 0, "\n".join(lines)
 
 
+#: Which entry point this process is — `main` sets it; the run record
+#: carries it so a reader can tell the 06:15 heartbeat's reporting-only pass
+#: from the every-30-minutes sweep that places stops.
+_RUN_ENTRY = "alert_heartbeat"
+
+
+def _attach_desk_log(project_root: Path | None = None) -> None:
+    """Send this process's log records to the log the desk actually writes.
+
+    Board item 131: the sweep's records went only to Python's last-resort
+    stderr handler (warnings and errors, nothing at INFO), so the systemd
+    journal of this one unit was the only place a run could be seen and
+    `quant_agent.log` held nothing from it. Same file and same format as
+    `main.py`; a plain appending FileHandler — this process is short-lived
+    and never rotates the file, the session processes do. Warnings and
+    errors still reach stderr, so the journal keeps what it showed before.
+    Called only from the `__main__` block, so tests never touch a real log.
+    """
+    import logging
+
+    root_dir = project_root or Path(__file__).resolve().parent.parent
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    try:
+        fh = logging.FileHandler(root_dir / "quant_agent.log", mode="a")
+        fh.setFormatter(fmt)
+        fh.setLevel(logging.INFO)
+        root.addHandler(fh)
+    except OSError as exc:
+        print(f"alert_heartbeat: could not open quant_agent.log ({exc})", file=sys.stderr)
+    err = logging.StreamHandler(sys.stderr)
+    err.setFormatter(fmt)
+    err.setLevel(logging.WARNING)
+    root.addHandler(err)
+
+
 def _build_broker():
     """Read-only broker handle, built the narrow way `src/api/broker_reads.py`
     does — two strings, never the whole config object."""
@@ -413,15 +450,33 @@ def run_coverage_check(now: datetime | None = None) -> str:
     Returns the journal line; raises only if the broker cannot be built, and
     `main` contains that.
     """
+    import logging
+    import uuid
+
     from src.coverage_watchdog import (
-        alert_text, check_coverage, repair_failure_text, status_line,
+        SWEEP_AGENT_NAME, SWEEP_LOG_NAME, alert_text, check_coverage,
+        record_sweep_run, repair_failure_text, status_line, sweep_log_line,
+        sweep_summary,
     )
 
+    # Board item 131: every run leaves a named line in the desk's log and
+    # one row in the desk's event record, started and finished, whatever
+    # happens in between.
+    sweep_log = logging.getLogger("src.coverage_watchdog")
+    entry = _RUN_ENTRY
+    run_id = f"{SWEEP_AGENT_NAME}-{uuid.uuid4().hex[:8]}"
+    sweep_log.info("%s %s (%s): started", SWEEP_LOG_NAME, run_id, entry)
     db, last_buy = _coverage_db_and_last_buy()
-    status = check_coverage(
-        _build_broker(), now=now, sweep_symbol=_cash_sweep_symbol(),
-        last_buy=last_buy, db=db,
-    )
+    try:
+        status = check_coverage(
+            _build_broker(), now=now, sweep_symbol=_cash_sweep_symbol(),
+            last_buy=last_buy, db=db,
+        )
+    except Exception as exc:  # noqa: BLE001 — record it, then let main report it
+        summary = sweep_summary(None, entry=entry, run_id=run_id, error=str(exc))
+        sweep_log.error("%s", sweep_log_line(summary))
+        record_sweep_run(db, summary)
+        raise
     line = status_line(status)
     sent: list[str] = []
     if status.should_alert or status.should_alert_repair_failure:
@@ -447,6 +502,16 @@ def run_coverage_check(now: datetime | None = None) -> str:
                 f"exposure alert "
                 f"{'delivered' if ok else 'could NOT be delivered'}"
             )
+    summary = sweep_summary(status, entry=entry, run_id=run_id, alerts=sent)
+    finished = sweep_log_line(summary)
+    if summary["outcome"] in ("repair_failed", "could_not_check"):
+        # WARNING, not ERROR: the failure itself is already logged at ERROR
+        # by the module that hit it, under wording `src/log_health.py`
+        # already classifies; a second ERROR here would be counted twice.
+        sweep_log.warning("%s", finished)
+    else:
+        sweep_log.info("%s", finished)
+    record_sweep_run(db, summary)
     return "; ".join([line, *sent])
 
 
@@ -493,6 +558,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    global _RUN_ENTRY
+    _RUN_ENTRY = "coverage_sweep" if args.coverage_only else "alert_heartbeat"
+
     if args.coverage_only:
         # The probe is skipped on purpose. This entry point exists to run
         # OFTEN — the market-hours tick that actually re-places a lapsed
@@ -533,4 +601,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    _attach_desk_log()
     raise SystemExit(main())

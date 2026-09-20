@@ -154,7 +154,12 @@ def test_format_session_result_daily_error_surfaces_reason():
     assert "it did not finish" in msg  # plain outcome, not "status: Error"
     assert "run_id" not in msg
     assert "no data from portfolio_history" in msg
-    assert "📊" not in msg   # rows/filename line skipped when absent
+    # Narrowed 2026-09-18: this asserted no "📊" anywhere, which now also
+    # matches the P&L block that leads every message (owner: P&L directly
+    # under the heading). The test's own stated intent is the rows/filename
+    # line, so it pins that line instead of the bare emoji.
+    assert "rows →" not in msg   # rows/filename line skipped when absent
+    assert "? rows" not in msg
 
 
 def test_format_session_result_daily_delivery_failure_keeps_rows_line():

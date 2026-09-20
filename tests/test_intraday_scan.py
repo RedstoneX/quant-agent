@@ -1112,12 +1112,15 @@ def _qualifying_move_pipeline():
 
 @patch("src.pipeline.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
-def test_empty_morning_carry_forward_skips_the_intraday_pm(
+def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
     mock_alert, mock_compute_indicators,
 ):
-    """This morning's macro/news never arrived. Labelling that
-    `not_run_intraday` used to let the PM decide on fabricated evidence.
-    The split status is a lost answer, so the scan refuses before the PM."""
+    """This morning's macro/news never arrived. The SPLIT STATUS is
+    unchanged — `carry_forward_empty` is still a lost answer, never the
+    intentional skip — but which lost seat stops the desk is now an owner
+    mandate (2026-09-18, "only technical analysis can stop the desk").
+    Macro and news are advisory, so the scan decides, and the decision
+    discloses that those two seats contributed nothing."""
     mock_compute_indicators.return_value = MagicMock()
     p = _qualifying_move_pipeline()
     p.macro_store.load_last_state.return_value = None
@@ -1127,17 +1130,17 @@ def test_empty_morning_carry_forward_skips_the_intraday_pm(
     with patch("src.decision_checkpoint.write_status") as write_status:
         result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result["status"] == "evidence_gate_skip"
-    assert set(result["lost_seats"]) == {"macro", "news"}
+    assert result["status"] != "evidence_gate_skip"
     assert ctx.data_status["macro"] == "carry_forward_empty"
     assert ctx.data_status["news"] == "carry_forward_empty"
     assert ctx.data_status["earnings"] == "not_run_intraday"
-    p.decision_stage.run.assert_not_called()
-    p.risk_stage.run.assert_not_called()
-    p.execution_stage.run.assert_not_called()
+    p.decision_stage.run.assert_called()
     write_status.assert_not_called()
-    mock_alert.assert_called_once()
-    assert "DECISION SKIPPED" in mock_alert.call_args[0][0]
+    # The loss is not silent: it is in the decision's own durable freshness
+    # record, and `notifier.maybe_alert_data_quality` still pages off the
+    # seat states the wrapper attaches to the result.
+    assert set(ctx.evidence_freshness["absent_seats"]) == {"macro", "news"}
+    assert ctx.evidence_freshness["fresh_seats"] == ["tech"]
 
 
 @patch("src.pipeline.compute_indicators")
@@ -1155,20 +1158,22 @@ def test_failed_morning_carry_forward_skips_the_intraday_pm(
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result["status"] == "evidence_gate_skip"
-    assert set(result["lost_seats"]) == {"macro", "news"}
     assert ctx.data_status["macro"] == "carry_forward_failed"
     assert ctx.data_status["news"] == "carry_forward_failed"
-    p.decision_stage.run.assert_not_called()
+    # Still lost, still recorded, still disclosed — but advisory, so the
+    # desk decides (owner mandate 2026-09-18).
+    assert result["status"] != "evidence_gate_skip"
+    assert set(ctx.evidence_freshness["absent_seats"]) == {"macro", "news"}
 
 
 @patch("src.pipeline.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
-def test_one_empty_carry_forward_seat_is_enough_to_refuse(
+def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
     mock_alert, mock_compute_indicators,
 ):
-    """Same categorical rule as morning: any one lost seat refuses.
-    Macro arrived; news did not."""
+    """The thin-decision shape the mandate change creates, end to end: news
+    lost, macro carried from the morning, one chart read done just now. The
+    desk decides — and says so."""
     mock_compute_indicators.return_value = MagicMock()
     p = _qualifying_move_pipeline()
     p.news_store.load_daily_report.return_value = None
@@ -1176,8 +1181,16 @@ def test_one_empty_carry_forward_seat_is_enough_to_refuse(
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result["status"] == "evidence_gate_skip"
-    assert result["lost_seats"] == ["news"]
+    assert result["status"] != "evidence_gate_skip"
     assert ctx.data_status["macro"] == "carried_from_morning"
     assert ctx.data_status["news"] == "carry_forward_empty"
-    p.decision_stage.run.assert_not_called()
+    p.decision_stage.run.assert_called()
+    freshness = ctx.evidence_freshness
+    assert freshness["fresh_seats"] == ["tech"]
+    assert "macro" in freshness["carried_seats"]
+    assert freshness["absent_seats"] == ["news"]
+    assert freshness["seats_read_this_tick"] == 1
+    from src.notifier import describe_evidence_freshness
+    words = " ".join(describe_evidence_freshness(freshness))
+    assert "1 of 5 research seats read just now" in words
+    assert "the market-backdrop research" in words

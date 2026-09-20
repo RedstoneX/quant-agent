@@ -158,11 +158,22 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 87, (
+    assert MAX_ARBITRARY_ENTRIES == 146, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
-        "trading decision -- a misclassification corrected, not a number added."
+        "trading decision -- a misclassification corrected, not a number added. "
+        "87 -> 88 the same day: `refresh_deadline_s` carried the identical "
+        "falsified sentence and was what the intraday freshness check ran out "
+        "of while deciding whether the tick could decide. "
+        "88 -> 106 on 2026-09-19, board item 130: scoping "
+        "src/execution/broker.py, src/coverage_watchdog.py, src/pipeline.py "
+        "and src/agents admitted 47 new sites, 18 of them arbitrary -- see "
+        "src/number_sources.py's MAX_ARBITRARY_ENTRIES comment for the count "
+        "by source. "
+        "106 -> 146 on 2026-09-19: the scanner learned parameter defaults, "
+        "attributes on any class and near-one inline multipliers; 98 live "
+        "sites became visible, 40 of them arbitrary. No number was added."
     )
 
 
@@ -263,6 +274,12 @@ def test_scope_has_not_silently_narrowed() -> None:
     assert "src/portfolio_constructor.py" in SCOPED_PATHS
     assert "src/data/technical.py" in SCOPED_PATHS
     assert "src/data/levels.py" in SCOPED_PATHS
+    # Board item 130: broker.py IS the broker order.
+    assert "src/execution/broker.py" in SCOPED_PATHS
+    assert "src/execution/stop_repair.py" in SCOPED_PATHS
+    assert "src/coverage_watchdog.py" in SCOPED_PATHS
+    assert "src/pipeline.py" in SCOPED_PATHS
+    assert "src/agents" in SCOPED_PATHS
 
 
 def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
@@ -278,7 +295,15 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 189
+    assert MAX_UNSCOPED_NUMERIC_SITES == 147, (
+        "145 -> 147 on 2026-09-19: +2 for src/number_sources.py's own "
+        "FACTOR_BAND, the scanner's classifier band, not a trade number. "
+
+        "192 -> 145 on 2026-09-19, board item 130: src/execution/broker.py, "
+        "src/coverage_watchdog.py, src/pipeline.py and src/agents moved into "
+        "SCOPED_PATHS and their 47 sites now carry ledger entries instead of "
+        "sitting in this count."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -572,3 +597,122 @@ def test_a_default_pointed_at_an_unscoped_module_does_not_vanish() -> None:
     assert [(p.kind, p.site_id) for p in problems] == [
         ("unsourced", "src.risk.rules.RulesConfig.floor")
     ]
+
+
+# --------------------------------------------------------------------------
+# Rules (c), (d), (e): the shapes (a)/(b) could not see. 2026-09-19.
+# --------------------------------------------------------------------------
+
+
+def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
+    """Every number the 2026-09-19 brief named as invisible, by the shape it
+    hid in: two parameter defaults, a class attribute, and board item 138's
+    inline order-price buffers.
+    """
+    ids = {site.site_id for site in collect_sites()}
+    # (c) parameter defaults.
+    assert "src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)" in ids
+    assert "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)" in ids
+    # (d) class attributes.
+    assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
+    assert "src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT" in ids
+    # (e) item 138: the 1% de-lever ladder, the 0.5% exit offsets.
+    assert "src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]" in ids
+    assert "src.pipeline.TradingPipeline._force_delever:factor[1]" in ids
+    assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
+    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids
+
+
+def test_a_parameter_default_is_a_site() -> None:
+    """Rule (c). A cap passed nowhere and defaulted in a signature is as live
+    as a module constant, and was invisible."""
+    root, ledger = _fixture(
+        Path(pytest.importorskip("tempfile").mkdtemp()),
+        """
+        def clamp(decisions, *, max_pct: float = 5.0, floor=0.0):
+            return decisions
+
+
+        class Engine:
+            def check(self, cluster_pct: float = 50.0):
+                return cluster_pct
+        """,
+        "numbers: []\n",
+    )
+    problems = audit(repo_root=root, ledger_path=ledger)
+    assert sorted(p.site_id for p in problems if p.kind == "unsourced") == [
+        "src.risk.rules.Engine.check(cluster_pct)",
+        "src.risk.rules.clamp(max_pct)",
+    ]
+
+
+def test_an_attribute_on_any_class_is_a_site() -> None:
+    """Rule (d). The 3% stop-limit buffer is an attribute of the broker class,
+    not a `*Config` field, and no rule saw it."""
+    root, ledger = _fixture(
+        Path(pytest.importorskip("tempfile").mkdtemp()),
+        """
+        class Broker:
+            STOP_LIMIT_BUFFER_PCT = 0.03
+            retries: int = 0
+
+            class Inner:
+                hops = 8
+        """,
+        "numbers: []\n",
+    )
+    problems = audit(repo_root=root, ledger_path=ledger)
+    assert sorted(p.site_id for p in problems if p.kind == "unsourced") == [
+        "src.risk.rules.Broker.Inner.hops",
+        "src.risk.rules.Broker.STOP_LIMIT_BUFFER_PCT",
+    ]
+
+
+def test_a_near_one_price_multiplier_is_a_site_and_unit_arithmetic_is_not() -> None:
+    """Rule (e), both halves. The margins fire -- including both arms of a
+    conditional and a folded `1 - 0.03` -- and the unit conversions, the
+    sign flip, the epsilon and constant arithmetic do not."""
+    root, ledger = _fixture(
+        Path(pytest.importorskip("tempfile").mkdtemp()),
+        """
+        def exit_limit(price, is_cover, bps, deficit, qty):
+            sell = round(price * 0.995, 2)
+            ladder = price * (1.01 if is_cover else 0.99)
+            stop = price * (1 - 0.03)
+            cushion = deficit * 1.02
+            skip = price / 1.02
+            cap = price * (1 + bps / 10_000.0)
+            flipped = qty * -1.0
+            days = 365 * 5
+            eps = qty + 1e-9
+            pct = qty / price * 100.0
+            half = qty / 2
+            return sell, ladder, stop, cushion, skip, cap, flipped, days, eps, pct, half
+        """,
+        "numbers: []\n",
+    )
+    found = {
+        p.site_id: p.detail
+        for p in audit(repo_root=root, ledger_path=ledger)
+        if p.kind == "unsourced"
+    }
+    assert sorted(found) == [
+        f"src.risk.rules.exit_limit:factor[{n}]" for n in range(6)
+    ]
+    assert "0.995" in found["src.risk.rules.exit_limit:factor[0]"]
+    assert "0.97" in found["src.risk.rules.exit_limit:factor[3]"]
+
+
+def test_the_new_shapes_do_not_leak_into_the_unscoped_sentinel() -> None:
+    """The sentinel's count is defined as module-level constants. Rules
+    (c)-(e) outside scope would have moved it by hundreds for no reason and
+    turned its ceiling into noise."""
+    root, ledger = _fixture(
+        Path(pytest.importorskip("tempfile").mkdtemp()),
+        "X = 1\n",
+        "numbers: []\n",
+    )
+    (root / "src" / "unscoped.py").write_text(
+        "def f(a=5.0):\n    return a * 0.99\n\n\nclass K:\n    B = 3\n"
+    )
+    assert collect_unscoped_sites(root) == []

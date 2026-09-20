@@ -24,7 +24,8 @@
   reject; its approval cannot override a deterministic drop. A dropped exit
   writes an append-only per-symbol reason on the named-trigger, AI-reject,
   noise-band, metric-contradiction, and proven-false holding-discipline
-  gates. This is the documented exception to item 4 on this path only, not
+  gates; an exit AI Risk approves writes the same kind of row with
+  `code=ai_risk_approved`, `dropped=false` (board item 164, 2026-09-19). This is the documented exception to item 4 on this path only, not
   permission to fail-open entries or to retune the noise-band / stop-floor
   1.0s (item 70). Verified by `tests/test_exit_refusal_coherence.py`.
 - **Kill switch** (2026-09-02): `risk.kill_switch_path` (default
@@ -72,8 +73,29 @@
   one symbol at a time with confirmed cancel and full-qty restore. Short adds
   stay blocked: scale-in is the long path. Missing short stops are repaired
   separately (item 73, closed). Verified by `tests/test_scale_in.py`.
-- **Fills are confirmed by bounded REST polling; the live websocket is OFF**
-  (owner decision 2026-09-17, `execution.fill_stream_enabled: false`): the
+- **The fill websocket cannot storm the account** (2026-09-18,
+  `_STREAM_ATTEMPT_CEILING_PER_SESSION` / `_STREAM_ATTEMPT_CEILING_PER_DAY`
+  in `src/execution/broker.py`): the installed `alpaca-py` (0.43.5) retries
+  a failed `trade_updates` handshake from inside its OWN loop
+  (`TradingStream._run_forever`), which sleeps a flat 10ms and has neither
+  backoff nor an attempt limit. On 2026-09-15 that produced 32,896
+  handshake attempts in one day, 32,666 of them rejected HTTP 429
+  [measured, retained logs]. Alpaca's rate limit is per ACCOUNT (200
+  requests per minute), so this competes with the order path. The desk now
+  bounds the SDK's loop rather than its own: a failed handshake backs off
+  on an equal-jitter curve, a 429 stands down for the full published
+  minute-window instead of the transport cap, and reaching either the
+  per-session or the per-day ceiling sets the SDK's `_should_run` false,
+  pages the owner ONCE in plain words, and leaves every fill to the bounded
+  REST path for the rest of the day. The budget is process-wide and
+  day-keyed, not per-socket, because a per-socket counter resets on each
+  new hub and bounds nothing in aggregate. Every constant is sourced in a
+  comment beside it. Verified by `tests/test_order_fill_stream.py`.
+- **Fills are confirmed by bounded REST polling whenever the socket cannot
+  serve them** (`execution.fill_stream_enabled`, ON in
+  `config/settings.yaml` since 2026-09-18; the history below is the
+  2026-09-17 decision that switched it off and is kept because it names the
+  two blockers): the
   `trade_updates` socket has never authenticated on this host since it was
   built on 2026-09-10, and two independent confirmed blockers mean no code
   or config change could make it (the process holds placeholder credentials
@@ -91,6 +113,18 @@
   or a reconciliation finding the desk's record and the broker's
   disagreeing with no sale to explain it). The socket being off never
   pages. Verified by `tests/test_fill_stream_switch.py`.
+- **UPDATE, 2026-09-18: "has never authenticated" above is now history, not
+  the present state.** With the real credential delivered and the flag on, a
+  connection attempt as the desk's own account authenticated on the FIRST
+  try — the placeholder-credential root cause is proven fixed, not merely
+  inferred. The broker's reply also flagged the in-band message format
+  alpaca-py sends as deprecated; the desk now sends the format the broker
+  actually asks for, with the old one kept only as a same-socket fallback.
+  Both were fixed and shipped the same day. Full detail, including what is
+  still unproven (the desk's own code completing the handshake end to end
+  during a real trading session) and the account this socket is pinned to:
+  `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`, "The websocket
+  exception" section.
 - **One `trade_updates` socket per Alpaca account** (2026-09-17, DORMANT
   while the flag above is off — this is the behaviour flipping it back on
   restores): Alpaca

@@ -687,6 +687,34 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_intra_check_reports_date
                 ON intra_check_reports(date);
 
+            -- Every outgoing Telegram message the desk attempted (2026-09-18,
+            -- owner-raised gap): a successful send used to leave no record
+            -- at all, only failures and rehearsal-suppressions. `text` is
+            -- the rendered message body actually handed to Telegram (or,
+            -- for a rehearsal, what WOULD have been); `status` distinguishes
+            -- 'sent' / 'failed' / 'suppressed'; `detail` carries the
+            -- (redacted) failure reason and is NULL otherwise. `kind` is a
+            -- short caller tag (a session mode like 'morning', or
+            -- 'owner_alert', 'document', ...) so "the last message of each
+            -- kind" is one query. `src/notifier.py::TelegramNotifier._record_send`
+            -- is the only writer, and creates this table itself too (a
+            -- notifier call can happen before any `Database` is
+            -- constructed, e.g. the live-scheduler startup ping) — this
+            -- declaration exists so the schema is discoverable in the one
+            -- place every other table lives, and so `Database` callers
+            -- (pruning, tooling) don't need to know that quirk.
+            CREATE TABLE IF NOT EXISTS notifier_sends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                run_id TEXT,
+                text TEXT NOT NULL,
+                detail TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts
+                ON notifier_sends(kind, timestamp);
+
             CREATE TABLE IF NOT EXISTS insights (
                 date TEXT PRIMARY KEY,
                 tomorrow_outlook TEXT,
@@ -2686,6 +2714,28 @@ class Database:
             latest.setdefault(row["symbol"], row)
         return latest
 
+    def get_latest_symbol_evidence(self, kind: str, symbols) -> dict[str, dict]:
+        """Newest `specialist_evidence` row of `kind` per symbol, as
+        {symbol: row}. Generic twin of `get_prior_position_review_metrics`
+        for the stop-side records in `src/execution/exit_path_records.py`,
+        which compare a new reason against the last one on file."""
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp, run_id FROM specialist_evidence "
+            f"WHERE kind=? AND symbol IN ({placeholders}) "
+            "ORDER BY timestamp DESC, id DESC"
+        )
+        with self._lock:
+            rows = self.conn.execute(sql, (kind, *wanted)).fetchall()
+        latest: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            latest.setdefault(row["symbol"], row)
+        return latest
+
     # --- Holding-discipline structural-protection memory (spec item 25,
     # owner refinements 2026-09-04) ------------------------------------
     #
@@ -3224,6 +3274,34 @@ class Database:
         with self._lock:
             cursor = self.conn.execute(
                 "DELETE FROM specialist_evidence WHERE timestamp < datetime('now', ?)",
+                (f"-{keep_days} days",),
+            )
+            self.conn.commit()
+            return cursor.rowcount or 0
+
+    def prune_notifier_sends(self, keep_days: int = 730) -> int:
+        """Delete notifier_sends rows older than keep_days. Returns count
+        deleted.
+
+        NOT wired into any scheduled maintenance pass as of 2026-09-18 —
+        see the PR that introduced this table. `notifier_sends`'s closest
+        siblings by shape and purpose, `session_reports` / `evening_reports`
+        / `intra_check_reports`, have NO pruning at all today, so there is
+        no single established convention for "how long does a rendered
+        report live" to match. Rather than invent a fresh number, this
+        reuses `prune_agent_logs`/`prune_specialist_evidence`'s already-
+        ratified 730-day (2 year) figure, on the same reasoning they give:
+        this table is forensic detail for the same session runs those
+        tables cover, one-plus rows per run on a long-running bot with no
+        cap otherwise. Flagged to the owner as an open call, not a decision
+        made unilaterally: he may prefer to match the report tables (no
+        pruning) instead, or set a rotation once one exists for them.
+        """
+        if keep_days <= 0:
+            raise ValueError(f"prune_notifier_sends: keep_days must be > 0, got {keep_days}")
+        with self._lock:
+            cursor = self.conn.execute(
+                "DELETE FROM notifier_sends WHERE timestamp < datetime('now', ?)",
                 (f"-{keep_days} days",),
             )
             self.conn.commit()

@@ -90,6 +90,7 @@ def _bind_reuse(obj):
     obj._peek_new_form4_accessions = (
         TradingPipeline._peek_new_form4_accessions.__get__(obj)
     )
+    obj._form4_freshness = TradingPipeline._form4_freshness.__get__(obj)
     obj._insider_same_session = TradingPipeline._insider_same_session.__get__(obj)
     obj._specialist_insider_as_of = (
         TradingPipeline._specialist_insider_as_of.__get__(obj)
@@ -276,6 +277,14 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
     assert from_summary.status == "expired"
 
 
+def _freshness(new_filings, *, ok=True, reason="stub"):
+    """A provider freshness verdict: "what was FILED since our last read"."""
+    return {
+        "ok": ok, "new_filings": sorted(new_filings), "read_through": "2026-09-18",
+        "checked": 1, "unchecked": [], "reason": reason,
+    }
+
+
 def test_insider_peek_expires_on_a_new_form4_accession():
     class _Form4:
         def __init__(self, known, peek):
@@ -296,7 +305,7 @@ def test_insider_peek_expires_on_a_new_form4_accession():
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
             providers=[_Form4(["0001-26-000001"], ["0001-26-000001"])],
-            peek_form4_accessions=lambda: {"0001-26-000001"},
+            form4_freshness=lambda _s=None: _freshness([]),
         ),
         db=None,
     )
@@ -304,11 +313,133 @@ def test_insider_peek_expires_on_a_new_form4_accession():
     kept = obj._carry_forward_insider(ctx)
     assert kept.status in (STATUS_CARRIED_FROM_MORNING, "chose_not_to_refetch") or kept.payload
 
-    obj.smart_money_provider.peek_form4_accessions = lambda: {
-        "0001-26-000001", "0001-26-000002",
-    }
+    obj.smart_money_provider.form4_freshness = lambda _s=None: _freshness(
+        ["0001-26-000002"],
+    )
     expired = obj._carry_forward_insider(ctx)
     assert expired.status == "expired"
+
+
+def test_insider_seat_expires_when_freshness_cannot_be_established():
+    """A probe that did not answer must NOT read as "nothing new".
+
+    The old peek swallowed its own failure and returned the known set, which
+    the caller read as no new filing and REUSED. That let a broken network
+    put a decision on research nobody checked was current, while a working
+    network that found unread backlog refused the decision — backwards in
+    both directions.
+    """
+    class _Form4:
+        def known_accessions(self):
+            return {"0001-26-000001"}
+
+    ctx = SimpleNamespace(smart_money_findings=[
+        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+    ])
+    for verdict in (
+        _freshness([], ok=False, reason="probe failed: ConnectionError"),
+        {"ok": False, "new_filings": [], "read_through": "",
+         "checked": 0, "unchecked": ["1045810"], "reason": "1 name unchecked"},
+    ):
+        obj = SimpleNamespace(
+            macro_store=_MacroStore(None),
+            news_store=_NewsStore(),
+            smart_money_provider=SimpleNamespace(
+                providers=[_Form4()],
+                form4_freshness=lambda _s=None, _v=verdict: _v,
+            ),
+            db=None,
+        )
+        _bind_reuse(obj)
+        assert obj._carry_forward_insider(ctx).status == "expired"
+
+    # A provider that raises outright falls the same way.
+    def _boom(_s=None):
+        raise RuntimeError("EDGAR unreachable")
+
+    obj = SimpleNamespace(
+        macro_store=_MacroStore(None),
+        news_store=_NewsStore(),
+        smart_money_provider=SimpleNamespace(
+            providers=[_Form4()], form4_freshness=_boom,
+        ),
+        db=None,
+    )
+    _bind_reuse(obj)
+    assert obj._carry_forward_insider(ctx).status == "expired"
+
+
+def test_an_empty_insider_seat_is_not_clean_when_coverage_is_partial():
+    """2026-09-19. An EMPTY remembered answer used to skip the fail-closed
+    branch, on the written ground that `insider_reuse` classifies an empty
+    payload as lost. It does not — an empty list is BLANK and reuses as
+    `chose_not_to_refetch`, an integrity-clean status saying "remembered; no
+    new filing". So with watched names never read through, the seat
+    reported clean over filings nobody had read."""
+    class _Form4:
+        def known_accessions(self):
+            return set()
+
+    ctx = SimpleNamespace(smart_money_findings=[])
+    partial = {
+        "ok": False, "new_filings": [], "read_through": "",
+        "checked": 82, "covered": 60, "unread_names": ["104169"],
+        "unread_filings": 193, "unchecked": [],
+        "reason": "22 of 82 watched name(s) not yet fully read",
+    }
+    obj = SimpleNamespace(
+        macro_store=_MacroStore(None),
+        news_store=_NewsStore(),
+        smart_money_provider=SimpleNamespace(
+            providers=[_Form4()], form4_freshness=lambda _s=None: partial,
+        ),
+        db=None,
+    )
+    _bind_reuse(obj)
+    obj._findings_from_specialist_evidence = lambda: []
+    assert obj._carry_forward_insider(ctx).status == "expired"
+
+
+def test_intraday_freshness_does_not_expire_on_backlog_alone():
+    """THE ACCEPTANCE CONDITION for 2026-09-18's six lost windows.
+
+    An accession the desk has never read, but which was filed on or before
+    the watermark, is BACKLOG — a hole in the producing step, not new
+    information. It must not expire the seat, and answering the question
+    must not require a full-text crawl.
+    """
+    class _Form4:
+        """Answers only from its own filing history — no EFTS crawl."""
+
+        def __init__(self):
+            self.crawled = False
+
+        def known_accessions(self):
+            # 000002 exists and was never read: the unread backlog.
+            return {"0001-26-000001"}
+
+        def peek_accessions(self, symbols=None):
+            self.crawled = True
+            return {"0001-26-000001", "0001-26-000002"}
+
+        def form4_freshness(self, symbols=None):
+            # Filed 2026-09-15, watermark 2026-09-18 => not "since".
+            return _freshness([], reason="nothing filed since 2026-09-18")
+
+    provider = _Form4()
+    ctx = SimpleNamespace(smart_money_findings=[
+        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+    ])
+    obj = SimpleNamespace(
+        macro_store=_MacroStore(None),
+        news_store=_NewsStore(),
+        smart_money_provider=provider,
+        db=None,
+    )
+    _bind_reuse(obj)
+    carried = obj._carry_forward_insider(ctx)
+    assert carried.status != "expired"
+    assert provider.crawled is False, "the decision tick must not run a crawl"
 
 
 def test_insider_loader_uses_processed_accessions_not_just_findings():
@@ -328,7 +459,7 @@ def test_insider_loader_uses_processed_accessions_not_just_findings():
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
             providers=[_Form4()],
-            peek_form4_accessions=lambda: {"0001-26-000001", "0001-26-000099"},
+            form4_freshness=lambda _s=None: _freshness([]),
         ),
         db=None,
     )
@@ -398,7 +529,7 @@ def test_dated_insider_finding_is_same_session_and_undated_is_not():
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
             providers=[_Form4()],
-            peek_form4_accessions=lambda symbols=None: {"0001-26-000001"},
+            form4_freshness=lambda symbols=None: _freshness([]),
         ),
         db=None,
     )
@@ -442,7 +573,7 @@ def test_specialist_evidence_timestamp_is_the_insider_same_session_date():
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
             providers=[_Form4()],
-            peek_form4_accessions=lambda symbols=None: {"0001-26-000001"},
+            form4_freshness=lambda symbols=None: _freshness([]),
         ),
         db=_DB(),
     )

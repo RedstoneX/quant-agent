@@ -1680,6 +1680,10 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
@@ -4230,6 +4234,10 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
     pipeline._activate_cost_session = MagicMock()
@@ -4291,6 +4299,10 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
+    # Item 127: the broker-writing preamble runs only under the desk's
+    # advisory flock, which lives beside the database named in config.
+    from types import SimpleNamespace
+    pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
     pipeline._activate_cost_session = MagicMock()
@@ -4333,3 +4345,37 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     assert tsla["fill_status"] == "rejected"
     assert nvda["fill_status"] == "canceled"
     db.close()
+
+
+# === Congressional-trading owner-facing wording must track the real switch ===
+# `congress_enabled` (src/config.py) was switched on 2026-09-20 per owner
+# ruling (docs/INCIDENT_HISTORY.md, that date). The pre-market smart-money
+# refresh log line must say so honestly instead of always claiming both
+# sources ran, whichever way the switch sits.
+
+def test_smart_money_refresh_sources_word_when_congress_off():
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    assert (
+        _smart_money_refresh_sources_word(False)
+        == "SEC Form 4 only (congressional cross-check switched off)"
+    )
+
+
+def test_smart_money_refresh_sources_word_when_congress_on():
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    assert _smart_money_refresh_sources_word(True) == "SEC Form 4 + congressional"
+
+
+def test_smart_money_refresh_sources_word_matches_repo_default_config():
+    """Revert-and-fail: if the log line goes back to a hard-coded string
+    regardless of the switch, this fails against the repo's own default
+    (congressional cross-check on, since 2026-09-20's owner ruling)."""
+    from src.config import SmartMoneyConfig
+    from src.pipeline import _smart_money_refresh_sources_word
+
+    default_congress_enabled = SmartMoneyConfig().congress_enabled
+    assert default_congress_enabled is True
+    word = _smart_money_refresh_sources_word(default_congress_enabled)
+    assert word == "SEC Form 4 + congressional"

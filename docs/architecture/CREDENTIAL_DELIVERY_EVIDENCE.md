@@ -11,6 +11,47 @@ Status: **accepted, commissioned, and verified — 2026-08-12.** This is the dur
 - QAMC's consuming code needs no awareness of any of this: `src/agents/base.py`'s OpenRouter branch, `src/execution/broker.py`'s `AlpacaBroker`, and `src/data/macro.py`'s `MacroDataProvider` all construct their SDK clients (`openai`/`httpx`, `alpaca-py`/`requests`, `fredapi`/`urllib`) with no custom session/opener, so each already inherits its library's default environment-driven proxy/CA trust. Zero `src/` or `config/` changes were needed to integrate any of the four credentials.
 - Client-side wiring is three environment variables in `/home/qamc/quant-agent/.env` (operator-only — `dev` cannot write into `/home/qamc`): `HTTPS_PROXY` (`http://x:<agent-token>@127.0.0.1:10255` — note `127.0.0.1`, not the `host.docker.internal` OneCLI's own `GET /api/container-config` returns by default, which only resolves inside a Docker container and not for QAMC's bare `qamc`-account processes), `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` (both pointed at OneCLI's gateway CA cert — `requests`, Alpaca's transport, does not honor `SSL_CERT_FILE` alone).
 
+## Two Alpaca accounts share the same OneCLI setup — verified 2026-08-28
+
+In plain terms: there is not one Alpaca paper account behind OneCLI, there are
+two, and the only thing that tells them apart is which agent is asking — not
+which key file is on disk. Looking at the filesystem alone (one `.env`, one set
+of placeholder values, one pair of header names) makes it look like a single
+account is configured; that appearance is wrong.
+
+The production desk and a separate rehearsal harness both authenticate with the
+identical header pair (`APCA-API-KEY-ID` / `APCA-API-SECRET-KEY`), and
+production's secret matches the wildcard host pattern `*.alpaca.markets`, which
+also covers the paper-trading host — so the request headers and the host alone
+cannot distinguish which account is being reached. What actually decides it is
+the **agent access token** carried in the outbound proxy URL
+(`HTTPS_PROXY=http://x:<agent-token>@127.0.0.1:10255`): OneCLI maps that token
+to an agent identity, and each agent identity has its own credential grants in
+the `agent_secrets` table.
+
+- `Default Agent` (`identifier=default`) → production, Alpaca paper account
+  `PA3DFXH9FF5V` (the same account already named elsewhere in this repo's
+  incident history).
+- `Rehearsal Harness` (`identifier=rehearsal`) → a separate paper account,
+  `PA30V8QHEW1C`, funded at $10,000, with its secrets pinned specifically to
+  `paper-api.alpaca.markets`.
+
+Verified directly: the same URL called through each of the two tokens returns
+data for a different account. When OneCLI cannot resolve a token to a grant
+unambiguously, it fails closed (`access_restricted`) rather than guessing —
+also confirmed empirically, not assumed from the gateway's documentation.
+
+Two gaps this leaves open, low urgency only because the rehearsal harness is
+currently offline: the rehearsal agent can still reach Telegram using the
+production bot token, so a live rehearsal run would alert the owner's real
+phone with fake trades unless a separate bot or a forced prefix is added; and
+an LLM call made from a rehearsal run spends real OpenRouter money on the same
+account as production, but is tracked in the rehearsal's own separate
+cost-circuit database, so production's own cost accounting would under-count
+the true bill if both ran at once. Neither is a reason to avoid rehearsal
+today; both are conditions to close before rehearsal and production ever run
+concurrently.
+
 ## Configured Providers
 
 **OpenRouter** — LLM provider credential for all 9 agents. Header-based: `Authorization: Bearer {value}`, host `openrouter.ai`.
@@ -64,6 +105,28 @@ websocket out of its reach:
   no proxy support at all.** Proxy support arrived in `websockets` 15.0, for the
   asyncio and sync clients only — not the legacy implementation the SDK uses. So
   the socket would not traverse the gateway even if a gateway could help.
+
+Both bullets re-verified 2026-09-18 against the installed packages:
+`alpaca/trading/stream.py` imports `websockets.legacy.client`, and that
+client's `connect` takes no proxy argument (websockets 17.0.1).
+
+**What that in-band payload now is.** Alpaca's authorization reply to
+alpaca-py's frame says the `{"action":"authenticate","data":{...}}` form is
+being deprecated in favour of `{"action":"auth","key":K,"secret":K}`. The
+vendor still builds the deprecated form in its newest release (0.44.0,
+checked 2026-09-18), so the desk sends the current frame itself, on a
+per-instance wrapper, and falls back to the vendor's frame on a fresh socket
+if the current one is refused. Both were measured `authorized` against the
+live paper broker on 2026-09-18. See the auth-format block at the top of
+`src/execution/broker.py`.
+
+**One consequence worth stating once.** Because the socket authenticates
+in-band with the key pair and cannot traverse the gateway, the socket's
+identity is whatever account that key pair belongs to — it CANNOT be pointed
+at a second account that is selected by a gateway agent token. Measured
+2026-09-18: the key pair in `/home/qamc/credentials` reads back account
+`PA3DFXH9FF5V`. A fill-notification test on any gateway-selected account is
+therefore not possible on this box.
 
 The consequence is the thing that cost this project most: **order placement
 works on a placeholder credential, and the websocket cannot ever authenticate

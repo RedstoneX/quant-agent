@@ -44,6 +44,8 @@ Nothing below should be merged until there is a working test gate. 94 PRs have a
 - **Deliberately push a failing test and confirm the merge is blocked.** This is the only step that constitutes proof. Do not skip it.
 - Add branch protection on `main` requiring the check to pass. A gate that reports but does not block is not a gate.
 
+*Correction (2026-09-19): this section describes the 2026-08-27 state. CI was enabled shortly afterward (fixed in #96) and has run on every PR since; it is not currently disabled or unexecuted.*
+
 **0.2 — Ratification rule.**
 Root cause of QAMC's drift: coding agents write the documents that define "accepted truth," and `STATE.md` declares independent review *"optional evidence, not permission and not a blocking gate."* Scope decisions made for engineering convenience (e.g. dropping short selling) laundered into requirements that every later agent treated as owner intent.
 
@@ -1761,6 +1763,22 @@ is the sprawl §12.2 cleaned up. `/account` reports the standing cap only
 (`RiskLimits.max_gross_exposure_x`). Putting the live ladder state on the
 dashboard needs the pure measurement functions moved out of `src.risk` first;
 that is not done and is the one piece of §11.2 left open.
+
+**Each trimmed name is re-protected before the next is touched (2026-09-19,
+board item 111).** Selling means cancelling that name's protective stop first
+(a resting stop holds the whole position). `_enforce_gross_ceiling` and
+`_force_delever` now finalize each name's stop coverage on its actual fill —
+restore, re-protect the residual, or nothing on a full exit — before the loop
+cancels the next name's stops. Before this, the whole batch was finalized once
+after the loop, leaving every earlier name uncovered while later names were
+sold. What is trimmed, and how much, is unchanged.
+
+**A de-lever that leaves the book over its ceiling is recorded (2026-09-19,
+board item 112).** Besides the `delever_incomplete` flag the session message
+reads, one run-scoped `specialist_evidence` `pipeline_event` row
+(`stage='gross_delever'`, `outcome='still_over_ceiling'`) keeps gross before
+and after, the ceiling, and each order's final broker status. Observability
+only; see `docs/INCIDENT_HISTORY.md`, 2026-09-19.
 
 **The owner's gate is met.** `tests/test_gross_exposure_ladder.py` (54 tests
 at the time of writing; 92 as of 2026-09-02, the 21 added being the submit

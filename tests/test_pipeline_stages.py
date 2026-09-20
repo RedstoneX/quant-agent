@@ -200,7 +200,7 @@ def test_apply_scale_all_buys_zero_drops_every_buy():
     )
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 0.0, "0.0 must propagate, not collapse to 1.0"
     actions = [d.action for d in scaled]
@@ -216,7 +216,7 @@ def test_apply_scale_all_buys_partial_scales_buy_allocations():
     verdict = RiskVerdict(approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(), reasoning="trim")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT")]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 0.5
     by_sym = {d.symbol: d for d in scaled}
@@ -233,7 +233,7 @@ def test_apply_scale_all_buys_one_is_no_op():
     verdict = RiskVerdict(approved=True, scale_all_buys=1.0, reasoning_chain=_risk_rc(), reasoning="ok")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8)]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 1.0
     assert [(d.symbol, d.allocation_pct) for d in scaled] == [
@@ -252,7 +252,7 @@ def test_apply_scale_all_buys_handles_missing_attribute_as_one():
         modifications = []
 
     decisions = [_buy("SPY", 10)]
-    scaled, scale = _apply_scale_all_buys(decisions, LegacyVerdict())
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, LegacyVerdict())
 
     assert scale == 1.0
     assert len(scaled) == 1
@@ -1793,6 +1793,76 @@ def test_morning_research_stage_smart_money_truncated_marks_status_truncated():
     assert result_ctx.data_status["smart_money"] == "truncated"
 
 
+def _smart_money_morning_stage(coverage, findings):
+    """A morning stage whose only interesting seat is smart money."""
+    from types import SimpleNamespace
+
+    from src.agents.base import AgentResult
+
+    config = SimpleNamespace(
+        trading=SimpleNamespace(universe=["SPY"], lookback_days=30),
+        smart_money=SimpleNamespace(enabled=True),
+    )
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+    macro = MagicMock()
+    macro.get_macro_summary.return_value = {}
+    macro_analyst = MagicMock()
+    macro_analyst.analyze.return_value = (
+        None,
+        AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+    )
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    smart_money_provider = MagicMock()
+    smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
+    smart_money_provider.form4_coverage.return_value = coverage
+    smart_money_analyst = MagicMock()
+    smart_money_analyst.analyze.return_value = (
+        findings,
+        AgentResult(raw_text='{"findings":[]}', tokens_used=1, model="test",
+                    user_message="x"),
+        None,
+    )
+    stage = MorningResearchStage(
+        config=config, db=MagicMock(), market=market, macro=macro,
+        news_provider=MagicMock(), news_store=news_store,
+        macro_store=macro_store, tech_store=MagicMock(),
+        earnings_provider=MagicMock(), macro_analyst=macro_analyst,
+        news_analyst=MagicMock(), tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        smart_money_provider=smart_money_provider,
+        smart_money_analyst=smart_money_analyst,
+        admit_smart_money_candidates_fn=lambda _observations: (set(), {}),
+        has_actionable_signal_fn=lambda *args, **kwargs: False,
+        run_news_update_fn=lambda *args, **kwargs: (None, None),
+        load_earnings_analyses_fn=lambda *args, **kwargs: ([], []),
+    )
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    return stage.run(ctx)
+
+
+def test_morning_smart_money_is_partial_while_watched_names_are_unread():
+    """2026-09-19. The seat's answer covers only names whose Form 4s have
+    all been read. With unread filings left on a watched name, a clean run
+    must not be recorded as `ok` — nor as `empty`, which would claim "no
+    material insider activity" on names nobody finished reading."""
+    unread = {"known": True, "as_of": "2026-09-21", "watched": 82,
+              "read_through": 60, "unread": ["WMT"]}
+    assert _smart_money_morning_stage(unread, []).data_status["smart_money"] == "partial"
+    assert _smart_money_morning_stage(
+        {"known": False, "as_of": "", "watched": 0, "read_through": 0, "unread": []},
+        [],
+    ).data_status["smart_money"] == "partial"
+
+    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
+                "read_through": 82, "unread": []}
+    assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
+
+
 @patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
     """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when
@@ -2000,6 +2070,118 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
 
     assert {a.symbol for a in result_ctx.analyses} == {"AAPL", "MSFT"}
     assert result_ctx.data_status["tech"] == "ok"
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
+    mock_compute_indicators, caplog,
+):
+    """2026-09-19 log-health false-alarm fix.
+
+    A `neutral` rating carries no view at all, so the model's own
+    conviction on it is structurally always 'low' — that is not a real
+    research degradation, it is the shape of a no-view read. Before this
+    fix, `data_status['tech'] == 'low_confidence'` (set whenever ANY
+    resolved read is low-conviction, regardless of rating) made the
+    "Morning research degraded: tech" ERROR line fire every single morning,
+    and the log-health report then told the owner a research desk "could
+    not be reached" on a morning where nothing was actually wrong.
+
+    `data_status['tech']` itself is UNCHANGED (still 'low_confidence',
+    asserted below) — RiskStage's `data_degraded` advisory and the Risk
+    Manager's prompt see exactly what they saw before. Only the ERROR
+    summary line is corrected."""
+    import logging
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, rating, conviction):
+        kwargs = dict(
+            symbol=symbol, rating=rating, conviction=conviction,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+        )
+        if rating != "neutral":
+            kwargs.update(
+                entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+                support_levels=[95.0], resistance_levels=[110.0],
+                setup_type="range", expected_horizon_sessions=10,
+                thesis_invalid_if="closes below support",
+            )
+        return TechAnalysisResult(**kwargs)
+
+    analyses_map = {
+        "AAPL": _mk("AAPL", "buy", "medium"),
+        "MSFT": _mk("MSFT", "neutral", "low"),
+    }
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with caplog.at_level(logging.WARNING, logger="src.pipeline_stages"):
+        result_ctx = stage.run(ctx)
+
+    # data_status is untouched — this is a reporting fix, not a gate change.
+    assert result_ctx.data_status["tech"] == "low_confidence"
+    degraded_lines = [
+        r.getMessage() for r in caplog.records
+        if "Morning research degraded" in r.getMessage()
+    ]
+    assert degraded_lines, "test setup sanity: other mocked seats are expected to degrade"
+    assert not any(
+        "tech" in line.split("|", 1)[0] for line in degraded_lines
+    ), f"tech must not be named as degraded on a neutral-only morning: {degraded_lines}"
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
+    mock_compute_indicators, caplog,
+):
+    """Contrast case for the fix above: a real BUY/SELL read the model
+    itself flagged as low-conviction is genuine degradation and must still
+    reach the operator log — only the neutral-driven false alarm is
+    suppressed."""
+    import logging
+
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, conviction):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction=conviction,
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+            thesis_invalid_if="closes below support",
+        )
+
+    analyses_map = {"AAPL": _mk("AAPL", "medium"), "MSFT": _mk("MSFT", "low")}
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    with caplog.at_level(logging.WARNING, logger="src.pipeline_stages"):
+        result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["tech"] == "low_confidence"
+    degraded_lines = [
+        r.getMessage() for r in caplog.records
+        if "Morning research degraded" in r.getMessage()
+    ]
+    assert any(
+        "tech" in line.split("|", 1)[0] for line in degraded_lines
+    ), f"a real low-conviction BUY/SELL read must still be reported: {degraded_lines}"
 
 
 def _minimal_news_report(confidence="medium"):
@@ -3382,3 +3564,130 @@ def test_session_candidate_ranking_is_none_not_empty_when_there_is_no_ranking():
             last_candidate_ranking=[SimpleNamespace(symbol="  ")],
         ))
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# Board items 135 (short side of the #519 guard) and 136 (a scale-driven
+# drop must leave a trace). 2026-09-18.
+# ---------------------------------------------------------------------------
+
+def _short(symbol, alloc):
+    from src.models import TradeDecision
+    return TradeDecision(
+        action="SHORT", symbol=symbol, allocation_pct=alloc,
+        entry_price=100.0, stop_loss=105.0, take_profit=90.0,
+        reasoning="x", thesis_invalid_if="reclaims resistance",
+    )
+
+
+def _run_mods_then_sweep(decisions, modifications):
+    """Exactly the sequence `RiskStage.run` performs: the pipeline's own
+    `_apply_risk_modifications`, then the entry-size sweep."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_stages import _revert_entry_size_increases
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pre = {
+        (d.symbol.strip().upper(), d.action): d.allocation_pct
+        for d in decisions if d.action in ("BUY", "SHORT")
+    }
+    updated, rejected = pipeline._apply_risk_modifications(decisions, modifications)
+    updated, enlarged = _revert_entry_size_increases(updated, pre)
+    return updated, list(rejected) + enlarged
+
+
+def test_item135_short_allocation_may_not_be_enlarged_by_a_risk_mod():
+    """Board item 135. `_apply_risk_modifications` guard 1b tests
+    `decision.action == "BUY"`, so an RM edit that ENLARGED a SHORT sailed
+    through — although the constructor sizes a short add with the mirror of
+    the same cumulative clamp, so an upward edit grows the short by more than
+    the number reads. Must be reverted to the constructor's size."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="XLU", field="allocation_pct",
+        original_value=12.0, new_value=40.0,
+        reason="wants a bigger short",
+    )]
+    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+
+    assert len(updated) == 1
+    assert updated[0].allocation_pct == 12.0, (
+        "the SHORT must ship at the constructor's size, not the enlarged one"
+    )
+    assert any(
+        r["symbol"] == "XLU" and r["field"] == "allocation_pct"
+        and "INCREASE" in r["reason"]
+        for r in rejected
+    ), f"the refusal must be recorded as a visible event; got {rejected}"
+
+
+def test_item135_short_allocation_may_still_be_reduced():
+    """Control. Cutting a short is the seat's actual remit and must apply."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="XLU", field="allocation_pct",
+        original_value=12.0, new_value=5.0, reason="too big",
+    )]
+    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+
+    assert updated[0].allocation_pct == 5.0
+    assert rejected == []
+
+
+def test_item135_buy_guard_is_unchanged_by_the_sweep():
+    """Control. The BUY case is already handled inside
+    `_apply_risk_modifications`; the sweep must not double-report it or
+    change the outcome."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="SPY", field="allocation_pct",
+        original_value=10.0, new_value=25.0, reason="bigger",
+    )]
+    updated, rejected = _run_mods_then_sweep([_buy("SPY", 10.0)], mods)
+
+    assert updated[0].allocation_pct == 10.0
+    assert len(rejected) == 1, f"exactly one refusal, not two; got {rejected}"
+
+
+def test_item136_scale_all_buys_reports_every_entry_it_drops():
+    """Board item 136. The 0.0 lever DROPS each entry rather than zeroing it
+    — which is correct and stays, because a zero allocation reads as SKIP at
+    execution. What was missing is any trace: the drop emitted a logger line
+    only, and the decision is gone from the list before `RiskStage.run`'s
+    per-decision event loop, so `scale_all_buys=0.0` deleted the entire entry
+    side with no pipeline event for any symbol."""
+    from src.models import RiskVerdict
+    from src.pipeline_stages import _apply_scale_all_buys
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.0,
+        reasoning_chain=_risk_rc(), reasoning="risk-off",
+    )
+    decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT"), _sell("NVDA")]
+
+    scaled, scale, dropped = _apply_scale_all_buys(decisions, verdict)
+
+    assert scale == 0.0
+    assert [d.action for d in scaled] == ["HOLD", "SELL"]
+    assert sorted(dropped) == [("SPY", 10.0), ("XLU", 8.0)], (
+        f"every dropped entry must be reported with its pre-scale size; "
+        f"got {dropped}"
+    )
+
+
+def test_item136_no_drops_reported_when_the_lever_is_not_pulled():
+    """Control. A scale that removes nothing reports nothing."""
+    from src.models import RiskVerdict
+    from src.pipeline_stages import _apply_scale_all_buys
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(), reasoning="trim",
+    )
+    scaled, scale, dropped = _apply_scale_all_buys([_buy("SPY", 10)], verdict)
+
+    assert scaled[0].allocation_pct == 5.0
+    assert dropped == []

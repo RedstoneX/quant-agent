@@ -399,10 +399,65 @@ class _Fake429(Exception):
 
 
 def test_reconnect_delay_honors_server_retry_after():
+    """Retry-After is honoured verbatim for a NON-rate-limit failure.
+
+    CHANGED 2026-09-18: this test used to assert that a 429 carrying
+    Retry-After 12 waited exactly 12s. It no longer may. Alpaca publishes
+    the limit as 200 requests per MINUTE, so a retry 12s into the same
+    exhausted window cannot clear it — a 429 now floors at the full
+    published window. The verbatim-hint contract still holds for every
+    other failure, which is what this now pins.
+    """
     from src.execution.broker import _trading_stream_reconnect_delay
-    exc = _Fake429(retry_after=12)
+
+    class _TransientWithHint(ConnectionError):
+        def __init__(self):
+            super().__init__("connection reset")
+            self.headers = {"retry-after": "12"}
+
+    exc = _TransientWithHint()
     assert _trading_stream_reconnect_delay(1, exc) == 12.0
     assert _trading_stream_reconnect_delay(9, exc) == 12.0
+
+
+def test_rate_limit_backs_off_harder_than_a_transient_error():
+    """A 429 must wait strictly longer than a generic network failure.
+
+    This is the whole lesson of 2026-09-15: 32,666 of the day's 32,896
+    handshakes were HTTP 429, and retrying a rate limit on transport
+    timings is what produced them.
+    """
+    from src.execution.broker import (
+        _trading_stream_reconnect_delay,
+        _STREAM_RATE_LIMIT_STAND_DOWN_S,
+        _ALPACA_STREAM_RECONNECT_MAX_S,
+    )
+
+    # The rate-limit floor must exceed the TRANSPORT cap, or "harder" is
+    # only true on early attempts.
+    assert _STREAM_RATE_LIMIT_STAND_DOWN_S > _ALPACA_STREAM_RECONNECT_MAX_S
+
+    for attempt in (1, 2, 5, 9, 50):
+        transient = _trading_stream_reconnect_delay(
+            attempt, ConnectionError("connection reset"),
+        )
+        rate_limited = _trading_stream_reconnect_delay(attempt, _Fake429())
+        assert rate_limited > transient, (
+            f"attempt {attempt}: 429 waited {rate_limited}s but a generic "
+            f"error waited {transient}s"
+        )
+        assert rate_limited >= _STREAM_RATE_LIMIT_STAND_DOWN_S
+
+    # A server asking us back sooner than its own published window does not
+    # shorten the stand-down.
+    assert (
+        _trading_stream_reconnect_delay(1, _Fake429(retry_after=5))
+        == _STREAM_RATE_LIMIT_STAND_DOWN_S
+    )
+    # A server asking for LONGER always wins.
+    assert _trading_stream_reconnect_delay(
+        1, _Fake429(retry_after=_STREAM_RATE_LIMIT_STAND_DOWN_S + 90),
+    ) == _STREAM_RATE_LIMIT_STAND_DOWN_S + 90
 
 
 def test_reconnect_delay_grows_then_caps_without_retry_after():
@@ -423,10 +478,11 @@ def test_stream_http_status_reads_429_from_exc_and_message():
     assert _stream_http_status(ConnectionError("timed out")) is None
 
 
-def test_guarded_handshake_does_not_tight_loop_on_429():
+def test_guarded_handshake_does_not_tight_loop_on_429(monkeypatch):
     """Old SDK shape: except + 10ms sleep. With Retry-After 0.2s the
     guarded `_start_ws` itself waits, so a 0.5s window cannot issue
     dozens of handshakes."""
+    from src.execution import broker as broker_mod
     from src.execution.broker import _install_trading_stream_reconnect_guard
 
     attempts = {"n": 0}
@@ -442,6 +498,11 @@ def test_guarded_handshake_does_not_tight_loop_on_429():
             self._should_run = False
 
     stream = Stream()
+    # The 429 stand-down is now the published 60s minute-window, which this
+    # 0.5s probe cannot wait out. Shrink the constant, not the assertion:
+    # what is under test is that the guard SLEEPS AT ALL between handshakes.
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.2)
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
     _install_trading_stream_reconnect_guard(stream)
 
     async def _old_sdk_loop(duration: float) -> None:
@@ -459,6 +520,7 @@ def test_guarded_handshake_does_not_tight_loop_on_429():
 
 
 def test_guard_stop_interrupts_backoff_wait():
+    from src.execution import broker as broker_mod
     from src.execution.broker import _install_trading_stream_reconnect_guard
 
     class Stream:
@@ -471,6 +533,7 @@ def test_guard_stop_interrupts_backoff_wait():
             self._should_run = False
 
     stream = Stream()
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
     _install_trading_stream_reconnect_guard(stream)
 
     async def _fail_then_stop():
@@ -1053,3 +1116,497 @@ def test_shipped_config_has_the_fill_stream_on():
     root = Path(__file__).resolve().parent.parent
     raw = yaml.safe_load((root / "config" / "settings.yaml").read_text())
     assert raw["execution"]["fill_stream_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Reconnect CEILINGS (2026-09-18). The backoff guard fixed the RATE of the
+# 2026-09-15 storm but not its BOUND: the attempt counter lived in a closure
+# and reset on every new hub, so a socket that can never authenticate
+# retried at the 30s cap forever. These pin the ceiling that ends it.
+# ---------------------------------------------------------------------------
+
+
+class _CeilingStream:
+    """Old-SDK shape: `_start_ws` that always fails, driven by a 10ms loop."""
+
+    def __init__(self, exc_factory):
+        self._should_run = True
+        self._exc_factory = exc_factory
+        self.attempts = 0
+
+    async def _start_ws(self):
+        self.attempts += 1
+        raise self._exc_factory()
+
+    async def stop_ws(self):
+        self._should_run = False
+
+
+async def _drive_sdk_loop(stream, max_iterations: int = 500) -> None:
+    """Reproduce `alpaca.trading.stream._run_forever` (alpaca-py 0.43.5).
+
+    Verbatim in the part that matters: catch everything, then
+    `finally: await asyncio.sleep(0.01)`, then re-check `_should_run` at the
+    top. No backoff and no ceiling of its own — which is the defect.
+    """
+    for _ in range(max_iterations):
+        if not stream._should_run:
+            return
+        try:
+            await stream._start_ws()
+            return
+        except Exception:
+            pass
+        finally:
+            await asyncio.sleep(0)
+
+
+def test_session_ceiling_stops_the_reconnect_loop(monkeypatch):
+    """The loop must STOP, not merely slow down."""
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    monkeypatch.setattr(broker_mod, "send_owner_alert", None, raising=False)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+    )
+
+    stream = _CeilingStream(_Fake429)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+    asyncio.run(_drive_sdk_loop(stream))
+
+    ceiling = broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION
+    assert stream.attempts == ceiling, (
+        f"expected the loop to stop at the {ceiling}-attempt session "
+        f"ceiling, got {stream.attempts}"
+    )
+    # The SDK's own loop is told to exit, which is what actually ends it.
+    assert stream._should_run is False
+    assert sent == ["it rate-limited us"], "exactly one give-up, once"
+
+
+def test_daily_ceiling_survives_a_fresh_session(monkeypatch):
+    """A new hub must NOT hand the socket a fresh unbounded budget.
+
+    This is the hole the closure-local counter left: every `start()` reset
+    `failures` to zero, so nothing ever accumulated across a day.
+    """
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_DAY", 10)
+    monkeypatch.setattr(broker_mod, "_alert_stream_gave_up", lambda reason: None)
+
+    total = 0
+    for _ in range(20):  # twenty fresh sockets in one day
+        stream = _CeilingStream(_Fake429)
+        broker_mod._install_trading_stream_reconnect_guard(stream)
+        asyncio.run(_drive_sdk_loop(stream))
+        total += stream.attempts
+
+    assert total <= 10 + broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION, (
+        f"twenty sessions spent {total} handshakes against a daily ceiling "
+        "of 10 — the budget is not shared across sessions"
+    )
+    assert broker_mod._STREAM_ATTEMPT_BUDGET.day_exhausted()
+
+
+def test_budget_rolls_over_to_a_new_day():
+    """Yesterday's exhaustion must not keep the socket shut forever."""
+    from src.execution.broker import _StreamAttemptBudget
+
+    budget = _StreamAttemptBudget()
+    for _ in range(500):
+        budget.record_attempt("2026-09-15")
+    assert budget.day_exhausted("2026-09-15")
+    assert budget.claim_alert("2026-09-15") is True
+    assert budget.claim_alert("2026-09-15") is False, "alert is once a day"
+
+    assert not budget.day_exhausted("2026-09-16")
+    assert budget.attempts_today("2026-09-16") == 0
+    assert budget.claim_alert("2026-09-16") is True
+
+
+def test_giveup_alert_is_plain_english_and_says_fills_still_work():
+    """The owner reads this on a phone and must not need to act on it."""
+    from src.execution.broker import _stream_giveup_owner_message
+
+    text = _stream_giveup_owner_message("it rate-limited us")
+    lowered = text.lower()
+    assert "instant fill alerts switched off" in lowered
+    assert "slower way" in lowered
+    assert "nothing for you to do" in lowered
+    for jargon in (
+        "websocket", "trade_updates", "429", "http", "handshake",
+        "backoff", "rest", "auth", "socket",
+    ):
+        assert jargon not in lowered, f"owner text leaked the term {jargon!r}"
+
+
+def test_auth_rejection_also_hits_the_ceiling(monkeypatch):
+    """A wrong credential must give up too, not just a rate limit.
+
+    2026-09-15 was a credential refusal that PRESENTED as 429s. Bounding
+    only the rate-limit path would leave the original fault unbounded.
+    """
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+    )
+
+    def _rejected():
+        return broker_mod.TradeStreamAuthRejected(
+            broker_message="code=401, message=Unauthorized",
+            broker_status="unauthorized",
+            credential="PKplaceholderplaceholder1234",
+        )
+
+    stream = _CeilingStream(_rejected)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+    asyncio.run(_drive_sdk_loop(stream))
+
+    assert stream.attempts == broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION
+    assert stream._should_run is False
+    assert sent == ["it rejected our credential"]
+
+
+# ---------------------------------------------------------------------------
+# AUTH FORMAT DEPRECATION (2026-09-18). Alpaca's authorization reply says the
+# payload we send is being deprecated in favour of
+# {"action":"auth","key":K,"secret":S}. That payload is built by the VENDOR,
+# in alpaca-py's `TradingStream._auth`, so the migration is upstream's — and
+# alpaca-py 0.44.0, the newest release on PyPI on 2026-09-18, still sends the
+# old form, so there is no version to bump to. These tests exist so that fact
+# is a mechanical check rather than a remembered promise: the first one goes
+# RED the day upstream migrates.
+# ---------------------------------------------------------------------------
+
+_ALPACA_DEPRECATION_REPLY = (
+    '{"stream":"authorization","data":{"action":"authenticate",'
+    '"message":"this authentication format is being deprecated. Please use '
+    'the format: {\\"action\\": \\"auth\\", \\"key\\": \\"x\\", '
+    '\\"secret\\": \\"x\\"}","status":"authorized"}}'
+)
+
+
+def test_the_installed_sdk_still_builds_the_deprecated_auth_payload():
+    """Pins WHOSE payload this is, and WHICH form it is, against the real SDK.
+
+    Read this failing test as good news, not a defect: if it goes red
+    because the payload is now `{"action":"auth","key":...,"secret":...}`,
+    alpaca-py has done the migration and the desk can DELETE its own frame
+    (`_send_current_auth_format`) and hand the job back to the vendor. If
+    it goes red some other way, the SDK changed shape and the wrapper that
+    stands in front of it needs a look before the socket is trusted.
+
+    It pins the SDK INSTALLED HERE, which is the CI box, not production —
+    `pyproject.toml` has no upper bound and there is no lockfile. It is a
+    trigger to look, not a statement about what the desk is running.
+    """
+    import json as _json
+
+    alpaca_stream = pytest.importorskip("alpaca.trading.stream")
+
+    sent: list[str] = []
+
+    class _RecordingSocket:
+        async def send(self, payload):
+            sent.append(payload)
+
+        async def recv(self):
+            return '{"stream":"authorization","data":{"status":"authorized"}}'
+
+    stream = alpaca_stream.TradingStream("key-not-real", "secret-not-real")
+    stream._ws = _RecordingSocket()
+    asyncio.run(stream._auth())
+
+    assert len(sent) == 1
+    payload = _json.loads(sent[0])
+    assert payload["action"] == "authenticate", (
+        "alpaca-py now sends a different auth action "
+        f"({payload.get('action')!r}). If it is 'auth', the vendor has "
+        "migrated: retire `_send_current_auth_format` and this test."
+    )
+    assert set(payload["data"]) == {"key_id", "secret_key"}
+    # The new form's keys must NOT be at the top level yet — that is the
+    # exact signal this test exists to catch.
+    assert "key" not in payload and "secret" not in payload
+
+
+def test_the_brokers_deprecation_notice_reaches_the_desks_own_log(caplog):
+    """The notice arrived on every successful handshake and was discarded.
+
+    A broker telling us our auth format is going away must not be
+    swallowed: the alternative record is a handshake that silently stops
+    working one day.
+    """
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    broker_mod._stream_auth_deprecation_logged = False
+    stream = _rejected_stream(reply=_ALPACA_DEPRECATION_REPLY)
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        asyncio.run(stream._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "trade_updates auth format is DEPRECATED by the broker" in text
+    assert "this authentication format is being deprecated" in text
+    # Says whose problem it is, so nobody re-derives it a third time.
+    assert "alpaca-py" in text
+
+
+def test_the_deprecation_notice_is_logged_once_not_once_per_handshake(caplog):
+    """Once per process. A per-handshake line is what the 2026-09-15 storm
+    cost: 32,896 attempts would have printed 32,896 of these."""
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    broker_mod._stream_auth_deprecation_logged = False
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        for _ in range(4):
+            asyncio.run(_rejected_stream(
+                reply=_ALPACA_DEPRECATION_REPLY,
+            )._start_ws())
+    hits = [
+        r for r in caplog.records
+        if "auth format is DEPRECATED" in r.getMessage()
+    ]
+    assert len(hits) == 1
+
+
+def test_no_deprecation_notice_is_invented_when_the_broker_sends_none(caplog):
+    """An authorized reply with no notice must print nothing.
+
+    A warning the broker did not send is an inference dressed as a
+    measurement, and would survive long after the migration landed.
+    """
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    broker_mod._stream_auth_deprecation_logged = False
+    authorized = (
+        '{"stream":"authorization","data":'
+        '{"action":"authenticate","status":"authorized"}}'
+    )
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        asyncio.run(_rejected_stream(reply=authorized)._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "DEPRECATED" not in text
+
+
+def test_the_deprecation_notice_never_carries_a_credential(caplog):
+    """Same rule as every other line this module prints about auth."""
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    broker_mod._stream_auth_deprecation_logged = False
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        asyncio.run(_rejected_stream(
+            reply=_ALPACA_DEPRECATION_REPLY,
+        )._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert _PLACEHOLDER_KEY not in text
+    assert _PLACEHOLDER_SECRET not in text
+
+
+class _SilentAuthSocket:
+    """A broker that accepts the auth frame and then never answers.
+
+    This is the shape a silent retirement of the deprecated auth format
+    takes, and it is NOT the rejection path: there is no reply to parse,
+    so nothing raises on its own.
+    """
+
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, payload):
+        self.sent.append(payload)
+
+    async def recv(self):
+        await asyncio.sleep(3600)
+
+
+class _SilentAuthStream(_FakeAuthStream):
+    def __init__(self):
+        super().__init__(_PLACEHOLDER_KEY, _PLACEHOLDER_SECRET, reply="")
+
+    async def _connect(self):
+        self._ws = _SilentAuthSocket()
+
+    async def _auth(self):
+        await self._ws.send("{}")
+        await self._ws.recv()
+
+
+def test_a_broker_that_never_answers_auth_does_not_park_the_thread(monkeypatch):
+    """alpaca-py awaits the auth reply with no timeout; its own `_consume`
+    bounds the same call. Without a bound here, a silent broker means no
+    exception, so the reconnect ceiling never counts and never gives up —
+    the socket would report itself live forever. The bound is the hub's
+    existing auth budget, not a new number."""
+    from src.execution import broker as broker_mod
+
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_AUTH_DEADLINE_S", 0.2)
+    stream = _SilentAuthStream()
+    asyncio.run(stream._connect())
+    broker_mod._install_trading_stream_auth_diagnostics(stream)
+
+    started = time.monotonic()
+    with pytest.raises(broker_mod.TradeStreamAuthRejected) as excinfo:
+        asyncio.run(stream._auth())
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5, "the handshake was not bounded"
+    assert excinfo.value.broker_status == "no reply"
+    assert "no reply to the authentication frame" in excinfo.value.broker_message
+    assert isinstance(excinfo.value.__cause__, asyncio.TimeoutError)
+
+
+def test_the_silent_broker_is_counted_by_the_reconnect_ceiling(monkeypatch):
+    """The timeout must arrive as the same kind of failure the ceiling
+    already ends on — otherwise bounding the wait just moves the unbounded
+    loop one level out."""
+    from src.execution import broker as broker_mod
+
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_AUTH_DEADLINE_S", 0.05)
+    monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_SESSION", 2)
+    monkeypatch.setattr(
+        broker_mod, "_trading_stream_reconnect_delay",
+        lambda *a, **k: 0.0,
+    )
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_alert_stream_gave_up", lambda reason: None)
+
+    stream = _SilentAuthStream()
+    broker_mod._install_trading_stream_auth_diagnostics(stream)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+
+    for _ in range(2):
+        with pytest.raises(broker_mod.TradeStreamAuthRejected):
+            asyncio.run(stream._start_ws())
+    assert stream._should_run is False
+    assert broker_mod._STREAM_ATTEMPT_BUDGET.attempts_today() == 2
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+
+
+# ---------------------------------------------------------------------------
+# AUTH FORMAT MIGRATION (2026-09-18). The desk now sends the format Alpaca
+# asks for, with the deprecated one kept as a fallback because the current
+# form is proven on exactly one host.
+# ---------------------------------------------------------------------------
+
+_AUTHORIZED_NEW_FORM = (
+    '{"stream":"authorization","data":'
+    '{"action":"authenticate","status":"authorized"}}'
+)
+
+
+def test_the_handshake_sends_the_format_the_broker_asks_for():
+    """The frame on the wire is the CURRENT one, not alpaca-py's."""
+    import json as _json
+
+    stream = _rejected_stream(reply=_AUTHORIZED_NEW_FORM)
+    asyncio.run(stream._start_ws())
+
+    assert len(stream._ws.sent) == 1
+    frame = _json.loads(stream._ws.sent[0])
+    assert frame["action"] == "auth"
+    assert frame["key"] == _PLACEHOLDER_KEY
+    assert frame["secret"] == _PLACEHOLDER_SECRET
+    # The deprecated envelope must be gone, not merely accompanied.
+    assert "data" not in frame
+
+
+def test_a_refused_current_format_falls_back_on_the_NEXT_socket(caplog):
+    """Never a second frame on a socket the broker just refused.
+
+    Alpaca closes a refused connection, so re-sending there would fail for
+    a reason unrelated to the format and would read as a bad credential.
+    The mark is what makes the next handshake — on a fresh socket — send
+    the deprecated form.
+    """
+    import json as _json
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    stream = _rejected_stream()  # refuses everything
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        with pytest.raises(broker_mod.TradeStreamAuthRejected):
+            asyncio.run(stream._start_ws())
+
+    assert stream._qamc_auth_fallback is True
+    assert len(stream._ws.sent) == 1, "a refused socket must not be re-sent on"
+    assert _json.loads(stream._ws.sent[0])["action"] == "auth"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "the CURRENT format" in text and "was refused" in text
+    assert "falls back to the deprecated format" in text
+
+    # Second handshake on a fresh socket: now the vendor's frame.
+    asyncio.run(stream._connect())
+    with pytest.raises(broker_mod.TradeStreamAuthRejected):
+        asyncio.run(stream._auth())
+    assert _json.loads(stream._ws.sent[0])["action"] == "authenticate"
+
+
+def test_a_successful_current_format_handshake_says_so_once(caplog):
+    """Positive evidence in the desk's own log that the migration took.
+
+    The absence of a failure is what let a socket that never authenticated
+    look healthy for three days; it must not be the evidence again.
+    """
+    import logging
+
+    from src.execution import broker as broker_mod
+
+    broker_mod._stream_current_auth_format_logged = False
+    with caplog.at_level(logging.INFO, logger="src.execution.broker"):
+        for _ in range(3):
+            asyncio.run(_rejected_stream(
+                reply=_AUTHORIZED_NEW_FORM,
+            )._start_ws())
+    hits = [
+        r for r in caplog.records
+        if "authenticated with the CURRENT auth format" in r.getMessage()
+    ]
+    assert len(hits) == 1
+
+
+def test_the_fallback_still_reaches_the_ceiling_and_gives_up(monkeypatch):
+    """Adding a format attempt must not add an unbounded one.
+
+    The fallback costs handshakes out of the SAME budget; a refusal
+    sequence still ends at the session ceiling.
+    """
+    from src.execution import broker as broker_mod
+
+    monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_SESSION", 3)
+    monkeypatch.setattr(
+        broker_mod, "_trading_stream_reconnect_delay", lambda *a, **k: 0.0,
+    )
+    monkeypatch.setattr(broker_mod, "_alert_stream_gave_up", lambda reason: None)
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+
+    stream = _rejected_stream()
+    for _ in range(3):
+        with pytest.raises(broker_mod.TradeStreamAuthRejected):
+            asyncio.run(stream._start_ws())
+    assert stream._should_run is False
+    assert broker_mod._STREAM_ATTEMPT_BUDGET.attempts_today() == 3
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()

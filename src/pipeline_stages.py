@@ -1545,6 +1545,42 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
     return faults
 
 
+def _record_constructor_side_flips(pipeline, ctx) -> None:
+    """One durable per-symbol row for every target the constructor collapsed
+    from a side flip to a close-only leg (`PortfolioConstructor`, rule D3).
+
+    Board item 164 (2026-09-19). The seat asked to turn a long into a short
+    (or back); the constructor refuses the flip and emits only the closing
+    leg. The symbol still produces an order, so it never counts as a drop,
+    and the only trace of the refused half was a log line. The record states
+    the held weight, the weight asked for and the weight emitted (0: flat).
+    Never raises.
+    """
+    try:
+        flips = getattr(pipeline.portfolio_constructor, "last_side_flips", None)
+        if not isinstance(flips, dict):
+            return
+        for sym, flip in flips.items():
+            held = flip.get("held_weight_pct")
+            asked = flip.get("requested_weight_pct")
+            _record_pipeline_event(
+                pipeline, ctx, sym, "deterministic_gate", "modified",
+                "side_flip_refused", gate="side_flip_refused",
+                held_weight_pct=held, requested_weight_pct=asked,
+                emitted_weight_pct=flip.get("emitted_weight_pct"),
+                detail=(
+                    f"{sym}: target asked to flip the position from "
+                    f"{held:+.2f}% to {asked:+.2f}% of the book in one "
+                    f"session; a single order that crosses sides is "
+                    f"unprotected between legs, so only the closing leg "
+                    f"(to 0%) was built. The other side can open in a later "
+                    f"session once the book is flat."
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("constructor side-flip recording failed: %s", exc)
+
+
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, ceiling: float, ask: float | None = None,
@@ -3316,7 +3352,159 @@ def _stash_macro_parse_failure(reason: str) -> None:
 
 
 
-def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
+def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
+    """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
+
+    `_apply_risk_modifications` guard 1b already does this for a BUY. It was
+    written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
+    the same cumulative clamp in the constructor, and scaled alongside BUY by
+    `_apply_scale_all_buys` precisely because both open new risk — could be
+    enlarged by an edit the seat believed was protective. On a short that ADDS
+    to a short already held, `allocation_pct` is an increment exactly as it is
+    on a long add, so an upward edit grows the short by more than the number
+    reads.
+
+    Enforced here rather than inside guard 1b only because this sweep needs
+    the pre-modification sizes, which this stage already has. Guard 1b stays:
+    it fires first and more specifically for a BUY, and this is a no-op behind
+    it. If the two are ever consolidated, consolidate ONTO guard 1b.
+
+    Fails toward the SMALLER size in every branch: the pre-modification value
+    is the constructor's own, which is already clamped by the single-name
+    ceiling, the risk budget and the sector dial. Nothing here can raise a
+    size, and a decision whose pre-modification size is unknown is left
+    untouched rather than guessed at.
+    """
+    out: list = []
+    rejected: list[dict] = []
+    for d in decisions:
+        if d is None or d.action not in ("BUY", "SHORT"):
+            out.append(d)
+            continue
+        before = pre_alloc.get((d.symbol.strip().upper(), d.action))
+        if before is None or d.allocation_pct <= before:
+            out.append(d)
+            continue
+        reason = (
+            f"RM modification would INCREASE {d.symbol}'s {d.action} "
+            f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}). "
+            f"Reverted — the risk seat may only reduce an entry's size, "
+            f"never enlarge it; on an add to a position already held this "
+            f"field is an increment, so an upward edit grows the position by "
+            f"more than the number reads."
+        )
+        logger.warning("Risk mod REJECTED for %s: %s", d.symbol, reason)
+        rejected.append({
+            "symbol": d.symbol, "field": "allocation_pct", "reason": reason,
+        })
+        try:
+            out.append(d.model_copy(update={"allocation_pct": before}))
+        except Exception as e:
+            # Cannot restore the smaller size, so do not ship the larger one.
+            logger.warning(
+                "Could not revert %s's enlarged allocation_pct (%s) — "
+                "DROPPING the decision rather than executing the increase",
+                d.symbol, e,
+            )
+            # Board item 164: the entry above says "Reverted", which is no
+            # longer true — the decision is gone. Restate it as the drop it
+            # is, so the durable record does not claim a trade shipped at
+            # its pre-edit size when nothing shipped at all.
+            rejected[-1].update({
+                "outcome": "dropped",
+                "gate": "rm_enlargement_revert_failed",
+                "action": d.action,
+                "before": before,
+                "requested": d.allocation_pct,
+                "reason": (
+                    f"RM modification would INCREASE {d.symbol}'s {d.action} "
+                    f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}); "
+                    f"restoring the pre-edit size failed ({e}), so the "
+                    f"{d.action} was DROPPED rather than shipped at the "
+                    f"enlarged size."
+                ),
+            })
+    return out, rejected
+
+
+#: The four fields a risk-seat edit or `scale_all_buys` can change — the
+#: same set `_apply_risk_modifications` accepts (`modifiable_fields` there).
+_RISK_EDITABLE_FIELDS = ("allocation_pct", "entry_price", "stop_loss", "take_profit")
+
+
+def _risk_edit_snapshot(decisions) -> dict:
+    """`{(SYMBOL, action): {field: value}}` for the editable fields."""
+    out: dict = {}
+    for d in decisions or []:
+        if d is None:
+            continue
+        out[(d.symbol.strip().upper(), d.action)] = {
+            f: getattr(d, f, None) for f in _RISK_EDITABLE_FIELDS
+        }
+    return out
+
+
+def _risk_event_for(
+    decision, pre_rm_fields: dict, verdict, scale: float,
+    field_aliases: dict | None = None,
+):
+    """The per-symbol `risk` event for a leg that SURVIVED the risk seat.
+
+    Board item 164 (2026-09-19). This event used to carry the constant
+    reason `risk_manager_verdict` on every symbol, and read `modified` for
+    any symbol the seat merely NAMED in a modification — including an edit
+    that was rejected, reverted or never matched — and for every leg,
+    exits included, whenever `scale_all_buys` was below 1. Now:
+
+    - `outcome` is `modified` only when a field of this decision actually
+      differs from what it was before the seat's edits and scaling;
+    - `reason` is the seat's OWN reason for this symbol — the stated reason
+      on each modification that took effect — and only where the seat gave
+      none does it say so in words;
+    - `changes` carries every field that moved, as `[before, after]`.
+
+    Pure: reads the decision, the snapshot and the verdict; changes nothing.
+    """
+    key = (decision.symbol.strip().upper(), decision.action)
+    before = pre_rm_fields.get(key) or {}
+    changes = {
+        f: [before[f], getattr(decision, f, None)]
+        for f in _RISK_EDITABLE_FIELDS
+        if f in before and before[f] != getattr(decision, f, None)
+    }
+    category = getattr(verdict, "reason_category", None)
+    details: dict = {"gate": "risk_manager", "reason_category": category}
+    if not changes:
+        reason = (
+            f"risk manager approved {decision.symbol} unchanged; the seat "
+            f"gave no reason specific to this symbol (verdict category "
+            f"{category!r}; its run-level reasoning is on this run's verdict "
+            f"row)"
+        )
+        return "approved", reason, details
+    aliases = field_aliases if isinstance(field_aliases, dict) else {}
+    seat_reasons = []
+    for m in (getattr(verdict, "modifications", None) or []):
+        field = aliases.get(m.field, m.field)
+        if (
+            m.symbol.strip().upper() == key[0] and field in changes
+            and (m.reason or "").strip()
+        ):
+            seat_reasons.append(f"{field}: {m.reason}")
+    if (
+        scale < 1.0 and decision.action in ("BUY", "SHORT")
+        and "allocation_pct" in changes
+    ):
+        seat_reasons.append(f"scale_all_buys={scale:.2f} applied to every entry")
+    details["changes"] = changes
+    reason = "; ".join(seat_reasons) or (
+        f"risk manager changed {', '.join(sorted(changes))} on "
+        f"{decision.symbol} without stating a reason for this symbol"
+    )
+    return "modified", reason, details
+
+
+def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float, list]:
     """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
 
     `scale_all_buys` is documented in config/prompts/risk_manager.md as
@@ -3331,14 +3519,17 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     level "cut everything new" knob should not have a blind spot for one
     of the two ways to open it. SELL, COVER and HOLD are untouched.
 
-    Returns ``(scaled_decisions, scale)`` so the caller can use the
+    Returns ``(scaled_decisions, scale, dropped)`` so the caller can use the
     coerced scale for follow-up filters (re-running hard risk if the
-    scale dropped allocations into different buckets).
+    scale dropped allocations into different buckets) and file a visible
+    pipeline event for every entry the scaling removed outright (board item
+    136 — see the drop branch below).
     """
     scale_raw = getattr(verdict, "scale_all_buys", 1.0)
     scale = 1.0 if scale_raw is None else float(scale_raw)
+    dropped: list[tuple[str, float]] = []
     if scale >= 1.0 or scale < 0.0:
-        return list(decisions), scale
+        return list(decisions), scale, dropped
 
     scaled: list = []
     for d in decisions:
@@ -3349,6 +3540,18 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
                     "scale_all_buys=%.2f drops %s (alloc 0 after scaling)",
                     scale, d.symbol,
                 )
+                # Board item 136. The DROP is correct and stays: this desk's
+                # standing rule is that a refusal must remove a target, never
+                # zero one, because an allocation_pct of 0 reads as SKIP at
+                # execution (the same convention guard 1 in
+                # `_apply_risk_modifications` protects). What was wrong is
+                # that the drop left NO trace anywhere the desk can read —
+                # a logger line only, and the decision is gone from the list
+                # before the per-decision event loop in `RiskStage.run`
+                # runs, so `scale_all_buys=0.0` silently deleted the whole
+                # entry side with no pipeline event for any symbol. Recorded
+                # here so the caller can file one per dropped name.
+                dropped.append((d.symbol, d.allocation_pct))
                 continue
             try:
                 scaled.append(d.model_copy(update={"allocation_pct": new_alloc}))
@@ -3364,7 +3567,7 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
                 scaled.append(d)
         else:
             scaled.append(d)
-    return scaled, scale
+    return scaled, scale, dropped
 
 
 class MorningResearchStage:
@@ -3401,6 +3604,7 @@ class MorningResearchStage:
         smart_money_analyst: "SmartMoneyAnalystAgent | None" = None,
         admit_smart_money_candidates_fn=None,
         admit_nominated_candidates_fn=None,
+        admit_screened_universe_fn=None,
         event_calendar: "MacroEventCalendarProvider | None" = None,
         fomc_calendar: "FOMCCalendarProvider | None" = None,
         live_session_context_fn=None,
@@ -3443,6 +3647,10 @@ class MorningResearchStage:
         # groups/ranks SEC Form 4 rows, the other consumes an
         # already-capped nomination candidate list.
         self._admit_nominated_candidates = admit_nominated_candidates_fn
+        # Universe screen (src/universe_screen.py): (positions) ->
+        # (symbols, details) for this session's share of the screened,
+        # persisted universe. Returns nothing while the screen is off.
+        self._admit_screened_universe = admit_screened_universe_fn
         # Injected callables so we don't duplicate pre-filter / news / earnings
         # orchestration logic. Those still live on TradingPipeline for now
         # because they touch shared state we haven't finished extracting.
@@ -3512,6 +3720,20 @@ class MorningResearchStage:
                 logger.warning("Smart-money transient admission failed closed: %s", exc)
                 ctx.admitted_symbols = set()
                 ctx.smart_money_admissions = {}
+        if self._admit_screened_universe:
+            try:
+                screened, screened_details = self._admit_screened_universe(
+                    getattr(ctx, "positions", None) or [],
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Fails closed: no screened name this session, nothing else lost.
+                logger.warning("Screened-universe admission failed closed: %s", exc)
+                screened, screened_details = set(), {}
+            for symbol in sorted(screened):
+                if symbol in ctx.admitted_symbols:
+                    continue
+                ctx.admitted_symbols.add(symbol)
+                ctx.smart_money_admissions[symbol] = screened_details.get(symbol, {})
         configured_symbols = [
             str(symbol).strip().upper()
             for symbol in self.config.trading.universe if str(symbol).strip()
@@ -3539,8 +3761,10 @@ class MorningResearchStage:
                     pass
         for symbol, admission in ctx.smart_money_admissions.items():
             import json as _json
+            screened = admission.get("reason") == "universe_screen_admission"
             _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
+                self.db, run_id=ctx.run_id,
+                agent_name="universe_screen" if screened else "smart_money_analyst",
                 kind="admission", scope="symbol", symbol=symbol,
                 evidence_json=_json.dumps(admission, sort_keys=True),
             )
@@ -3554,7 +3778,7 @@ class MorningResearchStage:
             admission_reason = admission_details.pop("reason", None)
             _record_pipeline_event(
                 self, ctx, symbol, "opportunity", "admitted",
-                "smart_money_form4_admission",
+                "universe_screen_admission" if screened else "smart_money_form4_admission",
                 admission_reason=admission_reason,
                 **admission_details,
             )
@@ -3793,6 +4017,34 @@ class MorningResearchStage:
             earnings_future = ex.submit(copy_context().run, _load_earnings)
             smart_money_future = ex.submit(copy_context().run, _run_smart_money)
 
+        # How much of the watched set the pre-market Form 4 pass actually
+        # read, per issuer. No network. The analyst's answer covers only the
+        # names read through; below, a clean status is downgraded to
+        # `partial` when any watched name still has unread filings, so the
+        # seat never reports `ok` / `empty` over filings nobody read.
+        sm_coverage = None
+        coverage_probe = getattr(self.smart_money_provider, "form4_coverage", None)
+        if smart_config and smart_config.enabled and callable(coverage_probe):
+            try:
+                sm_coverage = coverage_probe()
+                if not isinstance(sm_coverage, dict):
+                    sm_coverage = None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Smart-money coverage read failed: %s", exc)
+                sm_coverage = {"known": False, "error": type(exc).__name__}
+        # How old the congressional evidence is (newest disclosure, newest
+        # trade, each source's copy). No network; None when that feed is off.
+        sm_congressional = None
+        congress_probe = getattr(self.smart_money_provider, "congressional_freshness", None)
+        if smart_config and smart_config.enabled and callable(congress_probe):
+            try:
+                sm_congressional = congress_probe()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Congressional freshness read failed: %s", exc)
+                sm_congressional = {"known": False, "error": type(exc).__name__}
+        sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
+            not sm_coverage.get("known") or bool(sm_coverage.get("unread"))
+        )
         try:
             findings, sm_result, provider_error, analysis_error = smart_money_future.result()
             ctx.smart_money_findings = findings
@@ -3810,7 +4062,14 @@ class MorningResearchStage:
                         "degraded" if provider_error or analysis_error else
                         "material" if findings else "quiet"
                     ),
-                }, sort_keys=True),
+                    # Watched-name read-through as of the pre-market pass:
+                    # {known, as_of, watched, read_through, unread[symbols]}.
+                    "coverage": sm_coverage,
+                    # Congressional disclosures lag the trade by weeks
+                    # (median 60 days measured 2026-09-19); this is how old the
+                    # newest one is, so nothing reads it as current news.
+                    "congressional": sm_congressional,
+                }, sort_keys=True, default=str),
             )
             if provider_error:
                 data_status["smart_money"] = "degraded" if findings else "provider_error"
@@ -3870,6 +4129,21 @@ class MorningResearchStage:
             # it separately from a genuine quiet day or a provider failure.
             if sm_result is not None and getattr(sm_result, "truncated", False):
                 data_status["smart_money"] = "truncated"
+            # Partial coverage: an answer arrived and was read on this tick,
+            # but it cannot speak for watched names whose filings are not
+            # all read. `partial` is REPORTED + fresh + counted as degraded
+            # (src/evidence_gate.py) — honest on all three.
+            if (
+                sm_coverage_incomplete
+                and data_status.get("smart_money") in ("ok", "empty")
+            ):
+                data_status["smart_money"] = "partial"
+                logger.warning(
+                    "Smart-money seat is partial: %s of %s watched names read "
+                    "through (unread: %s)",
+                    sm_coverage.get("read_through"), sm_coverage.get("watched"),
+                    ", ".join(sm_coverage.get("unread") or []) or "coverage never recorded",
+                )
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)
             ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
@@ -4328,9 +4602,30 @@ class MorningResearchStage:
         # listing all degraded inputs side-by-side. The 2+ failure
         # advisory in RiskStage handles the runtime defensive response;
         # this log handles the postmortem readability.
+        # Tech's `low_confidence` is set (see the tech branch above) whenever
+        # ANY resolved read carries the model's own conviction="low" — and a
+        # `neutral` rating (no view at all) is effectively always
+        # low-conviction, because there is nothing for the model to be
+        # confident ABOUT. Before this fix that made this line fire ERROR
+        # every single morning regardless of whether a single actionable
+        # BUY/SELL call was ever shaky, and log-health then reported a
+        # perfectly healthy tech seat as "a research desk that could not be
+        # reached". `data_status["tech"]` itself, and everything that reads
+        # it (RiskStage's `data_degraded` advisory, the Risk Manager's
+        # prompt), is UNCHANGED by this — only this operator-facing summary
+        # line is corrected to name what actually degraded: a low-conviction
+        # read on a symbol the desk was actually weighing, not a no-view
+        # neutral read the model was never going to act on either way.
+        tech_low_confidence_is_noise = (
+            data_status.get("tech") == "low_confidence"
+            and not any(
+                a.conviction == "low" and a.rating != "neutral" for a in analyses
+            )
+        )
         degraded = [
             k for k, v in data_status.items()
             if evidence_gate.counts_as_degraded(v)
+            and not (k == "tech" and tech_low_confidence_is_noise)
         ]
         if degraded:
             logger.error(
@@ -4869,6 +5164,10 @@ class DecisionStage:
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             **pm_decide_kwargs,
         )
+        # Board item 164: read NOW — the candidate-accounting re-ask below
+        # calls decide() again, which resets this list.
+        _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)
+        pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
         from src.agents.portfolio_manager import PortfolioManagerAgent
         macro_failures = list(
             getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
@@ -4931,6 +5230,19 @@ class DecisionStage:
         # return below, so a run whose PM produced nothing still shows which
         # seats had asked for what. Bookkeeping only; never raises.
         _link_nominations_to_decision(pipeline, ctx)
+        # Board item 164: a target the seat proposed and code then removed
+        # (malformed, or an unadjudicated seat conflict) is a decision the
+        # desk made about that symbol; it is persisted per symbol with the
+        # gate and the reason, not only logged. Written whether or not the
+        # PM call as a whole produced a usable decision.
+        for dropped in pm_dropped_targets:
+            _details = {
+                k: v for k, v in dropped.items() if k not in ("symbol", "reason")
+            }
+            _record_pipeline_event(
+                pipeline, ctx, dropped.get("symbol"), "portfolio_manager",
+                "target_dropped", dropped.get("reason", ""), **_details,
+            )
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -5132,6 +5444,7 @@ class DecisionStage:
         data_faults = _record_constructor_drops(pipeline, ctx, portfolio_decision)
         if data_faults:
             _alert_unmeasurable_symbols(data_faults)
+        _record_constructor_side_flips(pipeline, ctx)
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
@@ -5160,6 +5473,60 @@ class DecisionStage:
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx
+
+
+def _record_earnings_cap(pipeline, ctx, before: list, after: list) -> None:
+    """One durable per-symbol row for every BUY the queued-earnings cap
+    dropped or cut (`TradingPipeline._clamp_queued_earnings_buys`).
+
+    Board item 164 (2026-09-19). The cap is a BUY-only gate that either
+    removes a decision or replaces it with a smaller copy, so both outcomes
+    are read by comparing the list it was handed with the list it returned:
+    a BUY absent afterwards was DROPPED, one whose `allocation_pct` fell was
+    CUT. The size is stated before and after because the symbol's
+    `proposed_order` row, written earlier by DecisionStage, still carries
+    the pre-cap number. Never raises — a record failure must not stop the
+    stage (`_persist_evidence`'s contract).
+    """
+    try:
+        after_by_symbol = {
+            d.symbol.strip().upper(): d
+            for d in (after or []) if d is not None and d.action == "BUY"
+        }
+        for d in before or []:
+            if d is None or d.action != "BUY":
+                continue
+            sym = d.symbol.strip().upper()
+            kept = after_by_symbol.get(sym)
+            if kept is None:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
+                    "queued_earnings_cap", gate="queued_earnings_cap",
+                    before_allocation_pct=d.allocation_pct,
+                    after_allocation_pct=0.0,
+                    detail=(
+                        f"BUY {d.symbol} DROPPED: a just-filed earnings "
+                        f"report is queued and not yet read, and the name is "
+                        f"already at or over the queued-earnings weight cap, "
+                        f"so there is no room to add. The proposed order "
+                        f"asked for {d.allocation_pct:.2f}%."
+                    ),
+                )
+            elif kept.allocation_pct < d.allocation_pct:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "deterministic_gate", "modified",
+                    "queued_earnings_cap", gate="queued_earnings_cap",
+                    before_allocation_pct=d.allocation_pct,
+                    after_allocation_pct=kept.allocation_pct,
+                    detail=(
+                        f"BUY {d.symbol} CUT from {d.allocation_pct:.2f}% to "
+                        f"{kept.allocation_pct:.2f}%: a just-filed earnings "
+                        f"report is queued and not yet read, so the resulting "
+                        f"position is held to the queued-earnings weight cap."
+                    ),
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("queued-earnings cap recording failed: %s", exc)
 
 
 def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
@@ -5364,9 +5731,16 @@ class RiskStage:
         # at 15% with an unread filing could otherwise be topped up to 20%.
         # rm_positions (sweep-vehicle-free) is the right basis — parked T-bills
         # are cash and never carry an earnings filing.
+        before_earnings_cap = list(portfolio_decision.decisions)
         portfolio_decision.decisions = pipeline._clamp_queued_earnings_buys(
             portfolio_decision.decisions, earnings_results,
             positions=rm_positions, total_value=total_value,
+        )
+        # Board item 164: the cap used to reach the log only, while this
+        # symbol's `proposed_order` row (written by DecisionStage, before
+        # this gate) kept the pre-cap size. Recording only.
+        _record_earnings_cap(
+            pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
         )
 
         daily_pnl = total_value - last_equity
@@ -5764,10 +6138,21 @@ class RiskStage:
                 "Risk manager REJECTED trades: %s",
                 verdict.reasoning,
             )
+            # Board item 164: a book-level veto refuses every leg for the
+            # book's reason, but where the seat ALSO named this symbol with
+            # its own reason, that reason is what the symbol's record
+            # carries — the book reason rides beside it, not over it.
+            book_veto_symbol_reasons = verdict.rejections_by_symbol()
             for decision in portfolio_decision.decisions:
+                own = book_veto_symbol_reasons.get(
+                    decision.symbol.strip().upper()
+                )
                 _record_pipeline_event(
                     pipeline, ctx, decision.symbol, "risk", "rejected",
-                    verdict.reasoning,
+                    own or verdict.reasoning,
+                    gate="risk_manager_book_veto",
+                    book_level_reason=verdict.reasoning,
+                    reason_category=getattr(verdict, "reason_category", None),
                 )
             return {
                 "status": "rejected", "orders": [],
@@ -5958,26 +6343,87 @@ class RiskStage:
                         "status": "rejected", "orders": [], "reason": reasons,
                     }
 
+        # Board item 164: what each surviving leg looked like BEFORE the
+        # seat's edits and `scale_all_buys`, so the per-symbol `risk` event
+        # below can say what actually changed rather than stamping one
+        # constant on every symbol. Recording only.
+        pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
+
         if verdict.modifications:
+            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
+            # `allocation_pct` edit that ENLARGES a BUY, but it tests
+            # `decision.action == "BUY"` only — a SHORT was never covered,
+            # although the constructor sizes it with the identical cumulative
+            # arithmetic (`name_headroom_pct = (max_position_pct -
+            # current_short_gross_pct) / gross_mul`, the explicit mirror of
+            # the long clamp) and `_apply_scale_all_buys` already treats the
+            # two sides alike because both open new risk. Snapshotted here
+            # and enforced below for BOTH sides: for a BUY the inner guard
+            # has already reverted the edit, so this sweep is a no-op and
+            # finds nothing; for a SHORT it is the only thing standing
+            # between the seat and a short it believes it is cutting.
+            pre_mod_entry_alloc = {
+                (d.symbol.strip().upper(), d.action): d.allocation_pct
+                for d in portfolio_decision.decisions
+                if d.action in ("BUY", "SHORT")
+            }
+            unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
+                unapplied=unapplied_mods,
             )
+            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
+                portfolio_decision.decisions, pre_mod_entry_alloc,
+            )
+            rejected_mods = list(rejected_mods) + enlarged
             # A modification this method refused (exit silently zeroed, or a
             # stop/target edit that would have shipped a reward:risk / noise-
             # band floor breach) must be a visible, distinguishable event —
             # not an edit that just vanishes. See `_apply_risk_modifications`
             # docstring, guards 1 and 2 (2026-09-03 audit).
-            for rejected in rejected_mods:
+            # Board item 164: the dropped / not-applied outcomes
+            # `_apply_risk_modifications` used to log and nothing else. Each
+            # entry already carries its own outcome, gate and reason.
+            #
+            # An edit naming a symbol with no decision in this stage's plan
+            # is filed RUN-scoped with the symbol in the payload: a
+            # symbol-scoped row would make `src/refusal_signature.py` count
+            # a name the run never considered as a candidate, or overwrite
+            # the real refusal of a name the seat already refused above.
+            in_plan = {sym for sym, _action in pre_rm_fields}
+            for rejected in list(rejected_mods) + unapplied_mods:
+                _details = {
+                    k: v for k, v in rejected.items()
+                    if k not in ("symbol", "reason", "outcome")
+                }
+                _sym = rejected["symbol"]
+                if str(_sym or "").strip().upper() not in in_plan:
+                    _details["symbol_named"] = _sym
+                    _sym = None
                 _record_pipeline_event(
-                    pipeline, ctx, rejected["symbol"], "risk",
-                    "modification_rejected", rejected["reason"],
-                    field=rejected["field"],
+                    pipeline, ctx, _sym, "risk",
+                    rejected.get("outcome", "modification_rejected"),
+                    rejected["reason"], **_details,
                 )
 
-        portfolio_decision.decisions, scale = _apply_scale_all_buys(
+        portfolio_decision.decisions, scale, scale_dropped = _apply_scale_all_buys(
             portfolio_decision.decisions, verdict,
         )
+        # Board item 136 — a scale-driven drop is a real refusal of a real
+        # trade and must leave the same kind of trace an RM refusal does.
+        # It cannot use the loop at the bottom of this method: the decision
+        # is no longer in the list by then.
+        for _sym, _pre_alloc in scale_dropped:
+            _record_pipeline_event(
+                pipeline, ctx, _sym, "risk", "scaled_out",
+                f"scale_all_buys={scale:.2f} reduced {_sym}'s entry "
+                f"allocation_pct from {_pre_alloc:.2f} to 0 — the order is "
+                f"DROPPED, not zeroed (a zero allocation reads as SKIP at "
+                f"execution). RM reason category: "
+                f"{getattr(verdict, 'reason_category', None)!r}",
+                field="allocation_pct",
+            )
 
         if verdict.modifications or scale < 1.0 or refused_decisions:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
@@ -6000,12 +6446,14 @@ class RiskStage:
                     pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
 
-        modified_symbols = {mod.symbol for mod in verdict.modifications}
         for decision in portfolio_decision.decisions:
+            outcome, reason, details = _risk_event_for(
+                decision, pre_rm_fields, verdict, scale,
+                field_aliases=getattr(pipeline, "_FIELD_ALIASES", None),
+            )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "risk",
-                "modified" if decision.symbol in modified_symbols or scale < 1.0 else "approved",
-                "risk_manager_verdict",
+                pipeline, ctx, decision.symbol, "risk", outcome, reason,
+                **details,
             )
             _record_pipeline_event(
                 pipeline, ctx, decision.symbol, "deterministic_gate", "allowed",
@@ -6070,13 +6518,12 @@ class ExecutionStage:
             except Exception as e:
                 logger.warning("Failed to record HOLD decision for %s: %s", d.symbol, e)
 
-        sell_order_ids: list[str] = []
-        # Terminal status per SELL order id, filled in by the wait loop
+        # Terminal status per SELL order id, filled in by the per-name wait
         # below. Phase 14b reads it to decide whether the rotation's freed
         # room is REAL before the replacement BUY is allowed.
         sell_status_by_id: dict[str, str | None] = {}
-        pending_protections: list[dict] = []
         for decision in sell_decisions:
+            prot = None
             try:
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty <= 0:
@@ -6121,9 +6568,7 @@ class ExecutionStage:
                 if sale is None:
                     continue
                 order, prot = sale
-                pending_protections.append(prot)
                 orders.append(order)
-                sell_order_ids.append(order["id"])
                 pipeline.db.insert_trade(
                     symbol=decision.symbol, action=action_label, qty=qty,
                     price=sell_price, reasoning=decision.reasoning, run_id=run_id,
@@ -6165,8 +6610,18 @@ class ExecutionStage:
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
-
-        for order_id in sell_order_ids:
+            if prot is None:
+                continue
+            # Wait for THIS sell and rebuild THIS name's stop coverage on its
+            # actual fill before the loop cancels the next name's stops —
+            # the per-name discipline the de-lever loops got (docs/WORK.md
+            # item 111). Submitting every SELL first and waiting/finalizing
+            # the batch afterwards left every earlier name with no
+            # protective stop while later names were cancelled, submitted
+            # and waited on. Runs even when the ledger write above raised:
+            # the stops are off and the order is live. Which names are sold,
+            # how much and at what limit are unchanged.
+            order_id = prot["order_id"]
             # ExecutionStage was the lone SELL path missing this guard
             # — every other SELL path (force_delever / midday_emergency /
             # midday_llm / intra_check / take_profit) wraps the wait in
@@ -6191,25 +6646,20 @@ class ExecutionStage:
                     "Sell order %s did not fill before buy phase (status=%s); buys will use current cash only",
                     order_id, status or "unknown",
                 )
-
-        # Now that wait_for_order_terminal has returned for every sell,
-        # the broker's fill_info is final. Reprotect on actual residual
-        # (filled successfully) or restore originals (no-fill terminal).
-        # wait=False: the sell_order_ids loop above already blocked until each
-        # order reached terminal (it also gates the buy phase), so the orders
-        # are terminal here — re-waiting would be a redundant no-op.
-        pipeline._finalize_pending_protections(
-            pending_protections, context="ExecutionStage", wait=False,
-        )
+            # The wait above returned, so the broker's fill_info is final.
+            # Reprotect on actual residual (filled) or restore originals
+            # (no-fill terminal). wait=False: this order was just waited on.
+            pipeline._finalize_pending_protections(
+                [prot], context="ExecutionStage", wait=False,
+            )
 
         # Stage 3 (shorts): COVER loop — the exit-side twin of the SELL loop
         # just above. Reuses `_submit_protected_sell`'s side="buy" plumbing
         # (PR #135 built this for emergency covers; this is the first
         # decision-path caller). No protective stop is placed afterward —
         # covering REDUCES risk, it doesn't open any.
-        cover_order_ids: list[str] = []
-        cover_pending_protections: list[dict] = []
         for decision in cover_decisions:
+            prot = None
             try:
                 existing = [p for p in positions if p.symbol == decision.symbol]
                 if not existing or existing[0].qty >= 0:
@@ -6255,9 +6705,7 @@ class ExecutionStage:
                 if sale is None:
                     continue
                 order, prot = sale
-                cover_pending_protections.append(prot)
                 orders.append(order)
-                cover_order_ids.append(order["id"])
                 pipeline.db.insert_trade(
                     symbol=decision.symbol, action=action_label, qty=qty,
                     price=cover_price, reasoning=decision.reasoning, run_id=run_id,
@@ -6276,8 +6724,11 @@ class ExecutionStage:
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
-
-        for order_id in cover_order_ids:
+            if prot is None:
+                continue
+            # Same per-name discipline as the SELL loop above: this short's
+            # BUY-stop coverage is rebuilt before the next short's is touched.
+            order_id = prot["order_id"]
             try:
                 status = pipeline.broker.wait_for_order_terminal(order_id)
             except Exception as e:
@@ -6292,10 +6743,9 @@ class ExecutionStage:
                     "Cover order %s did not fill before buy phase (status=%s)",
                     order_id, status or "unknown",
                 )
-
-        pipeline._finalize_pending_protections(
-            cover_pending_protections, context="ExecutionStage-Cover", wait=False,
-        )
+            pipeline._finalize_pending_protections(
+                [prot], context="ExecutionStage-Cover", wait=False,
+            )
 
         if sell_decisions or cover_decisions:
             account, positions, price_map = pipeline._refresh_account_state()

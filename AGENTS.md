@@ -268,6 +268,21 @@ the ceremony bound, and it held for 44 of the last 50 commits on `main`.
    session>`, citing a path that exists. Nothing on this desk validates a
    prompt or behaviour change offline.
 
+**The required `pytest` check is an aggregate, not a single test.** It is
+`needs: shard` with `if: always()` over the two-way test-shard matrix in
+`.github/workflows/test.yml`, and it goes red whenever either shard is not a
+success — cancelled, never-ran or genuinely failed all report the same way.
+A `pytest` failure that returns in a few seconds, with no test output to
+speak of, is almost always the definition-of-done check above failing inside
+one shard, not a test regression; read the shard's own log before assuming
+otherwise. Separately, `test_the_settled_cost_ceiling_still_stops_the_
+portfolio_manager` (`tests/test_rehearsal_reproduces_cost_ceiling.py`) is an
+ops-acceptance test gated on `sudo -n -u qamc` read access to the production
+database — it is SKIPPED, not failed, everywhere that access is unavailable,
+which includes every CI run. Two agents independently reported it as
+pre-existing repo breakage on 2026-09-18; both were wrong, and it is not
+evidence of anything broken in this repository.
+
 **Deployment is verified on the box, not claimed in a PR.**
 `scripts/check_item_deployment.py` asks, per item, whether the commit that
 added that number to the retired-numbers line is an ancestor of

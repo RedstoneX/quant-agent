@@ -54,6 +54,25 @@ def _history_entry_date(entry: str) -> date | None:
 EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 SEC_TICKERS_EXCHANGE = "https://www.sec.gov/files/company_tickers_exchange.json"
+# Per-entity filing history. SEC documents this as "Each entity's current
+# filing history", covering "at least one year's of filing or ... 1,000
+# (whichever is more) of the most recent filings"
+# (https://www.sec.gov/search-filings/edgar-application-programming-interfaces,
+# read 2026-09-18). Two properties were MEASURED against the live endpoint
+# on 2026-09-18 before this module was allowed to depend on them:
+#   * the ISSUER's CIK carries its officers' Form 4s, not just the reporting
+#     owner's — AAPL (CIK 320193), NVDA, RSG all list hundreds of form "4"
+#     rows under the issuer CIK;
+#   * it reflects SAME-DAY filings within minutes — General Dynamics
+#     (CIK 40533) Form 4s accepted 13:30 ET on 2026-09-18 were already
+#     present when queried that afternoon.
+# The second property is why this, and not the daily-index file, answers the
+# intraday freshness question: `/Archives/edgar/daily-index/.../form.<date>.idx`
+# for the CURRENT day did not exist when measured the same afternoon (HTTP 403,
+# identical to a future date; the newest published file was the prior business
+# day). An index that cannot see today cannot decide whether today's evidence
+# is stale.
+SEC_SUBMISSIONS = "https://data.sec.gov/submissions"
 DEFAULT_USER_AGENT = (
     "QAMC/1.0 research-intelligence "
     "https://github.com/yebof/quant-agent"
@@ -125,6 +144,7 @@ class SECForm4Provider:
         *,
         search_url: str = EFTS_SEARCH,
         archives_url: str = SEC_ARCHIVES,
+        submissions_url: str = SEC_SUBMISSIONS,
         data_dir: str = "data/smart_money",
         user_agent: str = DEFAULT_USER_AGENT,
         timeout_s: float | None = None,
@@ -141,6 +161,11 @@ class SECForm4Provider:
         min_cluster_owners: int = 2,
         max_observations: int = 40,
         refresh_deadline_s: float = 180,
+        # The watched-name drain's OWN budget, separate from the market-wide
+        # pass's `refresh_deadline_s`. Derivation lives with the production
+        # value at `src/config.py::SmartMoneyConfig.watched_drain_deadline_s`;
+        # this default mirrors it.
+        watched_drain_deadline_s: float = 859,
         max_filings_per_refresh: int = 1000,
         session: requests.Session | None = None,
         # Routine-versus-opportunistic classification thresholds
@@ -170,6 +195,7 @@ class SECForm4Provider:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.search_url = search_url.rstrip("/")
         self.archives_url = archives_url.rstrip("/")
+        self.submissions_url = submissions_url.rstrip("/")
         self.user_agent = user_agent.strip() or DEFAULT_USER_AGENT
         effective_timeout = request_timeout_s if timeout_s is None else timeout_s
         self.timeout_s = max(1.0, float(effective_timeout))
@@ -184,6 +210,7 @@ class SECForm4Provider:
         self.min_cluster_owners = max(2, int(min_cluster_owners))
         self.max_observations = max(1, int(max_observations))
         self.refresh_deadline_s = max(1.0, float(refresh_deadline_s))
+        self.watched_drain_deadline_s = max(1.0, float(watched_drain_deadline_s))
         self.max_filings_per_refresh = max(1, int(max_filings_per_refresh))
         self.session = session or requests.Session()
         self._cache_lock = threading.Lock()
@@ -401,6 +428,7 @@ class SECForm4Provider:
         seen: set[str] = set()
         watched_seen: set[str] = set()
         deadline_hit = False
+        busiest_day_total = 0
 
         def _budget_spent() -> bool:
             # With no watched names this is exactly the old condition. With
@@ -471,6 +499,15 @@ class SECForm4Provider:
                         total.get("value", 0) if isinstance(total, dict)
                         else int(total or 0)
                     )
+                    # EDGAR's own count of Form 4s filed on this day. It was
+                    # fetched and thrown away on every slice. It is the only
+                    # non-arbitrary basis anyone has for sizing
+                    # `max_filings_per_refresh`, so record the busiest day
+                    # seen: the cap can then be read off the instrument
+                    # instead of chosen. Recorded, not yet acted on — see the
+                    # open question on that number in config/number_ledger.yaml.
+                    if total_value > busiest_day_total:
+                        busiest_day_total = total_value
                     params["from"] = int(params["from"]) + len(hits)
                     if len(hits) < int(params["size"]) or int(params["from"]) >= total_value:
                         break
@@ -490,6 +527,7 @@ class SECForm4Provider:
             stats["watched_candidates"] = len(watched_seen)
             stats["cap_reached"] = len(out) >= cap
             stats["deadline_hit"] = deadline_hit
+            stats["busiest_day_total"] = busiest_day_total
         return out
 
     def _archive_url(self, cik: str, accession: str) -> str:
@@ -677,6 +715,284 @@ class SECForm4Provider:
                 out.add(text)
         return out
 
+    # ---- freshness (question b) and completeness (question a) -------------
+    #
+    # These are two different questions and the code used to pay the
+    # expensive one on every decision tick:
+    #
+    #   (a) "is there a Form 4 I have not READ?" — a data-completeness fact.
+    #       It belongs to the producing step (`refresh`) and to reporting.
+    #       Answering it needs the full-text crawl, because "unread" is a
+    #       statement about the whole filing stream.
+    #   (b) "has anything been FILED on a watched name since my last read?"
+    #       — the only question a freshness check needs. It is answered per
+    #       watched issuer from that issuer's own filing history, in
+    #       O(watched names) plain GETs with no pagination.
+    #
+    # `form4_freshness` answers (b) and is what a decision tick calls.
+    # `peek_accessions` below answers (a). CORRECTED 2026-09-19: this comment
+    # said it "is kept for the producing step"; nothing in `src/` calls it
+    # since PR #529 — `refresh` runs its own discovery. It is dead code on
+    # the live path, kept only because tests still exercise it.
+
+    def _submissions_form4(
+        self, cik: str, deadline: float,
+    ) -> list[tuple[str, str]]:
+        """(accession, filing_date) for every Form 4/4-A under one CIK.
+
+        One GET, no pagination. Newest first, as SEC serves it. Only the
+        `filings.recent` block is read: SEC's own documentation says it holds
+        at least a year of filings or the most recent 1,000, whichever is
+        more, which covers `lookback_days` at its 365 ceiling. Older
+        filings live in the paged `filings.files` references and are
+        deliberately NOT followed — a filing older than the lookback window
+        is outside what this provider retains at all.
+        """
+        try:
+            numeric = int(str(cik).strip())
+        except (TypeError, ValueError):
+            return []
+        url = f"{self.submissions_url}/CIK{numeric:010d}.json"
+        payload = self._get(url, params=None, deadline=deadline).json()
+        filings = payload.get("filings", {}) if isinstance(payload, dict) else {}
+        recent = filings.get("recent", {}) if isinstance(filings, dict) else {}
+        if not isinstance(recent, dict):
+            return []
+        forms = recent.get("form", []) or []
+        dates = recent.get("filingDate", []) or []
+        accessions = recent.get("accessionNumber", []) or []
+        out: list[tuple[str, str]] = []
+        # zip() over the parallel arrays, for the same reason
+        # `EarningsProvider._get_recent_filings` does: an upstream truncation
+        # would otherwise desync them and index access would raise.
+        for form, filed, accession in zip(forms, dates, accessions):
+            if str(form).strip() not in {"4", "4/A"}:
+                continue
+            text = str(accession or "").strip()
+            if not _ACCESSION_RE.fullmatch(text):
+                continue
+            out.append((text, str(filed or "").strip()[:10]))
+        return out
+
+    def recent_filings(
+        self, symbol: str, deadline: float, listed: dict | None = None,
+    ) -> list[tuple[str, str, str]] | None:
+        """(form, filing_date, items) for an issuer's recent filings.
+
+        The universe screen's pending-takeover check
+        (`src/universe_screen.py::pending_takeover`). One GET of the issuer's
+        `filings.recent` block — at least a year or the last 1,000 filings
+        per SEC's own documentation (see `_submissions_form4`). Returns None
+        when the symbol maps to no SEC issuer on a listed exchange; raises
+        when SEC could not be read.
+        """
+        wanted = _symbol(symbol)
+        if listed is None:  # pass `listed_map()` in when screening many
+            listed = self._listed_map(deadline)
+        cik = next(
+            (c for c, tickers in listed.items() if wanted in tickers), None,
+        )
+        if cik is None:
+            return None
+        url = f"{self.submissions_url}/CIK{int(cik):010d}.json"
+        payload = self._get(url, params=None, deadline=deadline).json()
+        filings = payload.get("filings", {}) if isinstance(payload, dict) else {}
+        recent = filings.get("recent", {}) if isinstance(filings, dict) else {}
+        if not isinstance(recent, dict):
+            return []
+        forms = recent.get("form", []) or []
+        dates = recent.get("filingDate", []) or []
+        items = recent.get("items", []) or [""] * len(forms)
+        return [
+            (str(form or "").strip(), str(filed or "").strip()[:10], str(item or ""))
+            for form, filed, item in zip(forms, dates, items)
+        ]
+
+    def listed_map(self, deadline: float) -> dict[str, dict[str, str]]:
+        """Public read of the cached SEC CIK -> {ticker: exchange} map."""
+        return self._listed_map(deadline)
+
+    def watched_form4_index(
+        self, ciks, deadline: float,
+    ) -> tuple[dict[str, list[tuple[str, str]]], list[str]]:
+        """Form 4 history for each watched CIK, plus the CIKs that failed.
+
+        The failure list is returned rather than swallowed. A name whose
+        history could not be read is a name this desk cannot make any
+        freshness claim about, and every caller here treats that as unknown,
+        never as "nothing new".
+        """
+        index: dict[str, list[tuple[str, str]]] = {}
+        failed: list[str] = []
+        for cik in sorted({str(c).strip() for c in (ciks or []) if str(c).strip()}):
+            try:
+                index[cik] = self._submissions_form4(cik, deadline)
+            except _RefreshDeadline:
+                # Out of budget: every CIK not yet reached is unknown too.
+                failed.append(cik)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SEC Form 4 filing history unavailable for CIK %s: %s", cik, exc,
+                )
+                failed.append(cik)
+        return index, failed
+
+    def read_through_date(self) -> str:
+        """ET date through which EVERY watched name is read. Report-only.
+
+        Written by `refresh` only when the watched drain left nothing unread
+        on any watched issuer. `form4_freshness` no longer reads it: a single
+        date could only say "all or nothing", and the per-issuer map below
+        is what freshness accepts as coverage.
+        """
+        manifest = self._load_json(self.manifest_path, {})
+        if not isinstance(manifest, dict):
+            return ""
+        return str(manifest.get("watched_read_through") or "").strip()[:10]
+
+    def read_through_by_cik(self) -> dict[str, str]:
+        """CIK -> ET date of the last pass that left that issuer fully read."""
+        manifest = self._load_json(self.manifest_path, {})
+        raw = manifest.get("watched_read_through_by_cik") if isinstance(manifest, dict) else None
+        out: dict[str, str] = {}
+        for cik, day in (raw.items() if isinstance(raw, dict) else []):
+            text = str(day or "").strip()[:10]
+            if str(cik).strip() and text:
+                out[str(cik).strip()] = text
+        return out
+
+    def form4_coverage(self) -> dict:
+        """How much of the watched set the last pre-market pass read. No network.
+
+        The morning seat reads this to decide whether its answer may be
+        called complete. ``known`` is False when no pass has recorded
+        coverage at all — which the caller must treat as incomplete, never
+        as complete.
+        """
+        manifest = self._load_json(self.manifest_path, {})
+        if not isinstance(manifest, dict) or not manifest.get("coverage_as_of"):
+            return {"known": False, "as_of": "", "watched": 0,
+                    "read_through": 0, "unread": []}
+        return {
+            "known": True,
+            "as_of": str(manifest.get("coverage_as_of") or "")[:10],
+            "watched": int(manifest.get("watched_names") or 0),
+            "read_through": int(manifest.get("watched_names_read_through") or 0),
+            "unread": [str(s) for s in (manifest.get("watched_names_unread") or [])],
+        }
+
+    def form4_freshness(self, symbols: list[str] | None = None) -> dict:
+        """Is the insider evidence on every watched name current?
+
+        Returns a verdict the caller must read fail-closed:
+
+          ``ok``            every watched name was checked AND every one is
+                            read through. False means the desk cannot call
+                            the seat current, and must never report it so.
+          ``new_filings``   unread accessions on names that ARE read through
+                            — necessarily filed after that read, so new.
+          ``unread_names``  watched CIKs never read through: their unread
+                            filings are backlog the desk has not read, so the
+                            seat's answer does not cover them.
+          ``unread_filings`` how many unread filings sit on those names.
+          ``unchecked``     CIKs whose history could not be read.
+
+        Coverage is per issuer (`watched_read_through_by_cik`). The single
+        watermark this replaced excluded any filing dated on or before it as
+        "backlog", which had two faults: it was all-or-nothing, so the seat
+        could never become current while one issuer was unfinished; and it
+        hid every filing made on the watermark's own date AFTER the
+        pre-market read — the whole trading day's filings — as backlog. Now
+        an issuer the drain left fully read cannot have backlog by
+        construction, so ANY unread filing on it inside the window is new.
+        """
+        relevant = {_symbol(s) for s in (symbols or []) if str(s).strip()}
+        verdict = {
+            "ok": False,
+            "new_filings": [],
+            "read_through": "",
+            "checked": 0,
+            "covered": 0,
+            "unread_names": [],
+            "unread_filings": 0,
+            "unchecked": [],
+            "reason": "",
+        }
+        if not relevant:
+            # Nothing watched is not a failure — there is nothing to be
+            # stale about, so this answers "nothing new" honestly.
+            verdict["ok"] = True
+            verdict["reason"] = "no watched names"
+            return verdict
+        by_cik = self.read_through_by_cik()
+        verdict["read_through"] = self.read_through_date()
+        if not by_cik:
+            verdict["reason"] = (
+                "no watched name has ever been confirmed fully read — "
+                "nothing to measure freshness against"
+            )
+            return verdict
+        try:
+            deadline = time.monotonic() + self.refresh_deadline_s
+            listed = self._listed_map(deadline)
+            ciks = self._ciks_for_symbols(listed, sorted(relevant))
+            index, failed = self.watched_form4_index(ciks, deadline)
+        except Exception as exc:  # noqa: BLE001
+            # FAIL CLOSED, and note the direction deliberately: the old code
+            # swallowed this and returned the known set, which the caller
+            # read as "nothing new" and REUSED superseded research. A probe
+            # that did not run is an unknown, and an unknown loses the seat
+            # for THIS TICK only; the next tick re-probes.
+            verdict["reason"] = f"freshness probe failed: {type(exc).__name__}: {exc}"
+            logger.warning("SEC Form 4 freshness probe failed: %s", exc)
+            return verdict
+        verdict["checked"] = len(index)
+        verdict["unchecked"] = sorted(failed)
+        known = self.known_accessions()
+        horizon = (et_today() - timedelta(days=self.lookback_days)).isoformat()
+        new_filings: set[str] = set()
+        unread_names: list[str] = []
+        unread_filings = 0
+        for cik, rows in index.items():
+            unread = [
+                accession for accession, filed in rows
+                if accession not in known and filed and filed >= horizon
+            ]
+            if cik in by_cik:
+                new_filings.update(unread)
+            elif not unread:
+                # Never recorded, but nothing inside the window is unread —
+                # e.g. a name added to the universe since the morning pass.
+                # Every filing there has been read, so it is covered.
+                continue
+            else:
+                unread_names.append(cik)
+                unread_filings += len(unread)
+        verdict["covered"] = len(index) - len(unread_names)
+        verdict["new_filings"] = sorted(new_filings)
+        verdict["unread_names"] = sorted(unread_names)
+        verdict["unread_filings"] = unread_filings
+        problems: list[str] = []
+        if failed:
+            # PARTIAL is still unknown. The one name that errored is exactly
+            # the one that might have filed.
+            problems.append(f"{len(failed)} watched name(s) could not be checked")
+        if unread_names:
+            problems.append(
+                f"{len(unread_names)} of {len(index)} watched name(s) not yet "
+                f"fully read ({unread_filings} filing(s) unread)"
+            )
+        if problems:
+            verdict["reason"] = "; ".join(problems)
+            return verdict
+        verdict["ok"] = True
+        verdict["reason"] = (
+            f"{len(new_filings)} new filing(s) on names read through"
+            if new_filings else "every watched name read through; nothing new"
+        )
+        return verdict
+
     def peek_accessions(self, symbols: list[str] | None = None) -> set[str]:
         """Known accessions plus newly listed filings for names we watch.
 
@@ -746,6 +1062,9 @@ class SECForm4Provider:
         errors: list[str] = []
         discovery: dict = {}
         discovered_count = 0
+        # Bound before the try: the watched drain below needs it, and a
+        # failed ticker-map fetch must leave it empty rather than unbound.
+        listed: dict[str, dict[str, str]] = {}
         try:
             listed = self._listed_map(deadline)
             priority = self._ciks_for_symbols(listed, symbols)
@@ -781,6 +1100,118 @@ class SECForm4Provider:
             logger.warning("SEC Form 4 refresh failed: %s", exc)
             errors.append(f"refresh:{type(exc).__name__}")
 
+        # ---- watched-name drain ------------------------------------------
+        #
+        # The market-wide pass above spends a budget sized against
+        # market-wide filing volume, so its residue is unbounded by anything
+        # the desk controls. This pass is bounded by the desk's OWN names:
+        # it asks each watched issuer for its filing history directly and
+        # reads whatever is still unread inside the lookback window.
+        #
+        # Three properties, each the fix for a way this pass used to fail:
+        #
+        # 1. It has its OWN deadline, started here, after the market-wide
+        #    pass has finished with `refresh_deadline_s`. Sharing one 180 s
+        #    budget with a pass that runs first and measured ~153 s meant the
+        #    drain could never finish (2026-09-18).
+        # 2. Completion is recorded PER ISSUER, in `watched_read_through_by_cik`,
+        #    the moment that issuer has nothing unread left. The old single
+        #    watermark was all-or-nothing, so one unfinished issuer threw away
+        #    the work done on every other one and the next morning started
+        #    from the same place.
+        # 3. Issuers are read fewest-unread first. The per-issuer record makes
+        #    "how many issuers are fully read" the unit of progress, and
+        #    reading the smallest residues first maximises it for any budget.
+        #
+        # `form4_freshness` treats an issuer as current ONLY if it appears in
+        # that map, and treats EVERY unread filing on such an issuer as new.
+        drain_residue: int | None = None
+        drain_read = 0
+        drain_unchecked: list[str] = []
+        drain_ran = False
+        drain_deadline_hit = False
+        watched_ciks: set[str] = set()
+        read_through_by_cik = self.read_through_by_cik()
+        residue_by_cik: dict[str, int] = {}
+        today_iso = et_today().isoformat()
+        try:
+            if symbols and isinstance(listed, dict) and listed:
+                drain_ran = True
+                drain_deadline = time.monotonic() + self.watched_drain_deadline_s
+                watched_ciks = self._ciks_for_symbols(listed, symbols)
+                index, drain_unchecked = self.watched_form4_index(
+                    watched_ciks, drain_deadline,
+                )
+                horizon = (
+                    et_today() - timedelta(days=self.lookback_days)
+                ).isoformat()
+                outstanding: dict[str, list[dict]] = {}
+                for cik, rows in index.items():
+                    outstanding[cik] = []
+                    for accession, filed in rows:
+                        if accession in processed:
+                            continue
+                        if not filed or filed < horizon:
+                            # Outside the retention window: this provider
+                            # would prune the observation anyway, so an
+                            # unread filing older than the lookback is not
+                            # residue, it is out of scope by design.
+                            continue
+                        outstanding[cik].append(
+                            {"accession": accession, "form": "4", "cik": cik},
+                        )
+                    residue_by_cik[cik] = len(outstanding[cik])
+                order = sorted(outstanding, key=lambda c: (len(outstanding[c]), c))
+                try:
+                    for cik in order:
+                        issuer_failed = False
+                        for filing in outstanding[cik]:
+                            try:
+                                body, source_url = self._submission(
+                                    filing, drain_deadline,
+                                )
+                                for row in self._parse_submission(
+                                    body, source_url=source_url, listed=listed,
+                                ):
+                                    key = f"{row.accession_number}:{row.transaction_row}"
+                                    if key not in observations:
+                                        new_count += 1
+                                    observations[key] = row.model_dump(mode="json")
+                                processed.add(filing["accession"])
+                                processed_count += 1
+                                watched_processed += 1
+                                drain_read += 1
+                                residue_by_cik[cik] -= 1
+                            except _RefreshDeadline:
+                                raise
+                            except Exception as exc:  # noqa: BLE001
+                                issuer_failed = True
+                                logger.warning(
+                                    "SEC Form 4 watched drain failed for %s: %s",
+                                    filing["accession"], exc,
+                                )
+                                errors.append(
+                                    f"drain:{filing['accession']}:{type(exc).__name__}",
+                                )
+                        if not issuer_failed and residue_by_cik[cik] == 0:
+                            # This issuer, and only this issuer, is now read
+                            # through. Recorded immediately so a deadline on
+                            # a LATER issuer cannot take it back.
+                            read_through_by_cik[cik] = today_iso
+                except _RefreshDeadline:
+                    drain_deadline_hit = True
+                    errors.append("watched_drain_deadline_exceeded")
+                drain_residue = sum(residue_by_cik.values())
+        except _RefreshDeadline:
+            # Only the filing-history index can land here — the read loop
+            # above catches its own. Every issuer not yet indexed is unknown.
+            drain_deadline_hit = True
+            errors.append("watched_drain_deadline_exceeded")
+            drain_residue = None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SEC Form 4 watched drain failed: %s", exc)
+            errors.append(f"drain:{type(exc).__name__}")
+            drain_residue = None
         cutoff = et_today() - timedelta(
             days=self.lookback_days + self.cluster_window_days,
         )
@@ -804,6 +1235,59 @@ class SECForm4Provider:
         watched_pending = max(
             0, int(discovery.get("watched_candidates", 0) or 0) - watched_processed,
         )
+        # The drain is the authoritative watched-residue number ONLY when it
+        # actually reached every watched name: it then asked each issuer
+        # directly instead of inferring the residue from a market-wide scan
+        # the cap may have truncated. A drain that could not check some names
+        # must never LOWER the reported residue — "I checked nothing, so
+        # nothing is outstanding" is the silent-degradation shape this whole
+        # change exists to remove, and it is how a stub that answers no
+        # question at all would otherwise report a clean desk.
+        if drain_ran and drain_residue is not None and not drain_unchecked:
+            watched_pending = drain_residue
+        elif drain_ran and drain_residue is not None:
+            watched_pending = max(watched_pending, drain_residue)
+        # Per-issuer coverage as of the end of this pass. An issuer is
+        # CURRENT only if it is in the read-through map AND this pass
+        # indexed it AND nothing on it is left unread. An issuer read through
+        # on an earlier morning that has since gained filings this pass could
+        # not finish is not current — `form4_freshness` will report those
+        # filings as new, which is what they are.
+        watched_symbols = {_symbol(s) for s in (symbols or []) if str(s).strip()}
+        current_ciks = sorted(
+            cik for cik in watched_ciks
+            if cik in read_through_by_cik
+            and cik in residue_by_cik
+            and residue_by_cik[cik] == 0
+        )
+        unread_symbols: list[str] = []
+        for cik in sorted(watched_ciks):
+            if cik in current_ciks:
+                continue
+            tickers = listed.get(cik) if isinstance(listed, dict) else None
+            names = sorted(
+                _symbol(t) for t in (tickers or {}) if _symbol(t) in watched_symbols
+            ) or [cik]
+            unread_symbols.append(names[0])
+        # The single date is kept for the pre-open check and for anything
+        # that reads the old key. It is a CLAIM that EVERY watched issuer is
+        # read through, so it only advances when that is true; freshness no
+        # longer reads it — it reads the per-issuer map.
+        watermark = str(
+            (self._load_json(self.manifest_path, {}) or {}).get(
+                "watched_read_through", "",
+            ) or "",
+        ).strip()[:10]
+        drain_clean = bool(
+            drain_ran
+            and drain_residue == 0
+            and not drain_unchecked
+            and not drain_deadline_hit
+            and len(current_ciks) == len(watched_ciks)
+            and not any(e.startswith("drain") for e in errors)
+        )
+        if drain_clean:
+            watermark = today_iso
         with self._cache_lock:
             # History is recorded from every row seen this refresh, including
             # those the lookback prune is about to drop — that prune is what
@@ -821,6 +1305,20 @@ class SECForm4Provider:
                 "pending_filings": pending_filings,
                 "watched_pending_filings": watched_pending,
                 "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
+                # Date through which EVERY watched name is read. Advanced
+                # only by a clean drain; reported, no longer read by freshness.
+                "watched_read_through": watermark,
+                # Per issuer (CIK -> ET date): the last pre-market pass that
+                # left nothing unread on that issuer. The ONLY thing
+                # `form4_freshness` accepts as coverage. Merged across runs,
+                # so progress on one issuer is never lost to another.
+                "watched_read_through_by_cik": dict(sorted(read_through_by_cik.items())),
+                # Coverage as of this pass, for the morning seat status and
+                # the pre-open check, which must not need the network.
+                "coverage_as_of": today_iso if drain_ran else "",
+                "watched_names": len(watched_ciks),
+                "watched_names_read_through": len(current_ciks),
+                "watched_names_unread": unread_symbols,
             })
         error = None
         if errors:
@@ -839,6 +1337,17 @@ class SECForm4Provider:
             "watched_pending_filings": watched_pending,
             "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
             "cached_observations": len(kept),
+            # The drain's own outcome, for the pre-open check. `read_through`
+            # not equal to today is the single fact that tells the desk,
+            # BEFORE the open, that every intraday tick will refuse today.
+            "watched_drain_ran": drain_ran,
+            "watched_drain_read": drain_read,
+            "watched_unchecked_names": sorted(drain_unchecked),
+            "watched_drain_deadline_hit": drain_deadline_hit,
+            "watched_read_through": watermark,
+            "watched_names": len(watched_ciks),
+            "watched_names_read_through": len(current_ciks),
+            "watched_names_unread": unread_symbols,
             "error": error,
         }
 

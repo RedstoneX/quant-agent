@@ -201,10 +201,112 @@ def test_idx6_rm_sell_vs_buy_allocation_labels():
     assert "never set to 0" in msg
 
 
+def test_buy_that_opens_still_reads_as_pct_of_portfolio():
+    """The `% of portfolio` label is TRUE for a BUY that opens a position and
+    must be left exactly as it was — the add case below is the only one that
+    changes."""
+    from src.agents.risk_manager import RiskManagerAgent
+
+    agent = _mk_agent(RiskManagerAgent)
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([_rm_decision(action="BUY", symbol="SPY", alloc=10.0)]),
+        positions=[_position(symbol="AAPL", market_value=30_000.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "BUY SPY: 10.0% of portfolio" in msg
+    assert "INCREMENT" not in msg
+
+
+def test_buy_that_adds_shows_increment_and_resulting_weight():
+    """2026-09-18 RSG: `allocation_pct` on a BUY that ADDS is an increment
+    (`name_headroom_pct`), not the resulting weight, and the seat was shown
+    "44.23% of portfolio" for an add to a name already at 20.77%. It objected
+    to 44.23 as over-concentrated, wrote 30, and the position landed at 50.8%
+    — larger than the figure it rejected. The row must state the increment,
+    the existing weight and the RESULTING weight."""
+    from src.agents.risk_manager import RiskManagerAgent
+
+    agent = _mk_agent(RiskManagerAgent)
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([
+            _rm_decision(action="BUY", symbol="RSG", alloc=44.23),
+        ]),
+        positions=[_position(symbol="RSG", market_value=20_770.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "ADD of 44.23% of portfolio" in msg
+    assert "INCREMENT, not the resulting weight" in msg
+    assert "already 20.77% of the book" in msg
+    assert "leaves the position at 65.00%" in msg
+    # And NOT the false label that produced the incident.
+    assert "BUY RSG: 44.23% of portfolio" not in msg
+
+
+def test_buy_that_adds_resulting_weight_is_gross_aware():
+    """The resulting weight must come from `weight_pct_of` — the one
+    gross-leverage weight definition, and the same measure `max_position_pct`
+    is checked against. The raw `market_value / equity` arithmetic used for
+    the position lines would understate a 3x name by 3x."""
+    from src.agents.risk_manager import RiskManagerAgent
+    from src.risk.rules import _gross_multiplier
+
+    assert _gross_multiplier("SQQQ") == 3.0, "fixture assumes SQQQ is 3x"
+    agent = _mk_agent(RiskManagerAgent)
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([
+            _rm_decision(action="BUY", symbol="SQQQ", alloc=5.0),
+        ]),
+        positions=[_position(symbol="SQQQ", market_value=5_000.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    # 5% raw held -> 15% gross; +5% raw new -> 30% gross resulting.
+    assert "already 15.00% of the book" in msg
+    assert "leaves the position at 30.00%" in msg
+
+
 def test_idx6_rm_prompt_documents_sell_semantics():
     text = (_REPO_ROOT / "config" / "prompts" / "risk_manager.md").read_text()
     assert "% of the EXISTING POSITION" in text
     assert "NEVER modify a SELL's `allocation_pct` to" in text
+
+
+def test_rm_prompt_does_not_assert_the_false_buy_allocation_rule():
+    """2026-09-18: the prompt told the seat a BUY's `allocation_pct` is "the %
+    of PORTFOLIO to deploy" full stop, and the seat recited it back while
+    resizing an ADD. The prose must not contradict the row the renderer now
+    emits."""
+    text = (_REPO_ROOT / "config" / "prompts" / "risk_manager.md").read_text()
+    assert "rows it is the % of PORTFOLIO to deploy" not in text
+    assert "that ADDS to a name already held it is an INCREMENT" in text
+    assert "may only REDUCE" in text
+
+
+def test_rm_prompt_states_max_position_pct_is_a_hard_block_not_a_clamp():
+    """`max_position_pct` is in `HARD_BLOCK_RULES`: the engine DROPS the order
+    rather than trimming it. The prompt asserted it "clamps the resulting
+    NOTIONAL"."""
+    text = (_REPO_ROOT / "config" / "prompts" / "risk_manager.md").read_text()
+    assert "clamps the resulting NOTIONAL" not in text
+    assert "HARD BLOCK" in text
+    assert "DROPPED entirely by the risk engine" in text
+
+
+def test_rm_prompt_carries_the_desks_concentration_doctrine():
+    """The seat cut a name to 30% twice, from two different inputs, on
+    diversification grounds — a frame `docs/OUTCOME.md` and `settings.yaml`
+    both explicitly reject. Nothing in its prompt said so."""
+    text = (_REPO_ROOT / "config" / "prompts" / "risk_manager.md").read_text()
+    assert "Sector diversification is not a goal here" in text
+    assert "Concentration in a hot sector is a legitimate and often correct trade" in text
+    assert "SURVIVAL ceiling, not diversification" in text
+    # Frame correction only — no number is prescribed to the seat.
+    assert "single-name dominance" in text
 
 
 # ---------------------------------------------------------------------------
@@ -746,3 +848,107 @@ def test_idx53_analyze_survives_one_bad_grade():
     assert report is not None
     assert len(report.buy_grades) == 1
     assert report.buy_grades[0].symbol == "MSFT"
+
+
+# ---------------------------------------------------------------------------
+# Board items 135 / 137 — two gaps left behind by the #519 fix (2026-09-18).
+# ---------------------------------------------------------------------------
+
+def test_item135_short_that_adds_shows_increment_and_resulting_weight():
+    """Board item 135. #519 fixed the BUY-that-adds label and left the short
+    side reading the raw increment as though it were the whole short. The
+    constructor sizes a short add with the explicit mirror of the long clamp
+    (`name_headroom_pct = (max_position_pct - current_short_gross_pct) /
+    gross_mul`), so the label understated the resulting short by the whole
+    existing short."""
+    from src.agents.risk_manager import RiskManagerAgent
+
+    agent = _mk_agent(RiskManagerAgent)
+    short = TradeDecision(
+        action="SHORT", symbol="XLU", allocation_pct=30.0,
+        entry_price=70.0, stop_loss=74.0, take_profit=60.0, reasoning="test",
+    )
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([short]),
+        # A short carries a NEGATIVE market_value.
+        positions=[_position(
+            symbol="XLU", qty=-200, current_price=70.0,
+            market_value=-20_000.0, unrealized_pnl=0.0,
+        )],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "ADD of 30.0% of portfolio" in msg
+    assert "INCREMENT, not the resulting weight" in msg
+    assert "already 20.00% of the book" in msg
+    assert "leaves the short at 50.00%" in msg
+    # The false label that item 135 is about.
+    assert "SHORT XLU: 30.0% of portfolio |" not in msg
+
+
+def test_item135_short_against_a_long_is_not_called_an_add():
+    """Control. A SHORT proposed on a name the desk is LONG reduces net
+    exposure; it does not add to a short and must not be described as one."""
+    from src.agents.risk_manager import RiskManagerAgent
+
+    agent = _mk_agent(RiskManagerAgent)
+    short = TradeDecision(
+        action="SHORT", symbol="XLU", allocation_pct=30.0,
+        entry_price=70.0, stop_loss=74.0, take_profit=60.0, reasoning="test",
+    )
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([short]),
+        positions=[_position(symbol="XLU", market_value=20_000.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "SHORT XLU: 30.0% of portfolio |" in msg
+    assert "INCREMENT" not in msg
+
+
+def test_item137_fresh_open_of_a_levered_name_states_gross_exposure():
+    """Board item 137. `allocation_pct` is RAW NOTIONAL. On a fresh open of a
+    3x fund the "% of portfolio" label is a third of the gross exposure the
+    `max_position_pct` ceiling actually measures, so the seat was asked to
+    judge 21.67% against a 65% ceiling that 21.67% exactly fills. The
+    multiple comes from `ETF_LEVERAGE`; no constant is introduced."""
+    from src.agents.risk_manager import RiskManagerAgent
+    from src.risk.rules import _gross_multiplier
+
+    assert _gross_multiplier("SQQQ") == 3.0, "fixture assumes SQQQ is 3x"
+    agent = _mk_agent(RiskManagerAgent)
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([
+            _rm_decision(action="BUY", symbol="SQQQ", alloc=21.67),
+        ]),
+        positions=[_position(symbol="AAPL", market_value=30_000.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "RAW NOTIONAL" in msg
+    assert "3x fund" in msg
+    assert "opens 65.01% of GROSS exposure" in msg
+    # The bare label that understates the ceiling consumption by 3x.
+    assert "BUY SQQQ: 21.67% of portfolio |" not in msg
+
+
+def test_item137_unlevered_fresh_open_label_is_unchanged():
+    """Control. An ordinary 1x name has no gap between raw and gross, and its
+    row must stay exactly as it was."""
+    from src.agents.risk_manager import RiskManagerAgent
+
+    agent = _mk_agent(RiskManagerAgent)
+    msg = agent.build_user_message(
+        portfolio_decision=_rm_pd([
+            _rm_decision(action="BUY", symbol="SPY", alloc=21.67),
+        ]),
+        positions=[_position(symbol="AAPL", market_value=30_000.0)],
+        macro_summary={},
+        rule_violations=[],
+        total_value=100_000.0,
+    )
+    assert "BUY SPY: 21.67% of portfolio |" in msg
+    assert "RAW NOTIONAL" not in msg
