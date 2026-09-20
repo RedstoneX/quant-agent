@@ -22,6 +22,562 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
+
+**In plain words:** an item on the open-work list asking to fix a bug — a
+holding's age being measured in calendar days instead of trading-session days
+for one pace calculation — was fixed two days before this entry. The fix was
+never written up here and the item was never removed from the list, so it
+sat open doing nothing for two days.
+
+**Done-criteria-met:** PR #493 (commit d93659fa, merged 2026-09-18) changed
+the position reviewer's pace calculation in `src/pipeline.py` so `too_early`
+and `time_fraction` read the weekend-aware `sessions_held` figure instead of
+calendar-day `days_held` — the code carries a comment citing this board item
+by number. Retired from `docs/WORK.md` 2026-09-20 during a full-board
+redundancy sweep prompted by finding two other already-fixed items the same
+day.
+
+---
+### 2026-09-20 — the owner's ruling on congressional trading evidence had gone undocumented for a day, and the weighting code did not yet match it; both are fixed and the feed is now switched on
+
+**In plain words:** Rex ruled on 2026-09-19 that congressional (House/Senate)
+trading disclosures are real evidence and must count toward the desk's
+decisions — never thrown out just because published research doubts their
+average edge. His own words: "insider trading and congressional trading are
+just one piece, one point of information. Clustering makes it more than one
+point of information, and the rest of the other agents put in their piece of
+the greater puzzle that needs to be sorted out by the PM." That ruling was
+never written down anywhere in the repo, and a resume attempt today
+(docs/WORK.md item 161) wasted time because of it. It is now written down,
+here, and the code was brought in line with it before the feed was switched
+on for the first time.
+
+**The four rules the ruling implies, and what each one needed:**
+
+1. **Congressional evidence must never be fully zeroed out on research
+   grounds** (the desk's own doctrine cites Belmont et al., NBER w26975, as a
+   documented reason for *caution*, not exclusion). Already correct in the
+   scoring itself — a lone, non-clustered disclosure was already downgraded
+   to "historical"/low conviction rather than dropped. What was NOT correct:
+   the feed's own on/off switch, `SmartMoneyConfig.congress_enabled`, was
+   still `False`, which zeroed out the entire stream at the source. Fixed by
+   switching it `True` in `src/config.py` and `config/feature_flags.yaml`.
+2. **Congressional evidence is a confirmatory ceiling only** — it may raise a
+   thesis's conviction, never alone reach "actionable" present-tense trading
+   evidence, and never alone admit a new symbol. The admission half was
+   already correct (`transient_admission_eligible` was already hard-set
+   `False` for a pure-congressional finding). The conviction-ceiling half was
+   NOT: a congressional-only finding whose model-assigned role was
+   "actionable" reached full ("high") conviction with nothing to stop it.
+   Fixed in `SmartMoneyFinding.deterministic_eligibility` (`src/models.py`):
+   an "actionable" role on a pure-congressional finding is now downgraded to
+   "confirmatory" (medium conviction).
+3. **A same-day cluster of multiple members trading the same name lifts
+   conviction by at most one step, never compounding per additional
+   member.** The same fix as rule 2 covers this: conviction here is a
+   3-rung categorical scale (historical/contradictory = low, confirmatory =
+   medium, actionable = high), and capping the ceiling at "confirmatory"
+   means a 2-member cluster and a 10-member cluster land on the identical
+   rung — there was never a numeric per-member multiplier to remove, but
+   nothing previously stopped a cluster's role from reaching the top rung
+   directly (a two-step jump from the ineligible floor). Now it cannot.
+4. **Only real, disclosed trade dates count — never an inferred or estimated
+   one.** Checked and already correct: `_date_verdict` in
+   `src/data/congressional_trading.py` reads the transaction date straight
+   from the source row and drops (never repairs) a missing or implausible
+   one. The one estimate in this file (`disclosure_date` for a
+   congresswatch-only row, which carries no filing-date field at all) is a
+   *disclosure*-date estimate, not a trade-date one, and is explicitly
+   flagged `disclosure_date_estimated=True` — a different, honestly-labelled
+   fact, not a violation of this rule.
+
+**Also found and removed, not part of the ruling:** a parked, uncommitted-review
+WIP on this branch (member-identity/asset-class grouping for the same feed)
+referenced row keys its own normalizers never populated and broke 11 of the
+module's own tests. It predated this task and was unrelated to evidence
+weighting, so it was reverted rather than finished or extended.
+
+**Tests:** `tests/test_congressional_trading.py` gained 4 new tests, one per
+rule above (50 passed total in that file). `tests/test_feature_flags.py`,
+`tests/test_notifier.py`, `tests/test_pipeline.py`, `tests/test_evidence_gate.py`
+and `tests/test_trader_feed.py` were updated where they asserted the old
+off-by-default wording/state (457 passed across those five files).
+
+**Retires docs/WORK.md item 161** (see that file's retired-numbers line):
+its concern — history entries describing the feed as running before it ever
+was — is now resolved the strong way, by the feed actually running, rather
+than by adding a "still off" note to old entries. Item 161's one declared
+completion criterion is met this way, not deferred; see this commit's
+`Done-criteria-met` trailer. The definition-of-done gate's adversary record
+and acceptance observable for this closure are also carried as commit
+trailers rather than restated here, per this file's own rule against
+recording what the repo already records.
+
+---
+
+### 2026-09-20 — item 85 checked against current main and found already fixed, not open
+
+**In plain words.** The board still listed a live-money defect — the
+portfolio manager and the position reviewer being told the account had no
+margin, and its cash as a hard spending limit, while margin was actually
+enabled and real room existed. Re-checking it against the code as it
+stands on main today found the fix was already shipped and already had
+its own regression tests; the board entry was simply never retired.
+
+**What the item asked for.** Filed 2026-09-17 against a real incident: with
+cash at -$916, the manager was told it had negative capital and no margin
+and correctly refused a confirmed BUY, while the account actually held
+about $8,000 of ladder headroom (equity $9,736, holdings $10,652, 2x
+ceiling). The item's own text noted the PROMPT wording half shipped the
+same night in #452, and left open whether "the figures themselves" — the
+actual headroom numbers, not just corrected wording — reach the seat.
+
+**What checking against main found.** They do, and did before this change.
+`DecisionStage.run` (`src/pipeline_stages.py`) and
+`TradingPipeline._run_position_review_body` (`src/pipeline.py`) both call
+`_entry_deployment_budget` — the exact §11.2 computation execution's submit
+loop sizes real orders against — and thread its `margin_headroom_usd`,
+`margin_ladder_backed`, `margin_ladder_multiple` and `margin_ladder_rung`
+straight into `PortfolioManagerAgent.decide` and
+`PositionReviewerAgent.review`. Both prompt builders render a "Margin
+Capacity" section with that real dollar figure when the ladder resolved,
+and an honest "could not be resolved... treat as unknown, not zero" when it
+did not — never a fabricated number and never a silent "no margin". The
+underlying hard-block gate (`RiskRuleEngine.check`'s `cash_only` rule) is
+also unaffected by the sign of cash once `allow_margin` is true; it is
+gated on the config flag, not on whether cash happens to be negative, and
+the actual limiter for a levered BUY is the gross-exposure ladder, exactly
+as this item wanted.
+
+**This was independently reconfirmed, not just inherited from #452.** The
+2026-09-18 write-up above (item 133) says directly: "the manager had been
+told the account had no margin while margin was enabled... both were
+prompt falsehoods, both were corrected before this work started, and both
+were confirmed on the main branch rather than taken on trust." Item 85's
+board text was never updated to reflect that second confirmation.
+
+**Coverage already existed.** `tests/test_margin_policy.py` carried
+`test_pm_prompt_never_says_no_margin_when_margin_enabled`,
+`test_pm_prompt_margin_section_discloses_ladder_headroom`,
+`test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget` (a
+source-level pin on the wiring itself) and the same trio mirrored for the
+reviewer — all built on the incident's own numbers (cash -$915.83, equity
+$9,736, headroom $11,434.37 at a 2.0x ceiling). This change adds one more:
+`test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy`
+exercises the actual hard-block gate (not just the prompt) with the
+incident's figures, confirming `cash_only` never fires once margin is on
+and a BUY with real ladder headroom is not refused.
+
+**What was NOT found.** No code path was found where a stale cache, a
+wrong account field, a sign error, or a race with a pending order feeds a
+wrong buying-power number into a risk or sizing gate — the specific
+mechanisms this kind of defect usually takes. If one exists, it is not on
+any of the four call sites (PM decide, PM re-ask, reviewer review, reviewer
+re-ask) that build these prompts, and not in the hard gate or the §11.2
+ladder that enforces them.
+
+---
+
+### 2026-09-19 — Universe expansion and pruning built (the 2026-09-01 design), shipped switched off
+
+**What changed, in one line:** the desk can now add stocks that pass standard
+filters and drop ones that stop passing, instead of trading only a
+hand-typed list — built exactly to the owner's 2026-09-01 design, and left
+OFF until he turns it on.
+
+**Why now.** The owner restated it 2026-09-19: add stocks with "a certain
+amount of liquidity, a certain minimum price ... filter out the garbage, the
+penny stocks, the highly speculative", and remove the ones that stop
+passing. The design had sat unbuilt for 18 days.
+
+**Where each line comes from** (all in `config/number_ledger.yaml`; no
+arbitrary row was added):
+- minimum price $5 — SEC Rule 3a51-1(d), the legal definition of a penny
+  stock;
+- minimum company size $30M — the Russell US indexes' eligibility floor;
+- spread — estimated from a year of daily highs and lows (Corwin & Schultz,
+  J. Finance 2012), and half of it must sit inside the desk's own
+  entry-slippage belt (40 bps today), because a name whose ordinary cost to
+  cross is past that belt is one the execution stage refuses to buy;
+- volatility ceiling — ATR/price at most 0.5 / the minimum stop multiple
+  (20% today): past it, the desk's own minimum stop lands below half the
+  price, which the midday sanity rule refuses as a typo;
+- a year of history — a calendar year of bars AND the 210 bars the 200-day
+  average and its slope need;
+- shortable / easy to borrow, active, tradable, listed, not a warrant / unit
+  / right — the broker's own asset flags;
+- pending takeover — the issuer's own SEC filings: a merger proxy or
+  tender-offer filing not followed by a termination 8-K;
+- the per-morning cap — `nominations.max_per_seat_per_run` (3): the screen
+  is one more candidate source and is capped like one seat.
+
+**What differs from the 2026-09-01 design, and why:**
+1. *The hand-typed list is not screened or pruned.* The design prunes "the
+   universe"; the build prunes only what the screen itself added. Removing a
+   hand-typed name would mean editing the owner's config file from code. A
+   hand-typed name is therefore never removed, and none is reported.
+2. *Spread is estimated from daily bars, not read from quotes.* This account
+   sees IEX quotes only, which are routinely absurd (CCJ once showed a 15%
+   spread). The first estimator variant tried (floor each day's estimate at
+   zero, then average) read AAPL at 25.6 bps and TSLA at 44 bps — that is
+   volatility, not trading cost — and would have refused most volatile
+   large caps. The build averages first and floors the average, which reads
+   AAPL 0.2, TSLA 5.7, and still refuses an illiquid name at 64 bps
+   (measured 2026-09-19).
+3. *A resolved sector is still required* — kept from the old side-door gate
+   because the sector cap needs one. Not in the design.
+4. *Funds, preferreds and depositary receipts stay excluded* — kept from the
+   old side-door gate. The design names only warrants, units and rights.
+5. *Unreadable is not a failure.* A data outage neither admits a name nor
+   counts toward removing one; the design did not say.
+6. *Screened names reach the morning session only*, the same lane the Form 4
+   admissions use. The intraday scan still watches only the hand-typed list.
+7. *The Form 4 side door got its age gate back* (behind the same switch).
+   Since `lookback_days` went 7 -> 365 on 2026-09-11 nothing in the cache was
+   ever "stale", so a 364-day-old purchase could admit a name (RSG). Now a
+   purchase must have been disclosed within `risk.max_target_horizon_sessions`
+   (60) sessions — the desk's own longest target horizon. That base is itself
+   arbitrary in the ledger.
+
+**How it runs.** At the end of each evening session, an incremental pass
+(budget 900 s; the evening body measured 173 s against a 1,260 s job limit)
+reads the broker's active asset list, settles every name that fails on the
+asset flags alone for free, then reads bars in batches, then company size and
+SEC filings for survivors. Each symbol is screened at most once per ISO week;
+delisted/halted admitted names are checked every evening. State lives in
+`data/universe/universe_state.json`; each change is logged as
+`UNIVERSE_CHANGE`, written to `specialist_evidence`, and listed in the next
+morning's Telegram message below the P&L block.
+
+**Dry run, 2026-09-19, in isolation (scratch directory, no production
+write).** The broker asset list could NOT be read (no credentials usable
+read-only), so the candidate list was SEC's public listed-ticker file with
+the broker's borrow and tradability flags ASSUMED true — so the numbers
+below overstate what will pass. A random 1,000 of its 7,631 tickers:
+266 passed, 124 unreadable (company-data lookups throttled), 610 failed —
+most often no price history (203), under $5 (176), under a year of history
+(120), pending takeover (35), wide spread (21). Extrapolated, roughly 2,300
+names would be admitted [estimate: 266/876 x 7,631]; at 3 per morning the
+rotation would take years to cycle, so a ranking rule is likely needed
+before the switch goes on.
+
+**Found while building, NOT fixed (pre-existing):**
+- Alpaca deprecated the `easy_to_borrow` asset flag on 2026-06-22 and sunsets
+  it on **2026-09-22**. `AlpacaBroker.get_shortability` reads only that flag
+  and fails closed, so after the sunset every short may be refused as "not
+  shortable". The screen reads the replacement (`borrow_status`); the short
+  gate does not.
+- The old side-door gate's name filter matches the substring `" unit"`, so
+  "First United Corp" reads as a unit. The screen uses word boundaries.
+- SPAC shells (trading flat at trust value) and closed-end funds pass the
+  screen as designed; the design names neither.
+
+### 2026-09-19 — three stop-side decisions left no record, and one told the owner the wrong cause
+
+**What broke, in one line:** when a stop did not trail, when the desk refused
+to put a missing stop back, and when the desk's own kill switch blocked a
+protective stop, the only trace was a log line — and in the last case the
+owner's alert said the broker had refused it.
+
+**Where this came from.** The 2026-09-18 audit of gates that decide and
+record nothing. All three were checked on main before anything changed, and
+all three were real:
+
+1. **Trailing stop.** Every "no trail this time" returned nothing and the
+   caller moved on, so a position whose stop never trailed was invisible —
+   including one with no opening row at all, which was skipped without even
+   a log line.
+2. **Stop-repair refusal.** A reason sentence on an in-memory dict, a log
+   line and a one-shot Telegram. This is the path that left ~$223 of shares
+   unprotected on 2026-09-18 ("only X of Y uncovered shares could be
+   covered"); afterwards it could not be counted or trended.
+3. **Kill switch blocking a protective stop.** No record at all, and the
+   repair's alert fell through to "the broker did not accept a protective
+   stop after every retry" — the broker was never asked.
+
+**What changed — recording only.** No stop trails, is repaired or is blocked
+any differently; no threshold moved. Each is now a row in the desk's existing
+evidence table (`specialist_evidence`) under its own kind:
+- `trail_state` — why the stop did or did not trail, written only when the
+  reason differs from the last one on file for that stock, so a stop stuck
+  for the same reason all month leaves one row, not one per check.
+- `stop_repair_refusal` — every refusal, with the stock, the uncovered
+  quantity, the reason, how much was held and covered, and the stop orders
+  already resting at the broker.
+- `protective_stop_blocked` — every protective stop the kill switch refused,
+  from every path that places one. The repair's alert now says plainly that
+  the desk's own kill switch blocked the stop, for which stock.
+
+**One placement that was deliberate.** None of these is a `pipeline_event`.
+The jam alarm reads every per-stock `pipeline_event` as "the session
+considered this stock as a new idea"; stop-side rows filed there could join or
+break a streak they have nothing to do with — the same reason board item 164
+kept approved exits out of it.
+
+**Found on the way, NOT fixed (each changes behaviour, not just recording):**
+- When the kill switch blocks the stop placed right after an entry fills, the
+  entry's own record says the protection was `placed`, no owner alert fires,
+  and a scale-in's write-ahead row is discharged as if covered. The new
+  `protective_stop_blocked` row is now the only true record of it.
+- Restoring stops after a failed sell or replace counts a kill-switch refusal
+  as "restored".
+- The ex-dividend stop shift skips several cases with only a log line, and a
+  shift the broker did not accept with nothing at all.
+- The partial-exit re-protect's "no accepted order id" leaves a retry row
+  but not the reason, which is a log line only.
+- Already known from the audit: the stop-level reconcile overwrites a wrong
+  recorded stop with no history, the scale-in rearm refusal and four cash-park
+  skips are log-only.
+
+**What would catch it next time:** each new row has a test that fails when
+the line writing it is removed (checked by removing each in turn). Nothing
+mechanical yet stops a new stop-side branch from discarding its decision.
+
+---
+
+### 2026-09-19 — the congressional-trading feed would have re-read every disclosure it had ever seen, every morning, and nothing would have said when its copy was old (fixed before it was ever switched on)
+
+**In plain words:** the congressional-trading feed has never run in production (its switch is off). Before the owner switches it on, he asked for it to work like the insider feed, not "read everything again over and over again every day". As built, every morning it downloaded both public sources whole, re-parsed all ~13,000 rows and rebuilt every observation from scratch. If a source was down it quietly re-read yesterday's saved file, and its only trace was a nested entry inside the Form 4 log line. It now downloads a file only when that file has changed, and it processes each disclosure once, ever. When a copy is old it says how old, and every refresh leaves a named log line, a durable record and lines the morning health report classifies.
+
+**What the sources can and cannot do (checked live, read-only, 2026-09-19).** Neither source can be asked for "only records newer than X". kadoa is a static GitHub file: its data folder holds only whole-file JSON, and `trades.json` is the newest 5,000 rows by filing date (filed 2026-07-01 to 2026-09-17). congresswatch is a static Vercel file: `/api` paths return 404, and `?since=2026-09-01` returns the identical 8,231 rows. congresswatch rows carry no id and no filing date. Both sources DO answer a conditional request (`If-None-Match` / `If-Modified-Since`) with `304 Not Modified` and zero bytes. So the feed uses conditional fetches, and when a file has changed it processes only the rows it has not seen. Each row is keyed by a fingerprint of the fields the code reads. kadoa's daily-recomputed return columns are deliberately left out of that fingerprint, or every row would look new every day. The date watermarks (kadoa's newest filing date; congresswatch's newest trade date) are reported, never used to skip, because a late filing can carry an older date than one already read.
+
+**Live two-refresh run, isolated scratch folder, 2026-09-19 (ET evening of 09-18).** Refresh 1 processed 13,231 rows: kadoa 5,000 (3,358 kept, 1,642 with no ticker) and congresswatch 8,231 (2,543 kept, 5,456 outside the 180-day window, 231 with no date, 1 future-dated). That gave 4,800 observations, matching the earlier dry run, in 0.9 s. Refresh 2: both sources answered "unchanged" and it processed **0** rows in 0.09 s. A third refresh with the validators deliberately cleared downloaded both files whole: 13,231 rows were already seen and 0 were processed. The newest disclosure was 1 day old; the newest trade was 18 days old. Across the 3,147 kept kadoa rows with a real filing date, the gap from trade to filing was a median of 60 days (range 0 to 880).
+
+**What is recorded.** The feed keeps `manifest.json` (per source: HTTP validators, last attempt and last success, outcome, watermark, processed keys), `disclosures.json` and `observations.json` under `data/smart_money/congressional/`. A crash can only cause a re-read, never a skip. There is one `Congressional refresh:` line per source per refresh and one summary line. A `congressional_refresh` evidence row is written per pre-market run, next to `form4_backlog`, and the morning `scan_summary` gains a `congressional` freshness block. A source that fails, or whose copy is from an earlier day, is served with a label giving its age, and the seat reads degraded. The health report gained three families (source unreachable, source unreadable, old copy used), each cleared by a later successful refresh of the same source. Unlike every other family there, these were not read off production logs, because none exist. The tests drive the real code into each failure and classify the line it emits.
+
+**Also changed.** Congressional rows are now labelled "fresh" only if the TRADE is recent, not the filing: a filing made yesterday about a two-month-old trade used to be called fresh. The feed's own time budget (`congress_refresh_deadline_s`) and the disclosure-lag setting were declared in config and never passed through; both now are, with values unchanged. A `src/config.py` comment still claimed congressional evidence must be 7 days old or less; that rule was removed on 2026-09-11, and the comment is corrected.
+
+**Found, not fixed.** A congresswatch-only row's filing date is estimated as trade + 45 days (capped at today), so its lag can never exceed 45 and the 45-day legal-deadline check always passes for such rows. The measured median lag of 60 days says real filings are often later than that.
+
+### 2026-09-19 — the daily log-health report missed the technical seat's own failures and false-alarmed on it every morning
+
+**What broke, in one line:** the owner's only window into the desk's logs
+(`src/log_health.py`, sent every trading morning) both missed real technical-
+seat failures and paged him with a fake one, on the seat now the only one
+that can stop the desk (2026-09-18 ruling).
+
+**Miss #1 — case-sensitive matching.** The report's pattern for "an answer
+the desk could not read" was the exact-case string `failed to parse`. The
+technical seat's own logger call spells it `Failed to parse tech analysis
+item for %s` — capital F — so it never matched, silently, since the line was
+first written; every OTHER seat's lowercase version of the same words did
+match. Five more real technical-seat lines had no pattern at all: the batch-
+level "unresolved after the single shared recovery" (a different ending from
+the "unresolved after retry" the report already knew), the whole-answer
+"returned non-JSON" case, a hallucinated row for a symbol nobody asked about
+("emitted N row(s) for symbols not in the submitted chunk"), and two summary
+lines from `src.pipeline_stages` ("Tech batch partial", "Tech batch: all N
+submitted symbol(s) failed") that restate a loss the seat's own line already
+counts. **Fix:** matching is now case-insensitive everywhere in this module
+(reviewed against the full retained history for a pattern that relies on
+case to tell two different conditions apart — none does), the five missing
+endings now have patterns, and the two pipeline_stages summaries are filed as
+informational (not reportable) so one lost batch is not counted twice under
+two different log lines.
+
+**Miss #2 — a fabricated daily alarm.** `data_status["tech"]` is set to
+`low_confidence` whenever ANY resolved read carries the model's own
+`conviction="low"` (`src/pipeline_stages.py`). A `neutral` rating has no view
+to be confident about, so it is effectively always low-conviction — which
+made the "Morning research degraded: tech" ERROR line fire most mornings
+regardless of whether any real BUY/SELL call was ever shaky, and the report
+then told the owner a research desk "could not be reached". (The standalone
+Telegram data-quality alert already carries an exemption for exactly this,
+`notifier._ALERT_EXEMPT_PER_SEAT`, ratified 2026-09-04 — this ERROR log line
+had never been given the same treatment.) **Fix, at the source:** the
+`degraded` list this one summary line reports from now excludes tech's
+`low_confidence` when every low-conviction read in the batch was `neutral`;
+a real low-conviction BUY/SELL read still reports. `data_status["tech"]`
+itself, RiskStage's `data_degraded` advisory, and the Risk Manager's prompt
+are byte-for-byte unchanged — this touches only the operator-facing summary
+line, deliberately, so no gate or trading behaviour moved.
+
+**Evidence.** Replayed the report's classifier over the last 10 trading
+days of real production logs (2026-09-04 through 2026-09-18): identical
+counts before and after, because none of the six missed line shapes actually
+occurred in that window — the technical seat's per-row parse fix (2026-09-19,
+same day, separate PR) had already cut off the malformed-row cases earlier in
+the retained history. Replayed over the full retained history instead
+(2026-08-01 to 2026-09-19) to prove the fix does something: `seat_answer_
+unreadable` 13 → 117, `names_dropped_from_answer` 82 → 84, and the generic
+fail-closed `unrecognised_faults` bucket 486 → 383 — the previously-invisible
+lines moving out of the catch-all and into their real, specific family.
+
+**Tests.** `tests/test_log_health.py` gained seven tests built from the
+literal log lines (four copied verbatim from production, two built from the
+tech seat's own format string for endings never yet seen live, one proving
+case-insensitivity generally); reverting the matching fix fails all seven.
+`tests/test_pipeline_stages.py` gained two tests for the false-alarm fix — a
+neutral-only low-conviction morning must not log "Morning research
+degraded", a real low-conviction BUY/SELL morning still must; reverting the
+source fix fails the first.
+
+### 2026-09-19 — the stop-coverage sweep had been running all along, but only one unit's journal could show it; and three desk processes had raced to place the same stop (items 131 and 127)
+
+**In plain words:** the board suspected the every-30-minutes stop-coverage sweep had never run. It had run on every tick since 2026-09-14 and had put protective stops back at four market opens, but it wrote only to its own systemd journal, never to the desk's log or database, so nothing a person normally reads could show it. Every run now leaves a named line in the desk's log and one row in the desk's event record. Separately, the 2026-09-16 "stop repair failed" alarm turned out to be a three-way race with the sweep, not a two-way one. The desk's processes now take one shared lock before writing to the broker.
+
+**Production evidence for item 131, read-only, 2026-09-19 ~01:35 UTC.** Timer active since 2026-09-14 04:47 UTC. The journal holds 235 starts and 235 finishes. The last run exited 0, and no run in the journal failed. The sweep put DAY stops back at the open on 09-14 (ORCL), 09-15 (ORCL), 09-16 (BRK-B, COP, EQNR, NOK, OXY) and 09-17 (AAPL, BRK-B, EQNR, NOK, XOM). It sent one exposure alert, on 09-14 at 21:00 UTC (ORCL, $44.67, delivered). **Its alarm for a failed repair has never fired**, so that path is still unproven in production. On 09-18 at the open it found 9 short-covered positions and placed nothing. Its journal line does not say why. The most likely reason is that the morning session held the session lock, and the new record states the reason. None of this reached `quant_agent.log`, because the process never configured logging: INFO lines were dropped and warnings went to stderr only. The only durable file, `data/alerting/coverage_heartbeat.json`, is overwritten on every run.
+
+**The 2026-09-16 collision, re-read against the broker's own order history.** The sweep created BRK-B's 0.4393-share DAY stop at 13:30:42.121. About 675 ms later, `intra_check` and `morning` (started 5 ms apart) each acted on the same stale gap. They were both refused with `held_for_orders`, both exhausted their retries, and both declared a failure over a stop that was resting at the broker. Neither of them placed the order that landed. The board's account of that incident ("the broker rejected the second") therefore needs correcting: it was a three-process race, and the order that won came from the sweep.
+
+**What changed.** Item 131, observability only: each run logs `COVERAGE SWEEP <run id> (<entry>): started` and a finish line to `quant_agent.log`. The finish line gives the outcome, positions checked, gaps, repairs attempted/succeeded/failed, the alert sent or none, and any deferral reason. Each run also writes one `specialist_evidence` row (`agent_name='coverage_sweep'`, `kind='pipeline_event'`, `scope='run'`). The sweep still repairs the same things, at the same times, with the same thresholds. Item 127: `intra_check`'s broker-writing preamble (the drains, coverage repair, cash-park release and the orphan, stop-out and fill reconciles) now runs only while that process holds the flock its paid scan already used (`.intraday_scan.lock`). It also defers whenever a live morning/midday/close session owns the desk, using the same owner check the paid scan uses. The sweep's repair pass now takes that same flock. When either one defers, only that tick's writes are skipped: the loss check still runs, and the next tick re-reads the broker.
+
+**Still open.** Sessions do not take the flock themselves. A session that starts in the second after `intra_check` or the sweep checked for it can still overlap them. Today that pairing is closed by timing alone: `intra_check` fires at :15/:45, and the sessions and the sweep at :00/:30. The sweep and the sessions share a tick, and on that tick they are separated only by the session-lock check.
+
+**Tests.** `tests/test_desk_broker_write_lock.py` (six) and a new section in `tests/test_coverage_watchdog.py` (five). Reverting the pipeline change fails the two `intra_check` tests, including the drain re-adding a stop that a live morning session cancelled to sell. Reverting the watchdog change fails the two lock tests and the four record tests. Reverting the heartbeat change fails the five record and log tests.
+
+### 2026-09-19 — the midday/close reviewer and the ordinary SELL and COVER loops now put each name's stop back before touching the next (follow-on to item 111)
+
+**In plain words:** the same fault the de-lever loops had (entry above) was in three more places that sell or cover more than one holding in one pass — the position reviewer's exits at midday and close, and the ordinary SELL and COVER orders the portfolio manager's decisions produce. Each took every holding's protective stop off and sent every order first, and only waited for fills and put stops back after the whole pass. Each now finishes one holding — wait for its order, then restore, re-protect the remainder, or leave off on a full exit — before it touches the next. Which holdings exit, how much and at what price are unchanged.
+
+**Reproduced on main before fixing.** `tests/test_multi_name_exit_stop_sequencing.py` drives the real `_midday_execute_llm_actions` loop and the real `ExecutionStage.run` SELL and COVER loops, with the real `_submit_protected_sell`, `_cancel_stops_with_write_ahead` and `_finalize_pending_protections`; only the broker edges are recorded. On main the reviewer produced: NVDA stops cancelled, NVDA sold, AMD cancelled, AMD sold, TSLA cancelled, TSLA covered, then all three re-protected. The ExecutionStage SELL loop (NVDA, AMD, MSFT) and COVER loop (TSLA, RIVN) had the same shape. In the reviewer the fill wait was inside the batch finalize, so each later name also sat uncovered through every earlier name's wait (15-second default each, `wait_for_order_terminal`); in ExecutionStage every name sat uncovered until every order in the loop had been waited on.
+
+**Fix.** Each loop now waits for and finalizes one name right after that name's order and trade row. The finalize still runs when the trade-row write raises after the order was accepted (the stops are off and the order is live) — the reviewer has a test for that case. ExecutionStage still records each SELL's terminal status for the rotation gate, in the same order. **Same trade-off as the de-lever fix:** a later exit is now submitted after the earlier ones finished, up to 15 seconds per earlier order later than before, so it has less of the session to fill. No timing, threshold or price was changed.
+
+**Checked and not affected:** the two cash-sweep sells and the de-lever loops (already one name at a time); the start-of-session recovery drain, the ex-dividend stop shift and the scale-in stop replacement (each touches one symbol's stops at a time).
+
+**Tests.** Four tests; reverting the reviewer fix fails its two, reverting the ExecutionStage fix fails its two, and a fix that finalizes only on the happy path fails the trade-row test.
+### 2026-09-19 — nine places where the desk changed or threw away a trade and kept no record of it (board item 164)
+
+**What broke, in one line:** between the portfolio manager's answer and the
+order, nine rules could cut, drop or quietly ignore a decision and leave only
+a log line — which rotates away — so afterwards nobody could see what had
+happened to that stock or why.
+
+**The owner's ruling this closes against:** keep every decision and its
+reason. A log line is not a record.
+
+**What was checked, and all nine were real on main.** Each was read in the
+code before anything changed:
+
+1. A risk-seat edit that fails the order schema drops the whole trade — in
+   neither the refused-edit list nor any event.
+2. An edit to a field the desk cannot change, and
+3. an edit naming a stock that has no order left, were ignored — while the
+   seat's edit row stayed stored as if it had been applied, and the stock's
+   risk event said `modified`.
+4. The queued-earnings cap cut or dropped a BUY; the stored proposed order
+   kept the pre-cap size.
+5. The portfolio manager's answer had a target removed for an unaddressed
+   seat conflict, or
+6. for being malformed (only an in-memory counter saw it).
+7. The constructor turned "flip this long into a short" into "just close
+   it" — the stock still got an order, so it never counted as a drop.
+8. When a risk-seat size increase on a short could not be undone, the short
+   was dropped — and the record said "Reverted", which was false.
+9. Every stock the risk seat let through carried the same constant reason,
+   `risk_manager_verdict`; a book-level veto stamped one sentence on every
+   stock even when the seat had named one stock's own reason; and an exit the
+   seat approved reached the raw model log only.
+
+One detail of the board item was off: it placed the constant-reason defect
+at two line numbers, one of which is actually defect 8. Nothing else in it
+was wrong.
+
+**What changed — recording only.** No rule's decision, threshold, cap, size
+or order changed. Each outcome is now a per-symbol row in the evidence stream
+the desk already uses for every stage of a trade (`pipeline_event`), naming
+the rule (`gate`), the reason, and the size before and after where one
+changed. The risk event now says `modified` only when something actually
+changed, and carries the seat's own reason. An approved exit goes into the
+exit path's own record (`exit_refusal`, `code=ai_risk_approved`,
+`dropped=false`), which already held non-drop outcomes.
+
+**Two placements that were deliberate, not convenient.**
+- An edit naming a stock with no order in the plan is filed against the run,
+  not the stock, with the stock named inside. Filed against the stock, the
+  jam detector (the alarm that fires when every idea is refused for the same
+  reason, session after session) would have counted a stock the run never
+  considered, or overwritten the real refusal of one the seat had already
+  refused.
+- An approved exit is NOT a `pipeline_event` for the same reason: that alarm
+  treats any surviving row as the session having taken a new idea, and an
+  exit is not one. Filing it there would have been able to silence the alarm.
+
+**What would catch it next time:** every one of the new rows has a test that
+fails if the line writing it is removed (checked by removing each line in
+turn). A new gate that drops or changes a trade without writing a row is
+still possible; nothing mechanical prevents that yet.
+
+---
+
+### 2026-09-19 — one broken line in the technical seat's answer threw away every good stock beside it
+
+**What broke, in one line:** when the technical seat answered about several
+stocks and made a typing slip in one of them, the desk kept one stock from
+the whole answer, told the log the model "had not answered" the rest, and
+sometimes lost good analyses permanently.
+
+**Why it mattered more after 2026-09-18.** The owner ruled that only the
+technical seat may stop the desk, and a stock the seat fails on counts as
+lost evidence. A parsing slip was therefore able to stop a decision.
+
+**The cause.** When an answer is not valid JSON as a whole, the shared
+parser (`AgentResult.parse_json`, used by every seat) picks ONE well-formed
+fragment. For the technical seat, whose answer is a list of stocks, that
+meant keeping one stock and discarding the rest. The seat then logged the
+discarded stocks as `missing-from-response` and re-asked for them; the retry
+could fail the same way.
+
+**Worked case, from the stored answers** (`agent_logs` row 456, run
+`intra_check-26f52bf2`, 2026-09-17 14:31): five stocks asked; the answer
+carried all five, SQQQ with a stray `n/a` line; ZS alone was kept. The retry
+of the other four came back with all four, SQQQ garbled again (`s"thesis_...`);
+MTZ alone was kept. ORCL and ETN were lost although both answers carried them
+well-formed.
+
+**Measured across every stored technical-seat answer** (292 answers in
+`agent_logs`, 2026-08-17 to 2026-09-18): 9 answers carried exactly one
+broken stock; in those 9 the old parser kept 9 stocks and the new one keeps
+54 — 45 good analyses recovered. On the other 283 answers the new parser
+returns exactly what the old one did.
+
+**The fix.** The technical seat now parses its answer stock by stock
+(`AgentResult.parse_json_rows`, opt-in; `parse_json` is unchanged for every
+other seat). A good stock is kept; a broken one is dropped on its own, logged
+with its symbol and the decoder's reason, and counted as a dropped item. Only
+the broken and genuinely absent stocks are re-asked. Log lines now name three
+causes apart: `validation-failed`, `malformed-in-response`, and
+`missing-from-response` (now meaning only what it says). The final loss line
+says, per stock, whether it was returned but unusable or absent from every
+answer. The row splitter resets its "inside a string" state at each line
+break, because JSON forbids a raw line break inside a string (RFC 8259 §7),
+so one missing quote cannot swallow the stocks after it.
+
+**Not done: constrained output on the Google route.** The Google-direct call
+already sends a response schema for any seat that declares one; the
+technical seat declares none, on either route. Adding one is not small:
+(1) its answer is a bare list, and the strict OpenAI-style schema this code
+builds requires an object at the top, so the prompt, parser and prompt
+snapshot tests would move to a wrapper object; (2) the result model carries
+eight fields the desk fills in itself (`atr_14`, `computed_levels`,
+`computed_level_touches`, `levels_coverage`, `signal_bar_low`,
+`signal_bar_high`, `bars_available`, `signal_age_days`), so a separate
+model-facing schema is needed; (3) `computed_level_touches` is a free-form
+map, which forces `strict=false` anyway; (4) whether Google's OpenAI-
+compatible endpoint then enforces the schema has not been tried on a live
+call. The per-stock parse above does not depend on any of that.
+
+**What still loses a stock.** A slip that unbalances braces (an extra `{`
+or a missing `}`) can merge two stocks into one broken piece; the first is
+then reported as broken, the second as absent, and both are re-asked. Not
+seen in the 292 stored answers.
+
+---
+
+### 2026-09-19 — a multi-name de-lever now puts each name's stop back before touching the next, and a de-lever that leaves the book over its ceiling is recorded (items 111 and 112)
+
+**In plain words:** when the automatic de-lever sold down more than one holding in one pass, it took every holding's protective stop off first and only put them back after the whole pass. It now puts each holding's stop back — on what is actually left after the fill — before it touches the next holding. Separately, a de-lever that finishes with the account still over its limit now leaves a permanent record of what was tried and what each order did. Neither change alters which holdings are sold, how much, or at what price.
+
+**Item 111 — reproduced on main before fixing.** A test driving the real `_enforce_gross_ceiling` loop, the real `_submit_protected_sell` and the real `_finalize_pending_protections` recorded this order of events for a two-name trim: NVDA stops cancelled, NVDA sold, AMD stops cancelled, AMD sold, NVDA covered, AMD covered. The cash-only sweep `_force_delever` produced the same shape. **Correction to the item as filed:** it said the EARLIEST-trimmed name rode naked through every later name's fill wait. Finalize walks the batch in order, so the first name waited only on its own order plus the rest of the submit loop; it was the LATER names that sat uncovered through every earlier name's wait (up to the 15-second ceiling each, `wait_for_order_terminal`). Every name after the first was exposed longer than it needed to be.
+
+**Fix.** Both loops now call `_finalize_pending_protections` for one name right after that name's order and trade row, so its stops are restored (no fill), re-protected on the residual (partial fill) or left off (full exit) before the next name's stops are cancelled. Which names, how much and at what limit are all fixed before the loop runs (`apply_gross_ceiling` for the ladder; `projected_proceeds`, booked at submit time, for the cash sweep) and are unchanged. **One trade-off, stated plainly:** the later trims are now submitted after the earlier ones have finished, so each resting limit gets its own wait window rather than also resting through the earlier names' waits. On a fast-moving day that can mean a later trim is submitted up to 15 seconds per earlier trim later than before, and has less total time to fill before it is cancelled. The timings, thresholds and prices themselves are unchanged.
+
+**Item 112 — what was already there, and what was added.** The item was partly stale: since it was filed, `_alert_owner_delever_incomplete` sets `delever_incomplete` on the session's leverage record, and the session message already shows a plain-words line when it is set. What was still missing was a durable record of the failure. A de-lever that ends over its ceiling now writes one run-scoped row to the existing lifecycle-event stream (`specialist_evidence`, `agent_name='pipeline'`, `kind='pipeline_event'`, `stage='gross_delever'`, `outcome='still_over_ceiling'`) holding the gross exposure and equity before, the ceiling, the gross exposure after, and for each order the symbol, side, quantity, broker order id, final broker status and whether its stop coverage was confirmed. It is deliberately NOT written to `agent_logs`: that is the paid-model ledger, and the cost circuit refuses a same-day `agent_logs` row whose run has no budget session — which a write from the pre-agent preamble could produce. No alert, no selling and no sizing were added; whether a failed de-lever should do anything more is still the owner's decision recorded on the item.
+
+**Tests.** `tests/test_gross_exposure_ladder.py`: two timeline tests (one per loop) fail on the pre-fix code and pass on the fix; the shortfall-row test fails with the write removed. A failing write is shown not to affect the de-lever.
+
 ### 2026-09-18 — the risk seat's three sizing defects, one real and two that did not survive a check (items 135, 136, 137 closed)
 
 **What broke, in one line:** of three reported position-sizing defects, one was real and live (a short could be enlarged by an edit meant to shrink it), one was real but had never once fired in production (a levered ETF's size was shown to the risk seat in the wrong units), and the third — as filed — was wrong on both of its own claims; the actual, much smaller defect underneath it is what was fixed.
@@ -9061,6 +9617,11 @@ targets, that check may now be too easy to pass and stop discriminating.
 **Universe expansion and pruning — DESIGN AGREED WITH THE OWNER 2026-09-01,
 never written down until now. Not built. Do not redesign it; implement this.**
 
+**STATUS 2026-09-19: BUILT, behind `universe_screen.enabled` (shipped OFF).
+"Not built" above is historical. What was built and every place it differs
+from this design: the 2026-09-19 entry "Universe expansion and pruning built"
+near the top of this file.**
+
 Today the 101-symbol universe is a hand-written list. Symbols CAN be added
 dynamically but only narrowly: up to 3/run via SEC Form 4 smart-money
 admission, and up to 3 per seat / 6 total per run via Phase 9 nominations.
@@ -12036,6 +12597,66 @@ the code path they describe — that has not been separately re-verified and
 should be checked against current `src/data/smart_money.py` before treating
 them as still live.
 
+**Follow-up 2026-09-19 — the PR #529 drain could never finish, and its
+watermark hid the whole trading day's filings.** In plain words: the check
+that was supposed to confirm "every filing on our own companies has been
+read" had to read about 5,400 filings in the 30 or so seconds left over from
+another job, so it never confirmed anything and the insider evidence was
+marked out of date on every check. It now has its own time allowance, keeps
+its progress company by company, and says exactly how many companies are
+fully read.
+
+- *Measured* (read-only against SEC, 2026-09-19, the desk's own User-Agent
+  and 8 requests/second limiter): 82 watched companies; 5,801 insider
+  filings inside the 365-day window, 5,431 of them unread, on 76 of the 82
+  companies; 11.0 s to fetch all 82 filing histories; 0.156 s per filing
+  read over 40 reads. Reading the backlog therefore takes about 858 s. The
+  drain shared the market-wide pass's 180 s, and that pass ran first and
+  took ~153 s by itself (journal, 2026-09-18 12:00:41 -> 12:03:14 UTC).
+- *Fixed — own budget.* `watched_drain_deadline_s` (859 s, derivation at
+  its definition in `src/config.py`) starts after the market-wide pass is
+  done. A test checks that the whole pre-market job still fits inside its
+  systemd limit of 1,260 s.
+- *Fixed — progress kept per company.* `watched_read_through_by_cik`
+  records each company the moment nothing on it is left unread; companies
+  are read smallest-backlog first. A drain that runs out of time loses
+  nothing and the next morning resumes. The single all-companies date is
+  still written, but only when every company is read, and freshness no
+  longer uses it.
+- *Fixed — a same-day blind spot.* The single date excluded any filing
+  "dated on or before" it as backlog. The drain runs at 08:00 ET and stamped
+  today, so every filing made later that trading day carried today's date
+  and was never seen as new: a false reuse, the dangerous direction. Now a
+  company that has been fully read cannot have backlog, so any unread
+  filing on it is new.
+- *Fixed — partial coverage is never reported clean.* Morning: a run that
+  would have said `ok` or `empty` says `partial` while any watched company
+  has unread filings. Intraday: the seat is `expired` with a reason naming
+  how many companies are not yet read — including when the remembered
+  answer is empty, which used to reuse as the clean `chose_not_to_refetch`
+  on the false ground that an empty answer is classified as lost.
+- *Fixed — the pre-open alert.* Production wraps the Form 4 provider in a
+  combined provider that never passed the read-through date up, so the
+  alert would have fired every morning whatever the drain did. Its wording
+  also still said the desk "will not make a new trading decision", false
+  since PR #535 made this seat advisory.
+- *Now recorded, not only logged:* the morning backlog counts
+  (`watched_pending_filings`, `discovery_cap_reached`, companies read) are a
+  `form4_backlog` evidence row each pre-market run; the morning seat's
+  coverage is inside its `scan_summary` row.
+- *Considered and not done — seeding.* Marking the backlog as read without
+  reading it would claim a year of coverage the desk does not have, the
+  same shape as the rejected exemption above. The 365-day window is the
+  owner's behavioural bound; reading it once costs ~14 minutes of one
+  morning, and steady-state inflow is ~16 filings a day on these companies.
+- *Not changed:* `peek_accessions` and the pipeline's
+  `_peek_new_form4_accessions` have no live caller since PR #529; the
+  pipeline one now logs a failure instead of swallowing it, and the stale
+  comment calling it "kept for the producing step" is corrected. Removal is
+  left for a separate change. If the pre-market job is killed by systemd
+  mid-drain, that morning's reads are cached on disk but not recorded as
+  read; the budget test is what keeps the job inside its limit.
+
 ---
 
 ### 2026-09-18 — the automatic board-conflict resolver silently dropped an entire item while reporting success
@@ -12066,20 +12687,3 @@ reported success on its own.
 
 ---
 
-### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
-
-**In plain words:** an item on the open-work list asking to fix a bug — a
-holding's age being measured in calendar days instead of trading-session days
-for one pace calculation — was fixed two days before this entry. The fix was
-never written up here and the item was never removed from the list, so it
-sat open doing nothing for two days.
-
-**Done-criteria-met:** PR #493 (commit d93659fa, merged 2026-09-18) changed
-the position reviewer's pace calculation in `src/pipeline.py` so `too_early`
-and `time_fraction` read the weekend-aware `sessions_held` figure instead of
-calendar-day `days_held` — the code carries a comment citing this board item
-by number. Retired from `docs/WORK.md` 2026-09-20 during a full-board
-redundancy sweep prompted by finding two other already-fixed items the same
-day.
-
----

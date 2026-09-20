@@ -802,6 +802,14 @@ class PortfolioConstructor:
         # (`pipeline_stages.DecisionStage`) drains once per session.
         self.last_refusals: dict[str, dict[str, str]] = {}
 
+        # SIDE FLIPS (board item 164, 2026-09-19): {SYMBOL: {...}} for every
+        # target this `construct_orders` call collapsed from "flip the side"
+        # to "close only" (rule D3 below). The symbol is NOT dropped — it
+        # still gets its closing leg — so neither `last_drop_reasons` nor
+        # `last_refusals` ever saw it, and the only trace was a log line.
+        # Reset per call; `pipeline_stages.DecisionStage` persists it.
+        self.last_side_flips: dict[str, dict] = {}
+
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
 
@@ -941,6 +949,7 @@ class PortfolioConstructor:
         """
         capture = _DropReasonCapture()
         logger.addHandler(capture)
+        self.last_side_flips = {}
         try:
             return self._construct_orders_impl(*args, **kwargs)
         finally:
@@ -1100,6 +1109,14 @@ class PortfolioConstructor:
                     "next session once the book is actually flat.",
                     sym, current_pct, signed_target,
                 )
+                try:
+                    self.last_side_flips[str(sym).strip().upper()] = {
+                        "held_weight_pct": current_pct,
+                        "requested_weight_pct": signed_target,
+                        "emitted_weight_pct": 0.0,
+                    }
+                except Exception:  # noqa: BLE001 — a record side-channel must never raise
+                    pass
                 signed_target = 0.0
 
             plan_for_sym = (

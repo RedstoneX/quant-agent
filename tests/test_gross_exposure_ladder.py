@@ -1618,3 +1618,236 @@ def test_the_single_name_execution_cap_falls_back_closed_not_open():
     pipeline.config.risk.max_position_pct = MagicMock()   # unreadable
     assert _single_name_execution_cap(pipeline, 10_000.0) == 2_000.0   # 20% default
     assert _single_name_execution_cap(pipeline, float("nan")) == 0.0
+
+
+# ===========================================================================
+# docs/WORK.md item 111 — a multi-symbol de-lever must never leave a symbol
+# without its protective stop while the loop goes on to touch the next one.
+#
+# These drive the REAL `_enforce_gross_ceiling` / `_force_delever` loops, the
+# REAL `_submit_protected_sell` (snapshot -> write-ahead -> cancel -> submit)
+# and the REAL `_finalize_pending_protections` (wait -> finalize). Only the
+# two broker-edge seams are recorded: the moment a symbol's stops are
+# cancelled at the broker ("naked") and the moment finalize rebuilds its
+# coverage on the actual fill ("covered"). The defect is purely the ORDER of
+# those events, so recording them at the seam is the defect itself, not a
+# mock of it.
+# ===========================================================================
+
+
+def _stop_timeline_pipeline(*, allow_margin: bool):
+    from src.config import CashSweepConfig
+    from src.pipeline import TradingPipeline
+
+    events: list[tuple[str, str]] = []
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = MagicMock()
+    pipeline.config.risk = _risk_config(allow_margin=allow_margin)
+    pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
+    pipeline.cash_sweeper = None
+    pipeline.db = MagicMock()
+    # A book that fell 16% from its high: the ladder demands 1.0x.
+    pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
+    pipeline._write_ahead_protection_restore = MagicMock(return_value=1)
+    pipeline._compute_deployable_cash = MagicMock(return_value=0.0)
+
+    broker = MagicMock()
+    broker.snapshot_protective_stops.side_effect = (
+        lambda symbol, **_kw: (True, [{"id": f"stop-{symbol}", "stop_price": 80.0}])
+    )
+
+    def _cancel(symbol, _specs):
+        events.append(("naked", symbol))
+        return True
+
+    def _submit(*, symbol, **_kw):
+        events.append(("submit", symbol))
+        return {"id": f"ord-{symbol}", "symbol": symbol, "status": "accepted"}
+
+    broker.cancel_snapshotted_stops.side_effect = _cancel
+    broker.submit_order.side_effect = _submit
+    broker.wait_for_order_terminal.return_value = "filled"
+    broker.get_account.return_value = {
+        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+    }
+    broker.get_positions.return_value = []
+    pipeline.broker = broker
+
+    def _finalize(order_id, symbol, *_a, **_kw):
+        events.append(("covered", symbol))
+        return True, []
+
+    pipeline._finalize_protection_after_sell = MagicMock(side_effect=_finalize)
+    return pipeline, events
+
+
+def _assert_no_symbol_left_naked_while_another_is_touched(events):
+    naked: set[str] = set()
+    touched: list[str] = []
+    for kind, symbol in events:
+        if kind in ("naked", "submit"):
+            others = naked - {symbol}
+            assert not others, (
+                f"{sorted(others)} still had NO protective stop when the "
+                f"de-lever moved on to {symbol} — full timeline: {events}"
+            )
+            if kind == "naked":
+                naked.add(symbol)
+                touched.append(symbol)
+        elif kind == "covered":
+            naked.discard(symbol)
+    assert not naked, f"{sorted(naked)} never had coverage rebuilt: {events}"
+    return touched
+
+
+def test_a_multi_symbol_gross_delever_restores_each_stop_before_touching_the_next():
+    """Item 111. Three names over a 1.0x ceiling: every one is trimmed, and
+    each must have its stop rebuilt on the actual fill BEFORE the next name's
+    stops are cancelled. Before the fix, finalize ran once after the loop, so
+    the first name rode naked through every later cancel and submit."""
+    from src.pipeline_context import RunContext
+
+    pipeline, events = _stop_timeline_pipeline(allow_margin=True)
+    ctx = RunContext(run_id="test-run", session="morning")
+    ctx.positions = [
+        _position("NVDA", qty=80.0, current_price=100.0),
+        _position("AMD", qty=70.0, current_price=100.0),
+        _position("MSFT", qty=50.0, current_price=100.0),
+    ]  # $20k gross on $10k equity = 2.0x against a 1.0x ceiling
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
+    assert len(orders) >= 2 and len(touched) >= 2, (
+        f"the scenario must trim more than one name to test anything: {events}"
+    )
+
+
+def test_a_multi_symbol_cash_only_delever_restores_each_stop_before_touching_the_next():
+    """Item 111, the `_force_delever` site, which shares the batch shape: a
+    cash deficit big enough to need two sales."""
+    from src.pipeline_context import RunContext
+
+    pipeline, events = _stop_timeline_pipeline(allow_margin=False)
+    ctx = RunContext(run_id="test-run", session="morning")
+    ctx.cash = -1_500.0
+    ctx.positions = [
+        _position("NVDA", qty=10.0, current_price=100.0, avg_entry=120.0),
+        _position("AMD", qty=10.0, current_price=100.0, avg_entry=110.0),
+        _position("MSFT", qty=10.0, current_price=100.0, avg_entry=90.0),
+    ]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._force_delever(ctx)
+
+    touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
+    assert len(orders) == 2 and touched == ["NVDA", "AMD"], events
+
+
+# ===========================================================================
+# docs/WORK.md item 112 — a de-lever that leaves the book over its ceiling
+# leaves a DURABLE record: before/after gross, the ceiling, each order's fate.
+# Observability only — the alert flag and every order are unchanged.
+# ===========================================================================
+
+
+def _shortfall_rows(database):
+    import json
+    rows = database.conn.execute(
+        "SELECT run_id, agent_name, kind, scope, symbol, evidence_json "
+        "FROM specialist_evidence WHERE kind='pipeline_event'"
+    ).fetchall()
+    return [
+        (dict(r), json.loads(r["evidence_json"])) for r in rows
+        if json.loads(r["evidence_json"]).get("stage") == "gross_delever"
+    ]
+
+
+def test_a_delever_left_over_the_ceiling_writes_a_durable_shortfall_row(tmp_path):
+    from src.pipeline_context import RunContext
+    from src.storage.db import Database
+
+    database = Database(str(tmp_path / "t.db"))
+    database.initialize()
+    try:
+        pipeline, _events = _stop_timeline_pipeline(allow_margin=True)
+        pipeline.db.insert_specialist_evidence.side_effect = (
+            database.insert_specialist_evidence
+        )
+        # The limit never fills: the broker cancels it, and the refreshed
+        # book is exactly as levered as before.
+        pipeline.broker.wait_for_order_terminal.return_value = "canceled"
+        pipeline.broker.get_positions.return_value = [
+            _position("NVDA", qty=200.0, current_price=100.0),
+        ]
+        ctx = RunContext(run_id="run-112", session="morning")
+        ctx.positions = [_position("NVDA", qty=200.0, current_price=100.0)]
+        ctx.total_value = EQUITY
+
+        orders = pipeline._enforce_gross_ceiling(ctx)
+
+        assert orders, "the trim is still submitted exactly as before"
+        assert ctx.leverage["delever_incomplete"] is True
+        rows = _shortfall_rows(database)
+        assert len(rows) == 1, rows
+        meta, data = rows[0]
+        assert meta["run_id"] == "run-112"
+        assert meta["agent_name"] == "pipeline" and meta["scope"] == "run"
+        assert data["outcome"] == "still_over_ceiling"
+        assert data["gross_usd_before"] == pytest.approx(20_000.0)
+        assert data["gross_x_before"] == pytest.approx(2.0)
+        assert data["gross_usd_after"] == pytest.approx(20_000.0)
+        assert data["gross_x_after"] == pytest.approx(2.0)
+        assert data["ceiling_x"] == 1.0
+        assert data["equity_before"] == pytest.approx(EQUITY)
+        assert data["ceiling_usd_before"] == pytest.approx(EQUITY)
+        assert data["orders"] == [{
+            "symbol": "NVDA", "action": "SELL", "qty_submitted": 100.0,
+            "broker_order_id": "ord-NVDA", "terminal_status": "canceled",
+            "stop_coverage_confirmed": True,
+        }]
+    finally:
+        database.close()
+
+
+def test_a_delever_that_cleared_the_ceiling_writes_no_shortfall_row(tmp_path):
+    from src.pipeline_context import RunContext
+    from src.storage.db import Database
+
+    database = Database(str(tmp_path / "t.db"))
+    database.initialize()
+    try:
+        pipeline, _events = _stop_timeline_pipeline(allow_margin=True)
+        pipeline.db.insert_specialist_evidence.side_effect = (
+            database.insert_specialist_evidence
+        )
+        pipeline.broker.get_positions.return_value = [
+            _position("NVDA", qty=100.0, current_price=100.0),
+        ]  # 1.0x after the fill: at the ceiling, not over it
+        ctx = RunContext(run_id="run-ok", session="morning")
+        ctx.positions = [_position("NVDA", qty=200.0, current_price=100.0)]
+        ctx.total_value = EQUITY
+
+        assert pipeline._enforce_gross_ceiling(ctx)
+        assert "delever_incomplete" not in ctx.leverage
+        assert _shortfall_rows(database) == []
+    finally:
+        database.close()
+
+
+def test_a_failed_shortfall_write_never_breaks_the_delever():
+    from src.pipeline_context import RunContext
+
+    pipeline, _events = _stop_timeline_pipeline(allow_margin=True)
+    pipeline.db.insert_specialist_evidence.side_effect = RuntimeError("disk full")
+    pipeline.broker.get_positions.return_value = [
+        _position("NVDA", qty=200.0, current_price=100.0),
+    ]
+    ctx = RunContext(run_id="run-x", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=100.0)]
+    ctx.total_value = EQUITY
+
+    assert pipeline._enforce_gross_ceiling(ctx)
+    assert ctx.leverage["delever_incomplete"] is True
+    assert pipeline.db.insert_specialist_evidence.called

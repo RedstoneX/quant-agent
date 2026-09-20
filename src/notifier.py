@@ -1161,14 +1161,63 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 # each one MEANS in the words a person would use; the key never reaches
 # the message. An unmapped seat or value is DESCRIBED and its raw text is
 # labelled as kept-for-the-record, never paraphrased into a claim.
+#
+# "smart_money" is deliberately NOT a fixed string here. Congressional
+# trading disclosures (`src/data/congressional_trading.py`) are gated by
+# `config.smart_money.congress_enabled`, switched ON 2026-09-20 per owner
+# ruling (see `docs/INCIDENT_HISTORY.md`'s 2026-09-04 and 2026-09-20
+# entries). Naming "congressional" in this label when that switch is off
+# would tell the owner the desk reads a feed it never actually reads.
+# `_smart_money_seat_label` below reads the real switch at call time, so
+# the wording can never drift from what the running desk actually does.
 _SEAT_WORDS: dict[str, str] = {
     "macro": "the market-backdrop research",
     "tech": "the chart research",
     "news": "the news research",
     "earnings": "the earnings-filing research",
-    "smart_money": "the insider-and-congressional-trading feed",
     "sector": "the sector research",
 }
+
+
+def _congress_enabled_now() -> bool:
+    """Whether `config.smart_money.congress_enabled` is on right now.
+
+    Read directly from `config/settings.yaml` (the one key, falling back to
+    the pydantic field default) instead of being threaded through as a
+    parameter: this module renders owner-facing text for dozens of call
+    sites (Telegram alerts, the intraday tick, stored-run replays) that do
+    not otherwise carry a config object, and several read stored historical
+    run data with no config in scope at all. Any failure to read it
+    (missing file in a test environment, credential delivery issues, bad
+    yaml) conservatively assumes the switch is off, `False`, regardless of
+    the field's own live default — a wording helper must never raise or
+    break an alert, and must never claim a feed is running when it could
+    not actually confirm the setting.
+    """
+    # Reads only the one key, NOT through `load_config`: that also collects
+    # the systemd-delivered broker credentials, which a wording helper has
+    # no business touching on every alert it renders.
+    try:
+        import yaml
+
+        from src.config import SmartMoneyConfig
+
+        settings_path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
+        with open(settings_path) as f:
+            raw = yaml.safe_load(f) or {}
+        section = raw.get("smart_money") or {}
+        if "congress_enabled" in section:
+            return bool(section["congress_enabled"])
+        return bool(SmartMoneyConfig.model_fields["congress_enabled"].default)
+    except Exception:
+        return False
+
+
+def _smart_money_seat_label(congress_enabled: bool) -> str:
+    """The smart-money seat's plain name, true to what it actually reads."""
+    if congress_enabled:
+        return "the insider-and-congressional-trading feed"
+    return "the insider-trading feed"
 
 _DATA_STATUS_WORDS: dict[str, str] = {
     "failed": "did not return an answer",
@@ -1205,6 +1254,8 @@ _DATA_STATUS_WORDS: dict[str, str] = {
 def seat_words(seat: Any) -> str:
     """Plain words for one research seat's internal name."""
     key = str(seat or "").strip().lower()
+    if key == "smart_money":
+        return _smart_money_seat_label(_congress_enabled_now())
     return _SEAT_WORDS.get(key) or (
         f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})"
     )
@@ -1227,6 +1278,144 @@ def describe_data_status(bad: dict) -> list[str]:
                 f"wording for (kept for the record: {token or 'blank'})"
             )
     return lines
+
+
+def _seat_list_words(seats: Any) -> str:
+    """"the chart research and the news research" — never internal keys."""
+    words = [seat_words(seat) for seat in (seats or []) if str(seat).strip()]
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def describe_evidence_freshness(freshness: Any) -> list[str]:
+    """How much of this decision's evidence was read on THIS tick, in words.
+
+    Owner mandate 2026-09-18 made every seat but the chart research
+    advisory. That means a decision can now rest on ONE freshly-read seat
+    plus a book carried over from the morning, and every one of those
+    carried seats reports green. Nothing anywhere said so. This says so.
+
+    It is DISCLOSURE, not a threshold: it states a count, it never judges
+    one. No minimum number of fresh seats exists in this desk and none may
+    be invented here — that number is the owner's (docs/WORK.md item 20).
+
+    Takes the dict produced by `evidence_gate.EvidenceFreshness.to_evidence`
+    and returns [] for anything it cannot read, so a missing or malformed
+    record costs the disclosure line and never the message.
+    """
+    if not isinstance(freshness, dict):
+        return []
+    fresh = [s for s in (freshness.get("fresh_seats") or []) if str(s).strip()]
+    carried = [s for s in (freshness.get("carried_seats") or []) if str(s).strip()]
+    absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
+    unknown = [
+        s for s in (freshness.get("unknown_freshness_seats") or [])
+        if str(s).strip()
+    ]
+    stale = [
+        s for s in (freshness.get("known_out_of_date_seats") or [])
+        if str(s).strip()
+    ]
+    total = len(fresh) + len(carried) + len(absent) + len(unknown)
+    if not total:
+        return []
+    lines = [
+        f"<b>HOW FRESH THIS DECISION'S EVIDENCE WAS</b> "
+        f"({len(fresh)} of {total} research seats read just now)"
+    ]
+    if fresh:
+        lines.append(f"   • read just now: {_seat_list_words(fresh)}")
+    else:
+        lines.append("   • read just now: none of them")
+    if carried:
+        lines.append(
+            f"   • carried over from earlier, not re-read: "
+            f"{_seat_list_words(carried)}"
+        )
+    if stale:
+        lines.append(
+            f"   • already known to be out of date: {_seat_list_words(stale)}"
+        )
+    if absent:
+        lines.append(f"   • no answer at all: {_seat_list_words(absent)}")
+    if unknown:
+        lines.append(
+            f"   • state the desk cannot classify, so not counted as read: "
+            f"{_seat_list_words(unknown)}"
+        )
+    return lines
+
+
+def describe_universe_changes(block: Any) -> list[str]:
+    """The owner-facing account of what the universe screen changed.
+
+    Owner design 2026-09-01: "the owner must never discover the universe
+    changed by accident" — every addition, flag and removal since the last
+    morning message, in plain words. Removals, flags and held names kept
+    past a failed check get one line EACH with the reason (they are the ones
+    that matter and are few); additions are one line of names, clipped,
+    because the first weeks can add hundreds. Silent only when the screen
+    is off (no block). With it on and nothing changed, it says so.
+    """
+    if not isinstance(block, dict):
+        return []
+    from src.universe_screen import describe_event, plain_reasons
+
+    events = [e for e in (block.get("events") or []) if isinstance(e, dict)]
+    admitted = block.get("admitted_count")
+    flagged = block.get("flagged_count")
+    size = (
+        f" \u2014 {admitted} screened stock(s) on the list, {flagged} flagged"
+        if isinstance(admitted, int) and isinstance(flagged, int) else ""
+    )
+    if not events:
+        return [f"\U0001f50e Stock list: no changes since the last morning{size}"]
+    out = [f"\U0001f50e Stock list changed: {len(events)} change(s){size}"]
+    grouped = {
+        "added": "Added {n} (passed every check): ",
+        "cleared": "Flag cleared on {n} (passing again): ",
+    }
+    for action, label in grouped.items():
+        names = [str(e.get("symbol", "?")) for e in events if e.get("action") == action]
+        if names:
+            out.append(_clip_text(
+                "\u2022 " + label.format(n=len(names)) + ", ".join(names), 600,
+            ))
+    flagged_events = [e for e in events if e.get("action") == "flagged"]
+    if flagged_events:
+        out.append(_clip_text(
+            f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
+            "next week): " + "; ".join(
+                "{} ({})".format(
+                    e.get("symbol", "?"), plain_reasons(e.get("reasons") or []),
+                )
+                for e in flagged_events
+            ), 600,
+        ))
+    for event in events:
+        if event.get("action") in ("removed", "removal_deferred_held"):
+            out.append(_clip_text(f"\u2022 {describe_event(event)}", 300))
+    return out
+
+
+def _append_universe_changes(lines: list[str], result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    block = describe_universe_changes(result.get("universe_changes"))
+    if block:
+        _new_section(lines, *block)
+
+
+def _append_evidence_freshness(lines: list[str], result: dict) -> None:
+    """Put the freshness disclosure into a session message body."""
+    if not isinstance(result, dict):
+        return
+    block = describe_evidence_freshness(result.get("evidence_freshness"))
+    if block:
+        _new_section(lines, *block)
 
 
 def describe_skipped_decision(
@@ -1653,12 +1842,16 @@ def format_session_result(
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
         _new_block(lines, _append_trade_session_body, result)
+        _append_evidence_freshness(lines, result)
+        if mode in ("morning", "once"):
+            _append_universe_changes(lines, result)
     elif mode == "evening":
         _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":
         _new_block(lines, _append_earnings_body, result)
     elif mode == "intra_check":
         _new_block(lines, _append_intra_check_body, result)
+        _append_evidence_freshness(lines, result)
     elif mode == "meta":
         _new_block(lines, _append_meta_body, result)
     elif mode == "daily":

@@ -8,10 +8,15 @@
 # 2026-09-18 there was NO MECHANICAL CHECK of that rule at all.
 #
 # `src/number_sources.py` enumerates every numeric definition site inside a
-# declared scope and requires each one to appear here. `tests/test_number_
+# declared scope and requires each one to appear here. A "site" is one of
+# five shapes: a module-level constant, a `*Config` field default, a
+# function-parameter default (id `module.Qual.func(param)`), a numeric
+# attribute on any class, or a multiplier/divisor literal in [0.5, 2)
+# other than 1 inside a function (id `module.Qual.func:factor[N]`, N in
+# source order within that function). `tests/test_number_
 # sources.py` fails the build otherwise, and `pytest` is the check branch
 # protection requires. Read that module's docstring before editing this file:
-# it states the scope rule, the six things this file is checked for, and --
+# it states the scope rule, the seven things this file is checked for, and --
 # at the bottom -- what the check structurally cannot catch.
 #
 # WHAT THIS FILE IS NOT. It is not evidence that any number here is sourced.
@@ -1039,6 +1044,13 @@ numbers:
       the watermark and refuses the day's ticks, so it is NOT demoted back
       to not-trade-governing. The value itself is a round 180 with no
       derivation recorded anywhere. NO VALUE WAS CHANGED here.
+      UPDATE 2026-09-19: it no longer bounds the watched-name drain. The
+      drain has its own budget, `watched_drain_deadline_s`, started after
+      this one is spent, so this deadline now bounds only the market-wide
+      pass (external candidate nomination) and the intraday freshness
+      probe's per-issuer index reads (82 GETs, 11.0 s measured 2026-09-19).
+      The open question below is therefore narrower than written: the
+      drain half of it is answered by that entry.
     open_question: >-
       What is the right network budget for one pre-market refresh plus a
       watched-name drain -- read off the measured time to read the desk's
@@ -1050,6 +1062,27 @@ numbers:
       not advance, and the pre-open check reports that the desk will refuse
       to decide all day. Set too high, a stuck SEC endpoint delays the
       pre-market path by up to this many seconds per refresh.
+  - id: src.config.SmartMoneyConfig.watched_drain_deadline_s
+    value: 859
+    status: sourced
+    site: src/config.py
+    source: >-
+      Derivation at src/config.py:1299 (the comment above the field), from a
+      read-only measurement against SEC on 2026-09-19 with the desk's own
+      User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
+      5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
+      read over 40 reads. 11.0 + 5,431 x 0.156 = 858.2 -> 859, i.e. the time
+      to clear the measured backlog in one pre-market run. SEC's published
+      ceiling is 10 req/s: https://www.sec.gov/os/accessing-edgar-data . Fit
+      against the job's TimeoutStartSec=1260
+      (scripts/systemd/quant-agent-earnings_preprocess.service:8) is kept by
+      tests/test_form4_backlog_order.py.
+    note: >-
+      Trade-governing in the same sense as refresh_deadline_s: until every
+      watched issuer is read through, the insider seat cannot be called
+      current. It binds only on the one-time catch-up; the steady-state
+      watched inflow is ~16 filings a day (5,801 in-window / 365). Progress
+      is recorded per issuer, so a drain that runs out of time loses nothing.
   - id: src.config.SmartMoneyConfig.request_timeout_s
     value: 15
     status: not-trade-governing
@@ -2548,3 +2581,1887 @@ numbers:
       magnitude.
     note: >-
       Fallback weight for a seat SEAT_WEIGHT does not name.
+
+  # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
+  # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
+  # src/execution/stop_repair.py. No value changed. ---
+  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Fallback reconnect floor for the trade_updates fill-notification
+      socket, used only when the installed alpaca-py TradingStream does not
+      expose its own backoff attributes. It copies alpaca-py's own default
+      (site-packages/alpaca/trading/stream.py:53, alpaca-py 0.43.5) rather
+      than inventing a second clock. It decides how fast an optional
+      notification socket retries, never whether or how much to trade; the
+      bounded REST fill-confirmation path is unaffected when this socket is
+      off entirely.
+  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MAX_S
+    value: 30.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Fallback reconnect ceiling for the same trade_updates socket, same
+      alpaca-py default (site-packages/alpaca/trading/stream.py:54,
+      alpaca-py 0.43.5). Same reasoning as
+      src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
+      optional notification socket's retry speed, not a trade decision.
+  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION
+    value: 6
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Handshake-attempt ceiling for one trade_updates session, derived from
+      the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py:245-253).
+      One of three constants added 2026-09-18 to close an unbounded retry
+      loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
+      (src/execution/broker.py:218-242); none of the three decides, sizes,
+      prices or exits a trade -- the bounded REST fill path is unchanged and
+      is what runs when this ceiling fires.
+  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_DAY
+    value: 200
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Handshake-attempt ceiling per process per day for the same socket,
+      set to Alpaca's own published account-wide rate limit of 200
+      requests/minute (src/execution/broker.py:255-264, cross-checked
+      against measured 56 and 50 attempts on 2026-09-16/17). Same
+      not-trade-governing reasoning as
+      src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
+  - id: src.execution.broker._STREAM_RATE_LIMIT_STAND_DOWN_S
+    value: 60.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Stand-down after the broker answers HTTP 429 on the same socket, set
+      to Alpaca's published one-minute rate-limit window
+      (src/execution/broker.py:267-274). Same not-trade-governing reasoning
+      as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
+  - id: src.execution.broker._BROKER_HTTP_TIMEOUT
+    value: 30.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.broker._SECTOR_LOOKUP_TIMEOUT_S
+    value: 10
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.broker._ENTRY_FILL_TIMEOUT_S
+    value: 90.0
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap.
+      src/execution/broker.py:1313-1327 records that the real-time
+      trade_updates stream now detects a fill first and this is purely the
+      ceiling for the rare fallback where that stream itself could not be
+      used. It decides how long the desk waits, never whether or how much
+      to trade.
+  - id: src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+    value: 3
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      Retry ceiling for placing the protective stop immediately after an
+      entry fills (src/execution/broker.py:1329-1348). docs/WORK.md item
+      129: the stated reasoning -- that a failure surviving three attempts
+      must be a rejection rather than a transient fault -- is falsified by
+      2026-09-16 (item 127), where a transient concurrency conflict
+      survived all three attempts and was not a rejection.
+    open_question: >-
+      What attempt count and backoff would this class of transient failure
+      (rate limit, 5xx, dropped connection, fill/order eventual-consistency
+      race) actually need to clear, measured against real occurrences
+      rather than assumed to clear "in under a second"?
+    cost_while_unanswered: >-
+      A position can open with no protective stop and reach the owner alert
+      -- the "real remedy" the comment names -- while still exposed, on any
+      failure class the three-attempt/~2-second budget does not actually
+      cover.
+  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[0]
+    value: 0.5
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      First of the two stop-placement retry delays, same site and same
+      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      (docs/WORK.md item 129).
+    open_question: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
+      actually clears the transient failure classes this retry is meant
+      for, measured rather than assumed.
+    cost_while_unanswered: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: a position
+      can be left without a protective stop if the real clearing time
+      exceeds the assumed one.
+  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[1]
+    value: 1.5
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      Second of the two stop-placement retry delays, same site and same
+      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      (docs/WORK.md item 129).
+    open_question: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+    cost_while_unanswered: >-
+      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+  - id: src.execution.broker._FRACTIONAL_QTY_EPSILON
+    value: 1.0e-9
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Floating-point tolerance used only to tell a genuine sub-share
+      remainder from float representation error (src/execution/broker.py:
+      1378-1400 docstring on `_split_protective_qty`) before splitting a
+      protective stop into a whole-share GTC leg and a sub-share DAY leg.
+      It guards against noise at the 1e-9 scale; any value in a wide band
+      well below a real fractional remainder (which is never smaller than a
+      broker-tradable fraction of one share) produces identical behaviour,
+      so this is a precision guard rather than a policy choice.
+  - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
+    value: 5
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap.
+      Bounds how many weekdays the watchdog's diagnostic sweep searches
+      backward for the most recent trading day
+      (src/coverage_watchdog.py:141-143); it decides how far the sweep
+      looks, never whether or how much to trade.
+  - id: src.coverage_watchdog._QTY_EPSILON
+    value: 1.0e-6
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      Floating-point tolerance for "covered < held" comparisons
+      (src/coverage_watchdog.py:145-146, same tolerance the coverage
+      reconciler uses). Guards against representation error rather than
+      choosing a policy magnitude, same reasoning as
+      src.execution.broker._FRACTIONAL_QTY_EPSILON.
+  - id: src.pipeline._PM_PROFILE_SYMBOL_CAP
+    value: 40
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. Ceiling
+      on how many symbols get a company-profile network lookup for PM's
+      informational facts block (src/pipeline.py:125-131); it decides how
+      much the desk fetches for that block, never whether or how much to
+      trade.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-flash']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-pro']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-chat']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-reasoner']
+    value: 384000
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: provider-declared maximum output-token ceiling used to
+      size a request, not a trading decision.
+  - id: src.agents.base._DEEPSEEK_DEFAULT_CEILING
+    value: 8192
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: fallback output-token ceiling for a DeepSeek model not
+      named in _DEEPSEEK_MAX_OUTPUT, not a trading decision.
+  - id: src.agents.base._DEFAULT_MAX_RETRIES
+    value: 2
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: default retry count for a failed LLM call, not a
+      trading decision.
+  - id: src.agents.base._LLM_HTTP_TIMEOUT
+    value: 300.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for LLM
+      HTTP calls. It decides how long the desk waits, never whether or how
+      much to trade.
+  - id: src.agents.base._DEFAULT_RETRY_DEADLINE_S
+    value: 480.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for the
+      LLM retry loop, not a trading decision.
+  - id: src.agents.base._RETRY_AFTER_CAP_S
+    value: 120.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: ceiling applied to a provider-returned Retry-After
+      value, not a trading decision.
+  - id: src.agents.base._ANTHROPIC_MAX_CONCURRENT
+    value: 4
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: concurrency cap on outstanding Anthropic calls, not a
+      trading decision.
+  - id: src.agents.base._GOVERNOR_CHARS_PER_TOKEN
+    value: 1.5
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: characters-per-token estimate used to govern request
+      size against a provider rate limit, not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+    value: 3
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: retry count for an OpenRouter generation-metadata
+      lookup (cost/usage accounting), not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_TIMEOUT_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap for the
+      same OpenRouter lookup, not a trading decision.
+  - id: src.agents.base._OPENROUTER_GENERATION_LOOKUP_SLEEP_S
+    value: 1.0
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: sleep between retries of the same OpenRouter lookup,
+      not a trading decision.
+  - id: src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS
+    value: 8
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many symbols' findings the smart-money synthesis prompt asks
+      for and how many the code keeps (src/agents/smart_money_analyst.py:
+      137, 361). Unlike a network fetch cap, a bound symbol here is silently
+      dropped from what the seat's verdict is built from, with nothing
+      downstream recorded as "missing evidence" -- the same shape
+      board item 90's history flags for `max_filings_per_refresh`, which
+      was corrected from not-trade-governing to arbitrary after a real day
+      where the cap binding refused a trading decision. Classified
+      arbitrary up front for that reason.
+    open_question: >-
+      On a day this cap binds, how many symbols with a live smart-money
+      finding are dropped from the synthesis, and does the seat's own
+      output say so?
+    cost_while_unanswered: >-
+      A queued symbol beyond the 8th gets no smart-money read that cycle,
+      indistinguishable in the output from one that was genuinely quiet.
+  - id: src.agents.smart_money_analyst._MAX_REPRESENTATIVE_TRANSACTIONS
+    value: 3
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many representative transactions are kept per finding
+      (src/agents/smart_money_analyst.py:199-204). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: a silent
+      truncation of the evidence a verdict reads, not a fetch/network cap.
+    open_question: >-
+      Does dropping transactions past the third ever change which findings
+      rank as actionable versus routine?
+    cost_while_unanswered: >-
+      A finding with many transactions is presented identically to one with
+      exactly three; the discarded transactions cannot be recovered from
+      the record afterward.
+  - id: src.agents.smart_money_analyst._MAX_FINDING_TEXT_WORDS
+    value: 24
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Word cap the synthesis prompt is told to write each finding within
+      (src/agents/smart_money_analyst.py:137-139). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: shapes the
+      evidence text a verdict reads, not a fetch/network cap.
+    open_question: >-
+      Has a finding ever needed more than 24 words to state correctly, and
+      would truncation there change how it reads?
+    cost_while_unanswered: >-
+      A finding requiring nuance beyond 24 words is either cut or forced
+      into a shorter, possibly misleading, statement.
+  - id: src.agents.smart_money_analyst._MAX_CONTEXT_TEXT_CHARS
+    value: 96
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Character cap applied to context text via `_bounded_context`
+      (src/agents/smart_money_analyst.py:182). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
+    open_question: >-
+      Does truncating context text at 96 characters ever cut the part that
+      would have changed a role or freshness classification?
+    cost_while_unanswered: >-
+      Context beyond 96 characters is silently dropped with no marker that
+      truncation happened.
+  - id: src.agents.smart_money_analyst._MAX_REASON_TEXT_CHARS
+    value: 220
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Character cap for the discount-reason text via `_bounded_context`
+      (src/agents/smart_money_analyst.py:93-95, 322). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS; the comment
+      there says only that this leaves "more room than an actor name", not
+      why 220 rather than another figure.
+    open_question: >-
+      Has a discount reason ever been truncated at 220 characters, and did
+      the truncated version still read correctly?
+    cost_while_unanswered: >-
+      A reason beyond 220 characters is silently cut with no marker.
+  - id: src.agents.smart_money_analyst._MAX_ACTOR_ROLES
+    value: 8
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Caps how many actor roles are kept per finding
+      (src/agents/smart_money_analyst.py:300). Same reasoning as
+      src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
+    open_question: >-
+      Does a finding ever carry more than 8 actor roles, and does dropping
+      the rest change how the finding is read?
+    cost_while_unanswered: >-
+      Roles beyond the 8th are silently dropped with no marker.
+  - id: src.agents.smart_money_analyst._ROLE_RANK['actionable']
+    value: 3
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight deciding which smart-money findings are prioritised
+      into synthesis (src/agents/smart_money_analyst.py:98-102). The
+      ORDER (actionable > confirmatory > contradictory > historical) is the
+      only part this desk states a reason for; the point values 3/2/1/0 (0
+      excluded from the ledger as the neutral floor) carry no cited
+      derivation. By this desk's own rule a source for an order is not a
+      source for a point value.
+    open_question: >-
+      Does the spacing between these four ranks (rather than just their
+      order) ever change which findings the synthesis keeps versus drops?
+    cost_while_unanswered: >-
+      Ranking decides which insider findings reach the seat's verdict when
+      the symbol/transaction caps above bind, so an unexamined spacing
+      silently reorders what the desk sees.
+  - id: src.agents.smart_money_analyst._ROLE_RANK['confirmatory']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+  - id: src.agents.smart_money_analyst._ROLE_RANK['contradictory']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+  - id: src.agents.smart_money_analyst._FRESHNESS_RANK['fresh']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight for how fresh a finding is (src/agents/
+      smart_money_analyst.py:104); same "order stated, spacing not" gap as
+      src.agents.smart_money_analyst._ROLE_RANK['actionable'].
+    open_question: >-
+      Does the spacing between fresh/delayed/stale ever change which
+      findings the synthesis keeps versus drops?
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable']:
+      ranking decides what reaches the verdict when the caps above bind.
+  - id: src.agents.smart_money_analyst._FRESHNESS_RANK['delayed']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._FRESHNESS_RANK['fresh'].
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic']
+    value: 2
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Ranking weight for signal class (src/agents/smart_money_analyst.py:
+      106-109). The comment cites docs/RESEARCH_FINDINGS.md section 1 for
+      why routine transactions should rank LOWEST; that source justifies
+      the ordering, not the point values 2/1/1/0 (0 excluded as the neutral
+      floor).
+    open_question: >-
+      Does the spacing here ever change which findings the synthesis keeps
+      versus drops, beyond routine ranking last?
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._ROLE_RANK['actionable']:
+      ranking decides what reaches the verdict when the caps above bind.
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'];
+      this is the rank an unset/unknown signal class receives.
+    open_question: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['indeterminate']
+    value: 1
+    status: arbitrary
+    site: src/agents/smart_money_analyst.py
+    note: >-
+      Same table and same reasoning as
+      src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    open_question: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+    cost_while_unanswered: >-
+      Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.tech_analyst._BARS_PER_SYMBOL
+    value: 40
+    status: arbitrary
+    site: src/agents/tech_analyst.py
+    note: >-
+      OHLCV bars attached per symbol in the technical seat's prompt
+      (src/agents/tech_analyst.py:19-24). The comment gives only qualitative
+      reasoning ("enough for swing pivots... not so many that context
+      balloons"); structural levels are computed separately in
+      src/data/levels.py, but the recent-bar window itself still shapes
+      what the seat reads for micro-structure, and no derivation sets 40
+      rather than another figure.
+    open_question: >-
+      What lookback do swing-pivot and micro-structure reads actually need
+      on this desk's traded universe, measured rather than assumed
+      sufficient?
+    cost_while_unanswered: >-
+      A pivot or micro-structure feature older than 40 bars is invisible to
+      the seat's immediate-context read.
+  - id: src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL
+    value: 30
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: ceiling before the technical seat's symbol batch is
+      auto-chunked across more calls (src/agents/tech_analyst.py:59-76).
+      Every symbol is still analysed, only split across more requests, so
+      this decides call shape, not whether or how much to trade.
+  - id: src.agents.tech_analyst._CHUNK_SIZE
+    value: 25
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: chunk size once a batch is split
+      (src/agents/tech_analyst.py:63-76). Same reasoning as
+      src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL -- every symbol is still
+      analysed.
+  - id: src.agents.tech_analyst._MAX_MISSING_RETRIES
+    value: 1
+    status: not-trade-governing
+    site: src/agents/tech_analyst.py
+    note: >-
+      LLM plumbing: bounded re-ask count for a symbol a chunk's first
+      response dropped (src/agents/tech_analyst.py:78-85). The comment
+      records that a symbol still missing after this is given an explicit
+      failed outcome rather than silently treated as analysed, which is
+      what keeps this a plumbing retry rather than a silent evidence drop.
+  # --- 2026-09-19: the scanner learned three more shapes (function/method
+  # parameter defaults, numeric attributes on any class, and near-one inline
+  # price/size multipliers -- src/number_sources.py rules (c), (d), (e)).
+  # 98 sites that were always live and never visible: 40 arbitrary, 29
+  # derived (mirrors of a number already in this file), 29 not-trade-
+  # governing. Covers board item 138 (order-price buffers) in full. NO VALUE
+  # WAS CHANGED.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['actions']
+    value: 50
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['analyses']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['approved']
+    value: 50
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['daily_summary']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['decisions']
+    value: 50
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['findings']
+    value: 50
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['investment_implications']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['macro_narrative']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['portfolio_view']
+    value: 20
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['rating']
+    value: 5
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['reasoning_chain']
+    value: 20
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['regime']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['symbol']
+    value: 5
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['targets']
+    value: 50
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['tomorrow_outlook']
+    value: 40
+    status: arbitrary
+    site: src/agents/base.py
+    note: >-
+      Weight of one top-level key when choosing which JSON fragment of a
+      seat's reply is its real output (src/agents/base.py:784-836). Parse
+      plumbing that has decided trades: src/agents/base.py:790-797 records
+      that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
+      'no trades'. The ORDERING (real anchors outrank nested fragments) has a
+      stated reason; the point values do not.
+    open_question: >-
+      Replayed over the recorded seat replies (tests/fixtures/pm_response_*
+      and the stored raw outputs), does any reply's chosen fragment change if
+      these weights are replaced by a rule that needs no numbers, e.g. 'the
+      fragment containing the expected schema's required keys'?
+    cost_while_unanswered: >-
+      A seat reply containing a stray fragment can be parsed as the wrong
+      object, which has already emptied a morning's trades once; a new seat
+      key missing from this table repeats it.
+  - id: src.agents.base.AgentResult.provider_requests
+    value: 1
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      Counter default: one logical result is normally one provider request
+      (src/agents/base.py:777-779). Bookkeeping.
+  - id: src.agents.base.BaseAgent.__init__(max_tokens)
+    value: 4096
+    status: not-trade-governing
+    site: src/agents/base.py
+    note: >-
+      LLM plumbing: output-token budget for a seat that does not set its own
+      (src/agents/base.py:1173). Same class as the token budgets recorded not-
+      trade-governing on 2026-09-19; a seat that truncates fails its parse
+      loudly rather than trading on a partial answer.
+  - id: src.agents.macro_analyst.MacroAnalystAgent.analyze(event_horizon_days)
+    value: 10
+    status: derived
+    site: src/agents/macro_analyst.py
+    derived_from: src.config.EventRiskConfig.horizon_days
+    base_value: 10
+    note: >-
+      Default macro-event horizon (src/agents/macro_analyst.py:211);
+      production passes event_risk.horizon_days (src/pipeline_stages.py:3819).
+      A further inline `or 10` fallback sits at
+      src/agents/macro_analyst.py:37, which no rule sees.
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.candidate_eligibility(rr_floor)
+    value: 1.5
+    status: derived
+    site: src/agents/portfolio_manager.py
+    derived_from: src.risk.constants.REWARD_RISK_FLOOR
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported REWARD_RISK_FLOOR
+      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      shared constants RiskConfig itself defaults to'). candidate_eligibility
+      accepts and ignores it since 2026-09-17
+      (src/agents/portfolio_manager.py:1442-1446).
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
+    value: 25
+    status: derived
+    site: src/agents/portfolio_manager.py
+    derived_from: src.config.RiskConfig.max_portfolio_risk_pct
+    base_value: 25
+    note: >-
+      Default rotation-check risk ceiling for the PM
+      (src/agents/portfolio_manager.py:2079). Same 25 as the deployed ceiling;
+      a second inline 25.0 fallback sits at
+      src/agents/portfolio_manager.py:656-657, which no rule sees.
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)
+    value: 1.5
+    status: derived
+    site: src/agents/portfolio_manager.py
+    derived_from: src.risk.constants.REWARD_RISK_FLOOR
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported REWARD_RISK_FLOOR
+      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      shared constants RiskConfig itself defaults to'). candidate_eligibility
+      accepts and ignores it since 2026-09-17
+      (src/agents/portfolio_manager.py:1442-1446).
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
+    value: 0.5
+    status: derived
+    site: src/agents/portfolio_manager.py
+    derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
+    base_value: 0.5
+    note: >-
+      Parameter default bound to the imported STARTER_POSITION_RISK_PCT
+      (src/agents/portfolio_manager.py:2063-2069).
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.rank_candidates(rr_floor)
+    value: 1.5
+    status: derived
+    site: src/agents/portfolio_manager.py
+    derived_from: src.risk.constants.REWARD_RISK_FLOOR
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported REWARD_RISK_FLOOR
+      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      shared constants RiskConfig itself defaults to'). candidate_eligibility
+      accepts and ignores it since 2026-09-17
+      (src/agents/portfolio_manager.py:1442-1446).
+  - id: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
+    value: 0.03
+    status: arbitrary
+    site: src/execution/broker.py
+    note: >-
+      Board item 138. How far past the trigger a protective stop-limit's limit
+      sits (3%), on every protective stop the desk places
+      (src/execution/broker.py:4375-4396) and re-used by stop repair
+      (src/execution/stop_repair.py:243). A class attribute, so rules (a)/(b)
+      never saw it; PR #544's description said it was ledgered and it was not.
+      src/execution/scale_in.py:213 carries a second 0.03 as a getattr
+      fallback, in a file outside scope.
+    open_question: >-
+      On this desk's names, how far past a stop trigger does the fill actually
+      land on the gap/fast-market days the stop exists for -- measured from
+      the broker's own stop fills -- and what limit distance keeps the fill
+      probability acceptable?
+    cost_while_unanswered: >-
+      Too tight and a gapping stop does not fill, so the position stays open
+      unprotected until a session acts; too wide and every stopped exit can
+      give back up to 3% beyond the stop.
+  - id: src.execution.broker.AlpacaBroker._MAX_REPLACEMENT_HOPS
+    value: 8
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Loop bound on following a replaced order's replaced_by chain
+      (src/execution/broker.py:4404-4408), so a broker-side cycle cannot spin
+      forever. Decides how far a lookup walks, not whether or how much to
+      trade.
+  - id: src.execution.broker.AlpacaBroker._wait_for_order_status_via_stream(poll_interval)
+    value: 1
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3856). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker._wait_for_order_terminal_via_stream(poll_interval)
+    value: 1
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3841). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.await_replacement_confirmed(timeout_seconds)
+    value: 5
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:4577). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.get_bars(lookback_days)
+    value: 120
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Dead default (src/execution/broker.py:2392): the one caller passes the
+      window explicitly.
+  - id: src.execution.broker.AlpacaBroker.get_recent_daily_closes(lookback_days)
+    value: 10
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Dead default (src/execution/broker.py:2016): every caller passes the
+      window explicitly.
+  - id: src.execution.broker.AlpacaBroker.get_top_movers(n)
+    value: 15
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Dead default (src/execution/broker.py:2320): the one caller passes the
+      count explicitly.
+  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(poll_interval)
+    value: 1
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3745). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(timeout_seconds)
+    value: 5
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3744). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(poll_interval)
+    value: 1
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3784). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(timeout_seconds)
+    value: 15
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:3783). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker._TradeUpdatesHub.wait(poll_interval)
+    value: 1
+    status: not-trade-governing
+    site: src/execution/broker.py
+    note: >-
+      Poll interval or wait deadline on an order-status lookup
+      (src/execution/broker.py:567). Same class as
+      src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
+      waits for the broker to report, never whether or how much to trade.
+  - id: src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT
+    value: 0.01
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead. Defined at src/pipeline.py:1466 and described in three
+      docstrings/comments as the de-lever cushion, but nothing reads it: the
+      live 1% is the inline literal
+      src.pipeline.TradingPipeline._force_delever:factor[1]. Recorded so it
+      cannot come back into use without a reviewer seeing it.
+  - id: src.pipeline.TradingPipeline._another_session_recently_active(within_minutes)
+    value: 15
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      No caller in src/, and the docstring (src/pipeline.py:14620-14626)
+      records the parameter 'is kept for callers but no longer gates a
+      finished session' -- the owner lock decides.
+  - id: src.pipeline.TradingPipeline._build_blocked_proposals(lookback_days)
+    value: 21
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Window of the PM's 'names you keep proposing and never get' memory
+      (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_blocked_proposals(max_lines)
+    value: 5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Maximum blocked names shown to the PM in that memory
+      (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_blocked_proposals(min_proposals)
+    value: 3
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Proposal count before a blocked name is shown to the PM in that memory
+      (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_calibration_note(lookback_days)
+    value: 45
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Window of the PM's own hit-rate/return calibration note
+      (src/pipeline.py:8588-8593). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(lookback_days)
+    value: 5
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default: the only caller passes this argument explicitly
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      that call site, which no scanner rule sees -- reported as a gap, not
+      ledgered here.
+  - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
+    value: 5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Dollar-volume floor ($M) for a top-mover to enter the evening missed-
+      opportunity review, which feeds the PM's missed-lessons memory
+      (src/pipeline.py:7716-7730). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(move_threshold_pct)
+    value: 8
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default: the only caller passes this argument explicitly
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      that call site, which no scanner rule sees -- reported as a gap, not
+      ledgered here.
+  - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_movers_count)
+    value: 15
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      How many broker top-movers are added to the evening missed-opportunity
+      review (src/pipeline.py:7716-7730). Its only caller passes nothing, so
+      this default is live. Same class as the smart-money prompt-truncation
+      caps classified arbitrary on 2026-09-19: it decides what evidence a
+      trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_n)
+    value: 15
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default: the only caller passes this argument explicitly
+      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      that call site, which no scanner rule sees -- reported as a gap, not
+      ledgered here.
+  - id: src.pipeline.TradingPipeline._build_own_recent_decisions(limit)
+    value: 3
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      How many previous position-reviewer sessions the reviewer is shown
+      (anti-flip-flop memory) (src/pipeline.py:13266-13270). Its only caller
+      passes nothing, so this default is live. Same class as the smart-money
+      prompt-truncation caps classified arbitrary on 2026-09-19: it decides
+      what evidence a trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_pm_recent_decisions(limit)
+    value: 3
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      How many of its own previous decision sets the PM is shown (anti-flip-
+      flop memory) (src/pipeline.py:6075-6080). Its only caller passes
+      nothing, so this default is live. Same class as the smart-money prompt-
+      truncation caps classified arbitrary on 2026-09-19: it decides what
+      evidence a trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_post_exit_reality(lookback_days)
+    value: 14
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6657-6659): every caller in src/ passes
+      this argument explicitly, so this value never runs in production. The
+      value passed at the call site is an inline literal or computed
+      expression that no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_post_exit_reality(max_symbols)
+    value: 12
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Maximum exits audited in that post-exit block
+      (src/pipeline.py:6780-6788). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_post_exit_reality(min_age_days)
+    value: 2
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Minimum age of an exit before its after-the-fact move is shown to the
+      position reviewer (src/pipeline.py:6780-6788). Its only caller passes
+      nothing, so this default is live. Same class as the smart-money prompt-
+      truncation caps classified arbitrary on 2026-09-19: it decides what
+      evidence a trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_projected_portfolio(default_buy_pct)
+    value: 5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Size assumed for every BUY-rated candidate in the sector-concentration
+      preview the PM reads before deciding (src/pipeline.py:6150-6160); the
+      one caller (src/pipeline_stages.py:4942) passes nothing.
+    open_question: >-
+      Should the preview size each candidate at the size the constructor would
+      actually give it (its risk budget over its stop distance) rather than a
+      flat figure?
+    cost_while_unanswered: >-
+      The PM is shown a projected sector mix computed at a size no candidate
+      is actually given, and self-corrects against it.
+  - id: src.pipeline.TradingPipeline._build_recent_buys_for_grading(lookback_days)
+    value: 5
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6365-6370): every caller in src/ passes
+      this argument explicitly, so this value never runs in production. The
+      value passed at the call site is an inline literal or computed
+      expression that no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_recent_loss_pits(lookback_days)
+    value: 14
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Window of the PM's repeat-loss-cause memory (src/pipeline.py:7354-7363).
+      Its only caller passes nothing, so this default is live. Same class as
+      the smart-money prompt-truncation caps classified arbitrary on
+      2026-09-19: it decides what evidence a trading seat's verdict is built
+      from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_recent_missed_lessons(lookback_days)
+    value: 14
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Window of the PM's recurring-missed-theme memory
+      (src/pipeline.py:6870-6880). Its only caller passes nothing, so this
+      default is live. Same class as the smart-money prompt-truncation caps
+      classified arbitrary on 2026-09-19: it decides what evidence a trading
+      seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_recent_outlook_calibration(lookback)
+    value: 10
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6485): every caller in src/ passes this
+      argument explicitly, so this value never runs in production. The value
+      passed at the call site is an inline literal or computed expression that
+      no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_recent_outlook_calibration._fwd_cumulative(n)
+    value: 5
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6531): every caller in src/ passes this
+      argument explicitly, so this value never runs in production. The value
+      passed at the call site is an inline literal or computed expression that
+      no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_recent_sells_for_grading(lookback_days)
+    value: 2
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6292-6297): every caller in src/ passes
+      this argument explicitly, so this value never runs in production. The
+      value passed at the call site is an inline literal or computed
+      expression that no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_rm_recent_verdicts(limit)
+    value: 5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      How many recent risk-seat verdicts the PM is shown to self-calibrate
+      size (src/pipeline.py:6008-6013). Its only caller passes nothing, so
+      this default is live. Same class as the smart-money prompt-truncation
+      caps classified arbitrary on 2026-09-19: it decides what evidence a
+      trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_thesis_health_context(lookback_weeks)
+    value: 8
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      News/rating window of the evening thesis-health review of every held
+      position (src/pipeline.py:7094-7108). Its only caller passes nothing, so
+      this default is live. Same class as the smart-money prompt-truncation
+      caps classified arbitrary on 2026-09-19: it decides what evidence a
+      trading seat's verdict is built from.
+    open_question: >-
+      How much history does this memory need before its signal is
+      distinguishable from noise, and how much before older rows stop changing
+      the seat's decision -- measured on the recorded decision rows?
+    cost_while_unanswered: >-
+      The seat's feedback memory is cut at a round number: too short and it
+      cannot see a repeating pattern, too long and stale rows steer today's
+      decision.
+  - id: src.pipeline.TradingPipeline._build_trade_grade_summary(lookback_days)
+    value: 14
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Dead default (src/pipeline.py:6628): every caller in src/ passes this
+      argument explicitly, so this value never runs in production. The value
+      passed at the call site is an inline literal or computed expression that
+      no scanner rule sees.
+  - id: src.pipeline.TradingPipeline._build_watchlist_candidates(lookback_days)
+    value: 30
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Owner-facing universe-expansion report (src/pipeline.py:7299-7310); no
+      caller in the trading path, and the only caller
+      (scripts/watchlist_candidates.py:127) passes it explicitly. It proposes
+      names for a human to add; it never adds one.
+  - id: src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)
+    value: 5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Resulting-weight cap on a BUY whose earnings filing is queued but not
+      yet analysed (src/pipeline.py:5109-5125). The one caller
+      (src/pipeline_stages.py:5679) passes nothing, so this default is the
+      live cap. The PM prompt asks for the same 5.0 in prose; that is the same
+      number restated, not a source.
+    open_question: >-
+      How large does an unread just-filed 10-Q/10-K move this desk's names
+      overnight, measured, and what weight keeps that move inside the per-
+      trade risk envelope?
+    cost_while_unanswered: >-
+      A name with an unread filing is capped at 5% of the book whatever its
+      stop distance, so the cap is either looser or tighter than the risk
+      envelope for that name, unknowably.
+  - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[0]
+    value: 1.01
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
+    base_value: 0.99
+    note: >-
+      Board item 138, the de-lever ladder's BUY-to-cover limit
+      (src/pipeline.py:11829): the same 1% applied on the other side, 1.01 = 2
+      - 0.99. One number, mirrored.
+  - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]
+    value: 0.99
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
+    base_value: 0.99
+    note: >-
+      Board item 138, the de-lever ladder's SELL limit
+      (src/pipeline.py:11818-11830): the comment calls it the 'same
+      1%-through-the-market buffer _force_delever uses'. One number, two
+      sites.
+  - id: src.pipeline.TradingPipeline._force_delever:factor[0]
+    value: 1.02
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      The 2% cushion on how much of the T-bill sweep vehicle is sold to cover
+      a cash deficit (src/pipeline.py:11524-11531): needed = deficit x 1.02.
+    open_question: >-
+      How far does a sweep-vehicle sale's realised proceeds fall short of
+      price x qty on this account, measured from its own SWEEP_SELL fills?
+    cost_while_unanswered: >-
+      Too small and a de-lever leaves a residual deficit for the next session;
+      too large and more of the cash park is sold, and re-parked, than the
+      deficit needs.
+  - id: src.pipeline.TradingPipeline._force_delever:factor[1]
+    value: 0.99
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Board item 138. The 1%-through-the-market SELL limit on a forced de-
+      lever (src/pipeline.py:11539): price x 0.99. The comment at
+      src/pipeline.py:1454-1466 describes this cushion as the named class
+      attribute `_EMERGENCY_LIMIT_CUSHION_PCT`, but that attribute is never
+      read; the live number is this inline literal.
+    open_question: >-
+      What limit distance fills a forced de-lever sell within the session on
+      this desk's names, measured from its own de-lever fills against the
+      reference price?
+    cost_while_unanswered: >-
+      Every forced de-lever sell gives up to 1% against the reference; if it
+      is too tight on a fast day the deficit is not cleared and the next
+      session repeats it.
+  - id: src.pipeline.TradingPipeline._force_delever:factor[2]
+    value: 0.99
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
+    base_value: 0.99
+    note: >-
+      Projected proceeds of a de-lever sell, estimated at the same 0.99 the
+      sell limit uses (src/pipeline.py:11562 says 'matches our limit'). One
+      number, two sites.
+  - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
+    value: 0.5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
+      ATR14 counts as having an actionable signal and is sent to the technical
+      seat (src/pipeline.py:2973-2976). The same function has further inline
+      thresholds (50% volume change, 2% MA spread) that no rule sees because
+      they are comparisons, not multipliers.
+    open_question: >-
+      What MA20/MA50 spread, in ATRs, precedes a tradeable move on this desk's
+      names more often than chance?
+    cost_while_unanswered: >-
+      Decides which names the technical seat ever looks at; a name filtered
+      out here cannot be traded that session.
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
+    value: 0.5
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Midday refuses a TRAIL_STOP whose new stop is below 50% of the current
+      price, as a likely model typo (src/pipeline.py:11290-11293).
+    open_question: >-
+      What is the widest stop, as a fraction of price, the desk's own stop
+      rules could ever legitimately produce, so the sanity floor can be read
+      from that rather than set at a half?
+    cost_while_unanswered: >-
+      A genuine very wide stop is refused as a typo, or a typo just above the
+      line is accepted as a protective stop.
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
+    value: 1.25
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
+    base_value: 1.25
+    note: >-
+      Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
+      refused (src/pipeline.py:11313-11320). The same 1.25 as the trailing-
+      stop noise band, which carries the open question.
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
+    value: 1.005
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 138: the midday COVER limit, price x 1.005
+      (src/pipeline.py:11365-11372). Its comment ties it to the ExecutionStage
+      COVER loop. One number, mirrored.
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]
+    value: 0.995
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 138: the midday SELL/REDUCE limit, price x 0.995
+      (src/pipeline.py:11382). Same number as the ExecutionStage SELL offset.
+  - id: src.pipeline.TradingPipeline._trail_tightened_recently(calendar_days)
+    value: 4
+    status: arbitrary
+    site: src/pipeline.py
+    note: >-
+      Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
+      the last 4 calendar days (src/pipeline.py:10248-10256, caller
+      src/pipeline.py:11306 passes nothing). The docstring's reason is a
+      forensic observation, not a measured cooldown length.
+    open_question: >-
+      Over how many sessions does a tightened trail on this desk's names stay
+      outside the daily-noise band, measured from its own trail history?
+    cost_while_unanswered: >-
+      A justified tightening is refused for up to four days, or a repeated one
+      is allowed too soon and marches the stop into noise.
+  - id: src.pipeline.TradingPipeline.run_quarterly_meta_reflection(lookback_days)
+    value: 90
+    status: not-trade-governing
+    site: src/pipeline.py
+    note: >-
+      Window of the quarterly meta-reflection digest
+      (src/pipeline.py:16921-16935). Its output reaches a prompt only as a
+      STAGED edit a human applies: config/settings.yaml:1497-1498 deploys
+      evolution enabled with dry_run true (stage-only).
+  - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    value: 0.995
+    status: arbitrary
+    site: src/pipeline_stages.py
+    note: >-
+      Board item 138, the 0.5% offset: an ordinary decision-path SELL is
+      limited at price x 0.995 (src/pipeline_stages.py:6501-6502). The midday
+      and cover sites mirror it.
+    open_question: >-
+      What limit distance fills an ordinary exit on this desk's names without
+      paying more than the spread, measured from its own exit fills against
+      the reference price?
+    cost_while_unanswered: >-
+      Every ordinary exit concedes up to 0.5%; if too tight on a fast tape the
+      exit does not fill and the position is held against the decision.
+  - id: src.pipeline_stages.ExecutionStage._run_session:factor[1]
+    value: 1.005
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      Board item 138: the COVER mirror of the 0.5% SELL offset
+      (src/pipeline_stages.py:6638-6642), 1.005 = 2 - 0.995. One number,
+      mirrored.
+  - id: src.pipeline_stages.ExecutionStage._run_session:factor[2]
+    value: 1.02
+    status: arbitrary
+    site: src/pipeline_stages.py
+    note: >-
+      An entry BUY is skipped when the quoted ask sits more than 2% above the
+      slippage cap (src/pipeline_stages.py:7242-7247); the comment says the
+      multiple is 'deliberately loose because the input is'.
+    open_question: >-
+      How far above the cap does an IEX ask sit on names the desk then fills
+      normally, versus on names that genuinely ran -- measured from the desk's
+      own skip and fill records?
+    cost_while_unanswered: >-
+      Too tight and approved entries are skipped on venue noise; too loose and
+      an entry is sent into a market that has genuinely run away.
+  - id: src.pipeline_stages.ExecutionStage._run_session:factor[3]
+    value: 1.02
+    status: derived
+    site: src/pipeline_stages.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[2]
+    base_value: 1.02
+    note: >-
+      The SHORT mirror of the BUY skip: bid < floor / 1.02
+      (src/pipeline_stages.py:7330-7335); its comment says 'Not a new
+      percentage'.
+  - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
+    value: 25
+    status: derived
+    site: src/risk/budget.py
+    derived_from: src.config.RiskConfig.max_portfolio_risk_pct
+    base_value: 25
+    note: >-
+      Default portfolio risk ceiling of the allocator
+      (src/risk/budget.py:193). Every caller passes it
+      (src/portfolio_constructor.py:1630-1635,
+      src/agents/portfolio_manager.py:1870-1873); same 25 as the deployed
+      ceiling.
+  - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
+    value: 40
+    status: derived
+    site: src/risk/budget.py
+    derived_from: src.config.RiskConfig.max_cluster_risk_share_pct
+    base_value: 40
+    note: >-
+      Default per-cluster risk share (src/risk/budget.py:194). The constructor
+      passes the config value; the PM rotation pre-check
+      (src/agents/portfolio_manager.py:1870-1873) relies on this default but
+      passes clusters=None. Same 40 as the deployed field.
+  - id: src.risk.budget.allocate_risk_budget(floor_pct)
+    value: 0.5
+    status: derived
+    site: src/risk/budget.py
+    derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
+    base_value: 0.5
+    note: >-
+      Default risk floor of the allocator (src/risk/budget.py:195); every
+      caller passes it. Same 0.5 as the ratified starter floor.
+  - id: src.risk.metrics.r_multiple(qty)
+    value: 1
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Unit default for a quantity (src/risk/metrics.py:110); every caller
+      passes the real quantity.
+  - id: src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)
+    value: 50
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      Correlated-cluster advisory cap: a BUY whose |corr|>=0.7 cluster would
+      exceed 50% of the book raises an advisory violation
+      (src/risk/rules.py:2660-2696). The one caller (src/pipeline.py:2398)
+      passes nothing, so the default is live. Advisory (absent from
+      HARD_BLOCK_RULES, src/pipeline.py:205), but advisories reach the risk
+      seat.
+    open_question: >-
+      What share of the book in one correlated cluster does the ratified per-
+      trade and portfolio risk envelope actually permit, and should this cap
+      be derived from max_cluster_risk_share_pct rather than set separately?
+    cost_while_unanswered: >-
+      The risk seat is told a cluster is too large at a line nothing backs,
+      and a second, different cluster cap (40% of RISK) exists beside this one
+      (50% of NOTIONAL).
+  - id: src.risk.rules.apply_gross_ceiling(min_order_usd)
+    value: 500
+    status: derived
+    site: src/risk/rules.py
+    derived_from: src.config.CashSweepConfig.min_order_usd
+    base_value: 500
+    note: >-
+      Default minimum trim of the gross-ceiling trimmer
+      (src/risk/rules.py:1819). Both callers pass cash_sweep.min_order_usd
+      (src/pipeline.py:11775-11782, src/portfolio_constructor.py:1295); the
+      comment at src/pipeline.py:770-773 says it reuses that $500.
+  - id: src.risk.rules.distance_to_forced_liquidation_pct(maintenance_margin_pct)
+    value: 25
+    status: derived
+    site: src/risk/rules.py
+    derived_from: src.config.RiskConfig.maintenance_margin_pct
+    base_value: 25
+    note: >-
+      Default maintenance margin (src/risk/rules.py:1468); the one caller
+      passes risk.maintenance_margin_pct (src/pipeline.py:11647-11649,
+      11742-11744).
+  - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.BREAKOUT_PROJECTION_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant
+      BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      One number, reached through a second name; the base carries the
+      question.
+  - id: src.risk.target_revision.assess_target_revision(max_horizon_sessions)
+    value: 60
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_HORIZON_SESSIONS
+    base_value: 60
+    note: >-
+      Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.assess_target_revision(max_reach_atr_multiple)
+    value: 1.5
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_REACH_ATR_MULTIPLE
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.assess_target_revision(min_target_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MIN_TARGET_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.assess_target_revision(noise_band_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.levels_still_in_the_way(noise_band_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.stale_reach_trigger(max_horizon_sessions)
+    value: 60
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_HORIZON_SESSIONS
+    base_value: 60
+    note: >-
+      Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.stale_reach_trigger(max_reach_atr_multiple)
+    value: 1.5
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_REACH_ATR_MULTIPLE
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.stale_reach_trigger(min_target_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MIN_TARGET_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.target_revision.target_level_broken(noise_band_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
+      (src/risk/target_revision.py:105-115). One number, reached through a
+      second name; the base carries the question.
+  - id: src.risk.trailing.compute_trailing_stop(qty)
+    value: 1
+    status: not-trade-governing
+    site: src/risk/trailing.py
+    note: >-
+      Unit default for a quantity (src/risk/trailing.py:347); both callers
+      pass the real quantity.
+  # --- 2026-09-19: universe expansion and pruning (src/universe_screen.py) --
+  # The screen's price, size and borrow lines are published rules; its
+  # spread and volatility lines are DERIVED at run time from existing
+  # entries (execution.max_entry_slippage_bps, risk.min_stop_atr_multiple)
+  # and so add no site of their own; the per-session cap is
+  # nominations.max_per_seat_per_run, read at run time. No arbitrary row
+  # was added by this feature.
+  - id: src.config.UniverseScreenConfig.min_price_usd
+    value: 5
+    status: sourced
+    site: src/config.py
+    source: >-
+      SEC Rule 3a51-1(d), 17 CFR 240.3a51-1: a security that "has a price of
+      five dollars or more" is excluded from the definition of penny stock.
+      https://www.law.cornell.edu/cfr/text/17/240.3a51-1 (fetched
+      2026-09-19). The owner's instruction was to filter out penny stocks;
+      this is the statutory line for one. Price here is the last completed
+      daily close.
+  - id: src.config.UniverseScreenConfig.min_market_cap_usd
+    value: 30000000
+    status: sourced
+    site: src/config.py
+    source: >-
+      FTSE Russell US indexes methodology overview, ineligible securities:
+      "Companies under $30 Million in total market capitalization".
+      https://www.lseg.com/content/dam/ftse-russell/en_us/documents/other/ftse-russell-us-indexes-methodology-overview-cut-sheet.pdf
+      (fetched 2026-09-19). The floor of the Russell 3000E, the broadest
+      published US investable-equity index. Market capitalisation is read
+      from yfinance at screen time.
+  - id: src.config.UniverseScreenConfig.screen_deadline_s
+    value: 900
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Wall-clock budget for one incremental screening pass at the end of
+      the evening session. Decides how many symbols are screened TONIGHT,
+      never whether one passes; an unfinished pass resumes next evening.
+      Derivation at src/config.py (UniverseScreenConfig): evening job
+      TimeoutStartSec=1260, evening body measured 173 s on 2026-09-19.
+  - id: src.config.UniverseScreenConfig.bars_batch_size
+    value: 50
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Symbols per multi-ticker daily-bar download. A fetch batch size: it
+      changes how many requests a pass makes, never a screen verdict.
+  - id: src.universe_screen.HISTORY_FETCH_DAYS
+    value: 400
+    status: not-trade-governing
+    site: src/universe_screen.py
+    note: >-
+      Calendar days of daily bars requested per symbol. A fetch window, not
+      a threshold: the one-year history test is a calendar comparison
+      between the first and last bar, and this only has to reach past a
+      year. It never decides a verdict unless set BELOW a year, which would
+      fail every symbol's history test visibly.
+  - id: src.universe_screen.STOP_SANITY_FLOOR_FRACTION
+    value: 0.5
+    status: derived
+    site: src/universe_screen.py
+    derived_from: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
+    base_value: 0.5
+    note: >-
+      The midday stop-sanity floor (a stop under half the price is refused
+      as a typo), restated so the screen's volatility ceiling can be read
+      from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
+      20% at today's values). Inherits that entry's arbitrary status and
+      open question.

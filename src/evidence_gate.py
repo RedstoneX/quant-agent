@@ -45,6 +45,47 @@ split is built: `not_run_intraday` is the intentional skip, and empty or
 failed morning carry-forward is `carry_forward_empty` /
 `carry_forward_failed`, which this gate treats as lost.
 
+WHICH SEATS CAN REFUSE — MANDATE DECISION, OWNER, 2026-09-18
+------------------------------------------------------------
+    "Only technical analysis can stop the desk."
+
+Before that ruling the blocking set was every seat, which nobody had
+decided: it was a side effect of which seat happened to write a status word
+that classified as LOST, so any seat gaining a new failure word silently
+gained the power to stop trading. It is now declared, in `BLOCKING_SEATS`
+below, and that constant is the only place it may be widened.
+
+The gate's PRINCIPLE is unchanged and still owner-ratified: the desk must
+not decide on evidence that never arrived. What changed is the scope of the
+refusal, not the standard. A lost advisory seat is still recorded, still
+named to the owner, and still feeds the `data_degraded` advisory — it simply
+no longer halts the desk on its own.
+
+FRESHNESS DISCLOSURE — WHY IT SHIPS IN THE SAME CHANGE
+-------------------------------------------------------
+With the other seats advisory, a decision can rest on ONE freshly-read seat
+plus a carried-forward book, and every status involved
+(`carried_from_morning`, `not_run_intraday`, `chose_not_to_refetch`,
+`remembered`) is integrity-clean, so such a decision reported five green
+seats and nothing anywhere counted how many were actually READ ON THIS TICK.
+That is silent degradation, which this desk bans independently of any
+mandate.
+
+So every decision now DISCLOSES its own evidence freshness: which seats were
+read on this tick, which are carried from earlier, which are absent. It is
+disclosure, not a threshold. No minimum number of fresh seats exists here
+and none may be invented — that number is the owner's, same as the coverage
+count above.
+
+`expired` IS NOT A LOST ANSWER
+------------------------------
+It used to classify as lost, which contradicted this module's own
+categorical line. `expired` means the desk HOLDS a good answer and knows a
+newer one exists — neither "nothing to say" nor "the answer never arrived".
+It now has its own category. It is not integrity-clean, so it still counts
+toward the `data_degraded` advisory, and the freshness disclosure names it
+explicitly as an answer known to be out of date.
+
 WHAT IT DOES NOT DO
 --------------------
 It never zeroes a target and never drops an individual candidate: a 0%
@@ -84,8 +125,37 @@ CATEGORY_NOTHING_TO_REPORT = "nothing_to_report"
 #: The desk asked, an answer existed to be had, and it never arrived — the
 #: call raised, the response would not parse, the provider failed outright,
 #: the generation was cut off mid-answer, or every analyzed filing came back
-#: with no content. This, and only this, refuses the decision.
+#: with no content. This, and only this, can refuse the decision — and then
+#: only for a seat named in `BLOCKING_SEATS`.
 CATEGORY_LOST = "lost"
+
+#: The desk HOLDS a good answer for this kind of evidence and knows a newer
+#: one exists (a newer material wire, a new Form 4 accession, a regime or
+#: print change) that this tick did not fetch. That is neither absence nor a
+#: lost answer, and classifying it as lost contradicted the categorical line
+#: this whole module rests on. Split out 2026-09-18. It is deliberately NOT
+#: in `INTEGRITY_CLEAN_STATUSES`, so it still feeds the `data_degraded`
+#: advisory, and the freshness disclosure names it in plain words.
+CATEGORY_EXPIRED = "expired"
+
+#: WHICH SEATS MAY REFUSE THE WHOLE DECISION.
+#:
+#: MANDATE DECISION. Owner, 2026-09-18, made with the argument against it in
+#: front of him (a second blocking seat for earnings was proposed and
+#: declined): **"Only technical analysis can stop the desk."**
+#:
+#: This is a risk mandate, not an engineering default. It is NOT an agent's
+#: to widen, narrow, or "make safer" — adding a seat here changes what the
+#: desk refuses to trade on and needs the owner's ruling, in the same way
+#: the coverage threshold does. A seat that is not listed here is ADVISORY:
+#: its loss is recorded, reported to the owner and counted as degraded, but
+#: it does not halt trading by itself.
+#:
+#: Declaring it also closes the accident it replaces. Until this constant
+#: existed the blocking set was "whichever seat happens to write a word that
+#: classifies as LOST", so any seat gaining a new failure word silently
+#: gained the power to stop the desk.
+BLOCKING_SEATS: frozenset[str] = frozenset({"tech"})
 
 #: Every value any seat writes into `RunContext.data_status`, classified.
 #: Sources, all in this repo: `MorningResearchStage.run` (macro / news /
@@ -135,10 +205,62 @@ STATUS_CATEGORY: dict[str, str] = {
     # deciding on it would be fabricating the missing seat.
     "carry_forward_empty": CATEGORY_LOST,
     "carry_forward_failed": CATEGORY_LOST,
+    # --- a good answer the desk knows has been superseded ---
     # Kind expired (newer wire, new filing, regime/print change) and this
-    # tick did not replace it. Deciding on the expired object would be
-    # treating a known-superseded answer as current.
-    "expired": CATEGORY_LOST,
+    # tick did not replace it. The desk HAS an answer; it is simply not the
+    # newest one. See CATEGORY_EXPIRED.
+    "expired": CATEGORY_EXPIRED,
+}
+
+#: HOW MUCH OF THE EVIDENCE BEHIND THIS DECISION WAS READ ON THIS TICK.
+#:
+#: Separate question from "did an answer arrive?", and nothing in this
+#: codebase asked it before 2026-09-18. It exists because the seats that
+#: report green on a carried-forward book (`carried_from_morning`,
+#: `remembered`, `chose_not_to_refetch`, `not_run_intraday`) are
+#: indistinguishable, at the point of decision, from seats that were just
+#: read — so a decision resting on one fresh seat and four carried ones
+#: looked exactly like a decision resting on five fresh ones.
+#:
+#: This map CLASSIFIES; it does not judge. There is no minimum fresh count
+#: here and none may be added — that number is the owner's.
+FRESHNESS_FRESH = "fresh"
+FRESHNESS_CARRIED = "carried"
+FRESHNESS_ABSENT = "absent"
+FRESHNESS_UNKNOWN = "unknown"
+
+STATUS_FRESHNESS: dict[str, str] = {
+    # --- asked on this tick AND came back with something usable ---
+    "ok": FRESHNESS_FRESH,
+    "partial": FRESHNESS_FRESH,
+    "low_confidence": FRESHNESS_FRESH,
+    "symbol_dropped": FRESHNESS_FRESH,
+    "degraded": FRESHNESS_FRESH,
+    "figures_contradicted": FRESHNESS_FRESH,
+    # A seat that was asked and honestly answered "nothing" was still READ.
+    "empty": FRESHNESS_FRESH,
+    "release_overdue": FRESHNESS_FRESH,
+    # --- an answer the desk holds, but not one it read on this tick ---
+    # `not_run_intraday` sits here because "not asked" is not "read": this
+    # tick chose not to re-pay the seat and whatever it holds from earlier
+    # is what the decision is standing on. Deliberately not counted fresh —
+    # overstating freshness is the exact failure this disclosure exists to
+    # prevent.
+    "carried_from_morning": FRESHNESS_CARRIED,
+    "remembered": FRESHNESS_CARRIED,
+    "chose_not_to_refetch": FRESHNESS_CARRIED,
+    "not_run_intraday": FRESHNESS_CARRIED,
+    # Carried AND known to be out of date. Reported inside `carried`, and
+    # named separately as well, because it is the sharpest case.
+    "expired": FRESHNESS_CARRIED,
+    # --- no usable evidence from this seat at all ---
+    "failed": FRESHNESS_ABSENT,
+    "parse_error": FRESHNESS_ABSENT,
+    "provider_error": FRESHNESS_ABSENT,
+    "truncated": FRESHNESS_ABSENT,
+    "content_missing": FRESHNESS_ABSENT,
+    "carry_forward_empty": FRESHNESS_ABSENT,
+    "carry_forward_failed": FRESHNESS_ABSENT,
 }
 
 #: Statuses that are NOT an upstream integrity problem for Risk's 2+
@@ -176,6 +298,104 @@ def counts_as_degraded(status: str) -> bool:
 
 
 @dataclass(frozen=True)
+class EvidenceFreshness:
+    """How much of this decision's evidence was read on THIS tick.
+
+    Disclosure only. It carries no verdict, refuses nothing, and holds no
+    threshold — see `STATUS_FRESHNESS`.
+    """
+
+    fresh: list[str] = field(default_factory=list)
+    carried: list[str] = field(default_factory=list)
+    absent: list[str] = field(default_factory=list)
+    unknown: list[str] = field(default_factory=list)
+    #: The subset of `carried` the desk KNOWS is superseded (`expired`).
+    known_out_of_date: list[str] = field(default_factory=list)
+    data_status: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def seats(self) -> int:
+        return len(self.data_status)
+
+    @property
+    def summary(self) -> str:
+        """Machine-side one-liner for the durable record and the log."""
+        parts = [
+            f"{len(self.fresh)} of {self.seats} research seat(s) were read on "
+            f"this tick ({', '.join(self.fresh) or 'none'})",
+            f"carried from earlier without being re-read: "
+            f"{', '.join(self.carried) or 'none'}",
+            f"no answer at all: {', '.join(self.absent) or 'none'}",
+        ]
+        if self.known_out_of_date:
+            parts.append(
+                "carried answers the desk knows are superseded: "
+                + ", ".join(self.known_out_of_date)
+            )
+        if self.unknown:
+            parts.append(
+                "seats whose state this desk cannot classify (NOT counted as "
+                "read): " + ", ".join(self.unknown)
+            )
+        return "; ".join(parts)
+
+    def to_evidence(self) -> dict:
+        return {
+            "fresh_seats": list(self.fresh),
+            "carried_seats": list(self.carried),
+            "absent_seats": list(self.absent),
+            "unknown_freshness_seats": list(self.unknown),
+            "known_out_of_date_seats": list(self.known_out_of_date),
+            "seats_total": self.seats,
+            "seats_read_this_tick": len(self.fresh),
+            "summary": self.summary,
+        }
+
+
+def freshness(data_status: dict | None) -> EvidenceFreshness:
+    """Classify each seat by whether its answer was read on THIS tick.
+
+    NEVER raises, and never counts an unrecognised state as fresh: an
+    unknown word means the desk does not know how fresh that seat is, and
+    claiming freshness it cannot prove is the failure this exists to stop.
+    """
+    if not isinstance(data_status, dict):
+        return EvidenceFreshness()
+    fresh: list[str] = []
+    carried: list[str] = []
+    absent: list[str] = []
+    unknown: list[str] = []
+    stale: list[str] = []
+    clean: dict[str, str] = {}
+    for seat, value in data_status.items():
+        seat_name = str(seat)
+        text = str(value)
+        clean[seat_name] = text
+        bucket = STATUS_FRESHNESS.get(text)
+        if bucket == FRESHNESS_FRESH:
+            fresh.append(seat_name)
+        elif bucket == FRESHNESS_CARRIED:
+            carried.append(seat_name)
+            if STATUS_CATEGORY.get(text) == CATEGORY_EXPIRED:
+                stale.append(seat_name)
+        elif bucket == FRESHNESS_ABSENT:
+            absent.append(seat_name)
+        else:
+            unknown.append(seat_name)
+            logger.error(
+                "evidence freshness: data_status[%r]=%r is not in "
+                "STATUS_FRESHNESS — reporting it as unknown freshness, NOT "
+                "as read-this-tick. Classify it in src/evidence_gate.py.",
+                seat_name, text,
+            )
+    return EvidenceFreshness(
+        fresh=sorted(fresh), carried=sorted(carried), absent=sorted(absent),
+        unknown=sorted(unknown), known_out_of_date=sorted(stale),
+        data_status=clean,
+    )
+
+
+@dataclass(frozen=True)
 class EvidenceGateVerdict:
     """Why the decision may or may not proceed. Machine-readable and durable
     — `to_evidence()` is what gets persisted, per symbol and per run."""
@@ -183,39 +403,73 @@ class EvidenceGateVerdict:
     lost: list[str] = field(default_factory=list)
     nothing_to_report: list[str] = field(default_factory=list)
     reported: list[str] = field(default_factory=list)
+    expired: list[str] = field(default_factory=list)
     unclassified: list[str] = field(default_factory=list)
     data_status: dict[str, str] = field(default_factory=dict)
+    freshness: EvidenceFreshness = field(default_factory=EvidenceFreshness)
+
+    @property
+    def blocking_lost(self) -> list[str]:
+        """Lost seats that are ALLOWED to stop the desk (`BLOCKING_SEATS`)."""
+        return [seat for seat in self.lost if seat in BLOCKING_SEATS]
+
+    @property
+    def advisory_lost(self) -> list[str]:
+        """Lost seats that are recorded and reported but do not halt trading."""
+        return [seat for seat in self.lost if seat not in BLOCKING_SEATS]
 
     @property
     def skip(self) -> bool:
-        """True when at least one seat's answer was lost outright."""
-        return bool(self.lost)
+        """True when a BLOCKING seat's answer was lost outright.
+
+        Owner mandate 2026-09-18, "Only technical analysis can stop the
+        desk" — see `BLOCKING_SEATS`. A lost advisory seat still appears in
+        `lost`, in the durable record and in the owner's message.
+        """
+        return bool(self.blocking_lost)
 
     @property
     def reason(self) -> str:
-        if not self.lost:
-            return "every seat reported or was honestly empty"
+        blocking = self.blocking_lost
+        if not blocking:
+            if self.lost:
+                detail = ", ".join(
+                    f"{seat}={self.data_status.get(seat)}" for seat in self.lost
+                )
+                return (
+                    f"decision proceeded: {len(self.lost)} advisory seat(s) "
+                    f"were asked and their answer never arrived — {detail}. "
+                    f"Owner mandate 2026-09-18: only the technical seat can "
+                    f"stop the desk. {self.freshness.summary}."
+                )
+            return f"every seat reported or was honestly empty. {self.freshness.summary}."
         detail = ", ".join(
-            f"{seat}={self.data_status.get(seat)}" for seat in self.lost
+            f"{seat}={self.data_status.get(seat)}" for seat in blocking
         )
         return (
-            f"decision skipped: {len(self.lost)} seat(s) were asked and their "
-            f"answer never arrived — {detail}. A decision resting on an answer "
-            f"the desk never received is not a degraded decision, it is a "
-            f"fabricated one (docs/WORK.md item 20)."
+            f"decision skipped: {len(blocking)} blocking seat(s) were asked "
+            f"and their answer never arrived — {detail}. A decision resting "
+            f"on an answer the desk never received is not a degraded "
+            f"decision, it is a fabricated one (docs/WORK.md item 20)."
         )
 
     def to_evidence(self) -> dict:
-        return {
+        evidence = {
             "gate": "evidence_coverage",
             "outcome": "skip" if self.skip else "proceed",
             "lost_seats": list(self.lost),
+            "blocking_lost_seats": list(self.blocking_lost),
+            "advisory_lost_seats": list(self.advisory_lost),
+            "blocking_seats": sorted(BLOCKING_SEATS),
             "nothing_to_report_seats": list(self.nothing_to_report),
             "reported_seats": list(self.reported),
+            "expired_seats": list(self.expired),
             "unclassified_seats": list(self.unclassified),
             "data_status": dict(self.data_status),
             "reason": self.reason,
         }
+        evidence.update(self.freshness.to_evidence())
+        return evidence
 
 
 def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
@@ -231,6 +485,7 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
     lost: list[str] = []
     nothing: list[str] = []
     reported: list[str] = []
+    expired: list[str] = []
     unclassified: list[str] = []
     clean: dict[str, str] = {}
 
@@ -241,6 +496,8 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
         category = STATUS_CATEGORY.get(text)
         if category == CATEGORY_LOST:
             lost.append(seat_name)
+        elif category == CATEGORY_EXPIRED:
+            expired.append(seat_name)
         elif category == CATEGORY_NOTHING_TO_REPORT:
             nothing.append(seat_name)
         elif category == CATEGORY_REPORTED:
@@ -259,6 +516,8 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
         lost=sorted(lost),
         nothing_to_report=sorted(nothing),
         reported=sorted(reported),
+        expired=sorted(expired),
         unclassified=sorted(unclassified),
         data_status=clean,
+        freshness=freshness(data_status),
     )
