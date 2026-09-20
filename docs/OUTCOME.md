@@ -472,6 +472,24 @@ before it reaches the owner. If a report says tests pass, check the count. If
 it says X is the cause, confirm X produces the symptom. If it says something
 never worked, find the counter-example first.
 
+## A gating review must block the merge, not race it
+
+**Standing rule, added 2026-09-20 after PR #560/#561.** A review whose job is
+to stop a merge has to be a precondition of that merge, not a parallel
+process that might finish first. #560 (the auto-fix loop's unattended
+session) was supposed to be blocked pending a qamc-adversary review of its
+permission sandbox; instead the review ran alongside CI and this repo's
+standing merge-when-green auto-merge, and auto-merge won — #560 was live on
+`main` before the review that was meant to gate it had an answer. The review
+then found real bypasses in the merged design (see
+`docs/INCIDENT_HISTORY.md`, 2026-09-20), and the PR was reverted the same day
+before anything was ever installed or run. Nothing here should be read as
+walking back merge-when-green for ordinary work — that policy is unconditional
+and correct for the common case. It means: when a change is explicitly
+marked as needing a gating review before merge, that requirement has to be
+wired so the merge cannot complete first, not left as a step that merely
+runs in parallel and hopes to win.
+
 ## There is no such thing as a quiet market
 
 Across a universe of a hundred-plus names, something is always moving. **"It

@@ -12816,3 +12816,65 @@ reported success on its own.
 
 ---
 
+### 2026-09-20 — the auto-fix loop's permission sandbox was reviewed after it merged, found bypassable, and reverted before it ever ran
+
+**In plain words:** the desk shipped a design meant to let an unattended
+session fix things after each health report, sandboxed by a list of denied
+commands. A safety review of the actual merged code — not a proposal — found
+the sandbox does not hold, found the session could have widened its own
+permissions and merged that widening itself, and found the review that was
+supposed to stop the merge lost a race with the automatic merge instead. The
+design was reverted the same day. Nothing from it was ever installed,
+enabled, or run anywhere, live or otherwise.
+
+PR #560 ("feat(ops): unattended auto-fix session, chained off the health
+report (ships inert)") merged into `main` via auto-merge on green CI. It
+carried its own design doc, `docs/architecture/AUTO_FIX_LOOP.md`, describing
+a permission "deny list" meant to sandbox the unattended session. A
+qamc-adversary review of that exact merged code, not the proposal that
+preceded it, found five things wrong:
+
+1. **The deny list is bypassable.** It matches literal command strings, not
+   effects. `python3 -c "..."` can reach `sudo`, `systemctl`, `crontab`, or
+   arbitrary files without ever typing a denied string, and the `ubuntu`
+   account carries passwordless root sudo (`(ALL) NOPASSWD: ALL`, verified) —
+   so a bypass is a straight path to root, not a narrow escape.
+2. **The session could rewrite its own restraints.** Nothing stopped it
+   editing its own permission config or prompt file and getting that
+   widening merged, because `main` has no required PR reviewers and no
+   CODEOWNERS. A sandbox a session can edit is not a sandbox.
+3. **A prompt-injection surface, with a timing hole on top.** A snapshot
+   re-read step feeds external log and model-derived content into a
+   privileged unattended session — text from outside the session driving a
+   session with root-adjacent reach. Separately, a hardcoded time constant
+   left a ~4.4 hour blind window that contradicted the prompt's own claim
+   about what data it was reading.
+4. **The design doc overclaimed its own safety.** Several statements in
+   `docs/architecture/AUTO_FIX_LOOP.md` about what was "enforced by deny
+   rules" were false as written, not merely optimistic.
+5. **The review that was supposed to gate the merge did not.** The adversary
+   review of #560 was meant to block the merge until it passed. Instead it
+   ran in parallel with CI and the repo's standing auto-merge-on-green
+   policy, and auto-merge won the race — #560 was live on `main` before the
+   review finished.
+
+**What shipped instead.** PR #561 reverted #560 cleanly (8 files,
+-886/+2 lines) the same day. Before the revert, the live server was checked
+and confirmed to have nothing from #560 installed, no systemd units enabled
+or started, anywhere — the design went from proposal to merged to reverted
+without a single unattended run, live or otherwise. Item 167 on the board
+carries what a redesign has to prove before a second attempt: the permission
+envelope tested against an actual privilege-escalation attempt rather than
+pattern-matched strings, the session's own config and prompt made
+unwidenable by itself (or any widening routed through a human merge, never
+auto-merge), a stated mitigation for the prompt-injection surface, and the
+design doc's safety claims tested rather than asserted in prose.
+
+**Process lesson, folded into `docs/OUTCOME.md`.** A review meant to gate a
+merge has to block that merge, not run beside it — "adversary review
+required" and "auto-merge on green" are two separate mechanisms, and nothing
+here made the first one a precondition of the second. See
+`docs/OUTCOME.md`'s new "A gating review must block the merge, not race it"
+principle.
+
+---
