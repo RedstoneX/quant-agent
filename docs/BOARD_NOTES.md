@@ -385,11 +385,6 @@ agent has widened the rule to work around it.
 
 **One factual correction, because it was being repeated.** The story that the range stop-width scaler 0.90 was derived against a stop base of 1.5 which later became 2.5, leaving the derivation stranded, does not match git. The base went from 3.0 to 2.5 on 2026-09-10, and 0.90 was introduced by that same change — it was never derived from anything, and the code beside it says as much ("not a specific measured number"). The class of defect is real and the check now catches it; this particular example is not an instance of it.
 
-## item 91
-
-**Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
-**Verified 2026-09-18, and it is worse than the general case —** the position reviewer's own pace check already has the right number sitting next to the wrong one. A weekend-aware trading-session count is computed a few lines above the pace math and used correctly elsewhere in the same file (widening the noise band). The pace math itself reads the calendar-day count instead, so the exact fix this item asks for already exists in scope and is simply not being read.
-
 ## item 92
 
 **Plain language —** The "we have lost too much today" alarm compares today's loss against how much the book would normally move. If a holding's normal movement cannot be measured, that holding is left out of the sum — so the book looks calmer than it is and the alarm trips earlier than it was designed to.
@@ -427,12 +422,6 @@ agent has widened the rule to work around it.
   - Roughly a third of the portfolio manager's briefing, and a quarter of the risk manager's and the position reviewer's, is prose describing machinery the model doesn't actually use. That dead weight is where almost every stale or wrong claim above was found living.
   - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
 **Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
-
-## item 111
-
-**Plain language —** Item 87 asked whether the automatic de-lever that trims the book when it gets too big cancels the protective stop-losses first. It does, and it has to — the broker would refuse the sell otherwise, because a resting stop holds the whole position. That part is fine, and the recovery around it is complete: a failed cancel is rolled back, a rejected sell restores the stop, a partial or no fill is put right by the step that runs afterward, and even a crash mid-way is covered because the recovery note is saved to disk before anything is cancelled at the broker. What is NOT fine: when the de-lever trims more than one holding in the same pass, that recovery step runs only once, after every holding in the pass has already been sold. The first holding trimmed sits with no protection for the whole rest of the pass, plus the wait for each later holding's order to finish — and this only happens during a drawdown, which is exactly when a naked position is most dangerous.
-**It has never happened —** the live records show this de-lever has fired zero times, and the account has never come close to the level that triggers it.
-**Recommendation —** Run the recovery step after each holding individually rather than once at the end. This touches the live selling path during a drawdown, so it is flagged for your decision rather than changed on our own say-so.
 
 ## item 112
 
