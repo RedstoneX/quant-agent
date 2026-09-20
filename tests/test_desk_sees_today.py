@@ -779,17 +779,22 @@ def test_a_symbol_the_feed_returned_nothing_for_is_still_a_snapshot_miss():
     p.broker.get_intraday_snapshots.return_value = {
         "MSFT": _snap(last_price=400.0, last_trade_at=now, prev_close=440.0),
         "BADTIX": {},
+        # The harder case: the previous close IS known, so the symbol
+        # cannot be dismissed on a missing prev_close — the feed simply
+        # returned no price of any kind for it. That is broken, not quiet.
+        "DEADTIX": _snap(prev_close=101.0),
     }
     p.config = MagicMock()
     p.config.intraday_scan.move_threshold_pct = 3.0
     p.config.intraday_scan.cooldown_hours = 4
-    p.config.trading.universe = ["MSFT", "BADTIX"]
+    p.config.trading.universe = ["MSFT", "BADTIX", "DEADTIX"]
     p._track_intraday_snapshot_miss = MagicMock()
     p._track_intraday_snapshot_ok = MagicMock()
     p._recently_intraday_evaluated = MagicMock(return_value=False)
 
     p._intraday_scan_mover_candidates(MagicMock())
-    p._track_intraday_snapshot_miss.assert_called_once_with("BADTIX")
+    missed = {c.args[0] for c in p._track_intraday_snapshot_miss.call_args_list}
+    assert missed == {"BADTIX", "DEADTIX"}
 
 
 def test_the_cockpit_does_not_render_a_prior_sessions_range_as_this_session(
