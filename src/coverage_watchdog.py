@@ -749,6 +749,60 @@ def claim_elected_unfilled_alert(
     return fresh
 
 
+# ---------------------------------------------------------------------------
+# the kill-switch-block marker — its own identity, the same machinery
+# ---------------------------------------------------------------------------
+# The desk's own kill switch refusing a protective stop is a THIRD distinct
+# condition from a placement failure and from an elected-but-unfilled stop:
+# the broker was never even asked. It must not share either key, for the
+# same reason those two don't share one — silencing one condition must
+# never silence a different one on the same name. Same state file, same
+# trading-day key, same claim-before-send discipline, separate identity.
+
+
+def _kill_switch_block_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    raw = state.get("kill_switch_block_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def claim_kill_switch_block_alert(
+    symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's kill-switch-block alert for `symbols` and return the
+    ones NOT already alerted today, in the order given.
+
+    Same contract as `claim_repair_failure_alert`: a kill switch left on
+    all day would otherwise page the owner on every retry of every symbol
+    it touches; an unwritable state file errs towards telling the owner
+    twice rather than not at all, which is the right way round for a
+    naked position.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _kill_switch_block_alerted_symbols(state, day)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    merged = already | set(fresh)
+    state["kill_switch_block_alerted_symbols"] = {
+        "day": day, "symbols": sorted(merged),
+    }
+    save_state(state, path)
+    return fresh
+
+
 def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 
