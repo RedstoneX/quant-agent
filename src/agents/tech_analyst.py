@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
@@ -54,6 +55,118 @@ _BARS_PLACEHOLDER_RE = re.compile(r"\{\{\s*tech\.bars_per_symbol\s*\}\}")
 def render_bars_per_symbol(text: str, bars: int = _BARS_PER_SYMBOL) -> str:
     """Substitute the bar-window placeholder with the count the code sends."""
     return _BARS_PLACEHOLDER_RE.sub(str(bars), text)
+
+
+# The OTHER number the sheet used to restate by hand, and the bigger error of
+# the two (board item 168). The sheet said "indicators are computed from ~120
+# days of history upstream" while every site that assembles this seat's
+# `symbols_data` fetches `config.trading.lookback_days` calendar days — 1800
+# since 2026-08-27, i.e. roughly fifteen times what the seat was told. Same
+# sentence as item 98's bar count, same halt-capable seat, same root cause: the
+# number had a second home in prose.
+#
+# Unlike `_BARS_PER_SYMBOL` this one is NOT a code constant — it is an
+# operator-tunable setting, so it is resolved from the live config at
+# prompt-assembly time and passed in by the pipeline. It still does not go
+# through `src/agents/prompt_limits.py`: that module RAISES on anything it
+# cannot resolve, and on the only seat allowed to halt the desk a raise at
+# agent construction IS a halt. Substitution here cannot fail — an unresolvable
+# history depth renders as prose that makes no numeric claim at all, which is
+# strictly better than a wrong number and visibly worse than a right one.
+_HISTORY_PLACEHOLDER = "{{tech.history_window}}"
+_HISTORY_PLACEHOLDER_RE = re.compile(r"\{\{\s*tech\.history_window\s*\}\}")
+
+#: Calendar arithmetic, not a tuned parameter: five of every seven calendar
+#: days are weekdays. `market.get_ohlcv` asks the provider for
+#: `start = today - timedelta(days=lookback_days)`, so what comes back is the
+#: weekday subset of that span, minus market holidays. Stated to the seat as
+#: "about N, fewer after market holidays" because this desk does not have a
+#: holiday calendar offline (`src/trading_calendar.py` says so in its own
+#: docstring) and an upper bound labelled as one beats a false precision.
+_WEEKDAYS_PER_WEEK = 5
+_DAYS_PER_WEEK = 7
+
+#: What the sheet says when the history depth cannot be read. Deliberately
+#: carries no digits: the failure mode this whole mechanism exists to prevent
+#: is a number in the sheet that the code does not produce.
+_HISTORY_UNAVAILABLE = "the full daily history this desk is configured to fetch"
+
+#: `config/settings.yaml` as the fallback source of `trading.lookback_days`,
+#: for the paths that build this agent without the live `AppConfig` (tests,
+#: scripts, `__new__`). Production passes the value in from the same config
+#: object the fetch uses, so the two cannot disagree there.
+_SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
+
+#: The longest window any advertised indicator reaches — the third number the
+#: sheet states about its own inputs, and it lives in `src/data/technical.py`
+#: as `LONGEST_INDICATOR_WINDOW`. Rendered rather than retyped for the same
+#: reason as the other two: the sheet must not be the second home for anything
+#: it says about the data it is handed. The adversary review of board item 168
+#: caught this one being typed by hand INSIDE the fix for the other two.
+_LONGEST_INDICATOR_PLACEHOLDER = "{{tech.longest_indicator_window}}"
+_LONGEST_INDICATOR_PLACEHOLDER_RE = re.compile(
+    r"\{\{\s*tech\.longest_indicator_window\s*\}\}"
+)
+
+_FROM_SETTINGS = object()
+
+
+def weekday_sessions_in(calendar_days: int) -> int:
+    """Weekday sessions inside a calendar-day span. Upper bound: no holidays."""
+    return max(0, int(calendar_days) * _WEEKDAYS_PER_WEEK // _DAYS_PER_WEEK)
+
+
+def format_history_window(lookback_days: object) -> str:
+    """The sheet's statement of how much history sits behind its indicators."""
+    if isinstance(lookback_days, bool) or not isinstance(lookback_days, int):
+        return _HISTORY_UNAVAILABLE
+    if lookback_days <= 0:
+        return _HISTORY_UNAVAILABLE
+    return (
+        f"up to {lookback_days} calendar days of price history "
+        f"(about {weekday_sessions_in(lookback_days)} weekday sessions, "
+        f"fewer after market holidays)"
+    )
+
+
+@lru_cache(maxsize=1)
+def settings_lookback_days() -> int | None:
+    """`trading.lookback_days` from `config/settings.yaml`, or None.
+
+    Never raises. A seat that cannot be briefed on its history depth is a
+    degraded brief; a seat that cannot be built at all is a halted desk.
+    """
+    try:
+        import yaml
+        raw = yaml.safe_load(_SETTINGS_PATH.read_text()) or {}
+        value = (raw.get("trading") or {}).get("lookback_days")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("tech_analyst: could not read trading.lookback_days: %s", exc)
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        logger.error(
+            "tech_analyst: trading.lookback_days is %r; the standing sheet will "
+            "state no history depth to the seat", value,
+        )
+        return None
+    return value
+
+
+def render_tech_placeholders(
+    text: str,
+    bars: int = _BARS_PER_SYMBOL,
+    lookback_days: object = _FROM_SETTINGS,
+) -> str:
+    """Substitute every `{{tech.*}}` placeholder. Cannot raise, cannot blank."""
+    if lookback_days is _FROM_SETTINGS:
+        lookback_days = settings_lookback_days()
+    from src.data.technical import LONGEST_INDICATOR_WINDOW
+    window = format_history_window(lookback_days)
+    rendered = render_bars_per_symbol(text, bars)
+    rendered = _HISTORY_PLACEHOLDER_RE.sub(lambda _m: window, rendered)
+    return _LONGEST_INDICATOR_PLACEHOLDER_RE.sub(
+        lambda _m: str(LONGEST_INDICATOR_WINDOW), rendered,
+    )
 
 
 # Ceiling on ONE request's predicted tokens. Chosen from measurement, not
@@ -170,10 +283,23 @@ class TechAnalystAgent(BaseAgent):
     def name(self) -> str:
         return "tech_analyst"
 
+    def __init__(self, *args, lookback_days: int | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: `config.trading.lookback_days` as the pipeline read it, so the sheet
+        #: states the depth the SAME config object made `market.get_ohlcv`
+        #: fetch. None falls back to `config/settings.yaml` (board item 168).
+        self._lookback_days = lookback_days
+
     @property
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
-            return render_bars_per_symbol(PROMPT_PATH.read_text())
+            configured = getattr(self, "_lookback_days", None)
+            return render_tech_placeholders(
+                PROMPT_PATH.read_text(),
+                lookback_days=(
+                    configured if configured is not None else _FROM_SETTINGS
+                ),
+            )
         return "You are a technical analyst. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:

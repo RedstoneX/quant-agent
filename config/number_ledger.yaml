@@ -3126,6 +3126,29 @@ numbers:
       Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
     cost_while_unanswered: >-
       Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.tech_analyst._WEEKDAYS_PER_WEEK
+    value: 5
+    status: sourced
+    site: src/agents/tech_analyst.py
+    source: >-
+      src/trading_calendar.py:106 — the desk's own weekend-aware session
+      counter, which this arithmetic is pinned against at
+      tests/test_tech_analyst_history_window.py:261, averaged over all seven
+      possible start weekdays where the start-weekday phase cancels exactly.
+      Five of every seven calendar days are Monday-to-Friday; the figure is
+      used only to state the technical seat's history depth back to it in
+      sessions as well as calendar days (board item 168). It is not a
+      lookback, a threshold or a weight — changing it changes no fetch, no
+      indicator and no trade.
+  - id: src.agents.tech_analyst._DAYS_PER_WEEK
+    value: 7
+    status: sourced
+    site: src/agents/tech_analyst.py
+    source: >-
+      src/trading_calendar.py:106 — the denominator of the weekday fraction
+      above, pinned by the same measurement at
+      tests/test_tech_analyst_history_window.py:261. Seven days in a week;
+      same scope, same test, same absence of any trading effect.
   - id: src.agents.tech_analyst._BARS_PER_SYMBOL
     value: 40
     status: arbitrary
