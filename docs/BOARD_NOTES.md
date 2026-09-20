@@ -385,11 +385,6 @@ agent has widened the rule to work around it.
 
 **One factual correction, because it was being repeated.** The story that the range stop-width scaler 0.90 was derived against a stop base of 1.5 which later became 2.5, leaving the derivation stranded, does not match git. The base went from 3.0 to 2.5 on 2026-09-10, and 0.90 was introduced by that same change — it was never derived from anything, and the code beside it says as much ("not a specific measured number"). The class of defect is real and the check now catches it; this particular example is not an instance of it.
 
-## item 91
-
-**Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
-**Verified 2026-09-18, and it is worse than the general case —** the position reviewer's own pace check already has the right number sitting next to the wrong one. A weekend-aware trading-session count is computed a few lines above the pace math and used correctly elsewhere in the same file (widening the noise band). The pace math itself reads the calendar-day count instead, so the exact fix this item asks for already exists in scope and is simply not being read.
-
 ## item 92
 
 **Plain language —** The "we have lost too much today" alarm compares today's loss against how much the book would normally move. If a holding's normal movement cannot be measured, that holding is left out of the sum — so the book looks calmer than it is and the alarm trips earlier than it was designed to.
