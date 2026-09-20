@@ -199,6 +199,227 @@ def test_deadline_already_expired_skips_remaining_series_without_attempting(mock
     mock.get_series.assert_not_called()
 
 
+def test_configured_observation_jobs_are_the_fifteen_required_series():
+    """The 2026-09-17 miss was the last seven IDs never being attempted.
+    Prefetch must ask for every series get_macro_summary() assembles."""
+    from src.data.macro import _configured_observation_jobs
+
+    ids = [sid for sid, _kw in _configured_observation_jobs()]
+    assert ids == [
+        "VIXCLS", "DGS3MO", "DGS2", "DGS10", "DFF",
+        "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "BAMLH0A0HYM2",
+        "DFII10", "T10YIE", "DTWEXBGS", "BAMLC0A0CM", "ICSA",
+    ]
+    assert len(set(ids)) == 15
+
+
+@patch("src.data.macro.Fred")
+def test_observations_are_attempted_before_any_metadata_http(mock_fred_cls):
+    """Measured 2026-09-17 retest: 15/15 in ~85s when observation+metadata
+    shared worker slots; open 7/15 never started. Metadata must not occupy
+    the observation budget. Unknown freshness is named, not an invented
+    value, and the deadline is not lengthened."""
+    mock = MagicMock()
+    order: list[tuple[str, str]] = []
+
+    def _obs(series_id, **kw):
+        order.append(("obs", series_id))
+        return _series([1.0, 1.1, 1.2])
+
+    def _meta(series_id):
+        order.append(("meta", series_id))
+        return pd.Series({
+            "observation_end": "2026-09-16",
+            "last_updated": "2026-09-16",
+        })
+
+    mock.get_series.side_effect = _obs
+    mock.get_series_info.side_effect = _meta
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    kinds = [kind for kind, _sid in order]
+    assert kinds.count("obs") == 15
+    assert kinds.count("meta") == 15
+    last_obs = max(i for i, kind in enumerate(kinds) if kind == "obs")
+    first_meta = min(i for i, kind in enumerate(kinds) if kind == "meta")
+    assert last_obs < first_meta
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+
+
+@patch("src.data.macro.Fred")
+def test_observation_prefetch_keeps_three_workers_and_does_not_fetch_metadata_on_them(
+    mock_fred_cls, monkeypatch,
+):
+    """90s/15s sizes 3 workers. The 85s healthy-batch cost was metadata
+    on those same slots, not a need for a 6-wide burst (15-wide 429'd;
+    6-wide was not measured against FRED)."""
+    from concurrent.futures import ThreadPoolExecutor as RealPool
+
+    mock = MagicMock()
+    mock.get_series.side_effect = lambda sid, **kw: _series([1.0, 1.1, 1.2])
+    mock_fred_cls.return_value = mock
+    seen: list[int] = []
+
+    def _tracking_pool(*a, **k):
+        workers = k.get("max_workers")
+        if workers is None and a:
+            workers = a[0]
+        seen.append(workers)
+        return RealPool(*a, **k)
+
+    monkeypatch.setattr("src.data.macro.ThreadPoolExecutor", _tracking_pool)
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=15.0,
+        max_retries=0,
+        total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert seen, "prefetch never opened a pool"
+    assert seen[0] == 3
+
+
+@patch("src.data.macro.Fred")
+def test_macro_summary_first_pass_is_one_attempt_then_one_bounded_retry(
+    mock_fred_cls,
+):
+    """Default max_retries=2 must not stack three HTTP onto the observation
+    pass. Prefetch is one attempt; the dedicated retry is the second."""
+    mock = MagicMock()
+    attempts: dict[str, int] = {}
+
+    def _side_effect(series_id, **kw):
+        attempts[series_id] = attempts.get(series_id, 0) + 1
+        if series_id == "ICSA" and attempts[series_id] == 1:
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(api_key="test-key")  # shipped defaults
+    provider.get_macro_summary()
+    assert attempts["ICSA"] == 2
+    assert max(attempts.values()) <= 2
+    assert provider.last_coverage.status == "ok"
+
+
+@patch("src.data.macro.Fred")
+def test_parallel_prefetch_attempts_every_series_inside_a_serial_impossible_deadline(
+    mock_fred_cls,
+):
+    """2026-09-17: eight serial observation+metadata calls ate 90s and the
+    last seven series were skipped without an attempt. Each fetch here
+    sleeps long enough that 15 in a row would miss a 0.8s ceiling; parallel
+    prefetch must still attempt (and land) every configured series."""
+    mock = MagicMock()
+    seen: list[str] = []
+
+    def _side_effect(series_id, **kw):
+        seen.append(series_id)
+        time.sleep(0.12)
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=1.0,
+        max_retries=0,
+        total_fetch_deadline_s=0.8,
+    )
+    start = time.monotonic()
+    provider.get_macro_summary()
+    elapsed = time.monotonic() - start
+
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.failed == []
+    assert set(seen) == {
+        "VIXCLS", "DGS3MO", "DGS2", "DGS10", "DFF",
+        "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "BAMLH0A0HYM2",
+        "DFII10", "T10YIE", "DTWEXBGS", "BAMLC0A0CM", "ICSA",
+    }
+    # Serial 15 × 0.12s = 1.8s would blow the 0.8s ceiling.
+    assert elapsed < 1.2, (
+        f"get_macro_summary() took {elapsed:.2f}s — prefetch is not parallel"
+    )
+
+
+@patch("src.data.macro.Fred")
+def test_failed_series_are_retried_once_inside_the_same_deadline(mock_fred_cls):
+    """Producing-step heal: a series that timed out on the first try is
+    asked for once more. No invented value. No longer ceiling."""
+    mock = MagicMock()
+    attempts: dict[str, int] = {}
+
+    def _side_effect(series_id, **kw):
+        attempts[series_id] = attempts.get(series_id, 0) + 1
+        if series_id == "ICSA" and attempts[series_id] == 1:
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert attempts["ICSA"] == 2
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.failed == []
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+
+
+@patch("src.data.macro.Fred")
+def test_series_that_fail_the_retry_stay_named_and_are_not_invented(mock_fred_cls):
+    mock = MagicMock()
+
+    def _side_effect(series_id, **kw):
+        if series_id == "ICSA":
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    summary = provider.get_macro_summary()
+    assert provider.last_coverage.status == "partial"
+    assert [f.series_id for f in provider.last_coverage.failed] == ["ICSA"]
+    assert summary["jobless_claims"]["current"] is None
+
+
+@patch("fredapi.fred.urlopen")
+def test_fred_fetch_passes_per_request_timeout_to_urlopen(mock_urlopen):
+    """Parallel prefetch cannot share socket.getdefaulttimeout(). Each
+    fredapi urlopen must carry its own timeout so one worker cannot
+    restore another request to blocking-forever."""
+    mock_urlopen.side_effect = TimeoutError("The read operation timed out")
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=15.0,
+        max_retries=0,
+        total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert mock_urlopen.called
+    timeouts = [
+        call.kwargs.get("timeout")
+        for call in mock_urlopen.call_args_list
+    ]
+    assert timeouts
+    assert all(t is not None and t > 0 for t in timeouts)
+    assert all(t <= 15.0 for t in timeouts)
+
+
 # ===========================================================================
 # The six new series — parsed correctly, reach the summary dict
 # ===========================================================================
@@ -478,7 +699,13 @@ def test_morning_research_stage_macro_partial_coverage_marks_status_partial():
     """One of fifteen configured FRED series down, fourteen survivors were
     enough for the analyst to produce a valid MacroAnalysis. Before this
     fix, data_status['macro'] was 'ok' purely because the LLM call parsed
-    — this asserts it is now 'partial'."""
+    — this asserts it is now 'partial'.
+
+    Note: item 119 is scoped to the FRED fetch producing step (observations-
+    first prefetch so a slow series can't starve later ones out of an
+    attempt). Whether incomplete coverage should also skip the analyst call
+    entirely (a gate/threshold change) is a separate, larger decision left
+    for its own item — not bundled into this data-completeness fix."""
     coverage = MacroCoverage(
         configured=15, succeeded=14,
         failed=[SeriesFailure(series_id="ICSA", reason="timed out")],
