@@ -1068,7 +1068,38 @@ def _form4_drain_summary(results) -> dict:
     if not form4:
         return {}
     dates = [str(r.get("watched_read_through") or "")[:10] for r in form4]
+    # EDGAR's own denominator (board item 126), lifted out of the per-provider
+    # dict for the same reason the counts above are: nested, it reaches only
+    # the log line, and the pre-open check and the session record read the
+    # top level. Verified only if every Form 4 provider verified its own.
+    edgars = [
+        r.get("edgar_coverage") for r in form4
+        if isinstance(r.get("edgar_coverage"), dict)
+    ]
+    edgar_total = sum(int(e.get("edgar_total") or 0) for e in edgars)
+    enumerated = sum(int(e.get("enumerated") or 0) for e in edgars)
+    days_queried = min((int(e.get("days_queried") or 0) for e in edgars), default=0)
+    days_in_window = max((int(e.get("days_in_window") or 0) for e in edgars), default=0)
+    edgar_coverage = {
+        "known": bool(edgars) and all(bool(e.get("known")) for e in edgars),
+        "verified": bool(edgars) and all(bool(e.get("verified")) for e in edgars),
+        "reasons": sorted({
+            str(x) for e in edgars for x in (e.get("reasons") or []) if str(x).strip()
+        } or ({"never_recorded"} if not edgars else set())),
+        "edgar_total": edgar_total,
+        "enumerated": enumerated,
+        "rows_received": sum(int(e.get("rows_received") or 0) for e in edgars),
+        "ratio": round(enumerated / edgar_total, 4) if edgar_total > 0 else None,
+        # A window, not a quantity — see `form4_coverage` below.
+        "days_queried": days_queried,
+        "days_in_window": days_in_window,
+        "window_fraction": (
+            round(days_queried / days_in_window, 4) if days_in_window > 0 else None
+        ),
+        "days_with_total": sum(int(e.get("days_with_total") or 0) for e in edgars),
+    }
     return {
+        "edgar_coverage": edgar_coverage,
         "watched_read_through": "" if any(not d for d in dates) else min(dates),
         "watched_unchecked_names": sorted({
             str(n) for r in form4 for n in (r.get("watched_unchecked_names") or [])
@@ -1279,9 +1310,18 @@ class CombinedSmartMoneyProvider:
         Unknown unless at least one sub-provider recorded coverage; with
         several, the result is only as complete as the least complete.
         """
+        from src.data.smart_money import blank_edgar_coverage
+
+        blank_edgar = blank_edgar_coverage()
         merged = {"known": False, "as_of": "", "watched": 0,
-                  "read_through": 0, "unread": []}
+                  "read_through": 0, "unread": [], "edgar": dict(blank_edgar)}
         found = False
+        # EDGAR coverage across sub-providers is only as verified as the
+        # least verified one, and its reasons are the union — the same
+        # posture as `unread` above. A wrapper holding no Form 4 provider
+        # at all reports never_recorded, which reads as unverified.
+        edgar_reasons: set[str] = set()
+        edgar_verified: list[bool] = []
         for provider in self.providers:
             probe = getattr(provider, "form4_coverage", None)
             if not callable(probe):
@@ -1290,16 +1330,60 @@ class CombinedSmartMoneyProvider:
                 result = probe() or {}
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Form 4 coverage read failed: %s", exc)
-                return {**merged, "known": False}
+                return {**merged, "known": False, "edgar": dict(blank_edgar)}
             if not result.get("known"):
-                return {**merged, "known": False}
+                return {**merged, "known": False, "edgar": dict(blank_edgar)}
             found = True
             merged["as_of"] = merged["as_of"] or str(result.get("as_of") or "")
             merged["watched"] += int(result.get("watched") or 0)
             merged["read_through"] += int(result.get("read_through") or 0)
             merged["unread"].extend(str(s) for s in (result.get("unread") or []))
+            sub_edgar = result.get("edgar")
+            if not isinstance(sub_edgar, dict):
+                sub_edgar = dict(blank_edgar)
+            edgar_verified.append(bool(sub_edgar.get("verified")))
+            edgar_reasons.update(
+                str(r) for r in (sub_edgar.get("reasons") or []) if str(r).strip()
+            )
+            for key in ("edgar_total", "enumerated", "rows_received",
+                        "days_with_total"):
+                try:
+                    merged["edgar"][key] += int(sub_edgar.get(key) or 0)
+                except (TypeError, ValueError):
+                    pass
+            # Days are a WINDOW, not a quantity: summing them across
+            # providers makes the queried/window fraction meaningless. The
+            # merged fraction is a lower bound — the fewest days any
+            # provider reached, over the widest window any of them meant.
+            try:
+                sub_queried = int(sub_edgar.get("days_queried") or 0)
+                sub_window = int(sub_edgar.get("days_in_window") or 0)
+            except (TypeError, ValueError):
+                sub_queried = sub_window = 0
+            merged["edgar"]["days_queried"] = (
+                sub_queried if merged["edgar"]["days_queried"] == 0
+                else min(merged["edgar"]["days_queried"], sub_queried)
+            )
+            merged["edgar"]["days_in_window"] = max(
+                merged["edgar"]["days_in_window"], sub_window,
+            )
         merged["known"] = found
         merged["unread"] = sorted(set(merged["unread"]))
+        merged["edgar"]["known"] = bool(edgar_verified)
+        merged["edgar"]["verified"] = bool(edgar_verified) and all(edgar_verified)
+        merged["edgar"]["reasons"] = sorted(
+            edgar_reasons or ({"never_recorded"} if not edgar_verified else set())
+        )
+        total = int(merged["edgar"]["edgar_total"] or 0)
+        merged["edgar"]["ratio"] = (
+            round(int(merged["edgar"]["enumerated"] or 0) / total, 4)
+            if total > 0 else None
+        )
+        window = int(merged["edgar"]["days_in_window"] or 0)
+        merged["edgar"]["window_fraction"] = (
+            round(int(merged["edgar"]["days_queried"] or 0) / window, 4)
+            if window > 0 else None
+        )
         return merged
 
     def peek_form4_accessions(self, symbols: list[str] | None = None) -> set[str]:

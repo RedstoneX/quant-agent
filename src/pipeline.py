@@ -14420,13 +14420,15 @@ class TradingPipeline:
                 # cannot drain until tomorrow.
                 logger.info(
                     "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
-                    "cap_reached=%s watched_read_through=%s/%s drain_deadline_hit=%s",
+                    "cap_reached=%s watched_read_through=%s/%s "
+                    "drain_deadline_hit=%s edgar_coverage=%s",
                     smart_money_refresh.get("pending_filings"),
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
                     smart_money_refresh.get("watched_names_read_through"),
                     smart_money_refresh.get("watched_names"),
                     smart_money_refresh.get("watched_drain_deadline_hit"),
+                    smart_money_refresh.get("edgar_coverage"),
                 )
                 # ...and RECORDED where the desk records its status. Until
                 # 2026-09-19 these counts existed only in a log line and the
@@ -15392,7 +15394,7 @@ class TradingPipeline:
             "watched_names", "watched_names_read_through",
             "watched_names_unread", "watched_unchecked_names",
             "watched_drain_ran", "watched_drain_read",
-            "watched_drain_deadline_hit", "error",
+            "watched_drain_deadline_hit", "edgar_coverage", "error",
         )
         _persist_evidence(
             getattr(self, "db", None), run_id=run_id,
@@ -15446,9 +15448,41 @@ class TradingPipeline:
         cap_reached = bool(refresh.get("discovery_cap_reached"))
         names = int(refresh.get("watched_names") or 0)
         names_read = int(refresh.get("watched_names_read_through") or 0)
-        if read_through == today and not watched_pending and not unchecked:
+        # Board item 126. EDGAR publishes its own count of the Form 4s filed
+        # on a day. When the morning read could not obtain that count, it
+        # cannot tell "nobody filed anything" from "our read of the filings
+        # service came back broken" — and the second case used to reach this
+        # desk looking exactly like the first.
+        #
+        # Fail CLOSED on a missing record, matching the morning seat in
+        # src/pipeline_stages.py: a refresh that ran a Form 4 pass and
+        # recorded no coverage answered the question not at all, which is
+        # not the same as answering it well. Only a refresh carrying the
+        # Form 4 drain keys is held to this — a wrapper with no Form 4
+        # provider is not silently failing, it has nothing to say.
+        edgar = refresh.get("edgar_coverage")
+        edgar_unverified = (
+            "watched_drain_ran" in refresh
+            and not (isinstance(edgar, dict) and edgar.get("verified"))
+        )
+        if (
+            read_through == today and not watched_pending and not unchecked
+            and not edgar_unverified
+        ):
             return
         why: list[str] = []
+        if edgar_unverified:
+            record = edgar if isinstance(edgar, dict) else {}
+            reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) \
+                or "no coverage was recorded at all"
+            why.append(
+                "the filing service did not account for how many filings "
+                "existed, so a quiet day and a failed read cannot be told "
+                f"apart ({reasons}; read {record.get('enumerated', 0)} of "
+                f"{record.get('edgar_total', 0)} filings it reported, across "
+                f"{record.get('days_queried', 0)} of "
+                f"{record.get('days_in_window', 0)} days looked at)",
+            )
         if names:
             why.append(
                 f"{names_read} of our {names} companies have every insider "

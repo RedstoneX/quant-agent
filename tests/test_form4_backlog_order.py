@@ -686,6 +686,13 @@ def test_combined_provider_surfaces_the_drain_outcome_to_the_pre_open_check(
                 "watched_unchecked_names": [], "watched_drain_deadline_hit": False,
                 "watched_read_through": today, "watched_names": 82,
                 "watched_names_read_through": 82, "watched_names_unread": [],
+                # Board item 126: EDGAR's own filing count, read and walked.
+                "edgar_coverage": {
+                    "known": True, "verified": True, "reasons": [],
+                    "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
+                    "days_queried": 15, "days_in_window": 15,
+                    "days_with_total": 15,
+                },
             }
 
     combined = CombinedSmartMoneyProvider.__new__(CombinedSmartMoneyProvider)
