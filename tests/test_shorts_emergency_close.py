@@ -317,6 +317,9 @@ def _halted_pipe():
     pipe._reconcile_stop_coverage = MagicMock(return_value=[])
     pipe.broker.snapshot_protective_stops.return_value = (True, [{"qty": 1e9}])
     pipe._submit_protected_sell = MagicMock()
+    pipe._alert_owner_daily_loss_halt = MagicMock()
+    pipe._sweep_symbol = MagicMock(return_value=None)
+    pipe._retired_cash_park_symbol = MagicMock(return_value=None)
     return pipe
 
 
@@ -829,3 +832,196 @@ def test_drain_finalize_degrades_to_sell_default_when_broker_unreadable(tmp_path
 # left in place, failure count reported) is a one-off git operation done
 # outside pytest; it is not encoded here because there is nothing to keep
 # passing once src/ is reverted — that's the point of the check.
+
+
+# ==========================================================================
+# docs/WORK.md item 32, owner ruling 2026-09-20 — the halt must not fail
+# closed on EXITS.
+#
+# `src/risk/rules.py::check` states this desk's asymmetry: "entries fail
+# closed, exits fail open, because being unable to close a position is
+# strictly worse than being unable to open one." The halt was failing BOTH
+# closed — it returned before the session's deterministic trailing pass, so
+# on the one day the breaker fires (and for every later session that day,
+# each of which re-checks the breach and halts again) every stop stayed
+# frozen at the level it had that morning.
+# ==========================================================================
+
+def test_the_halt_advances_the_desks_only_exit_rule():
+    """The trailing stop is the ONLY exit rule on this desk. A halt that
+    freezes it is a halt that stops managing the positions it just decided
+    to keep."""
+    pipe = _halted_pipe()
+    pipe._apply_deterministic_trails = MagicMock(return_value=[{"symbol": "GE"}])
+    long_pos = Position(
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
+    )
+
+    out = pipe._halt_on_daily_loss_breach(
+        [long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    pipe._apply_deterministic_trails.assert_called_once()
+    assert pipe._apply_deterministic_trails.call_args.args[0] == [long_pos]
+    # Protective moves are reported, and kept OUT of `orders` so nothing
+    # downstream can read a stop tightening as a trade the breaker made.
+    assert out["halt_trail_orders"] == [{"symbol": "GE"}]
+    assert out["orders"] == []
+    pipe._submit_protected_sell.assert_not_called()
+
+
+def test_a_failing_trailing_pass_does_not_stop_the_halt_and_says_so():
+    """The halt is the deterministic response and must not depend on any
+    later step succeeding. But a failure must be DISTINGUISHABLE from
+    success-with-nothing-to-do: both leave the moved-stop list empty, and
+    only one of them means every stop is stale. An adversary pass caught
+    the first version of this asserting an escalation the code did not
+    make."""
+    pipe = _halted_pipe()
+    pipe._apply_deterministic_trails = MagicMock(side_effect=RuntimeError("feed down"))
+    long_pos = Position(
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
+    )
+
+    out = pipe._halt_on_daily_loss_breach(
+        [long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    assert out["halted"] is True
+    assert out["halt_trail_orders"] == []
+    assert out["halt_trails_ran"] is False
+    assert out["orders"] == []
+    # ...and the owner is told, in the message he actually reads.
+    alert = pipe._alert_owner_daily_loss_halt.call_args
+    assert alert.kwargs["trails_ran"] is False
+
+
+def test_nothing_to_trail_is_not_reported_as_a_trailing_failure():
+    """The mirror. An ordinary halt where no stop needed moving must not
+    warn that the trailing pass failed."""
+    pipe = _halted_pipe()
+    pipe._apply_deterministic_trails = MagicMock(return_value=[])
+    long_pos = Position(
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
+    )
+
+    out = pipe._halt_on_daily_loss_breach(
+        [long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    assert out["halt_trails_ran"] is True
+    assert out["halt_trail_orders"] == []
+
+
+def test_the_halt_does_not_trail_the_cash_park_even_once_it_is_retired():
+    """The park is a deliberately stopless cash-equivalent. The first
+    version of this filter asked `_sweep_symbol()`, which returns None once
+    the sweep is DISABLED — and a retired vehicle can still be held, so the
+    filter was dead exactly when it was needed."""
+    pipe = _halted_pipe()
+    pipe._sweep_symbol = MagicMock(return_value=None)
+    pipe._retired_cash_park_symbol = MagicMock(return_value="SGOV")
+    pipe._apply_deterministic_trails = MagicMock(return_value=[])
+    park = Position(
+        symbol="SGOV", qty=100.0, avg_entry=100.0, current_price=100.0,
+        market_value=10000.0, unrealized_pnl=0.0,
+        unrealized_intraday_pnl=0.0, sector="Cash",
+    )
+    long_pos = Position(
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
+    )
+
+    pipe._halt_on_daily_loss_breach(
+        [park, long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    trailed = pipe._apply_deterministic_trails.call_args.args[0]
+    assert [p.symbol for p in trailed] == ["GE"]
+
+
+def test_the_trailing_pass_runs_before_coverage_is_judged():
+    """ORDERING IS THE SAFETY PROPERTY, not an implementation detail. A stop
+    replacement cancels before it resubmits, so a failed resubmit leaves a
+    position briefly naked. The trailing pass therefore runs BEFORE the
+    coverage audit (which repairs) and before the per-position verification
+    (which judges), so a cancel/replace is never in flight while coverage is
+    being decided."""
+    pipe = _halted_pipe()
+    order = []
+    pipe._apply_deterministic_trails = MagicMock(
+        side_effect=lambda *a, **k: order.append("trail") or [],
+    )
+    pipe._reconcile_stop_coverage = MagicMock(
+        side_effect=lambda *a, **k: order.append("audit") or [],
+    )
+    pipe._verify_stop_coverage_at_halt = MagicMock(
+        side_effect=lambda *a, **k: order.append("verify") or [],
+    )
+    long_pos = Position(
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
+    )
+
+    pipe._halt_on_daily_loss_breach(
+        [long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    assert order == ["trail", "audit", "verify"]
+
+
+def test_the_owner_message_says_which_of_the_two_empty_cases_happened():
+    """The payload key records it; the MESSAGE is what acts on it. Rendered
+    for real rather than asserted through a mock, because an adversary pass
+    pointed out that every other test here mocks the alert away and the text
+    was never exercised by anything."""
+    import src.notifier as _notifier
+    sent: list[str] = []
+
+    def _capture(pipe, trails_ran, moved):
+        original = _notifier.send_owner_alert
+        _notifier.send_owner_alert = lambda *a, **k: sent.append(
+            " ".join(str(x) for x in a) + " " + " ".join(
+                str(v) for v in k.values()
+            )
+        )
+        try:
+            pipe._alert_owner_daily_loss_halt(
+                MagicMock(message="Daily loss 5.0% exceeds max 3.00%"),
+                [], [], [],
+                where="intra_check", basis="account", entries_cancelled=True,
+                trail_orders=moved, trails_ran=trails_ran,
+            )
+        finally:
+            _notifier.send_owner_alert = original
+        return "\n".join(sent)
+
+    pipe = _halted_pipe()
+    del pipe._alert_owner_daily_loss_halt  # use the real method
+
+    failed = _capture(pipe, False, [])
+    assert "trailing-stop pass FAILED" in failed
+    assert "pre-halt level" in failed
+
+    sent.clear()
+    moved = _capture(pipe, True, [{"symbol": "GE"}])
+    assert "TIGHTENED" in moved and "GE" in moved
+    assert "FAILED" not in moved
+
+    sent.clear()
+    quiet = _capture(pipe, True, [])
+    assert "TIGHTENED" not in quiet
+    assert "FAILED" not in quiet

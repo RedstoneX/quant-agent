@@ -984,19 +984,37 @@ def test_an_unreadable_intraday_change_is_not_treated_as_flat():
     assert pnl == pytest.approx(-40.0)
 
 
-def test_the_numerator_is_the_held_book_when_the_threshold_is_vol_relative():
-    """The defect: the threshold was built from the held book's own
-    volatility while the loss tested against it was the whole ACCOUNT's day
-    change — realized losses on already-closed positions, commissions and
-    spread included, none of which the denominator models."""
+def test_the_numerator_is_the_account_at_every_rung():
+    """2026-09-20 owner ruling, docs/WORK.md item 32. The 2026-09-14 repair
+    closed the numerator/denominator mismatch by shrinking the NUMERATOR to
+    the held book. That made the breaker blind to realized losses — the
+    desk's designed, normal loss mode — so the mismatch is now closed from
+    the denominator side instead: every rung is a percent of the ACCOUNT, so
+    the account's whole-day change is the numerator at every rung, realized
+    losses and commissions included."""
     from src.risk.rules import daily_loss_numerator
     positions = [_pos("MSFT", 500.0, intraday=-40.0)]
 
     pnl, basis = daily_loss_numerator(
         -900.0, positions, vol_relative=True, cash_park_symbol="SGOV",
     )
-    assert basis == "held_book"
-    assert pnl == pytest.approx(-40.0)
+    assert basis == "account"
+    assert pnl == pytest.approx(-900.0)
+
+
+def test_the_breaker_is_not_blind_to_realized_losses():
+    """The regression the 2026-09-14 held-book numerator introduced, pinned
+    so it cannot come back: names stop out for a real account-level loss and
+    the survivors sit flat. Under the held-book numerator the book read flat
+    and nothing tripped on exactly the day the breaker is meant to bind."""
+    from src.risk.rules import daily_loss_numerator
+    survivors = [_pos("MSFT", 500.0, intraday=0.0)]
+
+    pnl, basis = daily_loss_numerator(
+        -4000.0, survivors, vol_relative=True, cash_park_symbol="SGOV",
+    )
+    assert basis == "account"
+    assert pnl == pytest.approx(-4000.0)
 
 
 def test_the_numerator_is_the_account_when_the_threshold_is_a_fixed_percent():
@@ -1027,22 +1045,22 @@ def test_a_flat_held_book_on_a_losing_account_falls_back_to_the_account():
     assert pnl == pytest.approx(-900.0)
 
 
-def test_a_flat_held_book_on_a_flat_account_stays_on_the_held_book():
-    """The mirror: with nothing to disagree about there is no reason to
-    degrade the basis."""
+def test_a_flat_account_on_a_flat_book_reports_no_loss():
     from src.risk.rules import daily_loss_numerator
     pnl, basis = daily_loss_numerator(
         0.0, [_pos("MSFT", 500.0, intraday=0.0)], vol_relative=True,
     )
-    assert basis == "held_book"
+    assert basis == "account"
     assert pnl == pytest.approx(0.0)
 
 
-def test_an_empty_book_reports_no_held_book_loss():
+def test_an_empty_book_still_reports_the_account_day_change():
+    """An account can lose money on a day it ends holding nothing — every
+    name stopped out. The old held-book numerator reported 0.0 here."""
     from src.risk.rules import daily_loss_numerator
     pnl, basis = daily_loss_numerator(-900.0, [], vol_relative=True)
-    assert basis == "held_book"
-    assert pnl == pytest.approx(0.0)
+    assert basis == "account"
+    assert pnl == pytest.approx(-900.0)
 
 
 def test_the_limit_reports_which_rung_produced_it():
@@ -1168,3 +1186,368 @@ def test_an_unmeasurable_rolling_window_is_stated_not_printed_as_a_null():
     # The thresholds themselves are still reported: the brake is blind, the
     # level it would fire at is not a secret.
     assert "-6.7" in message and "-13.4" in message
+
+
+# ---------------------------------------------------------------------------
+# docs/WORK.md item 32 — OWNER RULING 2026-09-20.
+#
+# "I think the nuclear option should only be for a nuclear option. And given
+# what you've told me, that's not the case. So this whole premise is
+# completely wrong."
+#
+# The daily breaker's yardstick is the held book's realized volatility, and
+# `normalized_holding_weights` deliberately does not renormalise — so a
+# 5%-deployed book reconstructed a normal daily move about 5% the size of the
+# same basket fully deployed, and the trip point shrank with it. Right for a
+# BRAKE (the 5-day / 20-day alarms keep it, and the last test here pins that).
+# Wrong for the response that stops the desk trading for the session.
+#
+# The DAILY breaker now re-expresses that same measurement AT FULL DEPLOYMENT.
+# No new constant: same sensitivity, same sqrt(time), same ladder cap, and the
+# scale factor is read off the live holdings' gross weight.
+# ---------------------------------------------------------------------------
+
+
+def _deployed_engine(sigma_pct, gross_fraction, **cfg_overrides):
+    """A book measuring `sigma_pct` per session at `gross_fraction` deployed.
+
+    Built through the SAME pure function the pipeline's provider uses, so
+    these tests exercise the real scaling rather than a re-implementation of
+    it: `src/pipeline.py::breaker_daily_vol_pct` reads one measurement and
+    hands exactly these four values to `breaker_vol_yardstick_pct`.
+    """
+    from src.risk.rules import breaker_vol_yardstick_pct
+    cfg = _cfg(**cfg_overrides)
+    yardstick = breaker_vol_yardstick_pct(
+        sigma_pct, gross_fraction, sensitivity=3.0,
+        fallback_pct=cfg.effective_max_daily_loss_pct,
+    )
+    return RiskRuleEngine(cfg, portfolio_vol_provider=lambda: yardstick)
+
+
+def test_a_lightly_deployed_book_having_an_ordinary_bad_day_does_not_halt():
+    """(a) THE OLD FAILURE CASE. The measured example from the incident
+    history: 5% of equity in one name, that name has an unremarkable 6%
+    single-stock day. The account is down 0.30%.
+
+    Before: the yardstick was 3 x (1.5% x 0.05) = 0.225% of equity, so 0.30%
+    breached it and the desk halted. After: the yardstick is the same book at
+    full deployment, 3 x 1.5% = 4.5% of equity, and a 0.30% day is nowhere
+    near it."""
+    name_vol_pct = 1.5
+    deployment = 0.05
+    engine = _deployed_engine(name_vol_pct * deployment, deployment)
+
+    # The threshold no longer collapses with deployment.
+    assert engine.daily_loss_limit_pct == pytest.approx(4.5, abs=0.01)
+    assert engine.daily_loss_limit_basis() == RiskRuleEngine.VOL_RELATIVE_BASIS
+
+    # A 6% day in the one name held at 5% of equity: -0.30% of the account.
+    equity = 100_000.0
+    day_loss = -equity * deployment * 0.06
+    assert engine.check_daily_loss(equity, day_loss) is None
+
+    # And the old basis is what would have fired, so this test is pinning a
+    # real change rather than an arithmetic coincidence.
+    old_style = RiskRuleEngine(
+        _cfg(), portfolio_vol_provider=lambda: name_vol_pct * deployment,
+    )
+    assert old_style.check_daily_loss(equity, day_loss) is not None
+
+
+def test_a_genuinely_severe_account_wide_loss_still_halts():
+    """(b) THE BREAKER IS NOT DISABLED. Same lightly-deployed book, but the
+    account is down 6% on the day — names stopped out, realized. That is
+    larger than a 3-sigma day would cost this book fully deployed, and it
+    still fires. Note the loss is ACCOUNT-wide and the surviving book is
+    flat: the numerator that sees it is the one the 2026-09-20 ruling
+    restored."""
+    engine = _deployed_engine(1.5 * 0.05, 0.05)
+    equity = 100_000.0
+
+    violation = engine.check_daily_loss(equity, -0.06 * equity)
+    assert violation is not None
+    assert violation.rule == "max_daily_loss_pct"
+
+
+def test_a_fully_deployed_book_trips_exactly_where_it_did_before():
+    """The regime the desk is ramping toward is untouched. At full deployment
+    the scale factor is 1.0 and the trip point is the pre-2026-09-20 one."""
+    scaled = _deployed_engine(1.2, 1.0)
+    unscaled = RiskRuleEngine(_cfg(), portfolio_vol_provider=lambda: 1.2)
+    assert scaled.daily_loss_limit_pct == pytest.approx(
+        unscaled.daily_loss_limit_pct,
+    )
+    assert scaled.daily_loss_limit_pct == pytest.approx(3.6, abs=0.01)
+
+
+def test_a_levered_book_is_never_scaled_down():
+    """The floor only ever raises the yardstick. A book levered past 1.0x
+    gross genuinely can lose more in a day, and dividing by its gross would
+    have TIGHTENED the breaker on the most exposed book the desk can hold."""
+    levered = _deployed_engine(2.4, 2.0)
+    assert levered.daily_loss_limit_pct == pytest.approx(7.2, abs=0.01)
+
+
+def test_the_trip_point_is_the_same_share_of_equity_at_every_deployment():
+    """The property the ruling asked for, stated directly: how much of the
+    ACCOUNT has to be lost before the desk stops trading must not depend on
+    how far along the ramp from cash the desk happens to be.
+
+    The old basis made it collapse — 4.5% of equity fully deployed, 0.045%
+    at 1% deployed. It is now 4.5% throughout. Note this is invariance in
+    ACCOUNT terms, which is the whole point: a 3-sigma day in a name that is
+    5% of the book is no longer a reason to stop, because it costs the
+    account almost nothing.
+
+    **IT IS INVARIANT ONLY WHILE THE BOUND DOES NOT BIND** — see
+    `test_the_trip_point_is_not_invariant_once_the_bound_binds`, which pins
+    the other regime rather than leaving the claim overstated. An adversary
+    pass caught this test asserting invariance while only ever exercising a
+    volatility inside the invariant band."""
+    name_vol_pct = 1.5
+    limits = []
+    for deployment in (1.0, 0.5, 0.25, 0.05, 0.01, 0.001):
+        engine = _deployed_engine(name_vol_pct * deployment, deployment)
+        limits.append(engine.daily_loss_limit_pct)
+    for limit in limits:
+        assert limit == pytest.approx(limits[0], rel=1e-9)
+    assert limits[0] == pytest.approx(4.5, abs=0.01)
+
+
+def test_a_near_empty_book_does_not_halt_on_a_single_dollar():
+    """THE ROUNDING DEFECT. `vol_relative_drawdown_threshold_pct` used to end
+    `-round(magnitude, 2)`. At about 0.1% deployment the threshold rounded
+    away to -0.0, the basis still reported itself as a MEASUREMENT, and a
+    limit of zero means any loss at all breaches it — one dollar halted the
+    desk. Rendering rounds; a control value does not."""
+    from src.risk.rules import vol_relative_drawdown_threshold_pct
+
+    tiny = vol_relative_drawdown_threshold_pct(
+        daily_vol_pct=0.0015, window_sessions=1, sensitivity=3.0,
+        fallback_pct=-6.7, cap_pct=-20.0,
+    )
+    assert tiny < 0.0
+    assert tiny != pytest.approx(0.0, abs=1e-9)
+
+    engine = _deployed_engine(0.0015, 0.001)
+    assert engine.daily_loss_limit_pct > 0.0
+    assert engine.check_daily_loss(100_000.0, -1.0) is None
+
+
+def test_an_unreadable_deployment_leaves_the_yardstick_unscaled():
+    """Fail-soft: a deployment that cannot be read yields the
+    pre-2026-09-20 behaviour — the measurement served unchanged — rather
+    than a guessed scale factor."""
+    from src.risk.rules import breaker_vol_yardstick_pct
+    fallback = _cfg().effective_max_daily_loss_pct
+    for gross in (None, 0.0, -1.0, float("nan"), True, "x"):
+        assert breaker_vol_yardstick_pct(
+            0.3, gross, sensitivity=3.0, fallback_pct=fallback,
+        ) == pytest.approx(0.3)
+
+
+def test_an_unmeasurable_book_never_produces_a_yardstick():
+    """No measurement means no scaled measurement. The caller falls through
+    to the fixed percentage; nothing is invented from the deployment alone."""
+    from src.risk.rules import breaker_vol_yardstick_pct
+    fallback = _cfg().effective_max_daily_loss_pct
+    for sigma in (None, 0.0, -1.0, float("nan"), True, "x"):
+        assert breaker_vol_yardstick_pct(
+            sigma, 0.5, sensitivity=3.0, fallback_pct=fallback,
+        ) is None
+
+
+def test_an_all_cash_book_still_falls_back_to_the_fixed_percentage():
+    """Nothing held, nothing measurable: the fixed rung governs, exactly as
+    before, and it is honestly reported as the fixed rung rather than as a
+    measurement."""
+    engine = RiskRuleEngine(_cfg(), portfolio_vol_provider=lambda: None)
+    assert engine.daily_loss_limit_basis() == RiskRuleEngine.FIXED_BASIS
+    assert engine.daily_loss_limit_pct == pytest.approx(
+        _cfg().effective_max_daily_loss_pct,
+    )
+
+
+def test_the_rolling_brakes_keep_the_deployment_scaled_yardstick():
+    """The scaling is the DAILY breaker's alone. The 5-day / 20-day brakes
+    only halve new BUY size, and deployment-scaling is correct for a brake —
+    the incident history is explicit that the property is right there and
+    wrong only when attached to a session-stopping response."""
+    from src.risk.rules import breaker_vol_yardstick_pct
+
+    fallback = _cfg().effective_max_daily_loss_pct
+    # The breaker's own yardstick is the re-expressed one...
+    assert breaker_vol_yardstick_pct(
+        0.075, 0.05, sensitivity=3.0, fallback_pct=fallback,
+    ) == pytest.approx(1.5)
+    # ...and `_compute_recent_performance` never calls it: the rolling
+    # brakes read `held_book_daily_vol_pct` straight off the pipeline, so
+    # the scaling is structurally unable to reach them.
+    import inspect
+    from src import pipeline as _pipeline
+    source = inspect.getsource(_pipeline.TradingPipeline._compute_recent_performance)
+    assert "held_book_daily_vol_pct()" in source
+    assert "breaker_daily_vol_pct" not in source
+
+
+def test_gross_weight_fraction_is_unsigned_and_park_free_by_construction():
+    """A market-neutral book IS deployed even though its signed weights
+    cancel, so the deployment read is gross. The cash park never reaches
+    here — `normalized_holding_weights` already dropped it."""
+    from src.risk.rules import gross_weight_fraction
+
+    assert gross_weight_fraction({"A": 0.3, "B": -0.3}) == pytest.approx(0.6)
+    assert gross_weight_fraction({}) == pytest.approx(0.0)
+    assert gross_weight_fraction(None) == pytest.approx(0.0)
+    assert gross_weight_fraction({"A": float("nan")}) == pytest.approx(0.0)
+
+
+def test_the_measurement_is_linear_in_the_weights():
+    """THE LOAD-BEARING CLAIM OF THE WHOLE DESIGN, against the real
+    measurement rather than against a re-implementation of it.
+
+    `breaker_vol_yardstick_pct` SCALES the measured volatility instead of
+    re-measuring on renormalised weights, on the grounds that the basket
+    return series is linear in the weights — so multiplying every weight by
+    c multiplies the standard deviation by exactly c. If that were false
+    anywhere (a normalisation, a clamp, a winsorisation, a
+    minimum-observation rule that is not scale-free, or item 92's imputation
+    of a name with no usable history from its peers), the scaled number
+    would be wrong and the design would have to re-measure."""
+    from src.risk.rules import measure_portfolio_daily_vol
+
+    bars = {
+        "AAA": _bars([1.4, -2.1, 0.8, 1.9, -1.2, 2.3, -0.7, 1.1, -1.8,
+                      0.6, 2.0, -1.4]),
+        "BBB": _bars([-0.9, 1.7, -2.4, 0.5, 1.3, -1.1, 2.2, -0.4, 1.6,
+                      -2.0, 0.7, 1.0]),
+        # Deliberately short: this one has no usable return series of its
+        # own and exercises item 92's peer imputation inside the scaling.
+        "CCC": _bars([0.5]),
+    }
+    base = {"AAA": 0.40, "BBB": -0.25, "CCC": 0.10}
+    reference = measure_portfolio_daily_vol(base, bars)
+    assert reference.daily_vol_pct is not None
+
+    for c in (0.5, 0.05, 0.001, 2.0):
+        scaled = measure_portfolio_daily_vol(
+            {sym: w * c for sym, w in base.items()}, bars,
+        )
+        assert scaled.daily_vol_pct == pytest.approx(
+            reference.daily_vol_pct * c, rel=1e-9,
+        )
+
+
+def test_the_scaling_cannot_loosen_the_breaker_without_bound():
+    """THE HOLE A FRESH ADVERSARY PASS FOUND IN THE FIRST VERSION OF THIS
+    FIX. A naive `sigma / gross` rises without limit as the book shrinks,
+    which inverts the point of the change: names stop out, gross falls, and
+    the breaker gets LOOSER exactly as the damage accrues — the same shape as
+    the self-tightening noose this desk has been burned by, running the more
+    dangerous way.
+
+    The scaled yardstick is bounded so the threshold it produces can never
+    exceed the desk's own ratified fixed circuit-breaker level, which is what
+    governs when there is nothing to measure at all. Scaling may loosen the
+    breaker up to the level already ratified for an unmeasurable book, and
+    not one basis point past it."""
+    from src.risk.rules import breaker_vol_yardstick_pct
+    cfg = _cfg()
+    fallback = cfg.effective_max_daily_loss_pct
+
+    # A violently volatile remnant at 2% deployment: unbounded scaling would
+    # give 3 x (0.16 / 0.02) = 24% of equity before the ladder cap.
+    engine = _deployed_engine(0.16, 0.02)
+    assert engine.daily_loss_limit_pct == pytest.approx(fallback, abs=0.01)
+
+    # And the bound holds however small the remnant gets.
+    for gross in (0.02, 0.005, 0.001, 1e-6):
+        limit = 3.0 * breaker_vol_yardstick_pct(
+            0.16 * gross, gross, sensitivity=3.0, fallback_pct=fallback,
+        )
+        assert limit <= fallback + 1e-9
+
+
+def test_a_genuinely_violent_fully_deployed_book_is_not_clipped_by_the_bound():
+    """The mirror, and the reason the bound is `max(unscaled, fallback)`
+    rather than a flat cap: a fully-deployed book in a violent regime should
+    be allowed a threshold deeper than the fixed level, because that level
+    was derived in a calm one. Nothing is being scaled here — the bound must
+    not clip a measurement that stands on its own."""
+    engine = _deployed_engine(4.0, 1.0)
+    assert engine.daily_loss_limit_pct == pytest.approx(12.0, abs=0.01)
+    assert engine.daily_loss_limit_pct > _cfg().effective_max_daily_loss_pct
+
+
+def test_the_breaker_does_not_get_looser_as_the_book_stops_out():
+    """Stated as the scenario rather than as arithmetic. A fully-deployed
+    book loses most of itself to stops and leaves a small, volatile remnant.
+    The yardstick is now measured on that remnant — so without the bound the
+    trip point would have RISEN on the worst day of the desk's life."""
+    fallback = _cfg().effective_max_daily_loss_pct
+    whole_book = _deployed_engine(1.2, 1.0).daily_loss_limit_pct
+    remnant = _deployed_engine(0.06, 0.03).daily_loss_limit_pct
+    assert remnant <= max(whole_book, fallback) + 1e-9
+
+
+def test_the_trip_point_is_not_invariant_once_the_bound_binds():
+    """THE HONEST OTHER HALF, pinned rather than left as an overstatement.
+
+    Deployment-invariance is what the scaling buys, but the bound that stops
+    the scaling loosening the breaker without limit necessarily breaks it in
+    the regime where the bound binds: above roughly 2.2%/day of
+    full-deployment volatility, 3-sigma already exceeds the ratified fixed
+    rung, so the clip returns the unscaled — deployment-collapsing — number
+    instead. That is the conservative direction (a more violent book gets a
+    TIGHTER breaker as it de-deploys, never a looser one), and it is the
+    price of the bound. It must be visible, not claimed away."""
+    violent = 5.0  # %/day at full deployment — 3-sigma is 15%, well past 6.7
+    limits = [
+        _deployed_engine(violent * g, g).daily_loss_limit_pct
+        for g in (1.0, 0.5, 0.25, 0.1)
+    ]
+    # Fully deployed, the measurement stands on its own and is deep.
+    assert limits[0] == pytest.approx(15.0, abs=0.01)
+    # De-deployed, it is clipped to the fixed rung — tighter, never looser.
+    assert limits[-1] == pytest.approx(
+        _cfg().effective_max_daily_loss_pct, abs=0.01,
+    )
+    # Monotone non-increasing: de-deploying can only tighten, in this regime
+    # as in every other. That is the invariant that actually holds
+    # everywhere, and it is the one the owner's ruling needs.
+    assert limits == sorted(limits, reverse=True)
+
+
+def test_de_deploying_can_never_loosen_the_breaker_in_any_regime():
+    """The property that DOES hold everywhere, swept rather than argued:
+    for any book, at any volatility, reducing deployment never raises the
+    loss the desk is allowed to take before it stops."""
+    for full_vol in (0.5, 1.5, 2.2, 3.0, 5.0, 9.0):
+        limits = [
+            _deployed_engine(full_vol * g, g).daily_loss_limit_pct
+            for g in (2.0, 1.0, 0.75, 0.5, 0.25, 0.1, 0.01, 0.001)
+        ]
+        # Floating-point tolerance: equality between rungs is the common
+        # case here, and two arithmetically identical routes to it differ in
+        # the last bit. The claim is about direction, not about bits.
+        for tighter, looser in zip(limits, limits[1:]):
+            assert looser <= tighter + 1e-9, (full_vol, limits)
+
+
+def test_a_clipped_measurement_is_still_reported_as_a_measurement():
+    """FINDING 2's "it hides its own trace", in its current form. The bound
+    lands a clipped yardstick on EXACTLY the fixed rung's value, and the
+    basis used to be decided by float equality against that value — so every
+    partially-deployed volatile book would have told an operator "no
+    measurement governed" on a day when a measurement, clipped, is precisely
+    what set the limit."""
+    engine = _deployed_engine(5.0 * 0.1, 0.1)
+    assert engine.daily_loss_limit_pct == pytest.approx(
+        _cfg().effective_max_daily_loss_pct, abs=0.01,
+    )
+    assert engine.daily_loss_limit_basis() == RiskRuleEngine.VOL_RELATIVE_BASIS
+
+    # And a book with nothing measurable still says so.
+    nothing = RiskRuleEngine(_cfg(), portfolio_vol_provider=lambda: None)
+    assert nothing.daily_loss_limit_basis() == RiskRuleEngine.FIXED_BASIS

@@ -2046,7 +2046,61 @@ numbers:
     cost_while_unanswered: >-
       The drawdown brake's basis; it and the fixed-percentage GROSS_LADDER can
       disagree, which src/risk/rules.py:572-576 records as an open owner-level
-      design question.
+      design question. STILL THE ONLY UNSOURCED NUMBER IN THE DAILY BREAKER
+      after the 2026-09-20 owner ruling (item 32): that change altered WHICH
+      BOOK the volatility is measured on for the daily breaker - the held book
+      re-expressed at full deployment, src/risk/rules.py::
+      breaker_vol_yardstick_pct - and introduced no new trading threshold. The
+      sensitivity, the sqrt(time) scaling and the GROSS_LADDER_ALERT_PCT cap
+      are all the existing ratified ones, and the scale factor is read off the
+      live holdings (gross weight as a fraction of equity), never chosen. So
+      no materiality floor in dollars or percent was invented. ONE new
+      constant DID come with it and is recorded separately and honestly as
+      arbitrary: src.risk.rules.BREAKER_FULL_DEPLOYMENT_GROSS, the gross
+      level treated as "fully deployed". The question above is unchanged and
+      unanswered.
+  - id: src.risk.rules.BREAKER_FULL_DEPLOYMENT_GROSS
+    value: 1.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The gross-exposure level the DAILY circuit breaker treats as "fully
+      deployed" when it re-expresses the held book's measured volatility
+      (owner ruling 2026-09-20, docs/WORK.md item 32). It is the pivot of a
+      one-sided scale factor - below it the yardstick is scaled UP by
+      1/gross, at or above it the measurement is served unchanged - so it
+      decides how a LEVERED book is treated. RECORDED AS ARBITRARY BECAUSE IT
+      IS. 1.0x gross is the unlevered book, the natural reading of "fully
+      invested", but it is not read off any instrument and it is not the only
+      defensible choice: this desk's configured ceiling is
+      risk.max_gross_exposure_x (2.0 today) and the session's actual ceiling
+      is whatever resolve_gross_ceiling returns after the de-levering ladder
+      has had its say. WHAT IT CONTROLS, stated carefully because the first
+      draft of this note had it backwards: it enters as min(gross, P), so it
+      has NO effect on any book below it - every under-deployed book is
+      scaled by 1/gross whatever P is - and bites only above it. Raising P to
+      2.0 would change nothing for an unlevered book and would TIGHTEN the
+      breaker on a levered one. P = 1.0 is therefore the permissive end for a
+      levered book, chosen so leverage can never make this gate fire on a
+      smaller loss than the same book unlevered, i.e. so the code never
+      divides a measurement the desk actually took. The scaling it governs is
+      BOUNDED (see breaker_vol_yardstick_pct): it can never loosen the
+      breaker past effective_max_daily_loss_pct, the level already ratified
+      for an unmeasurable book, so a wrong pivot cannot disable the breaker.
+    open_question: >-
+      What counts as "fully deployed" for the purpose of asking how bad a
+      one-day loss is - the unlevered book, the configured gross ceiling, or
+      the ladder-adjusted ceiling in force that session? And, separately and
+      not answered here either: the bound stops the loosening at
+      effective_max_daily_loss_pct (6.7%), but the desk has a SECOND ratified
+      level three times deeper, GROSS_LADDER_ALERT_PCT (20%), which already
+      caps this threshold downstream. 6.7 was chosen as the tighter of the
+      two; nothing derives that choice.
+    cost_while_unanswered: >-
+      A levered book's daily breaker is as loose as the same book unlevered
+      rather than proportionally tighter, and the loosening available to an
+      under-deployed book stops at the tighter of the desk's two ratified
+      levels rather than at a derived one.
   - id: src.risk.constants.MARGIN_DEFICIT_FLOOR_USD
     value: 1
     status: not-trade-governing

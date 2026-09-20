@@ -552,7 +552,12 @@ def agreement_refuses_trade(score: int) -> bool:
 #: it had not
 #: done so since 2026-09-14, when item 32 replaced the whole-book
 #: liquidation with a halt that sells nothing. The inversion is now one of
-#: trip ORDER, not of severity of action.) The rolling-return "drawdown
+#: trip ORDER, not of severity of action — and on 2026-09-20 the owner
+#: closed the trip-order half too: the daily breaker's yardstick is now the
+#: held book's volatility AT FULL DEPLOYMENT
+#: (`breaker_vol_yardstick_pct`), so it can no longer trip on an
+#: ordinary day in a book that is mostly cash. His words: "the nuclear
+#: option should only be for a nuclear option.") The rolling-return "drawdown
 #: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
 #: `drawdown_20d_threshold_pct`, halving new BUY size via
 #: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window
@@ -583,6 +588,32 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 #: is told. Kept as its own constant rather than inferred from the last
 #: `GROSS_LADDER` row so that adding a rung never silently moves the alert.
 GROSS_LADDER_ALERT_PCT = -20.0
+
+#: The gross-exposure level the DAILY circuit breaker treats as "fully
+#: deployed" when it re-expresses the held book's volatility (owner ruling
+#: 2026-09-20, docs/WORK.md item 32 — see `breaker_vol_yardstick_pct`).
+#:
+#: **RECORDED AS ARBITRARY, and it is.** 1.0x gross is the unlevered book,
+#: which is the natural reading of "fully invested". It is NOT read off any
+#: instrument, and it is not the only defensible choice: this desk's
+#: configured ceiling is `risk.max_gross_exposure_x` (2.0 today), and the
+#: session's actual ceiling is whatever `resolve_gross_ceiling` returns after
+#: the de-levering ladder has had its say.
+#:
+#: WHAT IT ACTUALLY CONTROLS, stated carefully because an earlier version of
+#: this comment had it backwards. Because it enters as `min(gross, P)`, the
+#: pivot has NO EFFECT on a book below it — every under-deployed book is
+#: scaled by `1/gross` whatever P is. It bites only ABOVE P, where it decides
+#: how much a LEVERED book is scaled. Raising P to the configured 2.0 would
+#: therefore change nothing for an unlevered book and would TIGHTEN the
+#: breaker on a levered one (a 2.0x book would be scaled by 1/2 rather than
+#: served unscaled). P = 1.0 is thus the LOOSER, more permissive end for a
+#: levered book, chosen so that leverage can never make this gate fire on a
+#: smaller loss than the same book unlevered — never dividing a measurement
+#: the desk actually took. `config/number_ledger.yaml` carries the open
+#: question, which is which notion of "fully deployed" is right, not which
+#: direction it moves.
+BREAKER_FULL_DEPLOYMENT_GROSS = 1.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
 #: `HARD_BLOCK_RULES` (src/pipeline.py) — one string, two files.
@@ -716,6 +747,14 @@ class PortfolioVolEstimate:
     #: estimate. Less than the book's full gross weight when a holding had
     #: unusable price history.
     measured_weight_pct: float = 0.0
+    #: The book's DEPLOYMENT at the moment this estimate was measured: gross
+    #: weight as a FRACTION of equity, over the same weights that produced
+    #: `daily_vol_pct`. Carried on the estimate rather than read separately
+    #: so the daily circuit breaker can never scale one snapshot's
+    #: volatility by another snapshot's deployment (2026-09-20, item 32).
+    #: 0.0 means "no readable deployment", and the breaker then leaves the
+    #: yardstick unscaled.
+    gross_fraction: float = 0.0
     #: Gross weight of equity, in percent, of every holding considered.
     book_weight_pct: float = 0.0
     symbols_used: tuple[str, ...] = ()
@@ -815,6 +854,140 @@ def normalized_holding_weights(
     return {sym: w for sym, w in weights.items() if w != 0.0}
 
 
+def gross_weight_fraction(weights) -> float:
+    """Gross (unsigned) weight of `normalized_holding_weights`, as a fraction
+    of equity. 0.0 for an empty or unreadable book.
+
+    This is the book's DEPLOYMENT: 1.0 is fully deployed, 0.05 is a book that
+    has 5% of equity at work, 2.0 is a book levered to the configured gross
+    ceiling. Gross rather than signed on purpose — a market-neutral book is
+    deployed even though its signed weights cancel.
+    """
+    total = 0.0
+    for weight in (weights or {}).values():
+        try:
+            value = float(weight)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            total += abs(value)
+    return total
+
+
+def breaker_vol_yardstick_pct(
+    daily_vol_pct: float | None, gross_fraction: float | None, *,
+    sensitivity: float, fallback_pct: float,
+) -> float | None:
+    """The DAILY circuit breaker's volatility yardstick: the held book's
+    measured daily volatility re-expressed AS IF FULLY DEPLOYED, and bounded.
+
+    **The owner ruling this implements (2026-09-20).** The breaker's
+    threshold is a multiple of the held book's own realized volatility, and
+    `normalized_holding_weights` deliberately does not renormalise: a
+    5%-deployed book reconstructs a normal daily move about 5% the size of
+    the same basket fully deployed. That property is right for a BRAKE, which
+    is why the 5-day and 20-day brakes keep it. Attached to a response that
+    stops the desk trading for the rest of the session it is wrong, and
+    measurably so: the halt could fire on a loss of about 0.3% of the
+    account. The owner's words: "the nuclear option should only be for a
+    nuclear option."
+
+    So the daily breaker measures the same holdings, with the same real price
+    history, at the same sensitivity — scaled to the book the desk would hold
+    if it were fully deployed. The threshold then answers a question that
+    does not change as the desk ramps from cash: *is today's loss as large as
+    a 3-sigma day would cost a fully-deployed version of this book?*
+
+    Scaling rather than re-measuring is exact. The portfolio return series
+    `measure_portfolio_daily_vol` builds is linear in the weights — including
+    item 92's peer imputation, which takes the median of UNWEIGHTED per-symbol
+    returns and then applies the weight — so multiplying every weight by
+    `1/gross` multiplies the series, and its standard deviation, by exactly
+    that factor. `test_the_measurement_is_linear_in_the_weights` pins it.
+
+    **THE SCALING IS BOUNDED, and this is the part that is not obvious.** A
+    naive `sigma / gross` rises without limit as the book shrinks, which
+    inverts the whole point: names stop out, gross falls, and the breaker
+    gets LOOSER exactly as the damage accrues. The scaled yardstick is
+    therefore capped so that the threshold it produces can never exceed the
+    desk's own ratified fixed circuit-breaker level (`fallback_pct`, the
+    percentage derived from the per-trade risk unit, which is what governs
+    when there is nothing to measure at all) — unless the UNSCALED
+    measurement was already deeper than that, in which case a genuinely
+    violent fully-deployed book is not clipped by a number chosen in a calm
+    one. In short: scaling may loosen the breaker only up to the level the
+    desk already ratified for an unmeasurable book, and never past it.
+
+    **WHAT THE BOUND COSTS, stated rather than claimed away.** Deployment
+    invariance is what the scaling buys, and the bound necessarily breaks it
+    in the regime where the bound binds: once `sensitivity * sigma_full`
+    exceeds `fallback_pct` — about 2.2%/day of full-deployment volatility at
+    the shipped 3.0 and 6.7 — the clip hands back the unscaled,
+    deployment-collapsing number. So the trip point is invariant below that
+    crossover and falls with deployment above it. That is the conservative
+    direction (a violent book de-deploying gets a TIGHTER breaker, never a
+    looser one) and the property that holds in EVERY regime is the weaker,
+    more useful one: reducing deployment can never raise the loss the desk
+    is allowed to take. Both are pinned by tests. Do not restate the
+    stronger claim.
+
+    **WHICH RATIFIED LEVEL THE BOUND USES IS A CHOICE, and it is not
+    derived.** The desk has two: `fallback_pct` (6.7% of equity, from the
+    per-trade risk unit) and `GROSS_LADDER_ALERT_PCT` (20%, which already
+    caps this threshold downstream). Bounding at the tighter of the two is
+    the fail-toward-not-trading option and is what ships; bounding at 20%
+    would let the scaling loosen the breaker three times further before
+    stopping. Recorded in `config/number_ledger.yaml` as part of
+    `BREAKER_FULL_DEPLOYMENT_GROSS`'s open question rather than presented as
+    the only possibility.
+
+    **Only ever scales UP.** A book levered past 1.0x gross is NOT scaled
+    down: `min(gross, 1.0)`. A levered book genuinely can lose more in a day
+    and the breaker must keep seeing that. See `config/number_ledger.yaml`
+    (`src.risk.rules.BREAKER_FULL_DEPLOYMENT_GROSS`) for the honest record of
+    why the pivot is 1.0 and not the configured gross ceiling.
+
+    Returns None when there is nothing to scale — no measurement, or no
+    readable deployment — and the caller falls back exactly as it already
+    does. A broken read must never disable the circuit breaker.
+    """
+    sigma = _usable_positive(daily_vol_pct)
+    if sigma is None:
+        return None
+    gross = _usable_positive(gross_fraction)
+    if gross is None:
+        # A measured volatility with no readable deployment behind it. Do not
+        # guess a scale factor — serve the measurement unchanged, which is
+        # the pre-2026-09-20 behaviour.
+        return sigma
+    scaled = sigma / min(gross, BREAKER_FULL_DEPLOYMENT_GROSS)
+    sens = _positive_float(sensitivity, 0.0)
+    if sens <= 0:
+        # Without a usable sensitivity there is no threshold to bound the
+        # scaling against; the caller falls back to the fixed percentage
+        # anyway (`vol_relative_drawdown_threshold_pct` returns its fallback).
+        return scaled
+    try:
+        floor_sigma = abs(float(fallback_pct)) / sens
+    except (TypeError, ValueError):
+        return scaled
+    if not math.isfinite(floor_sigma):
+        return scaled
+    return min(scaled, max(sigma, floor_sigma))
+
+
+def _usable_positive(value) -> float | None:
+    """`float(value)` when it is a finite positive real, else None."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
 def held_book_daily_pnl(
     positions, *, cash_park_symbol: str | None = None,
 ) -> tuple[float, bool]:
@@ -889,59 +1062,54 @@ def daily_loss_numerator(
     book. The caller reads which one governed from
     `RiskRuleEngine.daily_loss_limit_basis()` and says so.
 
-    Even under rung 2 the account number is used as a FALLBACK when the held
-    book cannot honestly be measured:
+    Even under rung 2 the account number was used as a FALLBACK when the
+    held book could not honestly be measured, and ``"held_book"`` was the
+    only other value this function could return. **Everything in the two
+    paragraphs above describes the 2026-09-14 design. The value returned is
+    now always ``"account"`` — see the note at the end of this docstring.**
 
-      * ``"held_book"`` — the threshold is volatility-relative and every
-        non-park holding exposed a finite intraday change.
-      * ``"account"`` — anything else. Either a fixed-percentage rung is
-        governing, or a holding exposed no readable intraday change, or the
-        held book reads exactly flat on a book that IS held while the
-        account is down. A broker that omits the intraday field reports
-        precisely that flat zero and nothing here can distinguish it from a
-        genuinely unmoved book, so the flat read is not trusted to suppress
-        a breach the account-wide number raises. The account number includes
-        realized losses, commissions and spread, so it is the more negative
-        of the two on any such day and trips SOONER — fail toward not
-        trading.
+    Every branch turned on whether a measurement EXISTS, never on how big it
+    was. No threshold, cutoff or tolerance is introduced here.
 
-    Every branch turns on whether a measurement EXISTS, never on how big it
-    is. No threshold, cutoff or tolerance is introduced here.
+    **2026-09-20, owner ruling — THE HELD-BOOK NUMERATOR IS RETIRED AND THIS
+    FUNCTION NOW ALWAYS RETURNS THE ACCOUNT'S DAY CHANGE.** Everything above
+    describes the 2026-09-14 repair, which closed the mismatch by shrinking
+    the NUMERATOR to match a held-book denominator. That repair was correct
+    about the mismatch and wrong about which side to move, for two reasons
+    found on 2026-09-20:
+
+      * **It made the breaker blind to realized losses.** Stops firing is
+        this desk's designed, normal loss mode. Hold five names, three stop
+        out for -4% of equity realized, the two survivors sit flat: the
+        held-book intraday change is ~0, nothing trips, and the desk keeps
+        buying on the worst day it has had. The account number — which
+        includes those realized losses, the commissions and the spread — is
+        the one that describes the damage.
+      * **The `measurable=False` guard above could not fire in production.**
+        `src/execution/broker.py` coerces a missing `unrealized_intraday_pl`
+        to `0.0` before a `Position` is ever built, so absence arrives as a
+        finite zero. Only a whole book summing to exactly zero reached the
+        fallback; one unreadable name among several was silently treated as
+        flat, with the basis recorded as `held_book` as if it had been
+        measured.
+
+    The mismatch is closed from the other side instead: the daily breaker's
+    DENOMINATOR is now stated as a percent of the ACCOUNT (the book's
+    volatility at full deployment — see
+    `breaker_vol_yardstick_pct`), so the account's day change is the
+    number that matches it at every rung. `vol_relative` is kept in the
+    signature because the caller still records WHICH rung governed, and
+    removing it would silently change ~50 call sites' meaning.
+
+    `held_book_daily_pnl` is left in place, unused by the breaker, because
+    the per-position intraday change is still the honest way to answer "what
+    did what we HOLD do today" for reporting. It is no longer a risk gate.
     """
     try:
         account_pnl = float(account_pnl)
     except (TypeError, ValueError):
         return float("nan"), "account"
-    if not vol_relative:
-        return account_pnl, "account"
-    book_pnl, measurable = held_book_daily_pnl(
-        positions, cash_park_symbol=cash_park_symbol,
-    )
-    park = (cash_park_symbol or "").strip().upper()
-    held_any = any(
-        str(getattr(p, "symbol", "") or "").strip().upper() not in ("", park)
-        for p in (positions or ())
-    )
-    if not measurable:
-        logger.warning(
-            "Daily circuit breaker: a holding exposed no readable intraday "
-            "change, so the held-book loss could not be measured over the "
-            "whole book. Comparing the ACCOUNT's day change ($%.2f) instead "
-            "of the held book's ($%.2f) — the more negative of the two on a "
-            "day with realized losses, so it trips sooner.",
-            account_pnl, book_pnl,
-        )
-        return account_pnl, "account"
-    if held_any and book_pnl == 0.0 and account_pnl < 0:
-        logger.warning(
-            "Daily circuit breaker: the held book's intraday change reads "
-            "exactly $0.00 on a book that IS held, while the account is down "
-            "$%.2f. A broker that omits the intraday field reports exactly "
-            "this and nothing here can tell it apart from a genuinely flat "
-            "book — comparing the account's day change.", account_pnl,
-        )
-        return account_pnl, "account"
-    return book_pnl, "held_book"
+    return account_pnl, "account"
 
 
 def measure_portfolio_daily_vol(
@@ -1234,7 +1402,16 @@ def vol_relative_drawdown_threshold_pct(
         return fallback
     if cap_pct is not None and math.isfinite(float(cap_pct)):
         magnitude = min(magnitude, abs(float(cap_pct)))
-    return -round(magnitude, 2)
+    # NOT ROUNDED (2026-09-20). This used to end `-round(magnitude, 2)`.
+    # Rounding a CONTROL VALUE to two decimals is a display convention
+    # applied to the wrong object, and it had two measured consequences:
+    # below about 1% deployment the rounding moved the trip point by up to
+    # ~11%, and at about 0.1% deployment or less the threshold rounded away
+    # to -0.0, which the caller reads as a limit of zero — so ANY loss at
+    # all, a single dollar, breached it and halted the desk while the basis
+    # still reported itself as a measurement. Rendering rounds; the gate
+    # does not.
+    return -magnitude
 
 
 def _positive_float(value, default: float = 0.0) -> float:
@@ -2287,8 +2464,12 @@ class RiskRuleEngine:
         return limit
 
     #: `daily_loss_limit_basis` when the limit came from the held book's own
-    #: measured volatility. The ONLY basis whose numerator is the held book —
-    #: see `daily_loss_numerator`.
+    #: measured volatility, re-expressed at full deployment
+    #: (`breaker_vol_yardstick_pct`). Since 2026-09-20 EVERY rung is
+    #: stated as a percent of the ACCOUNT, so every rung's numerator is the
+    #: account's day change — see `daily_loss_numerator`. The basis is still
+    #: recorded because an operator must be able to see whether a
+    #: measurement or the fixed fallback set the limit.
     VOL_RELATIVE_BASIS = "volatility_relative"
     #: Either of the two fixed-percentage rungs. Both are stated as a percent
     #: of the ACCOUNT, so the account's day change is what matches them.
@@ -2298,11 +2479,19 @@ class RiskRuleEngine:
         """WHICH rung of `daily_loss_limit_pct` is governing right now.
 
         2026-09-14, docs/WORK.md item 32. The breaker's numerator has to
-        measure the same object as its denominator, and the denominator is
+        measure the same object as its denominator, and the denominator was
         not always the same object: rungs 1 and 3 are fixed percentages OF
-        THE ACCOUNT, rung 2 is measured from the HELD BOOK. Reading the
-        limit no longer tells you which, so the two are computed together
-        and this reports the answer.
+        THE ACCOUNT, rung 2 was measured from the HELD BOOK. Reading the
+        limit did not tell you which, so the two are computed together and
+        this reports the answer.
+
+        2026-09-20: rung 2 is now ALSO stated as a percent of the account
+        (the held book's volatility at full deployment), so all three rungs
+        share one numerator and the mismatch is closed from the denominator
+        side. This still reports which rung governed — that is an operator's
+        only way to tell a measured limit from the fixed fallback, and
+        FINDING 2's "it hides its own trace" is the reason it is recorded
+        rather than inferred afterwards.
         """
         _limit, basis = self._daily_loss_limit_and_basis()
         return basis
@@ -2333,8 +2522,21 @@ class RiskRuleEngine:
         )
         # `vol_relative_drawdown_threshold_pct` returns `fallback_pct`
         # unchanged when the sensitivity is unusable, so an equal value here
-        # means no measurement governed after all.
-        if threshold == -abs(float(fallback)):
+        # USED TO mean no measurement governed after all. It stopped meaning
+        # that on 2026-09-20 (docs/WORK.md item 32): `breaker_vol_yardstick_
+        # pct` bounds its scaling at exactly `fallback / sensitivity`, so a
+        # MEASURED book whose scaled yardstick was clipped lands on exactly
+        # this value and would have been reported as the fixed rung — which
+        # is the common case for any partially-deployed book volatile enough
+        # for the bound to bind, not a coincidence. Discriminating on the
+        # float equality alone would have told an operator "no measurement"
+        # on a day when a measurement, clipped, is precisely what set the
+        # limit. Ask whether a measurement EXISTS instead; `sigma is None`
+        # above already handled the case where one does not, so reaching
+        # here with a usable sensitivity means one did.
+        if not _positive_float(
+            getattr(self.config, "drawdown_vol_sensitivity", 0.0), 0.0,
+        ):
             return abs(threshold), self.FIXED_BASIS
         return abs(threshold), self.VOL_RELATIVE_BASIS
 
@@ -2641,7 +2843,7 @@ class RiskRuleEngine:
             if daily_loss_pct > limit:
                 violations.append(RiskViolation(
                     rule="max_daily_loss_pct",
-                    message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%. Trading paused.",
+                    message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit:.2f}%. Trading paused.",
                     value=daily_loss_pct,
                     limit=limit,
                 ))
@@ -2915,7 +3117,7 @@ class RiskRuleEngine:
         if daily_loss_pct > limit:
             return RiskViolation(
                 rule="max_daily_loss_pct",
-                message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%",
+                message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit:.2f}%",
                 value=daily_loss_pct,
                 limit=limit,
             )

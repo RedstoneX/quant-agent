@@ -304,7 +304,7 @@ chmod 600 .env
   **Per-mode noise policy** (so the operator gets signal, not noise):
   - `morning` / `midday` / `close` / `evening`: always notify on completion (status + run_id + orders + degraded-data flag + elapsed).
   - `earnings_preprocess`: notify only when filings were analyzed; silent on `nothing_new` / `market_holiday` / transient SEC `fetch_error`.
-  - `intra_check`: silent on the 14 OK ticks per trading day; notifies loudly when the circuit breaker fires (`emergency_sold` / `hard_risk_block`).
+  - `intra_check`: silent on the 14 OK ticks per trading day; notifies loudly when the circuit breaker fires (`daily_loss_halted` / `hard_risk_block`). The daily-loss breaker HALTS the desk and sells nothing; `emergency_sold` is a historical status only (item 32, 2026-09-14).
   - `meta`: silent on `not_quarter_end`; notifies on actual reflection runs.
   - Any session that raises an exception: always notifies, regardless of mode policy.
 

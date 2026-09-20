@@ -4,7 +4,7 @@ import logging
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from src.trading_calendar import et_now, et_today, session_date_key
@@ -484,14 +484,19 @@ def _market_is_open_now(broker) -> bool:
 
 
 def _limit_is_vol_relative(risk_engine) -> bool:
-    """Is the daily-loss limit currently the HELD BOOK's volatility-relative
-    one, rather than a fixed percentage of the account?
+    """Is the daily-loss limit currently the MEASURED, volatility-relative
+    one, rather than the fixed percentage of the account?
 
-    docs/WORK.md item 32 — decides which day-change number `daily_loss_
-    numerator` compares. Read defensively: an engine that cannot answer (an
-    older stub, a Mock in a fixture) is treated as fixed-percentage, which
-    is the pre-2026-09-14 behaviour and the more-negative numerator on any
-    day with realized losses.
+    docs/WORK.md item 32. It NO LONGER SELECTS A NUMERATOR: since the
+    2026-09-20 owner ruling every rung of the limit is a percent of the
+    account, so `daily_loss_numerator` returns the account's day change
+    whichever way this answers. What it still does is record, for the
+    operator and for the halt payload, whether a measurement or the fixed
+    fallback set the limit — FINDING 2's "it hides its own trace" is the
+    reason that is recorded rather than inferred afterwards.
+
+    Read defensively: an engine that cannot answer (an older stub, a Mock in
+    a fixture) is reported as fixed-percentage.
     """
     from src.risk.rules import RiskRuleEngine
     try:
@@ -985,7 +990,13 @@ class TradingPipeline:
         # fires from six separate places in this file and the book changes
         # intraday. Returns None-safe values; a failing read falls back to
         # the fixed percentage.
-            portfolio_vol_provider=self.held_book_daily_vol_pct,
+            # 2026-09-20 owner ruling, docs/WORK.md item 32. The DAILY
+            # breaker reads the SCALED yardstick — the same measurement, the
+            # same holdings, re-expressed at full deployment and bounded — so
+            # its trip point cannot collapse toward zero as the book ramps
+            # from cash. The 5-day / 20-day brakes keep the unscaled number
+            # and read `held_book_daily_vol_pct` directly.
+            portfolio_vol_provider=self.breaker_daily_vol_pct,
         )
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
@@ -1499,18 +1510,28 @@ class TradingPipeline:
         including realized losses on positions already closed today,
         commissions and spread. Numerator and denominator did not measure the
         same object, so the breaker could trip (or not) on movement the
-        threshold never modelled. Both sides now read the held book, with the
-        cash park excluded from each of them.
+        threshold never modelled.
 
-        `basis` is recorded, never inferred later: ``"held_book"`` when every
-        non-park holding exposed a finite intraday change, ``"account"`` when
-        any did not. The account fallback is the more negative number on any
-        day with realized losses, so it trips SOONER — fail toward not
-        trading. It is also used when a book is held but its intraday change
-        reads as exactly flat, because a broker that omits the field reports
-        precisely that and there is no way to tell the two apart from here;
-        a flat read on a held book is therefore not trusted to suppress a
-        breach the account-wide number would raise.
+        **2026-09-20, owner ruling — the mismatch is now closed from the
+        DENOMINATOR side instead.** The 2026-09-14 repair made both sides
+        read the held book, which fixed the mismatch but made the breaker
+        blind to realized losses: a day on which several names stopped out
+        for a real account-level loss left the surviving book flat and
+        nothing tripped, on exactly the day the breaker is meant to bind.
+        The threshold is now stated as a percent of the ACCOUNT at every
+        rung — the held book's volatility re-expressed at full deployment,
+        see `src/risk/rules.py::breaker_vol_yardstick_pct` — so the
+        account's whole-day P&L is the matching numerator and the realized
+        losses, commissions and spread it contains are counted again.
+
+        `basis` is recorded, never inferred later. Since 2026-09-20 it is
+        always ``"account"``, because every rung of the limit is a percent of
+        the account; the string is kept because the payload, the owner alert
+        and the evening probe all read it, and because a field that silently
+        changes meaning is worse than one that states the same thing twice.
+        Which RUNG governed — a measurement or the fixed fallback — is the
+        separate question `RiskRuleEngine.daily_loss_limit_basis` answers,
+        and it is the one FINDING 2's "it hides its own trace" was about.
         """
         from src.risk.rules import daily_loss_numerator
 
@@ -1702,7 +1723,7 @@ class TradingPipeline:
 
     def _halt_on_daily_loss_breach(
         self, positions, loss_violation, run_id: str, *,
-        where: str, basis: str = "held_book", ctx=None,
+        where: str, basis: str = "account", ctx=None,
     ) -> dict:
         """**Stop taking risk. Do not sell anything.** The daily-loss
         circuit breaker's whole response, replacing the force-liquidation of
@@ -1738,25 +1759,45 @@ class TradingPipeline:
              standing intention to add risk; refusing new risk has to mean
              pending intentions too. Best-effort, and a failure is reported
              in the alert rather than swallowed.
-          3. Run the session stop-coverage audit, which repairs a
+          3. Run the deterministic TRAILING pass (2026-09-20, item 32), so
+             the desk's only exit rule keeps advancing on the one day the
+             breaker fires. Protective direction only.
+          4. Run the session stop-coverage audit, which repairs a
              recoverable long in place.
-          4. VERIFY coverage per held position against the broker
+          5. VERIFY coverage per held position against the broker
              (`_verify_stop_coverage_at_halt`) — the precondition, see there.
-          5. File a durable, per-symbol, machine-readable refusal for every
+          6. File a durable, per-symbol, machine-readable refusal for every
              holding, carrying its verified coverage state.
-          6. Alert the owner, escalating hard when any coverage is short or
-             unverifiable.
+          7. Alert the owner, escalating hard when any coverage is short or
+             unverifiable, and naming any stop the trailing pass moved.
 
-        NOTHING HERE CLOSES, RESIZES OR ZEROES A POSITION, and nothing here
-        places an order except the coverage audit's stop REPAIR, which can
-        only ADD protection. A held name is refused, not sold; its target is
-        dropped, never set to zero (a 0% target reads as "sell it" on this
-        desk).
+        NOTHING HERE CLOSES, RESIZES OR ZEROES A POSITION, and it places no
+        closing order. Two things it DOES do that it did not before
+        2026-09-20, stated because "the breaker sold nothing" has to stay
+        literally true: the trailing pass writes `TRAIL_STOP` rows to the
+        trades table (no fill quantity, so nothing that reads position state
+        can mistake one for a sale), and because the 30-minute intraday tick
+        re-halts on every pass, the ratchet is sampled far more often on a
+        halted day than on a normal one and therefore ends tighter. That is
+        more protection on the day the desk is losing money, and it does mean
+        a breach indirectly raises the chance a stop is hit. The alternative
+        is the frozen stops this step exists to fix.
+
+        The only orders it can cause are PROTECTIVE ONES: the coverage audit's stop REPAIR, and
+        the trailing pass's stop TIGHTENING, both of which can only move a
+        stop in the direction that protects the position (the ratchet is
+        enforced in `broker.replace_stop_loss`, not assumed here). Note that
+        a replacement CANCELS before it resubmits, so a submit failure can
+        leave a position momentarily naked — which is why step 3 runs before
+        the audit and the verification rather than after them, and why a
+        failure there is escalated rather than swallowed. A held name is
+        refused, not sold; its target is dropped, never set to zero (a 0%
+        target reads as "sell it" on this desk).
 
         WHEN A POSITION HAS NO LIVE STOP AT THE MOMENT OF HALT: the halt
         still halts — it must, because the alternative response was the
         broken liquidation — but it does NOT halt quietly. The audit in step
-        3 first tries to re-place the stop from the level recorded on the
+        4 first tries to re-place the stop from the level recorded on the
         position's own BUY. If that fails, or if the broker could not be
         asked at all, the symbol lands in `_halt_coverage_shortfalls`, the
         owner alert leads with it by name and held quantity, and the returned
@@ -1790,23 +1831,81 @@ class TradingPipeline:
                 "— a working entry limit can still add risk during the halt. "
                 "Escalated to the owner.", exc,
             )
-        # 3. The audit, which repairs a recoverable long in place.
+        # 3. ADVANCE THE DESK'S ONLY EXIT RULE (2026-09-20, docs/WORK.md
+        # item 32). `src/risk/rules.py::check` states this desk's asymmetry:
+        # "entries fail closed, exits fail open, because being unable to
+        # close a position is strictly worse than being unable to open one."
+        # The halt was failing BOTH closed — it returned before the session's
+        # deterministic trailing pass, so on the one day the breaker fires,
+        # and for every later session that day (each re-checks the breach and
+        # halts again), every stop stayed frozen at the level it had that
+        # morning. `_apply_deterministic_trails` is bounded by
+        # `src/risk/trailing.py` and by `broker.replace_stop_loss`'s ratchet
+        # check to move a stop in the protective direction only: it can
+        # tighten protection, and can never open a position, add risk or
+        # sell anything.
+        #
+        # ORDERED BEFORE THE COVERAGE AUDIT ON PURPOSE. `replace_stop_loss`
+        # cancels before it resubmits, so a submit failure can leave a
+        # position momentarily naked. Running the trail pass FIRST puts the
+        # audit — which repairs a recoverable stop in place — between that
+        # window and the verification in step 5, instead of leaving a
+        # cancel/replace in flight while coverage is being judged.
+        #
+        # The cash park is filtered out for the same reason the other call
+        # site filters it: it is a deliberately stopless cash-equivalent, and
+        # nothing should be trailing it.
+        #
+        # STILL BYPASSED, and deliberately: the position reviewer's
+        # discretionary exits. The pre-research halt exists so the
+        # deterministic response cannot depend on a model being reachable,
+        # and there is no exits-only reviewer path in this repo to call.
+        # Named as open in docs/WORK.md item 32 rather than silently
+        # accepted.
+        # `_sweep_symbol()` returns None while the sweep is DISABLED, which
+        # it has been since the owner retired it on 2026-09-17 — and a
+        # retired vehicle can still be HELD. `_reconcile_stop_coverage` four
+        # steps down already falls back to `_retired_cash_park_symbol()` for
+        # exactly that reason; this filter must use the same resolver or it
+        # is dead code that hands a deliberately stopless cash-equivalent to
+        # the trailing pass.
+        park = (
+            self._sweep_symbol() or self._retired_cash_park_symbol() or ""
+        ).strip().upper()
+        trail_candidates = [
+            p for p in held
+            if str(getattr(p, "symbol", "") or "").strip().upper() != park
+        ] if park else list(held)
+        trail_orders = []
+        trails_ran = True
+        try:
+            trail_orders = self._apply_deterministic_trails(
+                trail_candidates, run_id=run_id,
+            ) or []
+        except Exception as exc:  # noqa: BLE001
+            trails_ran = False
+            logger.error(
+                "DAILY LOSS HALT: the deterministic trailing pass failed "
+                "(%s) — stops are at their pre-halt levels. Escalated.", exc,
+            )
+        # 4. The audit, which repairs a recoverable long in place.
         try:
             coverage_gaps = self._reconcile_stop_coverage()
         except Exception as exc:  # noqa: BLE001
             logger.error("daily-loss halt: coverage audit failed: %s", exc)
             coverage_gaps = []
-        # 4. Verify, per position, against the broker.
+        # 5. Verify, per position, against the broker.
         coverage = self._verify_stop_coverage_at_halt(held)
         shortfalls = self._halt_coverage_shortfalls(coverage)
-        # 5. Durable per-symbol refusal.
+        # 6. Durable per-symbol refusal.
         self._record_daily_loss_halt_refusals(
             coverage, loss_violation, run_id=run_id, where=where, ctx=ctx,
         )
-        # 6. Alert.
+        # 7. Alert.
         self._alert_owner_daily_loss_halt(
             loss_violation, coverage, shortfalls, held,
             where=where, basis=basis, entries_cancelled=entries_cancelled,
+            trail_orders=trail_orders, trails_ran=trails_ran,
         )
         return {
             "status": self.DAILY_LOSS_HALT_STATUS,
@@ -1816,13 +1915,28 @@ class TradingPipeline:
             "daily_loss_basis": basis,
             "positions": len(held),
             # Explicitly empty and explicitly present: a reader must be able
-            # to see that the breaker placed no orders, rather than infer it
-            # from a missing key. A call site that already holds the session's
-            # own earlier orders (deterministic trails, say) overwrites this
-            # key so the feed still renders them; `halted` / `halt_reason`
-            # remain the record that the BREAKER sold nothing, and the
-            # invariant that this method never appends an order is tested.
+            # to see that the breaker placed no CLOSING order, rather than
+            # infer it from a missing key. A call site that already holds the
+            # session's own earlier orders (deterministic trails, say)
+            # overwrites this key so the feed still renders them; `halted` /
+            # `halt_reason` remain the record that the BREAKER sold nothing,
+            # and the invariant that this method never appends a closing,
+            # resizing or opening order is tested.
             "orders": [],
+            # Protective-only, and kept OUT of `orders` so nothing downstream
+            # can read a stop tightening as a trade: the stop moves the halt's
+            # deterministic trailing pass made (2026-09-20, item 32). Bounded
+            # by `src/risk/trailing.py` to the protective direction.
+            "halt_trail_orders": trail_orders,
+            # Explicitly present so "the trailing pass failed" is never
+            # indistinguishable from "nothing needed trailing" — both leave
+            # `halt_trail_orders` empty and only one of them means the stops
+            # are stale. The surface that ACTS on the distinction is the
+            # owner's halt message (`_alert_owner_daily_loss_halt`), which
+            # warns on the failure; this key is the machine-readable record
+            # of the same fact for the payload's readers, not the check
+            # itself.
+            "halt_trails_ran": trails_ran,
             "stop_coverage_gaps": coverage_gaps,
             "stop_coverage_verified": coverage,
             "unprotected_at_halt": [
@@ -1878,6 +1992,7 @@ class TradingPipeline:
     def _alert_owner_daily_loss_halt(
         self, loss_violation, coverage: list[dict], shortfalls: list[dict],
         positions, *, where: str, basis: str, entries_cancelled: bool,
+        trail_orders: list | None = None, trails_ran: bool = True,
     ) -> None:
         """Push the halt to the owner. Never raises.
 
@@ -1901,6 +2016,29 @@ class TradingPipeline:
                 + ("cancelled." if entries_cancelled
                    else "NOT cancelled — the cancel failed, see below."),
             ]
+            # The halt keeps managing what it keeps (2026-09-20, item 32).
+            # Said in the message because a protective stop moving is a real
+            # change to the book's risk and the owner reads this message;
+            # a behaviour with no consumer is a behaviour that did not
+            # happen from his side.
+            moved = [o for o in (trail_orders or []) if o]
+            if not trails_ran:
+                lines.append(
+                    "⚠️ The trailing-stop pass FAILED during this halt — "
+                    "every stop is at its pre-halt level and will not move "
+                    "again this session. The positions are still held."
+                )
+            elif moved:
+                names = ", ".join(
+                    str(o.get("symbol")) for o in moved[:8]
+                    if isinstance(o, dict) and o.get("symbol")
+                )
+                lines.append(
+                    f"Stops were TIGHTENED on {len(moved)} position(s)"
+                    + (f" ({names})" if names else "")
+                    + " — the trailing rule still runs during a halt. "
+                    "Protective direction only; nothing was loosened."
+                )
             if shortfalls:
                 lines += [
                     "",
@@ -3630,7 +3768,8 @@ class TradingPipeline:
         # needs no interruption — the belt did its job. A position still
         # carrying NO stop at all after the repair attempt is a live naked
         # position, and the sweep runs on a 30-minute cadence whose
-        # `intra_check` message is silent unless it liquidates: without this,
+        # `intra_check` message is silent unless the breaker HALTS the desk
+        # (it has liquidated nothing since 2026-09-14, item 32): without this,
         # the worst state this reconciler can find would be reported only in
         # a log file. Mis-sized gaps stay in the session banner rather than
         # interrupting the owner — they are real but bounded, and alerting on
@@ -6610,8 +6749,9 @@ class TradingPipeline:
         # decision the reviewer owns and should be graded on). TAKE_PROFIT
         # stays out: it was the rule-based auto trim (deleted 2026-09-12),
         # never a reviewer decision — historical rows still carry the label.
-        # Belt (audit round 2): the vehicle also exits under EMERGENCY_SELL
-        # when the breaker liquidates everything — filter by SYMBOL here,
+        # Belt (audit round 2): the vehicle also exited under EMERGENCY_SELL
+        # when the daily breaker still liquidated (deleted 2026-09-14, item
+        # 32; historical rows carry the label) — filter by SYMBOL here,
         # mirroring _build_post_exit_reality, so parking churn never reaches
         # the grading loop under any action name.
         sweeper = self._sweeper()
@@ -9127,6 +9267,7 @@ class TradingPipeline:
         read must never disable the circuit breaker.
         """
         from src.risk.rules import (
+            gross_weight_fraction,
             measure_portfolio_daily_vol,
             normalized_holding_weights,
         )
@@ -9152,6 +9293,13 @@ class TradingPipeline:
                 "thresholds: %s", exc,
             )
             return PortfolioVolEstimate(None, reason="held book unreadable")
+        # The deployment is read from the SAME weights that produce the
+        # volatility, and travels ON the estimate (2026-09-20, item 32). Two
+        # independent broker reads could straddle a fill and hand the daily
+        # breaker one snapshot's volatility scaled by another snapshot's
+        # deployment — and a smaller second book would blow the yardstick up,
+        # i.e. silently loosen the breaker.
+        gross = gross_weight_fraction(weights)
         if not weights:
             return measure_portfolio_daily_vol({}, {})
 
@@ -9161,7 +9309,7 @@ class TradingPipeline:
         # six times a session.
         #
         # Keyed on the TRADING DATE and on the holdings with their weights
-        # (to 4dp), so an intraday change in the book re-measures rather
+        # (to 8dp), so an intraday change in the book re-measures rather
         # than serving a stale yardstick, AND a new session can never serve
         # yesterday's. The date half is not decorative: `src/scheduler.py`
         # holds ONE `TradingPipeline` for the life of the process, so this
@@ -9188,7 +9336,13 @@ class TradingPipeline:
             measured_on = object()
         key = (
             measured_on,
-            tuple(sorted((sym, round(w, 4)) for sym, w in weights.items())),
+            # 8dp, not 4 (2026-09-20, item 32). At 0.1% deployment a 4dp
+            # weight carries a ~5% relative error, so the memo could serve
+            # one book's volatility for a materially different book in
+            # exactly the low-deployment regime the daily breaker's scaling
+            # is about. The key exists to avoid six market fetches a
+            # session, not to bucket books together.
+            tuple(sorted((sym, round(w, 8)) for sym, w in weights.items())),
         )
         cached = getattr(self, "_held_book_vol_memo", None)
         if cached is not None and cached[0] == key:
@@ -9207,7 +9361,10 @@ class TradingPipeline:
                 )
                 bars_by_symbol[symbol] = []
 
-        estimate = measure_portfolio_daily_vol(weights, bars_by_symbol)
+        estimate = replace(
+            measure_portfolio_daily_vol(weights, bars_by_symbol),
+            gross_fraction=gross,
+        )
         self._held_book_vol_memo = (key, estimate)
         return estimate
 
@@ -9226,6 +9383,53 @@ class TradingPipeline:
             logger.warning(
                 "Held-book volatility measurement failed (%s) — the drawdown "
                 "alarms fall back to their fixed-percentage thresholds.", exc,
+            )
+            return None
+
+    def breaker_daily_vol_pct(self) -> float | None:
+        """The DAILY circuit breaker's volatility yardstick, or None.
+
+        docs/WORK.md item 32, owner ruling 2026-09-20. The held book's
+        measured daily volatility re-expressed as if the book were fully
+        deployed, and bounded so the scaling can never loosen the breaker
+        past the desk's own ratified fixed level — see
+        `src/risk/rules.py::breaker_vol_yardstick_pct`, which owns the
+        arithmetic and the argument.
+
+        Wired into `RiskRuleEngine` as `portfolio_vol_provider`. That
+        provider feeds the DAILY breaker only; the 5-day / 20-day brakes read
+        `held_book_daily_vol_pct` directly in `_compute_recent_performance`
+        and keep the unscaled, deployment-scaled measurement, which is the
+        right basis for something whose only action is to halve new BUY size.
+
+        ONE measurement, so the volatility and the deployment it is scaled by
+        can never come from two different snapshots of the book. Never
+        raises: any failure returns None and the breaker falls back to its
+        fixed percentage.
+        """
+        from src.risk.rules import breaker_vol_yardstick_pct
+        try:
+            estimate = self.measure_held_book_daily_vol()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Held-book volatility measurement failed (%s) — the daily "
+                "circuit breaker falls back to its fixed-percentage "
+                "threshold.", exc,
+            )
+            return None
+        try:
+            return breaker_vol_yardstick_pct(
+                estimate.daily_vol_pct, estimate.gross_fraction,
+                sensitivity=_risk_number(
+                    getattr(self.config.risk, "drawdown_vol_sensitivity", None),
+                    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+                ),
+                fallback_pct=self.config.risk.effective_max_daily_loss_pct,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Daily-breaker yardstick could not be formed (%s) — falling "
+                "back to the fixed-percentage threshold.", exc,
             )
             return None
 

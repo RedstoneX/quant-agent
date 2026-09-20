@@ -5743,6 +5743,14 @@ class RiskStage:
             pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
         )
 
+        # The ACCOUNT's whole-day change, and since the 2026-09-20 owner
+        # ruling that is the object the daily-loss limit is stated in at
+        # every rung (docs/WORK.md item 32). It was NOT before: this gate
+        # passed the account's day change while the volatility-relative rung
+        # was a percent of the HELD BOOK, so the BUY/SHORT hard block carried
+        # the very numerator/denominator mismatch the 2026-09-14 repair
+        # closed on the breaker's own path and never closed here. Nothing
+        # about this line changed; what it is compared against did.
         daily_pnl = total_value - last_equity
         ctx.daily_pnl = daily_pnl
         # Owner mandate 2026-09-17: fully invested, always. The advisory's
@@ -6768,7 +6776,8 @@ class ExecutionStage:
         # now that intra_check fires concurrently per #46. We block BUYs
         # (no new risk during a confirmed breach) but let any pending SELLs
         # stay — they reduced exposure already. intra's next tick handles
-        # full emergency liquidation; morning's job here is just to not
+        # the daily-loss HALT (it liquidates nothing — 2026-09-14, item 32);
+        # morning's job here is just to not
         # add to the hole. Refresh first when sells didn't fire so the
         # check uses fresh portfolio_value, not the stale research-stage
         # snapshot.
@@ -6791,12 +6800,14 @@ class ExecutionStage:
                 ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
-            # docs/WORK.md item 32 (2026-09-14): the number compared against
-            # the daily limit is the HELD BOOK's day change, chosen by the
-            # same one rule the breaker itself uses
-            # (`risk.rules.daily_loss_numerator`) — a threshold built from
-            # the held book's volatility must not be tested against the whole
-            # account's day change. Uses the FRESH locals: the refresh above
+            # docs/WORK.md item 32: the number compared against the daily
+            # limit is chosen by the same one rule the breaker itself uses
+            # (`risk.rules.daily_loss_numerator`). Since the 2026-09-20 owner
+            # ruling that is the ACCOUNT's day change at every rung, because
+            # the threshold is now stated as a percent of the account (the
+            # held book's volatility at full deployment) — so realized losses
+            # on names already stopped out today are counted again. Uses the
+            # FRESH locals: the refresh above
             # updates ctx.total_value but not ctx.account.
             from src.pipeline import _limit_is_vol_relative
             from src.risk.rules import daily_loss_numerator

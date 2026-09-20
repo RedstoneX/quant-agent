@@ -22,6 +22,210 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — the daily breaker could stop the desk for the day over a third of one percent, and the repair that was meant to make it honest had made it blind (board item 32, owner ruling)
+
+**In plain words:** the desk has an alarm that stops it trading for the rest
+of the day when it has lost too much. How much is "too much" was worked out
+from how far the shares it happens to be holding normally move. When the desk
+is mostly in cash — which is exactly where it is right now, ramping back up —
+that number collapses: holding one name worth 5% of the account, an
+unremarkable 6% day in that name was enough to stop the desk, on a loss of
+about a third of one percent of the account. The owner was walked through it
+and ruled: "I think the nuclear option should only be for a nuclear option.
+And given what you've told me, that's not the case. So this whole premise is
+completely wrong."
+
+**What the briefing he was given got wrong, and it matters.** He was told the
+alarm force-liquidates the whole book. It has not done that since 2026-09-14,
+when the liquidation was deleted and replaced by a halt that sells nothing —
+in a pull request he merged himself. The response was already proportionate;
+what was still wrong was the trigger. Anyone reading the 2026-09-14 write-up
+would have made the same mistake: it records the liquidation problem and the
+open question, and does not say that the same day's work removed it.
+
+**THE FIX.** The alarm keeps measuring the same holdings from the same real
+price history at the same sensitivity — but the daily one now asks the
+question at FULL DEPLOYMENT: *is today's loss as large as a 3-sigma day would
+cost this book if the desk were fully invested?* At full deployment the
+THRESHOLD is the same number the alarm used before, so the level the desk is
+ramping toward is untouched; below full deployment it stops collapsing toward
+zero. The GATE is not unchanged even there, and saying "nothing moves" would
+be wrong: what the threshold is compared against also changed (see the
+realised-losses paragraph below), so a fully-deployed book that has taken
+realised losses today now trips where it previously would not. That is
+deliberate and it is the one direction in which this change makes the alarm
+TIGHTER.
+
+**Precisely what that buys, because the first draft of this entry overstated
+it.** The trip point is INVARIANT as the desk ramps from cash only while the
+book's volatility is ordinary — below roughly 2.2% a day at full deployment,
+which covers any normally diversified book. Above that the bound described
+below starts binding and the trip point falls with deployment again. That is
+the conservative direction: a violent book that de-deploys gets a TIGHTER
+alarm, never a looser one. The property that holds in every regime, and the
+one the ruling actually needs, is the weaker statement — **reducing deployment
+can never raise the loss the desk is allowed to take.** Both are pinned by
+tests rather than asserted here.
+
+Scaling the measurement rather than re-measuring on renormalised weights is
+exact rather than approximate, because the basket return series is linear in
+the weights — including the imputation that stands in for a holding with no
+usable price history of its own. That is the load-bearing claim of the whole
+design and it is now pinned by a test against the real measurement, not
+against a restatement of the formula.
+
+**THREE GUARDS ON THE SHAPE OF IT, and the middle one was missing from the
+first version of this fix — an adversary pass found it.**
+
+- The yardstick is only ever scaled UP. A book levered past 1.0x gross is
+  left alone, because a levered book genuinely can lose more in a day and
+  dividing by its gross would have TIGHTENED the alarm on the most exposed
+  book the desk can hold.
+- **The scaling is BOUNDED.** A naive "divide by deployment" rises without
+  limit as the book shrinks, which inverts the entire point: names stop out,
+  deployment falls, and the alarm gets LOOSER exactly as the damage accrues —
+  the same shape as the self-tightening noose this desk has been burned by,
+  running the more dangerous way. The scaled yardstick can now never produce
+  a threshold deeper than the desk's own ratified fixed level, the one that
+  governs when there is nothing to measure at all, unless the UNSCALED
+  measurement was already deeper than that (a genuinely violent fully-deployed
+  book must not be clipped by a number chosen in a calm one). So scaling may
+  loosen the alarm up to a level the desk already accepted, and not past it.
+- The 5-day and 20-day brakes keep the old deployment-scaled yardstick. Their
+  only action is to halve new BUY size, and scaling with deployment is right
+  for a brake. It was only ever wrong attached to a response that stops the
+  desk, and a test now fails if the scaled number ever reaches them.
+
+**ONE NEW NUMBER, and it is labelled arbitrary rather than dressed up.** What
+counts as "fully deployed" is a choice: 1.0x gross (the unlevered book) is
+what was picked, but the desk's configured ceiling is 2.0x and the session's
+real ceiling is whatever the de-levering ladder leaves. It only ever affects a
+LEVERED book — below it, every under-deployed book is treated the same
+whatever the pivot is — and picking 1.0 rather than 2.0 is the choice that a
+levered book's alarm is no tighter than the same book unlevered, i.e. that the
+code never divides down a measurement the desk actually took. (The first draft
+of this entry had that backwards, said so in three places, and an adversary
+pass caught it; it is written out here because a wrong reason recorded in a
+ledger is worse than no reason.) A second, separate choice sits beside it and
+is equally underived: the bound stops the loosening at the tighter of the
+desk's two ratified levels. It is in the number
+ledger as `arbitrary` with its open question stated, and the ratchet count was
+raised in the same change. Everything else is the existing ratified machinery:
+the sensitivity, the square-root-of-time scaling and the ladder cap.
+**`drawdown_vol_sensitivity = 3.0` is still the anchor under all of it and is
+still unsourced.** No materiality floor in dollars or percent was invented.
+
+**FINDING 2's other half, closed from the opposite side to 2026-09-14.** That
+repair made the numerator and the denominator measure the same book by
+shrinking the NUMERATOR to the held book. Correct about the mismatch, wrong
+about which side to move, and the cost was only visible once someone looked
+for it: **the alarm went blind to realised losses.** Stops firing is this
+desk's designed, normal loss mode. Hold five names, three stop out for -4% of
+equity realised, the two survivors sit flat — the held book's day change is
+about zero, nothing trips, and the desk keeps buying on the worst day it has
+had. The threshold is now stated as a percent of the ACCOUNT at every rung, so
+the account's whole-day change is the matching numerator again and the
+realised losses, the commissions and the spread it contains are counted.
+
+**Four more defects found while implementing it, none of them the thing that
+was being looked for.** (With the two above — the collapsing trigger and the
+blindness to realised losses — that is six in total.)
+
+- **A guard that could not fire.** The held-book numerator's "a holding
+  exposed no readable intraday change, so fall back and say so" branch was
+  unreachable in production: a missing broker field is coerced to a finite
+  zero before it ever reaches the guard, so absence arrived looking exactly
+  like a flat day. One unreadable name among several was silently treated as
+  flat with the basis recorded as measured. Retiring that numerator removes
+  the path; the code cannot tell absence from zero and nothing now depends on
+  it being able to.
+- **A control value that was being rounded like a display value.** The
+  threshold ended `round(magnitude, 2)`. Below about 1% deployment that moved
+  the trip point by up to ~11%, and at about 0.1% deployment or less it
+  rounded away to zero — a limit of zero means ANY loss breaches it, so a
+  single dollar halted the desk, while the basis still reported itself as a
+  measurement. Rendering rounds; the gate does not.
+- **The BUY-blocking gate still carried the exact mismatch the 2026-09-14
+  repair was about.** It compared the whole account's day change against the
+  held-book threshold. Bounded in severity — it blocks entries, it never sells
+  — but it raises the same rule name the halt does, so an operator reading a
+  blocked BUY was reading a number computed the wrong way. Closed by the same
+  denominator change, with no edit to the gate itself.
+- **The halt was failing closed on EXITS, against this desk's own written
+  rule.** `check()` states the asymmetry plainly: entries fail closed, exits
+  fail open, because being unable to close a position is strictly worse than
+  being unable to open one. The halt returned before the session's
+  deterministic trailing pass, so on the one day the alarm fires — and for
+  every later session that day, each of which re-checks and halts again —
+  every stop stayed frozen at the level it had that morning. The trailing pass
+  now runs inside the halt, bounded to move a stop in the protective direction
+  only (the ratchet is enforced at the broker call, not assumed), so it can
+  tighten protection and can never open a position, add risk or sell anything.
+  Two things were got right only after they were pointed out: a stop
+  replacement CANCELS before it resubmits, so a failed resubmit can leave a
+  position briefly naked — the trailing pass therefore runs BEFORE the
+  coverage audit and the per-position verification rather than after them, so
+  the audit sits between that window and the judgement, and the cash-park
+  vehicle is filtered out because it is deliberately stopless. The stop moves
+  are reported under their own key so nothing downstream can read a tightening
+  as a trade, AND they are now named in the owner's halt message — a stop
+  moving is a real change to the book's risk, and a behaviour that reaches
+  nobody did not happen from his side.
+
+**TWO CONSEQUENCES OF RUNNING THE TRAILING PASS INSIDE THE HALT, stated
+because an adversary pass found them and "the breaker sold nothing" has to
+stay literally true.** Neither is a defect; both are behaviour the desk did
+not have yesterday.
+
+- **A halted day now ends with tighter stops than the same day unhalted.**
+  The 30-minute intraday tick re-checks the breach and re-halts on every one
+  of its ~14 passes, so the trailing ratchet is now sampled roughly seven
+  times more often on a halted day than on a normal one (where it runs at
+  midday and close). A ratchet sampled more often captures more of the day's
+  highs, so it ends tighter. That is more protection, not less, on the day
+  the desk is losing money — but it does mean a breach indirectly raises the
+  chance a stop is hit. The alternative, freezing the stops, is the thing
+  being fixed.
+- **A halted session now writes stop-move rows to the trades table.** It did
+  not before. They are `TRAIL_STOP` rows with no fill quantity, so nothing
+  that reads position state can mistake one for a sale, and the session
+  payload keeps them out of `orders` — but the honest statement is "the
+  breaker placed no closing order", not "the breaker wrote nothing".
+
+**LEFT OPEN AND NAMED, not quietly accepted.** The position reviewer's
+DISCRETIONARY exits are still bypassed by a halt. The pre-research halt exists
+so the deterministic response cannot depend on a model being reachable, and
+there is no exits-only reviewer path in this repo to call — building one is a
+change to the session orchestration, not a repair, and it is not being done
+under cover of this one. What a halt now does for exits is the trailing stop,
+which this desk's doctrine already calls its only exit rule.
+
+**FINDING 2's "it hides its own trace" is no longer reachable by the route it
+described.** That failure needed the liquidation: sell everything, the book
+goes all-cash, the yardstick becomes unmeasurable, the limit reverts to the
+fixed fallback, and an operator looking afterwards sees a wide limit and no
+reason the desk sold. Nothing is sold now, so the book that set the threshold
+is still there to be inspected, and which rung governed is recorded in the
+halt's own payload rather than inferred later.
+
+**What would catch a regression.** The old failure case (a lightly-deployed
+book having an ordinary single-name bad day) and its opposite (a genuinely
+severe account-wide loss must still stop the desk) are both pinned, as are the
+invariance across deployment, the no-scaling-down rule for a levered book, the
+bound that stops the alarm loosening as the book stops out, the refusal to
+clip a genuinely violent fully-deployed book, the linearity the scaling rests
+on (against the real measurement), the one-dollar rounding case, the fail-soft
+behaviour when deployment cannot be read, the rolling brakes being structurally
+unable to see the scaled number, and the halt running the trailing pass while
+still placing no closing order.
+
+**One consequence worth stating because it is invisible from the code.** The
+cash sweeper's "do not park on a breach day" gate deliberately routes through
+the same one breach check, so it moved with this change rather than drifting
+from it. That was the point of routing it there, and it held.
+
+---
+
 ### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
 
 **In plain words:** an item on the open-work list asking to fix a bug — a
