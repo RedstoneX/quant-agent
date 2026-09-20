@@ -176,6 +176,14 @@ fi
 log "starting session (model=${MODEL}, cap=${TIMEOUT_SEC}s, rehearse=${REHEARSE})"
 # `--add-dir "$WORKDIR"` is what lets the session read the health snapshot,
 # which deliberately lives OUTSIDE the worktree so it can never be committed.
+#
+# THE PROMPT GOES IN ON STDIN, NOT AS AN ARGUMENT. `--disallowedTools` is
+# variadic, so a positional prompt after it is swallowed as more tool names —
+# the first rehearsal run (2026-09-20) parsed the entire standing prompt into
+# about two hundred nonexistent deny rules, one per word, and then died with
+# "Input must be provided either through stdin or as a prompt argument". Stdin
+# has no such ambiguity, and it also keeps several thousand words out of the
+# process table where `ps` would show them.
 set +e
 timeout --kill-after=30 "$TIMEOUT_SEC" \
     "$CLAUDE_BIN" \
@@ -186,7 +194,7 @@ timeout --kill-after=30 "$TIMEOUT_SEC" \
     --setting-sources local \
     --add-dir "$WORKDIR" \
     ${REHEARSE_ARGS[@]+"${REHEARSE_ARGS[@]}"} \
-    "$PROMPT"
+    <<< "$PROMPT"
 STATUS=$?
 set -e
 
