@@ -14507,13 +14507,15 @@ class TradingPipeline:
                 # cannot drain until tomorrow.
                 logger.info(
                     "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
-                    "cap_reached=%s watched_read_through=%s/%s drain_deadline_hit=%s",
+                    "cap_reached=%s watched_read_through=%s/%s "
+                    "drain_deadline_hit=%s edgar_coverage=%s",
                     smart_money_refresh.get("pending_filings"),
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
                     smart_money_refresh.get("watched_names_read_through"),
                     smart_money_refresh.get("watched_names"),
                     smart_money_refresh.get("watched_drain_deadline_hit"),
+                    smart_money_refresh.get("edgar_coverage"),
                 )
                 # ...and RECORDED where the desk records its status. Until
                 # 2026-09-19 these counts existed only in a log line and the
@@ -15479,7 +15481,7 @@ class TradingPipeline:
             "watched_names", "watched_names_read_through",
             "watched_names_unread", "watched_unchecked_names",
             "watched_drain_ran", "watched_drain_read",
-            "watched_drain_deadline_hit", "error",
+            "watched_drain_deadline_hit", "edgar_coverage", "error",
         )
         _persist_evidence(
             getattr(self, "db", None), run_id=run_id,
@@ -15533,9 +15535,74 @@ class TradingPipeline:
         cap_reached = bool(refresh.get("discovery_cap_reached"))
         names = int(refresh.get("watched_names") or 0)
         names_read = int(refresh.get("watched_names_read_through") or 0)
-        if read_through == today and not watched_pending and not unchecked:
+        # Board item 126. EDGAR publishes its own count of the Form 4s filed
+        # on a day. When the morning read could not obtain that count, it
+        # cannot tell "nobody filed anything" from "our read of the filings
+        # service came back broken" — and the second case used to reach this
+        # desk looking exactly like the first.
+        #
+        # Fail CLOSED on a missing record, matching the morning seat in
+        # src/pipeline_stages.py: a refresh that ran a Form 4 pass and
+        # recorded no coverage answered the question not at all, which is
+        # not the same as answering it well. A refresh that carries the
+        # Form 4 drain keys is held to this, and so is one that reports an
+        # error — a sub-provider that raised outright produces neither the
+        # drain keys nor a coverage record, and that is the LOUDEST case,
+        # not an exemption. A wrapper with neither is not asked to answer
+        # for coverage it never had; it is NOT thereby let off the alert,
+        # because an empty `watched_read_through` still trips the ordinary
+        # did-not-finish clause below.
+        edgar = refresh.get("edgar_coverage")
+        form4_answered = "watched_drain_ran" in refresh or bool(refresh.get("error"))
+        edgar_unverified = (
+            form4_answered
+            and not (isinstance(edgar, dict) and edgar.get("verified"))
+        )
+        record = edgar if isinstance(edgar, dict) else {}
+        # Reported whether or not anything is wrong. The market-wide scan is
+        # bounded by its own deadline and in production reaches a minority
+        # of the lookback window, so "how much of the window did we check"
+        # is a fact the owner needs on an ORDINARY morning — rendering it
+        # only on the failure branch would have shown him the honest number
+        # exactly when it was least representative.
+        #
+        # Gated on whether coverage was RECORDED, not merely present. A
+        # blank record is all zeros, and "read 0 of 0 filings across 0 of 0
+        # days" reads to a human as nothing to worry about when it means
+        # the opposite — the same trap `ratio` already avoids by answering
+        # None to nought-of-nought rather than 1.0.
+        if record.get("known"):
+            coverage_line = (
+                "Insider-filing coverage this morning: read "
+                f"{record.get('enumerated', 0)} of {record.get('edgar_total', 0)} "
+                "filings the service reported, across "
+                f"{record.get('days_queried', 0)} of "
+                f"{record.get('days_in_window', 0)} days looked at."
+            )
+        elif record:
+            coverage_line = (
+                "Insider-filing coverage this morning: NOT KNOWN — the "
+                "morning read did not record how much of the filing service "
+                "it covered."
+            )
+        else:
+            coverage_line = ""
+        if coverage_line:
+            logger.info("PRE-OPEN: %s", coverage_line)
+        if (
+            read_through == today and not watched_pending and not unchecked
+            and not edgar_unverified
+        ):
             return
         why: list[str] = []
+        if edgar_unverified:
+            reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) \
+                or "no coverage was recorded at all"
+            why.append(
+                "the filing service did not account for how many filings "
+                f"existed, so a quiet day and a failed read cannot be told "
+                f"apart ({reasons})",
+            )
         if names:
             why.append(
                 f"{names_read} of our {names} companies have every insider "
@@ -15571,6 +15638,10 @@ class TradingPipeline:
             + ". Until it does, the desk still makes its trading decisions "
             "but without complete insider evidence, and each decision "
             "records that. Existing positions and their stops are unaffected."
+            # Carried whatever the reason for the alert, not only when
+            # coverage itself is the complaint — the counts are the context
+            # for every other line above them.
+            + (f" {coverage_line}" if coverage_line else "")
         )
         logger.error("PRE-OPEN: %s", text)
         try:

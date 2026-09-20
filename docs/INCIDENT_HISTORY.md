@@ -22,6 +22,139 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — a broken read of the insider-filing service looked exactly like a quiet day on which nobody traded
+
+**In plain words:** every morning the desk reads the government's record of
+what company insiders bought and sold. Some mornings there is genuinely
+nothing there — that is a real answer and the desk should carry on. But if
+that read came back empty because it was BROKEN, the desk saw the same thing:
+no rows, no error, and a green tick against the insider seat. There was no way
+for anyone, machine or human, to tell "nobody filed anything" from "our read
+failed and nobody noticed". This is live money: that seat's answer feeds the
+conviction attached to positions the desk actually holds.
+
+**The part that makes it worse than an oversight.** The information needed to
+tell those two apart was already being fetched and thrown away. The filing
+service reports its own count of how many filings exist for the day being
+asked about. The code read that number, used it to decide whether to ask for
+another page of results, and then discarded it. So a denominator was in hand
+on every single request and nothing was ever measured against it.
+
+**What was done.** The service's own count is now kept per day, alongside how
+many rows the desk actually walked, and both are reported: the ratio, and a
+named reason whenever the two do not agree. One judgement is made from it —
+whether the read can account for itself at all — and it deliberately is NOT a
+cut point or a percentage anyone chose. A read accounts for itself when every
+day it asked about handed back a readable count and no page stopped short of
+one. Anything else is reported as partial, which is a word the evidence gate
+already understands; inventing a new one would have been read as an unknown
+status and treated as a total loss, which on 2026-09-16 cost the desk a whole
+intraday plan.
+
+**What was deliberately left alone, and why it matters more than it sounds.**
+The morning read has its own budget and its own deadline, and both routinely
+stop it early. That is the desk choosing how much of the wider market to read,
+not a failure, and its leftovers are already reported separately. Treating a
+budget spent as designed as a broken read would have marked the insider seat
+degraded every single morning — and a seat that cries wolf daily is a seat
+nobody reads. A genuinely quiet insider day still reports clean. That was the
+board item's own loudest requirement and it is now covered by a test that
+fails if it ever stops being true.
+
+**The gaming case, raised before it could be found in production.** A provider
+answering with a technically-non-empty body of nonsense would otherwise have
+bought itself a clean status: rows came back, a count came back, they matched.
+The first attempt at a guard asked whether EVERY row on a page was unusable —
+and an adversarial review of the change pointed out that this is a 100% rule
+dressed up as a structural one, defeated by slipping one real row into each
+page, with a code comment claiming it tolerated one bad row when it in fact
+tolerated ninety-nine. It was replaced by something with no cut point in it at
+all: coverage counts the DISTINCT rows the desk could actually read, so junk
+rows and repeated pages lower the reported fraction instead of being counted
+as coverage. The same change closed a second hole the review found — a cache
+or proxy replaying one page for every request would otherwise have walked to
+the service's own count and reported full coverage of filings it never sent.
+
+**The review also found a claim in this change that was simply false, and it
+is worth recording because it is the same failure the desk keeps making.** The
+code justified excluding a budget-limited read from counting as a failure by
+saying the leftovers were reported elsewhere. For the roughly eighty companies
+the desk actually holds, that is true — a separate pass reads those directly.
+For the wider market scan it was not: in production the window is a year long
+and the time budget reaches only the first couple of days of it, and nothing
+reported that. A read can now say how much of its window it reached at all,
+reported right next to how much of that stretch it read, so a perfect-looking
+figure cannot be mistaken for a statement about the year. A third finding:
+yesterday's coverage record was being accepted as today's, which would have
+reintroduced this very defect one day late.
+
+**A second, separate defect was found in the same code and deliberately NOT
+fixed here.** One of the two congressional-trading sources publishes no filing
+date at all, so the desk estimates one: the trade date plus the 45-day legal
+disclosure deadline, capped at today. That estimate is then fed to the check
+that asks whether the disclosure was legally on time — a check that therefore
+cannot fail for those rows, because the estimate is built out of the very
+number it is compared against. The desk's own measurement on the rows that DO
+carry a real filing date puts the typical lag at 60 days, well past the
+deadline. So the rows nobody can measure are quietly treated as the
+best-behaved ones. It was filed as its own board item rather than folded in,
+because it changes what evidence is allowed to support a position — a
+live-money rule — where this change only altered what gets reported.
+
+**A second review round, with the network on this time, found three more and
+all three are now fixed.** First: removing the percentage rule had left the
+original symptom alive in a milder form — a day where almost nothing was
+readable still reported a clean read, with only the reported fraction to show
+for it. The replacement needs no invented number either: a day the read
+claims to have gone all the way through is now checked against the count it
+went through, and a shortfall means it did not. Second: the filing service
+caps its own count at ten thousand and says so in the response, and the code
+was reading that ceiling as if it were an exact number — so the busiest day of
+the year would have read as fully covered while everything past the cap went
+unseen. It now refuses to treat "at least this many" as a count. Third: the
+honest figure for how much of the year the morning read actually reaches is
+around a fifth of it, and it was only being shown to the owner on the
+mornings something had already gone wrong. It now rides on every one of those
+messages and is written to the log on every pass.
+
+**The cost of that first fix, stated rather than buried.** One unreadable row
+on a day the read claims to have completed is now enough to mark the insider
+seat incomplete. That is deliberate, and it is justified by measurement rather
+than taste: the review walked three real days of filings — nearly four
+thousand rows — and found every single one well formed, with the distinct
+count matching the service's own count exactly. If this ever does start firing
+on ordinary traffic, that is worth knowing about the filing service, not a
+reason to soften the rule into a percentage.
+
+**ONE KNOWN, ACCEPTED, WATCHED RISK — read this before concluding the fix is
+wrong.** The morning read asks about today first, and it runs between roughly
+08:00 and 09:15 New York time while the filing service is still accepting and
+indexing today's filings, which it starts doing at 06:00. Two ordinary things
+could therefore happen on that one day slice and nothing else: a filing could
+be indexed between two pages of the read and come back twice, or the service's
+own count for today could grow while the read is part-way through it. Either
+would make an entirely normal morning report that it could not account for
+itself. Whether this actually happens depends on how many insider filings
+typically land that early, which no amount of further testing here can settle —
+only watching a real Monday morning can. So it is accepted rather than guessed
+at, and this is what to look for: it will show up as `edgar_rows_unreadable` or
+`edgar_total_changed` naming TODAY'S date specifically, with every other day in
+the window clean. That pattern is this race and nothing else. The remedy if it
+does fire is to stop asking about the still-open current day, or to read it
+last — not to loosen the check, which is exact everywhere else. No board item
+was filed for it because `docs/WORK.md` is at its growth cap; this paragraph is
+the record.
+
+**What would catch it next time.** The generalisable lesson is the one this
+desk keeps relearning under different names: a provider's own count of what
+it holds is the only honest denominator, and a status derived without one is
+a status that cannot distinguish silence from failure. The same fix shape has
+now been applied three times — to the news feeds, to the macro series, and
+here — and each time the denominator already existed and was being discarded.
+Before trusting any "ok" on a fetched feed, ask what it was measured against.
+
+---
+
 ### 2026-09-20 — at the open the desk could use yesterday's price as if it were today's
 
 **In plain words.** First thing in the morning, for a handful of companies, the

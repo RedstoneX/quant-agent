@@ -158,6 +158,194 @@ def _symbol(value: str) -> str:
     return str(value or "").strip().upper().replace(".", "-")
 
 
+# ---------------------------------------------------------------------------
+# EDGAR's own denominator — board item 126
+# ---------------------------------------------------------------------------
+
+#: The `edgar_coverage_reasons` that mean the scan CANNOT SAY how much of
+#: EDGAR's own count it read. Every one of them is a body this code could
+#: not read, or a page that stopped short of a count EDGAR itself gave.
+#:
+#: Deliberately NOT in here: `scan_cap_reached`, `refresh_deadline_exceeded`
+#: and `days_not_queried`. Those are the desk's OWN bounded choices — the
+#: `max_filings_per_refresh` budget and the refresh deadline — and their
+#: residue is already reported through `pending_filings` /
+#: `watched_pending_filings` / the per-issuer read-through map. A scan that
+#: spent its budget exactly as designed is not a scan that failed, and
+#: treating it as one would make the seat read degraded every single day,
+#: which is the harm board item 126 names in its own text.
+UNVERIFIED_EDGAR_REASONS = frozenset({
+    "edgar_total_unreadable",
+    "edgar_hits_unreadable",
+    "edgar_returned_no_hits_for_nonzero_total",
+    "edgar_page_short_of_total",
+    "edgar_hits_malformed",
+    "edgar_total_changed",
+    "edgar_coverage_stale",
+    "edgar_rows_unreadable",
+    "edgar_enumerated_above_total",
+})
+
+
+def _edgar_total(hits_block: object) -> int | None:
+    """EDGAR's own filing count from an EFTS ``hits`` block, or None.
+
+    None means "this body did not tell us", which is a different fact from
+    zero and the entire reason this function exists: a provider answering
+    200 with an empty or garbage body used to be indistinguishable from a
+    day on which nobody filed. A negative or non-integer count is also
+    None — EDGAR cannot have filed a negative number of forms, so a body
+    saying so is a body this code does not understand.
+
+    ``relation`` is read, not ignored. EFTS caps the count it reports and
+    then says so: ``{"value": 10000, "relation": "gte"}`` means "at least
+    this many", not "this many". Taking it as exact would let the scan page
+    to the cap, decide it had read the day through, and report complete
+    coverage of a day it had only read the head of. "At least N" is EDGAR
+    declining to give a denominator, so it is treated as no denominator.
+    """
+    if not isinstance(hits_block, dict):
+        return None
+    raw = hits_block.get("total")
+    if isinstance(raw, dict):
+        relation = str(raw.get("relation") or "eq").strip().lower()
+        if relation not in {"eq", ""}:
+            return None
+        raw = raw.get("value")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _well_formed_hit(hit: object) -> bool:
+    """Is this EFTS row shaped like the answer to a ``forms=4`` query?
+
+    Shape only — whether the desk cares about the issuer is a different
+    question, answered in `_discover`. This one asks whether the row could
+    have come from EDGAR at all.
+    """
+    if not isinstance(hit, dict):
+        return False
+    source = hit.get("_source")
+    if not isinstance(source, dict):
+        return False
+    if not _ACCESSION_RE.fullmatch(str(source.get("adsh") or "").strip()):
+        return False
+    # Whitespace-tolerant on purpose: this feeds an EXACT shortfall check,
+    # so a stray space in a real EDGAR row must not read as an unusable one.
+    return str(source.get("form") or "").strip() in {"4", "4/A"}
+
+
+def blank_edgar_coverage() -> dict:
+    """The record of a scan that answered no question about its coverage.
+
+    Never-recorded is not evidence of a clean fetch, so this reads as
+    unverified everywhere it is used — an older cache, a sub-provider that
+    has no Form 4 half, a test double, a stats dict from a stubbed
+    `_discover`.
+    """
+    return {
+        "known": False, "verified": False, "reasons": ["never_recorded"],
+        "edgar_total": 0, "enumerated": 0, "rows_received": 0, "ratio": None,
+        "days_queried": 0, "days_in_window": 0, "days_with_total": 0,
+        "window_fraction": None,
+    }
+
+
+def edgar_coverage(stats: object) -> dict:
+    """How much of EDGAR's own Form 4 count the last scan actually walked.
+
+    Reports RATIOS and NAMED REASONS. It sets no threshold and defines no
+    new seat status: the one judgement it makes is ``verified``, which is
+    True only when every day slice this scan queried handed back a readable
+    count of its own and no page stopped short of one. That is an exact
+    condition, not a cut point.
+
+    ``verified`` False does not mean "not enough data"; it means the desk
+    cannot tell how much data there was, which is the state that used to be
+    reported as a clean, quiet day.
+
+    WHAT IT DOES NOT CLOSE, stated because a record believed to cover more
+    than it does is worse than none. ``verified`` is True when the scan can
+    account for what it was HANDED. Numerator and denominator both come out
+    of the same response, so a source that confidently and consistently
+    reports zero filings every day is indistinguishable from a quiet market
+    and always will be from inside this process.
+
+    ``window_fraction`` is the other half a reader needs and the reason it
+    is reported beside the ratio: the market-wide scan is bounded by
+    `max_filings_per_refresh` and by its own deadline, and in production it
+    reaches only the first few day slices of a 366-day window. ``ratio``
+    speaks ONLY for ``days_queried``. It is reported, never judged — the
+    watched names the desk actually trades are covered by the separate
+    per-issuer drain, not by this scan.
+    """
+    blank = blank_edgar_coverage()
+    if not isinstance(stats, dict) or "edgar_days_queried" not in stats:
+        return blank
+    try:
+        total = int(stats.get("edgar_total") or 0)
+        enumerated = int(stats.get("edgar_enumerated") or 0)
+        rows_received = int(stats.get("edgar_rows_received") or 0)
+        days_queried = int(stats.get("edgar_days_queried") or 0)
+        days_in_window = int(stats.get("edgar_days_in_window") or 0)
+        days_with_total = int(stats.get("edgar_days_with_total") or 0)
+    except (TypeError, ValueError):
+        return blank
+    reasons = sorted({
+        str(r) for r in (stats.get("edgar_coverage_reasons") or [])
+        if str(r).strip()
+    })
+    if days_queried <= 0:
+        # Nothing was asked of EDGAR at all. Recorded as a reason rather
+        # than as an empty success.
+        reasons = sorted(set(reasons) | {"edgar_never_queried"})
+    elif days_with_total < days_queried:
+        reasons = sorted(set(reasons) | {"edgar_total_unreadable"})
+    if total > 0 and enumerated > total:
+        # More distinct readable filings than EDGAR said existed. Contrived
+        # rather than observed, but the alternative is a ratio above 1.0
+        # rendered with nothing attached to explain it, and a coverage
+        # figure that reads better than complete is not a coverage figure.
+        reasons = sorted(set(reasons) | {"edgar_enumerated_above_total"})
+    verified = (
+        days_queried > 0
+        and days_with_total == days_queried
+        and not (set(reasons) & UNVERIFIED_EDGAR_REASONS)
+    )
+    return {
+        "known": days_queried > 0,
+        "verified": verified,
+        "reasons": reasons,
+        "edgar_total": total,
+        # DISTINCT rows the scan could read, not rows it received. The two
+        # differ when a page repeats, or carries rows that could not have
+        # answered the query — both are reported rather than netted off.
+        "enumerated": enumerated,
+        "rows_received": rows_received,
+        # The ratio board item 126 asked for. None when EDGAR's own count
+        # is zero across every day queried, because "0 of 0" is not a
+        # fraction and rendering it as 1.0 would claim a completeness
+        # nothing measured. `verified` already carries that judgement.
+        "ratio": round(enumerated / total, 4) if total > 0 else None,
+        "days_queried": days_queried,
+        "days_in_window": days_in_window,
+        # How much of the lookback window the scan reached at all. Read this
+        # BEFORE the ratio: a ratio of 1.0 over two days of a 366-day window
+        # is an honest statement about two days and nothing more.
+        "window_fraction": (
+            round(days_queried / days_in_window, 4) if days_in_window > 0 else None
+        ),
+        "days_with_total": days_with_total,
+    }
+
+
 class SECForm4Provider:
     """Credentialless SEC Form 4 discovery with bounded, resumable caching."""
 
@@ -454,6 +642,34 @@ class SECForm4Provider:
         watched_seen: set[str] = set()
         deadline_hit = False
         busiest_day_total = 0
+        # ---- EDGAR's own denominator (board item 126) ----------------------
+        #
+        # `hits.total.value` is EDGAR's count of Form 4s filed on the day
+        # being queried. It was read for pagination and discarded, so a
+        # silently-broken fetch (HTTP 200, no usable body) produced exactly
+        # the same evidence as a genuinely quiet day: zero rows, no error.
+        # These structures keep it, per day slice:
+        #
+        #   `day_total`      day -> EDGAR's own count, ONLY when it parsed
+        #                    as an integer. A day missing here is a day
+        #                    whose denominator could not be read at all.
+        #   `day_rows`       day -> how many rows came back, repeats and
+        #                    unusable rows included.
+        #   `day_usable`     day -> the DISTINCT accessions this scan could
+        #                    actually read. Coverage is counted from this,
+        #                    never from `day_rows`, so a repeated page or a
+        #                    page of junk lowers the reported fraction
+        #                    instead of being counted as coverage.
+        #   `coverage_reasons` named, machine-checkable reasons a slice was
+        #                    not read to EDGAR's own count. Reported; no
+        #                    threshold is derived from any of it.
+        day_total: dict[str, int] = {}
+        day_rows: dict[str, int] = {}
+        day_usable: dict[str, set[str]] = {}
+        coverage_reasons: set[str] = set()
+        queried_days: set[str] = set()
+        exhausted_days: set[str] = set()
+        days_in_window = self.lookback_days + 1
 
         def _budget_spent() -> bool:
             # With no watched names this is exactly the old condition. With
@@ -468,12 +684,13 @@ class SECForm4Provider:
         # ownership filings can exceed that cap. Day slices also let repeated
         # refreshes skip the processed head and make progress into a backlog.
         try:
-            for days_ago in range(self.lookback_days + 1):
+            for days_ago in range(days_in_window):
                 filing_date = et_today() - timedelta(days=days_ago)
+                day = filing_date.isoformat()
                 params = {
                     "forms": "4",
-                    "startdt": filing_date.isoformat(),
-                    "enddt": filing_date.isoformat(),
+                    "startdt": day,
+                    "enddt": day,
                     "from": 0,
                     "size": 100,
                 }
@@ -481,14 +698,64 @@ class SECForm4Provider:
                     payload = self._get(
                         self.search_url, params=params, deadline=deadline,
                     ).json()
+                    # Counted only once a request for this day actually
+                    # returned: a day the budget never reached is a day this
+                    # scan did not query, and must not count as one it did.
+                    queried_days.add(day)
+                    day_rows.setdefault(day, 0)
+                    day_usable.setdefault(day, set())
                     hits_block = payload.get("hits", {}) if isinstance(payload, dict) else {}
                     hits = hits_block.get("hits", []) if isinstance(hits_block, dict) else []
+                    if not isinstance(hits, list):
+                        # A 200 whose `hits.hits` is not a list is a body
+                        # this code cannot read, not an empty day.
+                        hits = []
+                        coverage_reasons.add("edgar_hits_unreadable")
+                    # EDGAR's own count for this day, read BEFORE the rows
+                    # are walked so a body that carries no usable count is
+                    # recorded as unreadable rather than silently treated as
+                    # a day with nothing on it. `total_value is None` is the
+                    # whole point: 0 is a real answer, absent is not.
+                    total_value = _edgar_total(hits_block)
+                    if total_value is None:
+                        coverage_reasons.add("edgar_total_unreadable")
+                    elif day not in day_total:
+                        # The first page's count is the day's count. Later
+                        # pages restate it; they must not be able to move it.
+                        day_total[day] = total_value
+                        if total_value > busiest_day_total:
+                            busiest_day_total = total_value
+                    elif total_value != day_total[day]:
+                        # A later page disagreeing with the first about how
+                        # much exists is a source that cannot be paginated
+                        # against. Pagination below uses the PINNED first
+                        # count, so a shrinking total cannot end the slice
+                        # early and unnamed.
+                        coverage_reasons.add("edgar_total_changed")
+                    pinned_total = day_total.get(day)
                     if not hits:
+                        if (pinned_total or 0) > len(day_usable[day]):
+                            # EDGAR says there are filings on this day and
+                            # handed back none of them. This is the shape a
+                            # broken fetch takes, and it used to be
+                            # indistinguishable from a quiet day.
+                            coverage_reasons.add("edgar_returned_no_hits_for_nonzero_total")
                         break
+                    day_rows[day] += len(hits)
                     for hit in hits:
                         source = hit.get("_source", {}) if isinstance(hit, dict) else {}
                         accession = str(source.get("adsh") or "")
                         form = str(source.get("form") or "")
+                        # Coverage counts DISTINCT rows this scan could
+                        # actually read, not rows it received. Two reasons,
+                        # both measured against this code before it shipped:
+                        # a row that could not have answered a `forms=4`
+                        # query is not coverage of that query, and a cache
+                        # or proxy replaying one page for every offset would
+                        # otherwise walk to EDGAR's own count and report
+                        # complete coverage of filings it never sent.
+                        if _well_formed_hit(hit):
+                            day_usable[day].add(accession)
                         if (
                             accession in processed
                             or not _ACCESSION_RE.fullmatch(accession)
@@ -519,22 +786,30 @@ class SECForm4Provider:
                             other[accession] = filing
                         if _budget_spent():
                             break
-                    total = hits_block.get("total", {})
-                    total_value = (
-                        total.get("value", 0) if isinstance(total, dict)
-                        else int(total or 0)
-                    )
-                    # EDGAR's own count of Form 4s filed on this day. It was
-                    # fetched and thrown away on every slice. It is the only
-                    # non-arbitrary basis anyone has for sizing
-                    # `max_filings_per_refresh`, so record the busiest day
-                    # seen: the cap can then be read off the instrument
-                    # instead of chosen. Recorded, not yet acted on — see the
-                    # open question on that number in config/number_ledger.yaml.
-                    if total_value > busiest_day_total:
-                        busiest_day_total = total_value
                     params["from"] = int(params["from"]) + len(hits)
-                    if len(hits) < int(params["size"]) or int(params["from"]) >= total_value:
+                    if pinned_total is None:
+                        # Nothing says how much is left, so this slice ends
+                        # here. Named above; never silently "finished".
+                        break
+                    if int(params["from"]) >= pinned_total:
+                        # Read through EDGAR's own count for this day. This
+                        # is the ONLY clean way out of the slice — and the
+                        # claim it makes is checked below against how many
+                        # of those filings were actually readable.
+                        #
+                        # Not claimed when the budget ran out inside the
+                        # page just walked: the scan stopped reading rows
+                        # part-way, so the day was not read through and its
+                        # shortfall is the cap's, named as the cap's.
+                        if not _budget_spent():
+                            exhausted_days.add(day)
+                        break
+                    if len(hits) < int(params["size"]):
+                        # A short page while EDGAR's own count says there is
+                        # more: deep pagination was cut off (EFTS caps it),
+                        # or the page was truncated. Either way the day is
+                        # not read through and the desk must be able to say so.
+                        coverage_reasons.add("edgar_page_short_of_total")
                         break
                 if _budget_spent():
                     break
@@ -547,12 +822,51 @@ class SECForm4Provider:
 
         out = list(priority.values())[:cap]
         out.extend(list(other.values())[: max(0, cap - len(out))])
+        if deadline_hit:
+            coverage_reasons.add("refresh_deadline_exceeded")
+        if len(out) >= cap:
+            coverage_reasons.add("scan_cap_reached")
+        if len(queried_days) < days_in_window:
+            coverage_reasons.add("days_not_queried")
+        # A day EDGAR answered with rows, none of which this scan could
+        # read. Stated per day rather than per page on purpose: a body
+        # dressed up as an answer has to be junk for the whole day to hide
+        # here, and slipping one real row in per page no longer buys a clean
+        # record — the ratio below counts only readable rows, so it collapses
+        # instead. A stray malformed row among good ones lowers the ratio and
+        # nothing else, because firing on one oddity would make this seat
+        # degraded on any EDGAR hiccup.
+        if any(rows and not day_usable.get(day) for day, rows in day_rows.items()):
+            coverage_reasons.add("edgar_hits_malformed")
+        # A day the scan paged all the way through EDGAR's own count and
+        # still could not read that many filings out of it. EXACT, not a
+        # cut point: the claim "I read this day through" is checked against
+        # the count the day was read against, and nothing here picks a
+        # fraction. Only days that ended by exhaustion are held to it — a
+        # day the cap or the deadline stopped never claimed to be complete,
+        # and its shortfall is named by its own reason instead.
+        if any(
+            len(day_usable.get(day) or ()) < (day_total.get(day) or 0)
+            for day in exhausted_days
+        ):
+            coverage_reasons.add("edgar_rows_unreadable")
         if stats is not None:
             stats["candidates"] = len(seen)
             stats["watched_candidates"] = len(watched_seen)
             stats["cap_reached"] = len(out) >= cap
             stats["deadline_hit"] = deadline_hit
             stats["busiest_day_total"] = busiest_day_total
+            # EDGAR's own count of what was there, and how much of it this
+            # scan actually walked. `edgar_days_with_total` below
+            # `edgar_days_queried` means the denominator itself could not be
+            # read on some day — the case this whole record exists for.
+            stats["edgar_total"] = sum(day_total.values())
+            stats["edgar_enumerated"] = sum(len(v) for v in day_usable.values())
+            stats["edgar_rows_received"] = sum(day_rows.values())
+            stats["edgar_days_queried"] = len(queried_days)
+            stats["edgar_days_in_window"] = days_in_window
+            stats["edgar_days_with_total"] = len(day_total)
+            stats["edgar_coverage_reasons"] = sorted(coverage_reasons)
         return out
 
     def _archive_url(self, cik: str, accession: str) -> str:
@@ -896,15 +1210,37 @@ class SECForm4Provider:
         as complete.
         """
         manifest = self._load_json(self.manifest_path, {})
+        blank_edgar = blank_edgar_coverage()
         if not isinstance(manifest, dict) or not manifest.get("coverage_as_of"):
             return {"known": False, "as_of": "", "watched": 0,
-                    "read_through": 0, "unread": []}
+                    "read_through": 0, "unread": [], "edgar": blank_edgar}
+        as_of = str(manifest.get("coverage_as_of") or "")[:10]
+        recorded = manifest.get("edgar_coverage")
+        if not isinstance(recorded, dict):
+            recorded = blank_edgar
+        elif as_of != et_today().isoformat():
+            # A coverage record from an earlier pass describes an earlier
+            # fetch. Yesterday's clean read is not a statement about today's,
+            # and accepting it would reintroduce this item's defect one day
+            # late: nothing fetched today, seat reports clean.
+            recorded = {
+                **recorded, "verified": False,
+                "reasons": sorted(
+                    {str(r) for r in (recorded.get("reasons") or [])}
+                    | {"edgar_coverage_stale"},
+                ),
+            }
         return {
             "known": True,
             "as_of": str(manifest.get("coverage_as_of") or "")[:10],
             "watched": int(manifest.get("watched_names") or 0),
             "read_through": int(manifest.get("watched_names_read_through") or 0),
             "unread": [str(s) for s in (manifest.get("watched_names_unread") or [])],
+            # EDGAR's own denominator, as the last pass recorded it. A
+            # manifest written before board item 126 shipped carries no such
+            # record, and reads as unverified rather than as complete —
+            # never-recorded is not evidence of a clean fetch.
+            "edgar": recorded,
         }
 
     def form4_freshness(self, symbols: list[str] | None = None) -> dict:
@@ -1255,6 +1591,12 @@ class SECForm4Provider:
         # scan covers the whole lookback window, so it is the real residue.
         # When `_discover` is stubbed the counts are absent and the residue
         # falls back to what was discovered but not read.
+        # EDGAR's own count of what was filed, against what this scan walked
+        # (board item 126). Computed from the DISCOVERY stats, before the
+        # recorded DURING the fetch, never from the pruned cache above — a
+        # coverage figure taken after this refresh's own retention prune
+        # measures the prune, not the fetch.
+        edgar = edgar_coverage(discovery)
         seen_candidates = int(discovery.get("candidates", discovered_count) or 0)
         pending_filings = max(0, seen_candidates - processed_count)
         watched_pending = max(
@@ -1344,6 +1686,10 @@ class SECForm4Provider:
                 "watched_names": len(watched_ciks),
                 "watched_names_read_through": len(current_ciks),
                 "watched_names_unread": unread_symbols,
+                # EDGAR's own denominator for this pass. Persisted so the
+                # morning seat can read it without the network, exactly as
+                # it reads the watched-name coverage above.
+                "edgar_coverage": edgar,
             })
         error = None
         if errors:
@@ -1373,6 +1719,10 @@ class SECForm4Provider:
             "watched_names": len(watched_ciks),
             "watched_names_read_through": len(current_ciks),
             "watched_names_unread": unread_symbols,
+            # What EDGAR said was there, and how much of it this pass read.
+            # `verified: false` is the fetch saying it cannot account for
+            # itself — the state that used to be reported as a quiet day.
+            "edgar_coverage": edgar,
             "error": error,
         }
 

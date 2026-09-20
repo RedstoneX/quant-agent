@@ -1850,17 +1850,76 @@ def test_morning_smart_money_is_partial_while_watched_names_are_unread():
     all been read. With unread filings left on a watched name, a clean run
     must not be recorded as `ok` — nor as `empty`, which would claim "no
     material insider activity" on names nobody finished reading."""
+    verified = {"known": True, "verified": True, "reasons": [],
+                "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
+                "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
     unread = {"known": True, "as_of": "2026-09-21", "watched": 82,
-              "read_through": 60, "unread": ["WMT"]}
+              "read_through": 60, "unread": ["WMT"], "edgar": dict(verified)}
     assert _smart_money_morning_stage(unread, []).data_status["smart_money"] == "partial"
     assert _smart_money_morning_stage(
-        {"known": False, "as_of": "", "watched": 0, "read_through": 0, "unread": []},
+        {"known": False, "as_of": "", "watched": 0, "read_through": 0,
+         "unread": [], "edgar": dict(verified)},
         [],
     ).data_status["smart_money"] == "partial"
 
     complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
-                "read_through": 82, "unread": []}
+                "read_through": 82, "unread": [], "edgar": dict(verified)}
     assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
+
+
+def test_morning_smart_money_is_partial_when_edgar_coverage_is_unverified():
+    """Board item 126. Every watched name read through, no provider error,
+    no unread filings — and EDGAR's own count of what was filed could not be
+    read. That is the desk being unable to tell a quiet insider day from a
+    broken fetch, and it must not be reported as a clean run. It is
+    `partial`, an EXISTING status word `src/evidence_gate.py` already
+    classifies; a new word would be read as unknown and treated as a loss.
+    """
+    complete_names = {"known": True, "as_of": "2026-09-21", "watched": 82,
+                      "read_through": 82, "unread": []}
+    unverified = {"known": True, "verified": False,
+                  "reasons": ["edgar_total_unreadable"],
+                  "edgar_total": 0, "enumerated": 0, "ratio": None,
+                  "days_queried": 15, "days_in_window": 15, "days_with_total": 3}
+    assert _smart_money_morning_stage(
+        {**complete_names, "edgar": unverified}, [],
+    ).data_status["smart_money"] == "partial"
+
+    # A coverage record from before this shipped carries no `edgar` key at
+    # all. Never-recorded is not evidence of a clean fetch.
+    assert _smart_money_morning_stage(
+        dict(complete_names), [],
+    ).data_status["smart_money"] == "partial"
+
+
+def test_morning_smart_money_quiet_day_with_verified_coverage_stays_clean():
+    """The other half of board item 126, and the one it warns about loudest:
+    EDGAR said nothing was filed, the scan confirmed it read that count, and
+    the analyst found nothing. A genuinely quiet insider day must still read
+    clean — `src/evidence_gate.py` treats degraded seats as a loss and on
+    2026-09-16 that made Risk veto a whole intraday plan."""
+    quiet = {"known": True, "verified": True, "reasons": [],
+             "edgar_total": 0, "enumerated": 0, "ratio": None,
+             "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
+    status = _smart_money_morning_stage(
+        {"known": True, "as_of": "2026-09-21", "watched": 82,
+         "read_through": 82, "unread": [], "edgar": quiet},
+        [],
+    ).data_status["smart_money"]
+    assert status == "ok", status
+
+    # ...and a budget-bounded scan is likewise not a failure: the cap and
+    # the deadline are the desk's own choices, reported through the backlog
+    # counts, and must not flip the seat every morning.
+    bounded = {"known": True, "verified": True,
+               "reasons": ["days_not_queried", "scan_cap_reached"],
+               "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
+               "days_queried": 3, "days_in_window": 15, "days_with_total": 3}
+    assert _smart_money_morning_stage(
+        {"known": True, "as_of": "2026-09-21", "watched": 82,
+         "read_through": 82, "unread": [], "edgar": bounded},
+        [],
+    ).data_status["smart_money"] == "ok"
 
 
 @patch("src.pipeline_stages.compute_indicators")
