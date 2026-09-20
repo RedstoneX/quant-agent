@@ -158,7 +158,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 147, (
+    assert MAX_ARBITRARY_ENTRIES == 148, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -178,7 +178,12 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "`src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was "
         "`sourced` against an SSRN URL that returns HTTP 403 to everyone; "
         "relabelled `arbitrary` because a citation nobody can open is not a "
-        "source under this ledger's own rule. No value changed."
+        "source under this ledger's own rule. No value changed. "
+        "147 -> 148 the same day, cross-symbol crowd-out fix: a genuinely new "
+        "number, `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` "
+        "(the reserved-slot bound for board item 124's fix), recorded "
+        "honestly as `arbitrary` with its open question stated rather than "
+        "presented as measured."
     )
 
 

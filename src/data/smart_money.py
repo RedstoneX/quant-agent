@@ -30,9 +30,11 @@ from src.data.insider_signal import (
     holdings_fraction,
 )
 from src.data.smart_money_cluster import (
+    MAX_CLUSTER_RESERVED_SLOTS,
     cluster_survivors,
     insider_purchase_clusters,
     observation_key,
+    reserve_cluster_symbols,
 )
 from src.models import SmartMoneyObservation
 from src.util.time import et_today
@@ -90,6 +92,22 @@ _XML_RE = re.compile(
     re.I | re.S,
 )
 _NON_EQUITY_SUFFIXES = (".WS", ".WSA", ".WSB", ".U", ".UN", ".RT")
+
+# Board item 124, corrected defect axis (2026-09-20): a genuinely clustered
+# SYMBOL can lose its whole signal to `max_observations` truncation when
+# unrelated, higher-dollar buys on OTHER symbols fill every slot ahead of
+# it — cross-symbol crowd-out, not the within-symbol tie-break a previously
+# rejected fix targeted (that fix adjusted the shared sort key everything
+# else relies on and was found unsafe on review: wrong signal-weight values,
+# a nonexistent flag, and it would have overridden dollar-value ordering
+# entirely rather than narrowly tie-breaking). The adversary-recommended fix
+# instead: guarantee at least one surviving row per genuinely clustered
+# symbol via a SMALL, separately-bounded reservation
+# (`smart_money_cluster.reserve_cluster_symbols`), leaving the main
+# dollar-value sort below untouched for everyone else. The reservation's own
+# bound, `smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS`, is recorded in
+# config/number_ledger.yaml — it lives in `smart_money_cluster.py`, not here,
+# because that module (not this one) is inside the ledger's scanned scope.
 
 # One process-global limiter covers EFTS, ticker metadata and Archives calls.
 # 0.125 seconds is exactly 8 requests/sec, below the SEC's 10 req/s cap.
@@ -1484,6 +1502,17 @@ class SECForm4Provider:
                 -(item.transaction_value_usd or 0),
                 -(item.accepted_at.timestamp() if item.accepted_at else 0),
             ),
-        )[:self.max_observations]
+        )
+        # Board item 124: reserve a slot for any genuinely clustered symbol
+        # that the dollar-value sort above would otherwise drop entirely from
+        # `max_observations` because of unrelated, higher-dollar buys on
+        # OTHER symbols. This narrowly displaces individual overflow rows; it
+        # never reorders the main list.
+        final = reserve_cluster_symbols(
+            ordered,
+            set(clusters),
+            max_observations=self.max_observations,
+            max_reserved_slots=MAX_CLUSTER_RESERVED_SLOTS,
+        )
         error = f"cache_partial_error:{invalid}_invalid_rows" if invalid else None
-        return ordered, error
+        return final, error

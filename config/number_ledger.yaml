@@ -1244,6 +1244,36 @@ numbers:
       Part of the data-hygiene filter that drops an implausible bar before the
       scan runs; it decides what counts as a bad PRINT, not what counts as a
       trade.
+  - id: src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS
+    value: 5
+    status: arbitrary
+    site: src/data/smart_money_cluster.py
+    note: >-
+      Board item 124, corrected defect axis (2026-09-20): the previously
+      proposed fix (adjusting the shared row-level sort key in
+      `SECForm4Provider.fetch`) was found unsafe on review -- wrong
+      signal-weight values, a nonexistent flag, and it would have overridden
+      dollar-value ordering entirely rather than narrowly tie-breaking. The
+      fix actually shipped instead reserves a small, bounded number of
+      `max_observations` slots so a genuinely clustered symbol cannot be
+      crowded out entirely by unrelated higher-dollar buys on OTHER symbols
+      (`_reserve_cluster_symbols`). 5 is an undderived round number picked
+      only to keep the reservation small relative to `max_observations`
+      (=40): nothing measures how many genuine same-day clusters occur on a
+      typical day, so this cap could as easily starve a legitimately busy
+      cluster day as protect a quiet one.
+    open_question: >-
+      How many genuine same-day opportunistic purchase clusters occur across
+      the watched/core universe on a typical day -- read that off production
+      `insider_purchase_clusters` output before treating 5 as anything but a
+      placeholder ceiling?
+    cost_while_unanswered: >-
+      Set too low, a day with more than 5 genuine clusters loses the
+      cross-symbol crowd-out protection for the excess ones, silently
+      reproducing the original defect for those symbols. Set too high, the
+      reservation could itself crowd out non-cluster rows that would
+      otherwise have made the cut -- the exact failure mode this fix exists
+      to avoid on the other side.
   - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
     value: 2
     status: arbitrary

@@ -54,6 +54,21 @@ from src.models import InsiderPurchaseCluster, SmartMoneyObservation
 #: least one other, so two distinct insiders.
 MIN_PURCHASE_CLUSTER_INSIDERS = 2
 
+# Board item 124, corrected defect axis (2026-09-20): a genuinely clustered
+# SYMBOL was losing its whole signal to `SECForm4Provider.fetch`'s
+# `max_observations` truncation when unrelated, higher-dollar buys on OTHER
+# symbols filled every slot ahead of it -- cross-symbol crowd-out, not the
+# within-symbol tie-break a previously reviewed and rejected fix targeted
+# (adjusting the shared row-level sort key: found unsafe, since it cited
+# wrong signal-weight values, a nonexistent flag, and would have overridden
+# dollar-value ordering entirely rather than narrowly tie-breaking). The
+# adversary-recommended fix instead: `reserve_cluster_symbols` guarantees at
+# least one surviving row per genuinely clustered symbol, via a SMALL,
+# separately-bounded reservation that leaves the dollar-value sort untouched
+# for everyone else. 5 is an undderived round number -- see this constant's
+# entry in config/number_ledger.yaml for the open question.
+MAX_CLUSTER_RESERVED_SLOTS = 5
+
 
 def observation_key(item: SmartMoneyObservation) -> tuple:
     return (
@@ -107,6 +122,62 @@ def cluster_survivors(
                 for item in window:
                     survivors[observation_key(item)] = item
     return survivors
+
+
+def reserve_cluster_symbols(
+    ordered: list[SmartMoneyObservation],
+    clustered_symbols: set[str],
+    *,
+    max_observations: int,
+    max_reserved_slots: int,
+) -> list[SmartMoneyObservation]:
+    """Guarantee at least one row per symbol in ``clustered_symbols`` survives
+    truncation to ``max_observations``, board item 124's cross-symbol
+    crowd-out fix.
+
+    ``ordered`` is already sorted best-first by the caller's dollar-value
+    sort (`SECForm4Provider.fetch`); this only decides which rows survive the
+    cutoff, never their relative order. A symbol already present in the top
+    ``max_observations`` needs nothing — the fact already reaches the seat.
+    A missing clustered symbol is granted one slot by displacing the
+    LOWEST-priority row currently kept that does not itself belong to a
+    clustered symbol (so one reservation can never silently undo another),
+    up to ``max_reserved_slots`` reservations total. If every kept row
+    already belongs to a clustered symbol, no further reservation is
+    possible and the remaining clustered symbols stay excluded — the bound
+    is what keeps a busy cluster day from crowding out everything else in
+    turn.
+
+    Deliberately does NOT help a clustered symbol whose OWN non-cluster rows
+    already occupy the cap (that symbol is already "present" and nothing is
+    reserved) — that is the within-symbol tie-break the previously reviewed
+    sort-key fix was rejected for, and this mechanism does not attempt it.
+    """
+    main = list(ordered[:max_observations])
+    if not clustered_symbols or len(ordered) <= len(main):
+        return main
+    present = {item.symbol for item in main}
+    missing = [s for s in clustered_symbols if s not in present]
+    if not missing:
+        return main
+    overflow = ordered[max_observations:]
+    reserved = 0
+    for symbol in missing:
+        if reserved >= max_reserved_slots:
+            break
+        candidate = next((item for item in overflow if item.symbol == symbol), None)
+        if candidate is None:
+            continue
+        evict_at = next(
+            (i for i in range(len(main) - 1, -1, -1) if main[i].symbol not in clustered_symbols),
+            None,
+        )
+        if evict_at is None:
+            break
+        main[evict_at] = candidate
+        present.add(symbol)
+        reserved += 1
+    return main
 
 
 def _cluster_member(item: SmartMoneyObservation) -> bool:

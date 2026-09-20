@@ -417,3 +417,130 @@ def test_a_brand_new_participants_first_purchase_has_no_history_to_classify_rout
     first_ever = _buy(owner="new-participant", symbol="TSM", day=today, value=4_000)
     verdict = classify_transaction(first_ever, InsiderHistory({}))
     assert verdict.label == "opportunistic"
+
+
+# --------------------------------------------------------------------------
+# board item 124, corrected defect axis (2026-09-20): CROSS-symbol
+# crowd-out. A previously proposed fix (adjusting the shared row-level sort
+# key in `SECForm4Provider.fetch`) was reviewed and found unsafe -- wrong
+# signal-weight values, a nonexistent flag, and it would have overridden
+# dollar-value ordering entirely instead of narrowly tie-breaking, since
+# competing opportunistic rows already tie at the top weight. The fix
+# actually shipped instead is `src.data.smart_money._reserve_cluster_symbols`:
+# a small, bounded reservation (`MAX_CLUSTER_RESERVED_SLOTS`) that guarantees
+# at least one surviving row per genuinely clustered SYMBOL, leaving the main
+# dollar-value sort untouched. These tests prove the FACT actually reaches
+# the seat for a symbol whose only rows are the cluster's own -- not just
+# that some row of that symbol survives.
+# --------------------------------------------------------------------------
+
+def test_a_cluster_survives_cross_symbol_crowd_out_by_unrelated_higher_dollar_buys(tmp_path):
+    """CLUSTERED has ONLY its two cluster-member rows -- no other row for
+    that symbol exists anywhere in the cache. 45 unrelated symbols each
+    carry one solo buy at 8x the cluster's combined value, enough alone to
+    fill every ``max_observations`` (=40) slot ahead of CLUSTERED under the
+    plain dollar-value sort. This is the case the previous within-symbol
+    test (``test_a_cluster_rescued_by_the_retention_rule_can_still_be_
+    truncated_before_the_seat_sees_it``) does NOT cover: there, CORE's own
+    non-cluster rows already occupy the cap, which the reservation
+    deliberately does not touch (it only protects a symbol with ZERO
+    surviving rows, not a symbol whose OWN rows crowd out its OWN cluster).
+    Here every crowding row belongs to a different symbol, which is exactly
+    the defect item 124 was re-opened for.
+    """
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    today = date.today()
+    rows = []
+    for i in range(45):
+        rows.append(_provider_row(
+            symbol=f"CROWD{i}", owner=f"solo-{i}", value=1_000_000,
+            accession=f"0000000300-26-{i:06d}",
+            transaction_date=today - timedelta(days=10),
+            disclosure_date=today,
+        ))
+    # CLUSTERED: two distinct insiders, same day, each below the $100k core
+    # threshold alone ($60k) but $120k combined -- rescued into
+    # `cluster_survivors` by the two-owner window rule, and independently a
+    # same-day opportunistic `insider_purchase_clusters` cluster.
+    rows.append(_provider_row(
+        symbol="CLUSTERED", owner="rescue-1", value=60_000,
+        accession="0000000400-26-000001",
+        transaction_date=today - timedelta(days=1), disclosure_date=today,
+    ))
+    rows.append(_provider_row(
+        symbol="CLUSTERED", owner="rescue-2", value=60_000,
+        accession="0000000400-26-000002",
+        transaction_date=today - timedelta(days=1), disclosure_date=today,
+    ))
+    provider.observations_path.write_text(json.dumps(
+        [row.model_dump(mode="json") for row in rows]
+    ))
+    symbols = ["CLUSTERED"] + [f"CROWD{i}" for i in range(45)]
+    got, error = provider.fetch(symbols)
+    assert error is None
+    assert len(got) == provider.max_observations == 40
+
+    clustered_rows = [row for row in got if row.symbol == "CLUSTERED"]
+    assert clustered_rows, (
+        "CLUSTERED was crowded out of max_observations entirely by unrelated "
+        "higher-dollar buys on OTHER symbols -- the cross-symbol crowd-out "
+        "defect (board item 124) is not fixed"
+    )
+    # The load-bearing assertion: not just that a CLUSTERED row survived, but
+    # that the fact the seat reads (`purchase_cluster`) is actually stamped
+    # on it -- this is what `SmartMoneyFinding.purchase_cluster()` reads.
+    with_cluster = [row for row in clustered_rows if row.purchase_cluster is not None]
+    assert with_cluster, "a CLUSTERED row survived but without its cluster fact stamped"
+    cluster = with_cluster[0].purchase_cluster
+    assert cluster.distinct_insiders == 2
+    assert cluster.combined_value_usd == 120_000
+    assert set(cluster.insider_ciks) == {"rescue-1", "rescue-2"}
+
+
+def test_cross_symbol_reservation_is_bounded_and_does_not_starve_everything():
+    """The reservation is capped so a day with many clusters cannot crowd out
+    the whole dollar-sorted list; it only ever displaces the lowest-priority
+    non-clustered rows, one per reserved symbol.
+    """
+    from src.data.smart_money_cluster import (
+        MAX_CLUSTER_RESERVED_SLOTS, reserve_cluster_symbols as _reserve_cluster_symbols,
+    )
+
+    def _row(symbol, value, cik):
+        return _buy(owner=cik, symbol=symbol, value=value, day=DAY,
+                    accession=f"{cik}-{symbol}")
+
+    # 10 clustered symbols, each with exactly one overflow row, competing
+    # against 40 unrelated higher-value rows that fill the whole cap.
+    crowd = [_row(f"CROWD{i}", 1_000_000, f"crowd{i}") for i in range(40)]
+    clustered = [_row(f"CLUSTER{i}", 10_000, f"cluster{i}") for i in range(10)]
+    ordered = crowd + clustered  # already worst-first for the clustered set
+    final = _reserve_cluster_symbols(
+        ordered,
+        {f"CLUSTER{i}" for i in range(10)},
+        max_observations=40,
+        max_reserved_slots=MAX_CLUSTER_RESERVED_SLOTS,
+    )
+    reserved_symbols = {row.symbol for row in final if row.symbol.startswith("CLUSTER")}
+    assert len(reserved_symbols) == MAX_CLUSTER_RESERVED_SLOTS
+    assert len(final) == 40
+
+
+def test_a_routine_cluster_gets_no_reserved_slot():
+    """A routine-classified same-day cluster (e.g. an ESPP-shaped recurring
+    buy) must never be granted a reserved slot: `insider_purchase_clusters`
+    only records genuinely OPPORTUNISTIC clusters (`_cluster_member` in
+    `src.data.smart_money_cluster` requires ``signal_class == "opportunistic"``),
+    so a routine same-day pair never appears in ``clusters`` at all and the
+    reservation mechanism -- keyed off exactly that dict -- has nothing to
+    reserve for it.
+    """
+    today = date(2026, 9, 19)
+    routine_pair = [
+        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000,
+             signal_class="routine", accession="espp-1-x"),
+        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500,
+             signal_class="routine", accession="espp-2-x"),
+    ]
+    clusters = insider_purchase_clusters(routine_pair, universe={"TSM"}, today=today)
+    assert "TSM" not in clusters
