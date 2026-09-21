@@ -22,6 +22,75 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — a mechanical gate now exists so a trade-governing number can no longer be invented without being written down (item 90, half one)
+
+**In plain words:** every numeric constant on the path from a seat's verdict
+to a trade order now has to be recorded in one place with where it came
+from, or the test suite fails the build. Before this, a number could be
+typed into the code with no source and nobody would ever know.
+
+**What was built.** `src/number_sources.py` walks every module-level
+constant and `*Config` default inside a declared, reviewed set of files
+(including numbers nested in literals or bound to a name) and requires a
+matching entry in `config/number_ledger.yaml`. Six rules are enforced:
+every in-scope site is covered; the ledger's recorded value matches the
+live code literal; it also matches the DEPLOYED value in
+`config/settings.yaml` where a setting routes that way (52 sites do); a
+`sourced` or `instrument` entry must cite a URL or a `path:line`, never
+prose; an `arbitrary` entry must state the open question and what the desk
+pays while it stays unanswered; and a derivation whose base later moves
+fails the build (base-drift). A separate check fails if the count of
+module-level constants in files OUTSIDE the declared scope rises, so the
+scope itself cannot quietly narrow.
+
+**What it found, and its own honest limit.** At filing, 178 sites were in
+scope with 87 distinct numbers marked arbitrary (45 not trade-governing, 25
+derived, 16 sourced, 5 fixed by broker/exchange/statute); the count moved
+to 88 the next day (#529) before the sub-split was re-verified, so that
+breakdown is a snapshot, not a live figure — read `config/number_ledger.yaml`
+directly for the current count. The gate proves a justification was
+WRITTEN, never that it is TRUE: its own flagship entry, the 0.50%
+minimum-risk floor, was false in four separate places and now carries a
+written correction, along with six other corrected entries.
+
+**What is still open.** Reading each arbitrary entry off its actual
+instrument — settling the open question the ledger states for it — is
+unstarted and is board item 90's remaining half. `MAX_ARBITRARY_ENTRIES` is
+enforced as an EQUALITY, not a ceiling, specifically so deleting a row is
+never rewarded.
+
+---
+
+### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
+
+**In plain words:** two items on the backlog board had already been marked
+retired, with their reasons squeezed into the board's own "retired numbers"
+footer instead of a real write-up here — the exact bloat this file exists to
+prevent. Neither is a new finding; both are being recorded properly now so
+the board text can be trimmed to a pointer.
+
+**Item 146 — a stop-tolerance question that was already answered before it
+was filed.** The item asked whether the level-match tolerance should be
+derived from an ATR multiple (`level_match_atr_tolerance`). That setting key
+had already been removed on 2026-09-13 as part of item 46, and the tolerance
+was already being derived from `src.data.levels.CLUSTER_TOLERANCE_PCT`
+instead. The item's premise was false at filing, so it closed with no fix
+needed. Its one live piece — the horizon-arithmetic residue — was not
+discarded; it was folded into the standing DECIDE-BY mandate bullet at the
+top of the board, which it was only ever supporting evidence for. Retired
+2026-09-19.
+
+**Item 156 — the congressional-trading Form 4 drain could run past its own
+tick deadline.** The drain that pulls new Form 4 accessions for congressional
+trading shared its processing loop with the tick's overall time budget but
+had no budget or progress tracking of its own, so a slow issuer could burn
+the whole tick before later issuers were even attempted. Closed by PR #539
+(commit 0f758a95): the drain now runs against its own budget and tracks
+per-issuer progress, so a slow issuer no longer starves the ones queued
+behind it. Retired 2026-09-19.
+
+---
+
 ### 2026-09-20 — a broken read of the insider-filing service looked exactly like a quiet day on which nobody traded
 
 **In plain words:** every morning the desk reads the government's record of
