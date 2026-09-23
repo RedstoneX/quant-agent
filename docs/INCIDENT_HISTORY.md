@@ -22,6 +22,74 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk could size a new-name buy or short off a stale or mid price, not just render one (item 120 closed)
+
+**In plain words:** when the desk opens a name it does not already hold, the
+number of shares it buys is the dollars it wants to spend divided by the
+price. If that price is wrong, the share count is wrong in proportion. Item
+120 was first understood as a DISPLAY problem — a thin name showing
+yesterday's price as today's to the analyst — and its display half was fixed
+in September. But the same bad price was still setting SHARE COUNTS on new
+positions, on more than one code path, and that half stayed open until now.
+
+**What the price could be, and why it mattered.** A new name's sizing price
+came from the broker's plain "latest price" call, which returns a real trade
+if there is one but otherwise a QUOTE MIDPOINT (what someone is willing to
+do, not what was done) or YESTERDAY's last trade — neither labelled as such.
+Two places used it: the portfolio constructor, which sets the planned size,
+and the EXECUTION stage, which sets the size of the order actually sent. So a
+thin name that had not printed today, or one that had gapped overnight, could
+be bought in the wrong quantity, and nobody could see it in the number.
+
+**Why the first fix did not close it.** An earlier pass routed only the
+constructor's price through the desk's one freshness resolver. An adversary
+read of the code found the number that sizes the SUBMITTED order is computed
+separately at execution, from a helper that DELIBERATELY allows a today quote
+mid — correctly, because a mid is a fine reference for CROSSING the spread on
+an order whose size is already set. The mistake was letting that same
+fill-reference number also set the size. Sizing and filling are different
+acts and now use different rules.
+
+**What was done.** Every surface that turns dollars into a share count —
+the constructor's price map, the execution submit loop, the cash-sweep
+funding preflight, and the rotation replacement-buy gate — now sizes off a
+real TODAY price: an actual trade print, or, when there is none, today's
+still-forming session or one-minute bar (a real intraday price on the same
+venue, never a quote). A name with no such price is REFUSED as unmeasurable
+and recorded under its own machine-readable fault code, never sized on a
+guess and never quietly dropped forever. The fill/limit path is unchanged: a
+mid is still a legitimate reference for crossing the spread.
+
+**The dangerous-direction bug found and fixed along the way.** For a SHORT
+the execution loop had been dividing the allocation by the marketable limit,
+which sits BELOW the market — a smaller divisor, so MORE shares, a bigger
+short than intended, on the one side whose loss is unbounded. Both directions
+now size off the today print bounded by the approved entry (the higher, safer
+divisor), and the below-market limit is used only as the order's price, never
+as the share-count divisor.
+
+**What was ruled out / left open, stated plainly.** The mid "fallback" inside
+the execution sizing helper is unreachable in production (it exists only so
+the many mock-broker tests keep working); a real broker either yields a today
+price or a refusal. One residue is NOT part of this and is filed as item 181:
+on a SHORT the risk-budget branch can still over-size when the analyst entry
+sits above the today print, because `stop - entry` understates the true
+`stop - print`; it is bounded by the allocation cap but real and untested.
+Two adjacent things were deliberately not touched: the cash-sweep sizes the
+SGOV parking trade off a mid-capable price (a cash instrument, out of scope),
+and the acceptance of a today session bar for SIZING now leans on the
+still-unconfirmed assumption that the provider stamps a daily bar with today's
+date — it fails safe (a wrong date means no price and the name is refused),
+but that assumption is now load-bearing for sizing, not only for display.
+
+**What would catch it next time.** Tests now drive the REAL execution submit
+loop for both a buy and a short and assert the divisor is the today print,
+not the mid or the below-market limit, plus that the constructor and
+execution agree on a session-bar-only thin name — the exact population the
+item was about.
+
+---
+
 ### 2026-09-23 — the jam alarm told the owner the desk had refused every idea, on six runs where the desk refused nothing and was in fact switched off
 
 **In plain words:** the owner was told, in red, that the desk had turned down

@@ -8608,13 +8608,20 @@ class ExecutionStage:
                     )
                     continue
                 if decision.entry_price and decision.entry_price > 0:
-                    # Conservative for BOTH directions: the HIGHER divisor
-                    # gives FEWER shares — less capital deployed on a buy, a
-                    # SMALLER short on a short (whose downside is unbounded).
-                    # Never size off a below-market number. (A short used to
-                    # take min() here and was then overwritten by the
-                    # below-market `bid_limit` below, which over-sized it —
-                    # the one dangerous-direction bug this pass fixes.)
+                    # Size off a today print, bounded by the approved entry.
+                    # The HIGHER divisor is conservative on the ALLOCATION
+                    # path for BOTH directions (fewer shares: less capital on
+                    # a buy, a smaller short on a short). On the RISK-BUDGET
+                    # path it is conservative for a BUY only: there
+                    # `risk_per_share = entry - stop` and a higher entry
+                    # WIDENS it, shrinking qty_by_risk; for a SHORT
+                    # (`stop - entry`) a higher entry NARROWS it and can
+                    # INFLATE qty_by_risk when the analyst entry sits above
+                    # the today print — a distinct short-side risk-sizing
+                    # defect tracked as its own board item, NOT fixed here.
+                    # What this line does fix: the short no longer divides by
+                    # the below-market `bid_limit` (the over-size bug of
+                    # item 120). Never size off a below-market number.
                     sizing_price = max(sizing_print, float(decision.entry_price))
                 else:
                     sizing_price = sizing_print
