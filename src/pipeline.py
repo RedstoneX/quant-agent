@@ -933,6 +933,10 @@ class TradingPipeline:
             provider_order=config.llm.get_provider_order("tech_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
             structured_output=config.llm.structured_output,
+            # The standing sheet states this seat's history depth back to it.
+            # Passed from the SAME config object `market.get_ohlcv` is called
+            # with, so the brief and the fetch cannot disagree (board item 168).
+            lookback_days=config.trading.lookback_days,
         )
         self.portfolio_manager = PortfolioManagerAgent(
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),

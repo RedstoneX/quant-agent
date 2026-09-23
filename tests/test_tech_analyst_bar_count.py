@@ -61,6 +61,7 @@ from src.agents.tech_analyst import (
     PROMPT_PATH,
     TechAnalystAgent,
     render_bars_per_symbol,
+    render_tech_placeholders,
 )
 from src.models import OHLCV, TechnicalIndicators
 
@@ -100,6 +101,25 @@ _DATA_SUFFICIENCY_FLOOR = 20
 #: file, while any OTHER "<n> sessions" claim is still treated as a window claim.
 _SLOPE_PHRASE_RE = re.compile(r"MA direction over \d+ sessions")
 
+#: The rendered history-depth phrase (board item 168) says "about <n> weekday
+#: sessions", which is a claim about the UPSTREAM history the indicators are
+#: computed from, not about the bar window attached to the message. It is
+#: rendered from `trading.lookback_days` and checked end-to-end by
+#: `tests/test_tech_analyst_history_window.py`; exempted here by shape so the
+#: setting may change without touching this file.
+_HISTORY_PHRASE_RE = re.compile(
+    r"up to \d+ calendar days of price history "
+    r"\(about \d+ weekday sessions[^)]*\)"
+)
+
+#: The rendered longest-indicator window (`LONGEST_INDICATOR_WINDOW` in
+#: src/data/technical.py) — how far the deepest INDICATOR reaches, not how many
+#: bars are attached. Rendered from that constant and checked in
+#: tests/test_tech_analyst_history_window.py; exempted here by shape.
+_LONGEST_INDICATOR_PHRASE_RE = re.compile(
+    r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+\d+\s+sessions"
+)
+
 #: Bar counts to render the sheet against in the coupling test. All sit above
 #: the data-sufficiency floor on purpose: rendering a sheet that says "you are
 #: shown 7 bars" and also "return neutral below 20 bars" is not a configuration
@@ -116,6 +136,8 @@ def _bar_claims(text: str) -> list[str]:
     stripped = text.replace(_DATA_SUFFICIENCY_PHRASE, "<data-sufficiency-floor>")
     assert _DATA_SUFFICIENCY_PHRASE not in stripped
     stripped = _SLOPE_PHRASE_RE.sub("<ma-slope-lookback>", stripped)
+    stripped = _HISTORY_PHRASE_RE.sub("<history-window>", stripped)
+    stripped = _LONGEST_INDICATOR_PHRASE_RE.sub("<longest-indicator-window>", stripped)
     return [m.group(1) for m in _BAR_CLAIM_RE.finditer(stripped)]
 
 
@@ -226,7 +248,7 @@ def test_prompt_source_actually_uses_the_placeholder() -> None:
 # --------------------------------------------------------------------------
 
 def test_rendered_prompt_states_the_count_the_code_sends() -> None:
-    claims = _bar_claims(render_bars_per_symbol(_prompt_source()))
+    claims = _bar_claims(render_tech_placeholders(_prompt_source()))
     assert claims, "rendering produced no bar-window claim at all"
     wrong = sorted({c for c in claims if c != str(_BARS_PER_SYMBOL)})
     assert not wrong, (
@@ -244,7 +266,7 @@ def test_rendered_prompt_leaves_no_template_syntax() -> None:
     with spaces — or a typo in one of the five placeholders — rendered as literal
     template syntax to the seat with every test green.
     """
-    rendered = render_bars_per_symbol(_prompt_source())
+    rendered = render_tech_placeholders(_prompt_source())
     leftovers = re.findall(r"\{\{[^}]*\}\}", rendered)
     assert not leftovers, (
         f"unsubstituted template syntax survived rendering: {leftovers}. The "
@@ -262,7 +284,7 @@ def test_rendered_count_tracks_a_changed_constant(pretend_bars: int) -> None:
     number: a future edit that hard-codes any value — including the one that
     happens to be right today — fails here.
     """
-    claims = _bar_claims(render_bars_per_symbol(_prompt_source(), pretend_bars))
+    claims = _bar_claims(render_tech_placeholders(_prompt_source(), pretend_bars))
     assert claims, "rendering produced no bar-window claim at all"
     assert set(claims) == {str(pretend_bars)}, (
         f"With `_BARS_PER_SYMBOL` = {pretend_bars} the sheet still claims "
