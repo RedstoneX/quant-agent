@@ -210,6 +210,62 @@ request that names the item in its own title, or in a line in the production
 log. Items 120 and 130 were both closed by a pull request whose title names
 them, which is the cheapest of those two signals to read.
 
+### 2026-09-23 — "why can't I see the P&L?" — the morning message said the account had not been read, four lines above the book it had just read
+
+**In plain words:** the owner's morning Telegram said his profit and loss was
+"not available" and explained that the message had been built without reading
+the account. Both halves were wrong. The same message went on to print the
+twelve positions and the money invested in them, which it could only know
+from an account read it had certainly made.
+
+**What was actually broken.** Two independent defects rendered as one line.
+
+First, the figure never reached the message. The morning trading session
+takes exactly one broker account snapshot and can then leave by any of about
+a dozen returns — `no_trades`, `pm_agent_failure`, `paid_analysis_suspended`,
+`buys_unfunded`, `no_orders`, `executed`. Only ONE of those, the fully
+executed path, put the P&L keys on its result. The midday/close reviewer and
+the intraday tick did the same thing on their happy paths only. So whether
+the owner saw his own P&L depended on which exit the run happened to take,
+which is not a property anyone chose. Measured on the day: the 13:37 morning
+result carried no P&L key at all; the 13:49 intraday tick, twelve minutes
+later against the same account, carried all five.
+
+**The false sentence, which is the worse half.** The block appended "this
+message was built without an account read" whenever all four figures were
+absent — inferring a CAUSE from an ABSENCE. The absence of those keys is
+evidence of nothing except their absence. The sentence was therefore true
+for the pre-market filing reader (which genuinely reads no account) and
+false for every trading session, and the owner had no way to tell the two
+apart. An explanation the code cannot prove is a defect in its own right,
+not a wording problem.
+
+**The fix.** The account read is recorded when it happens and the P&L block
+is attached in the session WRAPPER, so it travels out of every return path
+rather than the one the author was looking at. Same basis and same source as
+the path that already worked — the broker's day-over-day change against
+`last_equity`, and `_total_pnl_since_reset` for the dated baseline. No second
+way to compute P&L was introduced; one renderer and one basis is a deliberate
+property of this code. The evening report keeps its own richer 4pm-close
+block, which exists so the shared renderer cannot show an after-hours figure.
+
+The sentence now comes from a reason the session RECORDS: the run ended
+before the account was read; the account was read but the broker gave no
+usable prior close; or the mode does no account read at all. With no recorded
+reason the block claims no cause whatsoever — it says only that no figure was
+recorded with the message.
+
+**No constant moved and none was needed.**
+
+**Found and deliberately not fixed.** The two happy paths still compute the
+same four lines inline instead of calling the shared helper — identical
+arithmetic, but two copies of it. They differ in one detail: one guards on
+`last_equity` being truthy and the other on it being positive, and both
+fabricate a 0.00 rather than "not available" when it is neither. The new
+attach path refuses to fabricate that zero; the two older ones still do.
+
+---
+
 ### 2026-09-23 — the desk bought fresher news, threw it away thirty minutes later, and then refused to buy it again
 
 **In plain words:** the news desk reads the wire each morning. When something
