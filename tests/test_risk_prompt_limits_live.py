@@ -97,7 +97,10 @@ WIRED_SETTINGS = (
     "max_position_pct",
     "max_total_position_pct",
     "max_sector_pct",
-    "effective_max_daily_loss_pct",
+    # `effective_max_daily_loss_pct` was here until 2026-09-20. The sheet no
+    # longer states that limit because the limit no longer exists: the
+    # account-level daily-loss halt was removed entirely on the owner's
+    # instruction (retired item 32, docs/INCIDENT_HISTORY.md).
     "max_position_risk_pct",
     "min_position_risk_pct",
 )
@@ -444,20 +447,6 @@ def test_per_trade_risk_budget_is_the_ratified_unit_not_the_old_half_percent():
     assert "`min_position_risk_pct`, 0.25% risk" in rendered
 
 
-def test_daily_loss_renders_the_derived_value_not_the_null_setting():
-    """`max_daily_loss_pct` is deliberately null in settings.yaml — it is an
-    override. The sheet renders the DERIVED effective figure, and a null must
-    never reach the reviewer as a blank."""
-    cfg = _live_risk_config()
-    assert cfg.max_daily_loss_pct is None
-    rendered = render_prompt_limits(_sheet(), cfg)
-    assert f"`max_daily_loss_pct={cfg.effective_max_daily_loss_pct:g}`" in rendered
-
-
-# --------------------------------------------------------------------------
-# 3. Fail loud, never blank
-# --------------------------------------------------------------------------
-
 def test_placeholder_with_no_matching_setting_fails_loudly():
     cfg = _live_risk_config()
     with pytest.raises(PromptPlaceholderError) as exc:
@@ -480,10 +469,15 @@ def test_placeholder_never_renders_blank_or_a_default():
 
 
 def test_a_null_optional_setting_is_refused_rather_than_blanked():
-    cfg = _live_risk_config()
-    assert cfg.max_daily_loss_pct is None
+    """No live setting is null today (the last one, `max_daily_loss_pct`,
+    went with the retired account-level breaker on 2026-09-20), so this
+    builds the unset case rather than reading it off settings.yaml. The
+    refusal is the behaviour under test, not which field happens to be
+    optional."""
+    cfg = _live_risk_config().model_copy(update={"max_sector_hard_pct": None})
+    assert cfg.max_sector_hard_pct is None
     with pytest.raises(PromptPlaceholderError) as exc:
-        resolve_placeholder("risk.max_daily_loss_pct", cfg)
+        resolve_placeholder("risk.max_sector_hard_pct", cfg)
     assert "None" in str(exc.value)
 
 
@@ -574,8 +568,8 @@ def _perturb(live: RiskConfig, field: str):
         candidates = [current * 0.9, current * 1.1, current + 1,
                       current - 1, current / 2, current * 2]
     elif current is None:
-        # An UNSET optional numeric setting (`max_daily_loss_pct` is null in
-        # settings.yaml today — the volatility-relative breaker derives it).
+        # An UNSET optional numeric setting (`max_sector_hard_pct` is null in
+        # settings.yaml today — RiskConfig derives it).
         # Probe with numbers ALREADY PRESENT elsewhere in the live config
         # rather than inventing one, so this file still holds no number of
         # its own. A field that is optional but not numeric simply finds no
@@ -666,13 +660,6 @@ def test_every_rendered_setting_is_also_threaded_into_the_engine():
     )
 
 
-def test_daily_loss_inputs_are_threaded_too():
-    threaded = _engine_threaded_fields()
-    for field in ("max_daily_loss_pct", "daily_loss_risk_multiple",
-                  "max_position_risk_pct"):
-        assert field in threaded, field
-
-
 def test_the_parity_check_would_actually_catch_a_hard_coded_limit():
     """Teeth. An UNTHREADED setting must fail the same check the threaded ones
     pass — otherwise `test_every_rendered_setting_is_also_threaded_into_the_
@@ -730,9 +717,12 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     # reason its sibling directly above it in this list always was.
     # 16 -> 15 on 2026-09-14: `agreement_ceiling_pct` was deleted outright
     # with the graduated agreement sizing ladder.
-    assert len(omitted) == 15, (
+    # 15 -> 13 on 2026-09-20: `drawdown_5d_risk_multiple` and
+    # `drawdown_20d_risk_multiple` were deleted from settings.yaml with the
+    # rest of the account-level loss alarms (retired item 32).
+    assert len(omitted) == 13, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 15 — if that grew, thread "
+        f"settings present in settings.yaml, not 13 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 

@@ -113,7 +113,11 @@ def test_correlation_claim_is_invisible_to_the_holding_discipline_checker():
     "guidance cut for the full year",
     "macro regime shift to risk-off today",
     "regime flip confirmed this morning",
-    "daily loss circuit breaker fired",
+    # "daily loss circuit breaker fired" was in this list until 2026-09-20,
+    # when the account-level loss alarm it named was removed in full
+    # (WORK.md item 32). It moved to the rejected list below, for the first
+    # of the two reasons this file's own docstring gives for correlation
+    # breach: nothing in the desk computes that event any more.
     "stopped out at the broker",
 ])
 def test_every_other_trigger_still_passes(reason):

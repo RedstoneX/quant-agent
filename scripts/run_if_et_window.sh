@@ -99,7 +99,7 @@ fi
 # don't edit one without the other.
 # earnings_preprocess: 08:00-09:15 ET (pre-market, analyze fresh filings)
 # morning            : 09:30-12:00 ET (pre-market / early session, wide for late-wake grace)
-# intra_check        : 09:30-16:00 ET (flash-crash circuit breaker, fires every 30min tick — at :15/:45, deliberately offset from every other session's shared :00/:30 tick since 2026-09-17; NOT subject to once-per-day guard — stateless, all actions idempotent)
+# intra_check        : 09:30-16:00 ET (fill reconcile + stop-coverage repair + bounded scan; fires every 30min tick — at :15/:45, deliberately offset from every other session's shared :00/:30 tick since 2026-09-17; NOT subject to once-per-day guard — stateless, all actions idempotent)
 # midday             : 13:00-14:30 ET (position reviewer, afternoon patience)
 # close              : 15:30-16:00 ET (position reviewer, act-on-trigger before overnight; 30min width so launchd StartInterval=1800 always lands one tick inside regardless of phase)
 # evening            : 20:00-22:00 ET (post-market, insights written before next morning)
@@ -118,10 +118,17 @@ if [[ "$ET_TOTAL_MIN" -lt "$LO" || "$ET_TOTAL_MIN" -gt "$HI" ]]; then
 fi
 
 # === Last-run guard — don't fire more than once per window ===
-# Exception: intra_check is a stateless circuit breaker designed to fire on
-# every 30-min launchd tick during market hours. All of its actions
-# (force_delever / emergency_liquidate / P&L read) are idempotent, so the
+# Exception: intra_check is stateless and designed to fire on every 30-min
+# launchd tick during market hours. All of its actions (fill reconcile,
+# stop-coverage repair, force_delever, P&L read) are idempotent, so the
 # once-per-day guard is skipped and no last-run file is written for it.
+# This used to read "a stateless circuit breaker" and to list
+# `emergency_liquidate` among the actions. Neither survives: the liquidator
+# went 2026-09-14 and the whole account-level loss alarm went 2026-09-20
+# (docs/INCIDENT_HISTORY.md, retired item 32). The idempotence argument is
+# unaffected — it was always about the actions, not about the breaker — but
+# do not re-justify the exemption on a mechanism that is gone. See the
+# longer note at the session-lock exemption below, and board item 128.
 LAST_FILE="${LAST_RUN_DIR}/last-${MODE}"
 NOW_UNIX="${NOW_UNIX_OVERRIDE:-$(date +%s)}"
 if [[ "$MODE" != "intra_check" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
@@ -148,12 +155,19 @@ fi
 # concurrently (e.g. a long morning LLM call while midday fires). Keep one
 # Python trading session active at a time; stale lock cleanup handles crashes.
 #
-# intra_check is INTENTIONALLY exempt — it's the stateless flash-crash
-# circuit breaker that MUST fire on every 30-min tick during 09:30-16:00 ET
-# regardless of what else is running. Mirrors its exemption from the
-# last-run guard above. Without this exemption a long morning/midday holds
-# the lock and intra goes silent for the entire window — which is exactly
-# the time when an unmonitored adverse move would be most damaging.
+# intra_check is INTENTIONALLY exempt so it fires on every 30-min tick
+# during 09:30-16:00 ET regardless of what else is running. Mirrors its
+# exemption from the last-run guard above. Without it a long morning/midday
+# holds the lock and intra goes silent for the entire window.
+#
+# READ THIS BEFORE RELYING ON THE EXEMPTION. It was originally justified by
+# a "stateless flash-crash circuit breaker" that the tick carried. That
+# breaker no longer exists — the whole account-level loss-alarm mechanism
+# was removed 2026-09-20 on the owner's instruction (docs/INCIDENT_HISTORY.md,
+# retired item 32). What the tick still does unstarvably is reconcile fills,
+# repair stop coverage found missing at the broker, and run the bounded
+# intraday scan. Board item 128 is open on whether that is enough to keep
+# the exemption; do not re-justify it on a mechanism that is gone.
 LOCK_ACQUIRED=0
 LOCK_OWNER_FILE="${SESSION_LOCK_DIR}/owner"
 
@@ -285,7 +299,7 @@ if "$TIMEOUT" --kill-after=30 1200 "$PYTHON" main.py --mode "$MODE"; then
     # would pin the shared check green even when morning/evening silently
     # die — defeating the dead-man's switch this ping exists for. Failure
     # pings (below) still fire for ALL modes, intra_check included, so a
-    # crashing circuit breaker is still visible externally.
+    # crashing intra_check tick is still visible externally.
     if [[ "$MODE" != "intra_check" ]]; then
         ping_healthcheck
     fi

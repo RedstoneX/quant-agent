@@ -435,7 +435,6 @@ def _pipeline(data_status: dict):
     }
     p.broker.get_positions.return_value = []
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.morning_research_stage = MagicMock()
 
     def _research(ctx):

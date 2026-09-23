@@ -424,6 +424,19 @@ threshold on this desk is, on new evidence, not a re-guess.
 
 ## 8. Drawdown alarms — what the literature gives you, and what it does not (2026-09-11)
 
+> **SUPERSEDED 2026-09-20 — READ THIS FIRST. The mechanism this section
+> derives no longer exists.** The owner removed the entire account-level
+> loss alarm — the daily circuit breaker and the 5-day / 20-day
+> rolling-return brakes — because it kept being shown able to fire on
+> ordinary market fluctuation, and ruled that per-position stop-losses are
+> the desk's loss protection (`docs/INCIDENT_HISTORY.md`, 2026-09-20,
+> retired board item 32). Everything below describes how its thresholds
+> were derived while it existed, and is kept because the NEGATIVE result is
+> still true and still worth not re-inventing: **the literature does not
+> give you a drawdown-alarm threshold.** Do not read this section as a
+> recipe for bringing the alarm back. Bringing it back at all is an owner
+> decision, not a research one.
+
 Recorded here because the useful result is a NEGATIVE one, and a negative
 result is exactly the kind of thing that gets quietly re-invented as a
 confident number by the next session that looks at this.

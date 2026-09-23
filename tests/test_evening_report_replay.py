@@ -39,7 +39,6 @@ _PAYLOAD = {
     "total_pnl": 5_678.90,
     "total_return_pct": 5.9,
     "total_pnl_since": "2026-09-02",
-    "max_daily_loss_pct": 5.0,
     "missing_sessions": [],
     "stop_coverage_gaps": [],
     "stop_proximity": [

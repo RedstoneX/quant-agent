@@ -5812,10 +5812,9 @@ class RiskStage:
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "RiskStage: recent-performance rebuild failed — the "
-                    "drawdown gate cannot fire this run: %s", e,
+                    "seat sees no rolling-return context this run: %s", e,
                 )
                 rm_recent_performance = {}
-        in_drawdown = bool(rm_recent_performance.get("in_drawdown"))
 
         # Spec §11.2 — the session's gross-exposure ceiling, resolved from
         # ACCOUNT STATE and never from PM output. The run preamble already
@@ -5824,22 +5823,11 @@ class RiskStage:
         # same rung the constructor sized them under.
         session_gross_ceiling = _session_gross_ceiling(pipeline, ctx)
 
-        # Audit §1.1 — the drawdown-halve is deterministic code now, applied
-        # before the hard filter so every downstream consumer (cash budget,
-        # sector accumulation, RM, execution) sees the halved size rather than
-        # PM's pre-halving intent. The PM prompt no longer pre-applies it.
-        if in_drawdown:
-            from src.risk.rules import apply_drawdown_scale
-            portfolio_decision.decisions, drawdown_notes = apply_drawdown_scale(
-                portfolio_decision.decisions, in_drawdown=True,
-                ceiling=session_gross_ceiling,
-            )
-            for note in drawdown_notes:
-                symbol = note.split(" ", 1)[0]
-                _record_pipeline_event(
-                    pipeline, ctx, symbol, "deterministic_gate", "modified",
-                    "drawdown_buy_halved", detail=note,
-                )
+        # The rolling-return drawdown halve used to run here, scaling every
+        # BUY and SHORT by 0.5 whenever `in_drawdown` was true. Removed  # retired-ok
+        # 2026-09-20 on the owner's instruction together with the daily-loss
+        # halt (retired item 32, docs/INCIDENT_HISTORY.md). The §11.2 gross
+        # ceiling resolved above is untouched and still sizes and blocks.
 
         # Memoized by DecisionStage so PM and this gate score the same numbers.
         # On the RC2 resume lane DecisionStage never ran and this is the first
@@ -5850,14 +5838,11 @@ class RiskStage:
         portfolio_decision.decisions, rule_violations, blocked_reasons = (
             pipeline._filter_hard_risk_decisions(
                 portfolio_decision.decisions,
-                positions, total_value, daily_pnl,
-                baseline=last_equity,
+                positions, total_value,
                 invested_target_pct=invested_target_pct,
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
-                in_drawdown=in_drawdown,
-                gross_ceiling=session_gross_ceiling,
-            )
+                gross_ceiling=session_gross_ceiling,)
         )
         _apply_sector_unresolved_alert(data_status, rule_violations)
         if blocked_reasons:
@@ -6460,14 +6445,11 @@ class RiskStage:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
                 pipeline._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
-                    positions, total_value, daily_pnl,
-                    baseline=last_equity,
+                    positions, total_value,
                     invested_target_pct=invested_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
-                    in_drawdown=in_drawdown,
-                    gross_ceiling=session_gross_ceiling,
-                )
+                    gross_ceiling=session_gross_ceiling,)
             )
             _apply_sector_unresolved_alert(data_status, post_mod_violations)
             if blocked_reasons:
@@ -6793,16 +6775,14 @@ class ExecutionStage:
         else:
             price_map = {p.symbol: p.current_price for p in positions}
 
-        # Daily-loss re-check before BUYs. The initial circuit breaker ran
-        # ~10 min ago (before LLM research); the tape may have gapped
-        # through the limit while PM/RM was thinking, especially relevant
-        # now that intra_check fires concurrently per #46. We block BUYs
-        # (no new risk during a confirmed breach) but let any pending SELLs
-        # stay — they reduced exposure already. intra's next tick handles
-        # full emergency liquidation; morning's job here is just to not
-        # add to the hole. Refresh first when sells didn't fire so the
-        # check uses fresh portfolio_value, not the stale research-stage
-        # snapshot.
+        # Refresh the account before BUYs when no SELL fired, so sizing and
+        # the entry-staleness guard read a current snapshot rather than the
+        # research-stage one from ~10 minutes ago.
+        #
+        # An account-level daily-loss re-check used to run here too, dropping
+        # every remaining BUY when the day's loss crossed the limit. Removed
+        # 2026-09-20 on the owner's instruction with the rest of that
+        # mechanism (retired item 32, docs/INCIDENT_HISTORY.md).
         if buy_decisions:
             if not sell_decisions:
                 # Take the FRESH price_map too (2026-07-16 audit): it was
@@ -6822,39 +6802,6 @@ class ExecutionStage:
                 ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
-            # docs/WORK.md item 32 (2026-09-14): the number compared against
-            # the daily limit is the HELD BOOK's day change, chosen by the
-            # same one rule the breaker itself uses
-            # (`risk.rules.daily_loss_numerator`) — a threshold built from
-            # the held book's volatility must not be tested against the whole
-            # account's day change. Uses the FRESH locals: the refresh above
-            # updates ctx.total_value but not ctx.account.
-            from src.pipeline import _limit_is_vol_relative
-            from src.risk.rules import daily_loss_numerator
-            daily_pnl_now, _basis = daily_loss_numerator(
-                total_value - ctx.last_equity, ctx.positions,
-                vol_relative=_limit_is_vol_relative(pipeline.risk_engine),
-                cash_park_symbol=getattr(
-                    getattr(pipeline.config, "cash_sweep", None), "symbol", None,
-                ),
-            )
-            loss_violation_now = pipeline.risk_engine.check_daily_loss(
-                ctx.last_equity, daily_pnl_now,
-            )
-            if loss_violation_now:
-                logger.warning(
-                    "ExecutionStage daily-loss re-check: %s — DROPPING "
-                    "%d BUY(s). The session's remaining new risk is refused; "
-                    "intra HALTS on the next tick (it no longer liquidates, "
-                    "docs/WORK.md item 32) — nothing held is sold because of "
-                    "this.", loss_violation_now.message, len(buy_decisions),
-                )
-                for d in buy_decisions:
-                    _record_execution_skip(
-                        pipeline, ctx, d.symbol, "daily_loss_recheck",
-                        loss_violation_now.message,
-                    )
-                buy_decisions = []
 
         # Phase 14b — the rotation's BUY leg may only proceed on room that
         # is REAL. The constructor granted the new candidate its risk on the

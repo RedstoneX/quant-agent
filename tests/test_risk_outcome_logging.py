@@ -593,7 +593,6 @@ def _exec_pipeline() -> MagicMock:
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.db.insert_trade.return_value = 1
     return pipeline
 

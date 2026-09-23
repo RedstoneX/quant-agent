@@ -138,8 +138,9 @@ This file records what is accepted and true **now**. Git history preserves imple
 - **Phase 2a of the remediation spec is merged and deployed** — `c89e957`
   on branch `feat/risk-metrics-and-pm-correlation`. It folds in four
   `AGENT_ROLE_AUDIT.md` audit findings that preceded Phase 2's own sizing work:
-  the drawdown-halve is now deterministic (`src/risk/rules.py::apply_drawdown_scale`
-  + `drawdown_buy_cap` hard block, PM prompt's own halving deleted), the
+  the drawdown-halve was made deterministic (since RETIRED IN FULL on
+  2026-09-20 at the owner's instruction, with the rest of the account-level
+  loss alarms — docs/INCIDENT_HISTORY.md, board item 32), the
   correlation matrix is built before the Portfolio Manager decides and shown to
   it as measured clusters (`src/data/correlation.py::correlation_clusters`),
   portfolio heat / budget risk / open risk exist (`src/risk/metrics.py`) and

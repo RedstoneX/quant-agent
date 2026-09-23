@@ -158,7 +158,6 @@ def _buy_pipeline(ask, live=100.0, *, stall=False):
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     pipeline._sweeper = None
     pipeline.db = MagicMock()

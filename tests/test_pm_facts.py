@@ -51,7 +51,7 @@ def test_pmfacts_render_produces_structured_block():
         positions_drift_flagged=1,
         tech_signals_count=14, tech_signals_median_age_days=3,
         tech_signals_stale_count=2,
-        rolling_5d_pct=-1.5, rolling_20d_pct=3.0, in_drawdown=False,
+        rolling_5d_pct=-1.5, rolling_20d_pct=3.0,
     )
     rendered = f.render()
     assert "n=12" in rendered
@@ -62,7 +62,6 @@ def test_pmfacts_render_produces_structured_block():
     assert "Energy: 6.0%" in rendered
     assert "drift-flagged (weight>12% + P&L>10%): 1" in rendered
     assert "stale(≥8d)=2" in rendered
-    assert "in_drawdown=False" in rendered
 
 
 def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
@@ -123,7 +122,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     facts = pipeline._build_pm_facts(
         positions=positions, analyses=analyses,
         total_value=10_000, cash=100,
-        recent_performance={"rolling_5d_pct": -2.0, "rolling_20d_pct": 1.0, "in_drawdown": False},
+        recent_performance={"rolling_5d_pct": -2.0, "rolling_20d_pct": 1.0},
     )
 
     # Calibration picked up
@@ -158,7 +157,6 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
 
     # System perf pass-through
     assert facts.rolling_5d_pct == -2.0
-    assert facts.in_drawdown is False
 
 
 def test_pm_build_user_message_renders_facts_when_provided():

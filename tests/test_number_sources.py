@@ -85,7 +85,7 @@ def test_a_default_bound_to_a_name_is_still_a_site() -> None:
     the gate. Constant arithmetic (`5 * 366`) did the same.
     """
     sites = {s.site_id: s.value for s in collect_sites()}
-    assert sites["src.config.RiskConfig.drawdown_vol_sensitivity"] == 3.0
+    assert sites["src.config.RiskConfig.max_position_risk_pct"] == 5.0
     assert sites["src.config.RiskConfig.min_reward_risk_after_widening"] == 1.5
     assert sites["src.config.SmartMoneyConfig.insider_history_retention_days"] == 5 * 366
 
@@ -158,7 +158,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 148, (
+    assert MAX_ARBITRARY_ENTRIES == 142, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "

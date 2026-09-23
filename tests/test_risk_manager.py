@@ -82,7 +82,7 @@ def test_risk_manager_with_violations(mock_cls, sample_portfolio_decision):
         "approved": False,
         "reasoning_chain": _risk_rc_payload(),
         "modifications": [],
-        "reasoning": "Daily loss limit exceeded. No new trades.",
+        "reasoning": "Single-name position limit exceeded. No new trades.",
     })
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -93,7 +93,7 @@ def test_risk_manager_with_violations(mock_cls, sample_portfolio_decision):
     mock_cls.return_value = mock_client
 
     violations = [
-        RiskViolation(rule="max_daily_loss_pct", message="Daily loss 3.5% exceeds max 3%", value=3.5, limit=3.0),
+        RiskViolation(rule="max_position_pct", message="Position 25.0% exceeds max 20%", value=25.0, limit=20.0),
     ]
 
     agent = RiskManagerAgent(api_key="test", model="claude-opus-4-6-20250725")

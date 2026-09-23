@@ -75,7 +75,6 @@ def _intra_pipeline_with_a_cancelled_stop(tmp_path):
     }
     p.broker._restore_stop_orders.return_value = (1, [])
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     return p, db, cancelled
 
 

@@ -71,12 +71,13 @@ retired:
   - name: the flat -3% daily-loss threshold
     retired: 2026-09-11
     why: >-
-      The breaker has one limit with three rungs, in precedence order:
-      an explicit `max_daily_loss_pct` (null today); otherwise a
-      volatility-relative threshold measured from the held book's own daily
-      sigma (`drawdown_vol_sensitivity`, capped at the ladder's owner-alert
-      point); otherwise the fixed `effective_max_daily_loss_pct`. No rung is
-      a flat -3%. Prompts must render the number, never type it.
+      SUPERSEDED 2026-09-20 — there is no daily-loss threshold of any kind
+      any more: the whole account-level breaker was removed on the owner's
+      instruction (see the 2026-09-20 entry below). This entry stays because
+      the phrases below must never come back. At the time it was written the
+      breaker had one limit with three rungs and none of them was a flat
+      -3%; today the honest answer to "what is the daily-loss threshold" is
+      that the desk does not have one.
     symbols: []
     phrases:
       - "-3% daily-loss"
@@ -107,6 +108,77 @@ retired:
     phrases:
       - "correlation breach is a valid trigger"
       - "correlation cluster breach is a valid trigger"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
+
+  - name: the account-level loss-alarm halt and the rolling-return BUY brake
+    retired: 2026-09-20
+    why: >-
+      Removed ENTIRELY on the owner's direct instruction, not as a defect
+      fix. His words: "I'm starting to think that I'm fine with the stops on
+      the individual stocks and I do not want a nuclear option so remove the
+      whole secondary halt on portfolio completely because there's too many
+      things you keep finding where a slight normal fluctuation in the market
+      can liquidate or halt everything — that's too dangerous to leave — the
+      proper stop losses should be enough." Gone: the daily circuit breaker
+      that halted new trading on the day's loss, the 5-day / 20-day
+      rolling-return brakes that halved every new BUY and SHORT, the
+      volatility yardstick built to set their thresholds, and every gate,
+      status, banner and alert that existed to serve them. What REMAINS is
+      the §11.2 peak-to-trough gross-exposure de-levering ladder
+      (`GROSS_LADDER`), which is a different mechanism the owner did not ask
+      to remove: it trims exposure gradually and never halts the desk.
+      Per-position stops are the desk's loss protection.
+    symbols:
+      - check_daily_loss
+      - daily_loss_numerator
+      - daily_loss_limit_pct
+      - daily_loss_limit_basis
+      - apply_drawdown_scale
+      - DRAWDOWN_BUY_SCALE
+      - vol_relative_drawdown_threshold_pct
+      - measure_portfolio_daily_vol
+      - _halt_on_daily_loss_breach
+      - _daily_loss_breach
+      - _alert_owner_daily_loss_halt
+      - _check_late_breach_and_halt
+      - drawdown_5d_threshold_pct
+      - drawdown_20d_threshold_pct
+      - drawdown_buy_cap
+      - drawdown_buy_halved
+      - effective_max_daily_loss_pct
+      - daily_loss_halted
+      - daily_loss_recheck
+      - in_drawdown
+      - held_book_daily_vol_pct
+      - held_book_daily_pnl
+      - normalized_holding_weights
+      - portfolio_daily_vol_pct
+      - unprotected_at_halt
+      - REALIZED_VOL_WINDOW_SESSIONS
+      - MIN_REALIZED_VOL_RETURNS
+      - REALIZED_VOL_SKIP_NEWEST_SESSIONS
+      - DEFAULT_DRAWDOWN_VOL_SENSITIVITY
+    # The five deleted settings.yaml KEYS — `max_daily_loss_pct`,
+    # `daily_loss_risk_multiple`, `drawdown_vol_sensitivity`,
+    # `drawdown_5d_risk_multiple`, `drawdown_20d_risk_multiple` — are
+    # deliberately NOT listed above. `RiskConfig._reject_deleted_loss_alarm_
+    # keys` has to name them to refuse them, and it refuses them at config
+    # load with a loud error, which is a stronger guarantee than this
+    # scanner gives. Listing them here would only flag that validator.
+    phrases:
+      - "daily-loss circuit breaker"
+      - "daily loss circuit breaker"
+      - "daily-loss breaker"
+      - "halves every new buy"
+      - "halved every buy"
+      - "in_drawdown=true — the risk engine"
+      - "no new risk this session"
     allowed_in:
       - config/retired_mechanisms.yaml
       - src/retired_mechanisms.py
