@@ -932,6 +932,167 @@ def test_risk_stage_invested_target_holds_when_guidance_missing():
     assert ctx.invested_target_pct == 100.0
 
 
+# ---------------------------------------------------------------------------
+# Parse loss reconciled against the book (2026-09-21 META incident)
+# ---------------------------------------------------------------------------
+
+
+def _parse_loss_violations(drops, decisions=None, positions=None):
+    """Run RiskStage to the RM call with `drops` recorded in the GLOBAL
+    parse telemetry, and return the parse-loss advisories it built.
+
+    Deliberately end-to-end through `RiskStage.run`: the whole point of the
+    fix is that the reconciliation happens where the book is held, so a test
+    that called the helper directly would not prove the risk stage passes it
+    the right book.
+    """
+    from src.models import PortfolioDecision, RiskVerdict, parse_telemetry
+
+    decisions = decisions if decisions is not None else [_buy("MRVL", 5)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_supported_symbols = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), []),
+    )
+    pipeline._clamp_queued_earnings_buys = MagicMock(
+        side_effect=lambda d, *a, **kw: list(d),
+    )
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), [], []),
+    )
+    pipeline._apply_risk_modifications = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), []),
+    )
+    pipeline._ensure_correlation_matrix = MagicMock(return_value={})
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="ok",
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    ctx = RunContext.start("intra_check")
+    ctx.decision_id = f"{ctx.run_id}-dec-000099"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.positions = list(positions or [])
+    ctx.data_status = {"tech": "ok"}
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    parse_telemetry.reset()
+    try:
+        for model, key in drops:
+            parse_telemetry.record_dropped_item(model, key)
+        RiskStage(pipeline=pipeline).run(ctx)
+    finally:
+        parse_telemetry.reset()
+
+    pipeline.risk_manager.review.assert_called_once()
+    violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
+    return {v.rule: v for v in violations
+            if v.rule.startswith("analysis_parse_loss")}
+
+
+def _held(symbol):
+    from src.models import Position
+    return Position(
+        symbol=symbol, qty=10, avg_entry=100.0, current_price=101.0,
+        market_value=1010.0, unrealized_pnl=10.0, sector="Technology",
+    )
+
+
+def test_a_recovered_parse_drop_is_a_cost_note_not_a_missing_coverage_claim():
+    """2026-09-21 intra_check: META was held with stops at 14:15:45, its row
+    dropped at 14:16:35, META was re-analysed and re-sized by the constructor
+    at 14:17:31, and the risk stage still told the Risk Manager it was
+    "discarded at parse ... and absent from the book below". It was in the
+    book. The RM called the environment degraded on that sentence."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "META")],
+        decisions=[_buy("META", 5)],
+        positions=[_held("META")],
+    )
+    assert "analysis_parse_loss" not in found, (
+        "a symbol sitting in the book is not a parse LOSS; got "
+        f"{found.get('analysis_parse_loss')!r}"
+    )
+    note = found.get("analysis_parse_loss_recovered")
+    assert note is not None, "the paid round-trip must still be reported"
+    assert "META" in note.message
+    assert "absent" not in note.message.lower(), note.message
+    assert "RECOVERED" in note.message
+
+
+def test_a_genuinely_lost_symbol_keeps_the_violation_and_its_wording():
+    """The falsifiable clause survives for the case where it is true."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "NVDA")],
+        decisions=[_buy("MRVL", 5)],
+        positions=[],
+    )
+    assert "analysis_parse_loss_recovered" not in found
+    lost = found.get("analysis_parse_loss")
+    assert lost is not None
+    assert "NVDA" in lost.message
+    assert "are absent from the book below" in lost.message
+    assert lost.value == 1.0
+
+
+def test_an_unidentified_drop_is_always_treated_as_lost():
+    """`"?"` is a row whose own symbol could not be read — it can never be
+    matched against the book, and one entry may aggregate several malformed
+    rows, so it cannot be PROVEN recovered and must not be."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "?")],
+        decisions=[_buy("MRVL", 5)],
+        positions=[_held("MRVL")],
+    )
+    assert "analysis_parse_loss_recovered" not in found, (
+        "an unidentified row must never be reported as recovered"
+    )
+    lost = found.get("analysis_parse_loss")
+    assert lost is not None
+    assert "TechAnalysisResult:?" in lost.message
+    assert "could not be read" in lost.message
+
+
+def test_both_categories_render_together_when_both_occur():
+    """A run with one recovered and one lost drop reports both, separately."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "META"), ("TechAnalysisResult", "NVDA")],
+        decisions=[_buy("META", 5)],
+        positions=[],
+    )
+    lost = found.get("analysis_parse_loss")
+    note = found.get("analysis_parse_loss_recovered")
+    assert lost is not None and note is not None
+    assert "NVDA" in lost.message and "META" not in lost.message
+    assert "META" in note.message and "NVDA" not in note.message
+    assert "absent" not in note.message.lower()
+
+
+def test_reconciliation_never_mutates_the_global_parse_counter():
+    """Five research seats share one global `parse_telemetry` and the tech
+    seat runs twice per morning run, so the risk stage may only READ it.
+    Nothing here un-records a drop."""
+    from src.models import parse_telemetry
+    from src.pipeline_stages import _parse_loss_advisories, _reconcile_parse_loss
+
+    parse_telemetry.reset()
+    try:
+        parse_telemetry.record_dropped_item("TechAnalysisResult", "META")
+        before = parse_telemetry.dropped_snapshot()
+        _reconcile_parse_loss(parse_telemetry.dropped_snapshot(), {"META"})
+        _parse_loss_advisories(parse_telemetry.dropped_snapshot(), {"META"})
+        assert parse_telemetry.dropped_snapshot() == before
+        assert parse_telemetry.total_dropped() == 1
+    finally:
+        parse_telemetry.reset()
+
+
 def test_risk_parse_failure_is_agent_failure_not_rejection():
     """No validated RiskVerdict means the agent failed; it did not veto."""
     from src.agents.base import AgentResult

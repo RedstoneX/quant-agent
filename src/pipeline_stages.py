@@ -6493,6 +6493,132 @@ def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
     )
 
 
+#: The key `AnalysisParseTelemetry.record_dropped_item` records when the
+#: malformed row's own symbol could not be read out of it — see
+#: `src/agents/tech_analyst.py`, which passes `"?"` for a row whose `key` is
+#: not in the submitted set and for a dict with no readable `symbol`.
+UNIDENTIFIED_DROP_KEY = "?"
+
+
+def _reconcile_parse_loss(
+    dropped: dict[tuple[str, str], int],
+    book_symbols: set[str],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Split recorded parse drops into RECOVERED and GENUINELY LOST.
+
+    WHY THIS EXISTS. `parse_telemetry` records a drop the moment a row fails
+    to parse and NOTHING un-records it when the retry succeeds — deliberately,
+    because a recovered drop is otherwise invisible to the operator while
+    still costing a paid LLM round-trip (the reasoning is written out at
+    `src.models.AnalysisParseTelemetry.record_dropped_item` and at both record
+    sites in `src/agents/tech_analyst.py`). The counter is therefore right and
+    stays exactly as it is. What was WRONG was the sentence built from it: the
+    advisory told the Risk Manager every recorded drop was "absent from the
+    book below".
+
+    Measured, 2026-09-21 `intra_check`: META was held with stops at 14:15:45,
+    its row dropped at 14:16:35, META was re-analysed and re-sized by the
+    constructor at 14:17:31, and at 14:22:05 the risk stage still reported it
+    as discarded and absent. META was in the book. The Risk Manager then
+    called the environment degraded on a data-quality red flag that had
+    already repaired itself. The falsifiable clause is "absent from the book
+    below", not the count, and that clause is what licensed the downgrade.
+
+    So the reconciliation happens HERE, in the risk stage, and nowhere else:
+    this is the only place that holds the book the seat is actually shown.
+    The tech seat's own `analyses` dict proves a row PARSED; it does not prove
+    the Portfolio Manager ranked the name or that the constructor kept it.
+
+    `book_symbols` is the caller's set of symbols visible to the risk seat,
+    upper-cased. Anything recorded under `UNIDENTIFIED_DROP_KEY` is counted as
+    genuinely lost whatever the book contains: a row whose symbol could not be
+    read cannot be matched against anything, and one such entry may aggregate
+    several separate malformed rows, so it can never be PROVEN recovered.
+    Treating it as lost is the conservative direction — it keeps the advisory
+    over-reporting loss rather than under-reporting it.
+
+    READ-ONLY with respect to the telemetry. This function takes a snapshot
+    dict, mutates nothing global, and un-records nothing; the tech seat runs
+    twice per morning run and research runs five seats in one
+    `ThreadPoolExecutor`, all against the single global counter, so a writer
+    here would be a new cross-thread hazard. There is none.
+
+    Returns `(recovered, lost)`, each an ordered `{"Model:KEY": count}` map in
+    the same display shape `describe_dropped` uses.
+    """
+    recovered: dict[str, int] = {}
+    lost: dict[str, int] = {}
+    for (model, key), count in sorted(dropped.items()):
+        name = f"{model}:{key}"
+        if key != UNIDENTIFIED_DROP_KEY and str(key).upper() in book_symbols:
+            recovered[name] = count
+        else:
+            lost[name] = count
+    return recovered, lost
+
+
+def _parse_loss_advisories(
+    dropped: dict[tuple[str, str], int],
+    book_symbols: set[str],
+) -> list:
+    """The parse-loss advisories for this session, reconciled against the book.
+
+    Two entries at most, and they say different things because they ARE
+    different things:
+
+      * `analysis_parse_loss` — dropped and still not in the book. Unchanged
+        wording, unchanged severity, still the falsifiable "absent from the
+        book below" clause, because for these it is true.
+      * `analysis_parse_loss_recovered` — dropped, re-asked, and present in
+        the book the seat is reading. A cost-and-quality note, NOT a claim of
+        missing coverage, and it never says the symbol is absent.
+
+    Both are raised, so the operator keeps the cost signal the counter exists
+    to give and the seat is told the truth rather than told less.
+    """
+    from src.risk.rules import RiskViolation as _RV
+
+    recovered, lost = _reconcile_parse_loss(dropped, book_symbols)
+    out: list = []
+    if lost:
+        n_lost = sum(lost.values())
+        out.append(_RV(
+            rule="analysis_parse_loss",
+            message=(
+                f"{n_lost} item(s) were discarded at parse this session "
+                f"and are absent from the book below: {', '.join(lost)} "
+                f"(TechAnalysisResult = a candidate PM never saw; "
+                f"TargetPosition = a position PM asked for and the desk "
+                f"could not read). The plan was therefore built from, or "
+                f"reduced to, a SMALLER set than the seats produced — "
+                f"treat a thin list as possibly truncated rather than as a "
+                f"genuine absence of setups. An entry keyed "
+                f"`{UNIDENTIFIED_DROP_KEY}` is a row whose own symbol could "
+                f"not be read, so it cannot be matched against the book and "
+                f"is counted here."
+            ),
+            value=float(n_lost),
+            limit=0.0,
+        ))
+    if recovered:
+        n_recovered = sum(recovered.values())
+        out.append(_RV(
+            rule="analysis_parse_loss_recovered",
+            message=(
+                f"{n_recovered} item(s) failed to parse and were RECOVERED by "
+                f"a retry: {', '.join(recovered)}. These names ARE in the book "
+                f"below — this is a cost and data-quality note, not missing "
+                f"coverage, and no name is missing from the book because of "
+                f"it. Do not treat it as degraded input: each one cost an "
+                f"extra paid model round-trip, which is what is worth "
+                f"reporting."
+            ),
+            value=float(n_recovered),
+            limit=0.0,
+        ))
+    return out
+
+
 class RiskStage:
     """Hard filter → earnings cap → correlation → RM review → mods → re-filter.
 
@@ -6818,30 +6944,46 @@ class RiskStage:
         ctx.null_coerced_fields = parse_telemetry.snapshot()
         dropped = ctx.dropped_analyses
         if dropped:
-            from src.risk.rules import RiskViolation as _RV
-            names = ", ".join(
-                f"{model}:{key}" for (model, key), _n in sorted(dropped.items())
+            # RECONCILED against the book before anything is said about it.
+            # A drop whose retry succeeded leaves its counter standing for
+            # ever (by design — see `_reconcile_parse_loss`), and until
+            # 2026-09-23 that made the advisory assert "absent from the book
+            # below" about symbols sitting in the book. Measured on
+            # 2026-09-21: META, held with stops and re-sized by the
+            # constructor in the same run, was reported to the Risk Manager as
+            # discarded and absent, and the seat flagged the environment
+            # degraded on it.
+            #
+            # The book is what the risk seat is actually SHOWN: the positions
+            # in the prompt plus the orders proposed to it. Deliberately NOT
+            # `portfolio_decision.targets` — a target the constructor dropped
+            # never reaches the seat, so counting it as present would be the
+            # same false reassurance in the other direction — and deliberately
+            # not `analyses`, which proves only that a row parsed.
+            book_symbols = {
+                str(p.symbol).upper() for p in (rm_positions or [])
+                if getattr(p, "symbol", None)
+            } | {
+                str(d.symbol).upper()
+                for d in (portfolio_decision.decisions or [])
+                if getattr(d, "symbol", None)
+            }
+            recovered_names, lost_names = _reconcile_parse_loss(
+                dropped, book_symbols,
             )
-            n_dropped = sum(dropped.values())
-            rule_violations.append(_RV(
-                rule="analysis_parse_loss",
-                message=(
-                    f"{n_dropped} item(s) were discarded at parse this session "
-                    f"and are absent from the book below: {names} "
-                    f"(TechAnalysisResult = a candidate PM never saw; "
-                    f"TargetPosition = a position PM asked for and the desk "
-                    f"could not read). The plan was therefore built from, or "
-                    f"reduced to, a SMALLER set than the seats produced — "
-                    f"treat a thin list as possibly truncated rather than as a "
-                    f"genuine absence of setups."
-                ),
-                value=float(n_dropped),
-                limit=0.0,
-            ))
-            logger.error(
-                "Analysis parse loss reached the risk stage: %d item(s) — %s",
-                n_dropped, names,
-            )
+            rule_violations.extend(_parse_loss_advisories(dropped, book_symbols))
+            if lost_names:
+                logger.error(
+                    "Analysis parse loss reached the risk stage: %d item(s) "
+                    "— %s", sum(lost_names.values()), ", ".join(lost_names),
+                )
+            if recovered_names:
+                logger.warning(
+                    "Analysis parse loss RECOVERED by retry before the risk "
+                    "stage: %d item(s) — %s; present in the book, reported as "
+                    "a cost note rather than as missing coverage",
+                    sum(recovered_names.values()), ", ".join(recovered_names),
+                )
 
         nulled = ctx.null_coerced_fields
         if nulled:

@@ -1011,7 +1011,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # the symbol and left data_status["tech"] reading "ok".
                     # Surfaced by RiskStage as the `analysis_parse_loss`
                     # advisory, the same non-blocking seam `data_degraded` and
-                    # `pm_audit_step_missing` already use.
+                    # `pm_audit_step_missing` already use — or, when the retry
+                    # below recovers the symbol and it reaches the book, as the
+                    # `analysis_parse_loss_recovered` cost note instead. The
+                    # entry recorded here is never erased either way; the risk
+                    # stage decides which of the two it is, because it is the
+                    # only place that holds the book.
                     parse_telemetry.record_dropped_item("TechAnalysisResult", bad_symbol)
                     if bad_symbol in submitted:
                         fields = (
