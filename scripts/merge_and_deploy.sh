@@ -55,8 +55,30 @@ fi
 
 PR="${1:?usage: merge_and_deploy.sh <pr-number> | --deploy-only}"
 
+# Read the state BEFORE merging, so "I merged it" can be told apart from
+# "somebody merged it days ago". Without this, a mistyped PR number that
+# happens to name an already-merged PR sails through the check below and
+# deploys whatever origin/main holds right now — including work being
+# deliberately held back.
+was="$(gh pr view "${PR}" --json state -q .state)"
+if [[ "${was}" == "MERGED" ]]; then
+  echo "PR #${PR} was ALREADY merged before this run — refusing." >&2
+  echo "      Use --deploy-only if you meant to push origin/main to the box." >&2
+  exit 1
+fi
+
 echo "==> merging PR #${PR}"
-gh pr merge "${PR}" --squash --delete-branch
+# NO `--delete-branch`. The repository already has `delete_branch_on_merge`
+# enabled, so GitHub removes the head branch itself and the flag adds only a
+# LOCAL delete — which fails whenever any worktree still has that branch
+# checked out, the normal state here because agents leave worktrees behind.
+# Under `set -euo pipefail` that failure killed the run AFTER the squash had
+# landed on GitHub but BEFORE `deploy` ran, so origin/main moved and the box
+# silently stayed behind while the output read like a failure. Dropping the
+# redundant flag removes that abort at its source and keeps gh's exit status
+# meaning something, rather than swallowing every gh error to tolerate one.
+# Stale local branches are cleaned up separately, not from the deploy path.
+gh pr merge "${PR}" --squash
 
 # Verify rather than assume. A squash-merge can be refused (branch behind,
 # a check still pending) and gh's exit status is not a reliable proxy.
@@ -67,4 +89,20 @@ if [[ "${state}" != "MERGED" ]]; then
 fi
 
 deploy
+
+# `deploy` pins the box to whatever origin/main is at the moment it looks,
+# which is a moving target: branch protection is off and sessions merge in
+# parallel, so another PR can land between this merge and that checkout.
+# Assert that THIS PR's merge commit is actually an ancestor of what the box
+# now runs, so the closing line cannot claim a deploy of code that did not
+# reach it.
+merge_sha="$(gh pr view "${PR}" --json mergeCommit -q .mergeCommit.oid)"
+deployed_sha="$(sudo -n git -C "${DEPLOY_ROOT}" rev-parse HEAD)"
+sudo -n git -C "${DEPLOY_ROOT}" fetch -q origin "${merge_sha}" 2>/dev/null || true
+if ! sudo -n git -C "${DEPLOY_ROOT}" merge-base --is-ancestor \
+       "${merge_sha}" "${deployed_sha}" 2>/dev/null; then
+  echo "PR #${PR} merged as ${merge_sha}, but the box is on ${deployed_sha}," >&2
+  echo "      which does not contain it. Re-run --deploy-only." >&2
+  exit 1
+fi
 echo "==> PR #${PR} merged AND deployed"
