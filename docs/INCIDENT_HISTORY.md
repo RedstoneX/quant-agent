@@ -22,6 +22,56 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the report told the owner the desk had no reason, seven-tenths of a second after the desk recorded sixty-nine of them
+
+**In plain words:** the morning message listed every stock the desk looked at
+and did not trade, and against each one it said "the desk did not record why".
+That was false. The desk had recorded a reason for every single name, and had
+written a line into its own log saying so, less than a second before the
+message was built. The reasons existed, were durable, and were read by
+nothing.
+
+**What the reader actually lost.** Not just an explanation. Among those
+sixty-nine names, seven were passed on because the book was FULL — 199.1% of
+a 2.0x gross-exposure ceiling with about $92 of headroom left on roughly
+$10,000 of equity — and thirty-nine were passed on because the chart offered
+no level to enter against or be proved wrong by. Those are completely
+different facts. "We had no room" and "we judged it and said no" were rendered
+as the same sentence, so the owner could not tell a desk that was out of
+capacity from a desk that disliked every idea it saw.
+
+**The cause, and why it was invisible.** The per-candidate accounting written
+in September (the change that MADE the seat account for every candidate it
+dropped) persists one durable row per name into the forensic evidence table.
+The report's snapshot reader walked that same table and admitted exactly one
+kind of row from it — a constructor block — and dropped everything else on the
+floor. So the renderer fell back to the only source it had, the portfolio
+manager's HOLD orders, which by definition say nothing about a name the desk
+does not hold. The producing side and the reading side were each correct and
+had never been joined. Nothing failed, nothing logged an error, and the
+fallback sentence was written to be honest about a gap that was not the gap it
+was describing.
+
+**The second half, found while fixing the first.** The desk runs an
+opportunity-cost pre-check every session: is the book full, and if so, does
+any new candidate beat something already held by enough to be worth selling
+for? Its commonest answer — the book is full and nothing outranked a holding —
+returned silently. No log line, no durable row, nothing in any message. A
+session that made the comparison was indistinguishable from one that never ran
+it, which is how a normal, healthy full book came to read to the owner as the
+desk having simply stopped doing anything. The owner's words: "Yes portfolio
+is full. But we're still reviewing things, which is how we built it. Report
+has to show that properly."
+
+**What would catch it next time.** A durable record with no reader is the
+shape to watch for. Both halves here were written correctly and consumed by
+nothing, and in both cases the message that replaced them asserted something
+stronger than "I do not know" — the first claimed the desk had no reason, the
+second implied there had been no comparison. A fallback sentence must be
+conditioned on the FACT being absent, never on the renderer being unable to
+reach it; those two conditions look identical from inside the renderer and
+mean opposite things to the reader.
+
 ### 2026-09-23 — the desk told the owner to go and place a stop by hand, then placed it itself fifteen minutes later and never said so
 
 **In plain words:** forty-three seconds after the market opened, the desk sent
