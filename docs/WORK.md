@@ -399,7 +399,7 @@ DONE WHEN:
 DONE WHEN:
   - [ ] a test flags prompt-prose vs code drift
 
-**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back. Also unmeasured in production: whether 15 min is the right cooldown and 14/day the right allowance — both read off the intra tick, neither observed yet.
+**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back. Also unmeasured: the 15-min cooldown is bracketed by the longest real run (9.8 min) and the smallest paid-run gap (90 min), and the 5/day allowance is one per paid run — neither has met a real occurrence yet. Neither number is covered by the number-ledger check.
 DONE WHEN:
   - [ ] a self-clear reaches the owner on the same surface the suspension did
   - [ ] cooldown and allowance re-read against a real occurrence

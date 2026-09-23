@@ -1999,6 +1999,19 @@ def _age_latch(path: str, minutes: float) -> None:
         )
 
 
+def _utc_stamp_on_et_day(et_day: str) -> str:
+    """A SQLite-shaped UTC timestamp landing at noon ET on `et_day`.
+
+    Noon, not midnight, so the conversion cannot land on the adjacent ET
+    day whatever the offset.
+    """
+    from datetime import time as _time
+    noon_et = datetime.combine(
+        datetime.fromisoformat(et_day).date(), _time(12, 0), tzinfo=_ET,
+    )
+    return noon_et.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _day_row(path: str) -> tuple:
     with sqlite3.connect(path) as conn:
         return conn.execute(
@@ -2538,3 +2551,162 @@ def test_the_2026_09_22_outage_no_longer_stops_the_desk(tmp_path):
         agent_name="position_reviewer", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
+
+
+# --- adversary round 1 (2026-09-23): holes found in the first draft -------
+
+
+def test_a_latch_that_outlived_midnight_checks_the_day_it_was_stamped_on(tmp_path):
+    """The hole the adversary found, and the exact shape of the incident.
+
+    The 2026-09-22 latch ran 15:17 UTC to 00:33 UTC the next day. Today's
+    accounting row is seeded fresh with zero unknown rows, so a self-clear
+    that looked only at today would wave the latch through while its real
+    unproven rows sat on yesterday, unexamined.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    today, _, _ = _et_day_and_utc_bounds()
+    yesterday = (
+        datetime.fromisoformat(today) - timedelta(days=1)
+    ).date().isoformat()
+    with sqlite3.connect(path) as conn:
+        # Move the whole incident onto yesterday, then seed a clean today --
+        # what the next morning's run actually finds.
+        conn.execute("UPDATE llm_budget_days SET day=?", (yesterday,))
+        conn.execute("UPDATE llm_budget_sessions SET day=?", (yesterday,))
+        conn.execute(
+            "INSERT INTO llm_budget_days(day, unknown_cost_rows, "
+            "failed_call_unknown_rows, costs_exact) VALUES (?, 0, 0, 1)",
+            (today,),
+        )
+        # Yesterday also carries one row of ANOTHER provenance, so the
+        # forgiveness is not owed.
+        conn.execute(
+            "UPDATE llm_budget_days SET unknown_cost_rows=unknown_cost_rows+1 "
+            "WHERE day=?", (yesterday,),
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at=?",
+            (_utc_stamp_on_et_day(yesterday),),
+        )
+
+    day = today
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        cleared = circuit._auto_clear_transient_latch_locked(conn, current_day=day)
+        conn.commit()
+
+    assert cleared is False
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT suspended FROM llm_circuit_state"
+        ).fetchone()[0] == 1
+
+
+def test_a_clean_overnight_latch_clears_and_forgives_both_days(tmp_path):
+    """Same span, nothing of another provenance: it expires, and yesterday's
+    unproven flags are cleared too -- not left to gate tomorrow."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    today, _, _ = _et_day_and_utc_bounds()
+    yesterday = (
+        datetime.fromisoformat(today) - timedelta(days=1)
+    ).date().isoformat()
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE llm_budget_days SET day=?", (yesterday,))
+        conn.execute("UPDATE llm_budget_sessions SET day=?", (yesterday,))
+        conn.execute(
+            "INSERT INTO llm_budget_days(day, unknown_cost_rows, "
+            "failed_call_unknown_rows, costs_exact) VALUES (?, 0, 0, 1)",
+            (today,),
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at=?",
+            (_utc_stamp_on_et_day(yesterday),),
+        )
+
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        cleared = circuit._auto_clear_transient_latch_locked(
+            conn, current_day=today,
+        )
+        conn.commit()
+
+    assert cleared is True
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT day, unknown_cost_rows, failed_call_unknown_rows, "
+            "costs_exact FROM llm_budget_days ORDER BY day"
+        ).fetchall()
+    assert rows == [(yesterday, 0, 0, 1), (today, 0, 0, 1)]
+
+
+def test_a_corrupt_failed_call_counter_refuses_instead_of_escalating(tmp_path):
+    """A subset counter above its own total is corruption.
+
+    It must block the self-clear and hand the day to an operator -- NOT
+    raise, which `_validate_accounting_invariants` would have escalated into
+    the durable emergency latch, the strictest stop in the system. A fix for
+    spurious hard latches must not add one.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE llm_budget_days SET failed_call_unknown_rows=99")
+
+    _age_latch(path, 600)
+
+    state = circuit.status()  # must not raise
+    assert state["suspended"] is True
+    assert state["trigger_code"] == "failed_call_unknown_cost"
+
+
+def test_the_self_clear_leaves_the_session_row_as_the_record(tmp_path):
+    """Strictly weaker than the operator path, on purpose.
+
+    An earlier draft flipped `call_failed` sessions back to `active` and
+    marked them exact. That enforced nothing, and made the dashboard's
+    per-run cost report a by-construction-unknown figure as exact.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+
+    _age_latch(path, 16)
+
+    assert circuit.status()["suspended"] is False
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT status, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id='run-latched'"
+        ).fetchone()
+    # `_trip_locked` already moved it to 'suspended'; either way the point
+    # is that the self-clear does not rewrite it, exactly as `reset` does not.
+    assert row == ("suspended", 0)
+
+
+def test_the_allowance_is_one_per_scheduled_paid_run_not_per_intra_tick(tmp_path):
+    """`intra_check` makes no paid call -- `src/trading_calendar.py` says so
+    in the window table -- so it cannot be the instrument for anything about
+    paid-call failures. The allowance counts the sessions that DO call a
+    model."""
+    from src.config import LLMCostCircuitConfig
+    from src.trading_calendar import SESSION_WINDOWS
+
+    paid = [m for m in SESSION_WINDOWS if m != "intra_check"]
+    assert LLMCostCircuitConfig().max_transient_latch_auto_clears_per_day == len(paid)
+    assert "intra_check" not in paid
+    assert len(paid) == 5
+
+
+def test_the_cooldown_sits_between_its_two_measured_bounds(tmp_path):
+    """Lower bound: the longest real paid run measured on the production DB
+    (9.8 min), below which a latch could expire mid-run. Upper bound: the
+    smallest gap between consecutive scheduled paid runs (90 min, 08:00 to
+    09:30), at or above which a second paid run can be lost."""
+    from src.config import LLMCostCircuitConfig
+
+    cooldown = LLMCostCircuitConfig().transient_latch_cooldown_minutes
+    assert 9.8 < cooldown < 90.0

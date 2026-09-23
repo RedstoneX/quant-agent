@@ -8,6 +8,18 @@ holds cannot be manually reset: sessions remain isolated and ET-day holds
 rearm automatically after exact rollover checks. ``reset`` is reserved for a
 hard accounting/infrastructure latch, requires an auditable operator reason,
 and never erases settled spend.
+
+One hard latch no longer needs ``reset`` at all: since 2026-09-23 a latch
+raised by a provider call that FAILED with an unprovable cost expires on its
+own once its cooldown passes (see `_auto_clear_transient_latch_locked` in
+`src/cost_circuit.py` for the full guard list). Because ``status`` and
+``check`` both go through the circuit's own authorization boundary, either of
+them can be the thing that OBSERVES an expiry that was already due, and the
+`auto_reset` event will then carry this script's run id. That is an
+observation, not an operator action: nothing about running this utility makes
+a latch expire earlier than it would have. Every other hard latch -- real
+unmeasured spend, an accounting-integrity fault, the durable infrastructure
+latch -- still requires ``reset`` and a reason.
 """
 
 from __future__ import annotations

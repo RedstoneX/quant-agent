@@ -1607,16 +1607,18 @@ class StorageConfig(BaseModel):
     db_path: str
 
 
-def _intra_check_tick_count() -> int:
-    """How many intraday control ticks one trading day actually has.
+def _paid_run_count() -> int:
+    """How many scheduled runs in a trading day actually call a model.
 
-    Read from the same canonical window `src/scheduler.py` builds its
-    OrTrigger from, so a future widening of the session propagates here
-    instead of leaving a hand-copied number behind. 09:30-16:00 ET at the
-    scheduler's 30-minute spacing is 14 ticks.
+    Every canonical session window except `intra_check`, which
+    `src/trading_calendar.py` labels "no LLM" in the window table itself --
+    it is the deterministic P&L circuit-breaker tick and makes no paid
+    call, so it cannot be the instrument for anything about paid-call
+    failures. Counted from the same table the scheduler reads, not copied,
+    so adding a session propagates. Currently 5: earnings_preprocess,
+    morning, midday, close, evening.
     """
-    lo_min, hi_min = SESSION_WINDOWS["intra_check"]
-    return len(range(lo_min, hi_min + 1, 30))
+    return len([m for m in SESSION_WINDOWS if m != "intra_check"])
 
 
 class LLMCostCircuitConfig(BaseModel):
@@ -1673,22 +1675,30 @@ class LLMCostCircuitConfig(BaseModel):
     # A hard latch raised by a FAILED provider call whose cost could not be
     # proven used to wait for a human. On 2026-09-22 that cost the desk the
     # close and evening runs and nine hours of refused analysis on $0.7883 of
-    # a $2.75 day. Both numbers below are read off the desk's OWN schedule,
-    # not chosen: `src/scheduler.py` runs the intraday control every 30
-    # minutes across SESSION_WINDOWS["intra_check"].
+    # a $2.75 day.
     #
-    # Half a tick. Long enough that the run which tripped the latch, and its
-    # whole retry/failover loop, is over; short enough that the latch is
-    # always clear before the NEXT 30-minute tick, so a transient provider
-    # blip costs exactly one intraday control and never two.
+    # THE COOLDOWN IS BRACKETED BY TWO MEASUREMENTS, not picked:
+    #   lower bound 9.8 min -- the longest real paid run on the production
+    #     DB [measured 2026-09-23 over 2026-09-15..21; the six 2026-08-31
+    #     rows that look longer all end at the same 19:02:03 operator reset,
+    #     which bumped their `updated_at`, and are excluded for that reason].
+    #     Below this the latch could expire while the run that tripped it is
+    #     still going.
+    #   upper bound 90 min -- the smallest gap between consecutive scheduled
+    #     PAID runs, 08:00 earnings_preprocess to 09:30 morning [measured,
+    #     config/settings.yaml]. At or above it a second paid run can be lost.
+    # 15.0 sits just inside the lower bound with ~1.5x margin, because the
+    # desk wants the latch back as early as is safe. An adversary pass on
+    # 2026-09-23 correctly rejected the first derivation, which came off the
+    # 30-minute intra_check tick -- a job that makes no paid calls at all.
     transient_latch_cooldown_minutes: float = Field(default=15.0, gt=0, allow_inf_nan=False)
-    # One forgiveness per intraday control tick in the canonical session
-    # window (14 ticks for 09:30-16:00 ET). A fault that outlasts every tick
-    # of a trading day is not a transient blip, so the next occurrence latches
-    # durably and waits for a human -- which also bounds how many
-    # unproven-cost calls a single day can forgive without one.
+    # One forgiveness per scheduled PAID run in a trading day. A fault
+    # recurring past that has outlasted every paid run of the day and is not
+    # a transient blip, so the next occurrence latches durably and waits for
+    # a human -- which is also what bounds how many unproven-cost calls a
+    # single day can forgive without one.
     max_transient_latch_auto_clears_per_day: int = Field(
-        default_factory=lambda: _intra_check_tick_count(), ge=1,
+        default_factory=lambda: _paid_run_count(), ge=1,
     )
     # === OpenRouter pricing staleness grace window (SPOF fix, 2026-08-28) ===
     # Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a

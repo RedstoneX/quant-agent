@@ -84,13 +84,26 @@ before anything expires: every unproven row on the day must be one this
 circuit itself booked as a failed call; settled spend must still be under
 both caps; a cooldown must have passed; and the day's allowance of
 self-clears must not be spent, so a fault that keeps recurring stops being
-treated as transient and goes back to waiting for a person.
+treated as transient and goes back to waiting for a person. The unproven-row
+check runs against every day the shutdown spans, not just today — the
+2026-09-22 one crossed midnight, and the next morning's accounting starts
+clean, so checking only the current day would have waved through a shutdown
+whose actual unproven rows sat on the day before.
 
-**Both numbers are read off the desk's own schedule, not chosen.** The
-intraday control runs every 30 minutes. The cooldown is half of that, so a
-blip costs exactly one intraday tick and never the following one. The daily
-allowance is the number of intraday ticks in a session (14) — one
-forgiveness per control, and the fifteenth is not a blip.
+**Both numbers are read off measurements, and the first attempt at reading
+them was wrong.** The first draft took both off the intraday control's
+30-minute cadence. An adversary review pointed out that the intraday
+control is the one scheduled job that explicitly makes no model calls at
+all, so it cannot be the instrument for anything about model-call failures
+— and that the runs actually lost that day, the close and the evening, are
+not intraday ticks. Re-derived: the cooldown is bracketed below by the
+longest real paid run on the production database (9.8 minutes) so a latch
+cannot expire while the run that tripped it is still going, and above by
+the smallest gap between two scheduled paid runs (90 minutes, the 08:00 to
+the 09:30) so a second run is never lost; 15 minutes sits just inside the
+lower bound, because the desk wants to be back as early as is safe. The
+daily allowance is one forgiveness per scheduled run that actually calls a
+model — five.
 
 **What a self-clear does not do:** it moves no money and raises no cap.
 Recorded spend is left exactly as it stands, the caps are only read, and
