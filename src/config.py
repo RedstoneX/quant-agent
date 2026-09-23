@@ -11,6 +11,7 @@ from src.agents.base import (
     provider_attempt_budget,
     resolve_provider,
 )
+from src.trading_calendar import SESSION_WINDOWS
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
     REWARD_RISK_FLOOR,
@@ -1606,6 +1607,18 @@ class StorageConfig(BaseModel):
     db_path: str
 
 
+def _intra_check_tick_count() -> int:
+    """How many intraday control ticks one trading day actually has.
+
+    Read from the same canonical window `src/scheduler.py` builds its
+    OrTrigger from, so a future widening of the session propagates here
+    instead of leaving a hand-copied number behind. 09:30-16:00 ET at the
+    scheduler's 30-minute spacing is 14 ticks.
+    """
+    lo_min, hi_min = SESSION_WINDOWS["intra_check"]
+    return len(range(lo_min, hi_min + 1, 30))
+
+
 class LLMCostCircuitConfig(BaseModel):
     """Fail-closed limits for every paid model request.
 
@@ -1655,6 +1668,27 @@ class LLMCostCircuitConfig(BaseModel):
     max_provider_attempts_per_call: int = Field(
         default_factory=lambda: provider_attempt_budget(failover_available=True),
         ge=1,
+    )
+    # === Transient-latch self-clear (Defect B, 2026-09-22) ===
+    # A hard latch raised by a FAILED provider call whose cost could not be
+    # proven used to wait for a human. On 2026-09-22 that cost the desk the
+    # close and evening runs and nine hours of refused analysis on $0.7883 of
+    # a $2.75 day. Both numbers below are read off the desk's OWN schedule,
+    # not chosen: `src/scheduler.py` runs the intraday control every 30
+    # minutes across SESSION_WINDOWS["intra_check"].
+    #
+    # Half a tick. Long enough that the run which tripped the latch, and its
+    # whole retry/failover loop, is over; short enough that the latch is
+    # always clear before the NEXT 30-minute tick, so a transient provider
+    # blip costs exactly one intraday control and never two.
+    transient_latch_cooldown_minutes: float = Field(default=15.0, gt=0, allow_inf_nan=False)
+    # One forgiveness per intraday control tick in the canonical session
+    # window (14 ticks for 09:30-16:00 ET). A fault that outlasts every tick
+    # of a trading day is not a transient blip, so the next occurrence latches
+    # durably and waits for a human -- which also bounds how many
+    # unproven-cost calls a single day can forgive without one.
+    max_transient_latch_auto_clears_per_day: int = Field(
+        default_factory=lambda: _intra_check_tick_count(), ge=1,
     )
     # === OpenRouter pricing staleness grace window (SPOF fix, 2026-08-28) ===
     # Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a
