@@ -10,6 +10,7 @@ import {
 } from "@tremor/react";
 import { AccountResponse, MacroBroaderContext, PositionItem } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
+import { marginInterestDailyLabel } from "./MarginInterestPanel";
 import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
 
@@ -146,6 +147,17 @@ export function HeroBand({
   const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
 
+  // Total P&L since the board's own tracked start (server-computed,
+  // src/api/routes_live.py — see AccountResponse.total_pnl) and margin
+  // interest (src/margin_interest.py via account.margin_interest) — the
+  // two owner-requested top-left figures that were missing entirely
+  // (owner, 2026-09-23): day P&L and unrealized already showed above.
+  // `null` renders as "—" in both spots rather than a fabricated number.
+  const totalPnlLabel = account.total_pnl === null
+    ? "Total P&L: —"
+    : `Total ${fmtMoney(account.total_pnl)} (${fmtPct(account.total_pnl_pct)})${account.total_pnl_since ? ` since ${account.total_pnl_since}` : ""}`;
+  const marginInterest = marginInterestDailyLabel(account.margin_interest);
+
   if (collapsed) {
     return (
       <div className={`${isPanel ? "" : "mx-3 mt-1 "}flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 overflow-x-hidden rounded-lg border border-border bg-panel px-3 py-1`}>
@@ -171,6 +183,15 @@ export function HeroBand({
         )}
         <span className={`font-mono text-[length:var(--fs-body)] font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
           {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
+        </span>
+        <span
+          className={`font-mono text-[length:var(--fs-meta)] tabular-nums ${pnlClass(account.total_pnl)}`}
+          title={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+        >
+          {totalPnlLabel}
+        </span>
+        <span className="text-[length:var(--fs-meta)] text-dim" title={marginInterest.note}>
+          {marginInterest.text}
         </span>
         {liquidity && (
           <span className="text-[length:var(--fs-meta)] text-dim" title="Cash plus the parked sweep vehicle — the figure sizing uses">
@@ -228,6 +249,17 @@ export function HeroBand({
             {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
           </span>
           <span className={`font-mono tabular-nums ${pnlClass(unrealized)}`}>{fmtMoney(unrealized)} unrealized</span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
+          <span
+            className={`font-mono font-semibold tabular-nums ${pnlClass(account.total_pnl)}`}
+            title={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+          >
+            {totalPnlLabel}
+          </span>
+          <span className="text-dim" title={marginInterest.note}>
+            {marginInterest.text}
+          </span>
         </div>
         {history.length > 1 && (
           <SparkAreaChart

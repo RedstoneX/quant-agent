@@ -1110,7 +1110,11 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
 
     # --- scan-first sections: VST blocked (desk-side, insufficient cash),
     # AVGO looked at and passed (neutral) ---
-    assert "<b>❌ BLOCKED / FAILED</b>" in msg
+    # Heading renamed 2026-09-23: refusals the desk made ON PURPOSE go
+    # under "🚫 NOT TAKEN", faults keep "❌ FAILED". `insufficient_cash` is
+    # a fault — "there was no cash" is not a decision — so this row stays
+    # under the loud heading and the header word stays FAILED.
+    assert "<b>❌ FAILED</b>" in msg
     assert "VST (Vistra Corp)" in msg
     assert "Blocked by the desk — insufficient cash: funding sale pending" in msg
     assert "<b>👀 LOOKED AT, NO TRADE</b>" in msg
@@ -1764,12 +1768,12 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     # --- section placement: DONE, then BLOCKED, then LOOKED AT, then
     # DETAILS, then the footer — in that order, each present exactly once ---
     for marker in (
-        "<b>✅ DONE</b>", "<b>❌ BLOCKED / FAILED</b>",
+        "<b>✅ DONE</b>", "<b>❌ FAILED</b>",
         "<b>👀 LOOKED AT, NO TRADE</b>", "<b>DETAILS</b>", "🧾 AI cost",
     ):
         assert msg.count(marker) == 1, f"{marker!r} should appear exactly once"
     done_idx = msg.index("<b>✅ DONE</b>")
-    blocked_idx = msg.index("<b>❌ BLOCKED / FAILED</b>")
+    blocked_idx = msg.index("<b>❌ FAILED</b>")
     looked_idx = msg.index("<b>👀 LOOKED AT, NO TRADE</b>")
     details_idx = msg.index("<b>DETAILS</b>")
     footer_idx = msg.index("🧾 AI cost")
@@ -2621,3 +2625,322 @@ def test_a_run_with_no_rotation_row_renders_no_rotation_block(
     """Every session before this shipped, and any replayed stored report."""
     db = _make_db(tmp_path, monkeypatch)
     assert "Rotation check" not in _morning(db, "run-none", monkeypatch)
+
+
+# ===========================================================================
+# The morning message budget, and headers that tell a refusal from a failure
+# (2026-09-23). Both defects were measured on the production database:
+#
+#   * Every morning message built since the scan-first redesign has rendered
+#     its DETAILS block EMPTY — `<blockquote expandable></blockquote>` — so
+#     the owner has never seen the desk's reasoning chain. Measured built
+#     lengths against a 4,000-char send budget: 7,772 (2026-09-21), 6,799
+#     (09-22), 7,052 (09-23), and 9,876 replaying 09-23's run through
+#     post-#600 code. The candidate list took the whole budget first.
+#   * "🔵 MORNING · 9:36 AM ET · FAILED" on 2026-09-22, whose only two
+#     blocks were the 200-session history pre-check refusing DRAM and CBRS
+#     while the PM's own verdict was `no_trades`.
+# ===========================================================================
+
+#: Today's real run shape (run-fccb2026, 2026-09-23, read from the
+#: production database): 69 analysed candidates, 12 of them positions the
+#: desk held and left alone, and the PM's grounds spread over the codes
+#: below in these proportions. Reproduced as a fixture so the budget is
+#: tested against the session the desk actually has, not a toy one.
+_REAL_MORNING_GROUNDS = [
+    ("no_readable_structure", 39),
+    ("held_unchanged", 12),
+    ("no_deployment_headroom", 7),
+    ("evidence_conflicts", 5),
+    ("evidence_insufficient", 4),
+    ("evidence_stale", 1),
+    ("other", 1),
+]
+
+
+def _full_morning_session(db, run):
+    """A morning run the size of a real one — 69 analysed candidates, each
+    with the chart seat's own rationale and the PM's own recorded ground,
+    12 held positions, and a full reasoning chain."""
+    symbols = [f"SY{index:02d}" for index in range(69)]
+    index = 0
+    for code, count in _REAL_MORNING_GROUNDS:
+        for _ in range(count):
+            symbol = symbols[index]
+            index += 1
+            _evidence(
+                db, run, "tech_analyst", "analysis",
+                {
+                    "symbol": symbol,
+                    "rating": "neutral" if index > 20 else "buy",
+                    "conviction": "low" if index > 20 else "medium",
+                    "risk_reward": 1.4,
+                    # The measured mean length of a real chart-seat
+                    # rationale on this run is ~100 characters.
+                    "reasoning": (
+                        "Earnings and macro are bullish, but technical is "
+                        "neutral inside consolidation with no breakout yet."
+                    ),
+                },
+                symbol=symbol,
+            )
+            _evidence(
+                db, run, "pipeline", "pipeline_event",
+                {
+                    "stage": "portfolio_manager", "refusal": code,
+                    "note": (
+                        "The seat recorded its own specifics for this name "
+                        "at roughly this length in the real run."
+                    ),
+                },
+                symbol=symbol,
+            )
+    for symbol in symbols[:12]:
+        _insert_position(db, symbol)
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {
+            "portfolio_view": (
+                "Hold the book unchanged today. The account is already near "
+                "the 2.0x gross ceiling, net long in a high-confidence "
+                "risk-on regime, and has no idle-cash problem; the right "
+                "action is to preserve protected winners and shorts rather "
+                "than force a new order with minimal gross headroom."
+            ),
+        },
+    )
+    _evidence(
+        db, run, "risk_manager", "verdict",
+        {"approved": True, "reason_category": "clean"},
+    )
+    _agent_log(db, run, "portfolio_manager", "no trades", cost=0.21)
+    return symbols
+
+
+def test_full_morning_message_fits_and_keeps_the_reasoning(tmp_path, monkeypatch):
+    """A message built from a real-sized morning session fits inside the
+    send budget WITH the reasoning block present and non-empty.
+
+    This is the defect stated as a test: before the budget was ordered, the
+    candidate list was rendered first, took all 4,000 characters, and
+    `_wrap_details` computed a negative budget — so the PM's reasoning, the
+    risk verdict and the execution record rendered as an empty blockquote
+    every single day while the list of names the desk had already declined
+    survived in full.
+    """
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-full-morning"
+    symbols = _full_morning_session(db, run)
+
+    _pin_clock(monkeypatch, datetime(2026, 9, 23, 9, 37, tzinfo=_ET))
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "no_trades", "run_id": run}, 120.0,
+    )
+    assert msg is not None
+
+    # --- it fits, as the payload actually put on the wire ---
+    notifier = TelegramNotifier(
+        token="t", chat_id="c", mission_control_url="https://example.invalid/mc",
+    )
+    sent = notifier._build_payload(msg, preserve_structural_markup=True)["text"]
+    assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
+    # The tag-blind emergency clip in `_build_payload` is the last-resort
+    # net for a message this module failed to size. It must not fire.
+    assert "[...truncated]" not in sent
+
+    # --- the reasoning is PRESENT and NON-EMPTY, which is the whole point ---
+    assert "<blockquote expandable></blockquote>" not in msg
+    assert "PM view (this check): Hold the book unchanged today." in msg
+    details = msg[msg.index("<b>DETAILS</b>"):]
+    assert len(details) > 400, "DETAILS must carry real content, not a stub"
+
+    # --- and no candidate was lost to make room ---
+    looked = msg[msg.index("<b>👀 LOOKED AT, NO TRADE</b>"):msg.index("<b>DETAILS</b>")]
+    for symbol in symbols:
+        assert symbol in looked, f"{symbol} vanished from the candidate list"
+    for _code, count in _REAL_MORNING_GROUNDS:
+        assert f"▪ {count} — " in looked or count == 1
+
+
+def test_reasoning_survives_when_the_candidate_list_is_huge(tmp_path, monkeypatch):
+    """The ordering guarantee, isolated: whatever the candidate list costs,
+    the reasoning block is not what gets dropped."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-huge-list"
+    _full_morning_session(db, run)
+    # Three times the real candidate count, all on one ground.
+    for index in range(200):
+        symbol = f"ZZ{index:03d}"
+        _evidence(
+            db, run, "tech_analyst", "analysis",
+            {"symbol": symbol, "rating": "neutral", "conviction": "low",
+             "reasoning": "No clean setup." * 10},
+            symbol=symbol,
+        )
+        _evidence(
+            db, run, "pipeline", "pipeline_event",
+            {"stage": "portfolio_manager", "refusal": "no_readable_structure"},
+            symbol=symbol,
+        )
+
+    _pin_clock(monkeypatch, datetime(2026, 9, 23, 9, 37, tzinfo=_ET))
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "no_trades", "run_id": run}, 120.0,
+    )
+    assert msg is not None
+    assert "PM view (this check): Hold the book unchanged today." in msg
+    assert "<blockquote expandable></blockquote>" not in msg
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    sent = notifier._build_payload(msg, preserve_structural_markup=True)["text"]
+    assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
+
+
+def test_correct_refusals_do_not_read_failed(tmp_path, monkeypatch):
+    """2026-09-22's morning message read "🔵 MORNING · 9:36 AM ET · FAILED"
+    when its only two blocks were the 200-session history pre-check refusing
+    two young listings and the PM's own verdict was `no_trades`. The risk
+    system working correctly is not a failed session."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-refusals-only"
+    for symbol, detail in (
+        ("DRAM", "only 118 completed session(s) of history against the "
+                 "200-session window the analyst's own trend reference needs."),
+        ("CBRS", "only 89 completed session(s) of history against the "
+                 "200-session window the analyst's own trend reference needs."),
+    ):
+        _evidence(
+            db, run, "pipeline", "pipeline_event",
+            {"stage": "deterministic_gate", "outcome": "blocked",
+             "reason": "constructor_refused", "refusal": "insufficient_history",
+             "detail": detail},
+            symbol=symbol,
+        )
+    _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
+
+    _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "no_trades", "run_id": run}, 60.0,
+    )
+    assert msg is not None
+    header = msg.splitlines()[0]
+    assert header.endswith("· NO TRADE"), header
+    assert "FAILED" not in msg
+    # ...and the section heading must not call it a failure either.
+    assert "<b>🚫 NOT TAKEN</b>" in msg
+    assert "DRAM" in msg and "CBRS" in msg
+
+    # The gross-exposure ceiling and the minimum trade size are the same
+    # kind of state and must read the same way.
+    for refusal in ("gross_exposure_ceiling_refused",
+                    "delta_below_min_trade_weight",
+                    "sector_crowding_leaves_below_min_order"):
+        folder = tmp_path / refusal
+        folder.mkdir()
+        db2 = _make_db(folder, monkeypatch)
+        run2 = f"run-{refusal}"
+        _evidence(
+            db2, run2, "pipeline", "pipeline_event",
+            {"stage": "deterministic_gate", "outcome": "blocked",
+             "reason": "constructor_refused", "refusal": refusal,
+             "detail": "the desk declined this on a standing rule."},
+            symbol="FLNC",
+        )
+        _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
+        other = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run2}, 60.0,
+        )
+        assert other is not None
+        assert other.splitlines()[0].endswith("· NO TRADE"), refusal
+        assert "FAILED" not in other, refusal
+
+
+def test_a_session_that_genuinely_broke_still_reads_failed(tmp_path, monkeypatch):
+    """The other half of the rule, and the one that must not regress: a real
+    failure stays loud. `broker_rejected` is not on the deliberate-refusal
+    allowlist, an unrecognised code is never on it, and a constructor block
+    with no reason written down cannot be told from a breakage, so all three
+    keep the loud word."""
+    cases = {
+        "broker": ("execution", "execution_skip",
+                   {"symbol": "NET", "reason": "broker_rejected",
+                    "detail": "the broker turned the order down"}),
+        "unknown": ("execution", "execution_skip",
+                    {"symbol": "NET", "reason": "a_code_added_next_year",
+                     "detail": "something new happened"}),
+        "unrecorded": ("pipeline", "pipeline_event",
+                       {"stage": "deterministic_gate", "outcome": "blocked",
+                        "reason": "constructor_dropped"}),
+    }
+    for name, (agent, kind, data) in cases.items():
+        folder = tmp_path / name
+        folder.mkdir()
+        db = _make_db(folder, monkeypatch)
+        run = f"run-{name}"
+        _evidence(db, run, agent, kind, data, symbol="NET")
+        _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
+        _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run}, 60.0,
+        )
+        assert msg is not None, name
+        assert msg.splitlines()[0].endswith("· FAILED"), (name, msg.splitlines()[0])
+        assert "<b>❌ FAILED</b>" in msg, name
+        assert "<b>🚫 NOT TAKEN</b>" not in msg, name
+
+
+def test_quote_and_venue_refusals_are_not_treated_as_decisions(tmp_path, monkeypatch):
+    """`slippage_gated`, `latency_window`, `short_add_blocked`,
+    `borrow_gate` and `insufficient_cash` were each proposed for the
+    deliberate-refusal allowlist and each thrown out against the production
+    database — see `_DELIBERATE_SKIP_REASONS`. Every one of the six
+    `slippage_gated` rows on record is an IEX quote 391-580bp through a
+    40bp ceiling on a venue the code's own comments call routinely stale;
+    `short_add_blocked`'s own detail reads "adding to a short is not built".
+    A session lost to any of them is not a session that decided."""
+    for reason in ("slippage_gated", "latency_window", "short_add_blocked",
+                   "borrow_gate", "insufficient_cash", "unusable_stop",
+                   "fat_finger_guard", "no_price", "stale_entry",
+                   "geometry_rr"):
+        folder = tmp_path / reason
+        folder.mkdir()
+        db = _make_db(folder, monkeypatch)
+        run = f"run-{reason}"
+        _evidence(
+            db, run, "execution", "execution_skip",
+            {"symbol": "NET", "reason": reason, "detail": "see the code"},
+            symbol="NET",
+        )
+        _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
+        _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run}, 60.0,
+        )
+        assert msg is not None, reason
+        assert msg.splitlines()[0].endswith("· FAILED"), reason
+
+
+def test_every_candidate_survives_every_render_tier():
+    """No name may be lost at any tier — the #600 rule that a grouping which
+    hides a name is a worse failure than a repetitive one."""
+    rows = [
+        {"symbol": f"SY{i:02d}", "rating": "neutral", "conviction": "low"}
+        for i in range(69)
+    ]
+    snap = {
+        "pm_accounting": {
+            f"SY{i:02d}": {"refusal": "no_readable_structure",
+                           "note": f"name-specific note for SY{i:02d}"}
+            for i in range(69)
+        },
+    }
+    lengths = []
+    for budget in (None, 100_000, 6_000, 3_000, 1_500, 0):
+        block = trader_feed._looked_at_block(rows, {}, snap, budget=budget)
+        text = "\n".join(block)
+        for row in rows:
+            assert row["symbol"] in text, (budget, row["symbol"])
+        assert "▪ 69 — " in text, budget
+        lengths.append(len(text))
+    # Tighter budgets must actually produce shorter blocks, or the tiers do
+    # nothing and the caller's arithmetic is a lie.
+    assert lengths[0] == lengths[1] > lengths[-1]

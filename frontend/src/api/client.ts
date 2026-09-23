@@ -161,6 +161,15 @@ export interface AccountResponse {
   last_equity: number | null;
   daily_pnl: number | null;
   daily_pnl_pct: number | null;
+  /** Total P&L since the `daily_pnl` table's own earliest row — NOT
+   * derivable from `history` below, which is capped at 30 recent rows and
+   * may be truncated. Server-computed in src/api/routes_live.py; `null`
+   * when the table can't be read or has no rows, never a fabricated 0. */
+  total_pnl: number | null;
+  total_pnl_pct: number | null;
+  /** The trading day `total_pnl`'s baseline is measured from — same value
+   * the Telegram feed labels "Total P&L since <date>" with. */
+  total_pnl_since: string | null;
   paper: boolean | null;
   history: DailyPnlPoint[];
   liquidity: LiquidityBreakdown | null;
