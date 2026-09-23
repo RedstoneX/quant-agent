@@ -733,3 +733,97 @@ def test_pm_section_says_so_only_when_execution_is_enabled():
     assert precheck.opportunity.tier == "ineligible_hold"
     assert precheck.opportunity.held_symbol == "OLD"
     assert precheck.headroom_pct == pytest.approx(0.2)
+
+
+# ---------------------------------------------------------------------------
+# The pre-check is RECORDED, whatever it concluded
+# ---------------------------------------------------------------------------
+#
+# The gap: `_apply_rotation_execution` returns silently when nothing was
+# surfaced, and that is the desk's commonest rotation outcome. No log line,
+# no durable row, nothing in the owner's report — a session that made the
+# comparison looked identical to one that never ran it.
+
+def _precheck_events(db, run_id="run-1"):
+    return [
+        e for _s, e in _rotation_events(db, run_id)
+        if e.get("outcome") == "precheck"
+    ]
+
+
+def test_a_surfaced_nothing_still_leaves_a_durable_precheck_row(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path, precheck=_precheck(None))
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "full_nothing_outranked_a_holding"
+    assert rows[0]["headroom_pct"] == pytest.approx(0.2)
+    assert rows[0]["ceiling_pct"] == pytest.approx(25.0)
+
+
+def test_the_precheck_row_is_written_even_with_rotation_execution_off(tmp_path):
+    """The comparison happens in the PM's own prompt whether or not the desk
+    may act on it, so the owner is owed the result either way — and the row
+    records which of the two it was."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(
+        tmp_path, enabled=False, precheck=_precheck(None),
+    )
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["execute_enabled"] is False
+
+
+def test_the_precheck_row_names_the_two_symbols_when_one_was_surfaced(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path)
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "full_candidate_outranked_a_holding"
+    assert rows[0]["held_symbol"] == "OLD"
+    assert rows[0]["new_symbol"] == "NEW"
+
+
+def test_recording_the_precheck_never_raises(tmp_path):
+    """Bookkeeping must not be able to end a live session."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path)
+    pipeline.db = None  # any write failure at all
+    _record_rotation_precheck(pipeline, _ctx())
+    assert _precheck_events(db) == []
+
+
+def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
+    tmp_path,
+):
+    from src.rotation import (
+        ROTATION_FULL_NOTHING_BETTER, ROTATION_FULL_OPPORTUNITY,
+        ROTATION_ROOM_AVAILABLE, ROTATION_TELEMETRY_UNAVAILABLE,
+        RotationPrecheck, precheck_outcome,
+    )
+
+    blind = RotationPrecheck(
+        opportunity=None, headroom_pct=0.0, ceiling_pct=25.0, floor_pct=0.5,
+        telemetry_available=False,
+    )
+    roomy = RotationPrecheck(
+        opportunity=None, headroom_pct=4.0, ceiling_pct=25.0, floor_pct=0.5,
+    )
+    assert precheck_outcome(blind) == ROTATION_TELEMETRY_UNAVAILABLE
+    assert precheck_outcome(roomy) == ROTATION_ROOM_AVAILABLE
+    assert precheck_outcome(_precheck(None)) == ROTATION_FULL_NOTHING_BETTER
+    assert precheck_outcome(_precheck(_opportunity())) == ROTATION_FULL_OPPORTUNITY
+    # All four say something to the owner — none renders empty.
+    from src.rotation import owner_precheck_lines, precheck_record
+    for pre in (blind, roomy, _precheck(None), _precheck(_opportunity())):
+        record = precheck_record(
+            pre, execute_enabled=True, ranked_margin_enabled=False,
+        )
+        assert owner_precheck_lines(record), record["outcome"]
