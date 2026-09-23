@@ -369,7 +369,16 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: 4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5 ATR
 #: research pre-filter; and the 5% preview size. No number was added and
 #: none changed -- the debt was always there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 142  # 2026-09-20, retired board item 32: -6 for the account-level loss alarms removed on the owner's direct instruction -- `RiskConfig.drawdown_20d_risk_multiple`, `RiskConfig.drawdown_5d_risk_multiple`, `DEFAULT_DRAWDOWN_VOL_SENSITIVITY`, `DRAWDOWN_BUY_SCALE`, `MIN_REALIZED_VOL_RETURNS` and `REALIZED_VOL_WINDOW_SESSIONS` (the volatility yardstick they were measured against went with them). Was 148.
+#: 2026-09-23: 142 -> 143, board item 180.
+#: `src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the
+#: 200-day moving average being a standard published trend reference. That
+#: sources the MA WINDOW; the SAME constant is also the bar count under
+#: which `_require_sufficient_history` refuses a trade outright, and no
+#: citation anywhere backs 200 as a data-sufficiency test. One status per
+#: site, so the row takes the weaker use's status and the split is written
+#: into its note -- the same correction shape as 146 -> 147. No value
+#: changed and no number was added; an unrecorded debt was written down.
+MAX_ARBITRARY_ENTRIES = 143  # 2026-09-23, board item 180: +1 for `LONGEST_INDICATOR_WINDOW`, relabelled `arbitrary` because its refusal-gate use is unsourced (see the comment above). 2026-09-20, retired board item 32: -6 for the account-level loss alarms removed on the owner's direct instruction -- `RiskConfig.drawdown_20d_risk_multiple`, `RiskConfig.drawdown_5d_risk_multiple`, `DEFAULT_DRAWDOWN_VOL_SENSITIVITY`, `DRAWDOWN_BUY_SCALE`, `MIN_REALIZED_VOL_RETURNS` and `REALIZED_VOL_WINDOW_SESSIONS` (the volatility yardstick they were measured against went with them). Was 148.
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not

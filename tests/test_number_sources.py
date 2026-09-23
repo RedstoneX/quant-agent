@@ -158,7 +158,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 142, (
+    assert MAX_ARBITRARY_ENTRIES == 143, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -183,7 +183,17 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "number, `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` "
         "(the reserved-slot bound for board item 124's fix), recorded "
         "honestly as `arbitrary` with its open question stated rather than "
-        "presented as measured."
+        "presented as measured. "
+        "148 -> 142 on 2026-09-20, retired board item 32: six rows left with "
+        "the account-level loss alarms the owner removed. "
+        "142 -> 143 on 2026-09-23, board item 180: "
+        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the "
+        "200-day moving average being a standard published trend reference, "
+        "which sources the MA WINDOW and not the second use of the same "
+        "constant -- the constructor's outright refusal of any listing under "
+        "200 bars, for which no citation exists. One status per site, so the "
+        "row takes the weaker use's status and the split is written into its "
+        "note. No value changed."
     )
 
 
