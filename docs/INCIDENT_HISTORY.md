@@ -22,6 +22,66 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk counted a protective stop as if it had already sold the shares, so its own share count was wrong on live positions (item 173)
+
+**In plain words:** when the desk places a protective stop order at the
+broker, it writes a row saying so. That row is a *standing instruction* —
+"sell if the price falls this far" — not a sale. The bookkeeping treated it
+as a sale anyway, and subtracted the whole protected position from the
+desk's record of what it owns. On the live account this made the desk
+believe it held no AMD when it actually held 1.7662 shares, and believe it
+held *negative* COP and EQNR when both were flat.
+
+**Why it mattered, and why nobody saw it.** Nothing the owner reads was
+wrong. Positions, daily P&L and realized profit all come from broker truth
+or from a separate calculation that already ignored unfilled stops, and no
+protective-stop row anywhere in the live database carries a realized-P&L
+figure [verified read-only against the production database, 2026-09-23]. The
+damage was to a safety net. `_reconcile_stop_out_fills` is the check that
+compares what the ledger believes it holds against what the broker actually
+shows, and catches a protective stop that fired without being recorded — the
+gap that lost the 2026-08-28 ONDS/CCJ stop-outs. It skips any symbol it
+believes is flat. So the one thing that guarantees a symbol is skipped is
+having a protective stop on it, which is to say: exactly the symbols that
+can be stopped out were the symbols the stop-out detector could not see.
+AMD was in that state and held real money. The defect made itself invisible
+to the very detector it disabled, which is why it survived every pass that
+looked at the detector's own results.
+
+**The cause.** `Database.get_symbols_with_open_ledger_qty` signed rows from
+the action name alone: BUY and SWEEP_BUY add, everything else subtracts.
+That reasoning holds for every other exit action, because those rows are
+only written once the desk has decided to sell. A TRAIL_STOP row is written
+at *placement*. Compounding it, the shared "did this execute" predicate
+treats a row with no fill status as executed, which is the shape all three
+live rows carry.
+
+**What was ruled out.** Not a new rule and not a threshold: the repo already
+drew this distinction in four places (`_is_filled_trail_stop`,
+`compute_trade_calibration`, `_assign_position_ids`,
+`_categorize_exit_reason`) and this one function simply never used it.
+
+**The trap inside the fix.** Deferring to `_is_filled_trail_stop` alone
+would have introduced the same class of bug pointing the other way. That
+helper answers "is this a priceable realized exit", so it requires a
+`filled` status. A stop that fills *partially* and is then canceled carries
+a terminal status that is not `filled` but has really moved shares. A pure
+share-count ledger has to subtract those or it over-reports. The share-count
+question and the realized-exit question are genuinely different questions,
+and the fix now has its own small helper that says so in as many words.
+
+**What would catch it next time.** The class is "a ledger signing a row by
+its action name, when the row's meaning depends on its fill state." The
+tests added with the fix walk a protective stop through every fill state on
+both the long and short side, and cross-check that the share-count ledger
+and the round-trip calibration agree on which stops closed something.
+
+**Not fixed here, carried as item 173:** correcting the count exposed a real
+EQNR gap the corrupted number had been hiding; the reconciler still runs
+before the fill reconciler and so pages a false CRITICAL on the desk's own
+unreconciled sale (NUE, 2026-09-21, self-corrected 476 ms later); and a
+COVER is still signed as a reduction.
+
 ### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
 
 **In plain words:** two items on the backlog board had already been marked

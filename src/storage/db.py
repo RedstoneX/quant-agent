@@ -35,6 +35,31 @@ def _is_filled_trail_stop(row, action: str) -> bool:
         return False
 
 
+def _trail_stop_reduced_position(row) -> bool:
+    """True when a TRAIL_STOP row actually took shares OUT of the book.
+
+    Share-count answer to `_is_filled_trail_stop`'s realized-exit question,
+    and deliberately the WIDER of the two. The helper answers "is this a
+    priceable realized exit", so it requires fill_status='filled' (or a
+    legacy NULL status with a recorded fill_qty). A stop that filled
+    PARTIALLY and was then canceled or expired carries a terminal status
+    with `fill_qty > 0`: no clean round trip to price, but those shares
+    are genuinely gone from the broker's book, so a pure quantity ledger
+    must still subtract them or it will believe it holds stock it sold.
+
+    Anything else — fill_status NULL/'submitted'/'pending_submit' with no
+    fill, or a cancel that never traded — is protection resting at the
+    broker and moves no shares.
+    """
+    try:
+        executed = float(row["fill_qty"] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        executed = 0.0
+    if executed > 0:
+        return True
+    return _is_filled_trail_stop(row, "TRAIL_STOP")
+
+
 def _new_position_id() -> str:
     """Opaque, stable identifier minted when a BUY opens a position from
     flat. Same shape as this codebase's run/decision ids
@@ -1725,16 +1750,35 @@ class Database:
         that closed them was never written back to `trades`.
         `_reconcile_stop_out_fills` (src/pipeline.py) is the caller that
         acts on a mismatch.
+
+        TRAIL_STOP IS THE ONE ACTION THIS CANNOT SIGN FROM THE ACTION NAME
+        (fixed 2026-09-23). Every other exit-family row is written only
+        once the desk has decided to sell, but a TRAIL_STOP row is written
+        at PLACEMENT — protection resting at the broker, which may never
+        fire. `_executed_trade_predicate` lets a legacy `fill_status IS
+        NULL` placement through, and signing it -1 subtracted the whole
+        protected position from the ledger's belief. Measured on the
+        production DB 2026-09-23, that made the ledger read AMD 0 (1.7662
+        actually held, so a real AMD stop-out would never have been
+        detected — the caller skips any symbol it believes is flat) and
+        drove COP/EQNR negative. The same distinction
+        `_is_filled_trail_stop`, `compute_trade_calibration`,
+        `_assign_position_ids` and `_categorize_exit_reason` already draw:
+        only the quantity the broker actually EXECUTED leaves the book.
         """
         with self._lock:
             rows = self.conn.execute(
-                "SELECT symbol, action, qty, fill_qty FROM trades "
+                "SELECT symbol, action, qty, fill_qty, fill_status FROM trades "
                 f"WHERE {self._executed_trade_predicate()} ORDER BY id",
             ).fetchall()
         net: dict[str, float] = {}
         for row in rows:
             action = (row["action"] or "").upper()
             if action == "HOLD":
+                continue
+            if action == "TRAIL_STOP" and not _trail_stop_reduced_position(row):
+                # Protection sitting at the broker, not a sale: no
+                # quantity effect at all.
                 continue
             qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
             if qty <= 0:

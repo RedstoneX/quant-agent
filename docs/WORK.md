@@ -164,6 +164,11 @@ DONE WHEN:
   - [ ] estimated-vs-real is visible wherever lag reaches a seat or owner
 
 
+**173. Residue of the ledger share-count fix — filed 2026-09-23.** Defect and fix: `docs/INCIDENT_HISTORY.md`. **(a)** The bad count hid a real gap — EQNR reads 8.5962 sh against a flat broker [measured, production DB, read-only, 2026-09-23]; the next reconciler pass records the missing exit or pages. **(b)** `_reconcile_stop_out_fills` runs BEFORE `_reconcile_fills` at every session entry, so the desk's own unreconciled sale pages a false CRITICAL (NUE 2026-09-21). **(c)** COVER is signed as a reduction, so covering a short makes the ledger more short.
+DONE WHEN:
+  - [ ] EQNR's exit resolved on its own evidence, or the pass's finding recorded
+  - [ ] (b) and (c) each designed and approved, or accepted — (b) suppresses a live page, so it needs a bound or a never-reconciled fill goes silent
+
 **111. The gross-exposure de-lever ladder's multi-symbol trim leaves the EARLIEST-trimmed symbol naked for the rest of the loop, not just the resting-order wait — TIER 1, filed 2026-09-18 out of the item 87 audit.** `_submit_protected_sell` cancels a symbol's stops immediately, but `_finalize_pending_protections` — the only thing that restores them — runs once, AFTER every symbol in the batch has been sold, at both the sweep/de-lever site and `_enforce_gross_ceiling` in `src/pipeline.py`; `_force_delever` shares the batch shape. With N trims the first symbol sold carries no stop for the rest of the loop plus every later symbol's terminal-fill wait, and the ladder fires only in a drawdown. There is no per-symbol finalize anywhere in the file, so finalizing per symbol is a real behaviour change on the live risk path.
 NO CRITERIA: this is a live-selling-path behaviour change during a drawdown — filing it is not authorization to act, and the owner decides whether and how to fix it before any completion criteria can be written.
 
