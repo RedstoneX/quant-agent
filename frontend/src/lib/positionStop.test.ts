@@ -88,7 +88,7 @@ describe("findPositionStop", () => {
   });
 
   it("uses the closing side matching a short/bearish qty sign", () => {
-    const short = position({ qty: -3, symbol: "SQQQ", direction: "bearish_hedge" });
+    const short = position({ qty: -3, symbol: "SQQQ", direction: "short" });
     const buyStop = order({ symbol: "SQQQ", side: "buy", stop_price: 12 });
     expect(findPositionStop(short, [buyStop], [])?.price).toBe(12);
     expect(findPositionStop(short, [order({ symbol: "SQQQ", side: "sell", stop_price: 12 })], [])).toBeNull();

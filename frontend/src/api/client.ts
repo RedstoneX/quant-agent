@@ -171,7 +171,7 @@ export interface AccountResponse {
   error: string | null;
 }
 
-export type PositionDirection = "long" | "bearish_hedge" | "cash_equivalent";
+export type PositionDirection = "long" | "short" | "bearish_hedge" | "cash_equivalent";
 
 export type PriceKind =
   | "broker_position_mark"
