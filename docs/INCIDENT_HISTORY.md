@@ -22,6 +22,88 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk told its own risk officer that a suggestion was a rule, and paid eight times for news it then threw away
+
+Two separate faults, found together, both long-standing. Neither lost money
+directly; both corrupted the record the desk judges itself by.
+
+**In plain words (fault one):** the risk officer is shown a list of things the
+engine noticed about today's plan. Some of those are genuine limits the code
+enforces — break one and the order is simply refused, nobody gets a say. The
+rest are guidelines: the officer may shrink a trade over one, but the owner
+ruled on 2026-09-19 that he may never cancel the whole plan over one. Every
+entry on that list was printed with the same word, **VIOLATION**, so the two
+were indistinguishable. The officer then did what the label told him: three of
+the seventeen stored verdicts cancelled an entire day's plan citing a
+guideline as "the hard risk rule".
+
+The worse half only became clear on inspection. By the time that list is
+printed, the engine has **already** removed every order that broke a real
+limit — they are gone, not listed. So the list can only ever contain
+guidelines, and the line it printed when the list was empty read *"No hard
+rule violations detected"*: a clean bill of health on exactly the checks it
+had no visibility into. The officer's own instructions told him to "confirm
+the block shows no position-cap or exposure violation slipped through" — a
+check against evidence that is filtered out before he sees it. The
+instructions and the code had drifted apart and each was being read as
+confirming the other.
+
+What was ruled out: splitting by the rule's NAME. `max_sector_pct` is a
+guideline and `max_sector_hard_pct` is an enforced limit; they differ by one
+word. The only honest answer is the set the engine itself uses to decide
+whether to drop an order, so that set now lives next to the engine and the
+renderer asks it directly. Anything added later classifies itself correctly
+with no further work.
+
+Also considered and rejected: dropping the word "advisory" for plainer
+English. The officer's instructions grade him on answering "every engine
+advisory" by that name, so removing the word would have broken a different
+contract. The fix keeps the word and adds the plain-English consequence beside
+it — what was blocked (nothing), and what he is and is not allowed to do
+about it.
+
+**In plain words (fault two):** when a research seat's answer goes stale
+mid-session, the desk is allowed to buy one fresh answer. It did that eight
+times on 2026-09-18. It kept a note saying "paid, worked" — and nothing else.
+Not the model used, not the tokens, not the price, not one word of what the
+model actually said. The owner's own per-session cost line adds up the
+recorded calls, so those eight purchases read as free.
+
+Verified before fixing, against the production database: twenty-two records of
+this kind exist, all from 2026-09-18, fourteen failures and eight purchases,
+every purchase on the news seat. Across all twenty-two the stored fields are
+the same eight bookkeeping flags — no model, no cost, no answer. And for the
+whole of that day the desk's call log holds **zero** news-seat entries. The
+purchases left no trace in the place the desk reads its own spending from.
+
+The fix reuses the path an ordinary purchase already takes rather than
+inventing a second one: the same call-log row (model, tokens, price, prompt
+and full answer) and the same structured-evidence row. It is filed under the
+seat's ordinary name and marked as a repair in its summary line — which is
+exactly what the desk's two other paid re-asks already do. A separate name was
+considered and rejected: it would have hidden the spend from every existing
+per-seat question instead of from one.
+
+**Still open, deliberately not fixed here** (found during this work, reported
+rather than self-authorised):
+
+- *The purchased news answer survives one tick.* It is put into the current
+  session's memory but never written back to the news store, and the store is
+  what the next tick reloads from. Thirty minutes later the desk reads the
+  stale report again, decides it is stale again, and the one-a-day allowance
+  refuses to re-buy. Recording the answer, which is what shipped here, does
+  not change that; writing it back to the store would change the desk's
+  behaviour and is a decision in its own right.
+- *The officer's veto grounds are still unmeasured.* Whether the shouted word
+  was what drove those three whole-plan cancellations, or something else in
+  the instructions, cannot be established from the repository. The next few
+  stored verdicts are the measurement.
+- *A macro repair stores a plain record where the rest of the code expects a
+  structured one*, and the failure that causes downstream is swallowed as a
+  warning. Pre-existing, on a line this change sits beside, untouched.
+
+---
+
 ### 2026-09-23 — the tool that merges the board's own documents was quietly handing back the wrong version of them
 
 **In plain words:** when two people's work has to be combined, the desk uses an

@@ -71,6 +71,13 @@ class HealResult:
     seat: str
     outcome: str
     reason: str
+    #: In-memory only, and deliberately NOT in `to_evidence()`. The paid
+    #: heal's answer is persisted by
+    #: `TradingPipeline._persist_heal_call` through the SAME two rows an
+    #: ordinary paid call writes — `agent_logs` (model, tokens, cost, raw
+    #: answer) and `specialist_evidence(kind="analysis")`. Copying it in here
+    #: too would duplicate it into a row that
+    #: `Database.count_paid_seat_heals_today` json-parses on every heal.
     payload: object | None = None
     mechanical: bool = False
     paid_retry: bool = False

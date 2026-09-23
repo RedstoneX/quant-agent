@@ -269,3 +269,87 @@ def test_dropped_news_symbols_are_stated_as_unknown_not_silence(mock_cls, sample
     assert "News Answer Lost" in msg
     assert "MSFT" in msg
     assert "NOT an absence of news" in msg
+
+
+# ── item 162: an advisory rendered as a VIOLATION ────────────────────────
+#
+# Owner ruling 2026-09-19: hard limits are enforced by CODE, and above a
+# mere guideline the risk seat may RESIZE but never VETO. Every entry used to
+# render with one prefix, `VIOLATION`, and 3 of 17 stored verdicts then
+# vetoed a whole plan citing an advisory as "the hard risk rule".
+
+def _findings(*rules):
+    from src.agents.risk_manager import _format_engine_findings
+    from src.risk.rules import RiskViolation
+    return _format_engine_findings([
+        RiskViolation(rule=r, message=f"{r} fired", value=1.0, limit=2.0)
+        for r in rules
+    ])
+
+
+def test_an_advisory_does_not_render_as_a_violation():
+    text = _findings("max_sector_pct")
+    assert "VIOLATION" not in text
+    assert "ADVISORY" in text
+    assert "NO order was blocked" in text
+
+
+def test_a_hard_limit_still_reads_as_a_breach_the_engine_enforced():
+    text = _findings("cash_only")
+    assert "HARD LIMIT BREACHED" in text
+    assert "ALREADY REFUSED" in text
+
+
+def test_the_class_is_read_from_the_rule_set_never_from_the_rule_name():
+    """`max_sector_pct` and `max_sector_hard_pct` differ by one word and sit
+    on opposite sides of the line. A name-based split gets this wrong."""
+    from src.pipeline import HARD_BLOCK_RULES
+    assert "max_sector_pct" not in HARD_BLOCK_RULES
+    assert "max_sector_hard_pct" in HARD_BLOCK_RULES
+    soft = _findings("max_sector_pct")
+    hard = _findings("max_sector_hard_pct")
+    assert "ADVISORY (nothing blocked) [max_sector_pct]" in soft
+    assert "HARD LIMIT BREACHED [max_sector_hard_pct]" in hard
+
+
+def test_a_hard_limit_can_never_rank_below_an_advisory():
+    text = _findings(
+        "max_sector_pct", "correlation_cluster", "data_degraded",
+        "max_position_pct", "deployment_gap",
+    )
+    assert text.index("HARD LIMIT BREACHED") < text.index("ADVISORY (nothing blocked)")
+
+
+def test_the_empty_block_is_not_a_false_all_clear_on_the_hard_limits():
+    """`_filter_hard_risk_decisions` drops an order whose hard rule fired and
+    `continue`s past this list, forwarding only `sector_unresolved_*`. So a
+    hard entry cannot reach this block and an empty one proves nothing about
+    hard limits — the old text, "No hard rule violations detected", claimed
+    the opposite."""
+    text = _findings()
+    assert "No hard rule violations detected" not in text
+    assert "NOT an all-clear" in text
+    assert "BEFORE this block is built" in text
+
+
+def test_every_advisory_the_pipeline_can_raise_renders_as_an_advisory():
+    """Whatever new non-blocking rule a future change adds, it classifies
+    correctly for free — membership of HARD_BLOCK_RULES is the only test."""
+    for rule in (
+        "max_sector_pct", "correlation_cluster", "deployment_gap",
+        "data_degraded", "analysis_parse_loss", "analysis_field_nulled",
+        "correlation_coverage_gap", "pm_audit_step_missing",
+        "sector_unresolved_no_sector", "sector_unresolved_lookup_failed",
+        "sector_unresolved",
+    ):
+        text = _findings(rule)
+        assert f"ADVISORY (nothing blocked) [{rule}]" in text, rule
+        assert "HARD LIMIT" not in text, rule
+
+
+def test_every_hard_rule_renders_as_a_hard_limit():
+    from src.pipeline import HARD_BLOCK_RULES
+    for rule in sorted(HARD_BLOCK_RULES):
+        text = _findings(rule)
+        assert f"HARD LIMIT BREACHED [{rule}]" in text, rule
+        assert "ADVISORY" not in text, rule

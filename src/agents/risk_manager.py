@@ -11,11 +11,83 @@ from src.models import (
     RiskModification, RiskVerdict, SymbolRejection, TechAnalysisResult,
 )
 from src.risk.constants import reward_risk_floor_applies
-from src.risk.rules import RiskViolation
+from src.risk.rules import HARD_BLOCK_RULES, RiskViolation
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+#: The empty case. It used to read "No hard rule violations detected." — a
+#: FALSE ALL-CLEAR, and the reason board item 162 exists. `TradingPipeline.
+#: _filter_hard_risk_decisions` drops an order whose hard rule fired and
+#: `continue`s past the list this block renders, forwarding only the
+#: `sector_unresolved_*` advisory. So a hard-limit entry cannot reach here,
+#: and an empty block says nothing whatsoever about hard limits. The seat's
+#: own prompt used to ask it to "confirm the Hard Risk Rule Check block shows
+#: no position-cap or exposure violation slipped through", which was a check
+#: against evidence filtered out upstream.
+_NO_FINDINGS = (
+    "Nothing raised. Read this as: the engine raised no ADVISORY this run. "
+    "It is NOT an all-clear on the hard limits — an order that breaches a "
+    "hard limit is dropped by the engine BEFORE this block is built, so a "
+    "hard breach is invisible here by construction. Orders refused that way "
+    "are simply absent from the proposed trades above."
+)
+
+
+def _format_engine_findings(rule_violations: list[RiskViolation]) -> str:
+    """Render the engine's findings so a HARD LIMIT and an ADVISORY cannot
+    be mistaken for one another.
+
+    Board item 162, and the owner ruling of 2026-09-19 behind it: hard limits
+    are enforced by CODE, and above a mere guideline the risk seat may RESIZE
+    but never VETO. Every entry used to render with one prefix, `VIOLATION`,
+    which told the seat it was looking at a breach of an enforced limit when
+    it was looking at a guideline — and 3 of 17 stored verdicts then vetoed a
+    whole plan citing an advisory as "the hard risk rule".
+
+    The class is read from `HARD_BLOCK_RULES` membership, NEVER from the rule
+    name: `max_sector_pct` (guideline) and `max_sector_hard_pct` (enforced)
+    differ by one word and sit on opposite sides.
+
+    Hard entries are listed FIRST and unconditionally, so the more serious
+    class can never rank below the less serious one however many advisories
+    a run raises.
+    """
+    hard = [v for v in rule_violations if v.rule in HARD_BLOCK_RULES]
+    advisory = [v for v in rule_violations if v.rule not in HARD_BLOCK_RULES]
+    if not hard and not advisory:
+        return _NO_FINDINGS
+    lines: list[str] = []
+    if hard:
+        lines.append(
+            "HARD LIMITS — enforced by code. The engine has ALREADY REFUSED "
+            "the order; nothing here is yours to approve or wave through."
+        )
+        lines.extend(
+            f"- HARD LIMIT BREACHED [{v.rule}]: {v.message} "
+            f"(value: {v.value}, limit: {v.limit})"
+            for v in hard
+        )
+    if advisory:
+        if hard:
+            lines.append("")
+        lines.append(
+            "ADVISORIES — guidelines, not limits. NO order was blocked by "
+            "any line below. You may resize (`modifications` / "
+            "`scale_all_buys`) or refuse a named trade (`rejected_symbols`); "
+            "you may NOT veto the plan (`approved: false`) on one of these "
+            "alone. Each must still be answered in the matching "
+            "`reasoning_chain` field."
+        )
+        lines.extend(
+            f"- ADVISORY (nothing blocked) [{v.rule}]: {v.message} "
+            f"(value: {v.value}, limit: {v.limit})"
+            for v in advisory
+        )
+    return "\n".join(lines)
+
 PROMPT_PATH = PROJECT_ROOT / "config" / "prompts" / "risk_manager.md"
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 
@@ -404,10 +476,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             _fmt_position(p) for p in positions
         ) if positions else "No current positions."
 
-        violations_text = "\n".join(
-            f"- VIOLATION [{v.rule}]: {v.message} (value: {v.value}, limit: {v.limit})"
-            for v in rule_violations
-        ) if rule_violations else "No hard rule violations detected."
+        violations_text = _format_engine_findings(rule_violations)
 
         vix = macro_summary.get("vix", {}) or {}
         treasury = macro_summary.get("treasury", {}) or {}
@@ -631,7 +700,7 @@ Portfolio View: {portfolio_decision.portfolio_view}
 - Fed Funds Rate: {_fmt_or_na(fed_funds, '%')}
 
 {reasoning_section}
-## Hard Risk Rule Check Results
+## Engine Risk Check Results
 {violations_text}
 
 Review these proposed trades and provide your verdict as JSON."""

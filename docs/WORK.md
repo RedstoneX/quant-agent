@@ -348,7 +348,7 @@ DONE WHEN:
 
 **162. The risk seat vetoes a whole plan citing its own ADVISORY limits as hard rules — filed 2026-09-19, measured against `specialist_evidence` (kind=verdict).** 3 of 17 verdicts since 09-02: 09-15 rejected EOG for "exceeding the 50% cluster cap … violates the hard risk rule", but `correlation_cluster` (`src/risk/rules.py`) labels itself "(advisory)" and its 50.0% default is not in the number ledger; 09-17 rejected MRVL for an advisory sector TARGET, not a limit. Per-symbol rejection (`rejected_symbols`) was used 0 of 17 times; the seat vetoes the whole plan instead.
 DONE WHEN:
-  - [ ] the briefing distinguishes advisory limits from hard rules
+  - [x] the briefing distinguishes advisory limits from hard rules — 2026-09-23: the block renders HARD LIMIT BREACHED above ADVISORY, classified by `HARD_BLOCK_RULES` membership, and its empty case no longer claims a false all-clear (a hard breach is dropped upstream and can never appear there).
   - [ ] a real breach uses per-symbol rejection, not a whole-plan veto
 
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
