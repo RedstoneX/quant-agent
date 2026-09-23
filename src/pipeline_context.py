@@ -177,12 +177,12 @@ class RunContext:
     # === Populated by the decision stage ===
     # Memory layers built for PM that the RiskStage also needs. Before the
     # 2026-08-13 agent audit these were DecisionStage locals, so the AI Risk
-    # Manager was told (in its prompt) to enforce PM's holding-discipline and
-    # drawdown-halve rules while receiving neither `days_held` nor
-    # `in_drawdown`. RiskStage rebuilds them when they are absent, which is
-    # the RC2 resume lane — there DecisionStage never runs at all.
+    # Manager was told (in its prompt) to enforce PM's holding-discipline
+    # rules while receiving no `days_held`. RiskStage rebuilds them when they
+    # are absent, which is the RC2 resume lane — there DecisionStage never
+    # runs at all.
     #   position_history:   {symbol: {entry_date, days_held, ...}}
-    #   recent_performance: {rolling_5d_pct, rolling_20d_pct, in_drawdown, trailing_days}
+    #   recent_performance: {rolling_5d_pct, rolling_20d_pct, trailing_days}
     position_history: dict = field(default_factory=dict)
     recent_performance: dict = field(default_factory=dict)
     # Spec §11.2 — the session's gross-exposure state, resolved from ACCOUNT
@@ -357,7 +357,6 @@ class PMFacts:
     # System performance (existing; surfaced here as facts)
     rolling_5d_pct: float | None = None
     rolling_20d_pct: float | None = None
-    in_drawdown: bool = False
 
     # RC3 (2026-07-16): deployment vs the invested target. Macro demanded
     # 72-75% invested for three months while realized invested% averaged
@@ -470,20 +469,10 @@ class PMFacts:
 - signals={self.tech_signals_count} · median_age={_num(self.tech_signals_median_age_days)}d · stale(≥8d)={self.tech_signals_stale_count}
 
 ### System Performance
-- rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)} · in_drawdown={self.in_drawdown}{self._render_drawdown_gate()}
+- rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)}
 
 {self._render_risk()}
 {self._render_correlation()}{self._render_deployment_gap()}{self._render_companies()}"""
-
-    def _render_drawdown_gate(self) -> str:
-        """State who applies the halving. Two halvings would quarter the size."""
-        if not self.in_drawdown:
-            return ""
-        return (
-            "\n- ⚠️ in_drawdown=true — the risk engine halves every BUY "
-            "deterministically AFTER you submit. Do NOT pre-halve; size "
-            "normally and the gate will apply once."
-        )
 
     def _render_risk(self) -> str:
         from src.risk.metrics import format_heat_block

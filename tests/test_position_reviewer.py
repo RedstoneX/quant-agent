@@ -502,7 +502,6 @@ def test_reason_cites_hard_trigger_recognises_thesis_invalid():
         "HIGH bearish state change on EU regulatory action"
     )
     assert _reason_cites_hard_trigger("bearish earnings filing posted today")
-    assert _reason_cites_hard_trigger("daily loss circuit breaker engaged")
     assert _reason_cites_hard_trigger("stop hit at $185.50")
     assert _reason_cites_hard_trigger("thesis broken — guidance cut")
 
@@ -570,11 +569,9 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
             "Bearish earnings",
             "Bearish earnings filing analysis posted today.",
         ),
-        (
-            "Daily-loss circuit breaker",
-            "circuit breaker",
-            "Daily-loss circuit breaker engaged at -3.2%.",
-        ),
+        # "Daily-loss circuit breaker" was a category here until 2026-09-20,
+        # removed from both sides with the account-level loss alarm itself
+        # (WORK.md item 32) — the second negative probe below pins it.
         # "Correlation cluster breach" was a category here until 2026-09-13
         # (WORK.md item 44). It was removed from BOTH sides — prompt and
         # keyword list — because nothing in the desk computes a
@@ -616,6 +613,29 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
         "exit trigger that no part of the desk can check. See "
         "docs/INCIDENT_HISTORY.md, 2026-09-13."
     )
+
+    # Second negative probe — the account-level loss alarm, removed in full
+    # on 2026-09-20 (WORK.md item 32). Membership of the accepted list is
+    # not merely permissive here: `cites_external_information` waves a
+    # SELL/REDUCE/COVER past the noise-band and ratchet clamps when the
+    # reason cites one, so an unverifiable phrase left accepted buys a
+    # clamp bypass. There is no exchange-halt (LULD) detection in this
+    # codebase either, so the generous reading of "circuit breaker" has
+    # nothing behind it.
+    assert "circuit breaker" in prompt_text.lower(), (
+        "the prompt no longer mentions 'circuit breaker' at all. It must "
+        "keep saying the phrase does NOT match, the way it does for "
+        "correlation breach — silence teaches the seat nothing."
+    )
+    for reason in (
+        "Daily-loss circuit breaker engaged at -3.2%.",
+        "daily loss limit breached, closing the book",
+    ):
+        assert not _reason_cites_hard_trigger(reason), (
+            f"the executor accepts {reason!r} again — the account-level "
+            "loss alarm was removed 2026-09-20 and nothing computes that "
+            "event. See docs/INCIDENT_HISTORY.md."
+        )
 
 
 def test_symbols_already_trimmed_today_pulls_sell_actions(tmp_path):

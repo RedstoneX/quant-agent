@@ -146,7 +146,6 @@ def _mock_config():
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
     cfg.risk.max_total_position_pct = 90
-    cfg.risk.max_daily_loss_pct = 3
     cfg.risk.max_sector_pct = 40
     cfg.risk.require_stop_loss = True
     cfg.trading.universe = ["SPY"]
@@ -465,7 +464,6 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(

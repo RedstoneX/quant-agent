@@ -1742,6 +1742,13 @@ the de-lever is engine-authored. A blank or mid-JSON-truncated PM response —
 measured at 1 run in 10 on one candidate model — is a no-trade session, and
 must never also be a no-de-lever session.
 
+**SUPERSEDED 2026-09-20.** `apply_drawdown_scale` and the whole rolling
+5d/20d `in_drawdown` brake were deleted on the owner's instruction, together
+with the daily-loss breaker (`docs/INCIDENT_HISTORY.md`, retired board item
+32). The §11.2 ladder described in this section is untouched and remains
+live; the paragraph below describes a wiring that no longer exists, and is
+kept because this file records what was specified at the time.
+
 **Wired to `apply_drawdown_scale`, not duplicated.** That function keeps its
 ratified flat 0.5x halving of new BUYs on the rolling 5d/20d `in_drawdown`
 flag, unchanged in threshold or magnitude, and now takes the resolved ceiling
@@ -2242,8 +2249,10 @@ several positions dying in one shock. 75% keeps that bound while permitting
 genuine concentration in a hot sector.
 
 **State the consequence honestly rather than burying it:** at 75% in one
-sector, an ordinary 20% sector drawdown costs 15% of equity — five times the 3%
-daily-loss breaker, and it will trip the Phase 11.2 de-levering ladder. That is
+sector, an ordinary 20% sector drawdown costs 15% of equity — three times the
+ratified 5% per-trade risk unit, and it will trip the Phase 11.2 de-levering
+ladder. (This line compared against the daily-loss breaker until 2026-09-20,
+when that breaker was removed outright — retired board item 32.) That is
 the accepted cost of a concentrated trading desk, not an oversight. Phase
 10.3's scaling still applies underneath: crossing the target shrinks each
 further position rather than refusing it.

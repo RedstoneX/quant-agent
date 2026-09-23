@@ -25,7 +25,6 @@ from src.risk.rules import (
     GROSS_EXPOSURE_RULE,
     GROSS_LADDER,
     RiskRuleEngine,
-    apply_drawdown_scale,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
     gross_exposure,
@@ -61,7 +60,7 @@ def _buy(symbol="NVDA", alloc=10.0) -> TradeDecision:
 def _risk_config(**overrides) -> RiskConfig:
     fields = dict(
         max_position_pct=100, max_total_position_pct=400,
-        max_daily_loss_pct=3, max_sector_pct=100, require_stop_loss=False,
+        max_sector_pct=100, require_stop_loss=False,
         allow_margin=True, max_gross_exposure_x=BASE_X,
     )
     fields.update(overrides)
@@ -392,23 +391,6 @@ def test_a_de_levered_book_trimmed_once_is_not_trimmed_again():
     )
 
 
-def test_the_drawdown_halve_and_the_ceiling_are_separate_arithmetic():
-    """`apply_drawdown_scale` halves ALLOCATIONS; the ladder sets a CEILING.
-    Passing the resolved ceiling to the halving must not double-scale — the
-    ceiling is there to be NAMED in the note, not multiplied in."""
-    ceiling = resolve_gross_ceiling(-16.0, base_x=BASE_X)
-    with_ceiling = apply_drawdown_scale(
-        [_buy("NVDA", 12.0)], in_drawdown=True, ceiling=ceiling,
-    )[0][0]
-    without_ceiling = apply_drawdown_scale(
-        [_buy("NVDA", 12.0)], in_drawdown=True,
-    )[0][0]
-    assert with_ceiling.allocation_pct == without_ceiling.allocation_pct == 6.0
-    assert "1.0x" in with_ceiling.reasoning, (
-        "the note should tell the reader which rung is in force"
-    )
-
-
 # ===========================================================================
 # THE GATE, PART 4 — none of this may depend on the Portfolio Manager.
 # ===========================================================================
@@ -446,8 +428,7 @@ def test_a_blank_portfolio_manager_session_still_de_levers():
     assert GROSS_EXPOSURE_RULE in [
         v.rule for v in engine.check(
             decision=_buy("TSLA", 5.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0, gross_ceiling=ceiling,
-        )
+            total_value=EQUITY, gross_ceiling=ceiling,)
     ], "the blank-PM ceiling must still refuse new exposure"
     assert outcome.trims, (
         "THE FAILURE THIS TEST EXISTS FOR: a blank PM response must not leave "
@@ -682,9 +663,7 @@ def test_the_execution_gate_hard_blocks_a_breach():
     decision = _buy("AMD", 30.0)                                      # +$3k -> 2.2x
 
     violations = engine.check(
-        decision=decision, positions=positions, total_value=EQUITY,
-        daily_pnl=0.0, gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
-    )
+        decision=decision, positions=positions, total_value=EQUITY, gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
 
     rules = [v.rule for v in violations]
     assert GROSS_EXPOSURE_RULE in rules
@@ -703,13 +682,11 @@ def test_the_execution_gate_moves_with_the_ladder():
     order = _buy("AMD", 20.0)                                         # +$2k -> 1.1x
 
     undrawn = engine.check(
-        decision=order, positions=positions, total_value=EQUITY, daily_pnl=0.0,
-        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
-    )
+        decision=order, positions=positions, total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
     drawn = engine.check(
-        decision=order, positions=positions, total_value=EQUITY, daily_pnl=0.0,
-        gross_ceiling=resolve_gross_ceiling(-16.0, base_x=BASE_X),
-    )
+        decision=order, positions=positions, total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(-16.0, base_x=BASE_X),)
 
     assert GROSS_EXPOSURE_RULE not in [v.rule for v in undrawn]
     assert GROSS_EXPOSURE_RULE in [v.rule for v in drawn]
@@ -727,8 +704,7 @@ def test_the_execution_gate_falls_back_to_the_configured_cap():
     positions = [_position("NVDA", qty=100.0, current_price=100.0)]   # $10k = 1.0x
     violations = engine.check(
         decision=_buy("AMD", 20.0), positions=positions,
-        total_value=EQUITY, daily_pnl=0.0,
-    )
+        total_value=EQUITY,)
     assert GROSS_EXPOSURE_RULE in [v.rule for v in violations]
 
 
@@ -742,9 +718,8 @@ def test_a_short_consumes_the_ceiling_exactly_like_a_long():
         reasoning="breakdown",
     )
     violations = engine.check(
-        decision=short, positions=positions, total_value=EQUITY, daily_pnl=0.0,
-        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
-    )
+        decision=short, positions=positions, total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
     assert GROSS_EXPOSURE_RULE in [v.rule for v in violations]
 
 
@@ -843,9 +818,7 @@ def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
     # --- gate 2: execution. Same ceiling, same order, same book.
     engine = RiskRuleEngine(_risk_config())
     violations = engine.check(
-        decision=decision, positions=positions, total_value=EQUITY,
-        daily_pnl=0.0, gross_ceiling=ceiling,
-    )
+        decision=decision, positions=positions, total_value=EQUITY, gross_ceiling=ceiling,)
     assert GROSS_EXPOSURE_RULE not in [v.rule for v in violations], (
         "the execution gate must not reject an order the sizing gate already "
         "fitted under the very same ceiling"
@@ -1336,7 +1309,6 @@ def _execution_pipeline(*, cash, equity, ceiling_x=BASE_X, rung="none",
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": equity}, list(positions), {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._resolve_gross_ceiling = lambda ctx: GrossCeiling(
         ceiling_x=ceiling_x, base_x=BASE_X, drawdown_pct=None,
         alert_owner=False, rung=rung, reason="test rung",

@@ -35,7 +35,6 @@ def _pipeline(live_price=100.0, cash=50_000.0):
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     return pipeline
 
 
@@ -118,27 +117,6 @@ def test_insufficient_cash_for_one_share_is_recorded():
     assert orders == []
     assert [s["reason"] for s in ctx.execution_skips] == ["insufficient_cash"]
     pipeline.broker.submit_order.assert_not_called()
-
-
-def test_daily_loss_recheck_records_every_blocked_buy():
-    pipeline = _pipeline()
-    violation = MagicMock()
-    violation.message = "daily loss -3.4% breaches 3.0% limit"
-    pipeline.risk_engine.check_daily_loss.return_value = violation
-    ctx = _ctx([
-        TradeDecision(action="BUY", symbol="XLE", allocation_pct=5,
-                      entry_price=100.0, stop_loss=95.0, take_profit=112.0,
-                      reasoning="r"),
-        TradeDecision(action="BUY", symbol="XLF", allocation_pct=5,
-                      entry_price=50.0, stop_loss=47.0, take_profit=57.0,
-                      reasoning="r"),
-    ])
-
-    orders = ExecutionStage(pipeline=pipeline).run(ctx)
-
-    assert orders == []
-    assert sorted(s["symbol"] for s in ctx.execution_skips) == ["XLE", "XLF"]
-    assert {s["reason"] for s in ctx.execution_skips} == {"daily_loss_recheck"}
 
 
 def test_successful_buy_records_no_skip():

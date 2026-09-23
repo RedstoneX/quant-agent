@@ -44,7 +44,7 @@ PROD_HARD = 90.0
 def _engine(**overrides) -> RiskRuleEngine:
     kwargs = dict(
         max_position_pct=99.0, max_total_position_pct=300.0,
-        max_daily_loss_pct=99.0, max_sector_pct=PROD_SOFT,
+        max_sector_pct=PROD_SOFT,
         max_sector_hard_pct=PROD_HARD, require_stop_loss=True,
     )
     kwargs.update(overrides)
@@ -79,8 +79,7 @@ def test_prod_caps_pooled_unknown_past_hard_ceiling_is_refused():
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = _engine().check(
             decision=decision, positions=positions,
-            total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-        )
+            total_value=EQUITY, cash=EQUITY,)
 
     hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
     assert [v.rule for v in hard] == ["max_sector_hard_pct"], (
@@ -102,8 +101,7 @@ def test_prod_caps_resolved_sector_at_the_same_size_also_refused_control():
     with patch("src.execution.broker._get_sector", return_value="Healthcare"):
         violations = _engine().check(
             decision=decision, positions=positions,
-            total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-        )
+            total_value=EQUITY, cash=EQUITY,)
     hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
     assert [v.rule for v in hard] == ["max_sector_hard_pct"]
 
@@ -120,8 +118,7 @@ def test_small_isolated_unresolved_order_is_advisory_only_not_refused():
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = _engine().check(
             decision=decision, positions=[],
-            total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-        )
+            total_value=EQUITY, cash=EQUITY,)
 
     rules = [v.rule for v in violations]
     hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
@@ -149,13 +146,11 @@ def test_unknown_long_and_short_pools_are_independent():
         # (empty) SHORT Unknown pool, not the 85%-full LONG one.
         short_violations = _engine().check(
             decision=_order("SHORTME", allocation_pct=10.0, action="SHORT"),
-            positions=positions, total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-        )
+            positions=positions, total_value=EQUITY, cash=EQUITY,)
         # A new LONG, on the other hand, stacks directly on the 85% LONG pool.
         long_violations = _engine().check(
             decision=_order("LONGME", allocation_pct=10.0, action="BUY"),
-            positions=positions, total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-        )
+            positions=positions, total_value=EQUITY, cash=EQUITY,)
 
     short_hard = [v for v in short_violations if v.rule in HARD_BLOCK_RULES]
     long_hard = [v for v in long_violations if v.rule in HARD_BLOCK_RULES]
@@ -186,8 +181,7 @@ def test_broad_index_etf_is_not_treated_as_unresolved():
 
     violations = _engine().check(
         decision=_order("SPY", allocation_pct=5.0),
-        positions=[], total_value=EQUITY, daily_pnl=0.0, cash=EQUITY,
-    )
+        positions=[], total_value=EQUITY, cash=EQUITY,)
     rules = [v.rule for v in violations]
     assert not any(r.startswith("sector_unresolved") for r in rules), (
         f"SPY has a legitimate deterministic 'Broad' sector and must not "

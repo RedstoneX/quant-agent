@@ -113,7 +113,6 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     p._reconcile_stop_out_fills = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     return p
 
 
@@ -186,7 +185,7 @@ def test_scan_crash_attaches_error_status_and_tick_completes():
     assert nested["run_id"] == result["run_id"]
     assert nested["error_type"] == "RuntimeError"
     assert "snapshot feed unavailable" in nested["error"]
-    assert nested["preserved"] == "intraday deterministic loss protection"
+    assert nested["preserved"] == "fill reconciliation and stop-coverage repair"
 
 
 def test_scan_crash_does_not_dump_a_raw_traceback():
@@ -227,53 +226,6 @@ def test_scan_crash_reaches_operator_via_trader_feed(tmp_path, monkeypatch):
     assert "RuntimeError" in msg
     assert "snapshot feed unavailable" in msg
 
-
-def test_deterministic_loss_protection_still_runs_when_scan_crashes():
-    """The scan crashing must not skip or undo the reconciliation / daily
-    loss check that runs before it in the same tick."""
-    p = _pipeline(enabled=True)
-    p.broker.get_intraday_snapshots.side_effect = RuntimeError("boom")
-
-    result = p.run_intra_check()
-
-    p._reconcile_stop_coverage.assert_called_once()
-    p._reconcile_orphan_pending_submits.assert_called_once()
-    p._reconcile_stop_out_fills.assert_called_once()
-    p.risk_engine.check_daily_loss.assert_called_once()
-    assert result["status"] == "ok"
-    assert result["positions"] == 0
-    assert result["intraday_scan"]["status"] == "intraday_scan_crashed"
-
-
-# ------------------------------------------------------------ never ran
-#
-# 2026-08-31 fix: these three used to collapse onto an absent
-# `intraday_scan` key — indistinguishable from each other AND from a scan
-# that ran and genuinely found nothing (the next section down). Each now
-# attaches its own explicit status, following the same pattern
-# "intraday_scan_crashed" established above. All three stay silent on the
-# Telegram feed (src/trader_feed.py's `_INTRADAY_SILENT_STATUSES`) — same
-# operator-facing behavior as before, now backed by real evidence instead
-# of an absent key.
-
-
-# WHY THE CLOCK IS PINNED IN THE THREE "stays healthy and silent" TESTS BELOW
-# (and why unfreezing it would put the flake straight back).
-#
-# `trader_feed._format_intra_check` asks `_is_hourly_checkpoint()`, which reads
-# the LIVE clock and compares it against the checkpoint minute derived from
-# intra_check's own timer unit (currently :15). So a quiet tick is silent at
-# :45 and legitimately SPEAKS at :15 — the owner's standing "never a full clock
-# hour without a message" pulse. These tests asserted only the silent case and
-# never pinned the minute, so they passed on luck and failed on any CI run that
-# happened to land on :15, against completely untouched code. A required check
-# that fails about one run in sixty for its own reasons is how a gate gets
-# routed around, and this check is the only gate this repo has.
-#
-# Pinning is therefore not a workaround for the assertion — the silence rule is
-# a ratified owner decision and nothing here is weakened. It pins WHICH TICK
-# each test is simulating. Each of the three now states both halves of the
-# rule: silent off the checkpoint minute, and speaking on it.
 
 def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)

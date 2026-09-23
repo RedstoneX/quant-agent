@@ -65,12 +65,11 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         # BUYs execution couldn't fund).
         reserve_balance: float = kwargs.get("reserve_balance", 0.0) or 0.0
         # 2026-08-13 agent audit — "risk evidence completeness". RM's prompt
-        # claims it enforces PM's holding-discipline and drawdown-halve rules,
-        # but neither input reached it: Position carries no entry date, and
-        # `in_drawdown` lived only in PM's facts block. Both are optional so
+        # claims it enforces PM's holding-discipline rules, but the input did
+        # not reach it: Position carries no entry date. Both are optional so
         # every existing call site keeps working; absent, the sections render
-        # as "not provided" rather than silently reading as "no drawdown" /
-        # "no position is young".
+        # as "not provided" rather than silently reading as "no position is
+        # young".
         position_history: dict = kwargs.get("position_history") or {}
         recent_performance: dict = kwargs.get("recent_performance") or {}
         # Audit §1.3 — total capital at risk if every open stop were hit. RM's
@@ -332,34 +331,22 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             # a header to hang off, so open the section anyway.
             account_section = "## Account\n"
 
-        # System-drawdown state. The halving is deterministic code now
-        # (`src.risk.rules.apply_drawdown_scale`, audit §1.1) rather than a
-        # rule the PM had to remember, so this block no longer asks RM to
-        # police it — it tells RM the scaling already happened, so a size that
-        # looks smaller than PM's stated weight reads as the engine, not as PM
-        # contradicting itself. Rendered inside the Account section because it
-        # is a property of the account, not of any one name.
+        # Recent system performance, rendered inside the Account section
+        # because it is a property of the account, not of any one name.
+        # INFORMATION ONLY since 2026-09-20: the rolling-return brake that
+        # used to halve every BUY on these numbers was removed with the rest
+        # of the account-level loss alarms (retired item 32).
         if recent_performance:
             r5 = recent_performance.get("rolling_5d_pct")
             r20 = recent_performance.get("rolling_20d_pct")
-            in_dd = bool(recent_performance.get("in_drawdown"))
             trailing = recent_performance.get("trailing_days")
             sample_bit = (
                 f", {trailing} trailing sessions" if trailing is not None else ""
             )
             account_section += (
                 f"- System performance: 5d {_fmt_or_na(r5, '%')} | "
-                f"20d {_fmt_or_na(r20, '%')} | "
-                f"in_drawdown={str(in_dd).lower()}{sample_bit}\n"
+                f"20d {_fmt_or_na(r20, '%')}{sample_bit}\n"
             )
-            if in_dd:
-                account_section += (
-                    "  ⚠️ in_drawdown=true — the risk engine has ALREADY halved "
-                    "every BUY below (×0.5, deterministic; each scaled order "
-                    "says so in its reasoning). Do not ask for it again and do "
-                    "not read the smaller size as PM inconsistency. Judge the "
-                    "halved sizes on their merits.\n"
-                )
         else:
             account_section += (
                 "- System performance: not provided "
@@ -679,10 +666,9 @@ Review these proposed trades and provide your verdict as JSON."""
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
         # 2026-08-13 audit: position_history / recent_performance are optional
-        # for the same reason — they carry the `days_held` and `in_drawdown`
-        # evidence RM needs to audit PM's holding-discipline and drawdown-halve
-        # rules, and their absence is rendered explicitly rather than assumed
-        # benign.
+        # for the same reason — they carry the `days_held` evidence RM needs
+        # to audit PM's holding-discipline rules, and their absence is
+        # rendered explicitly rather than assumed benign.
         result = self.run(
             portfolio_decision=portfolio_decision,
             positions=positions,

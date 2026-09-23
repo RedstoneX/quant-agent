@@ -199,8 +199,9 @@ phases:
         sha: "c89e957deda5e6103c136866f42817cd26425c7f"
         note: "Phase 2a landed commit"
       - kind: symbol_in_file
-        path: "src/risk/rules.py"
-        symbol: "def apply_drawdown_scale"
+        path: "src/risk/metrics.py"
+        symbol: "def portfolio_heat"
+        note: "Was `def apply_drawdown_scale` until 2026-09-20, when the drawdown-halve was retired in full on the owner's instruction (docs/INCIDENT_HISTORY.md, board item 32). Phase 2a's OTHER three findings — portfolio heat, the correlation matrix and R-multiple — are what still stand, so the evidence points at one of those instead of at a deleted symbol."
       - kind: symbol_in_file
         path: "src/data/correlation.py"
         symbol: "def correlation_clusters"

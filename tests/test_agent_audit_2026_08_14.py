@@ -137,47 +137,19 @@ def test_f6_unknown_position_age_is_explicit_not_omitted() -> None:
     assert "held: unknown" in msg
 
 
-def test_f6_rm_sees_system_drawdown_state() -> None:
-    """RM had no access to the drawdown flag at all when this was written,
-    while its prompt made it the enforcer of the halving.
-
-    Audit §1.1 has since moved the halving into deterministic code
-    (`src.risk.rules.apply_drawdown_scale`), so RM is no longer the enforcer —
-    but it still needs the flag, now to read a scaled-down BUY as the engine's
-    work rather than as PM contradicting its own stated weight."""
-    msg = _rm_message(recent_performance={
-        "rolling_5d_pct": -4.1, "rolling_20d_pct": -2.0,
-        "in_drawdown": True, "trailing_days": 22,
-    })
-    assert "in_drawdown=true" in msg
-    assert "5d -4.1%" in msg and "20d -2.0%" in msg
-    assert "22 trailing sessions" in msg
-    assert "halved" in msg, (
-        "an in_drawdown run must tell RM that the engine already halved the BUYs"
-    )
-
-
 def test_f6_no_drawdown_data_reads_as_unauditable_not_as_no_drawdown() -> None:
     """Fail-closed in the reporting sense: a missing input must never be
     presented as a benign value. 'not provided' is a different claim from
     'in_drawdown=false' and RM must be able to tell them apart."""
     msg = _rm_message(recent_performance={})
     assert "System performance: not provided" in msg
-    # Wording changed when the halving became deterministic code (audit §1.1):
-    # RM no longer polices the rule, so the absent-input line reports unknown
-    # STATE rather than an unauditable rule. The claim under test is unchanged.
+    # Wording changed when the halving became deterministic code (audit §1.1)
+    # and again when the whole account-level loss alarm was retired
+    # (2026-09-20, board item 32): the absent-input line reports unknown
+    # STATE, and there is no flag left to render either way. The claim under
+    # test — absence is never presented as a benign value — is unchanged.
     assert "drawdown state unknown this run" in msg
-    assert "in_drawdown=true" not in msg
-    assert "in_drawdown=false" not in msg
-
-
-def test_f6_drawdown_false_does_not_emit_the_halve_warning() -> None:
-    msg = _rm_message(recent_performance={
-        "rolling_5d_pct": 1.2, "rolling_20d_pct": 3.4,
-        "in_drawdown": False, "trailing_days": 25,
-    })
-    assert "in_drawdown=false" in msg
-    assert "REQUIRES every new" not in msg
+    assert "rolling 5d" not in msg.lower().split("not provided")[0][-200:]
 
 
 def test_f6_account_section_survives_an_empty_book() -> None:
@@ -186,7 +158,7 @@ def test_f6_account_section_survives_an_empty_book() -> None:
     msg = _rm_message(
         positions=[],
         recent_performance={"rolling_5d_pct": None, "rolling_20d_pct": None,
-                            "in_drawdown": False, "trailing_days": 0},
+                            "trailing_days": 0},
     )
     assert "## Account" in msg
     assert "## Current Positions" in msg
@@ -194,9 +166,18 @@ def test_f6_account_section_survives_an_empty_book() -> None:
 
 def test_f6_rm_prompt_declares_the_new_inputs() -> None:
     """The audit's root cause was a prompt that named inputs the renderer
-    did not pass. Keep the two in sync in the other direction too."""
+    did not pass. Keep the two in sync in the other direction too.
+
+    2026-09-20: `in_drawdown` is no longer asserted here. The flag was
+    retired with the rest of the account-level loss alarms (board item 32),
+    and the only remaining mention of that word in the sheet is the sentence
+    saying it is gone — so asserting the identifier appears would have kept
+    this test green off its own tombstone. What the sheet must still declare
+    is the rolling returns the renderer does pass.
+    """
     text = (PROMPT_DIR / "risk_manager.md").read_text()
-    assert "in_drawdown" in text
+    assert "rolling_5d_pct" in text
+    assert "rolling_20d_pct" in text
     assert "held: Nd" in text
     # Renamed from "Drawdown-halve compliance" when audit §1.1 moved the
     # halving into deterministic code: RM is told the state, not made the
@@ -214,12 +195,15 @@ def test_f6_risk_stage_forwards_the_evidence_it_was_given() -> None:
 
     ctx = RunContext.start("morning")
     ctx.position_history = {"NVDA": {"days_held": 3}}
-    ctx.recent_performance = {"in_drawdown": True, "rolling_5d_pct": -5.0,
+    ctx.recent_performance = {"rolling_5d_pct": -5.0,
                               "rolling_20d_pct": -1.0, "trailing_days": 20}
 
     kwargs = _run_risk_stage_capturing_review(ctx)
     assert kwargs["position_history"] == {"NVDA": {"days_held": 3}}
-    assert kwargs["recent_performance"]["in_drawdown"] is True
+    # A field production actually builds, so this cannot pass on a value the
+    # test planted into a shape nothing emits (2026-09-20: `in_drawdown` was
+    # exactly that after board item 32 retired it).
+    assert kwargs["recent_performance"]["rolling_5d_pct"] == -5.0
 
 
 def test_f6_risk_stage_rebuilds_the_evidence_on_the_resume_lane() -> None:

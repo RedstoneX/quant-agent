@@ -77,7 +77,6 @@ def _pipeline(*, live_price: float, cash: float = 1_000_000.0,
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 10_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.config.execution.fractional_enabled = fractional_enabled
     pipeline.config.execution.fractional_share_decimals = decimals
     if isinstance(fractionable, Exception):

@@ -59,8 +59,8 @@ STATUS_PLAIN = {
     "emergency_sold": (
         "The account had already fallen through its daily loss limit, so "
         "everything was sold and no new trades were considered. "
-        "(Historical only — the desk stopped doing this on 2026-09-14; see "
-        "daily_loss_halted.)"
+        "(Historical only — the desk stopped doing this on 2026-09-14, and "
+        "the halt that replaced it was itself removed on 2026-09-20.)"
     ),
     "daily_loss_halted": (
         "The account had already fallen through its daily loss limit, so the "
@@ -68,7 +68,10 @@ STATUS_PLAIN = {
         "was sold: resting entry orders were cancelled, every held position "
         "was kept, and the protective stop on each one was checked against "
         "the broker. If any position could not be confirmed as protected, "
-        "the owner was told by name."
+        "the owner was told by name. "
+        "(Historical only — the whole account-level loss alarm was removed "
+        "on 2026-09-20 on the owner's instruction; the desk has no "
+        "account-level loss limit now. See docs/INCIDENT_HISTORY.md.)"
     ),
     "paid_analysis_suspended": (
         "The session was stopped by the spending circuit before it could "
@@ -326,9 +329,14 @@ SKIP_PLAIN = {
         "reward-to-risk floor, an unknown payoff"
     ),
     "insufficient_cash": "there was not enough settled cash to pay for it",
+    # Historical runs only — the account-level daily-loss limit and this
+    # re-check were retired 2026-09-20 on the owner's instruction
+    # (docs/INCIDENT_HISTORY.md, board item 32); nothing emits this reason
+    # any more. Kept so an old run still replays in plain words, the same
+    # way `emergency_sold` is kept.
     "daily_loss_recheck": (
         "the account crossed its daily loss limit while the session was "
-        "running, so buying stopped"
+        "running, so buying stopped (historical)"
     ),
     "broker_rejected": "the broker refused the order",
     "broker_submit_exception": (
@@ -357,6 +365,9 @@ RULE_PLAIN = {
         "hedges added, not netted — above the borrowing-safety ceiling"
     ),
     "max_sector_pct": "it would have concentrated too much money in one sector",
+    # Historical runs only — the account-level daily-loss halt was retired
+    # 2026-09-20 on the owner's instruction (docs/INCIDENT_HISTORY.md, board
+    # item 32); nothing emits this rule any more.
     "max_daily_loss_pct": "the account had already lost too much for one day",
     "require_stop_loss": "it had no protective stop attached",
     "cash_only": "it would have required borrowing, and this account never borrows",
@@ -364,6 +375,8 @@ RULE_PLAIN = {
         "it was too similar to positions already held — they would all move "
         "together"
     ),
+    # Historical runs only — retired 2026-09-20 with the rest of the
+    # account-level loss alarms (board item 32).
     "drawdown_buy_cap": "the account is in a drawdown, so buying is capped",
     # Historical runs only — retired 2026-09-17 with the fully-invested
     # mandate; `deployment_gap` replaced it.
@@ -382,6 +395,8 @@ RULE_PLAIN = {
     ),
     "hard_risk": "it broke a hard risk limit",
     "symbol_guard": "the symbol is not one this system is permitted to trade",
+    # Historical runs only — retired 2026-09-20 with the rest of the
+    # account-level loss alarms (board item 32).
     "drawdown_buy_halved": "the size was halved because the account is in a drawdown",
 }
 
@@ -896,17 +911,16 @@ def collect(
     # nested-status extraction picks each up directly and `_verdict` reads
     # all three as PASS.
     #
-    # What remains, and it is not a health question: `run_intra_check`'s
-    # belt-and-suspenders gate skips calling the scan entirely (never even
-    # reaching `_run_intraday_opportunity_scan`) when a daily-loss breach
-    # was detected but there were no positions to force-liquidate — a
-    # daily-loss breach must never add new risk, regardless of whether there
-    # happened to be something to force-close. That specific combination is
-    # the only production path left that can produce an "ok" top-level
-    # status with no `intraday_scan` key at all; it is exercised directly by
-    # tests/test_intraday_scan.py's
-    # test_run_intra_check_skips_scan_on_daily_loss_breach_even_with_no_positions,
-    # not by this finding.
+    # What used to remain here was `run_intra_check`'s belt-and-suspenders
+    # gate, which skipped the scan entirely on a daily-loss breach with no
+    # positions to force-liquidate. That gate and the breach behind it were
+    # deleted 2026-09-20 with the whole account-level loss alarm (retired
+    # item 32, docs/INCIDENT_HISTORY.md), and so was the test named here as
+    # exercising it. So this finding no longer has a known benign
+    # explanation to exclude: a missing `intraday_scan` key on an "ok" tick
+    # is now unexplained by construction, which is what the finding below
+    # says. If a new benign path appears, give it its own status rather
+    # than re-opening a hole here.
     if session == "intra_check" and result and not isinstance(result.get("intraday_scan"), dict):
         report.findings.append({
             "kind": "intraday_scan_visibility_gap",

@@ -101,7 +101,7 @@ def _pipeline(reserve_pct: float = RESERVE_PCT) -> TradingPipeline:
         ),
         risk=RiskConfig(
             max_position_pct=20, max_total_position_pct=90,
-            max_daily_loss_pct=3, max_sector_pct=40,
+            max_sector_pct=40,
             require_stop_loss=True, allow_margin=False,
         ),
     )
@@ -192,7 +192,7 @@ def _rule_two_percentage() -> float:
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20,
         max_total_position_pct=0.0001,   # trip it so the value is reported
-        max_daily_loss_pct=3, max_sector_pct=40,
+        max_sector_pct=40,
         require_stop_loss=False, allow_margin=False,
     ))
     investable = [p for p in BOOK if p.symbol != SWEEP_SYMBOL]
@@ -202,9 +202,7 @@ def _rule_two_percentage() -> float:
         reasoning="probe measurement, allocates nothing",
     )
     violations = engine.check(
-        decision=decision, positions=investable, total_value=EQUITY,
-        daily_pnl=0.0, cash=CASH,
-    )
+        decision=decision, positions=investable, total_value=EQUITY, cash=CASH,)
     hit = [v for v in violations if v.rule == "max_total_position_pct"]
     assert hit, "expected the net-exposure rule to report its measurement"
     return hit[0].value

@@ -58,23 +58,9 @@ def risk_engine():
     return RiskRuleEngine(RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         require_stop_loss=True,
     ))
-
-
-def test_daily_loss_violation(risk_engine):
-    decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10,
-        entry_price=500, stop_loss=480, take_profit=530, reasoning="test",
-    )
-    violations = risk_engine.check(
-        decision=decision, positions=[], total_value=100000,
-        daily_pnl=-4000,  # -4% loss, exceeds 3% limit
-    )
-    rules = [v.rule for v in violations]
-    assert "max_daily_loss_pct" in rules
 
 
 def test_total_exposure_violation(risk_engine):
@@ -87,8 +73,7 @@ def test_total_exposure_violation(risk_engine):
         entry_price=800, stop_loss=750, take_profit=900, reasoning="test",
     )
     violations = risk_engine.check(
-        decision=decision, positions=positions, total_value=100000, daily_pnl=0,
-    )
+        decision=decision, positions=positions, total_value=100000,)
     rules = [v.rule for v in violations]
     assert "max_total_position_pct" in rules
 
@@ -99,8 +84,7 @@ def test_position_size_violation(risk_engine):
         entry_price=500, stop_loss=480, take_profit=530, reasoning="test",
     )
     violations = risk_engine.check(
-        decision=decision, positions=[], total_value=100000, daily_pnl=0,
-    )
+        decision=decision, positions=[], total_value=100000,)
     rules = [v.rule for v in violations]
     assert "max_position_pct" in rules
 
@@ -111,8 +95,7 @@ def test_stop_loss_required_violation(risk_engine):
         entry_price=500, stop_loss=0, take_profit=530, reasoning="test",
     )
     violations = risk_engine.check(
-        decision=decision, positions=[], total_value=100000, daily_pnl=0,
-    )
+        decision=decision, positions=[], total_value=100000,)
     rules = [v.rule for v in violations]
     assert "require_stop_loss" in rules
 
@@ -123,8 +106,7 @@ def test_sell_orders_skip_risk_check(risk_engine):
         entry_price=0, stop_loss=0, take_profit=0, reasoning="close",
     )
     violations = risk_engine.check(
-        decision=decision, positions=[], total_value=100000, daily_pnl=-5000,
-    )
+        decision=decision, positions=[], total_value=100000,)
     assert violations == []
 
 
@@ -132,7 +114,6 @@ def test_sector_cap_counts_pending_same_sector_buys():
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=30,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         require_stop_loss=True,
     ))
@@ -146,12 +127,10 @@ def test_sector_cap_counts_pending_same_sector_buys():
             decision=decision,
             positions=[],
             total_value=100000,
-            daily_pnl=0,
             # Spec §12.2 — the accumulator is keyed by `(sector, side)`. A
             # bare-sector key here would silently miss every lookup and the
             # test would pass while enforcing nothing.
-            pending_sector_investment={("Technology", "long"): 25000},
-        )
+            pending_sector_investment={("Technology", "long"): 25000},)
 
     rules = [v.rule for v in violations]
     assert "max_sector_pct" in rules
@@ -299,7 +278,6 @@ def test_pipeline_hard_risk_filter_blocks_missing_stop_loss():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         require_stop_loss=True,
     ))
@@ -312,8 +290,7 @@ def test_pipeline_hard_risk_filter_blocks_missing_stop_loss():
     ]
 
     allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-        decisions, positions=[], total_value=100000, daily_pnl=0,
-    )
+        decisions, positions=[], total_value=100000,)
 
     assert allowed == []
     assert violations == []
@@ -337,7 +314,6 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         max_sector_hard_pct=60,
         require_stop_loss=True,
@@ -357,8 +333,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["AAPL"]
     assert any("Technology" in reason for reason in blocked)
@@ -377,7 +352,6 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=30,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         max_sector_hard_pct=60,
         require_stop_loss=True,
@@ -397,8 +371,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["AAPL", "MSFT"]
     assert blocked == []
@@ -412,7 +385,6 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         require_stop_loss=True,
     ))
@@ -431,8 +403,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
         "src.execution.broker._get_sector", return_value="ETF"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decisions, positions=[], total_value=100000,)
 
     assert [d.reasoning for d in allowed] == ["first leg"]
     assert violations == []
@@ -1219,7 +1190,6 @@ def test_hedge_nets_out_for_total_exposure():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40,
         max_total_position_pct=50,  # tight limit
-        max_daily_loss_pct=3,
         max_sector_pct=90,  # high to not interfere
         require_stop_loss=True,
     ))
@@ -1241,8 +1211,7 @@ def test_hedge_nets_out_for_total_exposure():
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["SQQQ", "SPY"]
 
@@ -1253,7 +1222,6 @@ def test_same_direction_longs_sum_for_total_exposure():
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40,
         max_total_position_pct=50,
-        max_daily_loss_pct=3,
         max_sector_pct=90,
         require_stop_loss=True,
     ))
@@ -1273,8 +1241,7 @@ def test_same_direction_longs_sum_for_total_exposure():
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["SPY"]
     assert any("Net exposure" in r for r in blocked)
@@ -1369,7 +1336,7 @@ def test_deployment_gap_emits_advisory_violation():
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
+        max_sector_pct=90, require_stop_loss=True,
     ))
     decisions = [
         TradeDecision(action="BUY", symbol="SPY", allocation_pct=40,
@@ -1379,7 +1346,7 @@ def test_deployment_gap_emits_advisory_violation():
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
+            decisions, positions=[], total_value=100000,
             invested_target_pct=100,  # mandate 100%, PM projects 40%
         )
 
@@ -1394,7 +1361,7 @@ def test_deployment_gap_skipped_when_within_tolerance():
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
+        max_sector_pct=90, require_stop_loss=True,
     ))
     from src.models import Position
     held = [Position(symbol="SPY", qty=199, avg_entry=500, current_price=500,
@@ -1404,7 +1371,7 @@ def test_deployment_gap_skipped_when_within_tolerance():
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         _, violations, _ = pipeline._filter_hard_risk_decisions(
-            [], positions=held, total_value=100000, daily_pnl=0,
+            [], positions=held, total_value=100000,
             invested_target_pct=100,  # 99.5% vs 100% = -0.5pp, under the reserve band
         )
     assert not any(v.rule == "deployment_gap" for v in violations)
@@ -1740,7 +1707,6 @@ def test_single_position_cap_uses_gross_leverage():
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,  # high, doesn't interfere
-        max_daily_loss_pct=3,
         max_sector_pct=90,
         require_stop_loss=True,
     ))
@@ -1750,8 +1716,7 @@ def test_single_position_cap_uses_gross_leverage():
     )
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = engine.check(
-            decision=decision, positions=[], total_value=100000, daily_pnl=0,
-        )
+            decision=decision, positions=[], total_value=100000,)
     rules = [v.rule for v in violations]
     assert "max_position_pct" in rules
 

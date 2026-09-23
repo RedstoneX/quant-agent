@@ -501,9 +501,15 @@ EXTERNAL_INFORMATION_PATTERNS: tuple[str, ...] = (
     # belonged on a list whose defining property is "comes from OUTSIDE the
     # price series". An earnings miss is true regardless of the tape; a
     # correlation number is the tape.
-    r"\bcircuit breaker\b",
-    r"\bdaily[- ]loss\b",
-    r"\bdaily loss\b",
+    # `circuit breaker` / `daily loss` / `daily-loss` were REMOVED here
+    # 2026-09-20 (WORK.md item 32), alongside their removal from
+    # `pipeline._HARD_TRIGGER_KEYWORDS` and `exit_trigger.ExitTrigger`, and
+    # for the first of the two correlation-breach reasons above: the owner
+    # deleted the whole account-level loss alarm, so nothing in the desk
+    # computes a daily-loss or circuit-breaker event and the claim was no
+    # longer checkable. This list is the more dangerous of the two to leave
+    # stale, because membership here BYPASSES the noise-band and ratchet
+    # clamps rather than merely admitting a phrase.
     r"\bstop hit\b",
     r"\bstopped out\b",
 )

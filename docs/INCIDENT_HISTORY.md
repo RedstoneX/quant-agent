@@ -65,6 +65,405 @@ what would catch it next time.
 
 ---
 
+### 2026-09-20 — the desk's second, account-level loss response was REMOVED ENTIRELY on the owner's instruction (board item 32 retired)
+
+**In plain words:** the desk used to have two separate ways of reacting to
+losing money. One is a ladder that gradually trims how much the book may own
+as it falls further below its best-ever level. The other was a set of alarms
+that read the account's own recent losses and, when one tripped, stopped the
+desk taking any new risk for the day or cut every new purchase in half. The
+owner has removed the second one completely. The ladder stays.
+
+**This is not a defect fix.** Nothing was found broken. The owner decided the
+mechanism was more dangerous than the thing it protected against, and said
+so in these words, 2026-09-20:
+
+> "I'm starting to think that I'm fine with the stops on the individual
+> stocks and I do not want a nuclear option so remove the whole secondary
+> halt on portfolio completely because there's too many things you keep
+> finding where a slight normal fluctuation in the market can liquidate or
+> halt everything — that's too dangerous to leave — the proper stop losses
+> should be enough."
+
+**What he was reacting to.** This item had already produced three rounds of
+findings in six days, every one of them about the same shape of problem: the
+alarm firing, or being able to fire, on a day that was not actually unusual.
+The whole-book liquidation half was deleted on 2026-09-14 by his own merged
+PR after it was shown it would have cancelled every protective stop, failed
+to sell into a gap, and put the stops back. A retuned-trigger fix for the
+remaining halt was built and then superseded before merging (PR #564, closed
+unmerged). The pattern he is pointing at is real, and his answer to it is to
+stop having the mechanism rather than to keep re-tuning it.
+
+**What was removed.**
+
+- The daily circuit breaker: the account-level test of the day's loss
+  against a limit, and the halt it triggered — refusing all new risk for
+  the session, cancelling resting entry orders, verifying every held
+  position's stop at the broker, filing a per-symbol refusal and alerting
+  the owner. Every place it fired from went with it: the morning
+  pre-research check, the two late-breach checks around research and the
+  PM call, the pre- and post-review checks in the midday and close
+  sessions, the intra-session tick, the pre-BUY re-check in the execution
+  stage, and the gate that stopped the cash sweep parking on a breach day.
+- The 5-day and 20-day rolling-return brakes: the `in_drawdown` flag and
+  the deterministic halving of every new BUY and SHORT that hung off it,
+  plus the engine's fail-closed cap for an unscaled order that reached it
+  another way.
+- The volatility yardstick built solely to set those thresholds — the
+  measurement of the held book's own realized daily volatility from its
+  holdings' price history, and the square-root-of-time scaling of one
+  sensitivity multiple across the three windows.
+- Everything that only existed to serve them: five settings, nine entries in
+  the number ledger (six of them flagged arbitrary, which is the
+  `MAX_ARBITRARY_ENTRIES` 148 → 142 move), the status string, the Telegram halt banner, the
+  "within 80% of the limit" deterministic escalation banner on the evening
+  message, the per-symbol refusal rows, the owner alert, and the prompt
+  paragraphs telling the Portfolio Manager, the Risk Manager and the
+  position reviewer how the mechanism worked.
+
+**A consequence worth stating rather than discovering later.** That evening
+banner was the desk's only FACT-based escalation on the owner's message —
+its own deleted comment said so: it existed because the model under-rating
+its own day is exactly the failure you most want caught, and it did not
+depend on the model. With it gone, the evening message's escalation is
+`risk_rating` from the evening analyst, i.e. model judgement, plus the
+§11.2 ladder's own owner-alert at its ratified drawdown point. No
+replacement threshold was invented here: any number picked to replace it
+would be exactly the kind of arbitrary constant this desk forbids, and the
+limit it measured against no longer exists to be measured against.
+
+**What was deliberately NOT touched.** The §11.2 peak-to-trough
+gross-exposure de-levering ladder — the one that trims the ceiling on how
+much the book may own at -8%, -15% and -20% below its equity high. It is a
+different mechanism and the owner did not ask for it to go. It is also
+different in kind, which is why leaving it is coherent rather than a
+half-measure: it trims exposure gradually, it never halts the desk, and it
+never closes a position outright. The rolling 5-day and 20-day return
+figures also survive, as information shown to the seats; nothing is gated on
+them any more.
+
+**Two more board items were voided by this, and one was filed.** Items 92
+(the daily-loss trigger tightening when a holding's volatility cannot be
+measured) and 144 (the 5-day and 20-day rungs never having been evaluable
+for want of equity history) both asked real questions about the mechanism's
+thresholds. Neither was answered; both lost their subject, and are retired
+as void rather than as fixed. The §11.2 ladder has its own
+unmeasurable-drawdown question and that one is untouched and still live —
+do not read these two retirements as covering it.
+
+**Item 172, FIXED IN THIS SAME CHANGE rather than filed.** The removal
+deleted the only path that told the owner, by symbol, that a position's
+protective stop could not be READ at the broker — as distinct from not
+being there. Both remaining readers of stop coverage failed quiet on a
+broker snapshot error, and both did so before this change [verified
+against `origin/main`]; what this change did was remove the layer covering
+for them, in the same breath as making per-position stops the desk's only
+loss protection.
+
+It was first written up as a board item, on the reasoning that designing a
+new alerting path inside a removal would be scope creep. That reasoning
+was rejected on review: an alert saying "I cannot tell whether this stock
+has a stop" becomes MORE important the moment per-stock stops are the only
+protection, so deleting it is collateral damage rather than part of what
+the owner ruled out, and landing a safety regression with a board item
+attached is the filed-then-buried pattern the desk has been told not to
+repeat. No account-level mechanism was rebuilt — that ruling stands. The
+fix is per-symbol reporting on the existing per-position path only.
+
+**The producer was lying, and that was the half that mattered.** The first
+version of this fix changed only the two readers, and an adversary review
+caught that it closed the rarer half of the condition. `AlpacaBroker`'s own
+`_list_open_sell_stop_orders` and `_list_open_stop_orders_by_side` catch
+their listing exception and return an empty list, so
+`snapshot_protective_stops` returned `(True, [])` on a broker outage — its
+docstring said `ok` "is always True" and named the swallow explicitly.
+An empty stop list means "this position has no protective stop", so an
+outage was reported as a CONFIRMED NAKED POSITION, and
+`_repair_stop_coverage` then placed a full-size stop over a live stop it
+could not see. Both the strongest possible false statement about loss
+protection and a duplicate-protection write, from one swallowed exception,
+and reached by the common path rather than the rare one. The listers now
+report the failure to a caller that asks for it, `snapshot_protective_stops`
+returns `ok=False`, and both readers honour it. Every other caller's
+behaviour is byte-identical: the empty-list return is unchanged for anyone
+who does not ask.
+
+What was wrong, in the readers, in two places:
+
+  * `TradingPipeline._reconcile_stop_coverage` logged a WARNING and
+    `continue`d when `snapshot_protective_stops` raised, so the symbol
+    vanished from `stop_coverage_gaps` and read downstream exactly like a
+    position confirmed covered. It now records a `coverage='unreadable'`
+    row with `covered_qty=None` and pages the owner by symbol through
+    `send_owner_alert`, the same path a missing stop uses.
+  * `coverage_watchdog.uncovered_positions` did `return [], error` on the
+    FIRST symbol that raised, discarding every gap already found and every
+    symbol not yet reached — so one flaky name could hide a genuinely
+    naked position standing behind it in the position list. A per-symbol
+    read failure is now recorded by name and the pass carries on. A
+    `get_positions` failure remains a whole-pass error, because without
+    the position list there is no per-symbol finding to make.
+
+Further holes closed on the way. A snapshot that comes back in a shape the
+loop cannot iterate used to raise OUTSIDE the inner guard and take the
+entire sweep — every other position included — with it. A protective stop
+whose quantity could not be parsed is now its own unreadable condition,
+because counting it as zero invents a gap and skipping it invents
+coverage; note honestly that the real Alpaca adapter coerces quantities
+before they reach here, so that particular branch is defence for a
+non-adapter spec source rather than a reproduced production failure. The
+watchdog's dedup key is upper-cased at both ends, which it was not — a
+mixed-case symbol would have matched nothing and paged on every tick. And
+a sweep outcome of `clean` is no longer reachable while any position went
+unread: `clean` is the one word that must never describe a run holding an
+unanswered question about loss protection.
+
+**Stated honestly, two limits.** The per-symbol-per-day claim is recorded
+BEFORE the send, so a delivery failure costs that symbol its message for
+the day; releasing the claim instead would trade one lost message for a
+page every thirty minutes, so the failure is logged loudly rather than
+retried. And the once-a-day bound is on the ALERT only — while the
+condition lasts it keeps appearing in the session messages, exactly as a
+missing stop does. The owner-facing text says so rather than promising a
+silence it does not deliver.
+
+The load-bearing NEGATIVE behaviour: a sub-share remainder whose DAY stop
+lapsed overnight is a read that SUCCEEDED and a gap that was MEASURED, and
+it stays `fractional_overnight`. That state happens to every fractional
+position every night — $2,425.96 across ten positions on the 2026-09-22
+close [measured from the production log's own `stop_coverage_gaps` line,
+read-only, 2026-09-23] — so reporting it as unreadable would bury the one
+real signal in ten lines of expected noise, which is how a banner gets
+tuned out. The owner alert is deduped per symbol per trading day on the
+same state file and the same claim discipline as the placement-failure and
+elected-unfilled alerts, and shared with the standalone watchdog, because
+`send_owner_alert` has no throttle of its own and the two processes can
+each find the identical condition.
+
+Pinned by `tests/test_unreadable_stop_alerting.py` (36 tests, all passing
+[measured 2026-09-23]), which was itself checked by mutation: thirteen
+deliberate reversions — restoring each original defect, restoring the
+broker's swallowed listing error, making each reader ignore `ok=False`,
+removing the dedup, dropping its case normalisation, letting an unreadable
+pass report `clean`, and reclassifying the accepted fractional lapse as
+unreadable — were each caught by at least one failing test [measured
+2026-09-23].
+
+**A fourteenth mutation SURVIVED that round, and two defects were found
+after it. All three are fixed here; recorded because the first one is the
+argument for mutation-checking a review as well as a fix.**
+
+*One of the three owner-facing paths was unguarded.* Turning
+`CoverageStatus.should_alert_unreadable` into `return False` — which
+silences the standalone 30-minute sweep's alert completely — left the
+ENTIRE suite green, `tests/test_coverage_watchdog.py` and
+`tests/test_alert_heartbeat.py` included [measured 2026-09-23]. The other
+two paths were guarded: no-opping the live session's
+`_alert_owner_unreadable_stop` call failed 6 tests and making
+`notifier._gap_is_unreadable` return False failed 4. The unguarded one is
+the path that runs BETWEEN sessions, which is most of the clock. The code
+was correct — confirmed by executing the real `uncovered_positions`
+against a broker stub whose listing fails and one that raises, which
+produced the by-symbol page — so this was a missing test, not a missing
+alert. Two now cover it: the gate's four states including its deliberate
+ungating from `session_ran`, and the wiring driven through the real
+`run_coverage_check` to the real `send_owner_alert` with `symbols=`
+asserted.
+
+*The standalone sweep broke the promise its own message makes.* The text
+tells the owner the alert is "sent at most once per symbol per trading
+day". `check_coverage` correctly re-opens the gate when a NEW symbol
+becomes unreadable — that is the swallowing defect fixed one level down —
+but `alert_heartbeat` then rendered `status.unreadable` wholesale, so the
+new name dragged every already-reported name back into his phone with it.
+The live session's path was already right: it filters to the symbols it
+just claimed. `CoverageStatus.unreadable_fresh` now carries that same
+subset for the sweep, built with the same upper-cased comparison the claim
+uses so a mixed-case symbol cannot re-page under a different spelling.
+
+*The new banner out-ranked the worse condition in the channel that pages
+him.* Item 21b's convention is shape, not colour — the owner is red-green
+colour blind, so severity is carried by how many marks a line has.
+`src/notifier.py` had the ordering right (🛑🛑🛑 no stop, 🛑🛑 unreadable,
+⚠️ mis-sized) but `TradingPipeline._alert_owner_no_stop` sent a single 🔴
+for NO STOP AT ALL, and `src/trader_feed.py` rendered all three as a flat
+🚨 in one place and the tiered marks in another. So "there is nothing
+standing watch" arrived looking milder than "we could not find out whether
+anything is", in the direct-alert channel, in the same change that made
+per-position stops the only protection. All four renderers now count marks
+the same way, pinned by a test that reads their source.
+
+**THE EXIT PATH ALSO CHANGED, nobody noticed, and the commit message said
+it had not.** Making `snapshot_protective_stops` return `ok=False` on a
+listing failure did not only affect readers. `_cancel_stops_with_write_ahead`
+consumes `ok` and skips the SELL on False, so five exit call sites changed
+behaviour — `FORCE_DELEVER`, the gross-exposure ladder's trims and covers
+among them. The change's own record claimed "every caller that does not ask
+is byte-identical", which is true only of the callers that do not ask. The
+test pinning that skip was added 2026-05-16 and pinned UNREACHABLE code for
+four months, because until this change `ok` could not be False [measured
+from `git log -S`, 2026-09-23]. Nobody had ever chosen the behaviour.
+
+**What the evidence actually says, having gone looking.** Rejection is
+MEASURED on this desk: 2026-04-25, AMZN, a REDUCE rejected with the trail
+stop holding all 51 shares (commit `ea49ccd0`; note the desk's only record
+of its own foundational event is a commit message, not this file). An
+OVERSOLD or reversed position is evidenced by NOTHING — no entry here, none
+in `docs/WORK.md`, none in the git log — and Alpaca documents reservation
+rather than overfill: `Position.qty_available` is "total number of shares
+available minus open orders / locked"
+(https://docs.alpaca.markets/reference/getallopenpositions). But that
+covers longs. Nothing fetched covers a BUY-to-cover against a resting BUY
+stop; the repo asserts that symmetry in a test and has never measured it.
+
+**Decision: the desk still declines the exit, and it is no longer silent
+about it.** `docs/OUTCOME.md` makes broker protections fail CLOSED, and an
+unbounded unmeasured harm on one side beats a bounded measured one on the
+other, so declining stands. Three things changed around it.
+
+*The read is retried before it can refuse anything.* The listers had no
+retry at all — one exception and the answer was "I cannot ask", which now
+costs a trade. It reuses `_STOP_PLACEMENT_MAX_ATTEMPTS` and
+`_STOP_PLACEMENT_BACKOFF_S`, whose written justification ("every failure
+worth retrying is transient — a 429, a 5xx, a dropped connection") is
+stronger for a read than for the write they were derived for, since a
+retried read cannot double-place anything. No new number.
+
+*The log line says only what is established.* `ok=False` meant two things
+at once: the listing failed, so nobody knows whether a stop rests; or the
+cancel rolled back, so one verifiably does. Only the second supports "the
+broker would reject on held_for_orders", and the line asserted it for both.
+The two states are now stamped separately and worded separately.
+
+*A declined exit reaches the owner by symbol.* All five call sites do `if
+sale is None: continue` — no trade row, no session field, no message — so
+the desk could decide to leave a position, fail, and report a quiet day.
+After the account-level halt's removal one of those call sites is the
+de-levering ladder, which would otherwise trim less than it reports with
+nothing reconciling the shortfall. The alert uses the same notifier path
+and the same once-per-symbol-per-trading-day claim as the unreadable-stop
+alert, on a FOURTH state key — sharing the unreadable key would let a stop
+the desk could not read silence the exit it then refused on the strength of
+that same read, and those two happen together by construction.
+
+*Recommended next, NOT done here.* `Position.qty_available` is Alpaca's own
+documented answer to the only question the skip decision needs — is
+anything reserved on these shares — and `grep -rn qty_available src/`
+returns nothing: the adapter fetches the field and drops it. Reading it
+would turn this from a judgement about an unknown into a measurement, and
+would let a genuinely unreserved position be exited during a listing
+outage. It is a new broker field and new logic on the exit path, so it is
+named here rather than built inside a removal.
+
+## OPEN FINDINGS raised against this change and deliberately NOT acted on
+
+Written down here because they were found while reviewing the halt removal
+and have no home on the board — the owner's ruling is settled and none of
+these reopens it. None is fixed, none is filed as a numbered item, and the
+evidence for each is only what is stated.
+
+**The de-levering ladder is now the only account-wide loss response, and
+the board already records that it may not be able to sell.** Item 118 says
+`_enforce_gross_ceiling` prices every de-lever trim as a LIMIT order 1%
+through the current price, with a ceilinged wait, and calls that "the
+deleted breaker's exact failure mode, in the component the board elsewhere
+calls 'the only remaining automatic seller'". Before this change that was
+one of two account-wide mechanisms; it is now the only one, and its
+severity rose without its item being touched. [Read from `docs/WORK.md`
+item 118 and the cited code, 2026-09-23; the fill behaviour was not
+re-measured.]
+
+**The ladder cancels a position's protective stop during the exact
+conditions this change says those stops are load-bearing.** Item 111
+records that the ladder's multi-symbol trim cancels each symbol's stops
+and only restores them after the whole batch finishes, leaving the
+earliest-trimmed symbol unprotected for the rest of the loop — and it
+fires only in a drawdown. [Read from `docs/WORK.md` item 111, 2026-09-23;
+not reproduced.]
+
+**Nothing now reports a heavy loss day at any size.** The deleted
+`_append_evening_body` escalation ("daily loss X% is ≥80% of the Y%
+circuit-breaker limit") had no substitute put in its place. The owner's
+ruling was that the alarm FIRES on an ordinary move — a statement about a
+gate that halts trading, not about a line of text that halts nothing. A
+banner cannot false-trigger in the sense he objected to. Whether he wants
+one is his call and has not been asked. [Read from this change's own diff,
+2026-09-23.]
+
+**Smaller, same status.** The swallowed-listing-error defect this entry
+calls the dangerous half of the read path is fixed only in
+`snapshot_protective_stops`; four other call sites still treat a listing
+failure as an empty list, of which `src/execution/scale_in.py`'s
+`rearm_full_position_stop` is the one that would place a stop over a live
+one it could not see. Pre-existing, not caused here, named here so it is
+not lost. And item 128's question — whether `intra_check`'s session-lock
+exemption survives the breaker's removal — is still open; this change
+rewrites the comment to stop citing a dead mechanism but does not answer
+it.
+
+**The one real entanglement, and how it was resolved.** Board item 39's
+rotation-sequencing work (PR #563, open and unmerged at the time of this
+change) uses a gate it calls `daily_loss_recheck` as the first of four
+refusal checks on a rotation's replacement BUY. That gate is not a separate
+per-trade budget check that happens to share code — it is this same
+account-level breaker, run against a projected post-sale book. With the
+breaker gone it has nothing to evaluate, so it must be dropped from that
+branch's gate list when it rebases. Its other three gates — no live price,
+stale entry, sizing rounds to zero — are untouched and still do the work
+that PR exists for, so the feature is not hollowed out.
+
+**What would catch a resurrection, and what would not.**
+`config/retired_mechanisms.yaml` now carries this retirement with its
+function names and the prose forms that describe it, and the build fails if
+any prompt, docstring or comment under its scan globs starts describing it
+again. Two honest limits on that guarantee, both found by the adversary
+review of this change and not by the registry:
+
+- **The registry did not find the stale prose in this change; a reader
+  did.** Its matching is literal-phrase, so six surviving statements in
+  `config/prompts/portfolio_manager.md` scanned clean while flatly
+  contradicting the paragraphs this change had already corrected — among
+  them the Rule Priority table's row 9, which the prompt itself designates
+  as the tie-breaker when two rules conflict, and which told the Portfolio
+  Manager that a halving would be applied to its sizes after it submitted.
+  They are corrected here. Do not cite the registry as coverage it does not
+  have.
+- **Its scan globs do not cover everything.** `tests/`, `ops/`,
+  `src/api/`, `src/data/`, `scripts/`, `frontend/`, `config/settings.yaml`
+  and `docs/` are outside them, which is why a stale `settings.yaml`
+  comment pointing at "the daily circuit breaker above" survived while two
+  of its three identical siblings were corrected. Also fixed here.
+
+**A defect in the guard itself, found while arguing about this change.**
+The first attempt here dropped the halt's own run status from the two places
+that turn a status into words and a colour for the owner, while
+`emergency_sold` — retired the same way six days earlier — was kept in both
+as a historical label. Restoring the label failed the retired-mechanism
+check, and the reason turned out to be a bug in the check rather than a
+reason to drop the label: `OPT_OUT_MARKER` documents a per-LINE `retired-ok`
+opt-out, but the scanner compared the marker only against the extracted
+prose, which for a string literal is the literal's CONTENTS. A trailing
+`# retired-ok` on a `"key": "value",` line could therefore never work, and
+five such markers were already sitting inert in `src/config.py` reading to
+every later author as though they did. The scanner now checks the source
+line as well, `tests/test_retired_mechanisms.py` pins it, and the label is
+kept in both places. The colour mattered more than it first looked: a
+historical halted run was falling through to the white "nothing happened"
+bucket, and the owner is red-green colour blind, so the one status the desk
+has that means "the desk stopped" was reading as an ordinary quiet day.
+
+**The strongest remaining check is not the registry — it is
+`RiskConfig._reject_deleted_loss_alarm_keys`.** `RiskConfig` inherits
+pydantic's default `extra="ignore"`, so a stale deployment's
+`settings.yaml` still carrying any of the five deleted keys would otherwise
+load silently, and an operator would believe a daily halt was armed when
+nothing reads it. That validator refuses all five loudly at config load.
+It is the one way this removal could rot into a false belief about loss
+protection, so it is guarded by code rather than by a scanner.
+
+---
+
 ### 2026-09-23 — every short position on the live dashboard was labeled "long" (item 176)
 
 **In plain words:** the owner spotted it himself — a position's quantity showed negative on the dashboard while the word next to it said "long." Two real shorts were affected on the day this was found: FLNC (qty -36, $268.56 short) and UPS (qty -7, $670.53 short), both confirmed live via the running API.
