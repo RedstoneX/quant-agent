@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentResult
@@ -23,6 +24,37 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "tech
 # longer come from this window — they are computed in Python over the full
 # history (see src/data/levels.py), so this stays small on purpose.
 _BARS_PER_SYMBOL = 40
+
+# The standing sheet states the size of that window back to the model, in five
+# places. It used to state it as a hand-typed "20" while this constant said 40,
+# so for as long as the two disagreed the only seat allowed to halt the desk was
+# being told the wrong thing about its own inputs — it read pivots, gaps and
+# micro-structure off a window twice the size it believed it had (board item 98;
+# neither PR #464 nor #467 caught it). The count now has ONE home: the sheet
+# carries this placeholder and the value is substituted from the constant below
+# at prompt-assembly time, so changing the slice changes what the model is told.
+#
+# Deliberately NOT routed through `src/agents/prompt_limits.py`: that module
+# resolves `{{risk.*}}` against live settings and RAISES on anything it cannot
+# resolve. Raising is right for a risk limit; on this seat a raise is a halted
+# desk, and a bar count is a code constant, not an operator-tunable setting.
+# Substitution here cannot fail. What CAN happen is the placeholder being edited
+# away and a literal typed back in, which is the original defect returning — and
+# that is caught in CI by `tests/test_tech_analyst_bar_count.py`, not at run time.
+_BARS_PLACEHOLDER = "{{tech.bars_per_symbol}}"
+
+#: Matched as a pattern, not compared as a string. A bare `str.replace` stops
+#: substituting the moment someone writes `{{ tech.bars_per_symbol }}` with
+#: spaces, or the sheet gets rewrapped — and the failure is silent, shipping
+#: literal template syntax to the seat. `prompt_limits.PLACEHOLDER_RE` learned
+#: this already and tolerates the same whitespace; so does this.
+_BARS_PLACEHOLDER_RE = re.compile(r"\{\{\s*tech\.bars_per_symbol\s*\}\}")
+
+
+def render_bars_per_symbol(text: str, bars: int = _BARS_PER_SYMBOL) -> str:
+    """Substitute the bar-window placeholder with the count the code sends."""
+    return _BARS_PLACEHOLDER_RE.sub(str(bars), text)
+
 
 # Ceiling on ONE request's predicted tokens. Chosen from measurement, not
 # taste: at 45k a 53-symbol universe packs into 5 requests with a ~44k peak
@@ -151,7 +183,7 @@ class TechAnalystAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
+            return render_bars_per_symbol(PROMPT_PATH.read_text())
         return "You are a technical analyst. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:
@@ -221,16 +253,27 @@ class TechAnalystAgent(BaseAgent):
                 # Fail visible: the model must not read yesterday's close as
                 # today's price.
                 return (
-                    f"\n⚠️ LIVE PRICE UNAVAILABLE ({unavailable}) — the trading "
-                    f"session is IN PROGRESS but no current price could be "
-                    f"read. The last completed close above is STALE for today; "
-                    f"do not treat it as the current price, and say so in your "
-                    f"reasoning_chain."
+                    f"\n⚠️ NO PRICE FROM TODAY ({unavailable}) — the trading "
+                    f"session is IN PROGRESS but this name has produced no "
+                    f"print today on any feed this account is entitled to: no "
+                    f"trade, no minute bar, no session bar. The last completed "
+                    f"close above is STALE for today; do not treat it as the "
+                    f"current price. You have NO current price for this name, "
+                    f"so you cannot judge where it sits against any level, "
+                    f"stop or target: say the price seat is LOST for this "
+                    f"symbol in your reasoning_chain and do not assign it a "
+                    f"price-dependent setup. The completed-bar structure above "
+                    f"is still valid as structure."
                 )
-            last = ic.get("last_price")
+            # `live_price` is the freshness-RESOLVED number (item 120): a
+            # today print, a today minute-bar close, or a today forming-bar
+            # close — never the raw `last_price`, which can be yesterday's,
+            # and never a quote mid.
+            last = ic.get("live_price")
             prev = ic.get("prev_close")
             if not isinstance(last, (int, float)) or last <= 0:
                 return ""
+            source_text = ic.get("live_price_description") or "last trade print"
             # Move is measured against the prior COMPLETED close, which is
             # what "today's move" means; fall back to the last bar in the
             # series when the snapshot didn't carry one.
@@ -247,14 +290,30 @@ class TechAnalystAgent(BaseAgent):
                     return "n/a"
                 return f"{prefix}{v:,.2f}" if prefix else f"{v:,.0f}"
 
+            # The session line is only rendered when the snapshot's daily bar
+            # is TODAY's. `_live_session_context` blanks those fields when it
+            # is not (item 120) — Alpaca puts the PREVIOUS session's daily bar
+            # in that slot for a name that has not printed today, and this
+            # block used to render it under a "TODAY" heading.
+            has_session_bar = any(
+                isinstance(ic.get(k), (int, float)) and ic.get(k) > 0
+                for k in ("session_open", "session_high", "session_low")
+            )
+            session_line = (
+                f"\n  Session so far: O={_fmt('session_open')} "
+                f"H={_fmt('session_high')} L={_fmt('session_low')} "
+                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                if has_session_bar else
+                "\n  Session so far: NOT AVAILABLE — this name has no "
+                "today session bar; do not infer a range for today."
+            )
             return (
                 f"\n⚠️ CURRENT SESSION (TODAY, INCOMPLETE — this trading day has "
                 f"NOT closed; these are live intraday figures, NOT a finished "
                 f"daily bar and NOT part of the completed series above):"
-                f"\n  Last trade: ${last:,.2f} ({move_str})"
-                f"\n  Session so far: O={_fmt('session_open')} "
-                f"H={_fmt('session_high')} L={_fmt('session_low')} "
-                f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
+                f"\n  Current price: ${last:,.2f} ({move_str}) "
+                f"— source: {source_text}"
+                f"{session_line}"
                 f"\n  The indicators above are computed from COMPLETED daily "
                 f"bars only and therefore do NOT yet reflect this move. Judge "
                 f"the setup on today's live price action against those levels, "
@@ -306,7 +365,10 @@ class TechAnalystAgent(BaseAgent):
             # In-progress session: classify support/resistance against the
             # LIVE price, not yesterday's close (2026-09-14, ORCL 2026-09-10).
             ic = intraday_context.get(symbol) or {}
-            live_price = ic.get("last_price")
+            # item 120: the freshness-resolved price, not the raw provider
+            # `last_price` — classifying support/resistance against a prior
+            # session's print is exactly the defect this replaced.
+            live_price = ic.get("live_price")
             if (
                 ic.get("live_unavailable")
                 or not isinstance(live_price, (int, float))

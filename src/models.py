@@ -1214,6 +1214,51 @@ class TechAnalysisResult(TechAnalystAnswerItem):
             evidence.append(VerdictEvidence(label="support_level", value=float(level)))
         for level in self.resistance_levels:
             evidence.append(VerdictEvidence(label="resistance_level", value=float(level)))
+        # `computed_level_touches` (Python-set, `find_structural_levels`) is
+        # already how many prior pivots back EACH computed level — used
+        # elsewhere (`PortfolioConstructor._level_backing_stop`,
+        # `risk.min_level_touches_for_stop_honor`) to decide whether a stop
+        # earns the tight-stop exemption.
+        #
+        # RISK-SIDE ONLY, not every computed level. `computed_levels` is
+        # `find_structural_levels`' supports and resistances UNIONED
+        # (`TechAnalysisResult.computed_levels`'s own field comment), so a
+        # blind sum over `computed_level_touches` counts overhead
+        # resistance the same as underlying support — for a long, a
+        # heavily-touched ceiling is supply IN THE WAY of the trade, not
+        # evidence for it, and summing it in would score exactly the wrong
+        # direction. This filters to the levels on the RISK side of the
+        # analyst's own entry (below entry for a long, above it for a
+        # short) — the same side `_level_backing_stop` looks at, and the
+        # ONLY side `reward_risk_floor_applies` says a breakout is approved
+        # on at all (`src/risk/constants.py`): "a real level-backed or
+        # ATR-derived stop, plus the multi-agent conviction and evidence
+        # checks". A breakout's overhead is deliberately not measured
+        # anywhere in this desk's approval logic; this does not reach in
+        # and measure it either.
+        #
+        # Summed across qualifying levels (not averaged: more
+        # independently-touched structure under the stop is more evidence
+        # behind it, not a dilution of any one level — same "evidence adds"
+        # posture `score_verdict` already takes), attached as its own
+        # evidence item so `src/verdicts.py::rank_verdicts` can read it as
+        # a real ranking signal WITHOUT recomputing anything (WORK.md item
+        # 141: this is what closes the residual alphabetical fallback left
+        # when a tied composite tier has no risk_reward at all, e.g. an
+        # all-breakout tier). No entry price, or no computed levels at
+        # all, means zero — a real absence, not an invented value.
+        stop_side_level_touches = 0.0
+        if self.entry_price is not None:
+            is_short = self.rating in ("sell", "strong_sell")
+            for price, touches in self.computed_level_touches.items():
+                on_risk_side = (
+                    price >= self.entry_price if is_short else price <= self.entry_price
+                )
+                if on_risk_side:
+                    stop_side_level_touches += touches
+        evidence.append(VerdictEvidence(
+            label="stop_side_level_touches", value=float(stop_side_level_touches),
+        ))
         chain = self.reasoning_chain
         for label in ("trend", "momentum", "volatility", "volume", "support_resistance"):
             text = getattr(chain, label, "") or ""
