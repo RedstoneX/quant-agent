@@ -22,6 +22,109 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the tool that merges the board's own documents was quietly handing back the wrong version of them
+
+**In plain words:** when two people's work has to be combined, the desk uses an
+automatic tool to do it for the three documents that carry the backlog, the
+plain-language board notes and this history. When that tool decided it could
+not safely combine two versions, it stopped — correctly — but then left the
+file on disk looking perfectly normal. It was not normal: it was one side's
+older copy, with everything the other side had added simply gone. Nothing in
+the file said so. Three separate merges hit this in one night and one of them
+came within a `git commit` of quietly deleting other people's board entries.
+
+**The cause is a detail of how git calls such a tool.** Git hands the tool
+three files and reads the answer back out of one of them — the same file it
+had already filled with *this branch's* copy. A tool that stops without
+writing therefore leaves that copy behind. Git then marks the path as
+conflicted in its index, but it does NOT write conflict markers into the file
+and does not restore anything, so `git status` said the file was unmerged
+while the file itself looked finished. `git checkout --conflict=diff3` does
+not rescue it either: that re-runs the same tool, which refuses again.
+
+**What made this survive is the part worth remembering.** Both the tool's own
+comments and its test suite stated the opposite belief in as many words —
+that leaving the file untouched "is what makes git's own conflict machinery
+take over". The belief was wrong, and it had been written down and then
+pinned in place by a passing test, so every later reader was reassured by a
+test that was asserting the defect. Reasoning about the contract from the
+documentation is exactly what produced the wrong comment; it was settled this
+time by running a real merge and looking at the file.
+
+**What it does now when it cannot resolve.** It writes. The document is left
+with conflict markers around only the parts that genuinely disagree, both
+sides preserved, and the exit code is still a failure so no automation
+mistakes it for success. Three choices inside that were argued out with the
+adversary and are worth stating, because each rejects an option that sounds
+better than it is:
+
+* *Not a whole-file dump of both versions.* That would throw away everything
+  the tool had already merged correctly and make the human's job harder than
+  git's crude default. Nine real historic merges of the backlog file were
+  replayed: five needed no conflict region at all and three of the remaining
+  four needed exactly one, of 29, 62 and 81 lines. Whole-file would also have
+  tripled a document that is within 2,500 bytes of a hard size limit, and
+  turned this history file into three megabytes nobody would resolve.
+* *The reason is NOT written inside the document.* The board's own reader
+  picks out anything shaped like a numbered item, with no awareness of
+  comments, so an explanation quoting the two disputed items would have
+  appeared on the live board as phantom entries. Worse, someone who deletes
+  the markers and commits — the exact habit the marker check exists to catch
+  — would take every tripwire with them and leave the explanation behind as
+  document text. Every line of the banner therefore begins with a marker, so
+  removing the markers removes the whole banner, and the reason goes in a
+  gitignored file beside the document.
+* *A marker is written even when git's own line-level merge comes out clean.*
+  Some refusals are about the whole document rather than any one disagreement
+  — over the size limit, or a note left explaining an item that no longer
+  exists. In those cases a line-level merge is perfectly clean, and falling
+  back to it would produce an unmarked file that git nonetheless calls
+  conflicted: the same ambiguity, reintroduced through the back door. Where
+  the tool had already produced a merged document before a check refused it,
+  that document is put in the reason file so the work is not lost.
+
+**Three other defects found in the same pass.**
+
+* A backfilled entry in this file — written today about something that
+  happened days ago — was placed above every newer entry, breaking the one
+  ordering rule this file states about itself. New entries are now slotted by
+  date instead of pushed to the top. Entries already here still never move:
+  21 adjacent pairs are out of order for historical reasons, and re-sorting
+  them as a side effect of somebody's merge would rewrite the record.
+* Two branches that made the *same* edit but differed by one blank line or a
+  trailing space were told they had filed two different items under one
+  number, and made to rebuild the file by hand. Sameness is now judged
+  ignoring whitespace nobody can see. What gets written is still one side's
+  bytes exactly as written — the relaxation decides only whether two chunks
+  are the same, never what the answer looks like.
+* Genuinely different text under one item number still stops the merge, and
+  deliberately does not renumber anything: an item number is quoted from the
+  board notes, from this file, from the retired-numbers line and from pull
+  request titles, so renumbering inside a merge would break references the
+  tool cannot see. The message now leads with a line-by-line diff of what
+  actually differs, which is the thing that tells a real collision from a bad
+  rebase.
+
+**One defect found and deliberately not fixed here.** A dated heading written
+with two hashes instead of three is invisible to this tool, so it is never
+placed — it simply stays wherever it was typed, and appended at the end (as
+"append, never trim" invites) a same-day entry lands at the BOTTOM of a
+newest-first file with the merge reporting success. That is the most likely
+explanation for the ordering complaint that started this work. Twelve such
+headings already exist here and are somebody else's backlog item; blocking on
+them would break every merge of this file until that item is done. What the
+tool now does is refuse when a branch introduces a NEW one.
+
+**What would catch it next time.** Fifteen tests that fail against the old
+tool and pass against the new one, including one that runs a real `git merge`
+end to end rather than trusting anybody's reading of the contract, and one
+that asserts the guarantee as a guarantee: no non-blank line present on
+either side may be missing from what a refusal leaves behind. The tool also
+verifies that itself before writing, and appends both versions in full if the
+check ever fails.
+
+---
+
 ### 2026-09-23 — rotation sequencing, attempt 3: the naked-sale window was closed by ordering the sale last, not by predicting what would happen after it (item 39)
 
 **In plain words:** the desk has a rule that can sell one holding to buy a

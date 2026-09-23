@@ -8,11 +8,20 @@ git itself invokes it — four positional temp-file-shaped arguments — without
 needing a real git merge in flight.
 
 The one property that matters most: the resolver's exit code 2 ("refusing to
-write, needs a human") must come back out of this wrapper as a NONZERO exit,
-untouched, and %A (the file git reads the result from) must be left alone on
-that path. A refusal that this wrapper turned into exit 0 would be worse than
-having no automatic resolver at all — see docs/WORK.md item 68's own history
-of a resolver that wrote a plausible file instead of stopping.
+write, needs a human") must come back out of this wrapper as a NONZERO exit.
+A refusal that this wrapper turned into exit 0 would be worse than having no
+automatic resolver at all — see docs/WORK.md item 68's own history of a
+resolver that wrote a plausible file instead of stopping.
+
+CORRECTED 2026-09-23. This module also used to assert that %A must be left
+ALONE on a refusal, on the stated belief that doing so "is what makes git's
+own conflict machinery take over". That belief is false — git marks the
+INDEX and writes nothing into the file — and because %A arrives holding the
+OURS copy, the assertion was pinning the driver to leaving a markerless file
+with the incoming side's content missing. The defect was tested-in, which is
+why it survived to lose content in three merges in one night. What a refusal
+must now leave behind is covered by
+`tests/test_doc_merge_refusal_loses_no_content.py`.
 """
 from __future__ import annotations
 
@@ -65,12 +74,12 @@ def test_clean_merge_exits_zero_and_writes_the_result_to_ours(tmp_path):
     assert ours_path.read_text() == WORK_BASE
 
 
-def test_a_refusal_exits_nonzero_and_leaves_ours_untouched(tmp_path):
+def test_a_refusal_exits_nonzero_and_leaves_a_visibly_unresolved_file(tmp_path):
     """Two sides file different text under the same item number 3 — the
     resolver's NUMBER COLLISION refusal (exit 2). git must see this as an
-    unresolved path, so the wrapper must (a) exit nonzero and (b) never write
-    to %A — leaving it exactly as git initialised it (the "ours" copy) is
-    what makes git's own conflict machinery take over."""
+    unresolved path, so the wrapper must exit nonzero; and because git reads
+    the worktree copy out of %A and writes no markers of its own, the file
+    left there must say for itself that it is unresolved."""
     ours = WORK_BASE.replace(
         "**Retired item numbers",
         "**3. Ours: alpha finding — OPEN.** Ours body.\n\n**Retired item numbers",
@@ -82,8 +91,13 @@ def test_a_refusal_exits_nonzero_and_leaves_ours_untouched(tmp_path):
     proc, ours_path = _run(WORK_BASE, ours, theirs, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0, "a refusal must not look like success to git"
     assert "REFUSING TO WRITE" in proc.stderr
-    # untouched: still exactly the "ours" content git handed the driver
-    assert ours_path.read_text() == ours
+    result = ours_path.read_text()
+    assert result != ours, (
+        "the wrapper left %A as the ours copy: valid markdown, no marker, and "
+        "the incoming side's content gone — the 2026-09-23 data loss"
+    )
+    assert "<<<<<<< " in result, "a refusal must be visible in the file itself"
+    assert "Theirs: beta finding" in result, "the incoming side was dropped"
 
 
 def test_an_unmapped_path_exits_nonzero_without_running_the_resolver(tmp_path):
