@@ -827,3 +827,196 @@ def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
             pre, execute_enabled=True, ranked_margin_enabled=False,
         )
         assert owner_precheck_lines(record), record["outcome"]
+
+
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23 — the near-miss DETAIL rides in that same row.
+#
+# The pre-check row above records THAT a comparison happened and what it
+# concluded. It did not record WHICH holding was weighed against which
+# candidate, on what seats, at what ratio, or which of the seven refusal
+# points was hit — and board item 39(a), the open question behind the
+# unmeasured 25% margin, cannot be answered from anything else. Folded into
+# the one row rather than written as a second: one session's one comparison
+# is one fact.
+# ---------------------------------------------------------------------------
+
+def _refusal_precheck(point="book_not_constrained", **over):
+    from src.rotation import RotationPrecheck, RotationRefusal
+
+    fields = dict(
+        point=point,
+        detail="real room exists on every constraint",
+        held_symbol="OLD", new_symbol="NEW",
+        held_score=0.9, new_score=1.8,
+        shared_seats=("earnings", "technical"),
+        held_shared_score=0.9, new_shared_score=1.8,
+        ratio=2.0, binding=("funding",),
+    )
+    fields.update(over)
+    return RotationPrecheck(
+        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        refusal=RotationRefusal(**fields),
+        entry_budget_usd=92.20, min_order_usd=500.0,
+        binding=fields["binding"],
+    )
+
+
+def _refusal_pipeline(tmp_path, precheck, *, enabled=False):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.config = SimpleNamespace(
+        execution=SimpleNamespace(rotation_enabled=enabled),
+    )
+    pipeline.portfolio_manager = SimpleNamespace(last_rotation_precheck=precheck)
+    return pipeline, db
+
+
+def test_the_near_miss_row_carries_every_named_field(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _refusal_precheck())
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _rotation_events(db)
+    assert len(rows) == 1, "one session, one comparison, one row"
+    symbol, event = rows[0]
+    assert symbol is None, (
+        "RUN-scoped, with the symbols in the payload. A symbol-scoped row "
+        "here would be read by src/refusal_signature.py as a candidate the "
+        "session considered as a new idea — a weakest HOLDING is not one, "
+        "and this row fires every session, so it would break the "
+        "monomorphic-refusal streak on essentially every run and disarm the "
+        "jam alarm. Board item 164 and exit_path_records.py ruled the same "
+        "way twice before."
+    )
+    assert event["reason"] == "full_nothing_outranked_a_holding"
+    assert event["refusal_point"] == "book_not_constrained"
+    assert event["held_symbol"] == "OLD"
+    assert event["new_symbol"] == "NEW"
+    assert event["held_score"] == 0.9 and event["new_score"] == 1.8
+    assert event["shared_seats"] == "earnings,technical"
+    assert event["held_shared_score"] == 0.9
+    assert event["new_shared_score"] == 1.8
+    assert event["ratio"] == 2.0
+    assert event["margin_pct"] == 0.25
+    assert event["binding"] == "funding"
+    assert event["entry_budget_usd"] == 92.20
+    assert event["min_order_usd"] == 500.0
+    assert event["detail"]
+
+
+def test_every_refusal_point_lands_under_its_own_code(tmp_path):
+    """One code per point, grouped on the CODE rather than on prose — the
+    same `refusal`/`note` split `_record_accounted_candidate` uses."""
+    from src.pipeline_stages import _record_rotation_precheck
+    from src.rotation import ROTATION_REFUSAL_POINTS
+
+    seen = []
+    for i, point in enumerate(ROTATION_REFUSAL_POINTS):
+        (tmp_path / f"p{i}").mkdir(parents=True, exist_ok=True)
+        pipeline, db = _refusal_pipeline(
+            tmp_path / f"p{i}", _refusal_precheck(point=point),
+        )
+        _record_rotation_precheck(pipeline, _ctx())
+        rows = _rotation_events(db)
+        assert len(rows) == 1, point
+        seen.append(rows[0][1]["refusal_point"])
+    assert seen == list(ROTATION_REFUSAL_POINTS)
+
+
+def test_the_near_miss_detail_is_written_with_the_execution_flag_OFF(tmp_path):
+    """Recording is not acting. Gating the dataset on the switch it exists
+    to inform would mean it only starts existing once the decision it
+    informs has already been taken."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _refusal_precheck(), enabled=False)
+    _record_rotation_precheck(pipeline, _ctx())
+    assert _rotation_events(db)[0][1]["refusal_point"] == "book_not_constrained"
+
+
+def test_a_surfaced_opportunity_carries_no_refusal_point(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _precheck(_opportunity()))
+    _record_rotation_precheck(pipeline, _ctx())
+    event = _rotation_events(db)[0][1]
+    assert event["reason"] == "full_candidate_outranked_a_holding"
+    assert "refusal_point" not in event
+
+
+def test_the_owner_line_names_the_limit_that_is_actually_binding():
+    """2026-09-17 CRM, from the reporting side. Quoting risk headroom while
+    the real cause is $92 against a $500 minimum is a true-sounding
+    sentence about the wrong number."""
+    from src.rotation import owner_precheck_lines, precheck_record
+
+    record = precheck_record(
+        _refusal_precheck(), execute_enabled=False, ranked_margin_enabled=False,
+    )
+    text = " ".join(owner_precheck_lines(record))
+    assert "the book is FULL" in text
+    assert "$92 of cash and borrowing room" in text
+    assert "$500 smallest order" in text
+    assert "14.50% of risk headroom" not in text
+
+
+def test_a_book_full_only_on_funding_is_not_reported_as_having_room():
+    """THE REGRESSION, at the reporting layer. `precheck_outcome` tested
+    risk headroom alone and so called 14.50% "room available" on the day
+    the book could not fund a $500 order."""
+    from src.rotation import ROTATION_FULL_NOTHING_BETTER, precheck_outcome
+
+    assert precheck_outcome(_refusal_precheck()) == ROTATION_FULL_NOTHING_BETTER
+
+
+def test_an_unread_funding_view_is_not_reported_as_having_room():
+    """Adversary review 2026-09-23. `binding == ()` means "nothing bound",
+    and the owner line rendered that as "enough cash and borrowing room to
+    open a new position" — asserted from a figure that came back
+    unreadable. The direction is adverse: the ladder is unreadable exactly
+    when execution has fallen back to raw settled cash, which on a 2x book
+    is near zero."""
+    from src.rotation import RotationPrecheck, owner_precheck_lines, precheck_record
+
+    unread = RotationPrecheck(
+        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        entry_budget_usd=None, min_order_usd=500.0, binding=(),
+    )
+    text = " ".join(owner_precheck_lines(precheck_record(
+        unread, execute_enabled=False, ranked_margin_enabled=False,
+    )))
+    assert "could NOT read how much cash" in text
+    assert "enough cash and borrowing room" not in text
+
+
+def test_the_sale_reason_names_the_limit_that_actually_bound():
+    """Adversary review 2026-09-23, and the finding that would not have been
+    merged past: the string written onto the broker order and handed to the
+    Risk Manager said "Headroom 14.50% ... under the 0.50% minimum" on a
+    funding-bound rotation. That is a false arithmetic claim on the audit
+    record of a live sale, produced only by this change."""
+    from src.rotation import rotation_sell_reason
+
+    reason = rotation_sell_reason(
+        _opportunity(),
+        protection_basis="structural_level_broken",
+        protection_detail=BROKEN_DETAIL,
+        headroom_pct=14.50, ceiling_pct=25.0, floor_pct=0.5,
+        binding=("funding",), entry_budget_usd=92.20, min_order_usd=500.0,
+    )
+    assert "$92 deployable, under the $500 minimum order." in reason
+    assert "under the 0.50% minimum" not in reason
+    # An unthreaded caller still gets the legacy sentence byte-for-byte.
+    legacy = rotation_sell_reason(
+        _opportunity(),
+        protection_basis="structural_level_broken",
+        protection_detail=BROKEN_DETAIL,
+        headroom_pct=0.20, ceiling_pct=25.0, floor_pct=0.5,
+    )
+    assert "Headroom 0.20% of the 25.00% risk ceiling, under the 0.50% " \
+           "minimum." in legacy

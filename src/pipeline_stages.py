@@ -326,9 +326,24 @@ def _record_rotation_precheck(pipeline, ctx) -> None:
             ranked_margin_enabled=_rotation_ranked_margin_enabled(pipeline),
         )
         logger.info(
-            "Rotation pre-check: %s (headroom %.2f%% of a %.2f%% ceiling)",
+            "Rotation pre-check: %s (headroom %.2f%% of a %.2f%% ceiling, "
+            "binding [%s], %s vs %s at ratio %s%s)",
             record["outcome"], record["headroom_pct"], record["ceiling_pct"],
+            record.get("binding", ""), record.get("held_symbol"),
+            record.get("new_symbol"), record.get("ratio"),
+            f", refused at {record['refusal_point']}"
+            if record.get("refusal_point") else "",
         )
+        # RUN-scoped, with the symbols in the payload. Scoping it to the
+        # holding was tried and reverted on adversary review: this repo has
+        # ruled three times (`src/execution/exit_path_records.py`, board
+        # item 164, and the plan-edit rows in this file) that
+        # `src/refusal_signature.py` reads EVERY symbol-scoped
+        # `pipeline_event` as "this session considered that stock as a new
+        # idea". A weakest HOLDING is not such a candidate, and this row
+        # fires every session — it would have broken the monomorphic-refusal
+        # streak on essentially every run and silently disarmed the jam
+        # alarm. The near-miss fields are just as queryable in the payload.
         _record_pipeline_event(
             pipeline, ctx, None, "rotation", "precheck",
             record["outcome"], **{
@@ -533,6 +548,13 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         headroom_pct=precheck.headroom_pct,
         ceiling_pct=precheck.ceiling_pct,
         floor_pct=precheck.floor_pct,
+        # 2026-09-23: so the clause naming why there was no room states the
+        # limit that actually bound. Without this the sale's own reason
+        # claims 14.50% is "under the 0.50% minimum" on a funding-bound
+        # rotation — false, on the record the Risk Manager reads.
+        binding=tuple(precheck.binding or ()),
+        entry_budget_usd=precheck.entry_budget_usd,
+        min_order_usd=precheck.min_order_usd,
     )
     # A zero-size target IS this desk's "close it" instruction
     # (`TargetPosition.is_close`; `_build_sell` turns it into a full SELL).
@@ -564,6 +586,12 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         "protection_basis_text": protection.basis,
         "protection_detail_text": str(protection.detail),
         "floor_pct": float(precheck.floor_pct),
+        # Carried onto the context so the SELL built at the wire states the
+        # same binding constraint the PROPOSAL did — the two must not
+        # disagree about why the room was gone.
+        "binding": tuple(precheck.binding or ()),
+        "entry_budget_usd": precheck.entry_budget_usd,
+        "min_order_usd": precheck.min_order_usd,
         "new_score": float(opportunity.new_score),
         "held_reasons": list(opportunity.reasons),
         "protection_basis": protection.basis,
@@ -1418,6 +1446,9 @@ def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
             ceiling_pct=float(rotation.get("ceiling_pct") or 0.0),
             floor_pct=float(rotation.get("floor_pct") or 0.0),
             clearance=rotation.get("clearance"),
+            binding=tuple(rotation.get("binding") or ()),
+            entry_budget_usd=rotation.get("entry_budget_usd"),
+            min_order_usd=rotation.get("min_order_usd"),
         )
     except ValueError as exc:
         logger.error(
@@ -6133,6 +6164,12 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
+            # 2026-09-23: the §10.3 notional floor, read by exactly the
+            # helper the execution-time re-size and the rotation buy-leg
+            # projection already read it with, so the rotation pre-check
+            # tests "can this book fund the smallest order the desk will
+            # place" against the DEPLOYED floor rather than a second copy.
+            min_order_usd=_min_order_usd(pipeline),
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
