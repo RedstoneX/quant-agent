@@ -639,3 +639,164 @@ def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypat
     assert any(not lines[i].strip() for i in range(balance_at + 1, margin_at)), (
         "margin interest is still glued to the running-cost block"
     )
+
+
+# ---------------------------------------------------------------------------
+# 10. Weekend / holiday carry — owner-confirmed from Alpaca's docs 2026-09-23
+# ---------------------------------------------------------------------------
+# Alpaca charges margin interest for EVERY calendar day a debit balance is
+# carried, trading day or not. A Friday's overnight is charged 3 days
+# (Fri+Sat+Sun); a Friday before a Monday holiday, 4. The flat per-day
+# figure understated tonight's bill whenever the carry spans a closure.
+
+from datetime import date as _date  # noqa: E402
+
+
+def _weekday_calendar(holidays=()):
+    """Stub for `AlpacaBroker.is_trading_day`: Mon-Fri open, minus holidays."""
+    return lambda d: d.weekday() < 5 and d not in holidays
+
+
+def _stub_broker_with_calendar(monkeypatch, cash, today, calendar):
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
+    )
+    monkeypatch.setattr("src.api.deps.get_alpaca_credentials", lambda: ("k", "s"))
+    monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
+    monkeypatch.setattr("src.util.time.et_today", lambda: today)
+    monkeypatch.setattr(
+        "src.execution.broker.AlpacaBroker",
+        lambda **kw: MagicMock(
+            get_account=lambda: {"cash": cash},
+            get_margin_interest_activities=lambda: [],
+            is_trading_day=calendar,
+        ),
+    )
+
+
+def test_days_charged_weeknight_is_one():
+    from src.margin_interest import days_charged_until_next_trading_day
+    wed = _date(2026, 9, 23)
+    assert wed.weekday() == 2
+    assert days_charged_until_next_trading_day(_weekday_calendar(), wed) == 1
+
+
+def test_days_charged_friday_is_three():
+    from src.margin_interest import days_charged_until_next_trading_day
+    fri = _date(2026, 9, 25)
+    assert fri.weekday() == 4
+    assert days_charged_until_next_trading_day(_weekday_calendar(), fri) == 3
+
+
+def test_days_charged_friday_before_monday_holiday_is_four():
+    from src.margin_interest import days_charged_until_next_trading_day
+    fri = _date(2026, 9, 4)          # Labor Day 2026 is Mon 2026-09-07
+    assert fri.weekday() == 4
+    cal = _weekday_calendar(holidays={_date(2026, 9, 7)})
+    assert days_charged_until_next_trading_day(cal, fri) == 4
+
+
+def test_days_charged_degrades_to_one_when_calendar_raises():
+    from src.margin_interest import days_charged_until_next_trading_day
+
+    def boom(_d):
+        raise RuntimeError("calendar endpoint down")
+    assert days_charged_until_next_trading_day(boom, _date(2026, 9, 25)) == 1
+
+
+def test_days_charged_degrades_to_one_when_no_trading_day_within_bound():
+    """A calendar that says 'closed' forever is a broken read, not a
+    market closure — bounded search, then the old flat figure."""
+    from src.margin_interest import days_charged_until_next_trading_day
+    assert days_charged_until_next_trading_day(lambda d: False, _date(2026, 9, 25)) == 1
+
+
+def test_estimate_period_usd_is_daily_times_days_charged():
+    from src.margin_interest import build_estimate
+    est = build_estimate(5_000.0, 6.25, days_charged=3)
+    assert est.days_charged == 3
+    assert est.period_usd == pytest.approx(est.daily_usd * 3)
+    # The per-day and annual figures are UNCHANGED by the multi-day carry.
+    assert est.daily_usd == pytest.approx(build_estimate(5_000.0, 6.25).daily_usd)
+    assert est.annual_usd == pytest.approx(build_estimate(5_000.0, 6.25).annual_usd)
+
+
+def test_build_estimate_defaults_to_one_day_so_existing_callers_are_unchanged():
+    from src.margin_interest import build_estimate
+    est = build_estimate(5_000.0, 6.25)
+    assert est.days_charged == 1
+    assert est.period_usd == pytest.approx(est.daily_usd)
+
+
+def test_format_daily_line_weeknight_has_no_multi_day_clause():
+    from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=1)
+    assert line == (
+        "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
+        f"at 6.25% — {ESTIMATE_LABEL}"
+    )
+    assert "days" not in line.split(" — ")[0]
+
+
+def test_format_daily_line_friday_names_the_three_day_weekend_total():
+    from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=3)
+    assert line == (
+        "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
+        "at 6.25% — carried over the weekend that's 3 days ≈ $2.60"
+        f" — {ESTIMATE_LABEL}"
+    )
+
+
+def test_format_daily_line_long_weekend_names_four_days():
+    from src.margin_interest import format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=4)
+    assert "carried over the long weekend that's 4 days ≈ $3.47" in line
+
+
+def test_format_daily_line_zero_and_fault_states_ignore_days_charged():
+    """The multi-day clause belongs only on a real debit; the zero line and
+    both 'not available' lines are byte-for-byte what they were."""
+    from src.margin_interest import (
+        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, format_daily_line,
+    )
+    assert format_daily_line(None, 6.25, days_charged=3) == UNAVAILABLE_LINE
+    assert format_daily_line(-5_000.0, None, days_charged=3) == RATE_UNAVAILABLE_LINE
+    assert format_daily_line(1_000.0, 6.25, days_charged=3) == format_daily_line(1_000.0, 6.25)
+    assert format_daily_line(-0.99, 6.25, days_charged=3) == format_daily_line(-0.99, 6.25)
+
+
+def test_margin_interest_lines_weeknight_shows_one_day(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    _stub_broker_with_calendar(monkeypatch, -5_000.0, _date(2026, 9, 23), _weekday_calendar())
+    lines = n._margin_interest_lines()
+    assert lines[0].startswith("💳 margin interest: $0.87/day (~$312/yr) on $5,000")
+    assert "days" not in lines[0].split(" — ")[0]
+    assert "≈" not in lines[0]
+
+
+def test_margin_interest_lines_friday_shows_three_days_via_broker_calendar(monkeypatch):
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    _stub_broker_with_calendar(monkeypatch, -5_000.0, _date(2026, 9, 25), _weekday_calendar())
+    lines = n._margin_interest_lines()
+    assert "carried over the weekend that's 3 days ≈ $2.60" in lines[0]
+    assert "$0.87/day" in lines[0]
+    assert "ESTIMATE" in lines[0]
+
+
+def test_margin_interest_lines_calendar_failure_degrades_to_one_day_not_an_error(monkeypatch):
+    """A broken calendar read must NOT turn a readable balance into
+    'not available' — the cash WAS read; only the day count is unknown."""
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+
+    def boom(_d):
+        raise RuntimeError("calendar endpoint down")
+    _stub_broker_with_calendar(monkeypatch, -5_000.0, _date(2026, 9, 25), boom)
+    lines = n._margin_interest_lines()
+    assert lines[0].startswith("💳 margin interest: $0.87/day")
+    assert "≈" not in lines[0]
+    assert "not available" not in lines[0]
