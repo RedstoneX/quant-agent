@@ -897,6 +897,30 @@ numbers:
       2,805 [measured 2026-09-20 against efts.sec.gov, twelve days], well
       under the cap, but these are day counts and NOT the distinct-accession
       figure this open question asks for at the market-wide level.
+      CORRECTION 2026-09-23. The 2026-09-18 second-pass sentence above --
+      "the cap now bounds only how much of the wider market's Form 4
+      stream is read for external candidate nomination" -- was FALSE from
+      the moment it was written until today, and the value was not what
+      made it false. The same PR gave `_discover` an exit condition of
+      `len(priority) >= cap` whenever watched names were supplied.
+      `priority` holds only the ~82 watched issuers' filings, so it could
+      not reach 1,000, production always supplies watched names, and the
+      scan's only remaining terminator was `refresh_deadline_s`. The cap
+      therefore bounded NOTHING: discovery spent the whole 180 s
+      paginating and the market-wide read loop raised on an expired
+      deadline. Market-wide reads went 1,000/run on 2026-09-15..18 to 0,
+      31 and 13 on 2026-09-21..23 -- and the 31 and 13 were the watched
+      drain's, not this pass's -- while the backlog grew 10,229 ->
+      16,782 -> 21,217 [measured: production log and the Form 4 manifest].
+      The exit condition is now `len(other) >= cap` unconditionally and
+      the sentence is true again. NO VALUE WAS CHANGED, here or anywhere,
+      by that fix: at the measured steady-state inflow of 247 unread
+      listed-issuer Form 4s/day [21,217 pending / 86 days queried,
+      2026-09-23 run] and 0.156 s/filing [measured over 40 reads, see
+      src.config.SmartMoneyConfig.watched_drain_deadline_s], a day's
+      market-wide inflow is 38.5 s of the 180 s budget, so 1,000 is
+      reachable and the deadline is not the binding constraint. The value
+      is still an underived round 1,000 and the status stays `arbitrary`.
     open_question: >-
       How many DISTINCT Form 4 accessions are filed on a busy day, and what
       cap does that imply for market-wide reading -- read off

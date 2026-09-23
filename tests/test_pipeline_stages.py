@@ -1893,6 +1893,39 @@ def test_morning_smart_money_is_partial_while_watched_names_are_unread():
     assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
 
 
+def test_morning_smart_money_market_wide_blind_is_its_own_word():
+    """2026-09-23. Between 2026-09-18 and 2026-09-23 the market-wide Form 4
+    pass read ZERO filings on every run and the seat reported `partial` —
+    which is also what it reports on any ordinary residue, so five sessions
+    of total external-insider blindness were indistinguishable from a normal
+    morning. The state gets its own word, so the standing DATA QUALITY ALERT
+    can say what actually happened.
+    """
+    verified = {"known": True, "verified": True, "reasons": [],
+                "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
+                "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
+    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
+                "read_through": 82, "unread": [], "edgar": dict(verified)}
+
+    blind = {**complete, "market_wide_blind": True, "market_wide_read": 0,
+             "market_wide_pending": 21217}
+    assert _smart_money_morning_stage(blind, []).data_status["smart_money"] == \
+        "market_wide_blind"
+
+    # It wins over `partial` — a blind pass with unread watched names is
+    # still blind, and `partial` is the quieter of the two.
+    blind_and_unread = {**blind, "read_through": 60, "unread": ["WMT"]}
+    assert _smart_money_morning_stage(
+        blind_and_unread, [],
+    ).data_status["smart_money"] == "market_wide_blind"
+
+    # And a pass that read normally is untouched.
+    assert _smart_money_morning_stage(
+        {**complete, "market_wide_blind": False, "market_wide_read": 1000,
+         "market_wide_pending": 21217}, [],
+    ).data_status["smart_money"] == "ok"
+
+
 def test_morning_smart_money_is_partial_when_edgar_coverage_is_unverified():
     """Board item 126. Every watched name read through, no provider error,
     no unread filings — and EDGAR's own count of what was filed could not be

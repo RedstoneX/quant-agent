@@ -4965,6 +4965,14 @@ class MorningResearchStage:
         sm_edgar_unverified = isinstance(sm_coverage, dict) and not (
             isinstance(sm_edgar, dict) and sm_edgar.get("verified")
         )
+        # The market-wide pass read NOTHING while unread candidates were
+        # outstanding. Kept apart from `sm_coverage_incomplete` on purpose:
+        # that condition is TRUE on any ordinary residue and reports
+        # `partial`, which is why the 2026-09-18 discovery regression sat
+        # green for five sessions while external insider coverage was zero.
+        sm_market_wide_blind = isinstance(sm_coverage, dict) and bool(
+            sm_coverage.get("market_wide_blind")
+        )
         sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
             not sm_coverage.get("known")
             or bool(sm_coverage.get("unread"))
@@ -5074,6 +5082,30 @@ class MorningResearchStage:
                     ", ".join(
                         str(r) for r in ((sm_edgar or {}).get("reasons") or [])
                     ) if isinstance(sm_edgar, dict) else "no record",
+                )
+            # The market-wide pass read nothing at all. Wins over `partial`
+            # and over `ok`/`empty`, and is deliberately a DISTINCT word:
+            # `partial` is what the seat says on a normal day with a normal
+            # residue, so the one state that means "the desk is blind to
+            # every insider outside its own book" has to be sayable on its
+            # own. Classified REPORTED + fresh, and NOT in
+            # INTEGRITY_CLEAN_STATUSES, so it pages through the standing
+            # DATA QUALITY ALERT (src/notifier.py::maybe_alert_data_quality)
+            # exactly as any other degraded seat does — no new channel.
+            # It does not override a LOST state (`provider_error`,
+            # `truncated`, `degraded`): those are worse and already page.
+            if (
+                sm_market_wide_blind
+                and data_status.get("smart_money") in ("ok", "empty", "partial")
+            ):
+                data_status["smart_money"] = "market_wide_blind"
+                logger.error(
+                    "Smart-money seat read ZERO market-wide Form 4 filings "
+                    "with %s unread candidate(s) outstanding — insider "
+                    "coverage outside the desk's own %s watched name(s) is "
+                    "blind this session",
+                    sm_coverage.get("market_wide_pending"),
+                    sm_coverage.get("watched"),
                 )
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)

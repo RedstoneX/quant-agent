@@ -1233,6 +1233,11 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     "release_overdue": "is waiting on a scheduled data release that is overdue",
     "symbol_dropped": "dropped at least one symbol from its answer",
     "degraded": "returned a degraded answer",
+    "market_wide_blind": (
+        "read none of the wider market's insider filings this session, while "
+        "filings it had not read were still waiting — so it can speak for "
+        "the desk's own holdings and for nothing else"
+    ),
     # The four remaining CATEGORY_LOST states in src/evidence_gate.py had no
     # plain wording, so an evidence-gate skip naming one of them showed the
     # owner the raw token instead. Each phrase below is read straight off

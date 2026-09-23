@@ -203,6 +203,14 @@ STATUS_CATEGORY: dict[str, str] = {
     "symbol_dropped": CATEGORY_REPORTED,
     "degraded": CATEGORY_REPORTED,
     "figures_contradicted": CATEGORY_REPORTED,
+    # Smart money: the market-wide Form 4 pass read ZERO filings while
+    # unread ones were outstanding. REPORTED rather than LOST because the
+    # seat DID answer — the watched-name drain ran and the answer covers the
+    # desk's own book — but the answer cannot speak for any insider outside
+    # it. Not in INTEGRITY_CLEAN_STATUSES below, so it feeds the degraded
+    # advisory and pages. Its own word rather than `partial` because
+    # `partial` is what this seat says on an ordinary day.
+    "market_wide_blind": CATEGORY_REPORTED,
     "carried_from_morning": CATEGORY_REPORTED,
     # Cross-day remember of a GOOD payload whose kind has not expired
     # (macro regime, earnings write-up, Form 4). Same-session reuse stays
@@ -270,6 +278,9 @@ STATUS_FRESHNESS: dict[str, str] = {
     "symbol_dropped": FRESHNESS_FRESH,
     "degraded": FRESHNESS_FRESH,
     "figures_contradicted": FRESHNESS_FRESH,
+    # Asked on this tick and answered; what it could see was narrower than
+    # usual, which is a coverage fact, not a freshness one.
+    "market_wide_blind": FRESHNESS_FRESH,
     # A seat that was asked and honestly answered "nothing" was still READ.
     "empty": FRESHNESS_FRESH,
     "release_overdue": FRESHNESS_FRESH,
