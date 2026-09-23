@@ -3015,6 +3015,14 @@ class TradingPipeline:
         # can never be repaired against a guessed level, counted into the
         # overnight dollar total, or reclassified as a fractional lapse.
         unreadable: list[dict] = []
+        # Symbols whose coverage gap this pass actually CLOSED. A red alarm
+        # that later resolves has to say so: before this, "COULD NOT PUT THE
+        # PROTECTIVE STOP BACK" was the owner's last word on a position the
+        # desk itself re-covered fifteen minutes later, and he was left with
+        # an instruction to place a stop by hand that already existed
+        # (2026-09-23, RSG). Collected here and retracted once at the end
+        # rather than one Telegram per symbol per sweep.
+        repaired_symbols: list[str] = []
         longs_checked = 0
         shorts_checked = 0
         sweeper = self._sweeper()
@@ -3177,6 +3185,54 @@ class TradingPipeline:
                 # a DAY order submitted into a shut market is a rejection at
                 # best and a surprise queued order at worst.
                 if coverage == "fractional" and not market_open:
+                    # WHERE THE QUIET STATE ENDS. The ratified overnight
+                    # lapse is a sub-share DAY stop that WAS placed and
+                    # expired at 16:00 by design. A remainder that spent the
+                    # whole session waiting for its name's first print and
+                    # never got a stop at all is not that, and filing it as
+                    # that would turn the bell-adjacent silence into a
+                    # suppression: nothing would ever have told the owner.
+                    # This is the pass that can honestly say the session's
+                    # repair path is exhausted, so this is the pass that
+                    # pages.
+                    try:
+                        from src.coverage_watchdog import (
+                            session_awaiting_print_symbols,
+                        )
+
+                        never_covered = (
+                            symbol.strip().upper()
+                            in session_awaiting_print_symbols()
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "coverage sweep: could not read today's "
+                            "awaiting-print names (%s) — treating %s as the "
+                            "ordinary overnight lapse.", exc, symbol,
+                        )
+                        never_covered = False
+                    if never_covered:
+                        gap["coverage"] = "partial" if covered > 1e-6 else "none"
+                        gap["uncovered_qty"] = frac_uncovered
+                        gap["unprotected_value"] = _position_notional(
+                            p, frac_uncovered,
+                        )
+                        gap["repaired"] = False
+                        gap["is_short"] = is_short
+                        gap["session_repair_failed"] = True
+                        gap["never_printed_today"] = True
+                        logger.error(
+                            "FRACTIONAL STOP NEVER RE-PLACED THIS SESSION: "
+                            "%s held=%.4f, %.4f covered — the name produced "
+                            "no confirmed trade print all session, so the "
+                            "repair could never price a stop, and the "
+                            "sub-share remainder has now been uncovered "
+                            "since the previous close. This is NOT the "
+                            "expected overnight lapse and it alerts.",
+                            symbol, qty, covered,
+                        )
+                        gaps.append(gap)
+                        continue
                     gap["coverage"] = "fractional_overnight"
                     gap["uncovered_qty"] = frac_uncovered
                     gap["unprotected_value"] = _position_notional(
@@ -3216,6 +3272,7 @@ class TradingPipeline:
                         # — it is the design's daily heartbeat.
                         gap["coverage"] = "fractional_replaced"
                         gap["uncovered_qty"] = 0.0
+                        repaired_symbols.append(symbol)
                         logger.info(
                             "FRACTIONAL DAY STOP RE-PLACED: %s — the sub-share "
                             "remainder is covered again for this session.",
@@ -3241,13 +3298,78 @@ class TradingPipeline:
                         # RSG sat uncovered during the session and the owner
                         # was never told. The session that OBSERVED it now
                         # sends it.
-                        gap["session_repair_failed"] = True
                         gap["is_short"] = is_short
-                        logger.error(
-                            "FRACTIONAL STOP RE-PLACEMENT FAILED for %s during "
-                            "session hours (held=%.4f, covered=%.4f) — this is "
-                            "case (b) and it alerts.", symbol, qty, covered,
-                        )
+                        # WHICH SWEEP IS ENTITLED TO PAGE. Not this one, if
+                        # the refusal is the tape's rather than the desk's.
+                        # Measured across the whole retained production log,
+                        # every `no_trade_print_today` refusal fired inside
+                        # 45 seconds of the opening bell and every one was
+                        # resolved in the same session, five of them by the
+                        # very next sweep — so the first attempt paged before
+                        # the mechanism that fixes it had had its turn, and
+                        # the owner was sent to place a stop by hand that the
+                        # desk placed itself fifteen minutes later. The
+                        # classifier and its derivation live in one place
+                        # (`src.coverage_watchdog.page_now_for_refusal`),
+                        # shared with the standalone sweep, and a position
+                        # with NO coverage left is never deferred by it.
+                        try:
+                            from src.coverage_watchdog import (
+                                awaiting_first_print, note_awaiting_first_print,
+                            )
+
+                            waiting = awaiting_first_print(
+                                refusal_code=str(
+                                    gap.get("repair_refusal_code") or ""
+                                ),
+                                still_covered=covered > 1e-6,
+                                market_open=True,
+                            )
+                            if waiting:
+                                note_awaiting_first_print(symbol)
+                        except Exception as exc:  # noqa: BLE001
+                            # An unreadable marker file errs towards telling
+                            # the owner, the same way the claim does.
+                            logger.warning(
+                                "coverage sweep: could not classify the "
+                                "stop-repair refusal for %s (%s) — paging.",
+                                symbol, exc,
+                            )
+                            waiting = False
+                        page_now = not waiting
+                        gap["session_repair_failed"] = page_now
+                        if page_now:
+                            logger.error(
+                                "FRACTIONAL STOP RE-PLACEMENT FAILED for %s "
+                                "during session hours (held=%.4f, "
+                                "covered=%.4f) — this is case (b) and it "
+                                "alerts.", symbol, qty, covered,
+                            )
+                        else:
+                            # NOT a new `coverage` word. The gap stays
+                            # 'partial' and keeps its ⚠️ STOP MIS-SIZED line
+                            # in the session feed and the evening banner:
+                            # the position really is under-protected and the
+                            # owner should still SEE it. The only thing this
+                            # state changes is whether it INTERRUPTS him,
+                            # which is the defect. Reclassifying it would
+                            # have meant registering a fifth coverage word
+                            # in `src/notifier.py` and `src/trader_feed.py`
+                            # and would have hidden a real shortfall to fix
+                            # an alerting bug.
+                            gap["awaiting_first_print"] = True
+                            logger.warning(
+                                "FRACTIONAL STOP AWAITING FIRST PRINT: %s "
+                                "(held=%.4f, covered=%.4f): %s. The repair "
+                                "was attempted and will be attempted again "
+                                "on every pass; the whole-share leg is still "
+                                "standing watch. Not an owner page while the "
+                                "session can still resolve it — the pass "
+                                "that finds the market shut with this still "
+                                "true is the one that pages.",
+                                symbol, qty, covered,
+                                gap.get("repair_refusal") or "no reason given",
+                            )
                     gaps.append(gap)
                     continue
                 # ---- case (c) and every pre-existing condition ----
@@ -3273,6 +3395,8 @@ class TradingPipeline:
                     symbol, held - covered, is_short=is_short, outcome=gap,
                     resting_stops=list(specs or []),
                 )
+                if gap["repaired"]:
+                    repaired_symbols.append(symbol)
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps and not unreadable:
             logger.info(
@@ -3351,6 +3475,23 @@ class TradingPipeline:
         ]
         if session_failures:
             self._alert_owner_session_repair_failed(session_failures)
+        # Sent AFTER the escalations above, and last for a reason: a symbol
+        # this pass both repaired and then found short again must end on the
+        # alarm, not on the retraction.
+        if repaired_symbols:
+            try:
+                from src.coverage_watchdog import clear_awaiting_first_print
+
+                # The gap is closed, so the name is no longer waiting on a
+                # print and must not be reported after the close as though
+                # it had waited all session.
+                clear_awaiting_first_print(repaired_symbols)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "coverage sweep: could not clear the awaiting-print "
+                    "marker for %s: %s", ", ".join(repaired_symbols), exc,
+                )
+            self._alert_owner_repair_resolved(repaired_symbols)
         # Board item 172. Appended AFTER every filter above has been built
         # from `gaps`, so an unreadable row cannot reach the naked list, the
         # session-failure list, the overnight dollar total or a repair — all
@@ -3622,6 +3763,50 @@ class TradingPipeline:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("session stop-repair owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_repair_resolved(symbols: list[str]) -> None:
+        """Tell the owner a red stop-placement alarm he was sent today has
+        CLEARED. Never raises.
+
+        THE HALF THAT WAS MISSING. On 2026-09-23 the desk paged at 13:30:45
+        — "COULD NOT PUT THE PROTECTIVE STOP BACK ... Those shares have
+        nothing standing watch over them right now ... Place the missing
+        stop by hand" — and put the stop back itself at 13:45:45. Nothing
+        retracted it. The alarm was true for fifteen minutes and false for
+        the rest of the day, and the owner's standing instruction was to go
+        and do by hand a thing that was already done. An alarm that cannot
+        clear is worse than one that never fired, because the next one is
+        read as a stale one.
+
+        Sent through `send_owner_alert`, the same path the alarm itself
+        used, because a retraction that arrives somewhere else is not a
+        retraction. Gated on `claim_repair_resolution_notice`, which returns
+        only names the owner was ACTUALLY paged about today and has not
+        already been told about: a position that never alerted produces no
+        notice, so the ordinary daily re-placement of every fractional
+        remainder — which happens to every such position every morning —
+        stays silent.
+
+        Deliberately does NOT release the placement-failure claim. That
+        claim is what makes "Each position is reported at most once per
+        trading day" true, and releasing it would let a name that fails,
+        succeeds and fails again send two messages a cycle.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_repair_resolution_notice, repair_resolution_text,
+            )
+
+            fresh = claim_repair_resolution_notice(symbols)
+            if not fresh:
+                return
+            _notifier.send_owner_alert(
+                repair_resolution_text(fresh), symbols=sorted(fresh),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("stop-repair resolution notice failed: %s", exc)
 
     @staticmethod
     def _alert_owner_no_stop(naked: list[dict]) -> None:
