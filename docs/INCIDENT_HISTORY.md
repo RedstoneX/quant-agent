@@ -22,6 +22,18 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — every short position on the live dashboard was labeled "long" (item 176)
+
+**In plain words:** the owner spotted it himself — a position's quantity showed negative on the dashboard while the word next to it said "long." Two real shorts were affected on the day this was found: FLNC (qty -36, $268.56 short) and UPS (qty -7, $670.53 short), both confirmed live via the running API.
+
+**What was actually broken.** `_position_direction()` in `src/api/broker_reads.py`, which sets the `direction` field on every row of the `/positions` API response, never looked at the sign of quantity — it only checked symbol identity (the cash-sweep vehicle) and inverse-ETF membership, defaulting everything else to `"long"`. It computes no exposure or risk math (that already comes from `src.quantities.net_exposure_usd`, independent of this label), so the defect was purely cosmetic, but cosmetic on the one screen the owner actually watches.
+
+**Fix.** `qty < 0` now returns `"short"`, checked before the inverse-ETF check — a short position in an inverse ETF (an unusual, doubly-inverted bet) is labeled `"short"`, not `"bearish_hedge"` (which specifically means a long position in an inverse ETF, the desk's normal bearish mechanism). The cash-sweep identity check still wins over quantity sign, unchanged. `qty` of `0` or `None` falls through unchanged rather than raising on `None < 0`. Frontend: the Role-column badge now colors `"short"` distinctly (previously any unrecognized value, including a hypothetical `"short"`, would have rendered the same green as `"long"`), and the account summary's Long/Hedge/Liquidity money breakdown gained a fourth Short tile so a short's market value is shown honestly instead of silently understating the Long tile.
+
+**What did NOT change.** The Liquidity tile's actual number: the residual math (`portfolio value minus everything identified`) already summed to the same figure either way, algebraically, whether a short's negative value was hidden inside the wrong tile or given its own — only which tile it is honestly shown in changed.
+
+---
+
 ### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
 
 **In plain words:** two items on the backlog board had already been marked

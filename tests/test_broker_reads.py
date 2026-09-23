@@ -190,6 +190,98 @@ def test_read_positions_tags_sweep_vehicle_and_inverse_etf(monkeypatch):
     assert rows["NVDA"]["direction"] == "long"
 
 
+def test_read_positions_short_position_labeled_short(monkeypatch):
+    """docs/WORK.md item 176: a negative `qty` must be labeled "short" on
+    the wire, not "long" — this is the exact defect. Fractional qty is the
+    live shape (Alpaca can fill partial shares), so this pins that shape
+    too rather than only a round number."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position(symbol="FLNC", qty=-36.0, market_value=-268.56)],
+    ))
+    row = broker_reads.read_positions()["positions"][0]
+    assert row["direction"] == "short"
+    assert row["direction"] != "long"
+
+
+def test_read_positions_fractional_short_labeled_short(monkeypatch):
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position(symbol="UPS", qty=-0.135, market_value=-12.9)],
+    ))
+    row = broker_reads.read_positions()["positions"][0]
+    assert row["direction"] == "short"
+
+
+def test_read_positions_short_inverse_etf_is_short_not_hedge(monkeypatch):
+    """A SHORT position in an inverse ETF is a real, if unusual, case (a
+    doubly-inverted bet) — it must not be swallowed by `bearish_hedge`,
+    which every consumer reads as "long an inverse ETF held as a bearish
+    proxy." Quantity sign wins over the symbol-based inverse-ETF check."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position(symbol="SQQQ", qty=-4.0, market_value=-40.0)],
+    ))
+    row = broker_reads.read_positions()["positions"][0]
+    assert row["direction"] == "short"
+    assert row["direction"] != "bearish_hedge"
+
+
+def test_read_positions_long_inverse_etf_is_still_bearish_hedge(monkeypatch):
+    """The ordinary case — long an inverse ETF as the desk's bearish
+    mechanism — must be unchanged by the sign-aware fix."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position(symbol="SQQQ", qty=4.0, market_value=40.0)],
+    ))
+    row = broker_reads.read_positions()["positions"][0]
+    assert row["direction"] == "bearish_hedge"
+
+
+def test_read_positions_cash_sweep_wins_over_a_negative_quantity(monkeypatch):
+    """Identity beats sign: even a transient negative quantity on the sweep
+    vehicle itself (e.g. mid-liquidation) is still `cash_equivalent`, never
+    `short` — checked first in `_position_direction`."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position(symbol="SGOV", qty=-1.0, market_value=-1.0)],
+    ))
+    row = broker_reads.read_positions()["positions"][0]
+    assert row["direction"] == "cash_equivalent"
+
+
+def test_read_positions_zero_and_none_qty_never_raise_and_never_say_short(monkeypatch):
+    """`qty` of exactly 0 or `None` carries no sign — must not crash on
+    `None < 0` and must not be mislabeled "short" (it isn't one)."""
+    monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [
+            _position(symbol="NVDA", qty=0.0, market_value=0.0),
+            _position(symbol="MRVL", qty=None, market_value=0.0),
+            _position(symbol="SQQQ", qty=0.0, market_value=0.0, sector=None),
+        ],
+    ))
+    out = broker_reads.read_positions()
+    assert out["error"] is None
+    rows = {r["symbol"]: r for r in out["positions"]}
+    assert rows["NVDA"]["direction"] == "long"
+    assert rows["MRVL"]["direction"] == "long"
+    assert rows["SQQQ"]["direction"] == "bearish_hedge"
+    assert all(r["direction"] != "short" for r in rows.values())
+
+
+def test_position_direction_unit_never_labels_a_negative_quantity_long():
+    """Direct unit-level regression guard on the helper itself, so a future
+    change to the call site can't silently reintroduce the bug."""
+    assert broker_reads._position_direction("FLNC", "SGOV", -36.0) == "short"
+    assert broker_reads._position_direction("AAPL", "SGOV", -0.001) == "short"
+    assert broker_reads._position_direction("AAPL", "SGOV", 5.0) == "long"
+    assert broker_reads._position_direction("SGOV", "SGOV", -5.0) == "cash_equivalent"
+    assert broker_reads._position_direction("SQQQ", "SGOV", None) in ("bearish_hedge",)
+    assert broker_reads._position_direction("AAPL", "SGOV", None) == "long"
+    assert broker_reads._position_direction("AAPL", "SGOV", 0.0) == "long"
+
+
 def test_read_positions_defaults_optional_fields_to_none(monkeypatch):
     """`unrealized_intraday_pnl`/`sector` are read with getattr defaults —
     an older Position shape must not break the read."""

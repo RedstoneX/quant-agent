@@ -73,11 +73,21 @@ export function PositionsPanel({
       }),
       columnHelper.accessor("direction", {
         header: "Role",
-        cell: (info) => (
-          <Badge color={info.row.original.is_cash_equivalent ? "slate" : info.getValue() === "bearish_hedge" ? "fuchsia" : "emerald"} size="xs">
-            {info.row.original.is_cash_equivalent ? "cash parking" : info.getValue().replace(/_/g, " ")}
-          </Badge>
-        ),
+        cell: (info) => {
+          const value = info.getValue();
+          const color = info.row.original.is_cash_equivalent
+            ? "slate"
+            : value === "bearish_hedge"
+              ? "fuchsia"
+              : value === "short"
+                ? "rose"
+                : "emerald";
+          return (
+            <Badge color={color} size="xs">
+              {info.row.original.is_cash_equivalent ? "cash parking" : value.replace(/_/g, " ")}
+            </Badge>
+          );
+        },
       }),
       columnHelper.accessor("qty", { header: "Qty", cell: (info) => fmtNum(info.getValue()) }),
       columnHelper.accessor("avg_entry", { header: "Avg entry", cell: (info) => fmtMoney(info.getValue()) }),

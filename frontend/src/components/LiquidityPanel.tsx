@@ -83,7 +83,7 @@ export function LiquidityStrip({
         value={fmtMoneyCompact(liq.reserve_usd)}
         note="Sweep mechanic: the cushion park_excess leaves behind. Does not reduce deployable cash"
       />
-      <Stat label="Directional" value={fmtMoneyCompact(directionalExposure)} note="Long + bearish hedge; SGOV excluded" />
+      <Stat label="Directional" value={fmtMoneyCompact(directionalExposure)} note="Long + short + bearish hedge; SGOV excluded" />
       {accountError && (
         <Badge color="amber" size="xs" className="ml-auto">
           stale
