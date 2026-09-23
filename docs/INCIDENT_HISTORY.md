@@ -22,6 +22,194 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — seven finished board items were still parked on the work board, and the board was 98.9% full
+
+**In plain words:** the desk's job list has a hard size limit so it stays
+short enough to read. It had filled to 98.9% and warned that it would soon
+stop accepting new work. Nothing was wrong with the list itself — seven jobs
+on it were already finished and nobody had taken them off. Each one below was
+checked against the code that is actually running, or against the desk's own
+production log, before it was removed. Nothing was removed for sounding
+finished.
+
+**Why this happens.** Taking an item off is a remembered step, not a checked
+one. A fix ships, the pull request says it closes the item, and the board is
+never edited. Two of the eight (120 and 130) even had a merged pull request
+naming the item in its own title; item 120's retirement had already been
+WRITTEN into the board's retired-items sentence on 2026-09-20 while the item
+itself stayed on the board as open work.
+
+**Item 82 — the same trade was classified twice and the second answer won.**
+A trade's setup type (breakout, range, and so on) decides whether the risk
+reviewer is allowed to cut it. It was being worked out once when the trade was
+built and again when the order was sent, and on a top-up to a position the
+desk already held the second reading overwrote the one pinned on the original
+entry. Fixed by PR #494 (merged 2026-09-18) and verified on `main`: execution
+now carries the classification the constructor already made, and a scale-in
+re-reads the pinned row rather than re-deriving. The item's own stated fix was
+"classify once and carry it", which is what is there.
+
+**Item 84 — six timers firing in the same second.** The fix shipped the same
+night it was filed (PR #454) and was written up here then; the only thing
+owed was one live-session confirmation, which is now in hand. Production log,
+2026-09-23: the coverage sweep runs at :00 and :30 while the intraday check
+reconciles at :45, so the two are no longer on the same tick; and at 13:30:43
+UTC the sweep recorded `repair_deferred — a trading session currently holds
+the lock, so this tick defers the repair to that session's own coverage
+reconcile`. Both halves of the fix were observed doing their job. No second
+write-up was added, per the item's own instruction.
+
+**Item 86 — the live fill feed had never once authenticated.** The single
+condition the item set for itself was one live log line reading
+`trade_updates websocket authenticated`. There are nine of them, all on
+2026-09-21, the first at 13:37:00 UTC, against zero across the three days
+measured when the item was filed. **What actually fixed it, corrected on the
+adversary's evidence:** not one change but two, and neither is the one the
+item's own recommendation favoured. The auth FRAME was changed on 2026-09-18
+(PR #532, "send the auth format Alpaca asks for") — the log carries nine
+matching `authenticated with the CURRENT auth format` lines beside the nine
+above — and the process stopped holding the 29-character placeholder on the
+same date, which `src/execution/broker.py` records in place. So the item's
+recommendation (leave the feed off and keep polling) is not what happened;
+the credential research it rested on was acted on, not set aside. The
+research itself is NOT lost with the deleted board-note block: the no-TPM
+and no-user-scoped-credential findings survive verbatim in
+`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`, which is where anyone
+told "do not re-derive it" should now look. The standing rule that block
+carried is not item-specific and survives on its own — anything amounting to
+new credential-handling code is a credential redesign and is escalated to the
+owner regardless of who chose it. **One observed day, not a proven steady
+state:** there are no `trade_updates` lines at all on 2026-09-22 or
+2026-09-23, explained by there being no entry orders on either day, but the
+path has been seen working once and that is exactly what the item asked for.
+
+**Item 120 — a name priced off yesterday's last trade and called today's.**
+Closed by PR #572 (merged 2026-09-20), whose title names the item.
+`src/data/live_price.py` is now the one resolver every consumer goes through:
+last trade, then today's minute-bar close, then today's forming daily-bar
+close, then refusal naming which of two reasons, with the most recent winning
+among candidates that pass and a quote mid unreachable by construction. A name
+with no usable print is reported as a lost price seat, not as a low-confidence
+input. Both of the item's own criteria are met. The board's retired-items
+sentence had already recorded this retirement on 2026-09-20; the item block
+itself was simply never deleted, which is the failure this pass is fixing.
+**Residue the implementing module declares about itself, recorded here rather
+than re-filed:** `src/data/live_price.py` states that pinning the entitled
+feed "was part of what board item 120 described and is NOT done here", and
+that one thing in it is asserted and not yet observed — that Alpaca stamps a
+daily bar at a time whose ET date equals the session date. The item's two
+stated criteria are met without either; the feed-pinning half of its body is
+not, and nobody owns it.
+
+**Item 130 — the number ledger's scope rule excluded the broker order path.**
+Closed by PR #544 (merged 2026-09-19) and verified on `main`:
+`src/execution/broker.py`, `src/execution/stop_repair.py`,
+`src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` are all in
+`SCOPED_PATHS`, each carrying a comment naming this item. The unscoped
+sentinel fell 192 → 145 and its own note records that all 47 structural sites
+were given ledger entries rather than deleted or reclassified to make the
+count fall. The item's second, later half — the hand-typed queued-earnings
+5.0 cap in `src/pipeline.py` and `src/agents/` — is covered by the same
+change: that cap now appears in the ledger's own list of newly recorded
+arbitrary entries. **Residue found by the adversary on this retirement, and
+it is the same value as item 138's:** `src/execution/scale_in.py` re-arms a
+protective stop through the broker and prices the limit off a bare `0.03`
+fallback, and that module is NOT in `SCOPED_PATHS` — so a module that
+submits a broker order still sits outside a rule whose own words are "every
+module on the path from a seat's verdict to a broker order". The item's
+criterion named three specific modules and all three are in scope, which is
+why it retires; this is a fourth module nobody had looked at.
+
+**Item 131 was NOT retired, and the reason is worth recording.** It looked
+finished — PR #547 gave the coverage sweep an identifiable log line, and the
+production log across 2026-09-21 to 2026-09-23 carries 216 `started` lines
+and 213 outcomes: 27 `clean`, 183 `gaps_left`, 3 `repair_deferred`. Its first
+criterion is met. Its second reads "one real repair or one real clean sweep is
+observed end to end, **so** the owner alarm it carries is known to have a
+working path", and every one of those 213 outcomes reads `repairs attempted
+0 / succeeded 0 / failed 0, alert none sent`. The alarm can only become true
+off a repair that was attempted and failed, so nothing observed touches the
+alarm path at all. Retiring on the literal "one clean sweep" and ignoring the
+purpose clause would have been a false retirement, so the item stays open.
+
+**Two corrections to figures quoted while working this, both caught by the
+adversary and both re-measured.** The sweep's run counts were first quoted as
+221/188/218; that added 10 `alert_heartbeat` lines, a different run kind, into
+the sweep's own totals — the same error shape as the "147 websocket failures"
+count this file already records being corrected to ~45. The real figures are
+above. Separately, every `gaps_left` row reports exactly `gaps 10` — the ten
+fractional-share positions whose DAY stops lapse at each close and are
+re-placed after the open, which is the standing broker limitation already
+recorded against item 53 and deliberately not an open item, but it is ten of
+twelve positions and the sweep logs `alert none sent` throughout.
+
+**Item 138 — five unsourced order-price buffers.** All five now carry
+`config/number_ledger.yaml` entries with an open question and what the desk
+pays meanwhile, and the ledger's own section comment states it "covers board
+item 138 (order-price buffers) in full. NO VALUE WAS CHANGED." Verified by
+reading the entries, not the claim. **Residue, recorded here rather than
+re-filed:** the 3% stop-limit buffer's own ledger note records a second `0.03`
+at `src/execution/scale_in.py:213`, a `getattr` fallback in a file outside the
+ledger's scope. It is a sixth site of the same value and it is unledgered.
+
+**Item 175 — an economic release could come due on a Saturday.** The item's
+one criterion was that the expected-next-release date roll to a business day.
+PR #585 (merged 2026-09-23) did exactly that: `roll_to_publication_day` is on
+the live path in `src/data/macro.py` and is pinned by two tests, one replaying
+the production Saturday and one asserting the federal calendar is used rather
+than the exchange one. The item's second sentence — chronic FRED fetch
+timeouts — was already assigned to the fetch redesign and is not retired with
+this; it stays with item 119, which remains open.
+
+**Retirement narration moved out of docs/WORK.md.** The board's
+retired-items sentence had accumulated a paragraph of per-item narration for
+items long since closed. It is kept here verbatim rather than deleted, and
+the board keeps only the number lists and the clauses that still govern live
+work:
+
+> Item 141 (live technical-seat ranking ties breaking alphabetically) was
+> retired 2026-09-20: its measured tie rates were the same ones the 2026-09-04
+> fix (item 18/64 audit) already closed for any candidate carrying a
+> risk_reward value; the residual gap was an all-breakout tied tier with no
+> risk_reward at all, fixed with a direction-aware tiebreak on each
+> candidate's own risk-side structural-level touches. Item 111 (the
+> earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired
+> 2026-09-20: shipped 2026-09-19 by finalizing each symbol's protection right
+> after its own order, proven by `tests/test_gross_exposure_ladder.py`. Item
+> 168 was retired 2026-09-20 by the same mechanism as item 98, one layer out:
+> the sheet's upstream-history claim now renders from `trading.lookback_days`
+> instead of the hand-typed "~120 days", and the two data blocks the seat
+> received unexplained — today's in-progress session and the previous
+> session's macro regime — were given standing instructions rather than
+> removed, since both are live inputs the seat is already expected to reason
+> about. Items 164 and 171 were retired 2026-09-23; reasons in
+> `docs/INCIDENT_HISTORY.md`. Item 151 never sat on this board (filed and
+> closed in the same change). Item 172 (an unreadable protective stop
+> reaching no owner alert) was FILED AND CLOSED inside the same change that
+> caused it, 2026-09-23: it never sat on this board as open work, and was
+> fixed rather than filed because per-position stops became the only loss
+> protection in the same commit.
+
+**Item 83 was left open although its residue reads identically to item 84's.**
+Both say "Residue is ONE live-session confirmation". Item 84's two halves were
+both observed. Item 83's first half — fills reconciled every half-hour — is
+observed in the same log (13:45, 14:15, 14:45 and on through 19:45 UTC on
+2026-09-22). Its second half, that a fully-sold symbol no longer reaches the
+position reviewer, needs a session in which a symbol was fully sold and a
+later review ran, and no such session appears in the retained logs. Half a
+confirmation is not the confirmation the item asked for.
+
+**Why the board's own checks did not catch any of this.** There is a check for
+an item whose title claims closure (`find_closed_items_not_marked_done`) and
+one for a finished-looking item left parked
+(`find_finished_items_still_on_board`). Neither flagged any of these seven,
+because none of them says "FIXED" in its own title — they say "OPEN", or they
+state a residue, and the residue is what quietly came true. What they cannot
+see is an item whose stated condition was met somewhere else: in a merged pull
+request that names the item in its own title, or in a line in the production
+log. Items 120 and 130 were both closed by a pull request whose title names
+them, which is the cheapest of those two signals to read.
+
 ### 2026-09-23 — the desk bought fresher news, threw it away thirty minutes later, and then refused to buy it again
 
 **In plain words:** the news desk reads the wire each morning. When something
