@@ -34,6 +34,117 @@ what would catch it next time.
 
 ---
 
+### 2026-09-22 — a busy provider took the trading desk offline for nine hours, and it was the second time in a week
+
+**In plain words:** the desk's spending safety switch is supposed to stop
+paid analysis when money is at risk. Instead it stopped the desk because
+Google's model was busy. Google replied "this model is currently
+experiencing high demand, try again later" seventeen times in one day; the
+switch could not tell that a "busy" reply costs nothing, decided it might
+have been charged for something it could not measure, and shut the desk
+down. It stayed down from 15:17 UTC until an operator noticed and cleared
+it by hand at 00:33 the next morning — through the close run and the
+evening run, with markets reopening that day. The desk had spent 79 cents
+of a $2.75 daily allowance. Nothing was over budget. The same class of
+false shutdown had already happened on 2026-09-16, and twice on 2026-08-31.
+
+**The measurements.** 17 HTTP 503 "high demand" responses on 2026-09-22 and
+on no other day in the log window; settled spend at the moment of the trip
+$0.7883 of $2.75 for the day and $0.0388 of $0.90 for the session; four
+operator resets of this trigger class on the live circuit's own event log
+(2026-08-31 twice, 2026-09-16, 2026-09-22) and not one of them following a
+budget breach.
+
+**Cause 1 — "busy" was filed under "might have cost money".** The circuit
+keeps a short, deliberately narrow list of provider errors it will accept
+as provably free: the ones where the provider rejects the request before it
+generates anything, so there is nothing to bill. Rate-limiting (429) is on
+that list. A capacity refusal (503) is the same thing wearing a different
+number, and it had simply never been added. Everything not on the list is
+treated as possibly-billed, and a single possibly-billed failure is enough
+to shut the desk.
+
+**Why this was not just "add 503 to the list".** The list is narrow on
+purpose, and there is a real line underneath it: a failure BEFORE the
+request is sent costs nothing, while a failure partway through the reply
+may already have been charged for the words generated so far. Not every 503
+is the harmless kind. When the relay cannot change an HTTP status any more
+— because the reply has already started — it reports the failure inside the
+reply instead, carrying the status the reply would have had. That one is
+genuinely ambiguous. The two cases turn out to be distinguishable, but only
+by which kind of error object arrives, never by the number, which is 503
+either way. So 503 is now accepted as free only when it did not come from
+inside a started reply. What was deliberately left alone: a mid-reply 429
+is still treated as free, which is the ratified 2026-08-31 behaviour and a
+separate argument.
+
+**Cause 2 — the shutdown had no way back on.** Nothing cleared this latch
+except a human typing a reset with a reason. A provider hiccup therefore
+suspended the desk indefinitely, and the only thing standing between a
+transient outage and a missed trading day was somebody happening to look.
+That is what turned a two-minute provider blip into nine hours.
+
+**Where the line was drawn on letting it clear itself.** Only a latch
+raised by a provider call that FAILED expires on its own, because a failed
+call's unproven cost is bounded by one attempt. Everything else still waits
+for a person: a call that SUCCEEDED but reported no cost (real tokens were
+generated, so the unknown is real spend), an accounting-integrity fault
+such as a clock running backwards, a real budget breach, and any failure of
+the circuit's own storage — in that last case nothing the circuit computes
+can be trusted to authorise its own recovery. Four further guards apply
+before anything expires: every unproven row on the day must be one this
+circuit itself booked as a failed call; settled spend must still be under
+both caps; a cooldown must have passed; and the day's allowance of
+self-clears must not be spent, so a fault that keeps recurring stops being
+treated as transient and goes back to waiting for a person. The unproven-row
+check runs against every day the shutdown spans, not just today — the
+2026-09-22 one crossed midnight, and the next morning's accounting starts
+clean, so checking only the current day would have waved through a shutdown
+whose actual unproven rows sat on the day before.
+
+**Both numbers took three attempts to derive, and the second attempt was
+wrong for an interesting reason.** The code's own description of the
+desk's every-30-minutes intraday check says it makes no model calls. That
+is false. On the production database the intraday check is the desk's
+LARGEST spender on models — 72% of the money on the day of this incident,
+90% on the day before, thirteen or fourteen paid runs a day — and the run
+that tripped this very latch was one of them. Two separate derivations
+were built on that one wrong sentence before anybody checked it against
+the database, including one written in response to an adversary review
+that had correctly rejected the first. The sentence is now corrected where
+it lives.
+
+Corrected: the only hard bound on the cooldown is the gap between
+consecutive runs that can spend money, which is that 30-minute cadence —
+at or above it a second run is lost, which is the damage being fixed.
+There is no floor, because the run that trips the latch stops at the trip;
+the one on 2026-09-22 ran 88 seconds end to end. So 15 minutes is the
+midpoint of the only interval that matters, which is the value furthest
+from both ways of getting it wrong. The daily allowance is one forgiveness
+per scheduled run that can spend money — nineteen, the fourteen intraday
+ticks plus the five named sessions.
+
+**The lesson worth keeping is not about 503s.** A comment describing what
+a job does was wrong, and two rounds of careful reasoning inherited the
+error because reading the comment is cheap and querying the database is
+not. Both times the number came out defensible-sounding. Check the claim
+the number rests on, not just the arithmetic on top of it.
+
+**What a self-clear does not do:** it moves no money and raises no cap.
+Recorded spend is left exactly as it stands, the caps are only read, and
+the settled-limit check runs immediately afterwards, so a circuit cleared
+while genuinely over budget re-latches at once.
+
+**What would catch it next time.** Eight deliberate breakages of this fix
+were each confirmed to fail a test, including the two that matter most:
+blanket-allowing 503 regardless of where it came from, and letting a
+real-spend latch expire on the transient path. The remaining known gap is
+on the board as item 174 — a suspension reaches the owner on Telegram but a
+self-clear does not, so he can still be left believing the desk is down
+when it is back.
+
+---
+
 ### 2026-09-23 — the desk counted a protective stop as if it had already sold the shares, so its own share count was wrong on live positions (item 173)
 
 **In plain words:** when the desk places a protective stop order at the

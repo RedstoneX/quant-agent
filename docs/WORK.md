@@ -395,6 +395,11 @@ DONE WHEN:
   - [ ] whatever feeds external content into the session's prompt has a stated injection mitigation
   - [ ] the mechanism's safety claims are tested, not only asserted in prose
 
+**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back. Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
+DONE WHEN:
+  - [ ] a self-clear reaches the owner on the same surface the suspension did
+  - [ ] cooldown and allowance re-read against a real occurrence
+
 **175. FRED overdue dates can land on a Saturday; fetch timeouts are chronic — filed 2026-09-23, report-only.** `expected_next_by` is a plain calendar date, so DFF (cadence 1d, lag 1d) came due Sat 09-19 and read OVERDUE Mon 09-21 before an agency business day passed [measured, 1 firing]. Also: every FRED failure in the log is `fetch_deadline_exceeded`, 4 of 12 runs full coverage, worst 5/15 [measured 09-17..23] — owned by the approved fetch redesign.
 DONE WHEN:
   - [ ] `expected_next_by` rolls to a business day, or the artefact is accepted in writing
