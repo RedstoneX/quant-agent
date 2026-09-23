@@ -800,6 +800,19 @@ REFUSAL_PROJECTION_IMPLAUSIBLE = "projection_implausible"
 FAULT_NO_ENTRY = "entry_price_missing"
 FAULT_NO_VOLATILITY = "volatility_reading_missing"
 FAULT_NO_STRUCTURE = "price_history_unusable"
+#: SIZING faults (docs/WORK.md item 120). The share count divides the dollar
+#: allocation by a live price, so the price that sizes a new-name buy must be
+#: a real TODAY PRINT — never a prior-session last trade and never a quote
+#: MID. When the desk cannot obtain one, the name is refused as unmeasurable
+#: rather than sized on a bad price. Two distinct codes because "the feed
+#: returned nothing" and "the feed returned only a stale print" are different
+#: conditions the census counts separately — the same split
+#: `src/data/live_price.py` already draws between NO_PRICE_AT_ALL and
+#: ONLY_STALE. FAULT_NO_ENTRY is NOT reused for these: its string
+#: ("entry_price_missing") would misdescribe a name that has an analyst entry
+#: but no live print to size against.
+FAULT_NO_PRICE = "sizing_price_missing"
+FAULT_STALE_PRICE = "sizing_price_stale"
 #: Raised by the constructor, not here: the desk holds NO technical analysis
 #: for a symbol it was asked to size. Every input below is absent at once,
 #: so naming the first one ("no ATR") would misdescribe it.
