@@ -23,6 +23,7 @@ from src.notifier import (
     _DB_PATH as _NOTIFIER_DB_PATH,
     _fmt_signed_money,
     _lookup_company_profiles,
+    _margin_interest_lines,
     _new_block,
     _new_section,
     _seal_section,
@@ -265,6 +266,75 @@ def _skip_who(reason: str) -> str:
     return _SKIP_WHO_LABELS.get(str(reason or ""), "Blocked by the desk")
 
 
+# A NORMAL OPERATING STATE IS NOT AN ERROR (owner, 2026-09-23).
+#
+# Every execution-skip `reason` below is a desk rule declining to place an
+# order ON PURPOSE. The risk system refusing a trade it is built to refuse
+# is the risk system working, and a session whose only blocks are these did
+# not fail — it decided. The measured cases that forced this: "⚡ INTRADAY
+# OPPORTUNITY · 9:49 AM ET · FAILED" on 2026-09-21 whose single block was
+# `short_add_blocked`, and "🔵 MORNING · 9:36 AM ET · FAILED" on 2026-09-22
+# whose only two blocks were the 200-session history pre-check refusing DRAM
+# and CBRS while the PM's own verdict was `no_trades`.
+#
+# THE SET IS AN ALLOWLIST AND IT IS DELIBERATELY SHORT. Anything not named
+# here — `broker_rejected`, `no_price`, `submit_failed`, a code added by a
+# future change, a code this map has never seen — is classified as a FAULT
+# and keeps the loud header. Getting a refusal wrongly called a failure is
+# noise; getting a failure wrongly called a refusal is the owner not being
+# told his desk broke, so the unknown case must fall the loud way.
+#
+# WHAT IS NOT ON IT, AND WHY — each of these was proposed for this set and
+# thrown out against the production database on 2026-09-23:
+#
+#   slippage_gated / latency_window  Every one of the six `slippage_gated`
+#     rows in the database is a venue-data problem wearing a policy code:
+#     IEX asks 391, 405, 437, 488, 580 bp above reference against a 40bp
+#     ceiling, on an account whose own code comments record that IEX
+#     top-of-book is routinely stale. The 2026-09-15 run lost four
+#     risk-approved buys this way; calling that session a correct no-trade
+#     is exactly the cover story the desk's own doctrine forbids. The two
+#     codes are also not independently determined — `src/pipeline_stages.py`
+#     picks between them on `ctx.desk_latency_stall`, which is set at six
+#     sites and cleared at none, so one stall anywhere in a run relabels
+#     every later quote refusal in it.
+#   short_add_blocked  Its own detail string reads "adding to a short is
+#     not built". An unbuilt feature the desk keeps trying to use is not a
+#     decision; it is the desk failing to act on its own signal, five times
+#     on FLNC on 2026-09-21 alone.
+#   geometry_rr  Dead. `_execution_payoff_skip_reason` returns None
+#     unconditionally and its docstring says the token is not emitted. It
+#     survives only in stored runs, which `render_stored_session_report`
+#     re-renders through this code — so whitelisting it would retroactively
+#     relabel the two historical reward:risk refusals as correct.
+#   stale_entry  Zero rows in the entire database. Assigning owner-facing
+#     meaning to a path that has never once run is a guess.
+#   borrow_gate  A failed broker asset lookup is synthesised into
+#     `{"shortable": False, "reason": "asset_lookup_failed"}` and filed
+#     under this code, so an API failure would read as a borrow decision.
+#   insufficient_cash / unusable_stop / fat_finger_guard  "There was no
+#     cash", "the desk could not compute a stop" and "the safety net caught
+#     an absurd order" are all things that must be said loudly. A guard
+#     firing means something upstream produced something wrong.
+_DELIBERATE_SKIP_REASONS = frozenset({
+    # The $500 minimum trade size — one of the three the owner named.
+    "below_min_notional",
+    # Deterministic sizing arithmetic resolving to nothing to place.
+    "qty_zero",
+    # A full book with nothing outranking a holding. PR #600 established
+    # on the owner's own words that this is the desk's normal operating
+    # state, not a fault: "Yes portfolio is full. But we're still reviewing
+    # things, which is how we built it."
+    "rotation_room_not_freed",
+})
+
+
+def _skip_is_fault(reason: Any) -> bool:
+    """True when an execution skip means something BROKE rather than a desk
+    rule deciding not to trade — see `_DELIBERATE_SKIP_REASONS`."""
+    return str(reason or "").strip() not in _DELIBERATE_SKIP_REASONS
+
+
 # Board item 89 defect 5 — raw internal tokens printed to the owner word
 # for word. Every value below is what the token MEANS, in the same words a
 # person would use; the key is the internal spelling and never reaches the
@@ -400,6 +470,13 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
     per-symbol refusal distinct from the whole-plan `approved` bool); and
     a real trade row that reached neither a fill nor a live working order
     (a DAY order that expired unfilled, a submit that ultimately failed).
+
+    Every row also carries `"fault"`: True when it means something BROKE,
+    False when it is a desk or risk rule declining on purpose. It is set
+    HERE, at construction, because this is the only place the raw reason
+    code is still in hand — `_append_blocked` and `_outcome_word` see only
+    the plain English and could not tell the two apart. See
+    `_DELIBERATE_SKIP_REASONS` for why an unrecognised code is a fault.
     """
     rows: list[dict] = []
     seen: set[str] = set()
@@ -416,6 +493,7 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             "action": _decision_action_for(symbol, snap),
             "who": _skip_who(row.get("reason", "")),
             "reason": row.get("detail") or row.get("reason") or "blocked",
+            "fault": _skip_is_fault(row.get("reason")),
         })
         seen.add(symbol)
 
@@ -427,11 +505,18 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             symbol = str(row.get("symbol", "?")).upper()
             if symbol in seen:
                 continue
+            stated = str(row.get("reason") or "").strip()
             rows.append({
                 "symbol": symbol,
                 "action": _decision_action_for(symbol, snap),
                 "who": "Blocked by risk manager",
-                "reason": row.get("reason") or "refused without a stated reason",
+                "reason": stated or "refused without a stated reason",
+                # The risk seat refusing a name it is built to refuse is
+                # the risk seat working. But this field is free text with
+                # no code behind it, so the ONLY thing separating a working
+                # risk seat from a malfunctioning one here is whether it
+                # said why. A refusal with nothing written down stays loud.
+                "fault": not stated,
             })
             seen.add(symbol)
 
@@ -449,6 +534,10 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             # says the same thing in words; an unmapped token is described,
             # never pasted.
             "reason": _order_end_plain(row.get("fill_status")),
+            # An order the desk MEANT to place that reached neither a fill
+            # nor a live working order is an intention that did not happen.
+            # Loud.
+            "fault": True,
         })
         seen.add(symbol)
 
@@ -467,6 +556,19 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         if symbol in seen:
             continue
         detail = str(row.get("detail") or "").strip()
+        # A constructor block is a deliberate refusal ONLY when the
+        # constructor recorded one as data — `_record_constructor_drops`
+        # files those under `constructor_refused` with a named `refusal`
+        # code beside them (measured on the whole production database:
+        # insufficient_history 13, gross_exposure_ceiling_refused 5,
+        # sector_crowding_leaves_below_min_order 2,
+        # delta_below_min_trade_weight 1). Every one of those is a desk
+        # rule declining on purpose. The other path — `constructor_dropped`,
+        # recovered from a log line, or a row with no reason written down at
+        # all — is exactly the case where the report CANNOT tell a rule from
+        # a breakage, so it stays loud rather than guess.
+        named_refusal = bool(str(row.get("refusal") or "").strip())
+        fault = not (named_refusal and detail)
         if not detail:
             # Never a guess and never an internal code: say that the reason
             # was not written down.
@@ -479,6 +581,7 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             "action": _decision_action_for(symbol, snap),
             "who": "Stopped by the desk before an order was placed",
             "reason": detail,
+            "fault": fault,
         })
         seen.add(symbol)
 
@@ -520,22 +623,61 @@ def _traded_word(done_rows: list[dict] | None) -> str:
     return "TRADED"
 
 
+def _fault_count(blocked_rows: list[dict] | None) -> int:
+    """How many blocked rows mean something BROKE. A row with no `fault`
+    key is counted as one: an unclassified block is the case the report
+    cannot tell apart, and the unknown case falls the loud way."""
+    return sum(
+        1 for row in (blocked_rows or [])
+        if not isinstance(row, dict) or row.get("fault", True)
+    )
+
+
 def _outcome_word(
     status: str, done_count: int, blocked_count: int,
     done_rows: list[dict] | None = None,
+    fault_count: int | None = None,
 ) -> str:
-    """ONE plain word for the header line — BOUGHT / SOLD / TRADED / NO
-    CHANGE / FAILED / PARTIAL — computed from the SAME counts the sections
-    below render, so the header can never claim something the body doesn't
-    show. `done_rows` lets the word say which way the trades went."""
+    """ONE plain word for the header line, computed from the SAME rows the
+    sections below render, so the header can never claim something the body
+    doesn't show. `done_rows` lets the word say which way the trades went.
+
+    THE VOCABULARY, and which state earns which word:
+
+      FAILED     something broke — a red status, or a blocked row
+                 classified as a fault (`_blocked_rows`).
+      PARTIAL    orders reached the broker AND something also broke.
+      BOUGHT /   orders reached the broker; the word says which way
+      SOLD /     (`_traded_word`). Correct refusals alongside them do not
+      TRADED     change it: the session traded.
+      NO TRADE   nothing reached the broker, and every block was a desk or
+                 risk rule declining on purpose. A normal operating state.
+      NO CHANGE  nothing reached the broker and nothing was declined.
+
+    WHY "NO TRADE" EXISTS. Until 2026-09-23 any blocked row at all returned
+    FAILED, so the gross-exposure ceiling, the $500 minimum trade size and
+    the 200-session history pre-check each put the word FAILED on the top
+    line of a session that had worked correctly. Owner's instruction, in his
+    words: a normal operating state must not be reported as an error. It is
+    a separate word from NO CHANGE on purpose — "the desk weighed names and
+    declined them" and "the desk had nothing to weigh" are different facts
+    and the owner has to be able to tell them apart from the header alone.
+
+    `fault_count=None` keeps the pre-2026-09-23 behaviour (every block
+    counts as a fault) for any caller that has not been given rows to
+    classify — the loud direction, never the quiet one.
+    """
     if _status_emoji(status) == "🔴":
         return "FAILED"
-    if done_count and blocked_count:
+    faults = blocked_count if fault_count is None else fault_count
+    if done_count and faults:
         return "PARTIAL"
     if done_count:
         return _traded_word(done_rows)
-    if blocked_count:
+    if faults:
         return "FAILED"
+    if blocked_count:
+        return "NO TRADE"
     return "NO CHANGE"
 
 
@@ -551,30 +693,85 @@ def _outcome_word(
 _DETAILS_SAFETY_RESERVE_CHARS = 250
 
 
-def _wrap_details(lines: list[str], detail_lines: list[str]) -> None:
+def _wrap_details(
+    lines: list[str], detail_lines: list[str], extra_reserve: int = 0,
+) -> int:
     """Append the full, unabridged per-stock reasoning as a collapsed
     `<b>DETAILS</b>` / `<blockquote expandable>` block — NEW LAYOUT item 7.
     Content is unchanged from the pre-redesign message; only its
     presentation (collapsed, tapped open) is new. Sized to fit the
     remaining Telegram budget so a clip, if one is needed, lands inside
     DETAILS and never inside the scan-first sections above it.
+
+    `extra_reserve` is room for a section the caller has NOT appended yet —
+    the candidate list, which `_budgeted_sections` deliberately holds back
+    so this block gets its share of the budget first. Returns the budget
+    this block did not use, which is what the caller then spends on
+    rendering that list at a richer tier.
     """
     text = "\n".join(line for line in detail_lines if line is not None).strip("\n")
-    if not text:
-        return
     wrapper_overhead = len("<b>DETAILS</b>\n<blockquote expandable></blockquote>")
     used = len("\n".join(lines))
     budget = (
         TelegramNotifier.MAX_MESSAGE_CHARS - used - wrapper_overhead
-        - _DETAILS_SAFETY_RESERVE_CHARS
+        - _DETAILS_SAFETY_RESERVE_CHARS - max(0, extra_reserve)
     )
     budget = max(0, budget)
+    if not text:
+        return budget
     if len(text) > budget:
         text = _clip_text(text, budget, marker="\n[details truncated — see Mission Control]")
     start = len(lines)
     lines.append(_b("DETAILS"))
     lines.append(f"<blockquote expandable>{text}</blockquote>")
     _seal_section(lines, start)
+    return max(0, budget - len(text))
+
+
+def _budgeted_sections(
+    lines: list[str], slot: int, looked_at_rows: list[dict], profiles: dict,
+    snap: dict[str, Any] | None, detail_lines: list[str],
+) -> None:
+    """Fit BOTH the candidate list and the reasoning block into one
+    message, in the owner's order of need — and the reason the candidate
+    list is appended late rather than in place.
+
+    THE DEFECT THIS FIXES. `_wrap_details` sizes itself against whatever is
+    already in `lines`. The candidate list was built first and, measured on
+    run-fccb2026 (2026-09-23) replayed against post-#600 code, ran to 8,376
+    characters against a 4,000-character budget — so DETAILS got a negative
+    budget and rendered EMPTY. Live proof: that morning's message, and
+    2026-09-21's and 2026-09-22's, all end
+    `<blockquote expandable></blockquote>`. The desk's reasoning chain was
+    the guaranteed daily casualty while a list of names it had already
+    declined survived intact. Nothing was wrong with either section; the
+    ORDER in which they claimed the budget was wrong.
+
+    THE ORDER, highest priority first:
+
+      1. Everything already in `lines` — heading, P&L, the stop-coverage
+         and research banners, DONE, NOT TAKEN / FAILED. Never squeezed.
+      2. The candidate list at its tier-3 floor (`_looked_at_block`) —
+         every name, no detail. Reserved before DETAILS is sized, so the
+         list can never be erased either.
+      3. The reasoning block, which takes what is left.
+      4. Whatever the reasoning did not need goes back into rendering the
+         candidate list at a richer tier.
+
+    Step 4 is what stops this being a straight swap of one casualty for
+    another: on a quiet session with little reasoning, the list still
+    renders in full.
+    """
+    floor = _looked_at_block(looked_at_rows, profiles, snap, budget=0)
+    # +1 for the blank separator line `_seal_section` would insert.
+    reserve = (len("\n".join(floor)) + 1) if floor else 0
+    spare = _wrap_details(lines, detail_lines, extra_reserve=reserve)
+    if not floor:
+        return
+    block = _looked_at_block(
+        looked_at_rows, profiles, snap, budget=max(0, reserve - 1 + spare),
+    )
+    lines[slot:slot] = ([""] + block) if slot > 0 else block
 
 
 def _empty_snapshot() -> dict[str, Any]:
@@ -1306,19 +1503,43 @@ def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict)
 
 def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
     """NEW LAYOUT item 4 — who actually stopped it, in plain words. See
-    `_blocked_rows` for the three sources this merges."""
+    `_blocked_rows` for the four sources this merges.
+
+    TWO headings, not one. The old single "❌ BLOCKED / FAILED" heading
+    filed the risk system working correctly under the word FAILED, which is
+    the same defect as the header word and had to be fixed in the same pass
+    — a header that says NO TRADE over a section that says FAILED just
+    moves the confusion down one line. Rows the desk refused ON PURPOSE go
+    under "🚫 NOT TAKEN"; rows where something broke keep "❌ FAILED".
+    Every row still appears, with the same wording as before.
+    """
     if not rows:
         return
-    lines.append(_b("❌ BLOCKED / FAILED"))
-    for row in rows:
-        # 600, not 300: a constructor refusal sentence runs ~250 characters
-        # and a broker reason can run longer; a cut mid-sentence was item
-        # 89's "detail truncated" defect.
-        reason = _clip(row.get("reason"), 600)
+    refused = [row for row in rows if not row.get("fault", True)]
+    faults = [row for row in rows if row.get("fault", True)]
+
+    def _bullets(group: list[dict]) -> None:
+        for row in group:
+            # 600, not 300: a constructor refusal sentence runs ~250
+            # characters and a broker reason can run longer; a cut
+            # mid-sentence was item 89's "detail truncated" defect.
+            reason = _clip(row.get("reason"), 600)
+            lines.append(
+                f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — "
+                f"{row['who']}: {reason}"
+            )
+
+    if refused:
+        lines.append(_b("🚫 NOT TAKEN"))
         lines.append(
-            f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — "
-            f"{row['who']}: {reason}"
+            "   The desk decided against these. Nothing broke."
         )
+        _bullets(refused)
+    if faults:
+        if refused:
+            lines.append("")
+        lines.append(_b("❌ FAILED"))
+        _bullets(faults)
 
 
 def _pm_pass_reason(
@@ -1368,29 +1589,18 @@ def _pm_pass_reason(
     return None, ""
 
 
-def _append_looked_at(
-    lines: list[str], rows: list[dict], profiles: dict,
-    snap: dict[str, Any] | None = None,
-) -> None:
-    """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on.
+def _looked_at_groups(
+    rows: list[dict], profiles: dict, snap: dict[str, Any] | None,
+) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """`[(ground, [(ticker, name_with_rating, detail), ...]), ...]`, groups
+    in the order their first name appears — which is the existing priority
+    ordering from `_signal_rows`, so the strongest ratings still lead.
 
-    GROUPED BY THE GROUND, not one reason per name. A real session leaves
-    sixty-odd candidates here and most of them die on the SAME ground — on
-    2026-09-23, thirty-nine of sixty-nine on one — so a reason per bullet
-    printed the identical sentence thirty-nine times on a phone screen.
-    The layout is `_append_coverage_gaps`': a sub-header naming the
-    condition and how many it covers, then the names beneath it. No new
-    idiom and no cap — every name still appears exactly once, because a
-    grouping that hides a name is a worse failure than a repetitive one.
-
-    Groups keep the order their first name appears in, which is the
-    existing priority ordering from `_signal_rows`, so the strongest
-    ratings still lead.
+    Split out of `_looked_at_block` so all four render tiers below
+    group identically: a tier that grouped differently from another could
+    show the owner a different count for the same session.
     """
-    if not rows:
-        return
-    lines.append(_b("👀 LOOKED AT, NO TRADE"))
-    grouped: dict[str, list[tuple[str, str]]] = {}
+    grouped: dict[str, list[tuple[str, str, str]]] = {}
     for row in rows:
         symbol = str(row.get("symbol", "?")).upper()
         rating = str(row.get("rating", "?")).upper()
@@ -1403,24 +1613,123 @@ def _append_looked_at(
             else "the desk did not record why it passed on these"
         )
         grouped.setdefault(ground, []).append(
-            (f"{_ticker_co(symbol, profiles)} {rating}/{conviction}", detail),
+            (symbol, f"{_ticker_co(symbol, profiles)} {rating}/{conviction}",
+             detail),
         )
-    for ground, entries in grouped.items():
-        lines.append(f"   ▪ {len(entries)} — {ground}")
-        # A per-name detail that is word-for-word the same for every name
-        # under the heading is the heading again — the `held_unchanged`
-        # accounting note is one fixed sentence, and printing it twelve
-        # times under a heading that already says it is the repetition this
-        # grouping exists to remove. Dropped only when it is shared by the
-        # whole group AND the group has more than one name, so a name whose
-        # detail is its own is never silently lost.
-        details = {detail for _, detail in entries}
-        shared = len(entries) > 1 and len(details) == 1
-        for name, detail in entries:
-            lines.append(
-                f"      • {name} — {detail}"
-                if detail and not shared else f"      • {name}"
+    return list(grouped.items())
+
+
+def _looked_at_block(
+    rows: list[dict], profiles: dict, snap: dict[str, Any] | None = None,
+    budget: int | None = None,
+) -> list[str]:
+    """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on,
+    rendered at the richest of three tiers that fits `budget`.
+
+    GROUPED BY THE GROUND, not one reason per name (PR #600). A real
+    session leaves sixty-odd candidates here and most of them die on the
+    SAME ground — on 2026-09-23, thirty-nine of sixty-nine on one.
+
+    WHY THERE ARE TIERS. Measured on run-fccb2026 (2026-09-23, replayed
+    against the post-#600 code): this block alone renders 8,376 characters
+    for 68 candidates, against a 4,000-character message budget. It was
+    built first and took all of it, which is why the DETAILS block carrying
+    the desk's actual reasoning rendered EMPTY in every live morning
+    message. Clipping was not an option either: the clip would land
+    mid-list and silently lose names.
+
+    So the block degrades instead, and NO NAME IS EVER DROPPED at any tier
+    — the #600 rule stands that a grouping which hides a name is a worse
+    failure than a repetitive one. What is given up, in order, is the
+    per-name detail sentence and then the one-name-per-line layout:
+
+      tier 1  ground heading, then each name on its own line with its own
+              detail sentence.
+      tier 2  ground heading, then each name on its own line.
+      tier 3  ground heading, then every name and its rating comma-joined
+              on one line. Telegram soft-wraps it.
+      tier 4  the same, tickers only.
+
+    The company name goes before the rating because a ticker the owner does
+    not recognise tells him nothing (board item 89), so it is the last
+    thing given up rather than the first.
+
+    Tier 4 is the FLOOR and is returned whatever `budget` says, because a
+    block that renders nothing would put the owner back where #600 found
+    him. The count in every heading still accounts for every candidate at
+    every tier. `budget=None` means "no ceiling" — tier 1, the old
+    behaviour, which is what the position-review and evening formatters
+    and the stored-report replay path still get.
+    """
+    if not rows:
+        return []
+    groups = _looked_at_groups(rows, profiles, snap)
+    header = _b("👀 LOOKED AT, NO TRADE")
+
+    def _tier1() -> list[str]:
+        out = [header]
+        for ground, entries in groups:
+            out.append(f"   ▪ {len(entries)} — {ground}")
+            # A per-name detail that is word-for-word the same for every
+            # name under the heading is the heading again — the
+            # `held_unchanged` accounting note is one fixed sentence, and
+            # printing it twelve times under a heading that already says it
+            # is the repetition this grouping exists to remove. Dropped
+            # only when it is shared by the whole group AND the group has
+            # more than one name, so a name whose detail is its own is
+            # never silently lost.
+            details = {detail for _, _, detail in entries}
+            shared = len(entries) > 1 and len(details) == 1
+            for _symbol, name, detail in entries:
+                out.append(
+                    f"      • {name} — {detail}"
+                    if detail and not shared else f"      • {name}"
+                )
+        return out
+
+    def _tier2() -> list[str]:
+        out = [header]
+        for ground, entries in groups:
+            out.append(f"   ▪ {len(entries)} — {ground}")
+            for _symbol, name, _detail in entries:
+                out.append(f"      • {name}")
+        return out
+
+    def _tier3() -> list[str]:
+        out = [header]
+        for ground, entries in groups:
+            out.append(f"   ▪ {len(entries)} — {ground}")
+            out.append("      " + ", ".join(name for _s, name, _d in entries))
+        return out
+
+    def _tier4() -> list[str]:
+        out = [header]
+        for ground, entries in groups:
+            out.append(f"   ▪ {len(entries)} — {ground}")
+            out.append(
+                "      " + ", ".join(symbol for symbol, _n, _d in entries)
             )
+        return out
+
+    for build in (_tier1, _tier2, _tier3):
+        block = build()
+        if budget is None or len("\n".join(block)) <= budget:
+            return block
+    return _tier4()
+
+
+def _append_looked_at(
+    lines: list[str], rows: list[dict], profiles: dict,
+    snap: dict[str, Any] | None = None, budget: int | None = None,
+) -> None:
+    """`_looked_at_block`, appended in place — the `_new_block` shape.
+
+    The two formatters that carry a candidate list no longer call this:
+    they go through `_budgeted_sections`, which has to know the block's
+    size before deciding where to put it. Kept as the in-place form for
+    any caller that wants the block with no budget at all.
+    """
+    lines.extend(_looked_at_block(rows, profiles, snap, budget))
 
 
 def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
@@ -1518,7 +1827,10 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     looked_at_rows = _looked_at_rows(snap, None, acted)
     profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
+    outcome = _outcome_word(
+        status, len(done_rows), len(blocked_rows), done_rows,
+        fault_count=_fault_count(blocked_rows),
+    )
     lines = [f"{_status_emoji(status)} {mode.upper()} · {fmt_time_12h(et_now())} · {outcome}"]
 
     # P&L FIRST, directly under the heading — owner, 2026-09-18: "all the
@@ -1526,6 +1838,20 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     # right after the first line, which is really the heading." A repeat
     # correction: it kept drifting below whatever banner was added next.
     _new_section(lines, *_pnl_section_lines(result))
+
+    # Margin interest — the price of money the desk borrowed. This is the
+    # actual sent morning path (`_format_decision_session`, mode
+    # morning/once); `src.notifier`'s own `_margin_interest_lines()` call
+    # sits on `format_session_result`'s base formatter, which trader_feed
+    # only falls back to for statuses that never reach here (see
+    # `_BASE_ONLY_STATUSES` above) — so this line was built and correct but
+    # never actually sent (measured: 0 of 78 `notifier_sends` rows contain
+    # "margin interest"). Reused verbatim from `src.notifier`, including its
+    # own ESTIMATE caveat and the owner's "show it every day, even at zero"
+    # policy (2026-09-18) — placed here, right after P&L and before every
+    # section subject to the message-length budget, so it survives a clip
+    # the way the P&L block above it does.
+    _new_section(lines, *_margin_interest_lines())
 
     _new_block(lines, _append_coverage_gaps, result)
 
@@ -1550,15 +1876,28 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     _new_block(lines, _append_book, snap)
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
-    _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
+    # The candidate list is rendered LAST and spliced back in HERE — see
+    # `_budgeted_sections` for why it may not claim the budget first.
+    looked_at_slot = len(lines)
     _new_block(lines, _append_rotation, snap)
 
+    # THE REASONING LEADS, THE ENUMERATION TRAILS. Order matters inside
+    # DETAILS for the same reason it matters outside it: if this block has
+    # to be clipped, the clip must land in the per-candidate signals
+    # listing — which is the same 69 names the LOOKED AT block above
+    # already accounts for, read from a different seat — and never in the
+    # PM's reasoning chain, the risk verdict or the execution record, which
+    # appear nowhere else in the message. Measured on run-fccb2026: the
+    # signals listing is 9,379 of the block's 9,799 characters; the PM
+    # reasoning is 303, the risk verdict 0 and the execution record 114.
     detail_lines: list[str] = []
-    _new_block(detail_lines, _append_signals, snap)
-    _new_block(detail_lines, _append_pm, snap, may_glue=True)
+    _new_block(detail_lines, _append_pm, snap)
     _new_block(detail_lines, _append_risk, snap)
     _new_block(detail_lines, _append_gate_and_execution, result, snap)
-    _wrap_details(lines, detail_lines)
+    _new_block(detail_lines, _append_signals, snap)
+    _budgeted_sections(
+        lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+    )
 
     _new_block(lines, _append_footer, snap, elapsed)
     return "\n".join(lines)
@@ -1596,7 +1935,10 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     watch_rows = _watch_rows(result)
     profiles = _profiles(done_rows, blocked_rows, held_symbols, watch_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
+    outcome = _outcome_word(
+        status, len(done_rows), len(blocked_rows), done_rows,
+        fault_count=_fault_count(blocked_rows),
+    )
     lines = [
         f"{_status_emoji(status)} {mode.upper()} REVIEW · "
         f"{fmt_time_12h(et_now())} · {outcome}"
@@ -2460,7 +2802,10 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     looked_at_rows = _looked_at_rows(snap, candidates, acted)
     profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
+    outcome = _outcome_word(
+        status, len(done_rows), len(blocked_rows), done_rows,
+        fault_count=_fault_count(blocked_rows),
+    )
     lines = [f"⚡ INTRADAY OPPORTUNITY · {fmt_time_12h(et_now())} · {outcome}"]
 
     def _render_status_banner(lines: list[str]) -> None:
@@ -2540,7 +2885,8 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
-    _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
+    # Held back and spliced in here — see `_budgeted_sections`.
+    looked_at_slot = len(lines)
 
     detail_lines: list[str] = []
     # How much of this tick's evidence was actually read on this tick.
@@ -2553,13 +2899,17 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     _new_block(
         detail_lines, _append_intraday_evidence_freshness, outer, nested,
     )
-    _new_block(detail_lines, _append_signals, snap, candidates=candidates)
+    # Reasoning first, the per-candidate enumeration last — same ordering
+    # and same reason as `_format_decision_session`.
     _new_block(detail_lines, _append_pm, snap, may_glue=True)
     _new_block(detail_lines, _append_risk, snap)
     # `nested`, not `outer`: on the intraday path the traded-order evidence
     # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict.
     _new_block(detail_lines, _append_gate_and_execution, nested, snap)
-    _wrap_details(lines, detail_lines)
+    _new_block(detail_lines, _append_signals, snap, candidates=candidates)
+    _budgeted_sections(
+        lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+    )
 
     _new_block(lines, _append_footer, snap, elapsed)
     return "\n".join(lines)

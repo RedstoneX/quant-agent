@@ -90,7 +90,14 @@ def test_a_plan_the_constructor_dropped_is_reported_not_silently_lost(
         "morning", {"status": "no_trades", "run_id": run, "orders": []}, 12.0,
     )
 
-    assert "BLOCKED / FAILED" in msg
+    # NOT TAKEN, not BLOCKED / FAILED (2026-09-23). The minimum trade size
+    # is one of the three cases the owner named when he said a normal
+    # operating state must not be reported as an error: the desk declined
+    # this on a standing rule, nothing broke, and the header says NO TRADE.
+    # What must NOT change is that the drop still reaches the message at
+    # all, with its reason — that is what this test was written for.
+    assert "<b>🚫 NOT TAKEN</b>" in msg
+    assert msg.splitlines()[0].endswith("· NO TRADE")
     assert "NVDA" in msg
     assert "Stopped by the desk before an order was placed" in msg
     assert "0.20% of the account" in msg
