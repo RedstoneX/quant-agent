@@ -68,28 +68,57 @@ question rotation exists to ask actually depends on. Writing a second
 which already resolves the ladder, settled cash and the min of the two.
 
 **The second half, and arguably the more important one.** The evaluation
-declined at seven distinct points and recorded nothing at any of them. Which
+declined at eight distinct points and recorded nothing at any of them. Which
 holding was weighed against which candidate, on which seats, at what ratio,
 and which point refused — none of it existed anywhere. That is the desk's own
-standing rule against dropping a candidate without a durable, per-symbol,
+standing rule against dropping a candidate without a durable,
 machine-readable reason, breached in the one place whose open research
-question (board item 39(a), the unmeasured 25% margin) can only be answered
-from that exact distribution. Every refusal now carries those fields, and they
-ride in the per-session rotation pre-check row added earlier the same day
-rather than in a second row of their own — one session's one comparison is one
-fact, and two rows would have to be joined before either could be read.
+question (board item 39(a), the unmeasured 25% margin) could most use that
+distribution. Every refusal now carries those fields, and they ride in the
+per-session rotation pre-check row added earlier the same day rather than in a
+second row of their own — one session's one comparison is one fact, and two
+rows would have to be joined before either could be read.
 
 **The comparison facts are recorded even when the book had room**, which is
-the counter-intuitive part and the point: those sessions are 51 of the last
-51, so they are not a fringe case to be skipped, they are the population.
+the counter-intuitive part and the point: those renders are 51 of the last 51,
+so they are not a fringe case to be skipped, they are the population.
+
+**What that dataset is NOT.** It is not a settlement route for 39(a). Setting
+the margin from the distribution this book happens to throw off is fitting,
+which this desk refuses, and 39(a) already records backtesting as ruled out.
+It makes the question measurable; answering it still needs what 39(a) says it
+needs.
+
+**Three defects an adversary pass caught in the fix itself**, each of which
+would have shipped: the SALE's own reason still quoted the risk ceiling, so a
+funding-bound rotation would have written "Headroom 14.50% of the 25.00% risk
+ceiling, under the 0.50% minimum" onto a live broker order and into the Risk
+Manager's input; an unreadable funding view rendered as "enough cash and
+borrowing room to open a new position", asserting from a number nobody read,
+and adversely, because the ladder is unreadable exactly when execution has
+fallen back to raw settled cash; and scoping the new row to the holding
+compared would have made the jam detector read a weakest HOLDING as a
+candidate the session considered, breaking the monomorphic-refusal streak on
+essentially every run and silently disarming that alarm — a rule already
+written down three times in this repo.
 
 **What would catch it next time.** A precondition whose "off" branch has fired
 100% of the time over a month of production is not a conservative default, it
 is a dead code path wearing one. Nothing in the suite noticed, because every
 test supplied a headroom under the floor by hand and so only ever exercised
-the branch production never took. The check that exists now is the refusal-point
-inventory: every declining path must name itself in one list, and a test
-proves each member is reachable and that no path returns silently.
+the branch production never took. The check that exists now is the
+refusal-point inventory: every declining path must name itself in one list,
+and a test proves each member is reachable and that no path returns silently.
+
+**Left open, deliberately.** The funding floor is `cash_sweep.min_order_usd`
+($500), which is permissive: a $600 deployable budget clears a $500 order that
+cannot carry the 0.50% minimum risk the desk will trade, so rotation can still
+stay silent on an effectively full book. The right quantity is the notional
+that funds a minimum-risk starter at the candidate's own stop, which is
+readable from the instrument and needs its own item. Also unmeasured: how
+often item-25 structural protection is broken on this book, which is the
+number deciding whether the live categorical tier's real firing rate goes from
+zero to zero or from zero to daily.
 
 **No threshold moved.** `ROTATION_MARGIN_PCT` is still 0.25 and
 `rotation_ranked_margin_enabled` is still false; both remain blocked by 39(a).
@@ -5677,8 +5706,12 @@ whenever this loss is detected on an otherwise-clean run — checked ahead of
 the existing `low_confidence` self-report, since a confirmed loss is worse
 than the model's own stated doubt. That value already pages the owner
 through the standalone data-quality Telegram alert shipped 2026-09-11
-(`maybe_alert_data_quality` — any status other than "ok"/"empty" pages, no
-new alert code was needed).
+(`maybe_alert_data_quality` — no new alert code was needed). That
+parenthetical said "any status other than \"ok\"/\"empty\" pages" and has
+not been true since the reuse words were classified: the paging set is
+`evidence_gate.warrants_data_quality_page`, which is everything outside
+`INTEGRITY_CLEAN_STATUSES` MINUS `DISCLOSE_ONLY_STATUSES`. Corrected in
+place 2026-09-23; `symbol_dropped` itself still pages, unchanged.
 
 **Known, accepted false-positive.** The news prompt explicitly permits the
 model to see a stock mentioned in a headline and judge it incidental,
@@ -15045,3 +15078,84 @@ one budget, so a day spent proving EDGAR's own count is a day not spent
 reading. And nothing persists per-day read-through for the market-wide pass,
 so every morning re-walks the whole 86-day window from the freshest slice.
 Both are real and both are wider than this fix.
+
+## 2026-09-23 — a red page fired eighteen times to repeat a line the owner already had in the same second
+
+**What he received.** A standalone DATA QUALITY ALERT: "the intra_check
+session at 10:18 AM ET ran on incomplete research … the Portfolio Manager
+and the Risk Manager may have sized or decided this session on incomplete
+or unreadable input". Eighteen of them survive in the retained log and its
+five rotations — 15 on 2026-09-21, 6 on 2026-09-22 and 3 on 2026-09-23 by
+CRITICAL timestamp. Sixteen name `news=expired` (fifteen alone, one
+alongside `tech=partial`); the other two are `macro=partial` and
+`macro=release_overdue`.
+
+**Why that sentence was false for sixteen of them.** `expired` means the
+desk HOLDS a good answer and knows a newer one exists. `src/evidence_gate.py`
+says so in its own words and has since the state was split out of
+`CATEGORY_LOST` on 2026-09-18: it is neither "nothing to say" nor "the
+answer never arrived". On an intraday tick the news seat carries the
+morning's wire forward, which is the designed behaviour of the carry-forward,
+not a fault. The input was readable and complete. It was read earlier.
+
+**And the owner already knew.** Every one of those ticks sent its session
+report in the same second carrying the freshness disclosure — "carried over
+from earlier, not re-read: the news research" and "already known to be out
+of date: the news research". The red push was a second message repeating a
+line in the first.
+
+**The real defect: one predicate answering two questions.**
+`evidence_gate.counts_as_degraded` is a DISCLOSURE test — was this session's
+evidence less than clean? — and three consumers use it as one: Risk's ">= 2
+sources degraded" advisory, the session report's "degraded:" line and the
+postmortem log line. A fourth, the standalone alert, used the same answer to
+decide whether to INTERRUPT the owner. Those questions have different right
+answers for a held-but-superseded seat, and nothing had ever separated them.
+
+**The fix.** `warrants_data_quality_page` and `DISCLOSE_ONLY_STATUSES` in
+`src/evidence_gate.py`, and `main.py` hands the alert
+`page_worthy_statuses` instead of the raw `data_status`. `expired` is NOT
+reclassified: it stays out of `INTEGRITY_CLEAN_STATUSES`, stays degraded,
+stays in the Risk advisory, stays in the report's "degraded:" line, stays
+named in the freshness disclosure and stays healable. Only the separate red
+push goes away. The notifier's own per-seat exemption (tech's per-symbol
+`low_confidence`) is not duplicated in the gate; it applies on top of
+whatever the gate leaves.
+
+**Ruling out the thing that would make this dangerous.** Four code paths
+write `expired` into `data_status`: news (a prior session's wire, or a newer
+material wire landed), macro (regime or print changed), earnings (a new
+report with placeholders held) and insider (a new Form 4, or the Form 4
+freshness probe could not call the seat current). In each the desk still
+holds the prior payload, and a genuinely lost answer has its own separate
+words — `failed`, `parse_error`, `provider_error`, `truncated`,
+`content_missing`, `carry_forward_empty`, `carry_forward_failed` — every one
+of which still pages, pinned by a parametrised test over
+`STATUS_CATEGORY`, and a status may only join `DISCLOSE_ONLY_STATUSES` if
+this module already classifies it `CATEGORY_EXPIRED`.
+
+The one arguable path is the insider fail-closed added 2026-09-19: a failed
+or partial Form 4 freshness probe expires the seat even when the remembered
+payload is empty. That is a remembered claim the desk declines to call
+current, not an answer that never arrived — and it is not going silent: it
+still logs WARNING, still counts as degraded, still feeds the advisory and
+still appears in the session report. It has never produced one of these
+alerts; zero `smart_money=expired` pages appear in the retained log.
+
+**Expected effect.** Sixteen of the eighteen retained alerts would not have
+been sent — on the measured days, twelve fewer pushes on 2026-09-21, four
+fewer on 2026-09-22, and the tick that also carried `tech=partial` still
+pages, naming the chart seat only. `macro=partial` and
+`macro=release_overdue` are untouched.
+
+**No constant moved and none was needed.** The change is a set-membership
+split, not a threshold.
+
+**Found and deliberately not fixed.** The alert is undeduplicated by design,
+so a genuinely broken seat still pages once per session, five or six times a
+day — correct for a real fault, and untouched here. And the wording
+`_DATA_STATUS_WORDS["expired"]` uses ("had only an out-of-date answer") is
+listed in `src/notifier.py` under a comment calling it one of "the four
+remaining CATEGORY_LOST states", which stopped being true when the category
+was split on 2026-09-18; the comment is stale, the wording is right, and
+`src/notifier.py` had changes in flight when this shipped.
