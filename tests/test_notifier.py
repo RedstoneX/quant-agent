@@ -1858,6 +1858,27 @@ def test_bad_data_status_fires_a_standalone_alert():
     assert "morning" in body
 
 
+def test_market_wide_blind_pages_the_owner_in_plain_words():
+    """2026-09-23. The market-wide Form 4 pass read nothing for five
+    sessions and nothing said so, because the seat's word for it was
+    `partial` — the same word it uses on an ordinary residue. The new word
+    has to reach the owner through the SAME standing alert, in words, with
+    no seat names or state tokens in the sentence he reads."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {"data_status": {"tech": "ok", "smart_money": "market_wide_blind"}}
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "DATA QUALITY ALERT" in body
+    assert "read none of the wider market's insider filings" in body
+    # The raw pair is kept for the log line only, beneath the plain words.
+    assert "smart_money=market_wide_blind" in body
+    assert "no plain wording" not in body
+
+
 def test_same_session_reuse_does_not_fire_data_quality_alert():
     """Intra reuse words are usable, not a paging event. Intra results
     currently omit data_status except on evidence_gate_skip, but the

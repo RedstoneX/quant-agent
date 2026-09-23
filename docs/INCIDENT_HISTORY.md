@@ -14710,3 +14710,60 @@ left alone: the smart-money user payload sends `in_core_universe`,
 `transient_admission_eligible`; and `config/settings.yaml`'s smart-money
 token-budget justification still derives its ceiling from a schema that no
 longer exists, so that number's stated basis is stale.
+
+## 2026-09-23 — the market-wide Form 4 pass read nothing for five sessions, and every health signal stayed green
+
+**The regression.** The 2026-09-18 backlog fix (PR #513) gave `_discover`
+in `src/data/smart_money.py` a second exit condition: with watched names
+supplied, stop at `len(priority) >= max_filings_per_refresh`. `priority`
+holds only filings from the desk's ~82 watched issuers, who file 13-31 a
+day, and the cap is 1,000 — so the condition could not be reached, and
+production always supplies watched names. The scan's only remaining
+terminator was the 180 s `refresh_deadline_s`. Discovery spent the entire
+budget paginating EDGAR, and the read loop then called `_submission` on an
+already-expired deadline and raised on the first filing.
+
+**Measured.** Market-wide reads per run: 1,000 on each of 2026-09-15,
+09-16, 09-17 and 09-18, then 0 on 09-21, and 31 and 13 on 09-22 and 09-23
+— and those 31 and 13 were the watched-name drain's, not this pass's, which
+read nothing at all. Unread backlog: 10,229 -> 16,782 -> 21,217 across the
+three broken runs. Distinct symbols with market-wide insider coverage fell
+from ~180-210/day to 2-8 and stayed there.
+
+**Why nothing alarmed, which is the more expensive half.** The seat reported
+`partial` on every broken run. `partial` is also what it reports on any
+ordinary residue, so five sessions of total external-insider blindness were
+indistinguishable from a normal morning. The watched-name drain (#539) has
+its own budget and went on reporting 82/82 read through, so watched coverage
+— the signal anyone would have looked at — was genuinely clean. And
+`processed_filings`, the one count on the refresh result that could have
+shown it, is shared between the two passes, so the drain's reads masked the
+market-wide zero.
+
+**The fix, both halves.** The exit condition is `len(other) >= cap`
+unconditionally, which is exactly the condition that produced 1,000
+filings/run through 2026-09-18. Watched-first ORDERING inside `_discover` is
+kept — the desk's own names are still emitted ahead of the rest, so the
+submission downloads are spent on them first — but watched COVERAGE is no
+longer bought with the scan's termination, because #539 gave it a dedicated
+pass. Second, the market-wide pass now counts its OWN reads and reports
+`market_wide_blind` when it read zero with unread candidates outstanding.
+That travels through the Form 4 manifest and `form4_coverage` to
+`data_status["smart_money"]` as its own word, classified REPORTED-but-
+degraded in `src/evidence_gate.py`, so it pages through the standing DATA
+QUALITY ALERT in plain words rather than hiding inside `partial`.
+
+**No constant moved.** At the measured steady-state inflow of 247 unread
+listed-issuer Form 4s/day (21,217 pending / 86 days queried, 2026-09-23
+run) and 0.156 s/filing, a day's market-wide inflow is 38.5 s inside the
+180 s budget, so 1,000 is reachable and the deadline is not the binding
+constraint. `config/number_ledger.yaml` carried the sentence "the cap now
+bounds only how much of the wider market's Form 4 stream is read", which was
+false from the day it was written until this change made it true again; it
+is corrected in place with the measurement above.
+
+**Found and deliberately not fixed.** Coverage enumeration and reading share
+one budget, so a day spent proving EDGAR's own count is a day not spent
+reading. And nothing persists per-day read-through for the market-wide pass,
+so every morning re-walks the whole 86-day window from the freshest slice.
+Both are real and both are wider than this fix.
