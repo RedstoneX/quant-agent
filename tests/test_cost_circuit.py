@@ -12,12 +12,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.base import BaseAgent, LLMStreamInterruptedError
+from src.agents.base import (
+    BaseAgent,
+    LLMStreamErrorChunk,
+    LLMStreamInterruptedError,
+)
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     OptionalPaidAnalysisRetrySkipped,
     PaidAnalysisSuspended,
     _ET,
+    _et_day_and_utc_bounds,
     _is_known_zero_cost_failure,
     _trigger_scope,
     activate_paid_call_session,
@@ -430,7 +435,11 @@ def test_known_zero_cost_pre_send_tls_handshake_failure_charges_nothing(tmp_path
     _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
 
 
-@pytest.mark.parametrize("status_code", [500, 502, 503])
+# 503 was in this list until 2026-09-22 and is now handled separately: a
+# PRE-GENERATION 503 is provably free (see the 503 tests below), a mid-stream
+# one is still ambiguous. 500/502 remain unconditionally ambiguous -- neither
+# says anything about whether generation started.
+@pytest.mark.parametrize("status_code", [500, 502, 504])
 def test_5xx_keeps_conservative_charge_and_trip(tmp_path, status_code):
     path = _db_path(tmp_path)
     notifier = _Notifier()
@@ -1949,3 +1958,830 @@ def test_alert_delivery_failures_accumulate_durably_instead_of_vanishing(tmp_pat
         # summaries read this), not only in the raw sidecar file.
         assert later.status()["alert_attempts"] == expected_attempts
         assert later.status()["alert_delivered"] is False
+
+
+# =====================================================================
+# 2026-09-22 cost-circuit outage: 503 classification (Defect A) and the
+# transient-latch self-clear (Defect B). docs/WORK.md item 174.
+#
+# What happened: Google AI Studio returned HTTP 503 "This model is
+# currently experiencing high demand" 17 times on 2026-09-22 [measured,
+# production log]. 503 was not on the zero-cost allow-list, so the
+# tech_analyst call that failed on both primary and failover was booked
+# ambiguous and hard-latched the desk from 15:17 UTC to 00:33 UTC the
+# next day -- through the close run and the evening run -- on settled
+# spend of $0.7883 of a $2.75 day [measured, `scripts/cost_circuit.py
+# status`]. No budget was breached.
+# =====================================================================
+
+
+def _cooldown_config(**overrides):
+    """Production's own defaults for the self-clear knobs, not stand-ins.
+
+    An earlier version pinned the allowance to 14, a number a later commit
+    superseded -- so every self-clear test was running against a value the
+    desk no longer uses. Read the real defaults instead.
+    """
+    from src.config import LLMCostCircuitConfig
+
+    defaults = LLMCostCircuitConfig()
+    values = {
+        "transient_latch_cooldown_minutes": defaults.transient_latch_cooldown_minutes,
+        "max_transient_latch_auto_clears_per_day": (
+            defaults.max_transient_latch_auto_clears_per_day
+        ),
+    }
+    values.update(overrides)
+    return _config(**values)
+
+
+def _age_latch(path: str, minutes: float) -> None:
+    """Backdate `suspended_at` so the cooldown has elapsed.
+
+    The elapsed time is computed by SQLite against `julianday('now')`, the
+    same clock that wrote the stamp, so moving the stamp is the honest way
+    to simulate waiting.
+    """
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at="
+            "datetime('now', ?) WHERE singleton=1",
+            (f"-{minutes} minutes",),
+        )
+
+
+def _utc_stamp_on_et_day(et_day: str) -> str:
+    """A SQLite-shaped UTC timestamp landing at noon ET on `et_day`.
+
+    Noon, not midnight, so the conversion cannot land on the adjacent ET
+    day whatever the offset.
+    """
+    from datetime import time as _time
+    noon_et = datetime.combine(
+        datetime.fromisoformat(et_day).date(), _time(12, 0), tzinfo=_ET,
+    )
+    return noon_et.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _day_row(path: str) -> tuple:
+    with sqlite3.connect(path) as conn:
+        return conn.execute(
+            "SELECT baseline_cost_usd + incremental_cost_usd, unknown_cost_rows, "
+            "failed_call_unknown_rows, costs_exact FROM llm_budget_days"
+        ).fetchone()
+
+
+# --------------------------- Defect A ---------------------------------
+
+
+def test_pre_generation_503_charges_nothing_and_does_not_trip(tmp_path):
+    """The exact production shape: an SDK status error carrying 503.
+
+    Google AI Studio refused for capacity before generating anything, so
+    nothing was metered -- the same billing position as the 429 that is
+    already allow-listed.
+    """
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = _StatusCodeError(
+        503,
+        "Error code: 503 - [{'error': {'code': 503, 'message': 'This model is "
+        "currently experiencing high demand. Spikes in demand are usually "
+        "temporary. Please try again later.', 'status': 'UNAVAILABLE'}}]",
+    )
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-503-presend")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+    # Nothing was marked unprovable either -- this is the flag that used to
+    # keep re-latching the desk after every operator reset.
+    assert _day_row(path)[1:] == (0, 0, 1)
+
+
+def test_mid_stream_503_is_still_ambiguous_and_still_trips(tmp_path):
+    """A 503 reported from INSIDE a started stream may already have billed.
+
+    OpenRouter cannot change an HTTP status once the first byte is out, so
+    it reports an upstream failure as an in-band SSE error chunk carrying
+    the status the response would have had. Tokens may already have been
+    generated. 503 is allow-listed subject to this veto, not blanket.
+    """
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = LLMStreamErrorChunk(
+        "provider error mid-stream (code=503, type=None): high demand",
+        status_code=503,
+    )
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-503-midstream")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_mid_stream_503_wrapped_by_another_exception_is_still_ambiguous(tmp_path):
+    """The veto follows the cause chain, so wrapping cannot launder it."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    inner = LLMStreamErrorChunk("mid-stream 503", status_code=503)
+    error = _StatusCodeError(503, "retry wrapper")
+    error.__cause__ = inner
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-503-wrapped")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_mid_stream_429_stays_free_unchanged_by_the_503_fix(tmp_path):
+    """Deliberately NOT changed: the ratified 2026-08-31 behaviour.
+
+    `LLMStreamErrorChunk` exists precisely so a mid-stream 429 is judged as
+    the 429 it is. The mid-stream veto added for 503 must not spill onto
+    the codes that were already allow-listed.
+    """
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = LLMStreamErrorChunk("mid-stream 429", status_code=429)
+
+    reservation = _authorize_and_fail(circuit, error, run_id="run-429-midstream")
+
+    assert _is_known_zero_cost_failure(error) is True
+    _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservation)
+
+
+@pytest.mark.parametrize("status_code", [402, 500, 502, 504, 529])
+def test_status_codes_outside_the_allow_list_stay_ambiguous(tmp_path, status_code):
+    """402 in particular: "insufficient balance" is handled as a failover
+    signal in base.py, has never been on the enumerated zero-cost list, and
+    adding it here on our own initiative is the allow-list inversion this
+    module's comments forbid."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    error = _StatusCodeError(status_code, f"provider error ({status_code})")
+
+    reservation = _authorize_and_fail(circuit, error, run_id=f"run-amb-{status_code}")
+
+    assert _is_known_zero_cost_failure(error) is False
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_missing_and_non_integer_status_codes_stay_ambiguous(tmp_path):
+    """No status, a None status, a string status and a bool status must all
+    fail closed. `True == 1` in Python, so a bool must never be read as a
+    status code."""
+    class _NoStatus(Exception):
+        pass
+
+    none_status = _StatusCodeError(500, "x")
+    none_status.status_code = None
+    str_status = _StatusCodeError(500, "x")
+    str_status.status_code = "503"
+    bool_status = _StatusCodeError(500, "x")
+    bool_status.status_code = True
+
+    for error in (_NoStatus("no attribute"), none_status, str_status, bool_status):
+        assert _is_known_zero_cost_failure(error) is False
+
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    reservation = _authorize_and_fail(
+        circuit, _NoStatus("no attribute"), run_id="run-no-status",
+    )
+    _assert_charged_and_tripped(circuit, notifier, reservation)
+
+
+def test_one_mid_stream_503_among_pre_send_503s_charges_the_whole_call(tmp_path):
+    """Ambiguity stays contagious across a call's attempts."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    free = _StatusCodeError(503, "pre-send 503")
+    ambiguous = LLMStreamErrorChunk("mid-stream 503", status_code=503)
+
+    circuit.activate_session("run-503-mixed", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.fail_call(reservation, free, attempt_errors=[free, ambiguous])
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+
+
+def test_all_pre_send_503_attempts_are_free(tmp_path):
+    """The production case: every attempt on the logical call 503'd."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
+    errors = [_StatusCodeError(503, "high demand") for _ in range(3)]
+
+    circuit.activate_session("run-503-all", "intra_check")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.fail_call(reservation, errors[-1], attempt_errors=errors)
+
+    assert circuit.status()["suspended"] is False
+    assert _day_row(path)[1:] == (0, 0, 1)
+
+
+# --------------------------- Defect B ---------------------------------
+
+
+def _latch_on_failed_call(path, notifier=None, config=None, run_id="run-latched"):
+    """Drive the circuit into the real `failed_call_unknown_cost` latch by
+    the only route that produces it: an ambiguous failed provider call."""
+    circuit = LLMCostCircuitBreaker(
+        path, config or _cooldown_config(), notifier or _Notifier(),
+    )
+    _authorize_and_fail(
+        circuit, _StatusCodeError(500, "ambiguous"), run_id=run_id,
+    )
+    assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+    return circuit
+
+
+def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(tmp_path):
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+
+    _age_latch(path, 16)
+    state = circuit.status()
+
+    assert state["suspended"] is False
+    assert not state.get("trigger_code")
+    assert "auto-expired" in (state.get("reset_reason") or "")
+    # The audit trail names the trigger it forgave.
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT trigger_code, agent_name FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()
+    assert row == ("failed_call_unknown_cost", "transient_latch_expiry")
+    # And the desk can actually spend again -- the point of the whole fix.
+    circuit.activate_session("run-after-clear", "close")
+    circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+
+
+def test_transient_latch_does_not_clear_before_the_cooldown(tmp_path):
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+
+    _age_latch(path, 14)
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+
+
+def test_transient_latch_does_not_clear_on_a_backwards_clock(tmp_path):
+    """A `suspended_at` in the future yields negative elapsed time, which
+    must not be read as "the cooldown passed"."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+
+    _age_latch(path, -600)
+
+    assert circuit.status()["suspended"] is True
+
+
+def test_self_clear_erases_no_settled_spend_and_raises_no_cap(tmp_path):
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    config = _cooldown_config(daily_cost_limit_usd=20.0, session_cost_limit_usd=10.0)
+    circuit = LLMCostCircuitBreaker(path, config, notifier)
+    circuit.activate_session("run-spend-then-fail", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.75)
+    spend_before = circuit.status()["current_daily_cost_usd"]
+    reservation2 = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation2, model=reservation2.model)
+    circuit.fail_call(reservation2, _StatusCodeError(500, "ambiguous"))
+    assert circuit.status()["suspended"] is True
+
+    _age_latch(path, 16)
+    state = circuit.status()
+
+    assert state["suspended"] is False
+    assert state["current_daily_cost_usd"] == pytest.approx(spend_before)
+    assert state["current_daily_cost_usd"] == pytest.approx(0.75)
+    assert float(state["daily_limit_usd"]) == 20.0
+    assert float(state["session_limit_usd"]) == 10.0
+    assert _day_row(path)[0] == pytest.approx(0.75)
+
+
+def test_self_clear_never_reopens_into_a_breached_budget(tmp_path):
+    """Spend at the cap plus an ambiguous failure: the cooldown expiring
+    must not hand the desk a window to spend through an unchanged cap."""
+    path = _db_path(tmp_path)
+    config = _cooldown_config(daily_cost_limit_usd=0.50, session_cost_limit_usd=0.50)
+    circuit = LLMCostCircuitBreaker(path, config, _Notifier())
+    circuit.activate_session("run-at-cap", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.60)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_budget_days SET unknown_cost_rows=1, "
+            "failed_call_unknown_rows=1, costs_exact=0"
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended=1, "
+            "trigger_code='failed_call_unknown_cost', run_id='run-at-cap', "
+            "mode='morning', agent_name='tech_analyst', "
+            "trigger_detail='x', suspended_at=datetime('now','-60 minutes')"
+        )
+
+    assert circuit.status()["suspended"] is True
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("after-cooldown")
+    # Stronger than "still suspended": the settled-limit check would
+    # re-latch a wrongly-cleared circuit anyway, so assert the clear never
+    # HAPPENED. The original trigger survives and no auto_reset was written.
+    assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0] == 0
+
+
+def test_the_emergency_infrastructure_latch_is_exempt_from_the_self_clear(tmp_path):
+    """The circuit's own storage failing is not a provider blip.
+
+    Exercised against the locked helper directly: the sidecar normally also
+    installs an in-process sentinel that short-circuits every public entry
+    point, so the only way to show THIS guard carries its own weight is to
+    present the sidecar without it -- which is exactly the live race it
+    exists for, another process writing the marker while this one is
+    mid-transaction.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    _age_latch(path, 600)
+    circuit._emergency_latch_path.write_text(
+        json.dumps({"recorded_at": "2026-09-22T15:17:09Z", "detail": "sqlite gone"}),
+        encoding="utf-8",
+    )
+
+    day, _, _ = _et_day_and_utc_bounds()
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        cleared = circuit._auto_clear_transient_latch_locked(conn, current_day=day)
+        conn.commit()
+
+    assert cleared is False
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT suspended FROM llm_circuit_state"
+        ).fetchone()[0] == 1
+
+
+def test_a_genuine_spend_breach_is_not_touched_by_the_self_clear(tmp_path):
+    """A real settled-cost breach stops the desk on its own budget window,
+    not on a hard latch, and the transient self-clear must not release it."""
+    path = _db_path(tmp_path)
+    config = _cooldown_config(daily_cost_limit_usd=0.50, session_cost_limit_usd=0.50)
+    circuit = LLMCostCircuitBreaker(path, config, _Notifier())
+    circuit.activate_session("run-breach", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.60)
+    circuit.enforce_current_limits("preflight")
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["trigger_code"] in {"daily_cost_limit", "session_cost_limit"}
+
+    _age_latch(path, 600)
+
+    assert circuit.status()["suspended"] is True
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("after-cooldown")
+
+
+def test_unknown_actual_cost_from_a_completed_call_still_needs_a_human(tmp_path):
+    """A call that SUCCEEDED with no usage telemetry generated real tokens.
+    That unknown is real spend, not a failed attempt, so it keeps the
+    durable operator-reset latch."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _cooldown_config(), _Notifier())
+    circuit.activate_session("run-no-telemetry", "morning")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, None)
+    assert circuit.status()["trigger_code"] == "unknown_actual_cost"
+
+    _age_latch(path, 600)
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "unknown_actual_cost"
+
+
+def test_unknown_actual_cost_is_excluded_by_its_code_not_by_row_provenance(tmp_path):
+    """Kills the mutation that adds `unknown_actual_cost` to the
+    self-clearing set.
+
+    The test above passes even with that mutation, because a completed
+    call with no telemetry books an unknown row that is NOT a failed-call
+    row, so the provenance guard blocks it for a different reason. Here
+    the day's rows ARE all failed-call rows and only the trigger code
+    differs, so the trigger-class line is the only thing under test.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_circuit_state SET trigger_code='unknown_actual_cost'"
+        )
+
+    _age_latch(path, 600)
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "unknown_actual_cost"
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0] == 0
+
+
+def test_integrity_trigger_still_needs_a_human(tmp_path):
+    """`non_monotonic_quota_hold_day` means clock regression or accounting
+    corruption. Never transient, never self-clearing."""
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _cooldown_config(), _Notifier())
+    circuit.activate_session("run-integrity", "morning")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended=1, "
+            "trigger_code='non_monotonic_quota_hold_day', "
+            "run_id='run-integrity', mode='morning', "
+            "agent_name='budget_rollover', "
+            "trigger_detail='clock regression', "
+            "suspended_at=datetime('now','-600 minutes')"
+        )
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "non_monotonic_quota_hold_day"
+
+
+def test_an_unknown_row_of_another_provenance_blocks_the_self_clear(tmp_path):
+    """One unknown row this circuit did not book as a failed call, and the
+    whole day waits for a human -- it cannot tell which row the latch is
+    really about."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    with sqlite3.connect(path) as conn:
+        # A pre-deployment agent_logs row with a NULL cost, seeded by
+        # `_seed_today`: counted in unknown_cost_rows, not a failed call.
+        conn.execute(
+            "UPDATE llm_budget_days SET unknown_cost_rows=unknown_cost_rows+1"
+        )
+
+    _age_latch(path, 600)
+
+    assert circuit.status()["suspended"] is True
+    assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+
+
+def test_legacy_unknown_cost_from_failed_call_rows_self_clears(tmp_path):
+    """The 2026-09-16 recurrence: the SAME defect surfaces under the
+    downstream code once the day is inexact. It must expire the same way."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE llm_circuit_state SET trigger_code='legacy_unknown_cost'"
+        )
+
+    _age_latch(path, 16)
+
+    assert circuit.status()["suspended"] is False
+
+
+def test_the_daily_auto_clear_allowance_is_finite(tmp_path):
+    """A fault that keeps recurring is not transient. Past the allowance the
+    next occurrence latches durably and waits for a human."""
+    path = _db_path(tmp_path)
+    config = _cooldown_config(max_transient_latch_auto_clears_per_day=2)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, config, notifier)
+    for n in range(3):
+        _authorize_and_fail(
+            circuit, _StatusCodeError(500, "ambiguous"), run_id=f"run-flap-{n}",
+        )
+        assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+        _age_latch(path, 16)
+        cleared = circuit.status()["suspended"] is False
+        assert cleared is (n < 2), f"occurrence {n} cleared={cleared}"
+    with sqlite3.connect(path) as conn:
+        n_auto = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+    assert n_auto == 2
+    # The operator route still works on the one that stuck.
+    circuit.reset("operator reviewed the repeating provider fault")
+    assert circuit.status()["suspended"] is False
+
+
+def test_the_durable_emergency_latch_is_never_self_cleared(tmp_path):
+    """The circuit's own infrastructure failed, so nothing it computes may
+    authorize its own recovery."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    circuit.mark_unavailable(
+        RuntimeError("sqlite unavailable"),
+        run_id="run-latched", mode="morning", agent_name="tech_analyst",
+    )
+
+    _age_latch(path, 600)
+
+    assert circuit.status()["suspended"] is True
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("after-cooldown")
+
+
+def test_the_2026_09_22_outage_no_longer_stops_the_desk(tmp_path):
+    """End to end, both defects at once, against the real shape of the day.
+
+    Primary and failover both 503 pre-generation on the final attempt with
+    spend far under cap. Before this change that hard-latched the desk for
+    nine hours. Now nothing latches at all.
+    """
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _cooldown_config(max_provider_attempts_per_call=8), notifier,
+    )
+    circuit.activate_session("intra_check-005f582a", "intra_check")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    attempts = []
+    for _ in range(7):  # 7 provider attempts, as the live latch recorded
+        circuit.before_provider_attempt(reservation, model=reservation.model)
+        attempts.append(_StatusCodeError(503, "high demand"))
+    circuit.fail_call(reservation, attempts[-1], attempt_errors=attempts)
+
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert notifier.messages == []
+    # The close run that was missed on 2026-09-22 now proceeds.
+    circuit.activate_session("close-next", "close")
+    circuit.begin_call(
+        agent_name="position_reviewer", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+
+
+# --- adversary round 1 (2026-09-23): holes found in the first draft -------
+
+
+def test_a_latch_that_outlived_midnight_checks_the_day_it_was_stamped_on(tmp_path):
+    """The hole the adversary found, and the exact shape of the incident.
+
+    The 2026-09-22 latch ran 15:17 UTC to 00:33 UTC the next day. Today's
+    accounting row is seeded fresh with zero unknown rows, so a self-clear
+    that looked only at today would wave the latch through while its real
+    unproven rows sat on yesterday, unexamined.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    today, _, _ = _et_day_and_utc_bounds()
+    yesterday = (
+        datetime.fromisoformat(today) - timedelta(days=1)
+    ).date().isoformat()
+    with sqlite3.connect(path) as conn:
+        # Move the whole incident onto yesterday, then seed a clean today --
+        # what the next morning's run actually finds.
+        conn.execute("UPDATE llm_budget_days SET day=?", (yesterday,))
+        conn.execute("UPDATE llm_budget_sessions SET day=?", (yesterday,))
+        conn.execute(
+            "INSERT INTO llm_budget_days(day, unknown_cost_rows, "
+            "failed_call_unknown_rows, costs_exact) VALUES (?, 0, 0, 1)",
+            (today,),
+        )
+        # Yesterday also carries one row of ANOTHER provenance, so the
+        # forgiveness is not owed.
+        conn.execute(
+            "UPDATE llm_budget_days SET unknown_cost_rows=unknown_cost_rows+1 "
+            "WHERE day=?", (yesterday,),
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at=?",
+            (_utc_stamp_on_et_day(yesterday),),
+        )
+
+    day = today
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        cleared = circuit._auto_clear_transient_latch_locked(conn, current_day=day)
+        conn.commit()
+
+    assert cleared is False
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT suspended FROM llm_circuit_state"
+        ).fetchone()[0] == 1
+
+
+def test_a_clean_overnight_latch_clears_and_forgives_both_days(tmp_path):
+    """Same span, nothing of another provenance: it expires, and yesterday's
+    unproven flags are cleared too -- not left to gate tomorrow."""
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    today, _, _ = _et_day_and_utc_bounds()
+    yesterday = (
+        datetime.fromisoformat(today) - timedelta(days=1)
+    ).date().isoformat()
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE llm_budget_days SET day=?", (yesterday,))
+        conn.execute("UPDATE llm_budget_sessions SET day=?", (yesterday,))
+        conn.execute(
+            "INSERT INTO llm_budget_days(day, unknown_cost_rows, "
+            "failed_call_unknown_rows, costs_exact) VALUES (?, 0, 0, 1)",
+            (today,),
+        )
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at=?",
+            (_utc_stamp_on_et_day(yesterday),),
+        )
+
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        cleared = circuit._auto_clear_transient_latch_locked(
+            conn, current_day=today,
+        )
+        conn.commit()
+
+    assert cleared is True
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT day, unknown_cost_rows, failed_call_unknown_rows, "
+            "costs_exact FROM llm_budget_days ORDER BY day"
+        ).fetchall()
+    # Today is forgiven. Yesterday is READ to decide and deliberately left
+    # alone: nothing consumes a past day's flags, and stamping costs_exact=1
+    # on a historical day would rewrite settled history to look provable.
+    assert rows == [(yesterday, 1, 1, 0), (today, 0, 0, 1)]
+
+
+def test_a_corrupt_failed_call_counter_refuses_instead_of_escalating(tmp_path):
+    """A subset counter above its own total is corruption.
+
+    It must block the self-clear and hand the day to an operator -- NOT
+    raise, which `_validate_accounting_invariants` would have escalated into
+    the durable emergency latch, the strictest stop in the system. A fix for
+    spurious hard latches must not add one.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE llm_budget_days SET failed_call_unknown_rows=99")
+
+    _age_latch(path, 600)
+
+    state = circuit.status()  # must not raise
+    assert state["suspended"] is True
+    assert state["trigger_code"] == "failed_call_unknown_cost"
+
+
+def test_the_self_clear_leaves_the_session_row_as_the_record(tmp_path):
+    """Strictly weaker than the operator path, on purpose.
+
+    An earlier draft flipped `call_failed` sessions back to `active` and
+    marked them exact. That enforced nothing, and made the dashboard's
+    per-run cost report a by-construction-unknown figure as exact.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+
+    _age_latch(path, 16)
+
+    assert circuit.status()["suspended"] is False
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT status, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id='run-latched'"
+        ).fetchone()
+    # `_trip_locked` already moved it to 'suspended'; either way the point
+    # is that the self-clear does not rewrite it, exactly as `reset` does not.
+    assert row == ("suspended", 0)
+
+
+def test_the_allowance_is_one_per_scheduled_paid_run_including_intra_ticks(tmp_path):
+    """One forgiveness per scheduled run that can make a paid call.
+
+    intra_check counts, once per 30-minute tick. Its window comment said
+    "no LLM" and was wrong: measured on the production DB it is 13-14 paid
+    sessions a day and 72-90% of the daily spend, and the 2026-09-22 latch
+    was tripped by one."""
+    from src.config import LLMCostCircuitConfig
+    from src.trading_calendar import SESSION_WINDOWS
+
+    # Pinned literally. Recomputing `_paid_run_count`'s own body and
+    # comparing it to `_paid_run_count` asserts nothing.
+    assert LLMCostCircuitConfig().max_transient_latch_auto_clears_per_day == 19
+    # And intra_check is IN it, which is the whole correction: it is the
+    # desk's largest paid cost centre, not the "no LLM" tick its window
+    # comment claimed for two derivations running.
+    assert "intra_check" in SESSION_WINDOWS
+    assert len(SESSION_WINDOWS) == 6  # 5 named + intra_check
+
+
+def test_the_cooldown_is_the_midpoint_of_one_paid_run_gap(tmp_path):
+    """The only hard bound is the gap between consecutive paid runs (the
+    30-minute intra tick): at or above it a second paid run is lost. Below
+    it nothing is unsafe, only wasteful. The midpoint is the value furthest
+    from both, and most tolerant of jitter."""
+    from src.config import LLMCostCircuitConfig
+
+    from src.config import INTRA_CHECK_TICK_MINUTES
+
+    cooldown = LLMCostCircuitConfig().transient_latch_cooldown_minutes
+    # Pinned to the midpoint of (0, one paid-run gap), not merely inside it.
+    assert cooldown == INTRA_CHECK_TICK_MINUTES / 2
+    assert cooldown == 15.0
+
+
+# --- adversary round 2 (2026-09-23) ---------------------------------------
+
+
+def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
+    """Guards the deleted `llm_budget_sessions` write for real.
+
+    The previous test for this could not: `_trip_locked` has already moved
+    the LATCHED run's session to 'suspended', so the deleted statement
+    (`WHERE day=? AND status='call_failed'`) could never have matched it,
+    and restoring the statement passed anyway. The row the statement WOULD
+    have matched is a different same-day session left at 'call_failed' --
+    which is exactly where the dashboard-lie risk lived, because
+    `_canonical_run_cost` reports a definite dollar figure for a run once
+    `costs_exact` flips to 1.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    day, _, _ = _et_day_and_utc_bounds()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO llm_budget_sessions"
+            "(run_id, day, mode, actual_cost_usd, costs_exact, status) "
+            "VALUES ('run-other-failed', ?, 'midday', 0.0, 0, 'call_failed')",
+            (day,),
+        )
+
+    _age_latch(path, 16)
+
+    assert circuit.status()["suspended"] is False
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT status, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id='run-other-failed'"
+        ).fetchone()
+    assert row == ("call_failed", 0)
+
+
+def test_the_tick_spacing_this_module_pins_matches_the_scheduler(tmp_path):
+    """`INTRA_CHECK_TICK_MINUTES` is duplicated from the scheduler, which is
+    the authority. A silent divergence would move the cooldown's only hard
+    bound without anything noticing."""
+    from src.config import INTRA_CHECK_TICK_MINUTES
+    from src.scheduler import TradingScheduler
+    from src.trading_calendar import SESSION_WINDOWS
+
+    trigger = TradingScheduler._build_intra_check_trigger()
+    lo_min, hi_min = SESSION_WINDOWS["intra_check"]
+    expected = len(range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES))
+    assert len(trigger.triggers) == expected == 14
