@@ -484,3 +484,306 @@ def test_render_states_the_like_for_like_comparison_for_the_ranked_tier():
     assert "Like-for-like check" in result
     assert "technical" in result
     assert "0.90" in result and "2.40" in result
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23 — the precondition pointed at a constraint this book never hit.
+#
+# Across every retained log rotation (2026-08-21 .. 2026-09-23) the rendered
+# section took the "real room exists" branch 51 times out of 51 and "Capital
+# is constrained" never once, because the only test was RISK-budget headroom
+# against the 0.50% floor while what actually binds this desk is the §11.2
+# gross-exposure ladder and cash. The regression fixture below is the real
+# book of 2026-09-23: 1.9908x gross of a 2.00x ceiling on ~$10,000 equity,
+# $92.20 of ladder headroom, and 14.50% risk headroom of a 25% ceiling.
+# ---------------------------------------------------------------------------
+
+#: The real 2026-09-23 book, from the run log of that date.
+TODAY_RISK_HEADROOM_PCT = 14.50
+TODAY_DEPLOYABLE_USD = 92.20
+#: `cash_sweep.min_order_usd`, the deployed §10.3 floor. A literal here for
+#: the same reason `FLOOR_PCT` is one: a change to the deployed number must
+#: fail this test loudly, not quietly re-point it at a different threshold.
+MIN_ORDER_USD = 500.0
+
+
+def _today_ladder_full_kwargs(**over):
+    """The 2026-09-23 book: real risk-budget room, no funding room at all."""
+    kwargs = dict(
+        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+    )
+    kwargs.update(over)
+    return kwargs
+
+
+def test_a_book_full_on_the_gross_ladder_reaches_the_comparison():
+    """THE REGRESSION. 14.50% risk headroom is nowhere near the 0.50% floor,
+    so the old precondition returned `None` on the spot — at the exact
+    moment $92.20 of deployable budget could not fund the $500 minimum
+    order. The comparison must now be reached."""
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        **_today_ladder_full_kwargs(),
+    )
+    assert outcome.opportunity is not None, (
+        "the book could not fund a $500 order; the comparison must be made"
+    )
+    assert outcome.opportunity.tier == "ineligible_hold"
+    assert outcome.opportunity.held_symbol == "OLD"
+    assert outcome.opportunity.new_symbol == "NEW"
+    assert outcome.refusal is None
+
+
+def test_the_risk_budget_test_still_binds_on_its_own():
+    """The funding test is an addition, not a replacement. A book whose RISK
+    budget is exhausted while it still has cash must still rotate — the
+    failure mode of re-pointing at the ladder alone."""
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        entry_budget_usd=25_000.0, min_order_usd=MIN_ORDER_USD,
+    )
+    assert outcome.opportunity is not None
+    assert outcome.refusal is None
+
+
+def test_real_room_on_every_constraint_still_returns_none():
+    """The other side of the regression: genuine room everywhere is still
+    silence, and the refusal row says so by name."""
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
+        entry_budget_usd=9_000.0, min_order_usd=MIN_ORDER_USD,
+    )
+    assert outcome.opportunity is None
+    assert outcome.refusal is not None
+    assert outcome.refusal.point == "book_not_constrained"
+    assert outcome.refusal.binding == ()
+
+
+def test_an_unresolvable_funding_view_does_not_read_as_room_or_as_full():
+    """`None` is "not measured". It must not switch the funding test ON
+    (which would rotate on an unread number) nor silently assert room."""
+    from src.rotation import rotation_binding_constraints
+
+    assert rotation_binding_constraints(
+        headroom_pct=14.5, floor_pct=FLOOR_PCT,
+        entry_budget_usd=None, min_order_usd=MIN_ORDER_USD,
+    ) == ()
+    assert rotation_binding_constraints(
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        entry_budget_usd=None, min_order_usd=None,
+    ) == ("risk_budget",)
+    assert rotation_binding_constraints(
+        headroom_pct=14.5, floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+    ) == ("funding",)
+    assert rotation_binding_constraints(
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+    ) == ("risk_budget", "funding")
+
+
+def test_exactly_the_minimum_order_is_not_constrained():
+    """The boundary. `min_order_usd` dollars deployable funds the minimum
+    order, so the book is not full — strictly less than, not at-or-below."""
+    from src.rotation import rotation_binding_constraints
+
+    assert rotation_binding_constraints(
+        headroom_pct=14.5, floor_pct=FLOOR_PCT,
+        entry_budget_usd=MIN_ORDER_USD, min_order_usd=MIN_ORDER_USD,
+    ) == ()
+    assert rotation_binding_constraints(
+        headroom_pct=14.5, floor_pct=FLOOR_PCT,
+        entry_budget_usd=MIN_ORDER_USD - 0.01, min_order_usd=MIN_ORDER_USD,
+    ) == ("funding",)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23 — every refusal point writes its durable row.
+# ---------------------------------------------------------------------------
+
+def _refusal(**over):
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(**_today_ladder_full_kwargs(**over))
+    assert outcome.opportunity is None
+    assert outcome.refusal is not None, "a refusal must never be silent"
+    return outcome.refusal
+
+
+def test_no_refusal_point_is_silent_and_every_one_is_reachable():
+    """The list and the code must agree. A refusal point that exists in the
+    function but not in `ROTATION_REFUSAL_POINTS` is exactly the silent
+    drop this change exists to remove, and one in the tuple that nothing
+    can reach is a check nobody has seen fire."""
+    from src.rotation import ROTATION_REFUSAL_POINTS
+
+    # `_rcv` scores: technical weight 1.2, earnings weight 1.2 here.
+    weak = _rcv("OLD", {"technical": (0.75, "low")})            # 0.9
+    strong = _rcv("NEW", {"technical": (1.0, "medium")})        # 1.8
+    seen = {
+        # (a) the precondition
+        _refusal(
+            ranked=[strong], blocked={}, held_symbols={"OLD"},
+            entry_budget_usd=9_000.0,
+        ).point,
+        # (b) nothing to rotate INTO
+        _refusal(ranked=[weak], blocked={}, held_symbols={"OLD"}).point,
+        # (c) nothing held is ranked, and nothing held is blocked either
+        _refusal(ranked=[strong], blocked={}, held_symbols={"GONE"}).point,
+        # (d) the weakest holding scores zero or below
+        _refusal(
+            ranked=[strong, _rc("OLD", 0.0)], blocked={},
+            held_symbols={"OLD"},
+        ).point,
+        # (e) the full composite margin is not cleared (1.0 < 0.9 * 1.25)
+        _refusal(
+            ranked=[_rcv("NEW", {"technical": (0.83, "low")}), weak],
+            blocked={}, held_symbols={"OLD"},
+        ).point,
+        # (f) no seat scored both names
+        _refusal(
+            ranked=[_rcv("NEW", {"earnings": (1.0, "high")}), weak],
+            blocked={}, held_symbols={"OLD"},
+        ).point,
+        # (g) the shared sub-score's denominator is non-positive: OLD's
+        # whole score comes from `news`, which does not cover NEW, and the
+        # one seat they share rates it zero (magnitude 0, conviction low).
+        _refusal(
+            ranked=[
+                _rcv("NEW", {"technical": (1.0, "high"),
+                             "earnings": (1.0, "high")}),      # 4.8
+                _rcv("OLD", {"technical": (0.0, "low"),        # 0.0
+                             "news": (0.5, "low")}),           # 0.5
+            ],
+            blocked={}, held_symbols={"OLD"},
+        ).point,
+        # (h) cleared on the full composite, not on the shared seats
+        _refusal(
+            ranked=[
+                _rcv("NEW", {"technical": (0.8, "low"),
+                             "earnings": (1.0, "high")}),
+                _rcv("OLD", {"technical": (0.75, "low")}),
+            ],
+            blocked={}, held_symbols={"OLD"},
+        ).point,
+    }
+    assert seen == set(ROTATION_REFUSAL_POINTS), (
+        f"unreached: {set(ROTATION_REFUSAL_POINTS) - seen}; "
+        f"unlisted: {seen - set(ROTATION_REFUSAL_POINTS)}"
+    )
+
+
+def test_the_refusal_row_carries_the_named_fields():
+    """The dataset board item 39(a) needs: which holding, which candidate,
+    the shared seats, both shared scores, the ratio, and which point."""
+    refusal = _refusal(
+        ranked=[
+            _rcv("NEW", {"technical": (0.8, "low"), "earnings": (1.0, "high")}),
+            _rcv("OLD", {"technical": (0.75, "low")}),
+        ],
+        blocked={}, held_symbols={"OLD"},
+    )
+    assert refusal.point == "shared_composite_margin_not_cleared"
+    assert refusal.held_symbol == "OLD"
+    assert refusal.new_symbol == "NEW"
+    assert refusal.shared_seats == ("technical",)
+    assert refusal.held_shared_score == 0.9
+    assert refusal.new_shared_score == 0.96
+    # The ratio is taken on the LIKE-FOR-LIKE sub-score, which is the
+    # comparison the margin is actually judged on, not on the
+    # coverage-sensitive totals.
+    assert refusal.ratio == round(0.96 / 0.9, 4)
+    assert refusal.margin_pct == ROTATION_MARGIN_PCT
+    assert refusal.binding == ("funding",)
+    assert refusal.detail
+
+
+def test_the_row_describes_the_comparison_even_when_the_book_had_room():
+    """The sessions with room are 51 of the last 51 and are most of the
+    population 39(a) must be answered from. A row saying only "there was
+    room" is not a dataset."""
+    refusal = _refusal(
+        ranked=[
+            _rcv("NEW", {"technical": (1.0, "medium")}),
+            _rcv("OLD", {"technical": (0.75, "low")}),
+        ],
+        blocked={}, held_symbols={"OLD"},
+        entry_budget_usd=9_000.0,
+    )
+    assert refusal.point == "book_not_constrained"
+    assert refusal.held_symbol == "OLD" and refusal.new_symbol == "NEW"
+    assert refusal.shared_seats == ("technical",)
+    assert refusal.ratio == 2.0
+
+
+def test_the_refusal_payload_is_flat_json_safe_scalars():
+    """The row is stored as JSON and read by the evening review. A nested
+    object here would be one more thing to unpack before it is usable."""
+    import json
+
+    payload = _refusal(
+        ranked=[_rc("NEW", 1.8)], blocked={}, held_symbols={"GONE"},
+    ).event_kwargs()
+    assert payload["stage"] == "rotation"
+    assert payload["outcome"] == "not_surfaced"
+    assert payload["reason"] == "no_ranked_holdings"
+    for key, value in payload.items():
+        assert isinstance(value, (str, int, float, type(None))), (key, value)
+    assert json.loads(json.dumps(payload))["shared_seats"] == ""
+
+
+def test_the_legacy_entry_point_still_returns_the_opportunity_alone():
+    """`evaluate_rotation_opportunity` is this module's long-standing name
+    and keeps its shape; the pipeline uses `evaluate_rotation` so it can
+    record the refusal."""
+    opp = evaluate_rotation_opportunity(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        **_today_ladder_full_kwargs(),
+    )
+    assert opp is not None and opp.held_symbol == "OLD"
+
+
+def test_the_prompt_names_the_constraint_that_is_actually_binding():
+    """2026-09-17 CRM: a prompt that quotes a limit which is NOT the one
+    stopping the desk makes the model plan around the wrong number. With
+    only the funding constraint binding, the section must say so in
+    dollars, not quote 14.50% of risk headroom as though it were tight."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    result = PortfolioManagerAgent._render_rotation_section(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        existing_risk_pct={"OLD": 10.5},
+        ceiling_pct=25.0,
+        precheck=PortfolioManagerAgent.rotation_precheck(
+            ranked=[_rc("NEW", 1.8)],
+            blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+            held_symbols={"OLD"},
+            existing_risk_pct={"OLD": 10.5},
+            ceiling_pct=25.0,
+            entry_budget_usd=TODAY_DEPLOYABLE_USD,
+            min_order_usd=MIN_ORDER_USD,
+        ),
+    )
+    assert "Capital is constrained" in result
+    assert "$92.20 still deployable for new entries" in result
+    assert "$500 minimum order" in result
+    assert "real room exists" not in result

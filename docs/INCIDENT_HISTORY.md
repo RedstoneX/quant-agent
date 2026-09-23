@@ -210,6 +210,82 @@ request that names the item in its own title, or in a line in the production
 log. Items 120 and 130 were both closed by a pull request whose title names
 them, which is the cheapest of those two signals to read.
 
+### 2026-09-23 — the pruning mechanism watched the wrong dial, and had never once been in a position to compare anything
+
+**In plain words:** the desk has a mechanism that is supposed to ask "the book
+is full, so is this new idea better than the worst thing we already own?" It
+has never asked that question. Not once in the month of logs we keep. It was
+watching a dial that measures how much RISK the book is carrying, and that
+dial has never gone near its limit. The dial that IS at its limit almost every
+day is a different one — how much the book can actually buy with the cash and
+borrowing it has. So on the very day the desk was 199.1% invested with about
+$92 left to spend, the pruning mechanism looked at the book and reported
+"there is real room, nothing to rotate for", and said nothing.
+
+**The measurement, stated precisely.** Corpus: `quant_agent.log` and its five
+retained rotations, which span 2026-08-21 to 2026-09-23. Within them the
+Opportunity Rotation section was RENDERED 51 times, and all 51 took the "real
+room exists" branch; "Capital is constrained" has occurred zero times.
+Rendered risk headroom ranged 12.93%-24.53% against a 25% ceiling and never
+came within twelve percentage points of the 0.50% floor it was tested against.
+
+Two corrections an adversary pass forced on the first version of this entry,
+kept because the overstated version is the one that gets quoted back. Those 51
+are prompt RENDERS, not independent sessions — several run per trading day
+against one book state — and they are not spread over the whole window: the
+oldest rotation (2026-08-21..08-31) contains no rotation render at all and the
+next contains one, so the renders sit in 2026-09-15..2026-09-23. "51 of 51" is
+true of renders and is not a sample of 51 book states.
+
+The funding side, same corpus: the §11.2 ladder headroom the desk actually
+funds entries from printed 26 times (2026-09-17..2026-09-23) and was below the
+$500 minimum order on 12 of them. A separate count taken from the archived PM
+prompts rather than the log gives 10 of 21 over four days; the two corpora do
+not contain the same set of prints, which is why the corpus is named here
+rather than the number quoted bare.
+
+**What was ruled out.** Re-pointing the precondition at the gross-exposure
+ladder alone was considered and rejected: it reproduces the same defect
+mirrored, because a book at 1.2x gross with plenty of cash but an exhausted
+risk budget also cannot fund a starter position, and rotation would go silent
+again for exactly the reason it has been silent for a month. The precondition
+is now the UNION — constrained on any binding limit — which is what the
+question rotation exists to ask actually depends on. Writing a second
+"is the book full" computation was also rejected: the funding test reuses
+`_entry_deployment_budget`, the figure execution itself sizes entries against,
+which already resolves the ladder, settled cash and the min of the two.
+
+**The second half, and arguably the more important one.** The evaluation
+declined at seven distinct points and recorded nothing at any of them. Which
+holding was weighed against which candidate, on which seats, at what ratio,
+and which point refused — none of it existed anywhere. That is the desk's own
+standing rule against dropping a candidate without a durable, per-symbol,
+machine-readable reason, breached in the one place whose open research
+question (board item 39(a), the unmeasured 25% margin) can only be answered
+from that exact distribution. Every refusal now carries those fields, and they
+ride in the per-session rotation pre-check row added earlier the same day
+rather than in a second row of their own — one session's one comparison is one
+fact, and two rows would have to be joined before either could be read.
+
+**The comparison facts are recorded even when the book had room**, which is
+the counter-intuitive part and the point: those sessions are 51 of the last
+51, so they are not a fringe case to be skipped, they are the population.
+
+**What would catch it next time.** A precondition whose "off" branch has fired
+100% of the time over a month of production is not a conservative default, it
+is a dead code path wearing one. Nothing in the suite noticed, because every
+test supplied a headroom under the floor by hand and so only ever exercised
+the branch production never took. The check that exists now is the refusal-point
+inventory: every declining path must name itself in one list, and a test
+proves each member is reachable and that no path returns silently.
+
+**No threshold moved.** `ROTATION_MARGIN_PCT` is still 0.25 and
+`rotation_ranked_margin_enabled` is still false; both remain blocked by 39(a).
+What changed is whether the comparison is ever reached and whether its outcome
+is recorded.
+
+---
+
 ### 2026-09-23 — the report told the owner the desk had no reason, seven-tenths of a second after the desk recorded sixty-nine of them
 
 **In plain words:** the morning message listed every stock the desk looked at
