@@ -118,6 +118,18 @@ earlier drafts of this entry were themselves too strong and were cut.
   reconciler skips any negative as a short. Pinned by a test that states it
   is wrong.
 
+### 2026-09-23 — a proposed drift-detection test (item 171) was folded into an existing item instead of built, because it would not have caught either bug it cited
+
+**In plain words:** a request to build a test that catches a prompt sentence lying about what the code does, filed a third time, was retired — not because the idea is wrong, but because a check aimed only at deleted code cannot catch the two real bugs it names, and a stronger version of that check already belongs to another open item.
+
+**Why item 99(d) looked like enough, and why it wasn't quite.** 99(d) already tells the desk to grep for a removed mechanism's name across every prompt when it is deleted. An adversary review, asked directly whether folding 171 into 99(d) would lose anything, found it would: item 98 (the seat told 20 bars when the code sent 40) and item 168 (the seat told ~120 days when the code fetches 1800) are both a number going quietly stale against a config or code value that was never deleted — 99(d)'s own check only fires on a deletion, so neither bug would ever trip it. The adversary also caught 99(d)'s text claiming no drift defect ever lived in a prompt file, which is false for item 168: its wrong sentence is in `config/prompts/tech_analyst.md`.
+
+**What actually closed item 98** was not a scanner reading prompt text for suspicious numbers — that was tried in reasoning and rejected as too noisy (99(d) already records why: ~1,825 numeric tokens in the prompts are mostly dates and list numbering). It was rendering the sentence from the live value instead of typing a number by hand, with a test that fails if the two ever disagree again. Item 168 already carries that same fix as its own DONE WHEN.
+
+**What changed.** Item 99(d) gains a new criterion (99(g)): every prompt sentence stating a code- or config-controlled fact must either be rendered from that value or pinned by a drift test in item 168's pattern, on top of the existing deletion-site grep. Item 171 is retired — its number, not its intent.
+
+---
+
 ### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
 
 **In plain words:** two items on the backlog board had already been marked
