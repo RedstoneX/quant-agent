@@ -669,3 +669,149 @@ def rotation_proposal_reason(
         ceiling_pct=ceiling_pct,
         floor_pct=floor_pct,
     )
+
+
+# ---------------------------------------------------------------------------
+# owner-facing account of the pre-check (board item: the missing "why not")
+# ---------------------------------------------------------------------------
+#
+# The pre-check runs every session and its result reached NOTHING the owner
+# reads. Worse, its commonest outcome — capital constrained AND no candidate
+# good enough to sell a holding for — returned silently from
+# `_apply_rotation_execution`, so it left no log line and no durable row
+# either. The owner's words (2026-09-23): "Yes portfolio is full. But we're
+# still reviewing things, which is how we built it. Report has to show that
+# properly."
+#
+# ONE vocabulary, two consumers. `precheck_record` turns the pre-check into
+# the durable audit row; `owner_precheck_lines` renders THAT SAME row for the
+# owner. The model-facing prompt text in
+# `PortfolioManagerAgent._render_rotation_section` is deliberately left
+# byte-for-byte alone — rewording a live seat's prompt is a behaviour change
+# on a trading path — but the four cases below are the same four cases it
+# branches on, in the same order, and `tests/test_rotation.py` holds them to
+# that.
+
+#: The four mutually exclusive outcomes of one pre-check. A `reason` value,
+#: i.e. a rule name and never prose — the same split `pm_accounting` uses.
+ROTATION_TELEMETRY_UNAVAILABLE = "telemetry_unavailable"
+ROTATION_ROOM_AVAILABLE = "room_available"
+ROTATION_FULL_NOTHING_BETTER = "full_nothing_outranked_a_holding"
+ROTATION_FULL_OPPORTUNITY = "full_candidate_outranked_a_holding"
+
+
+def precheck_outcome(precheck) -> str:
+    """Which of the four cases this pre-check is. Pure, no config read."""
+    if not getattr(precheck, "telemetry_available", True):
+        return ROTATION_TELEMETRY_UNAVAILABLE
+    if getattr(precheck, "opportunity", None) is not None:
+        return ROTATION_FULL_OPPORTUNITY
+    if float(getattr(precheck, "headroom_pct", 0.0)) < float(
+        getattr(precheck, "floor_pct", 0.0)
+    ):
+        return ROTATION_FULL_NOTHING_BETTER
+    return ROTATION_ROOM_AVAILABLE
+
+
+def precheck_record(
+    precheck, *, execute_enabled: bool, ranked_margin_enabled: bool,
+) -> dict:
+    """The durable audit payload for one pre-check, and the only input
+    `owner_precheck_lines` reads.
+
+    Carries the two switches as measured facts, not as advice: the report
+    must be able to say that a comparison the desk is not permitted to act
+    on was information only, rather than letting the owner believe the desk
+    weighed it and declined.
+    """
+    opportunity = getattr(precheck, "opportunity", None)
+    record = {
+        "outcome": precheck_outcome(precheck),
+        "headroom_pct": float(getattr(precheck, "headroom_pct", 0.0) or 0.0),
+        "ceiling_pct": float(getattr(precheck, "ceiling_pct", 0.0) or 0.0),
+        "floor_pct": float(getattr(precheck, "floor_pct", 0.0) or 0.0),
+        "execute_enabled": bool(execute_enabled),
+        "ranked_margin_enabled": bool(ranked_margin_enabled),
+    }
+    if opportunity is not None:
+        record.update({
+            "tier": str(getattr(opportunity, "tier", "") or ""),
+            "held_symbol": str(getattr(opportunity, "held_symbol", "") or ""),
+            "new_symbol": str(getattr(opportunity, "new_symbol", "") or ""),
+        })
+    return record
+
+
+def _pct(value) -> str:
+    try:
+        return f"{float(value):.2f}%"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def owner_precheck_lines(record: dict | None) -> list[str]:
+    """The pre-check said to the owner, in plain words, on a phone.
+
+    NOT a warning and never rendered as one. A full book is a normal
+    operating state of this desk — the owner asked specifically that it read
+    that way — so the only thing this block reports is what was compared and
+    what the comparison concluded.
+    """
+    if not isinstance(record, dict) or not record:
+        return []
+    outcome = str(record.get("outcome") or "")
+    headroom = _pct(record.get("headroom_pct"))
+    ceiling = _pct(record.get("ceiling_pct"))
+    floor = _pct(record.get("floor_pct"))
+
+    if outcome == ROTATION_TELEMETRY_UNAVAILABLE:
+        return [
+            "🔄 Rotation check: not run this session — the book's own risk "
+            "figures could not be read, so nothing was compared. Nothing "
+            "was sold or bought because of this."
+        ]
+    if outcome == ROTATION_ROOM_AVAILABLE:
+        return [
+            f"🔄 Rotation check: not needed — there is still {headroom} of "
+            f"risk headroom under the desk's {ceiling} ceiling, so nothing "
+            "had to be sold to make room for a new idea."
+        ]
+
+    full = (
+        f"🔄 Rotation check: the book is FULL — {headroom} of risk headroom "
+        f"left under the desk's {ceiling} ceiling, below the {floor} "
+        "smallest position this desk will trade. This is a normal state, "
+        "not a fault."
+    )
+    if outcome == ROTATION_FULL_NOTHING_BETTER:
+        return [
+            full,
+            "   Every new candidate was still ranked against what is "
+            "already held, and none of them beat a holding by enough to be "
+            "worth selling one for. The desk is keeping what it has on "
+            "stronger conviction.",
+        ]
+    if outcome != ROTATION_FULL_OPPORTUNITY:
+        return []
+
+    held = str(record.get("held_symbol") or "?").upper()
+    new = str(record.get("new_symbol") or "?").upper()
+    tier = str(record.get("tier") or "")
+    lines = [
+        full,
+        f"   Every new candidate was ranked against what is already held, "
+        f"and one comparison came out the other way: {new} outranks {held}, "
+        f"the weakest thing currently using the room.",
+    ]
+    if not record.get("execute_enabled"):
+        lines.append(
+            "   The desk is not switched on to act on this by itself, so "
+            "this is information only — nothing was sold."
+        )
+    elif tier == "ranked_margin" and not record.get("ranked_margin_enabled"):
+        lines.append(
+            "   This is the score-margin kind of comparison, which the desk "
+            "is not switched on to act on. It was not weighed and declined "
+            "— it was never put to the desk to act on at all."
+        )
+    return lines

@@ -1114,7 +1114,10 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert "VST (Vistra Corp)" in msg
     assert "Blocked by the desk — insufficient cash: funding sale pending" in msg
     assert "<b>👀 LOOKED AT, NO TRADE</b>" in msg
-    assert "AVGO NEUTRAL/low — not traded — the desk did not record why" in msg
+    # 2026-09-23: the ground is now grouped into the heading above the
+    # name, so a candidate with none reads under one honest heading.
+    assert "the desk did not record why it passed on these" in msg
+    assert "AVGO NEUTRAL/low" in msg
 
     # --- PM view label, PM's own text untouched, inside DETAILS ---
     assert "<b>DETAILS</b>" in msg
@@ -1796,9 +1799,10 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     looked_section = msg[looked_idx:details_idx]
     # No HOLD row was recorded for any of the three in this fixture, so the
     # line says that in words rather than ending in "no reason recorded".
-    assert "CHPX (Global X AI Semiconductor ETF) BUY/medium — not traded" in looked_section
-    assert "OKLO (Oklo Inc) BUY/medium — not traded" in looked_section
-    assert "RKLB (Rocket Lab) BUY/medium — not traded" in looked_section
+    assert "CHPX (Global X AI Semiconductor ETF) BUY/medium" in looked_section
+    assert "OKLO (Oklo Inc) BUY/medium" in looked_section
+    assert "RKLB (Rocket Lab) BUY/medium" in looked_section
+    assert "the desk did not record why it passed on these" in looked_section
 
     # --- DETAILS: the full existing per-stock reasoning, unchanged,
     # collapsed behind a real Telegram HTML expandable blockquote ---
@@ -2278,8 +2282,10 @@ def test_looked_at_carries_the_pm_reason_or_says_none_recorded(tmp_path, monkeyp
         msg = trader_feed.format_session_result(
             "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
         )
-    assert "OKLO (Oklo Inc) BUY/medium — PM passed — Extended after a 30% run." in msg
-    assert "RKLB (Rocket Lab) BUY/medium — not traded — the desk did not record why" in msg
+    assert "the desk did not take these because Extended after a 30% run." in msg
+    assert "OKLO (Oklo Inc) BUY/medium" in msg
+    assert "the desk did not record why it passed on these" in msg
+    assert "RKLB (Rocket Lab) BUY/medium" in msg
     # The reward figure carries its unit.
     assert "reward 1.8× the risk" in msg
     assert "R/R 1.8" not in msg
@@ -2376,3 +2382,242 @@ def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
     body = "\n".join(lines)
     assert "detailed PM evidence unavailable" not in body
     assert "nothing was bought or sold" in body
+
+
+# ---------------------------------------------------------------------------
+# "the desk did not record why" — the false claim, and the grouping that
+# replaced forty identical sentences
+# ---------------------------------------------------------------------------
+#
+# 2026-09-23 morning, run-fccb2026: the desk logged "PM candidate accounting:
+# every one of the 69 non-targeted candidate(s) carries a named ground" at
+# 13:37:34, and the report built seven-tenths of a second later told the
+# owner "the desk did not record why" sixty-eight times. Every ground was in
+# `specialist_evidence`; `_read_run` admitted only `deterministic_gate`
+# pipeline events, so none of them reached the renderer.
+
+def _accounting(db, run_id, symbol, code, note, outcome="not_selected"):
+    """One `pm_accounting` row exactly as `_record_accounted_candidate`
+    writes it — stage `portfolio_manager`, the CODE in `refusal` and the
+    seat's prose in `note`."""
+    _evidence(
+        db, run_id, "pipeline", "pipeline_event",
+        {
+            "stage": "portfolio_manager", "outcome": outcome,
+            "reason": "pm_rejected_candidate", "refusal": code, "note": note,
+        },
+        symbol=symbol,
+    )
+
+
+def _looked_at_block(msg: str) -> list[str]:
+    out, inside = [], False
+    for line in msg.split("\n"):
+        if line.startswith("<b>👀 LOOKED AT"):
+            inside = True
+            continue
+        if inside:
+            if line.startswith("<b>") or not line.strip():
+                break
+            out.append(line)
+    return out
+
+
+def test_looked_at_renders_the_recorded_ground_never_did_not_record_why(
+    tmp_path, monkeypatch,
+):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-ground"
+    for sym in ("OKLO", "RKLB"):
+        _evidence(db, run, "tech_analyst", "analysis",
+                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
+                  symbol=sym)
+    _accounting(db, run, "OKLO", "no_deployment_headroom",
+                "OKLO would add tech exposure with no gross headroom left.")
+    _accounting(db, run, "RKLB", "reward_not_worth_risk",
+                "The stop distance swamps the measured upside.")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        )
+    assert "the desk did not record why" not in msg
+    assert "there was no cash or buying power left to put behind it" in msg
+    assert "the money it stood to make did not justify the money it put at risk" in msg
+    assert "OKLO would add tech exposure with no gross headroom left." in msg
+    # The internal code itself never reaches the owner.
+    for code in ("no_deployment_headroom", "reward_not_worth_risk",
+                 "pm_rejected_candidate", "not_selected"):
+        assert code not in msg
+
+
+def test_looked_at_still_admits_a_candidate_with_no_recorded_ground(
+    tmp_path, monkeypatch,
+):
+    """The honest fallback survives — and is now conditioned on there being
+    NO ground, not on the renderer failing to reach one."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-silent"
+    _evidence(db, run, "tech_analyst", "analysis",
+              {"symbol": "RKLB", "rating": "buy", "conviction": "medium"},
+              symbol="RKLB")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with _profiles_patch({"RKLB": RKLB_PROFILE}):
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        )
+    assert "the desk did not record why it passed on these" in msg
+    assert "RKLB (Rocket Lab) BUY/medium" in msg
+
+
+def test_looked_at_groups_a_shared_ground_once_and_hides_no_name(
+    tmp_path, monkeypatch,
+):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-group"
+    symbols = [f"S{i:02d}" for i in range(12)]
+    for sym in symbols:
+        _evidence(db, run, "tech_analyst", "analysis",
+                  {"symbol": sym, "rating": "neutral", "conviction": "low"},
+                  symbol=sym)
+        _accounting(db, run, sym, "no_readable_structure",
+                    f"{sym} has no level to enter against.")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+    )
+    ground = "there was no level on the chart to enter against or to be proved wrong by"
+    assert msg.count(ground) == 1, "the shared ground must be stated once"
+    assert f"12 — the desk did not take these because {ground}" in msg
+    # Grouping must never cost a name.
+    block = "\n".join(_looked_at_block(msg))
+    for sym in symbols:
+        assert f"• {sym} NEUTRAL/low" in block
+
+
+def test_looked_at_separates_no_capacity_from_rejected_on_merit(
+    tmp_path, monkeypatch,
+):
+    """Two completely different things to the owner: the desk had no room,
+    versus the desk judged the name and said no."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-split"
+    for sym, code in (("OKLO", "no_deployment_headroom"),
+                      ("RKLB", "evidence_insufficient")):
+        _evidence(db, run, "tech_analyst", "analysis",
+                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
+                  symbol=sym)
+        _accounting(db, run, sym, code, "")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        )
+    block = _looked_at_block(msg)
+    headers = [ln for ln in block if ln.strip().startswith("▪")]
+    assert len(headers) == 2
+    assert any("no cash or buying power left" in h for h in headers)
+    assert any("not enough current evidence behind it" in h for h in headers)
+
+
+def test_looked_at_drops_a_detail_that_is_the_group_heading_again(
+    tmp_path, monkeypatch,
+):
+    """`held_unchanged` carries one fixed sentence for every name; printing
+    it twelve times under a heading that already says it is the repetition
+    this grouping exists to remove. A detail unique to one name stays."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-held"
+    boiler = "the seat left a held name out of its targets"
+    for sym in ("OKLO", "RKLB"):
+        _evidence(db, run, "tech_analyst", "analysis",
+                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
+                  symbol=sym)
+        _accounting(db, run, sym, "held_unchanged", boiler,
+                    outcome="held_unchanged")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        )
+    assert boiler not in msg
+    assert "already held and the desk decided to leave it exactly as it is" in msg
+    for sym in ("OKLO", "RKLB"):
+        assert f"• {sym} " in "\n".join(_looked_at_block(msg))
+
+
+# ---------------------------------------------------------------------------
+# The rotation pre-check reaching the owner — the same defect from the other
+# side. Owner, 2026-09-23: "Yes portfolio is full. But we're still reviewing
+# things, which is how we built it. Report has to show that properly."
+# ---------------------------------------------------------------------------
+
+def _rotation_row(db, run, outcome, **extra):
+    _evidence(
+        db, run, "pipeline", "pipeline_event",
+        {
+            "stage": "rotation", "outcome": "precheck", "reason": outcome,
+            "headroom_pct": 0.09, "ceiling_pct": 25.0, "floor_pct": 0.5,
+            "execute_enabled": True, "ranked_margin_enabled": False, **extra,
+        },
+    )
+
+
+def _morning(db, run, monkeypatch):
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    return trader_feed.format_session_result(
+        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+    )
+
+
+def test_full_book_is_reported_as_a_normal_state_not_an_error(
+    tmp_path, monkeypatch,
+):
+    db = _make_db(tmp_path, monkeypatch)
+    _rotation_row(db, "run-full", "full_nothing_outranked_a_holding")
+    msg = _morning(db, "run-full", monkeypatch)
+    assert "the book is FULL" in msg
+    assert "This is a normal state, not a fault." in msg
+    assert "keeping what it has on stronger conviction" in msg
+    # It says the comparison HAPPENED — the thing that was invisible before.
+    assert "ranked against what is already held" in msg
+    line = [ln for ln in msg.split("\n") if "Rotation check" in ln][0]
+    for warning in ("⚠️", "🛑", "🔴"):
+        assert warning not in line
+
+
+def test_rotation_says_when_there_was_room_and_when_it_could_not_look(
+    tmp_path, monkeypatch,
+):
+    db = _make_db(tmp_path, monkeypatch)
+    _rotation_row(db, "run-room", "room_available")
+    assert "not needed" in _morning(db, "run-room", monkeypatch)
+    _rotation_row(db, "run-blind", "telemetry_unavailable")
+    msg = _morning(db, "run-blind", monkeypatch)
+    assert "not run this session" in msg
+    assert "could not be read" in msg
+
+
+def test_rotation_says_a_tier_the_desk_may_not_act_on_was_never_put_to_it(
+    tmp_path, monkeypatch,
+):
+    """`execution.rotation_ranked_margin_enabled` is False live. The owner
+    must not read a surfaced ranked-margin comparison as one the desk
+    weighed and declined."""
+    db = _make_db(tmp_path, monkeypatch)
+    _rotation_row(
+        db, "run-tier", "full_candidate_outranked_a_holding",
+        tier="ranked_margin", held_symbol="OKLO", new_symbol="RKLB",
+    )
+    msg = _morning(db, "run-tier", monkeypatch)
+    assert "RKLB outranks OKLO" in msg
+    assert "never put to the desk to act on at all" in msg
+    assert "ranked_margin" not in msg
+
+
+def test_a_run_with_no_rotation_row_renders_no_rotation_block(
+    tmp_path, monkeypatch,
+):
+    """Every session before this shipped, and any replayed stored report."""
+    db = _make_db(tmp_path, monkeypatch)
+    assert "Rotation check" not in _morning(db, "run-none", monkeypatch)
