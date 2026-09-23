@@ -21,6 +21,7 @@ unhandled 500 (which could leak an internal stack trace / file path).
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -444,6 +445,33 @@ def get_account() -> AccountResponse:
         except Exception:
             history = []
 
+        # Total P&L since the board's own tracked start — deliberately NOT
+        # derived from `history` above, which is capped at 30 rows and may
+        # be truncated. Reads the table's own earliest row directly, same
+        # baseline `TradingPipeline._total_pnl_since_reset` already uses for
+        # the Telegram feed's "Total P&L since <date>" line (see
+        # `get_earliest_daily_pnl`'s docstring). Degrades to `None` on any
+        # read failure or missing/non-positive baseline — never a
+        # fabricated total.
+        total_pnl = None
+        total_pnl_pct = None
+        total_pnl_since = None
+        try:
+            from src.api.db_reads import get_earliest_daily_pnl
+            earliest = get_earliest_daily_pnl()
+            if earliest and portfolio_value is not None:
+                baseline = float(earliest["total_value"]) - float(earliest["daily_pnl"])
+                tv = float(portfolio_value)
+                if baseline > 0 and math.isfinite(baseline) and math.isfinite(tv):
+                    total_pnl = tv - baseline
+                    total_pnl_pct = total_pnl / baseline * 100
+                    total_pnl_since = str(earliest.get("date") or "") or None
+        except Exception as exc:
+            logger.warning("routes_live total_pnl computation failed: %s", exc)
+            total_pnl = None
+            total_pnl_pct = None
+            total_pnl_since = None
+
         # One positions read serves both the liquidity split and the
         # exposure gauge — they used to be independent round-trips, and an
         # /account response built from two different broker snapshots is
@@ -468,6 +496,9 @@ def get_account() -> AccountResponse:
             last_equity=last_equity,
             daily_pnl=daily_pnl,
             daily_pnl_pct=daily_pnl_pct,
+            total_pnl=total_pnl,
+            total_pnl_pct=total_pnl_pct,
+            total_pnl_since=total_pnl_since,
             paper=get_alpaca_paper(),
             history=history,
             liquidity=liquidity,

@@ -190,6 +190,25 @@ class AccountResponse(BaseModel):
     last_equity: float | None = None
     daily_pnl: float | None = None       # portfolio_value - last_equity (computed here)
     daily_pnl_pct: float | None = None
+    #: Total P&L since the earliest row the `daily_pnl` table actually has —
+    #: `current portfolio_value - (that row's total_value - that row's own
+    #: daily_pnl)`, i.e. the broker equity going into the first tracked day.
+    #: Same baseline definition and the same "never reconstructed from an
+    #: archive" posture as `TradingPipeline._total_pnl_since_reset`, which
+    #: the Telegram feed's own "Total P&L since <date>" line already uses —
+    #: this is that same figure, reused for the dashboard rather than
+    #: recomputed a second way. `None` when the table can't be read or has
+    #: no rows, never a fabricated 0. `history` (above) is NOT the source —
+    #: it is capped at 30 recent rows and may be truncated, so it cannot
+    #: safely stand in for "since the start of the board".
+    total_pnl: float | None = None
+    total_pnl_pct: float | None = None
+    #: The trading day the `total_pnl` baseline is measured from (that
+    #: earliest row's own `date`) — same value trader_feed shows as
+    #: "Total P&L since <date>", carried here so the dashboard can label
+    #: the figure the same way rather than presenting a bare "total" that
+    #: reads as "since the account began".
+    total_pnl_since: str | None = None
     paper: bool | None = None
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first

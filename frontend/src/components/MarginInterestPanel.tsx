@@ -1,6 +1,39 @@
 import { Badge, Text } from "@tremor/react";
-import { AccountResponse } from "../api/client";
+import { AccountResponse, MarginInterestEstimate } from "../api/client";
 import { fmtMoney, fmtMoneyCompact } from "../lib/format";
+
+/** A single "$X/day [ESTIMATE]" label for margin interest, for compact
+ * chrome (HeroBand's top-left card and its collapsed header line) that
+ * cannot afford the full strip below. Reads the SAME `margin_interest`
+ * object this file's own strip does and applies the SAME rules — a `null`
+ * or errored estimate degrades to "not available" text, never a fabricated
+ * "$0.00", and a real zero (owner policy: show it every day) renders as an
+ * explicit "$0.00/day", never dropped. The ESTIMATE caveat travels in
+ * `note`, meant for a `title` tooltip in the compact spot it has no room to
+ * print inline — see MarginInterestStrip above for where it prints in
+ * full. */
+export function marginInterestDailyLabel(
+  mi: MarginInterestEstimate | null | undefined,
+): { text: string; note: string } {
+  if (!mi || mi.error) {
+    return {
+      text: "Interest: —",
+      note: `Margin interest not available — ${mi?.error || "the account could not be read"}`,
+    };
+  }
+  const isZero = mi.daily_usd === 0;
+  const rateNote = mi.rate_pct === null ? "" : ` at ${mi.rate_pct.toFixed(2)}% annual rate`;
+  if (isZero) {
+    return {
+      text: "Interest: $0.00/day",
+      note: `Nothing borrowed overnight, so nothing is owed${rateNote}.`,
+    };
+  }
+  return {
+    text: `Interest: ${fmtMoney(mi.daily_usd)}/day (ESTIMATE)`,
+    note: `${mi.label || "Margin interest ESTIMATE"} — borrowed ${fmtMoneyCompact(mi.debit_balance)}${rateNote}. Paper trading's own handling of margin interest is unconfirmed.`,
+  };
+}
 
 /* Margin interest — the price of money the desk BORROWED, shown as its own
  * strip.

@@ -639,6 +639,35 @@ def test_account_computes_daily_pnl(client, stub_broker, seeded_db):
     assert body["error"] is None
     assert len(body["history"]) == 1
     assert body["history"][0]["date"] == "2026-08-08"
+    # total_pnl (owner request, 2026-09-23): server-computed from the
+    # daily_pnl table's own EARLIEST row, never from `history` (which is
+    # capped at 30 rows and may be truncated). Baseline here is
+    # 100_000.0 - 500.0 = 99_500.0 (that row's total_value minus its own
+    # daily_pnl, i.e. broker equity going into the first tracked day);
+    # current portfolio_value is 105_000.0 (stub_broker).
+    assert body["total_pnl"] == pytest.approx(5_500.0)
+    assert body["total_pnl_pct"] == pytest.approx(5_500.0 / 99_500.0 * 100)
+    assert body["total_pnl_since"] == "2026-08-08"
+
+
+def test_account_total_pnl_is_none_not_fabricated_without_a_readable_baseline(
+    client, stub_broker, tmp_path, monkeypatch,
+):
+    # An empty (or unreadable) daily_pnl table must degrade `total_pnl` to
+    # `None`, never a fabricated 0 or a total computed against no baseline.
+    from src.storage.db import Database
+    db_path = tmp_path / "no_daily_pnl.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+
+    r = client.get("/account")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_pnl"] is None
+    assert body["total_pnl_pct"] is None
+    assert body["total_pnl_since"] is None
 
 
 def test_account_surfaces_broker_error_without_crashing(client, seeded_db, monkeypatch):
