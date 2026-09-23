@@ -138,6 +138,39 @@ CATEGORY_LOST = "lost"
 #: advisory, and the freshness disclosure names it in plain words.
 CATEGORY_EXPIRED = "expired"
 
+#: WHICH CATEGORIES THE SEAT-HEAL PATH IS ALLOWED TO TRY TO REFRESH.
+#:
+#: THIS IS NOT A TRADING CONSEQUENCE AND MUST NEVER BECOME ONE. Nothing in
+#: this module reads it: not `evaluate`, not `skip`, not `counts_as_degraded`,
+#: not the freshness disclosure. It answers exactly one question, asked by
+#: `TradingPipeline._heal_lost_research_seats` — "is it worth re-asking this
+#: seat?" — and the answer changes only whether the desk spends money to go
+#: and look again, never what the desk does with what it already has.
+#:
+#: Why it exists, 2026-09-23. PR #511 (2026-09-18 10:11 ET) taught the
+#: intraday news carry-forward to hand the wire text it had already fetched
+#: to the heal path, so an `expired` news seat could be re-asked with data
+#: the tick had already paid for. PR #535 (2026-09-18 17:24 ET, seven hours
+#: later) split `expired` out of `CATEGORY_LOST` — correctly, because the
+#: desk HOLDS an answer and holding an older answer is not the same as
+#: having none. But the heal dispatcher selected its work by testing for
+#: `CATEGORY_LOST`, so the split silently orphaned the refresh that had
+#: shipped that morning. It stayed dead until 2026-09-23, and the DURABLE
+#: RECORD is what shows that, not a log grep — the heal's success path writes
+#: no matchable log string, so "zero hits" would have proved nothing.
+#: `specialist_evidence` holds 22 `seat_heal` rows, ALL dated 2026-09-18, the
+#: last at 19:46 UTC, and #535 merged at 21:24 UTC that same day. Meanwhile
+#: the owner received 15 `news=expired` alerts: 11 on 2026-09-21 and 4 on
+#: 2026-09-22. [Measured 2026-09-23 — sqlite over a read-only copy of the
+#: production DB, and a date-bucketed scan of the retained production log.]
+#:
+#: The lesson is the coupling was implicit. A category membership test in
+#: one module decided whether a paid refresh in another module ever ran, and
+#: nothing named the dependency, so re-categorising was invisibly a
+#: behaviour change. It is named here now, and `tests/test_seat_heal_wiring.py`
+#: fails if any category that can carry a heal input drops out of this set.
+HEALABLE_CATEGORIES: frozenset[str] = frozenset({CATEGORY_LOST, CATEGORY_EXPIRED})
+
 #: WHICH SEATS MAY REFUSE THE WHOLE DECISION.
 #:
 #: MANDATE DECISION. Owner, 2026-09-18, made with the argument against it in

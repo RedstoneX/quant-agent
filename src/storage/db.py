@@ -35,6 +35,39 @@ def _is_filled_trail_stop(row, action: str) -> bool:
         return False
 
 
+def _trail_stop_reduced_position(row, action: str) -> bool:
+    """True when a TRAIL_STOP row actually took shares OUT of the book.
+
+    Share-count answer to `_is_filled_trail_stop`'s realized-exit question,
+    and deliberately the WIDER of the two — they are different questions,
+    so do NOT collapse them. `_is_filled_trail_stop` asks "is this a
+    priceable realized exit" and therefore requires fill_status='filled'
+    (or a legacy NULL status with a recorded fill_qty). A stop that filled
+    PARTIALLY and was then canceled or expired carries a terminal status
+    that is not 'filled' while still holding `fill_qty > 0`: there is no
+    clean round trip to price, but those shares are genuinely gone from
+    the broker's book, so a pure quantity ledger must subtract them or it
+    will believe it holds stock it has already sold.
+
+    Anything else — fill_status NULL / 'submitted' / 'pending_submit' with
+    no fill, or a cancel or expiry that never traded — is protection
+    resting at the broker and moves no shares.
+
+    `action` is required and checked: this answers a question only about
+    TRAIL_STOP rows, and every other action's quantity effect is decided
+    by the signing rule in `get_symbols_with_open_ledger_qty`, not here.
+    """
+    if (action or "").upper() != "TRAIL_STOP":
+        return False
+    try:
+        executed = float(row["fill_qty"] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        executed = 0.0
+    if executed > 0:
+        return True
+    return _is_filled_trail_stop(row, "TRAIL_STOP")
+
+
 def _new_position_id() -> str:
     """Opaque, stable identifier minted when a BUY opens a position from
     flat. Same shape as this codebase's run/decision ids
@@ -1725,16 +1758,49 @@ class Database:
         that closed them was never written back to `trades`.
         `_reconcile_stop_out_fills` (src/pipeline.py) is the caller that
         acts on a mismatch.
+
+        TRAIL_STOP IS THE ONE ACTION THIS CANNOT SIGN FROM THE ACTION NAME
+        (fixed 2026-09-23). Every other exit-family row is written only
+        once the desk has decided to sell, but a TRAIL_STOP row is written
+        at PLACEMENT — protection resting at the broker, which may never
+        fire. `_executed_trade_predicate` lets a legacy `fill_status IS
+        NULL` placement through, and signing it -1 subtracted the whole
+        protected position from the ledger's belief. Measured on the
+        production DB 2026-09-23, that made the ledger read AMD 0 (1.7662
+        actually held, so a real AMD stop-out would never have been
+        detected — the caller skips any symbol it believes is flat) and
+        drove COP/EQNR negative. The rule here is the quantity the broker
+        actually EXECUTED (`_trail_stop_reduced_position`).
+
+        `_is_filled_trail_stop`, `compute_trade_calibration`,
+        `_assign_position_ids` and `_categorize_exit_reason` all separate
+        a resting stop from a fired one too, but they ask the NARROWER
+        question — "is this a priceable realized exit" — and this function
+        deliberately departs from them on one row shape: a stop that
+        partially filled and was then canceled is not a round trip they
+        can price, yet its shares really did leave the book. See
+        `_trail_stop_reduced_position` for why that is not drift.
+
+        STILL SIGNED FROM THE ACTION NAME, and wrong on the short side:
+        a COVER family action, and a FILLED buy-to-cover TRAIL_STOP,
+        subtract from a short instead of retiring it (a SHORT 36 covered
+        in full reads -72, not 0) [measured 2026-09-23]. Pre-existing and
+        unchanged here; the caller reads any negative as a short and skips
+        it, so nothing acts on the number today. Carried as item 173(c).
         """
         with self._lock:
             rows = self.conn.execute(
-                "SELECT symbol, action, qty, fill_qty FROM trades "
+                "SELECT symbol, action, qty, fill_qty, fill_status FROM trades "
                 f"WHERE {self._executed_trade_predicate()} ORDER BY id",
             ).fetchall()
         net: dict[str, float] = {}
         for row in rows:
             action = (row["action"] or "").upper()
             if action == "HOLD":
+                continue
+            if action == "TRAIL_STOP" and not _trail_stop_reduced_position(row, action):
+                # Protection sitting at the broker, not a sale: no
+                # quantity effect at all.
                 continue
             qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
             if qty <= 0:
@@ -2323,6 +2389,58 @@ class Database:
             self.conn.commit()
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
+
+    def count_paid_seat_heals_today(self, seat: str, *,
+                                     trading_day: date | None = None) -> int | None:
+        """How many PAID research heals this seat has already had today (ET).
+
+        The in-context counter `RunContext.heal_paid_retries` says "at most
+        one paid retry per seat per session", but a RunContext lives for ONE
+        tick and `intra_check` fires every 30 minutes from 09:30 to 16:00 ET
+        — fourteen ticks, each with its own fresh counter. For a seat that
+        expires because the wire moved, the wire is still moved on the next
+        tick, so the in-context cap would have allowed the desk to buy the
+        same seat back fourteen times in a day and call that "one retry".
+        Nothing caught it before because the heal path was unreachable for
+        expired seats at all (see `evidence_gate.HEALABLE_CATEGORIES`).
+
+        The durable heal rows are the only cross-tick memory the heal path
+        has, so the day cap is read back from them. Row volume is a handful
+        per day; parsing in Python avoids depending on the JSON1 extension.
+        Returns None — NOT 0 — when the read fails, so the caller can tell
+        "nothing spent today" apart from "I could not find out". Those need
+        different answers and a shared 0 forced one global policy on both.
+        `trading_day` exists so the ET-day boundary itself is testable; the
+        default is today.
+        """
+        import json as _json
+        want = str(seat or "").strip()
+        if not want:
+            return 0
+        start, end = self._et_day_utc_bounds(trading_day)
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT evidence_json FROM specialist_evidence "
+                    "WHERE kind = 'seat_heal' AND timestamp >= ? AND timestamp < ?",
+                    (start, end),
+                ).fetchall()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("count_paid_seat_heals_today failed: %s", e)
+            return None
+        count = 0
+        for row in rows:
+            try:
+                payload = _json.loads(row[0])
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("seat") or "") != want:
+                continue
+            if payload.get("paid_retry") is True:
+                count += 1
+        return count
 
     # --- Conviction ledger (spec §9.5) -----------------------------------
     #
