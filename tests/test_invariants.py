@@ -24,7 +24,7 @@ from src.pipeline_context import RunContext
 from src.risk.rules import RiskRuleEngine
 from src.storage.db import Database
 from src.trading_calendar import ET, UTC
-from src.trading_calendar import et_now
+from tests.session_clock import todays_session_stamp
 
 
 def _risk_config() -> RiskConfig:
@@ -486,7 +486,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         # with no timestamps is correctly not-today and buys no paid
         # look, so a fixture that means "this traded today" says so.
         "AAPL": {"last_price": 110.0, "prev_close": 100.0,
-                 "last_trade_at": et_now()},
+                 "last_trade_at": todays_session_stamp()},
     }
     p.db = MagicMock()
     p.db.get_trades.return_value = []
