@@ -22,6 +22,131 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the owner has never once seen the end of a morning report, and the desk kept calling its own good decisions failures
+
+**In plain words:** two separate things, both in the morning Telegram message,
+both found the same day. First, the message has been too long to send since
+the day it was redesigned, so Telegram cut it off — and the part that got cut
+was always the same part: the desk's actual thinking. The owner has never read
+it. Second, the top line of the message said FAILED whenever the desk had
+decided not to buy something, even when that decision was correct and
+deliberate. A full portfolio, a trade below the minimum size, a company too
+newly listed to have enough price history — all of these are the safety rules
+working, and all of them put the word FAILED in front of the owner.
+
+**How long the first one had been happening.** Every morning message on
+record. Measured built lengths against a 4,000-character send budget: 7,772
+characters on 2026-09-21, 6,799 on 09-22, 7,052 on 09-23, and 9,876 when
+09-23's run is replayed through the code that merged later that morning. All
+three delivered messages end with an empty reasoning block.
+
+**WHY IT WAS ALWAYS THE REASONING THAT DIED, AND WHY THAT WAS NOT OBVIOUS.**
+Nothing was wrong with either section. The message is assembled in order, and
+the reasoning block sized itself against whatever was already assembled — so
+the list of candidates, built first, took the entire budget and the reasoning
+block was handed a negative one. It did not fail loudly; it rendered as an
+empty expandable quote, which looks exactly like a session that had nothing to
+say. The two states are indistinguishable from the outside, which is why three
+weeks of messages went out without anyone noticing.
+
+There was a second copy of the same mistake one level down. Inside the
+reasoning block, the four parts were assembled with the per-candidate chart
+listing FIRST, and a clip always cuts the tail — so even on a message that fit,
+the portfolio manager's reasoning (303 characters on 2026-09-23), the risk
+verdict and the execution record would be destroyed to preserve a 9,379-character
+listing of the same names the candidate list above had already accounted for.
+
+**WHAT CHANGED.** The order in which sections claim the budget, not what any
+of them say. The candidate list is now held back and spliced in last, after
+the reasoning has taken its share; inside the reasoning block the enumeration
+moved to the end so a clip lands there. The candidate list degrades through
+four render tiers rather than being clipped — full detail per name, then one
+line per name, then names comma-joined, then tickers comma-joined — and **no
+candidate is dropped at any tier**, because a list that hides a name is worse
+than a repetitive one. Replaying 2026-09-23's real morning run: 9,876
+characters becomes 3,919, nothing is truncated, the reasoning is present, and
+the part visible before the owner taps the reasoning open is 2,255 characters.
+
+**No constant was added and none moved.** The tiers are chosen by what fits,
+which is arithmetic over the message being built, not a threshold. The
+4,000-character budget is self-imposed headroom under Telegram's real
+4,096-character limit and was left alone.
+
+**SPLITTING INTO SEVERAL MESSAGES WAS CONSIDERED AND NOT NEEDED.** The
+notifier has no multi-message capability and would have had to grow one, with
+the partial-delivery failure modes that brings. Once the ordering was fixed
+the whole message fit, so the capability was not built. If a future session
+genuinely cannot fit, that is the next thing to reach for.
+
+**THE SECOND DEFECT: a refusal is not a failure.** Any blocked candidate at
+all set the header to FAILED. Measured: "⚡ INTRADAY OPPORTUNITY · 9:49 AM ET ·
+FAILED" on 2026-09-21 whose only block was "adding to a short is not built",
+and "🔵 MORNING · 9:36 AM ET · FAILED" on 2026-09-22 whose only two blocks were
+two young listings failing the 200-session history pre-check while the desk's
+own verdict was no-trades. Each blocked row is now classified where it is
+built — the only place the internal reason code is still in hand — as either a
+deliberate refusal or a fault, and the header has an honest word for each
+state: FAILED (something broke), PARTIAL (traded and something broke), BOUGHT
+/ SOLD / TRADED, NO TRADE (nothing traded, every block a correct refusal) and
+NO CHANGE (nothing traded, nothing declined). The section heading was split
+the same way, because a header saying NO TRADE over a section headed
+BLOCKED / FAILED just moves the confusion down one line.
+
+**THE ALLOWLIST IS DELIBERATELY TINY, AND THE FIRST DRAFT OF IT WAS WRONG.**
+An adversary run against the production database threw out most of a proposed
+eleven-code list, and every objection checked out:
+
+  * `slippage_gated` — all six rows on record are IEX quotes 391 to 580 basis
+    points through a 40 basis point ceiling, on a venue the code's own
+    comments call routinely stale. On 2026-09-15 four risk-approved buys died
+    on it in one run. That is a data fault wearing a policy code, and calling
+    that session a correct no-trade is the cover story the desk's doctrine
+    exists to forbid.
+  * `latency_window` — chosen over `slippage_gated` on a run-global flag set
+    at six sites and cleared at none, so one stall relabels every later quote
+    refusal in that run. The two codes do not independently mean anything.
+  * `short_add_blocked` — its own detail string reads "adding to a short is
+    not built". An unbuilt feature the desk keeps trying to use is the desk
+    failing, not deciding.
+  * `geometry_rr` — dead; the function that emitted it returns nothing
+    unconditionally. It survives only in stored runs, which are re-rendered
+    through today's formatters, so whitelisting it would have retroactively
+    relabelled two historical refusals as correct.
+  * `stale_entry` — zero rows in the entire database. Assigning owner-facing
+    meaning to a path that has never run is a guess.
+  * `borrow_gate` — a failed broker asset lookup is synthesised into a
+    not-shortable verdict and filed under this code, so an API failure would
+    have read as a borrow decision.
+  * `insufficient_cash`, `unusable_stop`, `fat_finger_guard` — all three are
+    things that must be said loudly. A safety net catching an absurd order
+    means something upstream produced one.
+
+What survived: the minimum trade size, sizing that resolves to zero, a full
+book with nothing outranking a holding, the constructor's own recorded
+refusals, and a risk-manager refusal **that stated a reason**. An unrecognised
+code, and a refusal with nothing written down, both count as faults and keep
+the loud word — because getting a refusal wrongly called a failure is noise,
+while getting a failure wrongly called a refusal is the owner not being told
+his desk broke.
+
+**WHAT WOULD CATCH EITHER ONE NEXT TIME.** A test that builds a message from
+a real-sized session — 69 candidates, 12 held, a full reasoning chain — and
+asserts both that it fits and that the reasoning is non-empty; a test that
+every candidate survives every render tier; and paired tests that a
+refusals-only session does not read FAILED while a genuinely broken one still
+does.
+
+**FOUND AND NOT FIXED, both pre-existing and both reported rather than
+touched.** The durable record of what was sent (`notifier_sends`) stores the
+text BEFORE truncation, so the desk's own audit trail of what it told the
+owner differs from what Telegram actually delivered, and nothing anywhere
+records that a cut happened — which is why the true delivered content of the
+last three weeks had to be reconstructed rather than read. And the truncation
+marker points the owner at Mission Control, which is a Tailscale address;
+whether he can open it from his phone was not established.
+
+---
+
 ### 2026-09-23 — the pruning mechanism watched the wrong dial, and had never once been in a position to compare anything
 
 **In plain words:** the desk has a mechanism that is supposed to ask "the book
