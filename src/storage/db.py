@@ -2442,6 +2442,56 @@ class Database:
                 count += 1
         return count
 
+    def latest_news_analysis_today(
+        self, *, trading_day: date | None = None,
+    ) -> str | None:
+        """The newest news-seat answer the desk PAID for today (ET), as JSON.
+
+        Why this exists, 2026-09-23. The intraday carry-forward reads the
+        news seat from `data/news/<ET day>/full_report.json`, which only the
+        three scheduled sessions ever write. A paid heal
+        (`TradingPipeline._try_one_paid_research_retry`) writes its answer to
+        `specialist_evidence` and nowhere else, so every later tick re-loaded
+        the SUPERSEDED morning file, re-expired the seat, and — since the
+        per-ET-day cap landed — then refused to buy it again. The desk paid
+        for a fresher read at 10:00 and ran the rest of the day with the
+        news seat unset. Production: 8 paid news heals on 2026-09-18, each
+        ~30 minutes apart, every one discarded by the next tick.
+
+        The row this reads is not heal-specific and deliberately so: the
+        ordinary morning/midday/evening reads write the SAME
+        `agent_name='news_analyst', kind='analysis', scope='run'` row
+        (`src/pipeline_stages.py`). "Newest such row today" therefore means
+        "the freshest paid news read the desk holds", which is a property of
+        the evidence, not of how it was bought. On a tick with no heal it
+        returns the same content the file holds, so the caller's merge is a
+        no-op.
+
+        The ET-day bound is the SAME bound the dated report directory
+        already has — no clock and no new lifetime; see
+        `src.evidence_kind.news_reuse`, which still decides expiry.
+
+        Returns None — not "" — when there is no such row or the read fails,
+        so the caller falls back to the file rather than treating a sick
+        forensic store as "the desk has no news".
+        """
+        start, end = self._et_day_utc_bounds(trading_day)
+        try:
+            with self._lock:
+                row = self.conn.execute(
+                    "SELECT evidence_json FROM specialist_evidence "
+                    "WHERE kind = 'analysis' AND agent_name = 'news_analyst' "
+                    "AND scope = 'run' AND timestamp >= ? AND timestamp < ? "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (start, end),
+                ).fetchone()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("latest_news_analysis_today failed: %s", e)
+            return None
+        if not row or not row[0]:
+            return None
+        return str(row[0])
+
     # --- Conviction ledger (spec §9.5) -----------------------------------
     #
     # §9.1/§9.2 already persisted every raw nomination as a `pipeline_event`

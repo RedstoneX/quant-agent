@@ -22,6 +22,96 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk bought fresher news, threw it away thirty minutes later, and then refused to buy it again
+
+**In plain words:** the news desk reads the wire each morning. When something
+genuinely new lands during the day, the desk pays for a fresh read rather than
+deciding on stale news. It was paying for that fresh read and then filing it
+somewhere nothing would ever look again. Half an hour later the same tick
+found the same old morning read, saw the same new headlines, and concluded the
+news was out of date all over again. Before a spending cap existed it simply
+bought the same thing over and over — eight times on 2026-09-18. Once the cap
+existed, the second attempt was correctly refused, which left the desk in the
+worse position of the two: it had paid for today's fresher news and then ran
+the rest of the day with the news seat marked out-of-date and empty.
+
+Nobody was told, either. The alarm for degraded research needs TWO seats to be
+in trouble before it fires. One bad seat is silent by design.
+
+**The three separate mistakes.** Only the first is the obvious one.
+
+1. The answer was not kept anywhere the next tick reads. It went into memory
+   for the current tick and into the forensic evidence table, and the
+   carry-forward reads neither — it reads the dated news report file, which
+   only the three scheduled sessions ever write.
+2. The QUESTION was not kept either, and this is the half that actually drove
+   the loop. Whether the news has moved is decided by comparing live wire
+   titles against the titles already on record. The desk recorded the answer's
+   REWRITTEN headlines, never the raw wire titles it had just paid to have
+   read. Those are not the same string — the news store's own docstring says
+   so. So even a perfectly stored answer would have been compared against
+   titles it never claimed to contain, and expired again immediately.
+3. The obvious repair — write the healed report into the day's report file —
+   is wrong, and was ruled out on the adversary's argument rather than
+   adopted. That file is walked ACROSS days by four readers: the active
+   state-change scan and three thesis/missed-opportunity scans, one of them
+   feeding the catalyst rule that lets a trade size below the risk floor.
+   Overwriting it would have pushed a heal's state changes — produced with no
+   prior-session baseline and no universe — into a multi-week catalyst memory,
+   and deleted the morning's from it. A file written for a cross-day window is
+   the wrong place for a within-day refresh.
+
+**What the lifetime of the purchased research is, and where it came from.**
+Unchanged, and that is the point. The question "how long should paid news
+last?" has an answer already ratified and it is not a number: news is scoped
+to the session and expires on the next material wire. Both places the desk can
+now find today's freshest paid read — the dated report directory and the
+evidence row — are bounded by the same ET trading day, and what expires the
+result is still the same wire compare. No clock, no refresh interval, no new
+constant. What changed is only WHICH of today's paid reads the desk finds.
+
+**What the once-a-day cap protects, and why this does not defeat it.** The cap
+stops the desk buying the same seat repeatedly inside one day; it exists
+because a per-tick counter let the news seat be bought eight times while each
+tick believed it was the only retry. This change reduces demand on the cap
+rather than loosening it: the cap is still counted from the durable rows, the
+allowance is still one, and a seat that has spent it is still refused. The
+difference is that the cap is no longer the thing that has to stop the loop —
+the loop is gone, so the cap is back to being a spending limit instead of the
+only brake on a bug.
+
+**The one judgement call.** Recording wire titles as "already read" suppresses
+them for the rest of the session, so the set had to be bounded. It is bounded
+by measurement, not by choice: a title is recorded only if it actually appears
+in the prompt text the analyst was paid to read. The prompt is truncated, so a
+title the peek fetched but the model never saw is deliberately left uncovered
+and can still expire the seat. Recording what was fetched instead of what was
+read would have been buying silence rather than research.
+
+**What was ruled out.** Writing the healed report to the day's report file
+(contaminates the cross-day catalyst window, above). Tagging it as a session
+(ticks fire every thirty minutes, so each heal would erase the last, and the
+evening diff baseline deliberately prefers the last SCHEDULED snapshot).
+Replacing the morning's report outright (the heal is handed general wire text
+with no universe and no symbol mentions, so it is the fresher answer about the
+wire and a narrower one about the book — a name the morning covered and the
+afternoon wire never mentioned now keeps its coverage).
+
+**What would catch it next time.** Five of the eleven new tests fail on the
+previous commit. The load-bearing one runs two consecutive ticks against the
+same stores rather than calling the heal directly — which is exactly how the
+previous version of this defect hid, since the function worked and nothing
+called it. One test asserts the day's report file is never written by a heal,
+so the cross-day contamination cannot be reintroduced by someone reaching for
+the obvious fix.
+
+**Still open, not fixed here.** The macro seat has the same shape of problem
+and is filed as board item 179 rather than repaired: its heal hands on a plain
+dictionary where the rest of the desk expects the model object, which silently
+costs that seat every one of its nominations, and it stores nothing either.
+
+---
+
 ### 2026-09-23 — the desk told its own risk officer that a suggestion was a rule, and paid eight times for news it then threw away
 
 Two separate faults, found together, both long-standing. Neither lost money

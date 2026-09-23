@@ -119,6 +119,47 @@ class NewsStore:
         path = self._today_dir() / "raw_headlines.json"
         _atomic_write(path, json.dumps(headlines, indent=2, ensure_ascii=False))
 
+    def append_raw_headlines(self, headlines: list[dict]) -> int:
+        """Add titles to today's raw-headline record without losing any.
+
+        `save_raw_headlines` REPLACES the file, which is right for a
+        scheduled session (it rewrites the whole wire it just read) and
+        wrong for a paid heal, which read only the general wire and would
+        wipe the morning's per-symbol titles — turning the seat's own
+        expiry compare against it. This is the append.
+
+        Titles already present are skipped, so re-running is a no-op and the
+        file cannot grow by repetition. Returns how many were added. Never
+        raises: failing to record coverage must not undo a heal that worked.
+        """
+        if not headlines:
+            return 0
+        existing = self.load_raw_headlines()
+        seen = {
+            str((i or {}).get("title") or (i or {}).get("headline") or "").strip()
+            for i in existing if isinstance(i, dict)
+        }
+        added = []
+        for item in headlines:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("headline") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            added.append(item)
+        if not added:
+            return 0
+        try:
+            _atomic_write(
+                self._today_dir() / "raw_headlines.json",
+                json.dumps(existing + added, indent=2, ensure_ascii=False),
+            )
+        except OSError as e:
+            logger.warning("Failed to append raw headlines: %s", e)
+            return 0
+        return len(added)
+
     def load_raw_headlines(self, session_date: str | None = None) -> list[dict]:
         """RSS titles saved when today's report was written. Empty if absent.
 
