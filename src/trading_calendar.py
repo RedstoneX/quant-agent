@@ -38,7 +38,14 @@ SessionMode = Literal[
 SESSION_WINDOWS: dict[str, tuple[int, int]] = {
     "earnings_preprocess": (480, 555),   # 08:00 - 09:15 ET
     "morning":             (570, 720),   # 09:30 - 12:00 ET
-    "intra_check":         (570, 960),   # 09:30 - 16:00 ET  (P&L circuit-breaker, no LLM, every 30min tick; NOT subject to once-per-day guard)
+    # "no LLM" here was FALSE and is corrected 2026-09-23: intra_check is the
+    # desk's largest paid cost centre, not a deterministic tick. Measured on
+    # the production DB (llm_budget_sessions): 13-14 paid sessions a day,
+    # $0.5672 of the day's $0.7883 on 2026-09-22 (72%) and $2.3839 of $2.6478
+    # on 2026-09-21 (90%). Two separate derivations were built on the wrong
+    # label before anyone checked. Whether it SHOULD be spending that much is
+    # a live question and not settled here.
+    "intra_check":         (570, 960),   # 09:30 - 16:00 ET  (P&L circuit-breaker + on-trigger paid review, every 30min tick; NOT subject to once-per-day guard)
     "midday":              (780, 870),   # 13:00 - 14:30 ET  (position reviewer, patient)
     "close":               (930, 960),   # 15:30 - 16:00 ET  (position reviewer, act-on-trigger; 30min width guarantees a 30-min launchd tick lands inside regardless of phase)
     "evening":             (1200, 1320), # 20:00 - 22:00 ET  (reporting only)

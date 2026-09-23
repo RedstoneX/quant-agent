@@ -271,10 +271,15 @@ class PositionItem(BaseModel):
     # True only for the configured cash-sweep vehicle (e.g. SGOV) — parked
     # idle cash, never a Portfolio Manager thesis. See LiquidityBreakdown.
     is_cash_equivalent: bool = False
-    # "long" (ordinary equity/ETF) | "bearish_hedge" (an inverse ETF already
-    # in the trading universe — see `src.quantities.inverse_etf_symbols()`,
-    # derived from the one leverage table) | "cash_equivalent" (the sweep
-    # vehicle).
+    # "long" (ordinary equity/ETF, qty > 0) | "short" (qty < 0, any symbol —
+    # see docs/WORK.md item 176: this value did not exist before that fix,
+    # every short position was mislabeled "long") | "bearish_hedge" (qty > 0
+    # in an inverse ETF already in the trading universe — see
+    # `src.quantities.inverse_etf_symbols()`, derived from the one leverage
+    # table; a SHORT position in an inverse ETF is labeled "short", not
+    # "bearish_hedge" — see `_position_direction` in
+    # `src/api/broker_reads.py` for the precedence and why) |
+    # "cash_equivalent" (the sweep vehicle).
     #
     # Display labeling ONLY; computes no exposure/risk math — and unlike
     # before, that is now true on both sides of the wire. The cockpit used
@@ -423,6 +428,13 @@ class LiveQuote(BaseModel):
     # telling you. `None` only when `last_price` itself is `None`.
     quote: PriceObservation | None = None
     prev_close: float | None = None
+    # Whether the `session_*` block below belongs to TODAY (docs/WORK.md
+    # item 120). Alpaca returns the PREVIOUS session's daily bar in that
+    # slot for a name that has not printed today, so without this the
+    # cockpit could draw yesterday's range as this session's. False means
+    # the three fields below are `None` and the caller must not infer a
+    # range for today; it must NOT be rendered as a range of zero.
+    session_bar_is_today: bool = False
     session_open: float | None = None
     session_high: float | None = None
     session_low: float | None = None

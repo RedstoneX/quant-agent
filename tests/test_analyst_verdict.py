@@ -40,8 +40,8 @@ from src.models import (
 )
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.verdicts import (
-    CONVICTION_SCORE, RANKING_SIGNALS, SEAT_WEIGHT, rank_verdicts, score_verdict,
-    seat_weight,
+    CONVICTION_SCORE, RANKING_SIGNALS, SEAT_WEIGHT, level_touches_of,
+    rank_verdicts, score_verdict, seat_weight,
 )
 
 REPO = Path(__file__).parent.parent
@@ -439,8 +439,12 @@ def test_two_seats_on_one_symbol_sum_at_the_research_informed_weight():
     # technical carries risk_reward evidence (2.40, from its 100/95/112
     # fixture geometry); "news" contributes 0 weight, not 0 value:
     # (2.40*1.2) / 1.2 = 2.40. Tiebreak only — never folded into `score`.
+    # level_touches_tiebreak: 0.0 — the `_tech` fixture sets no
+    # `computed_level_touches`, and neither seat here is one that would
+    # carry the evidence anyway besides technical (item 141, 2026-09-20).
     assert c.components == {
         "magnitude": 1.6, "conviction_score": 1.2, "risk_reward_tiebreak": 2.4,
+        "level_touches_tiebreak": 0.0,
     }
     assert c.score == 2.8
     assert c.seats == ["news", "technical"]
@@ -1072,3 +1076,138 @@ def test_the_prompt_says_nothing_is_ranked_when_nothing_is_eligible(monkeypatch)
     )
     assert "(no name passes every pre-decision rule today)" in msg
     assert "- AAA: R3 not BUY-eligible" in msg
+
+
+# ==========================================================================
+# Item 141 (2026-09-20) — the LIVE ranking path's residual alphabetical
+# fallback, left behind by item 1(d) (2026-09-11): a tied composite tier
+# where every candidate is a Type B / breakout setup carries NO risk_reward
+# at all (`reward_risk_floor_applies` is False for breakout, on purpose —
+# `src/risk/constants.py`), so `_reward_risk_sort_values` places the whole
+# tier at a shared 0.0 and `rank_verdicts` used to fall straight to
+# `symbol`. That is the same bug the 2026-09-04 fix (item 18/64 audit)
+# closed for the risk_reward-bearing case, reopened for breakout only.
+# ==========================================================================
+
+def _breakout_tech(symbol: str, touches: int, rating: str = "buy",
+                    conviction: str = "medium") -> TechAnalysisResult:
+    """A Type B / breakout read: no overhead resistance to measure a reward
+    against (so `risk_reward` and the `risk_reward_tiebreak` it feeds are
+    both absent), but a real, measured support side — `touches` prior
+    pivots backing the one support level `find_structural_levels` found,
+    the same count `PortfolioConstructor._level_backing_stop` already
+    trusts elsewhere."""
+    long = rating in ("buy", "strong_buy")
+    stop = 95.0 if long else 105.0
+    # `reference_target` is required on any actionable rating, breakout
+    # included — a measured-move projection, not a defended overhead
+    # level. `reward_risk_floor_applies` is what makes this NOT count as a
+    # comparable reward for ranking, not the absence of the field.
+    target = 120.0 if long else 80.0
+    return TechAnalysisResult(
+        symbol=symbol, rating=rating, conviction=conviction, entry_price=100,
+        stop_loss=stop, reference_target=target,
+        support_levels=[stop] if long else [],
+        resistance_levels=[] if long else [stop],
+        computed_levels=[stop], computed_level_touches={stop: touches},
+        setup_type="breakout", expected_horizon_sessions=10,
+        reasoning="measured-move breakout, no overhead structure",
+        reasoning_chain=_chain(), thesis_invalid_if="closes back below breakout level",
+    )
+
+
+def test_level_touches_evidence_is_attached_and_summed():
+    v = _breakout_tech("AAA", touches=7).to_verdict()
+    assert level_touches_of(v) == 7.0
+    by_label = {e.label: e for e in v.evidence}
+    assert by_label["stop_side_level_touches"].value == 7.0
+
+
+def test_level_touches_only_counts_the_risk_side_not_overhead_supply():
+    """A long's OVERHEAD resistance touches must never count here — that is
+    supply in the way of the trade, not evidence for it. Only the level
+    below entry (the stop side) contributes."""
+    a = TechAnalysisResult(
+        symbol="AAA", rating="buy", conviction="medium", entry_price=100,
+        stop_loss=95, reference_target=112,
+        support_levels=[95], resistance_levels=[112],
+        computed_levels=[95, 112], computed_level_touches={95: 3, 112: 20},
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="x", reasoning_chain=_chain(), thesis_invalid_if="x",
+    )
+    v = a.to_verdict()
+    assert level_touches_of(v) == 3.0  # the 20-touch resistance is excluded
+    # Mirror check on the short side: only the level ABOVE entry counts.
+    b = TechAnalysisResult(
+        symbol="BBB", rating="sell", conviction="medium", entry_price=100,
+        stop_loss=105, reference_target=88,
+        support_levels=[88], resistance_levels=[105],
+        computed_levels=[88, 105], computed_level_touches={88: 20, 105: 4},
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning="x", reasoning_chain=_chain(), thesis_invalid_if="x",
+    )
+    assert level_touches_of(b.to_verdict()) == 4.0  # the 20-touch support excluded
+
+
+def test_all_breakout_tied_tier_breaks_on_level_touches_not_alphabet():
+    """The exact residual case item 141 names: every candidate ties on the
+    composite score (all `buy`/`medium`, same as the item 18 audit's 9-of-12
+    day) AND every candidate is a breakout, so none of them carries a
+    risk_reward tiebreak at all. Z, the last ticker alphabetically, has the
+    most independently-touched support and must still win."""
+    verdicts = [
+        _breakout_tech("Z", touches=9).to_verdict(),
+        _breakout_tech("M", touches=2).to_verdict(),
+        _breakout_tech("A", touches=5).to_verdict(),
+    ]
+    setup_types = {"Z": "breakout", "M": "breakout", "A": "breakout"}
+    ranked = rank_verdicts(verdicts, setup_types=setup_types)
+    assert [c.score for c in ranked] == [ranked[0].score] * 3  # composite tied
+    for c in ranked:
+        assert "risk_reward_tiebreak" not in c.components  # breakout: no R/R at all
+    assert [c.symbol for c in ranked] == ["Z", "A", "M"]
+    # Unweighted — see `level_touches_of` for why `SEAT_WEIGHT` does not
+    # apply to a deterministic pivot count.
+    assert [c.components["level_touches_tiebreak"] for c in ranked] == [9.0, 5.0, 2.0]
+    # Pure and stable: same input, same order, every time.
+    assert [c.symbol for c in rank_verdicts(verdicts, setup_types=setup_types)] == [
+        "Z", "A", "M",
+    ]
+
+
+def test_measured_tie_pattern_9_of_12_all_breakout_orders_on_structure():
+    """Realistic synthetic data reproducing the measured tie rate the board
+    item cites (docs/WORK.md item 141; docs/INCIDENT_HISTORY.md 2026-09-04,
+    9 of 12 real names tied one day): 12 candidates, 9 tied on the identical
+    `buy`/`medium` composite, all of them breakout so the risk_reward
+    tiebreak this desk already shipped for the range case (2026-09-04) does
+    not reach them. Reverse-alphabetical touch counts prove the order is
+    driven by structure, not by ticker spelling running the other way by
+    coincidence."""
+    tied_symbols = ["AAPL", "CRM", "CHPX", "JNJ", "JPM", "MSFT", "TSM", "CMCSA", "PFE"]
+    verdicts = [
+        _breakout_tech(sym, touches=len(tied_symbols) - i).to_verdict()
+        for i, sym in enumerate(tied_symbols)  # AAPL gets the most touches
+    ]
+    # 3 more names at other composite scores, unaffected by this tiebreak.
+    verdicts += [
+        _tech("SLB", "strong_buy", "high").to_verdict(),
+        _tech("VLO", "strong_sell", "high").to_verdict(),
+        _tech("XLE", "sell", "low").to_verdict(),
+    ]
+    setup_types = {sym: "breakout" for sym in tied_symbols}
+    setup_types.update({"SLB": "range", "VLO": "range", "XLE": "range"})
+    ranked = rank_verdicts(verdicts, setup_types=setup_types)
+    tied = [c for c in ranked if c.symbol in tied_symbols]
+    assert len(tied) == 9
+    # Highest touch count first — AAPL, which is *not* alphabetically first
+    # among the tied set by ranking-relevant means (CHPX and CMCSA sort
+    # before it), wins because it has the most measured structure, not
+    # because of its spelling.
+    assert [c.symbol for c in tied] == tied_symbols
+    # Unweighted — see `level_touches_of`.
+    assert [c.components["level_touches_tiebreak"] for c in tied] == [
+        float(n) for n in range(9, 0, -1)
+    ]
+    # Confirms this is NOT the alphabetical order the old fallback produced.
+    assert [c.symbol for c in tied] != sorted(tied_symbols)

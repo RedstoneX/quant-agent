@@ -98,6 +98,58 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
 })
 
 
+# === Defect B (2026-09-22): a transient provider fault must not need a human ===
+#
+# These two hard triggers, and ONLY these two, describe the same thing: a
+# provider request that FAILED and whose (therefore bounded, single-call)
+# cost could not be proven. They are the class that has actually taken the
+# desk down -- four operator resets on this pair and not one of them
+# followed a budget breach [measured, llm_circuit_events on the production
+# DB: 2026-08-31 x2 and 2026-09-22 `failed_call_unknown_cost`, 2026-09-16
+# `legacy_unknown_cost`]. `_auto_clear_transient_latch_locked` lets them
+# expire, under every guard documented there.
+#
+# EVERYTHING ELSE STAYS OPERATOR-ONLY, on purpose:
+#   * `unknown_actual_cost` -- a call that SUCCEEDED and returned output
+#     with no usage telemetry. Real tokens were generated; the unknown is
+#     real spend, not a failed attempt.
+#   * `non_monotonic_quota_hold_day` -- clock regression or accounting
+#     corruption. An integrity fault, never transient.
+#   * `daily_cost_limit` / `session_cost_limit` -- real breaches. They are
+#     not hard latches at all; they expire with their own budget window and
+#     nothing here touches them.
+#   * the durable emergency file latch (`mark_unavailable`) -- the circuit's
+#     own infrastructure failed, so nothing it computes can be trusted.
+#     Checked explicitly and separately below.
+#   * any unrecognized future code -- `_trigger_scope` already defaults it
+#     to hard, and it is not in this set, so it stays hard.
+#
+# `legacy_unknown_cost` is in the set but is NOT unconditionally
+# self-clearing: it also fires for pre-deployment log rows and for a
+# completed call with no telemetry. The guard that separates them is the
+# day's `failed_call_unknown_rows`, which must account for EVERY unknown row
+# on the day before anything is forgiven.
+#
+# THE ALTERNATIVE THAT WAS REJECTED (adversary, 2026-09-23). Rather than
+# expire the latch, compute a conservative worst-case dollar bound for the
+# failed call from `src/cost_table.py` and each seat's `max_tokens`, book it
+# as settled spend, and let `daily_cost_limit` do the rest -- one mechanism
+# instead of two, and no cooldown or allowance to justify. It is a real
+# argument and it is what this module used to do. Item 14 (OWNER-APPROVED
+# 2026-09-02, see `LLMCostCircuitConfig`) deleted exactly that machinery,
+# measuring it holding ~2.6x what was ever spent and stopping the desk on
+# money that was never spent. Re-deriving a worst-case charge here is the
+# reservation layer under a new name, and it books a number nobody paid --
+# which is the failure mode the desk has ruled out twice over. The latch
+# still refuses to clear while settled spend is at cap, so the real ceiling
+# is unchanged; what is bounded instead of priced is the COUNT of unproven
+# failed calls a day may forgive.
+_SELF_CLEARING_HARD_TRIGGERS = frozenset({
+    "failed_call_unknown_cost",
+    "legacy_unknown_cost",
+})
+
+
 def _trigger_scope(code: Any) -> str:
     if not isinstance(code, str):
         return "hard"
@@ -141,6 +193,48 @@ def _trigger_scope(code: Any) -> str:
 # ambiguous errors" inversion this fix must not become.
 _KNOWN_ZERO_COST_STATUS_CODES = frozenset({400, 401, 403, 404, 429})
 
+# === Defect A (2026-09-22): 503 UNAVAILABLE ===
+#
+# A 503 is NOT a validation rejection, so it does not belong in the set
+# above, and it is the one status whose zero-cost-ness depends on WHEN it
+# arrived rather than on the number alone. Two genuinely different things
+# carry it:
+#
+#   (a) BEFORE generation. The provider refuses the request for capacity:
+#       Google AI Studio's "This model is currently experiencing high
+#       demand. Spikes in demand are usually temporary." The SDK raises an
+#       HTTP status error off the response headers, no body was ever
+#       generated, and nothing is metered -- the same billing position as
+#       a 429, which is already allow-listed. On 2026-09-22 that exact
+#       error arrived 17 times [measured: production log], the last
+#       tech_analyst attempt failed on primary and failover, and because
+#       503 was missing here the call was booked ambiguous and hard-latched
+#       the desk for over nine hours on $0.7883 of a $2.75 day.
+#
+#   (b) MID-STREAM. OpenRouter cannot change an HTTP status once the first
+#       byte is out, so it reports an upstream failure as an in-band SSE
+#       error chunk whose `code` is the status the response WOULD have
+#       carried (see `LLMStreamErrorChunk` in src/agents/base.py). Tokens
+#       may already have been generated and billed before that chunk. That
+#       is ambiguous, and it must stay ambiguous.
+#
+# The two are distinguishable, and only by the exception's class -- not by
+# the status code, which is 503 either way. So 503 is allow-listed subject
+# to a mid-stream veto rather than unconditionally.
+#
+# Left deliberately unchanged: a MID-STREAM 429 is still treated as free.
+# That is not an oversight here, it is the ratified 2026-08-31 fix that
+# `LLMStreamErrorChunk` exists to deliver, and re-litigating it is not this
+# change's job. The veto is applied only to the status this change adds.
+_PRE_GENERATION_CAPACITY_STATUS_CODES = frozenset({503})
+
+# Exception class names that mean "this status was reported from inside an
+# already-started response body". Matched by NAME, not `isinstance`: this
+# module must not import src.agents.base (see the module docstring -- the
+# breaker stays independent of every provider client and of the agent
+# layer), exactly as `_PRE_SEND_TRANSPORT_EXC_NAMES` below does.
+_MID_STREAM_EXC_NAMES = frozenset({"LLMStreamErrorChunk"})
+
 # Exception class names that can ONLY occur while establishing a TCP/TLS
 # connection -- i.e. strictly before a single byte of the request could
 # have been written to the socket: DNS resolution failure, a refused/reset
@@ -158,11 +252,48 @@ _PRE_SEND_TRANSPORT_EXC_NAMES = frozenset({
 })
 
 
+def _cause_chain(error: BaseException, limit: int = 6) -> list[BaseException]:
+    """`error` plus its wrapped causes, de-duplicated and length-bounded.
+
+    SDKs wrap the concrete failure (`raise APIConnectionError(...) from exc`)
+    rather than replacing it, so the specific original is usually still
+    reachable even when the outermost class name is uninformative.
+    """
+    seen: set[int] = set()
+    chain: list[BaseException] = []
+    node: BaseException | None = error
+    for _ in range(limit):  # generous bound against a pathological chain
+        if node is None or id(node) in seen:
+            break
+        seen.add(id(node))
+        chain.append(node)
+        node = node.__cause__ or node.__context__
+    return chain
+
+
+def _is_mid_stream_failure(error: BaseException) -> bool:
+    """True when this failure was reported from inside a started response.
+
+    Fail closed in the ambiguous direction: the whole cause chain is
+    checked, so a mid-stream error merely WRAPPED by something else still
+    vetoes the zero-cost claim. `__context__` can attach an unrelated
+    earlier exception, which can only ever make this return True when it
+    might have returned False -- i.e. charge a call that may have been
+    free. That is the conservative side, and it is the side this module
+    errs on everywhere else too.
+    """
+    return any(
+        type(node).__name__ in _MID_STREAM_EXC_NAMES
+        for node in _cause_chain(error)
+    )
+
+
 def _is_known_zero_cost_failure(error: BaseException) -> bool:
     """True only for a provider failure PROVEN to have cost $0.
 
     Fail closed: anything not explicitly matched here -- an unrecognized
-    exception, a 5xx, a timeout waiting for a response, a truncated
+    exception, a 5xx other than a pre-generation 503, a 503 reported from
+    inside a started stream, a timeout waiting for a response, a truncated
     stream, a missing/unexpected status code -- returns False (ambiguous,
     today's conservative accounting, unchanged by this function). This is
     an allow-list of what is safe to call zero-cost; it must never grow
@@ -170,26 +301,25 @@ def _is_known_zero_cost_failure(error: BaseException) -> bool:
     """
     status = getattr(error, "status_code", None)
     if isinstance(status, int) and not isinstance(status, bool):
-        return status in _KNOWN_ZERO_COST_STATUS_CODES
+        if status in _KNOWN_ZERO_COST_STATUS_CODES:
+            return True
+        if status in _PRE_GENERATION_CAPACITY_STATUS_CODES:
+            # Free only when the provider refused BEFORE generating. The
+            # same number reported from inside a started stream may already
+            # have billed tokens -- see the note on
+            # `_PRE_GENERATION_CAPACITY_STATUS_CODES`.
+            return not _is_mid_stream_failure(error)
+        return False
     # No HTTP status code was ever received: this is either a genuine
     # pre-send transport failure or something ambiguous (a read/write
     # timeout, a connection dropped mid-response, ...). Walk the
-    # exception's cause chain -- SDKs wrap the concrete httpx/socket/ssl
-    # exception (`raise APIConnectionError(...) from exc`) rather than
-    # replacing it, so the original, specific failure is almost always
-    # still reachable even though the top-level wrapper's own class name
+    # exception's cause chain -- the top-level wrapper's own class name
     # ("APIConnectionError") is, by itself, ambiguous about which side of
     # the connection failed.
-    seen: set[int] = set()
-    node: BaseException | None = error
-    for _ in range(6):  # generous bound against a pathological chain; never expected to matter
-        if node is None or id(node) in seen:
-            break
-        seen.add(id(node))
-        if type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES:
-            return True
-        node = node.__cause__ or node.__context__
-    return False
+    return any(
+        type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES
+        for node in _cause_chain(error)
+    )
 
 
 def _all_attempts_provably_free(
@@ -306,6 +436,12 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             baseline_cost_usd REAL NOT NULL DEFAULT 0,
             incremental_cost_usd REAL NOT NULL DEFAULT 0,
             unknown_cost_rows INTEGER NOT NULL DEFAULT 0,
+            -- Subset of unknown_cost_rows contributed by a FAILED call
+            -- (`fail_call`), as opposed to a completed call with no usage
+            -- telemetry or a pre-deployment log row. Only this subset is
+            -- eligible for the transient self-clear; see
+            -- `_auto_clear_transient_latch_locked`.
+            failed_call_unknown_rows INTEGER NOT NULL DEFAULT 0,
             costs_exact INTEGER NOT NULL DEFAULT 1,
             seeded_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -435,6 +571,14 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE llm_budget_days ADD COLUMN costs_exact INTEGER "
             "NOT NULL DEFAULT 1"
         )
+    if "failed_call_unknown_rows" not in day_columns:
+        # Defaults to 0, so any unknown row already on the books when this
+        # column appears is attributed to the NON-self-clearing class and
+        # still needs an operator. Migrating conservatively is the point.
+        conn.execute(
+            "ALTER TABLE llm_budget_days ADD COLUMN failed_call_unknown_rows "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
     session_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(llm_budget_sessions)")
     }
@@ -517,6 +661,22 @@ def _et_day_and_utc_bounds(now: datetime | None = None) -> tuple[str, str, str]:
         start.strftime("%Y-%m-%d %H:%M:%S"),
         end.strftime("%Y-%m-%d %H:%M:%S"),
     )
+
+
+def _et_day_from_sqlite_utc(stamp: str) -> str | None:
+    """The ET day a `datetime('now')` timestamp falls on, or None.
+
+    SQLite writes UTC without an offset. A latch stamped at 23:00 ET is
+    already the next UTC day, and the accounting is keyed on ET days, so
+    the conversion has to be explicit rather than a string prefix.
+    """
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            parsed = datetime.strptime(stamp.strip()[:19], fmt)
+        except ValueError:
+            continue
+        return parsed.replace(tzinfo=timezone.utc).astimezone(_ET).date().isoformat()
+    return None
 
 
 def _legacy_mode(run_id: str) -> str:
@@ -1694,6 +1854,217 @@ class LLMCostCircuitBreaker:
         )
         return state
 
+    def _auto_clear_transient_latch_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        current_day: str,
+    ) -> bool:
+        """Expire a hard latch raised by a transient provider failure.
+
+        Defect B (2026-09-22). A latch of the `_SELF_CLEARING_HARD_TRIGGERS`
+        class -- a provider call that FAILED with an unprovable cost -- used
+        to sit until a human noticed. It never once sat because money had
+        actually run out: all four such latches on the production DB were
+        cleared by an operator with spend well under cap [measured]. On
+        2026-09-22 that cost the close run, the evening run and nine hours
+        of refused analysis on 29% of the daily budget.
+
+        WHAT THIS DELIBERATELY DOES NOT DO. It never moves a dollar and
+        never touches a cap: settled spend on the day and the session rows
+        is left exactly as recorded, `self.config`'s limits are only read,
+        and `_enforce_settled_limits_locked` -- which runs at every
+        authorization boundary, including immediately after this on the same
+        connection -- re-latches instantly if real spend is over the line.
+        The only thing cleared is the "we could not prove this figure" flag
+        on rows this circuit itself booked as failed calls.
+
+        Every one of these must hold, or nothing happens:
+
+        1. The circuit is suspended on a hard trigger in
+           `_SELF_CLEARING_HARD_TRIGGERS`. Any other code -- an integrity
+           fault, a completed call with unknown cost, anything unrecognized
+           -- keeps the durable operator-reset latch, unchanged.
+        2. No durable emergency file latch exists. That path means the
+           circuit's own infrastructure failed, so nothing it computes may
+           be trusted to authorize its own recovery; it stays operator-only.
+        3. Every unknown row is a failed-call row, checked on EVERY day the
+           latch spans -- the ET day it was stamped on and today. A latch
+           can outlive midnight (the 2026-09-22 one did, 15:17 UTC to 00:33
+           UTC), and today's row is freshly seeded with zero unknown rows,
+           so checking only today would wave through a latch whose actual
+           unproven rows sit on yesterday. One row of any other provenance,
+           on either day, and it waits for a human. A `failed_call` counter
+           ABOVE the total it is a subset of is corruption, and also
+           refuses -- deliberately as a refusal to self-clear rather than
+           as an accounting invariant, so a bug in this counter falls back
+           to the operator instead of escalating to the emergency latch.
+        4. `transient_latch_cooldown_minutes` of wall clock has elapsed
+           since `suspended_at`, measured by SQLite against the same clock
+           that wrote it. A negative elapsed time (clock regression) does
+           not qualify.
+        5. The day's auto-clear allowance is not spent. A fault recurring
+           past that is not transient, and the next occurrence latches
+           durably -- which is also what bounds how many unproven-cost calls
+           one day can forgive without a human.
+        6. Settled day and session spend are both strictly under their caps
+           already. This never reopens into a breach.
+
+        Returns True when the latch was cleared.
+        """
+
+        state = self._state_row(conn)
+        if not int(state.get("suspended") or 0):
+            return False
+        code = state.get("trigger_code")
+        if code not in _SELF_CLEARING_HARD_TRIGGERS:
+            return False
+        if (
+            self._emergency_latch_path is not None
+            and self._emergency_latch_path.exists()
+        ):
+            return False
+
+        suspended_at = state.get("suspended_at")
+        if not suspended_at:
+            return False
+
+        # Every ET day this latch spans, not just today. `_seed_today`
+        # creates today's row once, with zero unknown rows, so a latch that
+        # outlived midnight would otherwise be judged against a clean slate
+        # while its real unproven rows sat on yesterday -- and the incident
+        # this fix exists for is exactly one that crossed midnight.
+        spanned_days = {current_day}
+        latch_day = _et_day_from_sqlite_utc(str(suspended_at))
+        if latch_day is None:
+            # An unparseable stamp is not a day this can vouch for.
+            return False
+        spanned_days.add(latch_day)
+        failed_call_rows = 0
+        for day in sorted(spanned_days):
+            day_row = conn.execute(
+                "SELECT unknown_cost_rows, failed_call_unknown_rows "
+                "FROM llm_budget_days WHERE day=?",
+                (day,),
+            ).fetchone()
+            if day_row is None:
+                if day == current_day:
+                    return False
+                # The stamped day predates this DB's accounting entirely;
+                # there is nothing recorded to vouch for either way.
+                return False
+            unknown = int(day_row["unknown_cost_rows"] or 0)
+            failed = int(day_row["failed_call_unknown_rows"] or 0)
+            if unknown != failed:
+                # Covers both "a row of another provenance" and the
+                # corruption case where the subset exceeds its total.
+                return False
+            failed_call_rows += failed
+        elapsed_row = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
+            (suspended_at,),
+        ).fetchone()
+        elapsed = elapsed_row["minutes"] if elapsed_row is not None else None
+        cooldown = float(
+            getattr(self.config, "transient_latch_cooldown_minutes", 15.0)
+        )
+        if elapsed is None or float(elapsed) < cooldown:
+            return False
+
+        _, utc_start, utc_end = _et_day_and_utc_bounds()
+        already = conn.execute(
+            "SELECT COUNT(*) AS n FROM llm_circuit_events "
+            "WHERE event_type='auto_reset' AND created_at BETWEEN ? AND ?",
+            (utc_start, utc_end),
+        ).fetchone()
+        allowance = int(
+            getattr(self.config, "max_transient_latch_auto_clears_per_day", 14)
+        )
+        used = int(already["n"] if already else 0)
+        if used >= allowance:
+            logger.error(
+                "cost-circuit refusing to auto-clear %s: %d auto-clear(s) "
+                "already used today of an allowance of %d. A fault recurring "
+                "this often is not transient; an operator must look.",
+                code, used, allowance,
+            )
+            return False
+
+        run_id, mode = self._context()
+        daily, session_cost = self._totals(conn, current_day, run_id)
+        daily_limit = float(self.config.daily_cost_limit_usd)
+        session_limit = float(self.config.session_cost_limit_usd)
+        if daily >= daily_limit or session_cost >= session_limit:
+            return False
+
+        reason = (
+            f"transient provider latch {code} auto-expired after "
+            f"{float(elapsed):.1f} min (cooldown {cooldown:.0f} min); "
+            f"{failed_call_rows} failed-call row(s) of unproven cost forgiven, "
+            f"settled spend untouched at ${daily:.4f}/${daily_limit:.2f} day "
+            f"and ${session_cost:.4f}/${session_limit:.2f} session; "
+            f"auto-clear {used + 1} of {allowance} today"
+        )
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd) VALUES "
+            "('auto_reset', ?, ?, ?, ?, 'transient_latch_expiry', ?, ?, ?)",
+            (
+                code, reason, run_id, mode,
+                int(state.get("session_attempts") or 0),
+                session_cost, daily,
+            ),
+        )
+        updated_state = conn.execute(
+            "UPDATE llm_circuit_state SET suspended=0, trigger_code=NULL, "
+            "trigger_detail=NULL, run_id=NULL, mode=NULL, agent_name=NULL, "
+            "session_attempts=0, session_cost_usd=0, daily_cost_usd=0, "
+            "attempts_exact=1, costs_exact=1, "
+            "suspended_at=NULL, alert_state=0, reset_at=datetime('now'), "
+            "reset_reason=?, updated_at=datetime('now') WHERE singleton=1",
+            (reason,),
+        )
+        if updated_state.rowcount != 1:
+            raise RuntimeError(
+                "cost-circuit singleton could not be auto-cleared"
+            )
+        if failed_call_rows:
+            # Exactly the operator-reset treatment, and for the same reason
+            # (see `reset`): the recorded AMOUNT is untouched, only the
+            # unprovable-figure flag goes, so the reconciler can rearm.
+            #
+            # `llm_budget_sessions` is deliberately NOT touched, which keeps
+            # this strictly weaker than the operator path rather than
+            # stronger. An adversary pass on 2026-09-23 found an earlier
+            # draft flipping 'call_failed' sessions back to 'active' and
+            # clearing their costs_exact: that enforced nothing (only the
+            # DAY-level unknown row gates anything) and made
+            # `_canonical_run_cost` in src/api/db_reads.py report a
+            # by-construction-unknown run cost to the dashboard as an exact
+            # dollar figure. The session row stays as the record of what
+            # happened.
+            #
+            # CURRENT DAY ONLY, exactly the rows `reset` writes. A second
+            # adversary pass on 2026-09-23 caught an earlier draft clearing
+            # every spanned day: nothing reads a PAST day's flags (every
+            # consumer keys on the current ET day), so the write bought
+            # nothing, and it stamped costs_exact=1 on a historical day
+            # whose cost was never proven -- rewriting settled history to
+            # look provable is the same defect as the session-row rewrite,
+            # relocated. The spanned-day CHECK above stays: reading
+            # yesterday to decide is the safety, writing it is not.
+            conn.execute(
+                "UPDATE llm_budget_days SET unknown_cost_rows=0, "
+                "failed_call_unknown_rows=0, costs_exact=1, "
+                "updated_at=datetime('now') WHERE day=?",
+                (current_day,),
+            )
+        logger.warning(
+            "cost-circuit auto-cleared hard latch %s: %s", code, reason,
+        )
+        return True
+
     def _reconcile_quota_holds_locked(
         self,
         conn: sqlite3.Connection,
@@ -1701,6 +2072,14 @@ class LLMCostCircuitBreaker:
         current_day: str,
     ) -> None:
         """Rearm completed ET-day quota windows without weakening hard faults."""
+
+        # Defect B (2026-09-22): a transient provider latch expires on its
+        # own. Placed here because every authorization boundary
+        # (activate_session / enforce_current_limits / begin_call /
+        # before_provider_attempt / status) already calls this reconciler
+        # inside its own write transaction, so one insertion covers them all
+        # and none of them can observe a stale latch.
+        self._auto_clear_transient_latch_locked(conn, current_day=current_day)
 
         hard_state = self._state_row(conn)
         if int(hard_state.get("suspended") or 0):
@@ -2742,6 +3121,13 @@ class LLMCostCircuitBreaker:
                 updated_day = conn.execute(
                     "UPDATE llm_budget_days SET "
                     "unknown_cost_rows=unknown_cost_rows+1, "
+                    # Provenance for the self-clear: this unknown row came
+                    # from a call that FAILED, so its unproven cost is
+                    # bounded by one attempt rather than being real
+                    # unmeasured spend. Kept as a separate counter so
+                    # `_auto_clear_transient_latch_locked` can refuse to
+                    # forgive a day that also carries any other kind.
+                    "failed_call_unknown_rows=failed_call_unknown_rows+1, "
                     "costs_exact=0, updated_at=datetime('now') WHERE day=?",
                     (day,),
                 )
@@ -2850,9 +3236,23 @@ class LLMCostCircuitBreaker:
         reserve charged for the unresolved request, which over-states cost
         rather than under-stating it. Only the "we could not prove this
         figure" flag is cleared, and only by a named operator giving a
-        reason. Deciding that a conservative figure is good enough to
-        continue on is precisely an operator's call; recomputing what the
-        provider really charged is not something this code can honestly do.
+        reason. Recomputing what the provider really charged is not
+        something this code can honestly do.
+
+        Deciding that a conservative figure is good enough to continue on
+        was, until 2026-09-23, described here as "precisely an operator's
+        call" full stop. That is now true with one bounded exception, and
+        the sentence is amended rather than left to disagree with the code:
+        `_auto_clear_transient_latch_locked` makes the same decision without
+        a human for rows this circuit itself booked as FAILED calls, and
+        only those, under the guards listed on that method -- a cooldown, a
+        finite daily allowance, spend under both caps, and every unknown row
+        on every day the latch spans being one of that kind. Real unmeasured
+        spend from a call that SUCCEEDED, an integrity fault, and the
+        durable infrastructure latch are all still this method's alone. The
+        argument for the exception is in `docs/INCIDENT_HISTORY.md` under
+        2026-09-22: four operator resets of that one class on the live
+        circuit, not one of them following a budget breach.
         """
 
         reason = reason.strip()
@@ -2920,6 +3320,7 @@ class LLMCostCircuitBreaker:
                     # conservative number the operator has accepted.
                     conn.execute(
                         "UPDATE llm_budget_days SET unknown_cost_rows=0, "
+                        "failed_call_unknown_rows=0, "
                         "costs_exact=1, updated_at=datetime('now') WHERE day=?",
                         (current_day,),
                     )

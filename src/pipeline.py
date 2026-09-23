@@ -3218,6 +3218,81 @@ class TradingPipeline:
                     return True
         return False
 
+    @staticmethod
+    def _resolve_live_context(snapshots: dict, symbols: list) -> tuple:
+        """Freshness-resolve a bulk snapshot reply into per-symbol context.
+
+        Shared by the morning Tech pass and the intraday opportunity scan,
+        because both hand the SAME payload to the SAME seat and only one of
+        them used to check it (docs/WORK.md item 120). Returns
+        `(context, missing, stale, rescued)`.
+
+        `context[sym]` is either `{"live_unavailable": reason}` or the raw
+        snapshot decorated with `live_price` / `live_price_source` /
+        `live_price_at` / `live_price_description`, with the `session_*`
+        block blanked when the daily bar in it belongs to a prior session.
+        """
+        from src.data.live_price import (
+            NO_PRICE_AT_ALL, SOURCE_LAST_TRADE, resolve_live_price,
+        )
+
+        out: dict[str, dict] = {}
+        missing: list[str] = []
+        stale: list[str] = []
+        rescued: dict[str, str] = {}
+        blanked: list[str] = []
+        for sym in symbols:
+            snap = snapshots.get(sym) or {}
+            resolved = resolve_live_price(snap)
+            if resolved.price is None:
+                (missing if resolved.unavailable == NO_PRICE_AT_ALL
+                 else stale).append(sym)
+                out[sym] = {"live_unavailable": resolved.unavailable}
+                continue
+            # The RAW provider price is deliberately NOT republished here.
+            # It sits a key away from the resolved one, still carrying a
+            # prior session's number, and the next reader picking the wrong
+            # one is this bug returning. What no consumer can reach, no
+            # consumer can misread.
+            entry = {k: v for k, v in snap.items()
+                     if k not in ("last_price", "minute_close")}
+            entry["live_price"] = resolved.price
+            entry["live_price_source"] = resolved.source
+            entry["live_price_at"] = resolved.as_of
+            entry["live_price_description"] = resolved.describe()
+            if not resolved.session_bar_is_today:
+                # The daily bar in this payload belongs to a PRIOR session.
+                # Blank it rather than let a caller render yesterday's
+                # open/high/low/volume under a "today" heading.
+                blanked.append(sym)
+                for field in ("session_open", "session_close", "session_high",
+                              "session_low", "session_volume"):
+                    entry[field] = None
+            if resolved.source != SOURCE_LAST_TRADE:
+                rescued[sym] = resolved.source
+            out[sym] = entry
+        # Blanking every priced name at once is the signature of the one
+        # assumption in `resolve_live_price` that has never been checked
+        # against a live call: that a daily bar's timestamp carries the
+        # session's ET date. If that is wrong this fires on day one instead
+        # of the session range vanishing silently.
+        priced = len(symbols) - len(missing) - len(stale)
+        if blanked and priced and len(blanked) == priced:
+            logger.error(
+                "live session context: EVERY priced symbol (%d) had a daily "
+                "bar dated to a prior session. One name is ordinary; all of "
+                "them means the daily-bar timestamp convention is not what "
+                "`src/data/live_price.py` assumes — check it before trusting "
+                "any session range", len(blanked),
+            )
+        elif blanked:
+            logger.info(
+                "live session context: %d symbol(s) carried a PRIOR session's "
+                "daily bar; their session range is blanked rather than shown "
+                "as today's (item 120): %s", len(blanked), blanked[:10],
+            )
+        return out, missing, stale, rescued
+
     def _live_session_context(self, symbols) -> dict[str, dict]:
         """Live, in-progress-session price facts for `symbols`, or {}.
 
@@ -3231,13 +3306,33 @@ class TradingPipeline:
         - Outside regular hours: {} — completed bars ARE current (after the
           close today's bar is complete; pre-market/weekend the last close
           is the latest price that exists).
-        - In session: one bulk snapshot. A symbol with no last trade, or
-          whose last trade is not from today (holiday, halt, feed gap), gets
-          `{"live_unavailable": reason}` and a WARNING — rendered as an
-          explicit STALE label, never silently replaced by yesterday.
+        - In session: one bulk snapshot, resolved through
+          `src.data.live_price.resolve_live_price`. A symbol with no print
+          from TODAY on any of the snapshot's three print-derived fields
+          gets `{"live_unavailable": reason}` and a WARNING — rendered as an
+          explicit STALE label, never silently replaced by yesterday, and
+          never replaced by a quote mid.
         Never raises.
+
+        2026-09-20, board item 120: this used to read `last_price` alone. On
+        2026-09-17 that cost 8 of 104 names their technical seat at the open
+        while today's forming bar in the SAME payload already held the open,
+        because a thin name's `latest_trade` can still be yesterday's minutes
+        into the session on an IEX entitlement. Two changes follow from that:
+        the resolver now falls through to today's minute bar and then today's
+        forming session bar (both aggregations of real prints on the same
+        entitled venue, neither a quote), and the `session_*` block is
+        BLANKED when the snapshot's daily bar is not today's — Alpaca returns
+        the previous session's bar in that slot for a name that has not
+        printed, and it was being rendered to the analyst as "CURRENT SESSION
+        (TODAY)".
+
+        The resolved number is published as `live_price` (with
+        `live_price_source` and `live_price_at`), NOT as `last_price`. The
+        raw provider field keeps its own name so no reader can pick up an
+        unchecked number believing it was checked.
         """
-        from src.trading_calendar import in_regular_session, live_price_is_today
+        from src.trading_calendar import in_regular_session
 
         symbols = [s for s in (symbols or []) if s]
         if not symbols or not in_regular_session():
@@ -3247,30 +3342,22 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("live session context: snapshot read failed: %s", exc)
             snapshots = {}
-        out: dict[str, dict] = {}
-        missing: list[str] = []
-        stale: list[str] = []
-        for sym in symbols:
-            snap = snapshots.get(sym) or {}
-            last = snap.get("last_price")
-            if not isinstance(last, (int, float)) or last <= 0:
-                missing.append(sym)
-                out[sym] = {"live_unavailable": "no live trade price returned"}
-                continue
-            if not live_price_is_today(snap.get("last_trade_at")):
-                stale.append(sym)
-                out[sym] = {
-                    "live_unavailable": "last trade is not from today's session",
-                }
-                continue
-            out[sym] = dict(snap)
+        out, missing, stale, rescued = self._resolve_live_context(snapshots, symbols)
         if missing or stale:
             logger.warning(
                 "live session context: in-session price unavailable for %d/%d "
-                "symbol(s) (no price: %s; not today: %s) — labelled STALE in "
-                "the Tech prompt, not replaced by the last close",
+                "symbol(s) (no price: %s; no today print: %s) — labelled STALE "
+                "in the Tech prompt, not replaced by the last close and never "
+                "by a quote mid",
                 len(missing) + len(stale), len(symbols),
                 missing[:10], stale[:10],
+            )
+        if rescued:
+            logger.info(
+                "live session context: %d/%d symbol(s) had no today last-trade "
+                "print but a today bar on the same venue, priced from it "
+                "rather than losing the seat (item 120): %s",
+                len(rescued), len(symbols), sorted(rescued.items())[:10],
             )
         return out
 
@@ -14458,13 +14545,15 @@ class TradingPipeline:
                 # cannot drain until tomorrow.
                 logger.info(
                     "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
-                    "cap_reached=%s watched_read_through=%s/%s drain_deadline_hit=%s",
+                    "cap_reached=%s watched_read_through=%s/%s "
+                    "drain_deadline_hit=%s edgar_coverage=%s",
                     smart_money_refresh.get("pending_filings"),
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
                     smart_money_refresh.get("watched_names_read_through"),
                     smart_money_refresh.get("watched_names"),
                     smart_money_refresh.get("watched_drain_deadline_hit"),
+                    smart_money_refresh.get("edgar_coverage"),
                 )
                 # ...and RECORDED where the desk records its status. Until
                 # 2026-09-19 these counts existed only in a log line and the
@@ -15430,7 +15519,7 @@ class TradingPipeline:
             "watched_names", "watched_names_read_through",
             "watched_names_unread", "watched_unchecked_names",
             "watched_drain_ran", "watched_drain_read",
-            "watched_drain_deadline_hit", "error",
+            "watched_drain_deadline_hit", "edgar_coverage", "error",
         )
         _persist_evidence(
             getattr(self, "db", None), run_id=run_id,
@@ -15484,9 +15573,74 @@ class TradingPipeline:
         cap_reached = bool(refresh.get("discovery_cap_reached"))
         names = int(refresh.get("watched_names") or 0)
         names_read = int(refresh.get("watched_names_read_through") or 0)
-        if read_through == today and not watched_pending and not unchecked:
+        # Board item 126. EDGAR publishes its own count of the Form 4s filed
+        # on a day. When the morning read could not obtain that count, it
+        # cannot tell "nobody filed anything" from "our read of the filings
+        # service came back broken" — and the second case used to reach this
+        # desk looking exactly like the first.
+        #
+        # Fail CLOSED on a missing record, matching the morning seat in
+        # src/pipeline_stages.py: a refresh that ran a Form 4 pass and
+        # recorded no coverage answered the question not at all, which is
+        # not the same as answering it well. A refresh that carries the
+        # Form 4 drain keys is held to this, and so is one that reports an
+        # error — a sub-provider that raised outright produces neither the
+        # drain keys nor a coverage record, and that is the LOUDEST case,
+        # not an exemption. A wrapper with neither is not asked to answer
+        # for coverage it never had; it is NOT thereby let off the alert,
+        # because an empty `watched_read_through` still trips the ordinary
+        # did-not-finish clause below.
+        edgar = refresh.get("edgar_coverage")
+        form4_answered = "watched_drain_ran" in refresh or bool(refresh.get("error"))
+        edgar_unverified = (
+            form4_answered
+            and not (isinstance(edgar, dict) and edgar.get("verified"))
+        )
+        record = edgar if isinstance(edgar, dict) else {}
+        # Reported whether or not anything is wrong. The market-wide scan is
+        # bounded by its own deadline and in production reaches a minority
+        # of the lookback window, so "how much of the window did we check"
+        # is a fact the owner needs on an ORDINARY morning — rendering it
+        # only on the failure branch would have shown him the honest number
+        # exactly when it was least representative.
+        #
+        # Gated on whether coverage was RECORDED, not merely present. A
+        # blank record is all zeros, and "read 0 of 0 filings across 0 of 0
+        # days" reads to a human as nothing to worry about when it means
+        # the opposite — the same trap `ratio` already avoids by answering
+        # None to nought-of-nought rather than 1.0.
+        if record.get("known"):
+            coverage_line = (
+                "Insider-filing coverage this morning: read "
+                f"{record.get('enumerated', 0)} of {record.get('edgar_total', 0)} "
+                "filings the service reported, across "
+                f"{record.get('days_queried', 0)} of "
+                f"{record.get('days_in_window', 0)} days looked at."
+            )
+        elif record:
+            coverage_line = (
+                "Insider-filing coverage this morning: NOT KNOWN — the "
+                "morning read did not record how much of the filing service "
+                "it covered."
+            )
+        else:
+            coverage_line = ""
+        if coverage_line:
+            logger.info("PRE-OPEN: %s", coverage_line)
+        if (
+            read_through == today and not watched_pending and not unchecked
+            and not edgar_unverified
+        ):
             return
         why: list[str] = []
+        if edgar_unverified:
+            reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) \
+                or "no coverage was recorded at all"
+            why.append(
+                "the filing service did not account for how many filings "
+                f"existed, so a quiet day and a failed read cannot be told "
+                f"apart ({reasons})",
+            )
         if names:
             why.append(
                 f"{names_read} of our {names} companies have every insider "
@@ -15522,6 +15676,10 @@ class TradingPipeline:
             + ". Until it does, the desk still makes its trading decisions "
             "but without complete insider evidence, and each decision "
             "records that. Existing positions and their stops are unaffected."
+            # Carried whatever the reason for the alert, not only when
+            # coverage itself is the complaint — the counts are the context
+            # for every other line above them.
+            + (f" {coverage_line}" if coverage_line else "")
         )
         logger.error("PRE-OPEN: %s", text)
         try:
@@ -15744,9 +15902,14 @@ class TradingPipeline:
         When the wire DID move, the peek that proved it holds current wire
         text. Hand that to the heal path (`ctx.heal_news_text`) so the
         expired seat is re-asked with the data this tick already paid for,
-        instead of being lost while fresh headlines are thrown away. The
-        evidence gate is untouched: expired is still LOST unless the
-        re-ask actually succeeds.
+        instead of being lost while fresh headlines are thrown away.
+
+        The evidence gate is untouched by this, but NOT because expired is
+        lost — it stopped being lost when #535 split `CATEGORY_EXPIRED` out
+        on 2026-09-18, which is what orphaned this hand-off for five days.
+        The gate is untouched because the re-ask changes only whether a
+        fresher answer exists, never what the gate does with the answer the
+        desk already holds. See `evidence_gate.HEALABLE_CATEGORIES`.
         """
         from src.evidence_kind import news_reuse
         try:
@@ -15956,7 +16119,12 @@ class TradingPipeline:
             logger.error("seat heal: owner alert failed: %s", e)
 
     def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
-        """One paid retry for a LOST seat. False if we cannot honestly retry.
+        """One paid retry for a LOST or EXPIRED seat, once per ET day.
+
+        False if we cannot honestly retry. An EXPIRED seat is a REFRESH, not
+        a recovery: the desk holds the earlier answer and will decide on it
+        either way, so every owner-facing sentence out of here must say that
+        rather than claim the seat was lost.
 
         Intra often has no FRED/news stack. A retry without inputs would
         invent the seat — refuse that, and do not burn the retry slot.
@@ -15964,9 +16132,25 @@ class TradingPipeline:
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import (
-            HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_PAID_RETRY,
-            can_paid_retry, record_paid_retry,
+            HealResult, HEAL_CAP_BLOCKED, HEAL_DAY_CAP, HEAL_FAILED,
+            HEAL_PAID_RETRY, can_paid_retry, record_paid_retry,
         )
+        from src import evidence_gate as _gate
+        # An EXPIRED seat is being REFRESHED, not recovered: the desk holds
+        # the earlier answer and will decide on it whatever happens here. Any
+        # owner page from this function must say so, because the default
+        # sentence ("the desk will not decide on this seat as if it had
+        # answered") is true of a lost seat and false of this one — the
+        # owner-facing-lie class of defect item 133 closed.
+        _incoming = (getattr(ctx, "data_status", None) or {}).get(seat)
+        _expired_seat = (
+            _gate.STATUS_CATEGORY.get(_incoming) == _gate.CATEGORY_EXPIRED
+        )
+        _consequence = (
+            "The desk still holds this seat's earlier answer and will decide "
+            "on it, labelled as carried rather than read this tick. No trade "
+            "was withheld for this."
+        ) if _expired_seat else ""
         retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
         if not can_paid_retry(retries, seat):
             return False
@@ -16000,13 +16184,74 @@ class TradingPipeline:
                 return False
         if seat == "tech":
             return False
+        # Cross-tick cap, checked HERE — after the honest-inputs checks
+        # above, never before them. A tick that has no wire text would have
+        # refused anyway, and a day-cap row on that tick would record the cap
+        # as the binding constraint when it was not. That row's whole purpose
+        # is to be the evidence that later settles whether one refresh a day
+        # is the right number, so it must only be written when the cap is
+        # what actually stopped the spend.
+        #
+        # `retries` above is per-RunContext and a RunContext is one tick;
+        # intra_check runs every 30 minutes and an expired seat is still
+        # expired on the next tick, so without this the "one paid retry" is
+        # one per tick. It was: production recorded EIGHT paid news heals on
+        # 2026-09-18. See Database.count_paid_seat_heals_today.
+        db = getattr(self, "db", None)
+        counter = getattr(db, "count_paid_seat_heals_today", None)
+        if callable(counter):
+            try:
+                spent_today = counter(seat)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("seat heal: day-cap read failed for %s: %s", seat, e)
+                spent_today = None
+            if spent_today is None:
+                # Could not find out, which is NOT the same as nothing spent.
+                # Allowed through on purpose: the cost circuit below is the
+                # fail-closed authority for spend and still runs, so a sick
+                # forensic store cannot silently stop the desk buying fresher
+                # news. Logged at WARNING so the degradation is visible
+                # rather than assumed.
+                logger.warning(
+                    "seat heal: could not read %s's day allowance; allowing "
+                    "the retry and leaving the spend to the cost circuit", seat,
+                )
+            elif not can_paid_retry({seat: int(spent_today)}, seat):
+                logger.info(
+                    "seat heal: %s already had its one paid retry today "
+                    "(%d spent); not re-asking", seat, spent_today,
+                )
+                # Durable, not just a log line. "The desk declined to pay for
+                # fresher research on this tick" is a decision about money,
+                # and it is the only record that could ever show whether one
+                # refresh a day is the right number. Not an owner page: the
+                # cap doing its job is not an incident.
+                self._record_heal(
+                    ctx,
+                    HealResult(
+                        seat=seat, outcome=HEAL_DAY_CAP,
+                        reason=(
+                            f"seat already had its one paid heal this ET day "
+                            f"({spent_today} recorded); not re-asking"
+                        ),
+                        paid_retry=False,
+                        details={
+                            "spent_today": int(spent_today),
+                            "was_expired": _expired_seat,
+                        },
+                        owner_consequence=_consequence,
+                    ),
+                    alert=False,
+                )
+                return False
         try:
             require(agent_name)
         except PaidAnalysisSuspended as exc:
             blocked = HealResult(
                 seat=seat, outcome=HEAL_CAP_BLOCKED,
                 reason=f"spend cap blocked the one paid retry: {exc}",
-                paid_retry=False,
+                paid_retry=False, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, blocked, alert=True)
             return False
@@ -16018,12 +16263,24 @@ class TradingPipeline:
             if seat == "macro":
                 analysis, _raw = analyze(ctx.macro_summary)
             else:
-                analysis, _raw = analyze(getattr(ctx, "heal_news_text", ""))
+                # Pass this run's session. The analyst's session guidance
+                # defaults to MORNING ("treat today as a fresh book... this
+                # report sets the tone for the day's trading"), which is
+                # false on a 14:00 intra_check — the same mislabelling audit
+                # round 2 #24 already fixed for the close session. The other
+                # arguments stay at their defaults: a heal re-ask genuinely
+                # has no universe or prior-session baseline to offer, and
+                # inventing one would be worse than admitting it.
+                analysis, _raw = analyze(
+                    getattr(ctx, "heal_news_text", ""),
+                    session=getattr(ctx, "session", None) or "intra_check",
+                )
         except Exception as exc:  # noqa: BLE001
             failed = HealResult(
                 seat=seat, outcome=HEAL_FAILED,
                 reason=f"paid heal retry raised: {exc}",
-                paid_retry=True,
+                paid_retry=True, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
@@ -16031,7 +16288,8 @@ class TradingPipeline:
             failed = HealResult(
                 seat=seat, outcome=HEAL_FAILED,
                 reason="paid heal retry returned no usable output",
-                paid_retry=True,
+                paid_retry=True, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
@@ -16049,39 +16307,79 @@ class TradingPipeline:
             ctx,
             HealResult(
                 seat=seat, outcome=HEAL_PAID_RETRY,
-                reason="one paid retry replaced a lost seat",
+                reason=(
+                    "one paid retry refreshed a superseded seat"
+                    if _expired_seat else
+                    "one paid retry replaced a lost seat"
+                ),
                 payload=payload, paid_retry=True, usable=True,
+                details={"was_expired": _expired_seat},
             ),
             alert=False,
         )
         return True
 
     def _heal_lost_research_seats(self, ctx: RunContext) -> None:
-        """After carry-forward: log lost seats. Don't page empty-store gaps
+        """After carry-forward: log unhealed seats. Don't page empty-store gaps
         (the evidence gate already pages those). Attempt a paid retry only
-        when the seat's inputs actually exist on this run."""
+        when the seat's inputs actually exist on this run.
+
+        Selects work by `evidence_gate.HEALABLE_CATEGORIES`, which covers a
+        LOST seat (no answer) and an EXPIRED one (an answer the desk knows is
+        superseded). Those two are deliberately different categories to the
+        evidence gate and stay different: this loop reads the set only to
+        decide whether to go and LOOK again, and changes no verdict, no skip,
+        no degraded count and no freshness label. Testing for CATEGORY_LOST
+        here is what orphaned the expired-news refresh on 2026-09-18.
+        """
         from src import evidence_gate
         from src.seat_heal import HealResult, HEAL_FAILED
         data_status = ctx.data_status or {}
         for seat, status in list(data_status.items()):
-            if evidence_gate.STATUS_CATEGORY.get(status) != evidence_gate.CATEGORY_LOST:
+            category = evidence_gate.STATUS_CATEGORY.get(status)
+            if category not in evidence_gate.HEALABLE_CATEGORIES:
                 continue
             # Empty store: nothing to heal. Gate skip is the owner page.
             if status == "carry_forward_empty":
                 continue
+            was_expired = category == evidence_gate.CATEGORY_EXPIRED
             attempted = self._try_one_paid_research_retry(ctx, seat)
             still = (ctx.data_status or {}).get(seat)
-            if evidence_gate.STATUS_CATEGORY.get(still) == evidence_gate.CATEGORY_LOST:
-                result = HealResult(
-                    seat=seat, outcome=HEAL_FAILED,
-                    reason=f"seat still {still} after mechanical heal",
-                    details={"status": still, "paid_retry_attempted": attempted},
-                )
-                # Page only when we actually paid a retry and it failed.
-                # Kind-expiry / empty-store without inputs is the evidence
-                # gate's skip, not a second owner page.
-                alert = bool(attempted)
-                self._record_heal(ctx, result, alert=alert)
+            if evidence_gate.STATUS_CATEGORY.get(still) not in evidence_gate.HEALABLE_CATEGORIES:
+                continue
+            # A LOST seat is recorded whether or not a retry was possible —
+            # that row is the forensic trail for an absent answer. An EXPIRED
+            # seat is not absent, and most expired seats (insider, earnings)
+            # have no heal wired at all by design (#535 dissolved that
+            # asymmetry rather than repairing it), so recording every one of
+            # them would bury the real rows in noise. Record an expired seat
+            # only when the desk actually tried and failed.
+            if was_expired and not attempted:
+                continue
+            # An expired seat that could not be refreshed is NOT a seat the
+            # desk will refuse to decide on — it still holds the earlier
+            # answer. Saying otherwise in the alert would repeat the
+            # owner-facing lie item 133 fixed, so the consequence sentence is
+            # overridden rather than defaulted.
+            consequence = (
+                "The desk still holds this seat's earlier answer and will "
+                "decide on it, labelled as carried rather than read this "
+                "tick. No trade was withheld for this."
+            ) if was_expired else ""
+            result = HealResult(
+                seat=seat, outcome=HEAL_FAILED,
+                reason=f"seat still {still} after mechanical heal",
+                details={
+                    "status": still,
+                    "paid_retry_attempted": attempted,
+                    "was_expired": was_expired,
+                },
+                owner_consequence=consequence,
+            )
+            # Page only when we actually paid a retry and it failed.
+            # Kind-expiry / empty-store without inputs is the evidence
+            # gate's skip, not a second owner page.
+            self._record_heal(ctx, result, alert=bool(attempted))
 
     def _intraday_held_tech_symbols(self, ctx: RunContext) -> list[str]:
         """Investable holdings that need current-run Technical on this scan.
@@ -16124,6 +16422,10 @@ class TradingPipeline:
         cannot vanish the mover list. A skip after wait names these
         symbols in a durable reason instead of dropping them silently.
         """
+        from src.data.live_price import (
+            NO_PRICE_AT_ALL, NO_SNAPSHOT, resolve_live_price,
+        )
+
         cfg = self.config.intraday_scan
         universe = list(self.config.trading.universe)
         snapshots = self.broker.get_intraday_snapshots(universe) or {}
@@ -16132,12 +16434,34 @@ class TradingPipeline:
         candidates: list[tuple[str, float]] = []
         for symbol in universe:
             snap = snapshots.get(symbol) or {}
-            last = snap.get("last_price")
+            # item 120: the move that buys a PAID look has to be today's.
+            # This read `last_price` straight, so a name still carrying a
+            # prior session's print measured a move that did not happen
+            # today. Same resolver as the morning Tech pass, so "today" is
+            # decided in one place.
+            resolved = resolve_live_price(snap)
+            last = resolved.price
             prev = snap.get("prev_close")
-            if not (isinstance(last, (int, float)) and isinstance(prev, (int, float))):
+            # The miss counter pages the owner after three consecutive
+            # scans with "check whether the ticker is still valid/tradable
+            # on Alpaca". It exists to tell a BROKEN ticker from a quiet
+            # one (`src/storage/db.py`), so a thin name that simply has not
+            # printed today must NOT feed it — item 120's own filing names
+            # two IEX-thin names in exactly that state, and paging on them
+            # would be a false alarm. A symbol the feed returned nothing
+            # for at all is still a miss.
+            fed_nothing = resolved.unavailable in (NO_SNAPSHOT, NO_PRICE_AT_ALL)
+            if not isinstance(prev, (int, float)) or (
+                last is None and fed_nothing
+            ):
                 self._track_intraday_snapshot_miss(symbol)
                 continue
             self._track_intraday_snapshot_ok(symbol)
+            if last is None:
+                # Quiet, not broken: the feed answered, the name has no
+                # today print. It cannot have moved today, so it buys no
+                # paid look — and it does not page anybody either.
+                continue
             if prev <= 0:
                 continue
             move_pct = abs(last - prev) / prev * 100.0
@@ -16349,9 +16673,20 @@ class TradingPipeline:
         # never as a completed daily bar. Held names already in the
         # universe snapshot are included; a hold outside that snapshot
         # still gets bars, just no live-session block.
-        intraday_context = {
-            s: snapshots[s] for s in tech_symbols if s in snapshots
-        }
+        # item 120: resolved through the SAME freshness rule the morning
+        # pass uses. This used to hand Tech the raw snapshot, so a name
+        # whose last trade was a prior session's could be rendered to the
+        # intraday seat as "CURRENT SESSION (TODAY)".
+        intraday_context, _missing, _stale, _rescued = self._resolve_live_context(
+            snapshots, [s for s in tech_symbols if s in snapshots],
+        )
+        if _missing or _stale:
+            logger.warning(
+                "Intraday scan: no today print for %d symbol(s) handed to Tech "
+                "(no price: %s; no today print: %s) — labelled as a lost price "
+                "seat, never replaced by a prior session's number",
+                len(_missing) + len(_stale), _missing[:10], _stale[:10],
+            )
         self._require_paid_analysis("intraday_tech_analyst")
         analyses_map, ta_result = self.tech_analyst.analyze_batch(
             symbols_data,

@@ -33,13 +33,45 @@ from src.api.deps import (
     get_risk_limits,
 )
 from src.execution.broker import AlpacaBroker, _internal_symbol
+from src.trading_calendar import live_price_is_today
 
 logger = logging.getLogger(__name__)
 
 
-def _position_direction(symbol: str, sweep_symbol: str) -> str:
+def _position_direction(symbol: str, sweep_symbol: str, qty: float | None) -> str:
+    """Display-labeling ONLY — see `PositionItem.direction` in
+    `src/api/schemas.py`. Computes no exposure/risk math; a wrong label here
+    used to make every short position read as "long" on the wire (docs/WORK.md
+    item 176), because this never looked at the sign of `qty`.
+
+    Precedence, in order:
+
+    1. `cash_equivalent` — identity-based (the configured sweep vehicle),
+       independent of quantity. Checked first because it names what the
+       position IS (parked cash), not which way it is pointed.
+    2. `short` — `qty < 0`, whatever the symbol. This takes priority over
+       the inverse-ETF check below: `bearish_hedge` specifically means "a
+       LONG position in an inverse ETF, held as the desk's mechanism for
+       bearish exposure without shorting" (see `INVERSE_ETF_SYMBOLS` and
+       `src.quantities.inverse_etf_symbols()`). An actual SHORT position in
+       an inverse ETF is not that — it is an unusual, doubly-inverted bet
+       (economically closer to long the underlying) and must not be hidden
+       under the `bearish_hedge` label, which every consumer reads as "long
+       an inverse ETF."
+    3. `bearish_hedge` — `qty > 0` (or unknown-sign, see below) in a symbol
+       already in the trading universe's inverse-ETF set.
+    4. `long` — the default for everything else.
+
+    `qty` of exactly `0` or `None` carries no directional sign, so it falls
+    through step 2 unchanged (never raises on `None < 0`) and is labeled by
+    steps 3/4 exactly as before this fix — a flat/unknown-quantity position
+    was never a case this label tried to distinguish, and a zero-quantity
+    position never carries risk either way.
+    """
     if symbol == sweep_symbol:
         return "cash_equivalent"
+    if qty is not None and qty < 0:
+        return "short"
     if symbol in INVERSE_ETF_SYMBOLS:
         return "bearish_hedge"
     return "long"
@@ -200,7 +232,7 @@ def read_positions() -> dict:
                 "unrealized_intraday_pnl": getattr(p, "unrealized_intraday_pnl", None),
                 "sector": getattr(p, "sector", None),
                 "is_cash_equivalent": p.symbol == sweep_symbol,
-                "direction": _position_direction(p.symbol, sweep_symbol),
+                "direction": _position_direction(p.symbol, sweep_symbol, p.qty),
             })
         return {"positions": out, "error": None}
     except Exception as exc:
@@ -557,6 +589,12 @@ def read_live_quotes(symbols: list[str]) -> dict:
             if last_price is not None or snap.get("prev_close") is not None:
                 any_data = True
             last_trade_at = snap.get("last_trade_at")
+            # item 120: Alpaca returns the PREVIOUS session's daily bar in
+            # the `daily_bar` slot for a name that has not printed today, so
+            # these three were capable of showing yesterday's range on the
+            # cockpit as this session's. Blank them unless the bar's own
+            # timestamp says today.
+            session_is_today = live_price_is_today(snap.get("session_bar_at"))
             quotes[sym] = {
                 "last_price": last_price,
                 "quote": {
@@ -569,9 +607,10 @@ def read_live_quotes(symbols: list[str]) -> dict:
                     "freshness": _quote_freshness(last_trade_at, session_open),
                 } if last_price is not None else None,
                 "prev_close": snap.get("prev_close"),
-                "session_open": snap.get("session_open"),
-                "session_high": snap.get("session_high"),
-                "session_low": snap.get("session_low"),
+                "session_bar_is_today": session_is_today,
+                "session_open": snap.get("session_open") if session_is_today else None,
+                "session_high": snap.get("session_high") if session_is_today else None,
+                "session_low": snap.get("session_low") if session_is_today else None,
             }
         # get_intraday_snapshots itself never raises — a total read failure
         # (bad/absent credentials, market-data outage) degrades to `{}` for

@@ -22,6 +22,652 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — every short position on the live dashboard was labeled "long" (item 176)
+
+**In plain words:** the owner spotted it himself — a position's quantity showed negative on the dashboard while the word next to it said "long." Two real shorts were affected on the day this was found: FLNC (qty -36, $268.56 short) and UPS (qty -7, $670.53 short), both confirmed live via the running API.
+
+**What was actually broken.** `_position_direction()` in `src/api/broker_reads.py`, which sets the `direction` field on every row of the `/positions` API response, never looked at the sign of quantity — it only checked symbol identity (the cash-sweep vehicle) and inverse-ETF membership, defaulting everything else to `"long"`. It computes no exposure or risk math (that already comes from `src.quantities.net_exposure_usd`, independent of this label), so the defect was purely cosmetic, but cosmetic on the one screen the owner actually watches.
+
+**Fix.** `qty < 0` now returns `"short"`, checked before the inverse-ETF check — a short position in an inverse ETF (an unusual, doubly-inverted bet) is labeled `"short"`, not `"bearish_hedge"` (which specifically means a long position in an inverse ETF, the desk's normal bearish mechanism). The cash-sweep identity check still wins over quantity sign, unchanged. `qty` of `0` or `None` falls through unchanged rather than raising on `None < 0`. Frontend: the Role-column badge now colors `"short"` distinctly (previously any unrecognized value, including a hypothetical `"short"`, would have rendered the same green as `"long"`), and the account summary's Long/Hedge/Liquidity money breakdown gained a fourth Short tile so a short's market value is shown honestly instead of silently understating the Long tile.
+
+**What did NOT change.** The Liquidity tile's actual number: the residual math (`portfolio value minus everything identified`) already summed to the same figure either way, algebraically, whether a short's negative value was hidden inside the wrong tile or given its own — only which tile it is honestly shown in changed.
+
+---
+
+### 2026-09-22 — a busy provider took the trading desk offline for nine hours, and it was the second time in a week
+
+**In plain words:** the desk's spending safety switch is supposed to stop
+paid analysis when money is at risk. Instead it stopped the desk because
+Google's model was busy. Google replied "this model is currently
+experiencing high demand, try again later" seventeen times in one day; the
+switch could not tell that a "busy" reply costs nothing, decided it might
+have been charged for something it could not measure, and shut the desk
+down. It stayed down from 15:17 UTC until an operator noticed and cleared
+it by hand at 00:33 the next morning — through the close run and the
+evening run, with markets reopening that day. The desk had spent 79 cents
+of a $2.75 daily allowance. Nothing was over budget. The same class of
+false shutdown had already happened on 2026-09-16, and twice on 2026-08-31.
+
+**The measurements.** 17 HTTP 503 "high demand" responses on 2026-09-22 and
+on no other day in the log window; settled spend at the moment of the trip
+$0.7883 of $2.75 for the day and $0.0388 of $0.90 for the session; four
+operator resets of this trigger class on the live circuit's own event log
+(2026-08-31 twice, 2026-09-16, 2026-09-22) and not one of them following a
+budget breach.
+
+**Cause 1 — "busy" was filed under "might have cost money".** The circuit
+keeps a short, deliberately narrow list of provider errors it will accept
+as provably free: the ones where the provider rejects the request before it
+generates anything, so there is nothing to bill. Rate-limiting (429) is on
+that list. A capacity refusal (503) is the same thing wearing a different
+number, and it had simply never been added. Everything not on the list is
+treated as possibly-billed, and a single possibly-billed failure is enough
+to shut the desk.
+
+**Why this was not just "add 503 to the list".** The list is narrow on
+purpose, and there is a real line underneath it: a failure BEFORE the
+request is sent costs nothing, while a failure partway through the reply
+may already have been charged for the words generated so far. Not every 503
+is the harmless kind. When the relay cannot change an HTTP status any more
+— because the reply has already started — it reports the failure inside the
+reply instead, carrying the status the reply would have had. That one is
+genuinely ambiguous. The two cases turn out to be distinguishable, but only
+by which kind of error object arrives, never by the number, which is 503
+either way. So 503 is now accepted as free only when it did not come from
+inside a started reply. What was deliberately left alone: a mid-reply 429
+is still treated as free, which is the ratified 2026-08-31 behaviour and a
+separate argument.
+
+**Cause 2 — the shutdown had no way back on.** Nothing cleared this latch
+except a human typing a reset with a reason. A provider hiccup therefore
+suspended the desk indefinitely, and the only thing standing between a
+transient outage and a missed trading day was somebody happening to look.
+That is what turned a two-minute provider blip into nine hours.
+
+**Where the line was drawn on letting it clear itself.** Only a latch
+raised by a provider call that FAILED expires on its own, because a failed
+call's unproven cost is bounded by one attempt. Everything else still waits
+for a person: a call that SUCCEEDED but reported no cost (real tokens were
+generated, so the unknown is real spend), an accounting-integrity fault
+such as a clock running backwards, a real budget breach, and any failure of
+the circuit's own storage — in that last case nothing the circuit computes
+can be trusted to authorise its own recovery. Four further guards apply
+before anything expires: every unproven row on the day must be one this
+circuit itself booked as a failed call; settled spend must still be under
+both caps; a cooldown must have passed; and the day's allowance of
+self-clears must not be spent, so a fault that keeps recurring stops being
+treated as transient and goes back to waiting for a person. The unproven-row
+check runs against every day the shutdown spans, not just today — the
+2026-09-22 one crossed midnight, and the next morning's accounting starts
+clean, so checking only the current day would have waved through a shutdown
+whose actual unproven rows sat on the day before.
+
+**Both numbers took three attempts to derive, and the second attempt was
+wrong for an interesting reason.** The code's own description of the
+desk's every-30-minutes intraday check says it makes no model calls. That
+is false. On the production database the intraday check is the desk's
+LARGEST spender on models — 72% of the money on the day of this incident,
+90% on the day before, thirteen or fourteen paid runs a day — and the run
+that tripped this very latch was one of them. Two separate derivations
+were built on that one wrong sentence before anybody checked it against
+the database, including one written in response to an adversary review
+that had correctly rejected the first. The sentence is now corrected where
+it lives.
+
+Corrected: the only hard bound on the cooldown is the gap between
+consecutive runs that can spend money, which is that 30-minute cadence —
+at or above it a second run is lost, which is the damage being fixed.
+There is no floor, because the run that trips the latch stops at the trip;
+the one on 2026-09-22 ran 88 seconds end to end. So 15 minutes is the
+midpoint of the only interval that matters, which is the value furthest
+from both ways of getting it wrong. The daily allowance is one forgiveness
+per scheduled run that can spend money — nineteen, the fourteen intraday
+ticks plus the five named sessions.
+
+**The lesson worth keeping is not about 503s.** A comment describing what
+a job does was wrong, and two rounds of careful reasoning inherited the
+error because reading the comment is cheap and querying the database is
+not. Both times the number came out defensible-sounding. Check the claim
+the number rests on, not just the arithmetic on top of it.
+
+**What a self-clear does not do:** it moves no money and raises no cap.
+Recorded spend is left exactly as it stands, the caps are only read, and
+the settled-limit check runs immediately afterwards, so a circuit cleared
+while genuinely over budget re-latches at once.
+
+**What would catch it next time.** Eight deliberate breakages of this fix
+were each confirmed to fail a test, including the two that matter most:
+blanket-allowing 503 regardless of where it came from, and letting a
+real-spend latch expire on the transient path. The remaining known gap is
+on the board as item 174 — a suspension reaches the owner on Telegram but a
+self-clear does not, so he can still be left believing the desk is down
+when it is back.
+
+---
+
+### 2026-09-23 — the desk counted a protective stop as if it had already sold the shares, so its own share count was wrong on live positions (item 173)
+
+**In plain words:** when the desk places a protective stop order at the
+broker, it writes a row saying so. That row is a *standing instruction* —
+"sell if the price falls this far" — not a sale. The bookkeeping treated it
+as a sale anyway, and subtracted the whole protected position from the
+desk's record of what it owns. On the live account this made the desk
+believe it held no AMD when it actually held 1.7662 shares, and believe it
+held *negative* COP and EQNR when both were flat.
+
+**Why it mattered, and why nobody saw it.** Nothing the owner reads was
+wrong. Positions, daily P&L and realized profit all come from broker truth
+or from a separate calculation that already ignored unfilled stops, and no
+protective-stop row anywhere in the live database carries a realized-P&L
+figure [verified read-only against the production database, 2026-09-23]. The
+damage was to a safety net. `_reconcile_stop_out_fills` is the check that
+compares what the ledger believes it holds against what the broker actually
+shows, and catches a protective stop that fired without being recorded — the
+gap that lost the 2026-08-28 ONDS/CCJ stop-outs. It skips any symbol it
+believes is flat. So the one thing that guarantees a symbol is skipped is
+having a protective stop on it, which is to say: exactly the symbols that
+can be stopped out were the symbols the stop-out detector could not see.
+AMD was in that state and held real money. The defect made itself invisible
+to the very detector it disabled, which is why it survived every pass that
+looked at the detector's own results.
+
+**The cause.** `Database.get_symbols_with_open_ledger_qty` signed rows from
+the action name alone: BUY and SWEEP_BUY add, everything else subtracts.
+That reasoning holds for every other exit action, because those rows are
+only written once the desk has decided to sell. A TRAIL_STOP row is written
+at *placement*. Compounding it, the shared "did this execute" predicate
+treats a row with no fill status as executed, which is the shape all three
+live rows carry.
+
+**What was ruled out.** Not a new rule and not a threshold: the repo already
+drew this distinction in four places (`_is_filled_trail_stop`,
+`compute_trade_calibration`, `_assign_position_ids`,
+`_categorize_exit_reason`) and this one function simply never used it.
+
+**The trap inside the fix.** Deferring to `_is_filled_trail_stop` alone
+would have introduced the same class of bug pointing the other way. That
+helper answers "is this a priceable realized exit", so it requires a
+`filled` status. A stop that fills *partially* and is then canceled carries
+a terminal status that is not `filled` but has really moved shares. A pure
+share-count ledger has to subtract those or it over-reports. The share-count
+question and the realized-exit question are genuinely different questions,
+and the fix now has its own small helper that says so in as many words.
+
+**What would catch it next time.** The class is "a ledger signing a row by
+its action name, when the row's meaning depends on its fill state." The
+tests added with the fix take a protective stop through every fill status
+the fill reconciler can actually write — and take the *list* of those
+statuses from that reconciler's own code rather than retyping it, with a
+check that fails if the two ever diverge. They also cover the resting and
+filled cases on the short side, and cross-check the share-count ledger
+against the round-trip calibration for a resting and a fired stop.
+
+**What the adversary pass found in the fix itself, and what changed.** Three
+of the fill-state tests passed for the wrong reason: the shared executed-row
+predicate admits no `submitted`, `canceled`, `expired` or `pending_submit`
+row that carries no fill quantity, so the new Python branch never ran and
+the assertion would have held even with the rule inverted. They now pin the
+Python rule directly as well as the end-to-end number — worth recording
+because a test that cannot fail is indistinguishable from one that passes.
+The new helper also answered "yes" for any row at all that carried a fill
+quantity, which would have handed a true-by-default answer to a future
+caller; it now checks the action. A second pass then found that the
+replacement fill-status list had been enumerated by hand and silently
+omitted three statuses the reconciler really writes — `done_for_day`,
+`rejected`, and `cancelled` with two Ls next to `canceled` with one — of
+which `done_for_day` carrying a partial fill is the ordinary real-world
+instance of the exact shape the wider rule was built for. The list is now
+derived from the writer, which is the same two-copies-drift the tests were
+added to catch, reappearing inside the fix for it. Several claims in
+earlier drafts of this entry were themselves too strong and were cut.
+
+**Not fixed here, carried as item 173:**
+
+- Correcting the count exposed a real EQNR gap the corrupted number had been
+  hiding. EQNR left the held book between 16:19 and 16:45 UTC on 2026-09-21
+  with no trades row for the remaining 8.5962 shares. That is inside the
+  seven-day lookback now, so the next pass should find the broker order and
+  write it back — but past roughly 2026-09-28 it falls out of the window,
+  and the owner alert has no dedup or throttle of any kind, so it would then
+  page CRITICAL at every session entry point, every day. Separately, nothing
+  establishes that EQNR's exit was a protective stop; writing it back as one
+  would stamp a cause the evidence does not support onto owner-facing P&L.
+- The reconciler still runs before the fill reconciler, so a sale the desk
+  placed and has not yet reconciled pages a false CRITICAL (NUE, 2026-09-21,
+  self-corrected 476 ms later).
+- The short side is still signed from the action name: a COVER, and a
+  buy-to-cover TRAIL_STOP the broker filled, subtract from a short instead
+  of retiring it. Unchanged by this fix and silent today, because the
+  reconciler skips any negative as a short. Pinned by a test that states it
+  is wrong.
+
+### 2026-09-23 — a proposed drift-detection test (item 171) was folded into an existing item instead of built, because it would not have caught either bug it cited
+
+**In plain words:** a request to build a test that catches a prompt sentence lying about what the code does, filed a third time, was retired — not because the idea is wrong, but because a check aimed only at deleted code cannot catch the two real bugs it names, and a stronger version of that check already belongs to another open item.
+
+**Why item 99(d) looked like enough, and why it wasn't quite.** 99(d) already tells the desk to grep for a removed mechanism's name across every prompt when it is deleted. An adversary review, asked directly whether folding 171 into 99(d) would lose anything, found it would: item 98 (the seat told 20 bars when the code sent 40) and item 168 (the seat told ~120 days when the code fetches 1800) are both a number going quietly stale against a config or code value that was never deleted — 99(d)'s own check only fires on a deletion, so neither bug would ever trip it. The adversary also caught 99(d)'s text claiming no drift defect ever lived in a prompt file, which is false for item 168: its wrong sentence is in `config/prompts/tech_analyst.md`.
+
+**What actually closed item 98** was not a scanner reading prompt text for suspicious numbers — that was tried in reasoning and rejected as too noisy (99(d) already records why: ~1,825 numeric tokens in the prompts are mostly dates and list numbering). It was rendering the sentence from the live value instead of typing a number by hand, with a test that fails if the two ever disagree again. Item 168 already carries that same fix as its own DONE WHEN.
+
+**What changed.** Item 99(d) gains a new criterion (99(g)): every prompt sentence stating a code- or config-controlled fact must either be rendered from that value or pinned by a drift test in item 168's pattern, on top of the existing deletion-site grep. Item 171 is retired — its number, not its intent.
+
+---
+
+### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
+
+**In plain words:** two items on the backlog board had already been marked
+retired, with their reasons squeezed into the board's own "retired numbers"
+footer instead of a real write-up here — the exact bloat this file exists to
+prevent. Neither is a new finding; both are being recorded properly now so
+the board text can be trimmed to a pointer.
+
+**Item 146 — a stop-tolerance question that was already answered before it
+was filed.** The item asked whether the level-match tolerance should be
+derived from an ATR multiple (`level_match_atr_tolerance`). That setting key
+had already been removed on 2026-09-13 as part of item 46, and the tolerance
+was already being derived from `src.data.levels.CLUSTER_TOLERANCE_PCT`
+instead. The item's premise was false at filing, so it closed with no fix
+needed. Its one live piece — the horizon-arithmetic residue — was not
+discarded; it was folded into the standing DECIDE-BY mandate bullet at the
+top of the board, which it was only ever supporting evidence for. Retired
+2026-09-19.
+
+**Item 156 — the congressional-trading Form 4 drain could run past its own
+tick deadline.** The drain that pulls new Form 4 accessions for congressional
+trading shared its processing loop with the tick's overall time budget but
+had no budget or progress tracking of its own, so a slow issuer could burn
+the whole tick before later issuers were even attempted. Closed by PR #539
+(commit 0f758a95): the drain now runs against its own budget and tracks
+per-issuer progress, so a slow issuer no longer starves the ones queued
+behind it. Retired 2026-09-19.
+
+---
+
+### 2026-09-20 — the live desk's technical ranking still fell back to ticker spelling for one specific kind of trade, after the 2026-09-04 fix (WORK.md item 141, retired)
+
+**In plain words:** when several stocks the desk was considering scored exactly the same and none of them had a measurable reward-to-risk number — which only happens for "breakout" trades, the kind with no overhead price target to measure a reward against — the desk still picked among them by ticker spelling. Every other kind of tie was already fixed two weeks earlier. This was the one case that fix didn't reach, because a later, separate, correct decision (don't measure a reward-to-risk ratio for a breakout at all) removed the only number the earlier fix used to break ties.
+
+**What was actually still broken, and what was not.** Item 141 was filed citing the same measured tie rates (64% of technical reads sharing a composite score; 9 of 12 names tied one real day, 23 of 33 another) as the 2026-09-04 fix to `src/verdicts.py::rank_verdicts`, which already breaks a tied composite score on each candidate's reward:risk ratio before falling back to the ticker symbol. That fix is live and wired into `PortfolioManagerAgent.rank_candidates` today — most of what item 141 described was already closed. The gap it still exposed: the 2026-09-11 change (item 1(d)) correctly stopped scoring a reward:risk ratio for breakout trades at all (a breakout has no overhead level being defended, so any "reward" number for one is invented). But `rank_verdicts`'s tier-neutral placement gives every candidate with no ratio the same value, so a tied tier where every member is a breakout still fell straight through to alphabetical order.
+
+**Fix.** A third-stage tiebreak, reached only after both the composite score and the reward:risk ratio are equal (including all-absent). `TechAnalysisResult.to_verdict()` now attaches `stop_side_level_touches`: the number of prior chart pivots backing the structural levels on the RISK side of the trade only (below entry for a long, above it for a short) — the same touch count `PortfolioConstructor._level_backing_stop` already trusts elsewhere to decide whether a stop earns a tight-stop exemption, and the only side of the chart `reward_risk_floor_applies`'s own doctrine says a breakout is judged on at all. The first version of this fix summed touches from BOTH sides of the chart (overhead resistance included), which a qamc-adversary review caught as scoring supply-in-the-way for a long as if it were support — fixed by filtering to the risk side before shipping. The same review caught that the tiebreak was being weighted by `SEAT_WEIGHT`, a published prior on how reliably a TYPE of analysis forecasts direction — inapplicable to a deterministic pivot count, and latently double-counting if a second seat ever attached the same evidence label; the weighting was removed.
+
+**What this does not close.** The adversary review raised two points accepted as real, unresolved limits, not blockers for a third-tier tiebreak among already-tied, already-eligible candidates: (1) a distance-discounted version of this signal (`Level.strength` in `src/data/levels.py`) already exists and would resolve a non-monotonicity this raw touch-count doesn't handle, but plumbing it onto `TechAnalysisResult` was judged out of scope for a tiebreak this far down the order — a candidate for a future item if the residual tie rate after this fix is ever measured and found to matter; (2) neither this tiebreak nor the 2026-09-04 risk_reward one is rendered into the PM's prompt or any owner-facing surface — a pre-existing gap this change adds one more field to rather than fixes. Neither is a live-capital risk today because both are third- and second-stage tiebreaks among names the desk's own gates already judged equally eligible; the volatility/listing-age tilt raised as a hypothetical was not measured and is not asserted here as real.
+
+**What would catch it next time.** `tests/test_analyst_verdict.py`: a fixture reproducing the exact 9-of-12 measured tie pattern, all breakout, asserting the order is touch-count-driven and not alphabetical; a direct test that overhead-side touches are excluded, on both the long and short side; a test that the tiebreak component is present and unweighted even when the seat weight would change it if misapplied.
+
+---
+
+### 2026-09-20 — a broken read of the insider-filing service looked exactly like a quiet day on which nobody traded
+
+**In plain words:** every morning the desk reads the government's record of
+what company insiders bought and sold. Some mornings there is genuinely
+nothing there — that is a real answer and the desk should carry on. But if
+that read came back empty because it was BROKEN, the desk saw the same thing:
+no rows, no error, and a green tick against the insider seat. There was no way
+for anyone, machine or human, to tell "nobody filed anything" from "our read
+failed and nobody noticed". This is live money: that seat's answer feeds the
+conviction attached to positions the desk actually holds.
+
+**The part that makes it worse than an oversight.** The information needed to
+tell those two apart was already being fetched and thrown away. The filing
+service reports its own count of how many filings exist for the day being
+asked about. The code read that number, used it to decide whether to ask for
+another page of results, and then discarded it. So a denominator was in hand
+on every single request and nothing was ever measured against it.
+
+**What was done.** The service's own count is now kept per day, alongside how
+many rows the desk actually walked, and both are reported: the ratio, and a
+named reason whenever the two do not agree. One judgement is made from it —
+whether the read can account for itself at all — and it deliberately is NOT a
+cut point or a percentage anyone chose. A read accounts for itself when every
+day it asked about handed back a readable count and no page stopped short of
+one. Anything else is reported as partial, which is a word the evidence gate
+already understands; inventing a new one would have been read as an unknown
+status and treated as a total loss, which on 2026-09-16 cost the desk a whole
+intraday plan.
+
+**What was deliberately left alone, and why it matters more than it sounds.**
+The morning read has its own budget and its own deadline, and both routinely
+stop it early. That is the desk choosing how much of the wider market to read,
+not a failure, and its leftovers are already reported separately. Treating a
+budget spent as designed as a broken read would have marked the insider seat
+degraded every single morning — and a seat that cries wolf daily is a seat
+nobody reads. A genuinely quiet insider day still reports clean. That was the
+board item's own loudest requirement and it is now covered by a test that
+fails if it ever stops being true.
+
+**The gaming case, raised before it could be found in production.** A provider
+answering with a technically-non-empty body of nonsense would otherwise have
+bought itself a clean status: rows came back, a count came back, they matched.
+The first attempt at a guard asked whether EVERY row on a page was unusable —
+and an adversarial review of the change pointed out that this is a 100% rule
+dressed up as a structural one, defeated by slipping one real row into each
+page, with a code comment claiming it tolerated one bad row when it in fact
+tolerated ninety-nine. It was replaced by something with no cut point in it at
+all: coverage counts the DISTINCT rows the desk could actually read, so junk
+rows and repeated pages lower the reported fraction instead of being counted
+as coverage. The same change closed a second hole the review found — a cache
+or proxy replaying one page for every request would otherwise have walked to
+the service's own count and reported full coverage of filings it never sent.
+
+**The review also found a claim in this change that was simply false, and it
+is worth recording because it is the same failure the desk keeps making.** The
+code justified excluding a budget-limited read from counting as a failure by
+saying the leftovers were reported elsewhere. For the roughly eighty companies
+the desk actually holds, that is true — a separate pass reads those directly.
+For the wider market scan it was not: in production the window is a year long
+and the time budget reaches only the first couple of days of it, and nothing
+reported that. A read can now say how much of its window it reached at all,
+reported right next to how much of that stretch it read, so a perfect-looking
+figure cannot be mistaken for a statement about the year. A third finding:
+yesterday's coverage record was being accepted as today's, which would have
+reintroduced this very defect one day late.
+
+**A second, separate defect was found in the same code and deliberately NOT
+fixed here.** One of the two congressional-trading sources publishes no filing
+date at all, so the desk estimates one: the trade date plus the 45-day legal
+disclosure deadline, capped at today. That estimate is then fed to the check
+that asks whether the disclosure was legally on time — a check that therefore
+cannot fail for those rows, because the estimate is built out of the very
+number it is compared against. The desk's own measurement on the rows that DO
+carry a real filing date puts the typical lag at 60 days, well past the
+deadline. So the rows nobody can measure are quietly treated as the
+best-behaved ones. It was filed as its own board item rather than folded in,
+because it changes what evidence is allowed to support a position — a
+live-money rule — where this change only altered what gets reported.
+
+**A second review round, with the network on this time, found three more and
+all three are now fixed.** First: removing the percentage rule had left the
+original symptom alive in a milder form — a day where almost nothing was
+readable still reported a clean read, with only the reported fraction to show
+for it. The replacement needs no invented number either: a day the read
+claims to have gone all the way through is now checked against the count it
+went through, and a shortfall means it did not. Second: the filing service
+caps its own count at ten thousand and says so in the response, and the code
+was reading that ceiling as if it were an exact number — so the busiest day of
+the year would have read as fully covered while everything past the cap went
+unseen. It now refuses to treat "at least this many" as a count. Third: the
+honest figure for how much of the year the morning read actually reaches is
+around a fifth of it, and it was only being shown to the owner on the
+mornings something had already gone wrong. It now rides on every one of those
+messages and is written to the log on every pass.
+
+**The cost of that first fix, stated rather than buried.** One unreadable row
+on a day the read claims to have completed is now enough to mark the insider
+seat incomplete. That is deliberate, and it is justified by measurement rather
+than taste: the review walked three real days of filings — nearly four
+thousand rows — and found every single one well formed, with the distinct
+count matching the service's own count exactly. If this ever does start firing
+on ordinary traffic, that is worth knowing about the filing service, not a
+reason to soften the rule into a percentage.
+
+**ONE KNOWN, ACCEPTED, WATCHED RISK — read this before concluding the fix is
+wrong.** The morning read asks about today first, and it runs between roughly
+08:00 and 09:15 New York time while the filing service is still accepting and
+indexing today's filings, which it starts doing at 06:00. Two ordinary things
+could therefore happen on that one day slice and nothing else: a filing could
+be indexed between two pages of the read and come back twice, or the service's
+own count for today could grow while the read is part-way through it. Either
+would make an entirely normal morning report that it could not account for
+itself. Whether this actually happens depends on how many insider filings
+typically land that early, which no amount of further testing here can settle —
+only watching a real Monday morning can. So it is accepted rather than guessed
+at, and this is what to look for: it will show up as `edgar_rows_unreadable` or
+`edgar_total_changed` naming TODAY'S date specifically, with every other day in
+the window clean. That pattern is this race and nothing else. The remedy if it
+does fire is to stop asking about the still-open current day, or to read it
+last — not to loosen the check, which is exact everywhere else. No board item
+was filed for it because `docs/WORK.md` is at its growth cap; this paragraph is
+the record.
+
+**What would catch it next time.** The generalisable lesson is the one this
+desk keeps relearning under different names: a provider's own count of what
+it holds is the only honest denominator, and a status derived without one is
+a status that cannot distinguish silence from failure. The same fix shape has
+now been applied three times — to the news feeds, to the macro series, and
+here — and each time the denominator already existed and was being discarded.
+Before trusting any "ok" on a fetched feed, ask what it was measured against.
+
+---
+
+### 2026-09-20 — at the open the desk could use yesterday's price as if it were today's
+
+**In plain words.** First thing in the morning, for a handful of companies, the
+desk was looking at the price from the *previous day's* final trade and treating
+it as the price right now. Everything built on that price — how big a position
+should be, whether a stop had been hit, whether a stock was above or below a
+level worth buying at — was then built on a number from a day that had already
+ended, at the single most volatile moment of the trading day. The owner named
+this the highest-priority fix of the night and called it "a huge, huge problem,
+poisoning everything else."
+
+**How it showed up.** On 2026-09-17, 8 of 104 names — one of them a stock the
+desk actually held — came back from the broker in the morning carrying the
+previous session's last trade. The detail that mattered and had not been acted
+on: the *same* broker response already contained today's opening price for those
+names, in a different field. The desk was refusing the seat on a name while
+today's real price sat unread in the reply it already had.
+
+**What the real cause turned out to be.** Two things, one reported and one not.
+
+The reported one: the code read a single field, "the last trade", and asked
+whether its timestamp was today. For a thinly traded name on the price feed this
+account is entitled to, that field can still be yesterday's several minutes into
+the session — the account is not entitled to the consolidated feed, so a stock
+that has traded elsewhere but not on this venue shows nothing. The check itself
+was correct and the name was correctly refused rather than mispriced. What was
+wrong was giving up there, when the broker's own reply also carries today's
+one-minute bar and today's still-forming daily bar, both of which are built out
+of real trades on the same venue. Pricing off those is not a guess and it is not
+a quote — a quote is what somebody is *willing* to do, and the desk's standing
+rule is that a quote must never be worn as a trade.
+
+The one nobody had reported: the block of figures labelled to the technical seat
+as "CURRENT SESSION (TODAY)" — the day's open, high, low and volume — was taken
+from the broker's "daily bar" field with nothing at all checking which day that
+bar belonged to. For a name that has not traded today the broker returns
+*yesterday's* daily bar in that slot. So a name could be shown yesterday's whole
+trading range under a heading that said today. Same defect, one field over, and
+it would have outlived the reported one. It was found by asking what else in the
+same reply was being trusted without a date check, which is the only reason it
+was found at all.
+
+**What was ruled out.** An elapsed-time rule — "the price must be less than N
+minutes old" — was rejected. N would be an invented number with nothing behind
+it, which is the thing this desk refuses on principle, and it would also be
+wrong: a stock that genuinely has not traded for twenty minutes is thin, not
+stale.
+
+Using the previous close as a stand-in was never on the table. A name with no
+trade today has no price today, and saying so is the honest answer.
+
+**What the first version of this fix got wrong, and how.** The first pass used
+one test — does this price's timestamp fall on today's date in New York — and
+argued in writing that any tighter rule would be an invented number. The
+adversary showed that was false on this desk's own record: the dashboard
+already had a tighter test that is *not* invented, built on the time the
+exchange opens, and this same file already records a proposal being rejected in
+September for exactly the weakness date-only comparison has — a price from
+before the market opened still counts as "today's", and on a day that gaps at
+the open it can sit on the wrong side of the real price. So a second bound was
+added: a price must also be stamped at or after the 09:30 open. Nothing was
+invented; the bound is when the exchange opens, which it publishes months ahead
+and which is the same on a half-day.
+
+The adversary also found a subtler version of the same bug that no date test
+could ever catch: with three possible sources ranked by how good they are
+rather than how recent, a stock that traded once at 09:31 and then only
+appeared in aggregate data all afternoon would be priced at its 09:31 figure at
+four o'clock. Most recent now wins; the quality ranking only breaks ties.
+
+And it found a way the fix could have hurt: a stock that simply has not traded
+today would have been counted as a *broken ticker* and, after three checks, the
+owner would have been messaged to go and see whether it still exists. The two
+thin names in the original report are exactly that case, so the alarm would
+have been wrong the first day it fired. Quiet and broken are now counted
+separately again.
+
+**What happens now.** One piece of code decides what "today's price" means, and
+everything that needs one asks it. It tries the last trade, then today's
+one-minute bar, then today's forming daily bar, and if none of those is from
+today it refuses and says which of the two reasons applies — the feed returned
+nothing at all, or the feed returned only a prior session. A name that gets
+refused is told to the technical seat as a *lost price seat*: no
+price-dependent judgement on that name today, the structural history is still
+good, and it is priced normally again the next session. It is not dropped and
+not quietly downgraded to "low confidence", which was the previous behaviour and
+which invites the model to have an opinion anyway.
+
+The resolved number is published under a different name from the raw broker
+field, deliberately. Both now sit side by side in the same object, and the
+failure mode of the next person reading the wrong one is exactly this bug
+returning. Naming them differently is what makes picking the wrong one visible.
+
+**What would catch it next time.** Twelve deliberate sabotages of the fix were
+written and run against its own tests — comparing dates in the wrong timezone,
+treating the session open as the cutoff instead of the date, trusting a
+timestamp with no timezone on it, allowing yesterday through, reading the wrong
+end of a bar, skipping the date check on one field out of three, confusing
+Friday with the previous session on a Monday, accepting a zero or a NaN as a
+price, and reverting each rewired reader to the raw field. Ten were caught on
+the first pass; two were not — a missing date check on the one-minute bar, and
+a reader quietly preferring the raw field — and both were real holes in the
+tests rather than in the fix. Tests were added for both and all twelve are now
+caught. The two that slipped are the useful part of this paragraph: a fix whose
+tests pass is not the same as a fix whose tests would notice it being undone.
+
+**One thing here is still unconfirmed and is written down rather than assumed.**
+The whole "which day does this bar belong to" half rests on the broker stamping
+a daily bar at a time that reads as that day in New York. The published
+convention says it does and the software library documents the field, but
+nobody has made a live call from this desk to watch it happen. If it is wrong,
+every stock loses its session range at once rather than any stock showing the
+wrong one — the safe direction — and an error is logged the first morning
+saying precisely that. Confirming it is the first thing to look at after a real
+session.
+
+**Deliberately not done, so nobody assumes it was.** The price feed is still
+not pinned to a named venue; a stock that loses its price for the day still
+produces one log line rather than a stored, per-stock reason; and the cockpit
+chart still draws today's candle from the raw broker field, which is filed as
+its own board item because it needs a front-end build.
+
+---
+
+### 2026-09-20 — the only seat allowed to halt the desk was told it sees half the price history it is actually sent
+
+**In plain words:** the technical analyst is the one seat that can stop the
+desk trading. Its standing instruction sheet told it that it was being shown
+the last 20 days of price bars for each stock. The code had been attaching 40.
+So the seat was reading gaps, pivots and short-term structure off a window
+twice the size it believed it had, and was being asked to judge "recent" using
+a definition nobody had told it.
+
+**How long, and how it survived two attempts to catch it.** The mismatch was
+visible on the board as item 98 and was named in item 99 as well. Two earlier
+pull requests (#464 and #467) were both filed against this exact class of
+defect — an instruction sheet describing machinery that had since changed —
+and neither one touched the technical sheet's bar count. That is the reason
+this write-up exists: the failure was not noticing it, it was noticing it
+twice and shipping a fix that went somewhere else.
+
+**What was wrong, precisely.** Five statements in
+`config/prompts/tech_analyst.md`, not the three the board item listed: the
+input list, the note explaining what the window is for, the support/resistance
+instruction, the stop-anchoring paragraph, and the inputs footer. Three were
+named on the board; two more stated the same wrong count and were found while
+fixing the first three. One further "20" in the same file — the rule telling
+the seat to return `neutral` when a name has fewer than 20 bars of history —
+is a minimum-history floor, is correct, and was deliberately left alone.
+
+**What shipped.** The count now has one home. The sheet carries a
+`{{tech.bars_per_symbol}}` placeholder and the technical analyst substitutes
+the value from its own `_BARS_PER_SYMBOL` constant when it assembles the
+prompt, so changing the slice changes what the model is told. It is
+deliberately NOT routed through the existing `{{risk.*}}` rendering used by
+the risk manager and portfolio manager: that mechanism raises when a
+placeholder will not resolve, which is right for a risk limit read off live
+settings and wrong here, because a raise on this particular seat is a halted
+desk and a bar count is a code constant rather than an operator-tunable
+setting. The silent-failure risk that choice creates is covered in CI instead.
+
+**What would catch it next time, and what the first attempt at that missed.**
+`tests/test_tech_analyst_bar_count.py` names no bar count. It renders the real
+sheet against counts the repo has never used and requires every claim to move
+with the constant; it fails if any literal count is typed back in, in digits or
+spelled out, as bars, sessions, trading days or candles; and it builds a real
+user message and reads which bars actually came out. The first draft of that
+test was weaker in three ways, all found by adversary review before the change
+was opened rather than after:
+
+1. A placeholder written with spaces inside the braces stopped substituting and
+   every test still passed — literal template syntax would have shipped to the
+   seat. The renderer now matches a pattern rather than an exact string, and
+   the test fails on any surviving braces rather than on one spelling.
+2. Sending the OLDEST 40 bars instead of the most recent passed every check,
+   because the check asked only whether the constant appeared in some slice.
+   The test now reads the assembled message and asserts which bars were sent.
+3. It scanned only the prompt FILE. `docs/OUTCOME.md` already records that
+   neither confirmed prompt-drift defect ever lived in a prompt file — both
+   were Python-assembled strings — so the test now scans the assembled user
+   message too.
+
+**Known and accepted.** When a symbol has fewer than 40 bars available, the
+user message honestly reports the real count while the system prompt states
+the full window; the per-request line is the more specific of the two. And
+`{{tech.bars_per_symbol}}` matches the `{{risk.*}}` placeholder pattern
+without resolving through it, so routing this sheet through `LiveLimitPrompt`
+in future would raise at construction; a warning to that effect now sits in
+`src/agents/prompt_limits.py` beside the namespace it would trip.
+
+**Found while fixing it, not fixed:** the same sentence also tells the seat
+"indicators are computed from ~120 days of history upstream". The tech path
+fetches `trading.lookback_days`, which has been 1800 calendar days since
+2026-08-27. That claim is wrong by a much larger factor than the bar count was
+and was left untouched — it is a separate defect on a seat that can halt the
+desk, and it is filed as board item 168 rather than folded in here.
+
+---
+
+### 2026-09-18 — a mechanical gate now exists so a trade-governing number can no longer be invented without being written down (item 90, half one)
+
+**In plain words:** every numeric constant on the path from a seat's verdict
+to a trade order now has to be recorded in one place with where it came
+from, or the test suite fails the build. Before this, a number could be
+typed into the code with no source and nobody would ever know.
+
+**What was built.** `src/number_sources.py` walks every module-level
+constant and `*Config` default inside a declared, reviewed set of files
+(including numbers nested in literals or bound to a name) and requires a
+matching entry in `config/number_ledger.yaml`. Six rules are enforced:
+every in-scope site is covered; the ledger's recorded value matches the
+live code literal; it also matches the DEPLOYED value in
+`config/settings.yaml` where a setting routes that way (52 sites do); a
+`sourced` or `instrument` entry must cite a URL or a `path:line`, never
+prose; an `arbitrary` entry must state the open question and what the desk
+pays while it stays unanswered; and a derivation whose base later moves
+fails the build (base-drift). A separate check fails if the count of
+module-level constants in files OUTSIDE the declared scope rises, so the
+scope itself cannot quietly narrow.
+
+**What it found, and its own honest limit.** At filing, 178 sites were in
+scope with 87 distinct numbers marked arbitrary (45 not trade-governing, 25
+derived, 16 sourced, 5 fixed by broker/exchange/statute); the count moved
+to 88 the next day (#529) before the sub-split was re-verified, so that
+breakdown is a snapshot, not a live figure — read `config/number_ledger.yaml`
+directly for the current count. The gate proves a justification was
+WRITTEN, never that it is TRUE: its own flagship entry, the 0.50%
+minimum-risk floor, was false in four separate places and now carries a
+written correction, along with six other corrected entries.
+
+**What is still open.** Reading each arbitrary entry off its actual
+instrument — settling the open question the ledger states for it — is
+unstarted and is board item 90's remaining half. `MAX_ARBITRARY_ENTRIES` is
+enforced as an EQUALITY, not a ceiling, specifically so deleting a row is
+never rewarded.
+
+---
+
 ### 2026-09-20 — item 91 (calendar-days pace calc) was already fixed on 2026-09-18, board never updated
 
 **In plain words:** an item on the open-work list asking to fix a bug — a
@@ -12876,5 +13522,111 @@ required" and "auto-merge on green" are two separate mechanisms, and nothing
 here made the first one a precondition of the second. See
 `docs/OUTCOME.md`'s new "A gating review must block the merge, not race it"
 principle.
+
+---
+
+### 2026-09-23 — the paid intraday tick, its cadence and its trigger are one unanswered question, not three defects
+
+**Why this entry exists.** The owner hit the same cluster three separate ways
+in one night, each piece filed somewhere different or not filed at all, and
+nothing said they were one thing. The evidence is gathered here so board item
+177 can stay short. Nothing here was fixed; this is the measurement record.
+
+**What the tick actually is.** `intra_check` runs 13 times a day, every 30
+minutes from 09:30 to 16:00 ET [measured: 13 distinct `intra_check` run_ids
+per day in `llm_budget_sessions`, on both 2026-09-21 and 2026-09-22]. It is
+not a monitor. Each run is a FULL trading session: it re-reads the whole book
+and asks the portfolio manager whether to trade.
+
+**What it produced.** 5 material actions across 26 runs over those two days;
+21 runs changed nothing [measured]. All of 2026-09-21's trading came from this
+tick — the NUE sale, the META, ETN and MRVL buys, the RKLB buy and the UPS
+short. 2026-09-22 ran 13 times and took zero actions [measured].
+
+**What it cost.** 2026-09-21 spent $2.6478 against a $2.75 daily cap, 96% of
+the ceiling, of which this tick was 90%. 2026-09-22 spent $0.7883, 72% of it
+this tick. Median paid run about $0.18 [all measured, `llm_budget_sessions`].
+
+**Where the 30 minutes comes from: nowhere.** The interval exists only in a
+systemd timer, `OnCalendar=*:15,45`, with no config key anywhere. The `:15/:45`
+PHASE is justified — it avoids a measured 90 ms timer race on 2026-09-17 (see
+that day's entry above). The 30 itself is derived from nothing; the only
+written reasoning is a code comment saying the scan "runs in ~5 seconds; OK for
+a 30-minute cadence", which justifies feasibility, not frequency.
+
+**The cost driver is the held book, not the movers.** Portfolio-manager input
+was 40,573 to 42,444 tokens across all 12 paid runs — a 4.6% spread — while the
+mover count over the same runs ranged from 1 to 5 [measured]. A 1-mover tick
+cost $0.2009; a 5-mover tick cost $0.1495. So the trigger threshold controls
+whether a run happens, and barely touches what it costs when it does. The
+remaining 2x run-to-run spread is not the book either: it is OpenRouter's cheap
+`flex` endpoint saturating and falling through to full price, confirmed by
+arithmetic against the published rates.
+
+**Protection does not depend on this tick.** A separate, free unit,
+`quant-agent-coverage-sweep`, re-checks every stop every 30 minutes all day
+(49 runs on 2026-09-22 [measured]) and repaired all 10 coverage gaps itself at
+the open. The cadence of the paid tick can therefore change without touching
+deterministic safety. BUT three cheap jobs currently ride the paid tick and
+would have to be scheduled separately first: the daily-loss breaker, order-fill
+reconciliation, and stop-out write-back.
+
+**The numbers that govern it.** All are already registered in
+`config/number_ledger.yaml`; that file, not this one, carries their open
+questions and their stated cost while unanswered. They are
+`src.config.IntradayScanConfig.move_threshold_pct` (3, `arbitrary`),
+`cooldown_hours` (3, `arbitrary`), `max_candidates_per_scan` (5, `arbitrary`),
+and a SECOND number with the same name and a different value,
+`src.pipeline.TradingPipeline._build_missed_opportunities_digest(move_threshold_pct)`
+(8, registered `not-trade-governing` as a dead default whose live value is a
+call-site literal). `config/settings.yaml`'s own comment beside these already
+admits they "carry no source".
+
+**Why it is one decision and not several.** The threshold decides whether a
+tick spends anything at all; the cadence decides how many ticks there are; the
+held-book context decides what each one costs regardless of either. Answering
+any one alone gives a wrong answer — which is exactly the trap an orchestrator
+fell into by bringing the owner the cadence question on its own, and he
+correctly refused to answer it.
+
+**The wider frame.** Board item 90's half two — read each arbitrary entry off
+its instrument — is the parent. 213 entries are marked arbitrary in the ledger
+[measured: `grep -c arbitrary config/number_ledger.yaml`]. The gate that forces
+a written justification exists and works; the work of actually deriving the
+numbers has not started. This cluster is the first tranche because it is the
+one the owner has now hit three times and the one spending his whole budget.
+
+**Two corrections to the brief this entry was written from, found by the
+adversary review on 2026-09-23 and verified here.** First, the cadence is NOT
+defined in one place: besides the systemd timer there is
+`src/scheduler.py::_build_intra_check_trigger`, whose `range(lo_min, hi_min+1,
+30)` produces 14 ticks rather than 13, and `src/silence_watchdog.py`'s
+`SLACK_MINUTES = 45`, whose own comment says it is derived from the timer
+cadence. None of the three is in `src/number_sources.py`'s scope, so the
+cadence has no ledger entry and no mechanical cover at all — a change to it
+fails nothing. Second, "213 entries marked arbitrary" is wrong: `grep -c
+arbitrary` counts LINES containing the word, including prose inside notes. The
+entry count is 148 [measured: `grep -c '^    status: arbitrary'`], which is
+also `MAX_ARBITRARY_ENTRIES` in `src/number_sources.py`, and because that
+constant is an EQUALITY, re-deriving any of the three intraday entries fails
+the build until it is lowered. That is what makes item 177 mechanically
+checkable rather than prose.
+
+**One nuance the cost measurement hides.** A tick with no qualifying mover
+returns `intraday_scan_no_opportunity` before any paid discovery
+(`src/pipeline.py`), so the trigger is a cost lever too, not only a quality
+lever: it decides whether a tick is paid at all. The held-book finding above
+describes what a PAID run costs once the trigger has let it through. Both are
+true, and they are why the two cannot be settled separately.
+
+**The jobs riding the tick are more than three.** The brief named the
+daily-loss breaker, order-fill reconciliation and stop-out write-back; the
+intra preamble also carries the protection-restore drain, the repeg drain, the
+retired-cash-park release and the orphan-submit reconciler, and the whole
+preamble is SKIPPED whenever another process holds the broker-write lock or a
+live session owns the desk. Item 177 therefore says "every intra-preamble job",
+not "the three". Note also that item 32's owner ruling points at deleting the
+account-level loss halt, so rescheduling that particular job may be moot —
+check item 32 before doing it.
 
 ---

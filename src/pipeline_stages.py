@@ -4619,9 +4619,14 @@ class MorningResearchStage:
     def _live_price_kwarg(live_context: dict, symbol: str) -> dict:
         """`{"live_price": x}` only when a usable live price exists, so an
         injected prefilter with the old 4-argument signature still works
-        outside market hours."""
+        outside market hours.
+
+        Reads `live_price` — the freshness-RESOLVED number
+        `_live_session_context` publishes (docs/WORK.md item 120) — not the
+        raw provider `last_price`, which can be a prior session's print.
+        """
         ic = live_context.get(symbol) or {}
-        price = ic.get("last_price")
+        price = ic.get("live_price")
         if ic.get("live_unavailable") or not isinstance(price, (int, float)) or price <= 0:
             return {}
         return {"live_price": price}
@@ -4989,8 +4994,28 @@ class MorningResearchStage:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Congressional freshness read failed: %s", exc)
                 sm_congressional = {"known": False, "error": type(exc).__name__}
+        # Board item 126. EDGAR publishes its own count of the Form 4s filed
+        # on each day. Until this shipped, a fetch that came back with
+        # nothing because it was BROKEN and a day on which genuinely nobody
+        # filed produced identical evidence — zero rows, no provider error,
+        # status "ok". `verified` is the fetch saying it read EDGAR's own
+        # count and walked it; unverified means the desk cannot tell those
+        # two apart, which is not the same claim as "no signal found".
+        #
+        # This deliberately does NOT fire on a scan that spent its own
+        # budget or deadline: those are the desk's bounded choices, their
+        # residue is already reported through `unread` below, and treating
+        # them as failure would make the seat degraded every day — the harm
+        # board item 126 names in its own text. See
+        # `UNVERIFIED_EDGAR_REASONS` in src/data/smart_money.py.
+        sm_edgar = sm_coverage.get("edgar") if isinstance(sm_coverage, dict) else None
+        sm_edgar_unverified = isinstance(sm_coverage, dict) and not (
+            isinstance(sm_edgar, dict) and sm_edgar.get("verified")
+        )
         sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
-            not sm_coverage.get("known") or bool(sm_coverage.get("unread"))
+            not sm_coverage.get("known")
+            or bool(sm_coverage.get("unread"))
+            or sm_edgar_unverified
         )
         try:
             findings, sm_result, provider_error, analysis_error = smart_money_future.result()
@@ -5087,9 +5112,15 @@ class MorningResearchStage:
                 data_status["smart_money"] = "partial"
                 logger.warning(
                     "Smart-money seat is partial: %s of %s watched names read "
-                    "through (unread: %s)",
+                    "through (unread: %s); EDGAR coverage verified=%s "
+                    "ratio=%s reasons=%s",
                     sm_coverage.get("read_through"), sm_coverage.get("watched"),
                     ", ".join(sm_coverage.get("unread") or []) or "coverage never recorded",
+                    bool(isinstance(sm_edgar, dict) and sm_edgar.get("verified")),
+                    (sm_edgar or {}).get("ratio") if isinstance(sm_edgar, dict) else None,
+                    ", ".join(
+                        str(r) for r in ((sm_edgar or {}).get("reasons") or [])
+                    ) if isinstance(sm_edgar, dict) else "no record",
                 )
         except Exception as e:
             logger.warning("Smart-money branch failed: %s", e)
