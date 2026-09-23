@@ -247,7 +247,7 @@ as void rather than as fixed. The §11.2 ladder has its own
 unmeasurable-drawdown question and that one is untouched and still live —
 do not read these two retirements as covering it.
 
-Filed the other way: **item 169**, because this removal deleted the only
+Filed the other way: **item 172**, because this removal deleted the only
 path that told the owner, by symbol, that a position's protective stop
 could not be READ at the broker — as distinct from not being there. Both
 remaining readers of stop coverage fail quiet on a broker snapshot error,
