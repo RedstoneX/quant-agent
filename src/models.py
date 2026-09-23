@@ -5,9 +5,10 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, Literal, get_origin
+from typing import Annotated, Any, Literal, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, ValidationInfo, computed_field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from src.quantities import collapse_stances
 # `src.risk.exit_trigger` imports only the stdlib (and `src.risk` has an
@@ -474,6 +475,34 @@ def _list_typed_fields(cls: type[BaseModel]) -> frozenset[str]:
     with _LIST_TYPED_FIELDS_CACHE_LOCK:
         _LIST_TYPED_FIELDS_CACHE[key] = result
     return result
+
+
+# ---------------------------------------------------------------------------
+# `SkipJsonSchema` — the marker used throughout this file for a field that
+# exists on a parsed-from-LLM model for the DESK's own bookkeeping and must
+# never appear on the surface the model actually sees.
+#
+# `BaseAgent._response_format_for` builds the OpenRouter / OpenAI
+# `response_format` from `result_model.model_json_schema()`. On the strict
+# path `_strictify_schema` then forces EVERY property in that schema to be
+# `required`, so a desk-owned field left in it is a field the model is
+# COMPELLED to invent and whose value the pipeline overwrites the instant it
+# parses the response. On the `strict: False` fallback path — taken when a
+# model carries a free-form map, e.g. `NewsIntelligenceReport` — the field is
+# an invitation rather than a compulsion, which is weaker but still wrong: it
+# is an output slot for something the seat is not being asked.
+#
+# Annotating the field removes it (and any `$defs` reachable only through it)
+# from the rendered schema. Validation, assignment, storage and serialisation
+# are completely unchanged: the desk still sets it, still persists it, still
+# reads it back. Putting the marker on the field itself — rather than
+# maintaining a second, model-facing copy of the class — is what stops the
+# stored shape and the sent shape from drifting apart.
+#
+# Use it ONLY for a field the desk itself fills. A field the model is
+# genuinely being asked for stays visible. `tests/
+# test_response_format_desk_only_fields.py` is the mechanical check.
+# ---------------------------------------------------------------------------
 
 
 class LLMOutputModel(BaseModel):
@@ -1805,10 +1834,23 @@ class SmartMoneyFinding(LLMOutputModel):
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
     summary: str = Field(min_length=1)
     why_now: str = Field(min_length=1)
-    observations: list[SmartMoneyObservation] = Field(min_length=1)
-    support_eligible: bool = False
-    transient_admission_eligible: bool = False
-    evidence_hash: str = ""
+    # All four are `SkipJsonSchema`: the desk fills every one of them itself,
+    # and before this they were REQUIRED output under strict structured
+    # output. `SmartMoneyAnalystAgent._parse_findings` overwrites
+    # `observations` with `[o.model_dump() for o in source_rows]` and
+    # `evidence_hash` with the desk's own digest on every single finding,
+    # cached or live, and `deterministic_eligibility` below recomputes both
+    # eligibility booleans from the source rows. So the seat was spending its
+    # output budget re-typing a 45-field internal row (accession_number,
+    # transaction_row, signal_weight, freshness, admission_eligible,
+    # transient_admitted, in_core_universe, lag_days, ...) at least once per
+    # finding, plus a sha256 it cannot know, and 100% of it was discarded
+    # before the object was constructed. Nothing validates the echo against
+    # the source rows, so it was never a grounding device either.
+    observations: Annotated[list[SmartMoneyObservation], SkipJsonSchema()] = Field(min_length=1)
+    support_eligible: Annotated[bool, SkipJsonSchema()] = False
+    transient_admission_eligible: Annotated[bool, SkipJsonSchema()] = False
+    evidence_hash: Annotated[str, SkipJsonSchema()] = ""
 
     @field_validator("symbol")
     @classmethod
@@ -2353,7 +2395,15 @@ class PortfolioDecision(LLMOutputModel):
     # PM must never fill it directly — the LLM output is validated with
     # `decisions` empty; the pipeline injects constructor output before
     # handing the object off to downstream stages.
-    decisions: list[TradeDecision] = Field(default_factory=list)
+    # `SkipJsonSchema`: kept off the rendered response_format entirely. Strict
+    # structured output made this field REQUIRED, so the seat was ordered to
+    # emit a full order book (entry_price / stop_loss / take_profit per name)
+    # that `PortfolioManagerAgent.validate_grounding` then refuses outright —
+    # "portfolio manager supplied concrete decisions; only grounded targets
+    # may cross the PM boundary" discards every target and the whole book.
+    # The prompt never mentions the field, so there was nothing telling the
+    # seat to leave it empty.
+    decisions: Annotated[list[TradeDecision], SkipJsonSchema()] = Field(default_factory=list)
     #: Symbols the PM proposed that the deterministic constructor DROPPED
     #: (unmeasurable range reward:risk, no readable structure, no valid
     #: stop, ... — no reward:risk floor since 2026-09-11). Set by
@@ -2370,7 +2420,10 @@ class PortfolioDecision(LLMOutputModel):
     #: remaining plan legible. Same reasoning as the constructor's existing
     #: `cap_note` provenance, which solved this once already for allocation
     #: caps (portfolio_constructor.py ~947).
-    constructor_dropped: list[str] = Field(default_factory=list)
+    # `SkipJsonSchema` for the same reason as `decisions` above: set by the
+    # pipeline after `construct_orders`, never by the LLM, so it has no place
+    # in the schema the LLM is handed.
+    constructor_dropped: Annotated[list[str], SkipJsonSchema()] = Field(default_factory=list)
     portfolio_view: str
 
 
@@ -3338,7 +3391,12 @@ class NewsIntelligenceReport(LLMOutputModel):
     # `symbol_dropped` and downstream seats do not read the empty list
     # as "no news". Default `[]` so an old persisted/replayed report —
     # and every caller that hasn't been updated — parses unchanged.
-    dropped_news_symbols: list[str] = []
+    # `SkipJsonSchema` is what makes "never asked of the model" true on the
+    # wire as well as in this comment: the field used to be rendered into
+    # this report's `response_format` schema like any other, so the seat was
+    # shown an output slot inviting it to nominate its own coverage gaps,
+    # and `analyze()` overwrote whatever it said one line after parsing.
+    dropped_news_symbols: Annotated[list[str], SkipJsonSchema()] = []
 
     def format_dropped_symbols_block(self) -> str:
         """Prompt text naming symbols shown real headlines but omitted from
