@@ -230,9 +230,12 @@ pip install -e ".[dev]"
 three files every parallel branch collides on, and `.gitattributes` names a
 merge driver for them (`docsmerge`) — but a git merge driver is only wired up
 by a per-clone `git config` entry, never by `.gitattributes` alone. Without
-this command your clone is not broken, just unaffected: conflicts in these
+BOTH lines below your clone is not broken, just unaffected: conflicts in these
 three files fall back to git's ordinary line-level merge, same as before this
-existed. Run it once per clone:
+existed. Run BOTH — setting only the `.name` line leaves git aborting the
+merge outright with `fatal: custom merge driver docsmerge lacks command
+line`, which is a half-registered driver rather than an unaffected clone
+[reproduced 2026-09-23]. Run it once per clone:
 
 ```bash
 git config merge.docsmerge.name   "item-aware doc conflict resolver"
@@ -241,12 +244,21 @@ git config merge.docsmerge.driver "scripts/git_merge_driver_docs.sh %O %A %B %P"
 
 With it set, a conflicting merge on those three files runs
 `scripts/resolve_doc_conflict.py` automatically — it merges by numbered item,
-not by line, and **refuses to write** (leaving the path conflicted for you to
-resolve by hand, exactly like an unconfigured clone) rather than guess when
-two branches file different items under the same number or a merge would make
-a live item vanish. See the "Operational facts" note in `docs/WORK.md` for
-what a refusal looks like and how to tell a missing driver from a genuine
-one.
+not by line, and **refuses to resolve** rather than guess when two branches
+file different items under the same number or a merge would make a live item
+vanish.
+
+**What a refusal leaves behind (changed 2026-09-23).** It leaves the document
+with conflict markers around the parts it could not resolve, both sides
+preserved, and the plain-English reason in a gitignored file beside it
+(`docs/WORK.md.merge-refusal`). Until 2026-09-23 a refusal wrote nothing at
+all, which sounds safe and is not: git hands the driver the worktree copy of
+the file and reads the result back out of the same path, so writing nothing
+left the branch's own stale copy sitting there — valid markdown, no marker,
+and the incoming side's newest board entries simply absent. `git status` said
+`UU`; nothing in the file did. Three merges hit it in one night and one
+nearly committed a silent revert of other people's entries. Resolve the
+markers by hand, then delete the reason file.
 
 **Trust its refusal, but check its success.** On 2026-09-18 the resolver was
 caught merging a real conflict, correctly handing back one sentence it judged
