@@ -512,3 +512,107 @@ def test_placeholder_words_do_not_fire_inside_an_opaque_key(value):
 )
 def test_placeholder_words_still_fire_as_whole_words(value):
     assert placeholder_reason(value), value
+
+
+# --- systemd unit wiring -------------------------------------------------
+#
+# THE DRIFT THIS EXISTS TO CATCH. `LoadCredential=` in the unit and the
+# `$CREDENTIALS_DIRECTORY` read in the runner are two halves of one mechanism,
+# living in two files that nothing tied together. PR #458 shipped the unit half
+# alone and the delivered key was silently ignored. The daily P&L export then
+# went the other way: it was never given the unit half at all, so it ran on the
+# .env placeholder and — being the first unit of the day at 09:00 ET — spent the
+# once-per-day owner alert in `report_startup_credentials`, which would have
+# silenced a genuinely broken key in a later trading session. Measured on the
+# production box: false PLACEHOLDER CREDENTIAL owner alerts at 13:00:40 UTC on
+# 2026-09-18, 2026-09-21 and 2026-09-22, each while the export itself succeeded.
+#
+# Both halves are now asserted together, by file, so neither can drift again.
+
+_UNIT_DIR = Path(__file__).resolve().parents[1] / "scripts" / "systemd"
+_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
+
+# Units that read or write the broker account and therefore run the startup
+# credential check. Enumerated, not inferred: a new unit must be classified
+# deliberately, and `test_every_unit_is_classified` fails until it is.
+_UNITS_NEEDING_BROKER_CREDENTIALS = frozenset({
+    "quant-agent-api.service",
+    "quant-agent-close.service",
+    "quant-agent-daily.service",
+    "quant-agent-earnings_preprocess.service",
+    "quant-agent-evening.service",
+    "quant-agent-intra_check.service",
+    "quant-agent-midday.service",
+    "quant-agent-morning.service",
+})
+
+
+def _unit_files() -> list[Path]:
+    return sorted(_UNIT_DIR.glob("*.service"))
+
+
+def _exec_start_runner(unit_text: str) -> Path | None:
+    """The shell runner a unit executes, or None when it execs python directly."""
+    for line in unit_text.splitlines():
+        if not line.startswith("ExecStart="):
+            continue
+        for token in line[len("ExecStart="):].split():
+            if token.endswith(".sh"):
+                return _SCRIPT_DIR / Path(token).name
+    return None
+
+
+def test_every_unit_is_classified() -> None:
+    """A new unit cannot be added without deciding whether it needs the broker."""
+    known = {p.name for p in _unit_files()}
+    assert _UNITS_NEEDING_BROKER_CREDENTIALS <= known, (
+        "these units are listed as needing broker credentials but no longer exist: "
+        f"{sorted(_UNITS_NEEDING_BROKER_CREDENTIALS - known)}"
+    )
+
+
+def test_broker_units_declare_load_credential() -> None:
+    for unit in _unit_files():
+        expected = unit.name in _UNITS_NEEDING_BROKER_CREDENTIALS
+        text = unit.read_text()
+        declared = {
+            line.split(":", 1)[0][len("LoadCredential="):]
+            for line in text.splitlines()
+            if line.startswith("LoadCredential=")
+        }
+        if expected:
+            assert declared == {"alpaca_api_key", "alpaca_secret_key"}, (
+                f"{unit.name} touches the broker account, so it must declare both "
+                f"credentials; it declares {sorted(declared)}. Without them it runs "
+                "on the .env placeholder and raises a false owner alert that also "
+                "consumes the day's single real one."
+            )
+        else:
+            assert not declared, (
+                f"{unit.name} is not classified as needing broker credentials but "
+                f"declares {sorted(declared)} — classify it or drop the lines."
+            )
+
+
+def test_runners_of_credentialed_units_read_the_directory() -> None:
+    """The unit half is useless unless the runner applies it after sourcing .env."""
+    for unit in _unit_files():
+        if unit.name not in _UNITS_NEEDING_BROKER_CREDENTIALS:
+            continue
+        runner = _exec_start_runner(unit.read_text())
+        if runner is None:
+            continue  # execs python directly; load_systemd_credentials reads the env
+        assert runner.is_file(), f"{unit.name} names a runner that does not exist: {runner}"
+        body = runner.read_text()
+        assert "CREDENTIALS_DIRECTORY" in body, (
+            f"{runner.name} is handed systemd credentials by {unit.name} but never "
+            "reads $CREDENTIALS_DIRECTORY, so the delivered key is ignored and the "
+            ".env placeholder wins."
+        )
+        env_at = body.find('source "${PROJECT_ROOT}/.env"')
+        creds_at = body.find("CREDENTIALS_DIRECTORY")
+        if env_at != -1:
+            assert creds_at > env_at, (
+                f"{runner.name} reads $CREDENTIALS_DIRECTORY before sourcing .env, so "
+                ".env puts the placeholder back over the delivered key."
+            )

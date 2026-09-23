@@ -11,6 +11,18 @@ Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
 # The runner sources .env and applies its own 300s timeout.
 ExecStart=/home/qamc/quant-agent/scripts/run_daily_export.sh
+# Real broker credentials, delivered the same way the six trading units get
+# them. WHY THIS UNIT NEEDS THEM despite never opening the trade_updates
+# websocket: without them the export holds the .env placeholder, the startup
+# check correctly reports PLACEHOLDER CREDENTIAL, and — because this unit is
+# the FIRST of the day at 09:00 ET — it consumes the once-per-day owner alert
+# slot in report_startup_credentials(). A later trading session holding a
+# genuinely broken key would then be silenced. Measured on the box: the alert
+# fired at 13:00:40 UTC on 2026-09-18, 09-21 and 09-22 while the export itself
+# succeeded (30 rows sent), i.e. three false owner alarms and three days on
+# which a real one could not have got through.
+LoadCredential=alpaca_api_key:/home/qamc/credentials/alpaca_api_key
+LoadCredential=alpaca_secret_key:/home/qamc/credentials/alpaca_secret_key
 # systemd safety net above the runner's 300+30s kill.
 TimeoutStartSec=420
 StandardOutput=journal
