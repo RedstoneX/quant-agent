@@ -88,6 +88,20 @@
 # NO VALUE WAS CHANGED -- changing a live trade-governing number is the
 # owner's call and several are ratified-but-unsourced.
 numbers:
+  - id: src.config.INTRA_CHECK_TICK_MINUTES
+    value: 30
+    status: sourced
+    site: src/config.py
+    source: >-
+      src/scheduler.py:56 (`for tick_min in range(lo_min, hi_min + 1, 30)` in
+      `_build_intra_check_trigger`, the authority for how often the intraday
+      control actually fires) and src/trading_calendar.py:48 (the window those
+      ticks span). Not an independent number: it is pinned in config only so
+      the cost circuit's transient-latch cooldown can be derived from the gap
+      between consecutive PAID runs instead of chosen, and
+      tests/test_cost_circuit.py asserts the two agree by building the real
+      trigger and counting its ticks. Changing the schedule changes this;
+      changing this alone changes nothing about when anything runs.
   - id: src.config.CashSweepConfig.min_order_usd
     value: 500
     status: arbitrary
