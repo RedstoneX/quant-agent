@@ -442,9 +442,12 @@ def run_coverage_check(now: datetime | None = None) -> str:
     `src.execution.stop_repair.repair_stop_coverage` a normal session uses. It
     never sells, resizes, closes or cancels anything.
 
-    Two owner alerts, each at most once per trading day: shares still with no
-    stop and no session to have re-placed one, and a placement that was
-    attempted during open hours and did not land. A failed placement is never
+    Three owner alerts, each at most once per trading day (per SYMBOL for the
+    latter two): shares still with no stop and no session to have re-placed
+    one, a placement that was attempted during open hours and did not land,
+    and — board item 172 — a position whose protective stop the broker could
+    not be ASKED about, which is an unknown rather than a measured gap and is
+    sent FIRST. Neither a failed placement nor an unreadable stop is ever
     swallowed.
 
     Returns the journal line; raises only if the broker cannot be built, and

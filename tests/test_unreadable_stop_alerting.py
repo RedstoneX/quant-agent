@@ -516,6 +516,77 @@ def test_the_unreadable_marker_does_not_share_a_key_with_the_other_two(state_pat
     assert coverage_watchdog.claim_elected_unfilled_alert(["AAPL"], now=_NOW) == ["AAPL"]
 
 
+def test_the_standalone_sweeps_own_gate_is_what_decides_it_pages():
+    """`should_alert_unreadable` is the ONE condition `run_coverage_check`
+    consults before paging, and nothing else in the file was asserting on
+    it: a mutation turning it into `return False` silenced the 30-minute
+    sweep's alert with every test in the suite still green [measured
+    2026-09-23]. The session reconciler does not cover this — it is a
+    different process on a different trigger, and between two sessions the
+    standalone sweep is the only thing looking.
+
+    It must also stay UNGATED on `session_ran`, unlike `should_alert`:
+    nothing re-reads a stop the broker refused to describe, so waiting for
+    a session to have its chance would only delay the report.
+    """
+    row = coverage_watchdog.UnreadableStop(
+        symbol="AAPL", held_qty=9.0, reason="snapshot raised",
+    )
+    fires = coverage_watchdog.CoverageStatus(
+        trading_day="2026-09-23", session_ran=True, unreadable=[row],
+    )
+    assert fires.should_alert_unreadable is True
+    no_session = coverage_watchdog.CoverageStatus(
+        trading_day="2026-09-23", session_ran=False, unreadable=[row],
+    )
+    assert no_session.should_alert_unreadable is True
+    already = coverage_watchdog.CoverageStatus(
+        trading_day="2026-09-23", session_ran=True, unreadable=[row],
+        already_alerted_unreadable_for_day=True,
+    )
+    assert already.should_alert_unreadable is False
+    nothing = coverage_watchdog.CoverageStatus(
+        trading_day="2026-09-23", session_ran=True,
+    )
+    assert nothing.should_alert_unreadable is False
+
+
+def test_the_standalone_sweep_actually_pages_the_owner_by_symbol(state_path):
+    """The gate above, driven through the real `run_coverage_check` to the
+    real `send_owner_alert` call, so the wiring between them is asserted
+    and not assumed. `symbols=` is checked because the per-symbol claim and
+    the owner's own reading both depend on it."""
+    import scripts.alert_heartbeat as hb
+
+    status = coverage_watchdog.CoverageStatus(
+        trading_day="2026-09-23", session_ran=True,
+        unreadable=[coverage_watchdog.UnreadableStop(
+            symbol="AAPL", held_qty=9.0,
+            reason="snapshot_protective_stops raised: 503",
+        )],
+    )
+    sent: list[tuple[str, list]] = []
+
+    with patch.object(hb, "_build_broker", return_value=MagicMock()), \
+         patch.object(hb, "_cash_sweep_symbol", return_value="SGOV"), \
+         patch.object(hb, "_coverage_db_and_last_buy", return_value=(None, None)), \
+         patch("src.coverage_watchdog.check_coverage", return_value=status), \
+         patch("src.coverage_watchdog.record_sweep_run"), \
+         patch(
+             "src.notifier.send_owner_alert",
+             side_effect=lambda text, symbols=None, **_kw: (
+                 sent.append((text, list(symbols or []))) or True
+             ),
+         ):
+        line = hb.run_coverage_check(now=_NOW)
+
+    assert len(sent) == 1, "exactly one alert, and it is the unreadable one"
+    text, symbols = sent[0]
+    assert "UNREADABLE" in text and "AAPL" in text
+    assert symbols == ["AAPL"]
+    assert "unreadable-stop alert delivered" in line
+
+
 # ===========================================================================
 # 4. rendering: never folded into a banner that states a measured fact
 # ===========================================================================
