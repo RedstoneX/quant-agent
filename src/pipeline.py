@@ -12520,7 +12520,9 @@ class TradingPipeline:
         problem costs the audit record, never the morning push.
         """
         self._last_evidence_freshness = None
+        self._last_account_snapshot = None
         result = self._run_morning_body()
+        self._attach_pnl(result)
         self._attach_evidence_freshness(result)
         self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
@@ -12556,6 +12558,77 @@ class TradingPipeline:
         status = getattr(self, "_last_decision_data_status", None)
         if isinstance(status, dict) and status and "data_status" not in result:
             result["data_status"] = dict(status)
+
+    def _record_account_snapshot(self, total_value, last_equity) -> None:
+        """Remember the account read this session already made, so the P&L
+        block can be built from it on EVERY return path.
+
+        The session takes exactly one broker account snapshot and then may
+        leave by any of a dozen returns (no_trades, pm_agent_failure,
+        paid_analysis_suspended, executed, ...). Before 2026-09-23 only the
+        position-review and intra-check happy paths bothered to carry the
+        P&L keys out, so the morning message the owner actually reads said
+        "not available" while the same message printed the book it had just
+        read. Recording the snapshot here, and attaching in the wrapper,
+        makes the figure a property of "the account was read", not of which
+        exit the run happened to take.
+        """
+        try:
+            self._last_account_snapshot = (
+                float(total_value), float(last_equity),
+            )
+        except (TypeError, ValueError):
+            self._last_account_snapshot = None
+
+    def _attach_pnl(self, result) -> None:
+        """Fill the owner-facing P&L keys from this run's own account read.
+
+        SAME basis and SAME source as the path that already worked — the
+        broker's day-over-day change against `last_equity`, and
+        `_total_pnl_since_reset` for the dated baseline (see
+        `trader_feed._pnl_section_lines` for why "total" is dated). No
+        second way to compute P&L is introduced here, and nothing is
+        computed where the account was not read: a run with no snapshot
+        sets the REASON instead, so the message can say something true.
+
+        Never overwrites a figure a body already set, and never raises — a
+        P&L fault must not cost the push.
+        """
+        if not isinstance(result, dict):
+            return
+        keys = (
+            "daily_pnl", "daily_return_pct",
+            "total_pnl", "total_return_pct", "total_pnl_since",
+        )
+        if any(k in result for k in keys):
+            return
+        snapshot = getattr(self, "_last_account_snapshot", None)
+        if not snapshot:
+            result.setdefault(
+                "pnl_unavailable_reason", "ended_before_account_read",
+            )
+            return
+        try:
+            total_value, last_equity = snapshot
+            if last_equity > 0:
+                daily_pnl = total_value - last_equity
+                result["daily_pnl"] = daily_pnl
+                result["daily_return_pct"] = daily_pnl / last_equity * 100
+            total_pnl, total_return_pct, total_pnl_since = (
+                self._total_pnl_since_reset(total_value)
+            )
+            if total_pnl is not None:
+                result["total_pnl"] = total_pnl
+                result["total_return_pct"] = total_return_pct
+                result["total_pnl_since"] = total_pnl_since
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning("P&L attach failed (non-fatal): %s", exc)
+        if not any(k in result for k in keys):
+            # The account WAS read; what is missing is a usable prior close
+            # (and no dated baseline row exists either). Say that, rather
+            # than claiming an account read that demonstrably happened did
+            # not.
+            result.setdefault("pnl_unavailable_reason", "no_prior_close")
 
     def _persist_session_report(self, mode: str, result: dict) -> None:
         """Write a morning/midday/close result dict verbatim, keyed by
@@ -12657,6 +12730,9 @@ class TradingPipeline:
             ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
             ctx.total_value = total_value
             ctx.last_equity = last_equity
+            # The owner's P&L block is built from THIS read, whichever of
+            # the body's return paths the run leaves by (see `_attach_pnl`).
+            self._record_account_snapshot(total_value, last_equity)
             logger.info(
                 "Account: $%.2f total, $%.2f cash (deployable $%.2f), %d positions (last close $%.2f)",
                 total_value, cash, ctx.deployable_cash, len(positions), last_equity)
@@ -13401,7 +13477,9 @@ class TradingPipeline:
         """
         if session_type not in ("midday", "close"):
             raise ValueError(f"run_position_review: unknown session_type {session_type!r}")
+        self._last_account_snapshot = None
         result = self._run_position_review_body(session_type)
+        self._attach_pnl(result)
         self._persist_session_report(session_type, result)
         return result
 
@@ -13491,6 +13569,9 @@ class TradingPipeline:
         cash = account["cash"]
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
+        # Carries the P&L block out of the paid-suspension return paths too,
+        # which read the account and then reported "not available".
+        self._record_account_snapshot(total_value, last_equity)
         ctx.account = account
         ctx.positions = positions
         ctx.cash = cash
@@ -14021,6 +14102,21 @@ class TradingPipeline:
         }
 
     def run_earnings_preprocess(self) -> dict:
+        """Pre-market earnings analysis, plus the one true sentence its
+        P&L block can say.
+
+        This mode runs before the open and makes no broker account read at
+        all, so its message genuinely has no figure. It says so explicitly
+        rather than letting the renderer guess from absent keys — the guess
+        is what produced the false "built without an account read" line on
+        trading sessions that HAD read the account (2026-09-23).
+        """
+        result = self._run_earnings_preprocess_body()
+        if isinstance(result, dict):
+            result.setdefault("pnl_unavailable_reason", "no_account_read")
+        return result
+
+    def _run_earnings_preprocess_body(self) -> dict:
         """Pre-market earnings analysis — the ONLY place that calls the LLM
         for 10-Q/10-K filings.
 
@@ -14281,10 +14377,12 @@ class TradingPipeline:
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
         self._last_evidence_freshness = None
+        self._last_account_snapshot = None
         self._intra_preamble_deferred = ""
         result = self._run_intra_check_body()
         if isinstance(result, dict) and self._intra_preamble_deferred:
             result["preamble_deferred"] = self._intra_preamble_deferred
+        self._attach_pnl(result)
         self._attach_evidence_freshness(result)
         self._persist_intra_check_report(result)
         return result
@@ -14442,6 +14540,7 @@ class TradingPipeline:
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
         daily_pnl = total_value - last_equity
+        self._record_account_snapshot(total_value, last_equity)
         ctx.account = account
         ctx.positions = positions
         ctx.cash = account["cash"]

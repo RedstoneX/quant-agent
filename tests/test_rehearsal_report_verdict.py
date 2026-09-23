@@ -249,6 +249,11 @@ _PIPELINE_SESSION_FUNCTIONS = (
     # lives in `_run_morning_body` / `_run_position_review_body` /
     # `_run_intra_check_body`, so the bodies are scanned directly too.
     "_run_morning_body", "_run_position_review_body", "_run_intra_check_body",
+    # `run_earnings_preprocess` became the same shape on 2026-09-23: the
+    # wrapper stamps the P&L block's `pnl_unavailable_reason` (this mode
+    # genuinely reads no account) and every status literal lives in the
+    # body, so the body is scanned directly too.
+    "_run_earnings_preprocess_body",
 )
 
 # Explicit indirection bridges: (source file, lookup, resolved status set).
