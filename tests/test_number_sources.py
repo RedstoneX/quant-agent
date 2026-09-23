@@ -305,7 +305,14 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 147, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 149, (
+        "147 -> 149 on 2026-09-23, the three-route failover ladder: +2 for "
+        "`src.llm_route_journal._DEFAULT_DB_RELATIVE`'s companions in that "
+        "new module (the journal's SQLite timeout and its read_events page "
+        "size). Both are plumbing on a durable log of which LLM road "
+        "answered; neither decides, sizes, prices or exits a trade. The four "
+        "numbers the same change added to src/agents/base.py are NOT here -- "
+        "that module is in SCOPED_PATHS and they carry ledger entries. "
         "145 -> 147 on 2026-09-19: +2 for src/number_sources.py's own "
         "FACTOR_BAND, the scanner's classifier band, not a trade number. "
 

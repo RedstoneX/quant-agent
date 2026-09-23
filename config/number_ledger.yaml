@@ -2936,6 +2936,39 @@ numbers:
     note: >-
       LLM plumbing: ceiling applied to a provider-returned Retry-After
       value, not a trading decision.
+  - id: src.agents.base._BACKOFF_CAP_S
+    value: 60.0
+    status: sourced
+    site: src/agents/base.py
+    source: >-
+      https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+      -- the "cap" term of the published Full Jitter formula
+      `sleep = random(0, min(cap, base * 2 ** attempt))`. The formula is
+      unbounded in the attempt index without it; the article treats the cap
+      as a required part of the pattern, not an optional tuning knob.
+    note: >-
+      LLM plumbing, not a trading decision. The VALUE 60s is bounded by
+      `_DEFAULT_RETRY_DEADLINE_S` (480s) in the same module: one sleep must
+      not be able to consume the primary window on its own. Any value
+      comfortably below 480 satisfies the constraint; 60 is the round number
+      inside it, and that choice is the arbitrary part -- stated rather than
+      dressed up as measured.
+  - id: src.agents.base._MIN_CAPACITY_BACKOFF_S
+    value: 1.0
+    status: sourced
+    site: src/agents/base.py
+    source: >-
+      https://ai.google.dev/gemini-api/docs/troubleshooting (verified
+      2026-09-23) -- for 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE: "Wait a
+      short time before the first retry (for example, 1 second), then
+      increase the delay exponentially ... Add random 'jitter'." Read off the
+      page of the provider that is the desk's PRIMARY route and the one that
+      actually rate-limits it.
+    note: >-
+      LLM plumbing, not a trading decision. Applied only to the rate-limit
+      and capacity classes the cited page is about; a transport-class failure
+      gets pure Full Jitter, because no source publishes a floor for those
+      and inventing one would be arbitrary.
   - id: src.agents.base._ANTHROPIC_MAX_CONCURRENT
     value: 4
     status: not-trade-governing

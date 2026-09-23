@@ -226,7 +226,9 @@ def test_no_agent_exceeds_its_models_context(llm):
 def test_pinned_openrouter_table_has_no_unused_speculative_rows():
     """Every pinned rate is either in the policy, is the baseline the cost
     reduction is measured against, or is the process-wide cross-provider
-    failover target (2026-08-31: `llm.fallback_model`, reachable from any
+    failover target (2026-08-31: `llm.fallback_model`), or is the tertiary
+    route 3 target (2026-09-23: `llm.tertiary_model`, the different-MODEL
+    last rung). The fallback is reachable from any
     seat whose primary differs from it — which after the same-day Google
     migration is every seat except PM/RM's specific model, since the
     OpenRouter-routed seats among AGENTS are now only PM/RM themselves).
@@ -238,6 +240,14 @@ def test_pinned_openrouter_table_has_no_unused_speculative_rows():
     fallback_model = llm.get("fallback_model")
     if fallback_provider == "openrouter" and fallback_model:
         used.add(fallback_model)
+    # ...or is route 3, the tertiary (2026-09-23): the first rung that changes
+    # the MODEL rather than the road, reached only when the primary and the
+    # same-model secondary have both failed. Same rule as the fallback above —
+    # it is a real route the desk can run on, so its rate is not speculative.
+    tertiary_provider = llm.get("tertiary_provider")
+    tertiary_model = llm.get("tertiary_model")
+    if tertiary_provider == "openrouter" and tertiary_model:
+        used.add(tertiary_model)
     unused = set(_PRICING_OPENROUTER) - used
     assert not unused, f"pinned but unused: {sorted(unused)}"
 

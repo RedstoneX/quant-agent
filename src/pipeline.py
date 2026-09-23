@@ -921,6 +921,14 @@ class TradingPipeline:
         # provider_keys and this construction site can never pick different
         # credentials for the same configured fallback.
         _fallback_api_key = _key_for(config.llm.fallback_model, config.llm.fallback_provider)
+        # Route 3 credential — a genuinely DIFFERENT model (see
+        # config.llm.tertiary_model). Resolved through the same closure for
+        # the same reason. Empty when route 3 is switched off, which
+        # BaseAgent._tertiary_reachable reads as "no third rung".
+        _tertiary_api_key = (
+            _key_for(config.llm.tertiary_model, config.llm.tertiary_provider)
+            if (config.llm.tertiary_model or "").strip() else ""
+        )
 
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
@@ -929,6 +937,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.tech_analyst_provider,
             provider_order=config.llm.get_provider_order("tech_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -945,6 +956,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -967,6 +981,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -998,6 +1015,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.position_reviewer_provider,
             provider_order=config.llm.get_provider_order("position_reviewer"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1010,6 +1030,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.evening_analyst_provider,
             provider_order=config.llm.get_provider_order("evening_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1022,6 +1045,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.news_analyst_provider,
             provider_order=config.llm.get_provider_order("news_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1034,6 +1060,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1063,6 +1092,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.earnings_analyst_provider,
             provider_order=config.llm.get_provider_order("earnings_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1075,6 +1107,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1148,6 +1183,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.meta_reflector_provider,
             provider_order=config.llm.get_provider_order("meta_reflector"),
             reasoning_effort=config.llm.reasoning_effort,

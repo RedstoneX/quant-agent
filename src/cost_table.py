@@ -211,6 +211,29 @@ _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
     # Commissioning baseline. Retained because it is what the cost reduction
     # is measured against, and pricing it is what makes that measurable.
     "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
+    # TERTIARY route (`llm.tertiary_model`) — the third rung of the failover
+    # ladder and the first one that is a genuinely DIFFERENT model rather
+    # than the same model on a different road. Reached only when the primary
+    # (Google direct) and the secondary (OpenRouter, same model) have BOTH
+    # failed, which is the saturated-MODEL case route diversity cannot
+    # survive (2026-09-22).
+    #
+    # Note the id spelling: OpenRouter serves this model as
+    # `anthropic/claude-haiku-4.5` with a DOT, while Anthropic's own native
+    # id (in `_PRICING_FALLBACK` above) is `claude-haiku-4-5` with a dash.
+    # They are the same weights on two different roads and both rows are
+    # needed; searching the catalog for the dashed form returns nothing,
+    # which is how this route was nearly written off as unavailable.
+    #
+    # Verified against OpenRouter's live catalog 2026-09-23:
+    #     curl -s https://openrouter.ai/api/v1/models | python3 -c \
+    #       "import json,sys; [print(m['id'], m['pricing']['prompt'], \
+    #        m['pricing']['completion']) for m in json.load(sys.stdin)['data'] \
+    #        if m['id'] == 'anthropic/claude-haiku-4.5']"
+    # 3.33x the input and 2.0x the output of the secondary
+    # (google/gemini-3.5-flash-lite at 0.300/2.500), and unbounded against
+    # the PRIMARY, which is Google AI Studio's free tier at $0.00/$0.00.
+    "anthropic/claude-haiku-4.5":      {"input": 1.000, "output":  5.000},
 }
 
 # Active PRICING — populated below from cache or fallback at module
