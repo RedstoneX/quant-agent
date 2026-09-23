@@ -22,11 +22,15 @@ directly for filled SELL orders the ledger has never recorded
 `Database.insert_stop_out_trade`.
 """
 
+import re
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.pipeline import TradingPipeline
-from src.storage.db import Database
+from src.storage.db import Database, _trail_stop_reduced_position
 
 
 def _mk_pipeline(db: Database, broker, lookback_days: int = 7) -> TradingPipeline:
@@ -551,3 +555,405 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
     assert stats["n"] == 3
     # 2 wins (AAA, BBB) out of 3 closed trades — the STOP_OUT loss counts.
     assert stats["win_rate_pct"] == round(2 / 3 * 100, 1)
+
+
+# ---------------------------------------------------------------------------
+# TRAIL_STOP is protection, not a sale — live corruption found 2026-09-23.
+#
+# `get_symbols_with_open_ledger_qty` signed every non-BUY/non-HOLD executed
+# row -1, so a TRAIL_STOP row — written at PLACEMENT by the stop-placement
+# paths, and left at `fill_status IS NULL` on the legacy rows that
+# `_executed_trade_predicate` nevertheless treats as executed — subtracted
+# the whole protected position from the ledger's own belief.
+#
+# Measured against the production DB on 2026-09-23 (read-only): three such
+# rows existed (COP id 11, EQNR id 12, AMD id 50; all fill_status NULL,
+# fill_qty NULL, broker_order_id NULL) and the ledger read AMD 0.0 while
+# the broker held 1.7662, COP -5.3194 and EQNR -8.5962 while both were
+# flat. AMD is the dangerous one: `_reconcile_stop_out_fills` skips any
+# symbol whose ledger qty is <= 0, so an untracked broker sale on that
+# symbol was undetectable by construction.
+#
+# These probe the CLASS — what a TRAIL_STOP in each fill state does to a
+# pure share-count ledger, long side and short side, next to the other
+# actions the signing rule enumerates.
+# ---------------------------------------------------------------------------
+
+def _rest_the_stops(db: Database, *, clear_order_id: bool = False):
+    """Force every TRAIL_STOP row into the production legacy shape:
+    fill_status NULL and fill_qty NULL. `insert_trade` cannot express this
+    together with a broker_order_id, and it is exactly the shape the three
+    live rows carry."""
+    extra = ", broker_order_id = NULL" if clear_order_id else ""
+    db.conn.execute(
+        f"UPDATE trades SET fill_status = NULL, fill_qty = NULL{extra} "
+        "WHERE action = 'TRAIL_STOP'")
+    db.conn.commit()
+
+
+def _set_fill(db: Database, broker_order_id: str, *, status=None, qty=None):
+    """Force one row into a fill state `insert_trade` cannot express (it
+    takes no fill_qty) — a legacy NULL status carrying a real executed
+    quantity, or a partial fill that was then canceled."""
+    db.conn.execute(
+        "UPDATE trades SET fill_status = ?, fill_qty = ? WHERE broker_order_id = ?",
+        (status, qty, broker_order_id))
+    db.conn.commit()
+
+
+def test_unfilled_trail_stop_with_null_fill_status_is_not_an_exit(tmp_path):
+    """THE LIVE DEFECT (AMD id 50): a resting stop must not zero the book."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("AMD", "BUY", 1.7662, 549.11, "entry", "r1",
+                    broker_order_id="amd-buy", fill_status="filled")
+    db.insert_trade("AMD", "TRAIL_STOP", 1.7662, 549.11, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+
+    # Precondition: the row really is one the executed predicate admits —
+    # otherwise this test would pass for the wrong reason.
+    admitted = db.conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE action = 'TRAIL_STOP' AND "
+        + Database._executed_trade_predicate()).fetchone()[0]
+    assert admitted == 1
+
+    assert db.get_symbols_with_open_ledger_qty()["AMD"] == 1.7662
+
+
+def test_resting_trail_stop_does_not_drive_a_flat_symbol_negative(tmp_path):
+    """COP id 11: entry, resting stop, then the real sale that flattened
+    the book. The stop must not double-count that exit."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("COP", "BUY", 5.3194, 100.0, "entry", "r1",
+                    broker_order_id="cop-buy", fill_status="filled")
+    db.insert_trade("COP", "TRAIL_STOP", 5.3194, 95.0, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2",
+                    broker_order_id="cop-sell", fill_status="filled")
+    _set_fill(db, "cop-sell", status="filled", qty=5.3194)
+
+    assert db.get_symbols_with_open_ledger_qty()["COP"] == 0.0
+
+
+def test_filled_trail_stop_is_an_exit(tmp_path):
+    """The stop actually sold the shares: it MUST still subtract them."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("LLY", "BUY", 8, 900.0, "entry", "r1",
+                    broker_order_id="lly-buy", fill_status="filled")
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1",
+                    broker_order_id="lly-stop", fill_status="submitted")
+    _set_fill(db, "lly-stop", status="filled", qty=8.0)
+
+    assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
+
+
+#: Every terminal-failure fill_status `_reconcile_fills` can write, and the
+#: pre-terminal ones it leaves alone. DERIVED from the writer below rather
+#: than typed out here: an earlier hand-written list silently omitted
+#: `done_for_day`, `rejected` and the two-L `cancelled`, which is the same
+#: two-copies-of-a-contract drift these tests exist to catch.
+_TERMINAL_FAIL_STATUSES = ("canceled", "cancelled", "expired", "rejected",
+                           "done_for_day")
+_PRE_TERMINAL_STATUSES = ("submitted", "pending_submit")
+
+
+def test_terminal_status_list_still_matches_the_only_writer():
+    """The mechanical half of the derivation. `_reconcile_fills` in
+    src/pipeline.py is the only thing that writes a terminal fill_status,
+    and it stores the broker's string verbatim. If that set ever gains or
+    loses a status, the parametrized tests below must follow it, so this
+    fails rather than letting them quietly stop covering a real state."""
+    source = (Path(__file__).resolve().parents[1] / "src" / "pipeline.py").read_text()
+    match = re.search(r"terminal_fail\s*=\s*\{([^}]*)\}", source)
+    assert match, "could not find terminal_fail in src/pipeline.py"
+    written = {s.strip().strip("\"'") for s in match.group(1).split(",") if s.strip()}
+    assert written == set(_TERMINAL_FAIL_STATUSES), (
+        "src/pipeline.py's terminal_fail set has changed; update "
+        "_TERMINAL_FAIL_STATUSES and the tests parametrized over it"
+    )
+
+
+@pytest.mark.parametrize(
+    "status", _PRE_TERMINAL_STATUSES + _TERMINAL_FAIL_STATUSES)
+def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
+    """A stop that rests, is pulled, lapses, is rejected or is closed out
+    at the end of the day WITHOUT trading moves no shares — asserted TWICE
+    on purpose.
+
+    The end-to-end number is currently decided by the SQL predicate, which
+    admits none of these rows at all (measured: 0 rows) so the Python
+    branch never runs. That makes the end-to-end assertion alone vacuous —
+    it would still pass if the Python rule were inverted. The SQL and
+    Python copies of this contract have drifted before, so the Python rule
+    is pinned directly as well."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("NVDA", "BUY", 10, 500.0, "entry", "r1",
+                    broker_order_id="nv-buy", fill_status="filled")
+    db.insert_trade("NVDA", "TRAIL_STOP", 10, 450.0, "protect", "r1",
+                    broker_order_id="nv-stop", fill_status=status)
+
+    assert db.get_symbols_with_open_ledger_qty()["NVDA"] == 10.0
+    row = db.conn.execute(
+        "SELECT fill_qty, fill_status FROM trades WHERE broker_order_id = 'nv-stop'"
+    ).fetchone()
+    assert _trail_stop_reduced_position(row, "TRAIL_STOP") is False
+
+
+@pytest.mark.parametrize("status", _TERMINAL_FAIL_STATUSES)
+def test_every_terminal_status_with_a_partial_fill_still_subtracts(tmp_path, status):
+    """The case the wide rule exists for, across EVERY terminal status the
+    writer can produce — not just the one that was typed out by hand.
+
+    `_reconcile_fills` stores the broker's terminal status verbatim
+    alongside whatever quantity did trade, and logs that combination
+    explicitly. `done_for_day` with a partial fill is the ordinary
+    real-world instance: a day order that traded part of its size and then
+    lapsed at the close. Those shares are gone from the broker's book even
+    though there is no priceable round trip, so the share-count ledger has
+    to subtract them."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("TGT", "BUY", 30, 80.0, "entry", "r1",
+                    broker_order_id="tgt-buy", fill_status="filled")
+    db.insert_trade("TGT", "TRAIL_STOP", 30, 75.0, "protect", "r1",
+                    broker_order_id="tgt-stop", fill_status="submitted")
+    _set_fill(db, "tgt-stop", status=status, qty=11.0)
+
+    assert db.get_symbols_with_open_ledger_qty()["TGT"] == 19.0
+
+
+@pytest.mark.parametrize("action", ["TRAIL_STOP", "trail_stop", "Trail_Stop"])
+def test_trail_stop_rule_is_case_insensitive_on_the_action(action):
+    """The guard upper-cases before comparing. Every caller happens to pass
+    an already-upper-cased action today, so nothing else would notice if
+    that normalisation were dropped."""
+    filled = {"fill_qty": 4.0, "fill_status": "filled"}
+    assert _trail_stop_reduced_position(filled, action) is True
+
+
+def test_trail_stop_rule_does_not_answer_for_other_actions(tmp_path):
+    """The helper is named for TRAIL_STOP and must say so. Without the
+    action check it returned True for any row carrying a fill_qty, which
+    would quietly hand a true-by-default answer to a future caller."""
+    filled_sell = {"fill_qty": 9.0, "fill_status": "filled"}
+    assert _trail_stop_reduced_position(filled_sell, "SELL") is False
+    assert _trail_stop_reduced_position(filled_sell, "TRAIL_STOP") is True
+
+
+def test_trail_stop_with_fill_qty_but_null_status_is_an_exit(tmp_path):
+    """Legacy shape: no fill_status ever written back, but the broker's
+    executed quantity WAS recorded. Those shares are gone."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("KO", "BUY", 20, 60.0, "entry", "r1",
+                    broker_order_id="ko-buy", fill_status="filled")
+    db.insert_trade("KO", "TRAIL_STOP", 20, 55.0, "protect", "r1",
+                    broker_order_id="ko-stop")
+    _set_fill(db, "ko-stop", status=None, qty=20.0)
+
+    assert db.get_symbols_with_open_ledger_qty()["KO"] == 0.0
+
+
+def test_partially_filled_trail_stop_subtracts_only_what_traded(tmp_path):
+    """Part of the protected size traded. The ledger must lose exactly
+    that part — not the whole position, and not nothing.
+
+    Uses the legacy NULL-status shape rather than a `partially_filled`
+    status string: `_reconcile_fills` normalises anything filled to
+    `'filled'` and stores only its own terminal vocabulary otherwise, so
+    `partially_filled` is a state this desk never writes and a test using
+    it would exercise the right branch under a name that cannot occur."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("PEP", "BUY", 30, 170.0, "entry", "r1",
+                    broker_order_id="pep-buy", fill_status="filled")
+    db.insert_trade("PEP", "TRAIL_STOP", 30, 160.0, "protect", "r1",
+                    broker_order_id="pep-stop")
+    _set_fill(db, "pep-stop", status=None, qty=12.0)
+
+    assert db.get_symbols_with_open_ledger_qty()["PEP"] == 18.0
+
+
+def test_resting_stop_alongside_a_real_partial_sale(tmp_path):
+    """Both at once (EQNR id 12): a REDUCE that really traded, and
+    protection still resting over the remainder. Only the REDUCE may move
+    the number."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("EQNR", "BUY", 17.1924, 25.0, "entry", "r1",
+                    broker_order_id="eqnr-buy", fill_status="filled")
+    db.insert_trade("EQNR", "TRAIL_STOP", 17.1924, 23.0, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+    db.insert_trade("EQNR", "REDUCE", 8.5962, 24.0, "trim", "r2",
+                    broker_order_id="eqnr-reduce", fill_status="filled")
+    _set_fill(db, "eqnr-reduce", status="filled", qty=8.5962)
+
+    assert db.get_symbols_with_open_ledger_qty()["EQNR"] == 8.5962
+
+
+def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
+    """Short side. A SHORT signs negative and its protective stop is a
+    BUY-to-cover resting at the broker — still protection, still no
+    quantity effect. The caller reads negatives as shorts and skips them,
+    so a wrong number here would be silent."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+
+    assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
+
+
+def test_short_side_cover_sign_is_a_known_defect_item_173c(tmp_path):
+    """KNOWN DEFECT, pinned so it cannot be mistaken for correct — item
+    173(c). The signing rule still reads the action name, so anything that
+    RETIRES a short subtracts from it instead: a full cover of a 36-share
+    short reads -72, not 0, whether it comes as a COVER or as a
+    buy-to-cover TRAIL_STOP the broker filled. Unchanged by this fix (the
+    old code produced -72 too) and silent today, because the reconciler
+    treats any negative as a short and skips it.
+
+    Both halves are asserted together on purpose. Fixing only one of the
+    two routes reds only that line, and the cheapest way out of that red
+    is to edit the expected number — so the failure messages name item
+    173(c) and say to delete this test rather than adjust it."""
+    _WRONG = ("item 173(c): the short-side sign is knowingly wrong here. If "
+              "you have FIXED the signing rule, delete this whole test — do "
+              "not edit the expected number, and do not fix one route only.")
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
+                    broker_order_id="flnc-stop", fill_status="submitted")
+    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
+
+    db.insert_trade("UPS", "SHORT", 7, 94.75, "short entry", "r1",
+                    broker_order_id="ups-short", fill_status="filled")
+    db.insert_trade("UPS", "COVER", 7, 92.0, "cover", "r2",
+                    broker_order_id="ups-cover", fill_status="filled")
+    _set_fill(db, "ups-cover", status="filled", qty=7.0)
+
+    net = db.get_symbols_with_open_ledger_qty()
+    assert net["FLNC"] == -72.0, f"filled buy-to-cover TRAIL_STOP route — {_WRONG}"
+    assert net["UPS"] == -14.0, f"COVER route — {_WRONG}"
+
+
+def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
+    """Guard the rest of the signing rule against collateral damage:
+    BUY/SWEEP_BUY add, SWEEP_SELL/STOP_OUT/REDUCE subtract, and HOLD plus a
+    never-sent submit_failed row contribute nothing."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("SGOV", "SWEEP_BUY", 65, 100.0, "park", "r1",
+                    broker_order_id="sw-b", fill_status="filled")
+    db.insert_trade("SGOV", "SWEEP_SELL", 25, 100.1, "release", "r2",
+                    broker_order_id="sw-s", fill_status="filled")
+    db.insert_trade("OXY", "BUY", 31.3451, 45.0, "entry", "r1",
+                    broker_order_id="oxy-buy", fill_status="filled")
+    db.insert_trade("OXY", "STOP_OUT", 31.3451, 41.0, "stopped out", "r2",
+                    broker_order_id="oxy-stop", fill_status="filled")
+    db.insert_trade("XOM", "BUY", 10, 110.0, "entry", "r1",
+                    broker_order_id="xom-buy", fill_status="filled")
+    db.insert_trade("XOM", "REDUCE", 4, 112.0, "trim", "r2",
+                    broker_order_id="xom-red", fill_status="filled")
+    db.insert_trade("XOM", "HOLD", 0, 0, "hold", "r2")
+    db.insert_trade("XOM", "BUY", 99, 110.0, "never sent", "r2",
+                    broker_order_id="xom-fail", fill_status="submit_failed")
+
+    net = db.get_symbols_with_open_ledger_qty()
+    assert net["SGOV"] == 40.0
+    assert net["OXY"] == 0.0
+    assert net["XOM"] == 6.0
+
+
+def test_reconciler_now_sees_a_stop_out_masked_by_a_resting_stop(tmp_path):
+    """End-to-end consequence of the live defect. AMD's resting stop made
+    the ledger read 0, and `_reconcile_stop_out_fills` skips any symbol it
+    believes is flat — so an untracked broker sale there was undetectable
+    by construction. With the fix the gap is seen and written back."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("AMD", "BUY", 2.0, 549.11, "entry", "r1",
+                    broker_order_id="amd-buy", fill_status="filled")
+    db.insert_trade("AMD", "TRAIL_STOP", 2.0, 500.0, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # broker flat: the stop fired
+    broker.list_filled_sell_orders.return_value = [
+        {"id": "untracked-stop-fill", "qty": 2.0, "price": 500.0,
+         "filled_at": "2026-09-22 14:00:00"},
+    ]
+
+    pipeline = _mk_pipeline(db, broker)
+    results = pipeline._reconcile_stop_out_fills(run_id="r9")
+
+    assert [r["symbol"] for r in results] == ["AMD"]
+    assert results[0]["ledger_qty"] == 2.0
+    assert results[0]["recorded"] == 1
+    assert any(r["action"] == "STOP_OUT" for r in db.get_trades(symbol="AMD"))
+
+
+def test_reconciler_stays_a_no_op_on_a_genuinely_flat_symbol(tmp_path):
+    """The mirror case: COP went NEGATIVE, which the caller also skips, so
+    the defect was invisible from the reconciler's results either way.
+    After the fix the number is a true 0, the pass is still a no-op, and
+    no broker query or owner page happens."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("COP", "BUY", 5.3194, 100.0, "entry", "r1",
+                    broker_order_id="cop-buy", fill_status="filled")
+    db.insert_trade("COP", "TRAIL_STOP", 5.3194, 95.0, "protect", "r1")
+    _rest_the_stops(db, clear_order_id=True)
+    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2",
+                    broker_order_id="cop-sell", fill_status="filled")
+    _set_fill(db, "cop-sell", status="filled", qty=5.3194)
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+
+    pipeline = _mk_pipeline(db, broker)
+    assert pipeline._reconcile_stop_out_fills(run_id="r9") == []
+    broker.list_filled_sell_orders.assert_not_called()
+
+
+def test_calibration_and_ledger_qty_agree_on_trail_stop_fill_state(tmp_path):
+    """Cross-check the two accountings that read the same rows. A
+    TRAIL_STOP that closes a lot in `compute_trade_calibration` must also
+    be one that removes shares here, and one the calibration leaves open
+    must still be counted as held. Drift between them is what produced
+    this defect in the first place."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    # Three symbols whose protective stop really fired...
+    for sym in ("AAA", "CCC", "DDD"):
+        db.insert_trade(sym, "BUY", 10, 100.0, "entry", "r1",
+                        broker_order_id=f"{sym}-buy", fill_status="filled")
+        db.insert_trade(sym, "TRAIL_STOP", 10, 90.0, "protect", "r1",
+                        broker_order_id=f"{sym}-stop", fill_status="submitted")
+        db.conn.execute(
+            "UPDATE trades SET fill_price = 90.0, fill_qty = 10.0, "
+            "fill_status = 'filled' WHERE broker_order_id = ?", (f"{sym}-stop",))
+    # ...and one whose stop is still resting, in the production row shape.
+    db.insert_trade("BBB", "BUY", 10, 100.0, "entry", "r1",
+                    broker_order_id="bbb-buy", fill_status="filled")
+    db.insert_trade("BBB", "TRAIL_STOP", 10, 90.0, "protect", "r1")
+    db.conn.execute(
+        "UPDATE trades SET fill_status = NULL, fill_qty = NULL "
+        "WHERE action = 'TRAIL_STOP' AND broker_order_id IS NULL")
+    db.conn.commit()
+
+    net = db.get_symbols_with_open_ledger_qty()
+    assert net["AAA"] == net["CCC"] == net["DDD"] == 0.0  # the stops sold them
+    assert net["BBB"] == 10.0  # this stop is still resting
+
+    stats = db.compute_trade_calibration(lookback_days=3650)
+    # Exactly the three stops that fired closed a round trip — BBB is still
+    # open to BOTH accountings, which is the agreement being asserted.
+    assert stats["n"] == 3
