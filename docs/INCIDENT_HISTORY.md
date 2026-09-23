@@ -22,6 +22,102 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk told the owner to go and place a stop by hand, then placed it itself fifteen minutes later and never said so
+
+**In plain words:** forty-three seconds after the market opened, the desk sent
+a red alarm saying it could not put a protective stop back on part of a
+holding and that the owner should place it by hand. Fifteen minutes later the
+desk placed that stop itself, without being asked. Nothing ever retracted the
+alarm, so for the rest of the day the owner's last instruction from the desk
+was to go and do by hand a thing that was already done. The alarm was true for
+fifteen minutes and false for the next six hours.
+
+**Why it fired at all.** Part-share holdings can only carry a day-only
+protective stop, so that stop expires every night by design and has to be
+re-placed each morning. The re-placement needs a price it can trust, and it
+refuses to use a price the market has not actually traded at — a stop priced
+off an unconfirmed quote can fire the instant it is placed. Forty-three
+seconds after the bell, plenty of names have not traded yet. The refusal was
+correct. Refusing is not the defect.
+
+**The actual defect: the wrong pass was doing the paging.** The very first
+attempt of the session raised an owner-level alarm, at a moment when "this
+name has not printed yet" is the ordinary state of the market rather than a
+failure of anything. The desk's own later passes routinely resolve it. So the
+alarm fired before the mechanism that clears it had been given a turn.
+
+**Measured, across every retained log rotation (2026-08-21 to 2026-09-23).**
+The no-trade-print refusal occurred six times, on four sessions: NET and RSG
+on 09-18, BRK-B, NUE and RSG on 09-21, RSG on 09-23. Every single one was
+raised between 13:30:43 and 13:30:45 UTC, inside forty-five seconds of the
+open. Every single one was resolved in the same session — five at the next
+pass, and 09-18 RSG by a scale-in that re-placed the whole stop at 13:35:58.
+Not one of them survived to a second look. A seventh alarm of the same
+outward shape, BRK-B on 2026-09-16, had a completely different cause: the
+broker rejected the order and the retries ran out. That one was a real
+failure on its first attempt and still is.
+
+**What was changed, and what deliberately was not.** The refusal logic is
+untouched. The retry is untouched — the desk still attempts the repair on
+every pass, at the same cadence, because a 2026-09-18 ruling in this same file
+explicitly rejected deferring the RETRY on the grounds that waiting adds
+unprotected time. That ruling stands; what now waits is the PAGE, not the fix.
+A refusal that says "this name has not traded today", on a position whose
+whole-share part is still covered by its durable stop, while the market is
+still open for later passes, is named in code as waiting on the tape rather
+than as a placement failure, and it does not interrupt the owner. It is still
+shown to him: the shortfall keeps its ordinary "stop mis-sized" line in the
+session feed and the evening report, because the position really is
+under-protected and hiding it would be a worse defect than the one being
+fixed.
+
+**No new number, on purpose.** The obvious fix was a delay or a
+wait-this-many-passes count fitted to the six observations above. `docs/
+OUTCOME.md` forbids exactly that — fitting a threshold to the desk's own past
+record is "an arbitrary number with a backtest stapled to it" — and requires
+reformulating the rule so it needs no constant before anything else is tried.
+The rule as written needs none: it asks a question of the tape (has this name
+printed today) and of the book (is anything still standing watch), and both
+answers are re-read on every pass. The measurement above is the reason the
+condition is worth naming. It is not the source of any number, because there
+is none.
+
+**Where the silence ends, so that it is a delay and not a suppression.** A
+name that spends the whole session waiting for a first print and never gets
+its stop back is not the ratified overnight lapse — that one is a stop that
+WAS placed and expired at 16:00 as designed. Filing the two as the same thing
+would mean nobody was ever told. The first pass that finds the market shut
+with the name still uncovered says so in a red alarm of its own. That pass is
+the one that can honestly say the session's repair path is exhausted.
+
+**The half that did not exist: an alarm that can clear.** A red stop alarm now
+sends an all-clear when the desk puts the stop back. It goes through the same
+owner channel the alarm used, because a retraction that arrives somewhere else
+is not a retraction, and it only names positions the owner was actually paged
+about — so the ordinary daily re-placement of every part-share stop, which
+happens to every such position every morning, stays silent. The original
+alarm's once-per-day cap is untouched and does not swallow the all-clear: the
+retraction carries its own marker. The cap was deliberately NOT released on
+resolution, because both alarm messages promise "reported at most once per
+trading day" and releasing it would both make that sentence false and let a
+name that fails, succeeds and fails again send two messages per cycle.
+
+**Found and NOT fixed, recorded here so it is not lost.** The deeper fix is
+still the one this file already called for on 2026-09-18: the desk holds a
+today-print source these names DO have — the one-minute bar, an aggregation of
+real prints on the same venue — and the stop-repair price read never consults
+it, asking only for the latest trade and then for quotes. Wiring that in would
+make most of these refusals not happen at all, rather than not page. That is a
+change to the refusal path and was out of scope here. Also still open from
+that entry: whether the broker's "held for other orders" figure blocks a
+sliver's stop while a whole-share stop rests on the same position. One
+measurement against it landed incidentally — on 2026-09-21 BRK-B, NUE and RSG
+each had a part-share day stop accepted while a whole-share stop was resting
+on the same position, which is direct evidence against that being a general
+block.
+
+---
+
 ### 2026-09-23 — "why can't I see the P&L?" — the morning message said the account had not been read, four lines above the book it had just read
 
 **In plain words:** the owner's morning Telegram said his profit and loss was
