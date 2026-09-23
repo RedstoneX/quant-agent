@@ -78,11 +78,17 @@ last event kill nothing, and reading either as a refusal is how the owner
 came to be told that the desk had refused every idea for the same reason
 across six intraday ticks that never ran a gate at all:
 
-  * a last event whose outcome is in `UNDECIDED_OUTCOMES` records the
-    candidate ARRIVING somewhere — the desk found it, or a specialist looked
-    at it — and nothing more. Such a candidate has no terminal outcome and
+  * a last event whose outcome is in `NOT_A_REFUSAL_OUTCOMES` did not turn
+    an idea down. Either it records the candidate ARRIVING somewhere with
+    nothing yet ruled (`UNDECIDED_OUTCOMES` — the desk found it, a
+    specialist looked at it, a seat nominated it), or something DID rule and
+    ruled that no new entry was right (`NO_ENTRY_DECIDED_OUTCOMES` — the
+    portfolio manager holding a position it still rates, a nomination that
+    duplicates an analysis this run already has, an exit). Such a candidate
     is dropped from the run's evidence; a run left with none of them is
-    absent from the session list entirely.
+    absent from the session list entirely. The second of those two is the
+    fully-invested book, and it is not a defect: a decision to hold is the
+    gate working.
   * a run the desk's OWN report row says stopped before the decision stage
     (`NON_DECIDING_STATUSES`: the cost circuit suspending paid analysis, the
     evidence gate skipping, a crash on the way in) is not evidence about the
@@ -162,6 +168,14 @@ ENTRY_ACTIONS = ("BUY", "SHORT")
 SURVIVED_OUTCOMES = frozenset({
     "submitted", "filled", "allowed", "approved", "placed",
     "buy_submitted", "funded",
+    # 2026-09-23 audit additions, both of them "an entry went ahead" words
+    # that were reading as refusals because they were simply never listed:
+    #   risk|modified        — the risk manager RESIZED the entry and let it
+    #                          through, which is `approved` with a haircut.
+    #   execution|safety_net — the catch-up reprice inside the entry ceiling,
+    #                          written only on the path where the order then
+    #                          proceeds.
+    "modified", "safety_net",
 })
 
 #: `outcome` values that record a candidate ARRIVING somewhere rather than a
@@ -184,7 +198,62 @@ SURVIVED_OUTCOMES = frozenset({
 #: all, and is dropped from that run's evidence. It is not counted as
 #: refused and it is not counted as survived; the desk simply never got as
 #: far as having an opinion about it.
-UNDECIDED_OUTCOMES = frozenset({"discovered", "evaluated"})
+UNDECIDED_OUTCOMES = frozenset({
+    "discovered",     # opportunity — a mover or prefilter hit was noticed
+    "evaluated",      # specialist  — a seat analysed the chart
+    "nominated",      # opportunity — a research seat put the name forward
+    "admitted",       # opportunity — smart-money/Form 4 widened eligibility
+    "proposed",       # portfolio_manager — a target was put up
+    "attempted",      # funding — a cash sweep is in flight
+    "not_decided",    # evidence_gate — the gate says so in the word itself
+    "protective_sell_cancelled",   # scale_in — a bookkeeping step mid-add
+})
+
+#: Outcomes where something DID rule, and ruled that no new entry was the
+#: right answer — for reasons that are not a gate turning an idea down.
+#:
+#: This is the third category, and it exists because the other two cannot
+#: hold `held_unchanged` without breaking something:
+#:
+#:  * It is not a REFUSAL. The portfolio manager holds the position, still
+#:    rates it, and deliberately left it out of the target list because the
+#:    right action was none. That is the gate WORKING. Reading it as a
+#:    refusal is why a book at 1.99x against a 2.0x ceiling — this desk,
+#:    today, with twelve `held_unchanged` rows and no orders — was about to
+#:    be reported to the owner as a jammed gate.
+#:  * It is not a SURVIVAL either, and putting it in `SURVIVED_OUTCOMES` was
+#:    the tempting one-word fix. It would have been worse than the bug. A
+#:    single surviving candidate ENDS the streak outright, so on a fully
+#:    invested book — where every session carries held names — this alarm
+#:    could never fire again, including on a gate that really was stuck. A
+#:    full book is exactly when a jam is hardest to see by eye.
+#:
+#: So a candidate that ends here is dropped from the run's evidence, the
+#: same mechanical treatment an undecided one gets and for a different
+#: reason: it is a decision, but it is not a decision ABOUT a gate refusing
+#: an idea. Twelve held names and nothing else means the run is absent and
+#: nothing is sent; twelve held names beside five new candidates all killed
+#: by one stuck rule still leaves those five, monomorphic, and the alarm
+#: still fires. That is the whole point of choosing this category.
+NO_ENTRY_DECIDED_OUTCOMES = frozenset({
+    "held_unchanged",   # portfolio_manager — holds it, left it out on purpose
+    "already_covered",  # opportunity — the nomination matched an analysis
+                        #   this same run already has; a dedupe, not a verdict
+    "not_required",     # funding — no cash sweep was needed to proceed
+    "exited",           # position_management — a SELL. This module already
+                        #   holds that an exit does not make a day non-empty
+                        #   (see ENTRY_ACTIONS); it is equally not a refusal
+                        #   of a new idea.
+    "stop_out_gap_unexplained",  # reconciliation — a finding about a
+                        #   position that is already closed, not a candidate
+})
+
+#: The union, which is what the loader actually applies: every outcome word
+#: that is NOT the desk turning an idea down. Everything outside it reads as
+#: a refusal, which is still the conservative default the module was built
+#: on — an outcome nobody has classified can only ever lengthen a streak
+#: that must still be monomorphic over a CHANGING candidate set.
+NOT_A_REFUSAL_OUTCOMES = UNDECIDED_OUTCOMES | NO_ENTRY_DECIDED_OUTCOMES
 
 #: The desk's OWN recorded words for a run that stopped before the decision
 #: stage. This detector's premise is "the candidates varied, the outcome did
@@ -500,13 +569,14 @@ def load_sessions(
             order.append(run_id)
         # Rows arrive in id order, so the LAST write for a symbol wins —
         # that is the outcome the candidate actually ended on. Unless that
-        # last write is one of UNDECIDED_OUTCOMES, which records the
-        # candidate arriving rather than anything ruling on it: then the
-        # candidate has no terminal outcome, and any earlier one it might
-        # have had is discarded with it, because the evidence stream only
-        # ever moves a candidate FORWARD.
+        # last write is one of NOT_A_REFUSAL_OUTCOMES — the candidate
+        # arriving somewhere with nothing ruled yet, or something ruling
+        # that no new entry was the right answer. Either way the candidate
+        # carries no refusal, and any earlier outcome it had is discarded
+        # with it, because the evidence stream only ever moves a candidate
+        # FORWARD.
         outcome = str(payload.get("outcome") or "")
-        if outcome in UNDECIDED_OUTCOMES:
+        if outcome in NOT_A_REFUSAL_OUTCOMES:
             keys[run_id].pop(symbol, None)
             outcomes[run_id].pop(symbol, None)
         else:
@@ -522,10 +592,12 @@ def load_sessions(
         if when is None:
             continue
         if not keys[run_id]:
-            # Every candidate this run touched is still undecided, so the
-            # run considered nothing that anything ruled on. Same treatment
-            # as a run with no symbol-scoped event at all: absent from this
-            # list, joining no streak and breaking none.
+            # Nothing this run touched ended on a refusal — every
+            # candidate is either still undecided or was settled without a
+            # new entry being turned down. Same treatment as a run with no
+            # symbol-scoped event at all: absent from this list, joining no
+            # streak and breaking none. This is the fully-invested book:
+            # twelve held names, no orders, and nothing to report.
             continue
         sessions.append(SessionShape(
             run_id=run_id,

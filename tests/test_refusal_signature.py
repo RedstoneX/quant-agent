@@ -630,3 +630,170 @@ def test_a_named_code_is_still_preferred_over_the_raw_reason():
     said = _plain_key("some_gate|blocked|some_reason|some_code|")
     assert "some_code" in said
     assert "some_reason" not in said
+
+
+# ---------------------------------------------------------------------------
+# a full book is not a jammed gate (2026-09-23, the alert that was next)
+# ---------------------------------------------------------------------------
+#
+# Measured on the live desk on 2026-09-23: gross exposure 1.9908x against a
+# 2.0x ceiling, roughly $92 of headroom on ~$10,000 of equity. Every session
+# on a book that full produces a run of `portfolio_manager|held_unchanged`
+# rows and no orders — twelve of them that morning — and the desk's own
+# accounting line read "every one of the 69 non-targeted candidate(s)
+# carries a named ground". Monomorphic, over a candidate set that shifts as
+# the book does, for as long as the book stays full.
+#
+# `held_unchanged` means the portfolio manager holds the position, still
+# rates it, and left it out of the target list on purpose. That is the gate
+# working. Reported as "THE DESK HAS REFUSED EVERY IDEA FOR THE SAME REASON
+# — the shape of a jammed gate" it is the same class of falsehood as reading
+# a discovery as a refusal.
+
+#: The exact row the portfolio manager writes for a held name, from
+#: `src/pm_accounting.py` and verbatim in shape from production.
+HELD_UNCHANGED = {
+    "stage": "portfolio_manager", "outcome": "held_unchanged",
+    "reason": "pm_left_holding_unchanged", "refusal": "held_unchanged",
+    "note": ("the seat left a held name out of its targets, which its own "
+             "instructions define as leaving the position alone"),
+}
+
+#: Two consecutive real intra_check runs on the full book, with the held
+#: names they each reported. The sets differ, which is the condition that
+#: would have satisfied the "the input varied" half of the trigger.
+FULL_BOOK_20260923 = (
+    ("intra_check-d62ee54c", ["BRK-B", "NET", "META", "ETN", "FLNC", "NOK",
+                              "MRVL", "AMD", "AAPL", "RKLB", "RSG", "UPS"]),
+    ("intra_check-55044038", ["ETN", "AMD", "NET", "FLNC", "MRVL", "BRK-B",
+                              "META", "AAPL", "NOK", "RKLB", "UPS", "RSG",
+                              "PLTR"]),
+)
+
+
+def test_a_full_book_of_held_names_is_not_a_jammed_gate(db, tmp_path):
+    con, path = db
+    _report_tables(con)
+    for (run_id, held), day in zip(FULL_BOOK_20260923, (THU, FRI)):
+        for symbol in held:
+            _event(con, run_id, day, symbol, HELD_UNCHANGED)
+        _intra_report(con, run_id, day, "intraday_no_trades")
+    con.commit()
+
+    sessions, err = load_sessions(path)
+    assert err is None
+    assert sessions == [], (
+        "a run that only held what it already owns refused nothing, so it "
+        "is not a session this check has an opinion about"
+    )
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is False
+
+
+def test_a_jam_still_fires_underneath_a_full_book(db, tmp_path):
+    """The reason `held_unchanged` is NOT in SURVIVED_OUTCOMES. A surviving
+    candidate ends the streak outright, so holding the book there would make
+    this alarm unfireable on a fully invested desk — which is exactly when a
+    stuck gate is hardest to see. Dropping the held names instead leaves the
+    genuinely refused ones visible."""
+    con, path = db
+    _report_tables(con)
+    held = ["AAPL", "META", "NET", "RSG"]
+    for run, day, fresh in (("r1", WED, ["NVDA"]),
+                            ("r2", THU, ["AMD", "INTC"]),
+                            ("r3", FRI, ["TSLA"])):
+        for symbol in held:
+            _event(con, run, day, symbol, HELD_UNCHANGED)
+        _jam_session(con, run, day, fresh)
+        _intra_report(con, run, day, "intraday_no_trades")
+    con.commit()
+
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is True
+    assert status.symbols == ["AMD", "INTC", "NVDA", "TSLA"], (
+        "the held names must not be reported to the owner as refused ideas"
+    )
+
+
+def test_holding_the_book_does_not_end_a_streak_the_way_a_fill_does(db):
+    """`held_unchanged` and `filled` must land in different categories:
+    one drops its candidate, the other ends the streak."""
+    con, path = db
+    _jam_session(con, "r1", WED, ["AAPL"])
+    _event(con, "r1", WED, "META", HELD_UNCHANGED)
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].any_survived is False
+    assert sessions[0].candidates == frozenset({"AAPL"})
+
+
+# ---------------------------------------------------------------------------
+# the rest of the outcome vocabulary, audited 2026-09-23
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("opportunity", "nominated"),          # a seat put the name forward
+    ("opportunity", "admitted"),           # eligibility was widened for it
+    ("opportunity", "already_covered"),    # duplicates an analysis this run has
+    ("portfolio_manager", "held_unchanged"),
+    ("portfolio_manager", "proposed"),     # a target was put up
+    ("evidence_gate", "not_decided"),      # says so in the word itself
+    ("funding", "attempted"),              # a cash sweep in flight
+    ("funding", "not_required"),           # no sweep was needed
+    ("position_management", "exited"),     # a SELL is not a refused idea
+    ("scale_in", "protective_sell_cancelled"),
+    ("reconciliation", "stop_out_gap_unexplained"),
+])
+def test_no_outcome_word_that_refuses_nothing_is_read_as_a_refusal(db, stage, outcome):
+    con, path = db
+    _event(con, "r1", WED, "AAPL", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    assert load_sessions(path)[0] == []
+
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("risk", "modified"),        # resized and let through — `approved` with a haircut
+    ("execution", "safety_net"), # catch-up reprice, the order then proceeds
+    ("order", "filled"),
+    ("risk", "approved"),
+])
+def test_an_entry_that_went_ahead_ends_the_streak(db, stage, outcome):
+    con, path = db
+    _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
+    _event(con, "r1", WED, "NVDA", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].any_survived is True
+    assert unvarying_streak(sessions) == []
+
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("deterministic_gate", "blocked"),
+    ("risk", "rejected"),
+    ("portfolio_manager", "not_selected"),
+    ("portfolio_manager", "omitted"),
+    ("funding", "no_additional_cash"),
+    ("protection", "not_placed"),
+    ("specialist", "failed"),
+    ("order", "rejected"),
+    ("an_outcome_word_invented_next_year", "who_knows"),
+])
+def test_a_word_that_kills_a_candidate_still_reads_as_a_refusal(db, stage, outcome):
+    """The default is unchanged and stays conservative: anything not
+    classified as harmless kills its candidate, so the audit cannot have
+    quietly disarmed the check."""
+    con, path = db
+    _event(con, "r1", WED, "AAPL", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].candidates == frozenset({"AAPL"})

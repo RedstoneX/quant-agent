@@ -102,6 +102,59 @@ marked as never having reached a decision, and the streak is empty — no alert.
 NO GATE, THRESHOLD, SIZE OR TRADE-GOVERNING NUMBER CHANGED; no constant was
 added.
 
+**And the same alarm was about to do it again, for a different word.** A
+review of the fix asked what else the outcome vocabulary contained. The
+answer was ugly: `SURVIVED_OUTCOMES` is a seven-word positive list and
+everything outside it reads as a refusal, which is the design that produced
+the discovery bug in the first place. Measured on the live desk the same
+day — gross exposure 1.9908x against a 2.0x ceiling, about $92 of headroom
+on roughly $10,000 of equity — every session produced a run of
+`portfolio_manager|held_unchanged` rows and no orders, twelve of them that
+morning. `held_unchanged` means the portfolio manager holds the position,
+still rates it, and left it out of the target list on purpose. Monomorphic,
+over a candidate set that shifts as the book does, for as long as the book
+stays full. The next alert was going to tell the owner his desk had refused
+every idea for the same reason, when what had happened is that it had
+deliberately kept a full book.
+
+**Why `held_unchanged` did NOT go into the survived list, which was the
+one-word fix.** A single surviving candidate ends the streak outright. Put
+held names there and this alarm can never fire again on a fully invested
+desk — which is precisely when a stuck gate is hardest to notice by eye, and
+precisely the condition the book is in. So a third category was added
+instead: outcomes where something DID rule and ruled that no new entry was
+right. A candidate ending there is dropped from the evidence, the same
+mechanical treatment an undecided one gets, for a different stated reason.
+Twelve held names and nothing else means the run is absent and nothing is
+sent. Twelve held names beside five candidates all killed by one stuck rule
+still leaves those five, monomorphic, and the alarm still fires — pinned by
+a test.
+
+**The audit found four more words that would have produced a false alarm,
+and two that were suppressing true ones.** Read out of the production
+evidence rows rather than guessed from the source. Not refusals, but read as
+refusals: `opportunity|already_covered` (a nomination that duplicates an
+analysis the same run already holds — a dedupe, not a verdict),
+`evidence_gate|not_decided` (which says so in the word itself, 145 rows),
+`position_management|exited` (a SELL; this module already held that an exit
+does not make a day non-empty, and it is equally not a refusal of a new
+idea), `funding|not_required`, plus the in-flight steps `nominated`,
+`admitted`, `proposed`, `attempted` and `protective_sell_cancelled`. Going
+the other way, `risk|modified` — the risk manager resizing an entry and
+letting it through, which is `approved` with a haircut — and
+`execution|safety_net` were both absent from the survived list, so a session
+that genuinely did take an idea could still have been counted as refusing
+everything.
+
+**What was deliberately left as a refusal.** `specialist|failed` — the data
+layer could not analyse the name — still reads as a refusal, and a
+multi-session identical data outage would therefore fire this alarm
+describing itself as a jammed gate. That is a real stuck condition with the
+wrong prose on it, recorded here rather than fixed in the same pass. The
+default for an unclassified word is also unchanged and still conservative:
+anything not named as harmless kills its candidate, so the audit cannot have
+quietly disarmed the check.
+
 ---
 
 ### 2026-09-23 — "why can't I see the P&L?" — the morning message said the account had not been read, four lines above the book it had just read
