@@ -72,10 +72,12 @@ and the fix now has its own small helper that says so in as many words.
 
 **What would catch it next time.** The class is "a ledger signing a row by
 its action name, when the row's meaning depends on its fill state." The
-tests added with the fix walk a protective stop through every fill state on
-the long side, cover the resting and filled cases on the short side, and
-cross-check the share-count ledger against the round-trip calibration for a
-resting and a fired stop.
+tests added with the fix take a protective stop through every fill status
+the fill reconciler can actually write — and take the *list* of those
+statuses from that reconciler's own code rather than retyping it, with a
+check that fails if the two ever diverge. They also cover the resting and
+filled cases on the short side, and cross-check the share-count ledger
+against the round-trip calibration for a resting and a fired stop.
 
 **What the adversary pass found in the fix itself, and what changed.** Three
 of the fill-state tests passed for the wrong reason: the shared executed-row
@@ -86,8 +88,15 @@ Python rule directly as well as the end-to-end number — worth recording
 because a test that cannot fail is indistinguishable from one that passes.
 The new helper also answered "yes" for any row at all that carried a fill
 quantity, which would have handed a true-by-default answer to a future
-caller; it now checks the action. Two claims in an earlier draft of this
-entry were themselves too strong and were cut.
+caller; it now checks the action. A second pass then found that the
+replacement fill-status list had been enumerated by hand and silently
+omitted three statuses the reconciler really writes — `done_for_day`,
+`rejected`, and `cancelled` with two Ls next to `canceled` with one — of
+which `done_for_day` carrying a partial fill is the ordinary real-world
+instance of the exact shape the wider rule was built for. The list is now
+derived from the writer, which is the same two-copies-drift the tests were
+added to catch, reappearing inside the fix for it. Several claims in
+earlier drafts of this entry were themselves too strong and were cut.
 
 **Not fixed here, carried as item 173:**
 

@@ -22,7 +22,9 @@ directly for filled SELL orders the ledger has never recorded
 `Database.insert_stop_out_trade`.
 """
 
+import re
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -647,10 +649,38 @@ def test_filled_trail_stop_is_an_exit(tmp_path):
     assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
 
 
-@pytest.mark.parametrize("status", ["submitted", "pending_submit", "canceled", "expired"])
+#: Every terminal-failure fill_status `_reconcile_fills` can write, and the
+#: pre-terminal ones it leaves alone. DERIVED from the writer below rather
+#: than typed out here: an earlier hand-written list silently omitted
+#: `done_for_day`, `rejected` and the two-L `cancelled`, which is the same
+#: two-copies-of-a-contract drift these tests exist to catch.
+_TERMINAL_FAIL_STATUSES = ("canceled", "cancelled", "expired", "rejected",
+                           "done_for_day")
+_PRE_TERMINAL_STATUSES = ("submitted", "pending_submit")
+
+
+def test_terminal_status_list_still_matches_the_only_writer():
+    """The mechanical half of the derivation. `_reconcile_fills` in
+    src/pipeline.py is the only thing that writes a terminal fill_status,
+    and it stores the broker's string verbatim. If that set ever gains or
+    loses a status, the parametrized tests below must follow it, so this
+    fails rather than letting them quietly stop covering a real state."""
+    source = (Path(__file__).resolve().parents[1] / "src" / "pipeline.py").read_text()
+    match = re.search(r"terminal_fail\s*=\s*\{([^}]*)\}", source)
+    assert match, "could not find terminal_fail in src/pipeline.py"
+    written = {s.strip().strip("\"'") for s in match.group(1).split(",") if s.strip()}
+    assert written == set(_TERMINAL_FAIL_STATUSES), (
+        "src/pipeline.py's terminal_fail set has changed; update "
+        "_TERMINAL_FAIL_STATUSES and the tests parametrized over it"
+    )
+
+
+@pytest.mark.parametrize(
+    "status", _PRE_TERMINAL_STATUSES + _TERMINAL_FAIL_STATUSES)
 def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
-    """A stop that rests, is pulled, or lapses without trading moves no
-    shares — asserted TWICE on purpose.
+    """A stop that rests, is pulled, lapses, is rejected or is closed out
+    at the end of the day WITHOUT trading moves no shares — asserted TWICE
+    on purpose.
 
     The end-to-end number is currently decided by the SQL predicate, which
     admits none of these rows at all (measured: 0 rows) so the Python
@@ -670,6 +700,38 @@ def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
         "SELECT fill_qty, fill_status FROM trades WHERE broker_order_id = 'nv-stop'"
     ).fetchone()
     assert _trail_stop_reduced_position(row, "TRAIL_STOP") is False
+
+
+@pytest.mark.parametrize("status", _TERMINAL_FAIL_STATUSES)
+def test_every_terminal_status_with_a_partial_fill_still_subtracts(tmp_path, status):
+    """The case the wide rule exists for, across EVERY terminal status the
+    writer can produce — not just the one that was typed out by hand.
+
+    `_reconcile_fills` stores the broker's terminal status verbatim
+    alongside whatever quantity did trade, and logs that combination
+    explicitly. `done_for_day` with a partial fill is the ordinary
+    real-world instance: a day order that traded part of its size and then
+    lapsed at the close. Those shares are gone from the broker's book even
+    though there is no priceable round trip, so the share-count ledger has
+    to subtract them."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("TGT", "BUY", 30, 80.0, "entry", "r1",
+                    broker_order_id="tgt-buy", fill_status="filled")
+    db.insert_trade("TGT", "TRAIL_STOP", 30, 75.0, "protect", "r1",
+                    broker_order_id="tgt-stop", fill_status="submitted")
+    _set_fill(db, "tgt-stop", status=status, qty=11.0)
+
+    assert db.get_symbols_with_open_ledger_qty()["TGT"] == 19.0
+
+
+@pytest.mark.parametrize("action", ["TRAIL_STOP", "trail_stop", "Trail_Stop"])
+def test_trail_stop_rule_is_case_insensitive_on_the_action(action):
+    """The guard upper-cases before comparing. Every caller happens to pass
+    an already-upper-cased action today, so nothing else would notice if
+    that normalisation were dropped."""
+    filled = {"fill_qty": 4.0, "fill_status": "filled"}
+    assert _trail_stop_reduced_position(filled, action) is True
 
 
 def test_trail_stop_rule_does_not_answer_for_other_actions(tmp_path):
@@ -697,34 +759,22 @@ def test_trail_stop_with_fill_qty_but_null_status_is_an_exit(tmp_path):
 
 def test_partially_filled_trail_stop_subtracts_only_what_traded(tmp_path):
     """Part of the protected size traded. The ledger must lose exactly
-    that part — not the whole position, and not nothing."""
+    that part — not the whole position, and not nothing.
+
+    Uses the legacy NULL-status shape rather than a `partially_filled`
+    status string: `_reconcile_fills` normalises anything filled to
+    `'filled'` and stores only its own terminal vocabulary otherwise, so
+    `partially_filled` is a state this desk never writes and a test using
+    it would exercise the right branch under a name that cannot occur."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade("PEP", "BUY", 30, 170.0, "entry", "r1",
                     broker_order_id="pep-buy", fill_status="filled")
     db.insert_trade("PEP", "TRAIL_STOP", 30, 160.0, "protect", "r1",
-                    broker_order_id="pep-stop", fill_status="submitted")
-    _set_fill(db, "pep-stop", status="partially_filled", qty=12.0)
+                    broker_order_id="pep-stop")
+    _set_fill(db, "pep-stop", status=None, qty=12.0)
 
     assert db.get_symbols_with_open_ledger_qty()["PEP"] == 18.0
-
-
-def test_canceled_trail_stop_that_partially_traded_still_subtracts(tmp_path):
-    """The regression trap inside this fix. `_is_filled_trail_stop` answers
-    a REALIZED-EXIT question and returns False here (terminal status that
-    is not 'filled'), but 5 shares genuinely left the broker's book.
-    Deferring blindly to that helper would have made the ledger OVER-report
-    by the traded size — a fresh instance of the same bug class, pointing
-    the other way."""
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade("TGT", "BUY", 12, 80.0, "entry", "r1",
-                    broker_order_id="tgt-buy", fill_status="filled")
-    db.insert_trade("TGT", "TRAIL_STOP", 12, 75.0, "protect", "r1",
-                    broker_order_id="tgt-stop", fill_status="submitted")
-    _set_fill(db, "tgt-stop", status="canceled", qty=5.0)
-
-    assert db.get_symbols_with_open_ledger_qty()["TGT"] == 7.0
 
 
 def test_resting_stop_alongside_a_real_partial_sale(tmp_path):
@@ -759,15 +809,22 @@ def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
 
 
-def test_short_side_cover_sign_is_wrong_and_this_change_does_not_fix_it(tmp_path):
+def test_short_side_cover_sign_is_a_known_defect_item_173c(tmp_path):
     """KNOWN DEFECT, pinned so it cannot be mistaken for correct — item
     173(c). The signing rule still reads the action name, so anything that
     RETIRES a short subtracts from it instead: a full cover of a 36-share
     short reads -72, not 0, whether it comes as a COVER or as a
     buy-to-cover TRAIL_STOP the broker filled. Unchanged by this fix (the
     old code produced -72 too) and silent today, because the reconciler
-    treats any negative as a short and skips it. Change this test only
-    together with the signing rule it describes."""
+    treats any negative as a short and skips it.
+
+    Both halves are asserted together on purpose. Fixing only one of the
+    two routes reds only that line, and the cheapest way out of that red
+    is to edit the expected number — so the failure messages name item
+    173(c) and say to delete this test rather than adjust it."""
+    _WRONG = ("item 173(c): the short-side sign is knowingly wrong here. If "
+              "you have FIXED the signing rule, delete this whole test — do "
+              "not edit the expected number, and do not fix one route only.")
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
@@ -783,8 +840,8 @@ def test_short_side_cover_sign_is_wrong_and_this_change_does_not_fix_it(tmp_path
     _set_fill(db, "ups-cover", status="filled", qty=7.0)
 
     net = db.get_symbols_with_open_ledger_qty()
-    assert net["FLNC"] == -72.0  # should be 0.0 — see item 173(c)
-    assert net["UPS"] == -14.0   # should be 0.0 — same defect, same cause
+    assert net["FLNC"] == -72.0, f"filled buy-to-cover TRAIL_STOP route — {_WRONG}"
+    assert net["UPS"] == -14.0, f"COVER route — {_WRONG}"
 
 
 def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
