@@ -568,8 +568,46 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 GROSS_LADDER_ALERT_PCT = -20.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
-#: `HARD_BLOCK_RULES` (src/pipeline.py) — one string, two files.
+#: `HARD_BLOCK_RULES` (below in this file) — one string, two places.
 GROSS_EXPOSURE_RULE = "max_gross_exposure"
+
+#: WHICH RULES ACTUALLY STOP AN ORDER.
+#:
+#: Moved here from `src/pipeline.py` on 2026-09-23 (board item 162). It is
+#: the ONLY code-level answer to "is this entry a hard limit or an advisory",
+#: and the risk seat's renderer (`src/agents/risk_manager.py`) must be able
+#: to ask it. That module cannot import `src.pipeline` — `src.pipeline`
+#: imports it — so the set had to sit below both. `src.pipeline` re-exports
+#: this name, so every existing `from src.pipeline import HARD_BLOCK_RULES`
+#: still resolves.
+#:
+#: Membership is the WHOLE distinction, and it is never derivable from a
+#: rule's NAME: `max_sector_pct` and `max_sector_hard_pct` differ by one
+#: word and sit on opposite sides of it.
+
+HARD_BLOCK_RULES = {
+    "max_total_position_pct",
+    "max_position_pct",
+    "require_stop_loss",
+    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
+    # a hard block and is deliberately absent from this set. It is now the
+    # diversification TARGET — breaching it emits an ADVISORY violation the
+    # AI Risk Manager and the audit trail see, while the constructor shrinks
+    # the order for crowding instead of the pipeline dropping it. The hard
+    # gate moved to `max_sector_hard_pct` below, which fires only past the
+    # absolute ceiling or on an order that never went through that sizing.
+    # Removing it from here is the whole of "concentration is a dial, not a
+    # gate" at the pipeline level; putting it back reinstates the veto.
+    "max_sector_hard_pct",
+    "cash_only",
+    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
+    # value plus absolute short market value — may not exceed the ladder-
+    # resolved multiple of equity. There was NO gross-exposure ceiling in
+    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
+    # and `max_total_position_pct` bounds NET exposure, where a hedge
+    # cancels a long. Adding this hard block is a tightening.
+    "max_gross_exposure",
+}
 
 
 def _positive_float(value, default: float = 0.0) -> float:
@@ -1618,7 +1656,7 @@ class RiskRuleEngine:
                 ))
 
         # 1c. Spec §11.2 — the GROSS-exposure ceiling. HARD BLOCK (in
-        # HARD_BLOCK_RULES, src/pipeline.py).
+        # HARD_BLOCK_RULES, above in this file).
         #
         # Distinct from rule 2 below in the way that matters: rule 2 measures
         # NET exposure, where a hedge cancels a long. That does not answer "how much does the book OWN", which is what

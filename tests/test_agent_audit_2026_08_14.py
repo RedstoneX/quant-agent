@@ -317,7 +317,7 @@ def test_f5_pm_claims_come_after_the_primary_evidence() -> None:
     i_positions = msg.index("## Current Positions")
     i_macro = msg.index("## Macro Context")
     i_claims = msg.index("## PM Reasoning Chain")
-    i_engine = msg.index("## Hard Risk Rule Check Results")
+    i_engine = msg.index("## Engine Risk Check Results")
 
     assert i_trades < i_positions < i_macro < i_claims < i_engine, (
         "PM's self-justification must sit after the primary evidence and "

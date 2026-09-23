@@ -84,10 +84,11 @@ class _Provider:
 class _Analyst:
     """Stands in for news_analyst / macro_analyst. Records what it was handed."""
 
-    def __init__(self, *, outcome="ok"):
+    def __init__(self, *, outcome="ok", call_result=None):
         self.seen = None
         self.calls = 0
         self.outcome = outcome
+        self.call_result = call_result if call_result is not None else _Recorded()
 
     def analyze(self, payload, *args, **kwargs):
         self.calls += 1
@@ -96,17 +97,52 @@ class _Analyst:
             raise RuntimeError("provider exploded on the re-ask")
         if self.outcome == "none":
             return None, None
-        return SimpleNamespace(model_dump=lambda: {"pm_briefing": "re-asked"}), None
+        return (
+            SimpleNamespace(
+                model_dump=lambda: {"pm_briefing": "re-asked"},
+                model_dump_json=lambda: '{"pm_briefing": "re-asked"}',
+            ),
+            self.call_result,
+        )
 
 
 class _DayLedger:
-    """Stands in for Database's durable per-ET-day paid-heal counter."""
+    """Stands in for Database's durable per-ET-day paid-heal counter.
+
+    Also captures the two rows a PAID heal now writes — `agent_logs` and
+    `specialist_evidence` — because until 2026-09-23 it wrote neither, and
+    every production paid heal's model, tokens, cost and answer were lost.
+    """
 
     def __init__(self, counts=None):
         self.counts = dict(counts or {})
+        self.agent_logs: list[dict] = []
+        self.evidence: list[dict] = []
 
     def count_paid_seat_heals_today(self, seat):
         return int(self.counts.get(seat, 0))
+
+    def insert_agent_log(self, **kw):
+        self.agent_logs.append(kw)
+
+    def insert_specialist_evidence(self, **kw):
+        self.evidence.append(kw)
+
+
+class _Recorded:
+    """A stand-in for `AgentResult` carrying what a paid call costs."""
+
+    def __init__(self):
+        self.user_message = "the heal prompt"
+        self.raw_text = '{"pm_briefing": "re-asked"}'
+        self.model = "claude-sonnet-4-6"
+        self.tokens_used = 4321
+        self.input_tokens = 4000
+        self.output_tokens = 321
+        self.cost_usd = 0.0412
+        self.provider_requests = 1
+        self.latency_s = 2.5
+        self.truncated = False
 
 
 def _bind(obj):
@@ -118,6 +154,7 @@ def _bind(obj):
         "_peeked_news_wire_text",
         "_try_one_paid_research_retry",
         "_heal_lost_research_seats",
+        "_persist_heal_call",
     ):
         fn = getattr(TradingPipeline, name, None)
         if fn is not None:
@@ -133,7 +170,7 @@ def _pipeline(titles, *, analyst=None, require=None, db=None, recorded=None):
         config=SimpleNamespace(news=SimpleNamespace(max_prompt_items=50)),
         news_analyst=analyst if analyst is not None else _Analyst(),
         macro_analyst=_Analyst(),
-        db=db,
+        db=db if db is not None else _DayLedger(),
         _require_paid_analysis=require if require is not None else (lambda name: None),
     )
     log = recorded if recorded is not None else []
@@ -730,3 +767,102 @@ def test_healable_categories_is_only_read_by_the_heal_path():
         f"{sorted(code_readers)}. It is a refresh-cost hint, not a trading "
         f"consequence."
     )
+
+
+# ── the desk paid for research and kept neither the answer nor the price ──
+#
+# Verified against production on 2026-09-23 before the fix: `specialist_
+# evidence` holds 22 `kind='seat_heal'` rows, all 2026-09-18, 14 `failed` and
+# 8 `paid_retry` — every paid one on the news seat. The union of JSON keys
+# across all 22 rows is {gate, seat, outcome, reason, mechanical, paid_retry,
+# usable, details}: no model, no tokens, no cost, not one word the model said.
+# `agent_logs` holds ZERO `news_analyst%` rows for the whole of 2026-09-18,
+# so the owner's per-session cost line (which sums `agent_logs.cost_usd` by
+# `run_id`) reported those eight paid calls as free.
+
+def test_a_paid_heal_records_its_cost_the_way_an_ordinary_paid_call_does():
+    """THE regression test for the thrown-away spend."""
+    ledger = _DayLedger()
+    analyst = _Analyst()
+    obj, ctx = _expired_news_tick(analyst=analyst, db=ledger)
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert analyst.calls == 1
+    assert len(ledger.agent_logs) == 1, (
+        "a paid heal wrote no agent_logs row — its cost is invisible to the "
+        "owner's per-session cost line, which sums agent_logs.cost_usd"
+    )
+    row = ledger.agent_logs[0]
+    assert row["cost_usd"] == 0.0412
+    assert row["model"] == "claude-sonnet-4-6"
+    assert row["tokens_used"] == 4321
+    assert row["input_tokens"] == 4000
+    assert row["output_tokens"] == 321
+    assert row["run_id"] == ctx.run_id
+
+
+def test_a_paid_heal_keeps_what_the_model_actually_said():
+    ledger = _DayLedger()
+    obj, ctx = _expired_news_tick(db=ledger)
+
+    obj._heal_lost_research_seats(ctx)
+
+    row = ledger.agent_logs[0]
+    assert "re-asked" in row["full_response"], "the model's answer was dropped"
+    assert row["input_message"] == "the heal prompt", "the prompt was dropped"
+    # And the structured answer lands in the SAME evidence row an ordinary
+    # read writes, not in a second invented shape.
+    analyses = [e for e in ledger.evidence if e["kind"] == "analysis"]
+    assert len(analyses) == 1
+    assert analyses[0]["agent_name"] == "news_analyst"
+    assert analyses[0]["scope"] == "run"
+    assert "re-asked" in analyses[0]["evidence_json"]
+
+
+def test_the_heal_row_carries_the_seats_ordinary_agent_name_marked_as_a_heal():
+    """Not a new agent name: that would hide the spend from every per-seat
+    query that exists today. The desk's two other paid re-asks (exit-trigger,
+    candidate-accounting) already mark themselves in `input_summary` and keep
+    the ordinary name; this follows them. News keeps its `_{session}` suffix
+    because that IS its ordinary name (`news_analyst_{session}`)."""
+    ledger = _DayLedger()
+    obj, ctx = _expired_news_tick(db=ledger)
+
+    obj._heal_lost_research_seats(ctx)
+
+    row = ledger.agent_logs[0]
+    assert row["agent_name"] == "news_analyst_intra_check"
+    assert "seat heal" in row["input_summary"]
+    assert "news" in row["input_summary"]
+
+
+def test_a_failed_heal_bills_nothing_because_there_is_nothing_to_bill():
+    """Only a heal that came back with an answer writes the paid-call row.
+    A raise or a None answer must not leave a row of zeroes reading as a
+    completed call."""
+    ledger = _DayLedger()
+    obj, ctx = _expired_news_tick(analyst=_Analyst(outcome="none"), db=ledger)
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert ledger.agent_logs == []
+    assert [e for e in ledger.evidence if e["kind"] == "analysis"] == []
+
+
+def test_a_broken_forensic_store_never_undoes_a_heal_that_worked():
+    """A log write is bookkeeping. Losing it must not cost the desk the
+    fresher research it already paid for."""
+    class _Exploding(_DayLedger):
+        def insert_agent_log(self, **kw):
+            raise RuntimeError("disk full")
+
+        def insert_specialist_evidence(self, **kw):
+            raise RuntimeError("disk full")
+
+    obj, ctx = _expired_news_tick(db=_Exploding())
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert ctx.data_status["news"] == "ok"
+    assert ctx.news_intel is not None

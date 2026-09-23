@@ -6990,7 +6990,14 @@ class RiskStage:
             rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
             agent_name="risk_manager", run_id=run_id,
-            input_summary=f"{len(portfolio_decision.decisions)} trades, {len(rule_violations)} violations",
+            # "violations" was wrong AND owner-facing: this string is what
+            # `CandidateDetailModal` shows on the dashboard, and by this point
+            # `_filter_hard_risk_decisions` has already dropped every hard
+            # breach, so the count can only ever be advisories (item 162).
+            input_summary=(
+                f"{len(portfolio_decision.decisions)} trades, "
+                f"{len(rule_violations)} engine advisories"
+            ),
             input_message=rm_result.user_message,
             output_summary=f"Approved: {verdict.approved if verdict else 'error'}",
             full_response=rm_result.raw_text,

@@ -171,29 +171,12 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
     return threaded
 
 
-HARD_BLOCK_RULES = {
-    "max_total_position_pct",
-    "max_position_pct",
-    "require_stop_loss",
-    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
-    # a hard block and is deliberately absent from this set. It is now the
-    # diversification TARGET — breaching it emits an ADVISORY violation the
-    # AI Risk Manager and the audit trail see, while the constructor shrinks
-    # the order for crowding instead of the pipeline dropping it. The hard
-    # gate moved to `max_sector_hard_pct` below, which fires only past the
-    # absolute ceiling or on an order that never went through that sizing.
-    # Removing it from here is the whole of "concentration is a dial, not a
-    # gate" at the pipeline level; putting it back reinstates the veto.
-    "max_sector_hard_pct",
-    "cash_only",
-    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
-    # value plus absolute short market value — may not exceed the ladder-
-    # resolved multiple of equity. There was NO gross-exposure ceiling in
-    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
-    # and `max_total_position_pct` bounds NET exposure, where a hedge
-    # cancels a long. Adding this hard block is a tightening.
-    "max_gross_exposure",
-}
+# `HARD_BLOCK_RULES` now lives in `src/risk/rules.py`, beside the engine that
+# emits the rule names, so the RISK SEAT'S RENDERER can classify an entry
+# without importing the pipeline (which imports the seat — a cycle). Re-
+# exported here because this is the name every caller and test already
+# imports, and moving the import site would be churn with no benefit.
+from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
@@ -15459,6 +15442,74 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.error("seat heal: owner alert failed: %s", e)
 
+    def _persist_heal_call(self, ctx: RunContext, seat: str, agent_name: str,
+                            analysis, call_result) -> None:
+        """Record a PAID heal exactly the way an ordinary paid call is recorded.
+
+        Two rows, both of them the EXISTING path, neither of them new:
+
+          * `agent_logs` — the model, the tokens, the cost, the raw answer and
+            the prompt that produced it. Written under the seat's ORDINARY
+            agent name and marked as a heal in `input_summary`, which is the
+            convention the desk's two other paid re-asks already follow (the
+            exit-trigger re-ask logs `position_reviewer`, the candidate-
+            accounting re-ask logs `portfolio_manager`). A separate agent name
+            would hide the spend from every per-seat query that exists today,
+            which is a different corruption, not less of one. News keeps its
+            `_{session}` suffix because that IS its ordinary name.
+          * `specialist_evidence(kind="analysis")` — the model's answer as
+            structured evidence, the same row `RiskStage` writes for an
+            ordinary news or macro read.
+
+        Never raises: a forensic-write failure must not undo a heal that
+        succeeded, the same rule `_persist_evidence` and the two re-ask log
+        writes above already follow.
+        """
+        from src.pipeline_stages import _persist_evidence
+        session = getattr(ctx, "session", None) or "intra_check"
+        # `news_analyst_{session}` is the ordinary name for the news seat
+        # (`_run_news_analysis`); macro logs flat. Match each, don't invent.
+        log_name = f"{agent_name}_{session}" if seat == "news" else agent_name
+        if call_result is None:
+            # An analyst that returned an answer but no call record. Nothing
+            # to bill and nothing to quote — say so rather than writing a row
+            # of zeroes that would read as a free call.
+            logger.warning(
+                "seat heal: %s returned no call result; cost and raw answer "
+                "for this paid retry cannot be recorded", seat,
+            )
+        else:
+            try:
+                self.db.insert_agent_log(
+                    agent_name=log_name, run_id=ctx.run_id,
+                    input_summary=f"seat heal re-ask | {seat} | session={session}",
+                    input_message=getattr(call_result, "user_message", "") or "",
+                    output_summary=f"seat heal refreshed {seat}",
+                    full_response=getattr(call_result, "raw_text", "") or "",
+                    model=getattr(call_result, "model", "") or "",
+                    tokens_used=getattr(call_result, "tokens_used", 0) or 0,
+                    input_tokens=getattr(call_result, "input_tokens", None),
+                    output_tokens=getattr(call_result, "output_tokens", None),
+                    cost_usd=getattr(call_result, "cost_usd", None),
+                    **agent_log_kwargs(call_result),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("seat heal: paid-call log write failed: %s", e)
+        try:
+            dump = getattr(analysis, "model_dump_json", None)
+            if callable(dump):
+                evidence_json = dump()
+            else:
+                import json as _json
+                evidence_json = _json.dumps(analysis, sort_keys=True, default=str)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: could not serialise %s answer: %s", seat, e)
+            return
+        _persist_evidence(
+            self.db, run_id=ctx.run_id, agent_name=agent_name,
+            kind="analysis", scope="run", evidence_json=evidence_json,
+        )
+
     def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
         """One paid retry for a LOST or EXPIRED seat, once per ET day.
 
@@ -15602,7 +15653,7 @@ class TradingPipeline:
         ctx.heal_paid_retries = record_paid_retry(retries, seat)
         try:
             if seat == "macro":
-                analysis, _raw = analyze(ctx.macro_summary)
+                analysis, call_result = analyze(ctx.macro_summary)
             else:
                 # Pass this run's session. The analyst's session guidance
                 # defaults to MORNING ("treat today as a fresh book... this
@@ -15612,7 +15663,7 @@ class TradingPipeline:
                 # arguments stay at their defaults: a heal re-ask genuinely
                 # has no universe or prior-session baseline to offer, and
                 # inventing one would be worse than admitting it.
-                analysis, _raw = analyze(
+                analysis, call_result = analyze(
                     getattr(ctx, "heal_news_text", ""),
                     session=getattr(ctx, "session", None) or "intra_check",
                 )
@@ -15641,6 +15692,16 @@ class TradingPipeline:
             ctx.macro_analysis = payload
         elif seat == "news":
             ctx.news_intel = analysis
+        # KEEP WHAT COSTS MONEY. Until 2026-09-23 this function spent real
+        # dollars on a research call and then kept neither the answer nor the
+        # price: `call_result` was discarded as `_raw`, no `agent_logs` row
+        # was written, and `HealResult.to_evidence()` omits `payload`. All 8
+        # paid heals in production (2026-09-18, news seat) left the desk with
+        # a row saying "paid_retry / usable" and nothing else — no model, no
+        # tokens, no cost, not one word the model actually said. The owner's
+        # own per-session cost line sums `agent_logs.cost_usd` by `run_id`
+        # (`src/notifier.py`), so those eight calls read as free.
+        self._persist_heal_call(ctx, seat, agent_name, analysis, call_result)
         status = dict(ctx.data_status or {})
         status[seat] = "ok"
         ctx.data_status = status
