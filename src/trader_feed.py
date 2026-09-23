@@ -1755,11 +1755,45 @@ def _pnl_section_lines(result: dict) -> list[str]:
     # is known, one short sentence says why, so "not available" is never
     # left looking like a fault.
     if today_pnl is None and today_ret is None and total_pnl is None and total_ret is None:
-        lines.append(
-            "   This message was built without an account read, so there is "
-            "no figure yet."
-        )
+        lines.append("   " + _pnl_unavailable_sentence(result))
     return lines
+
+
+# Why a figure is missing, keyed by the code the SESSION sets on its own
+# result (`TradingPipeline._attach_pnl` / `run_earnings_preprocess`).
+#
+# Owner rule: an explanation the code cannot prove is itself a defect. The
+# old block asserted "this message was built without an account read"
+# whenever the four keys were absent — which was false for every trading
+# session (2026-09-23: the same morning message that said it went on to
+# print "Book: 12 position(s) · $18,178 invested"). The absence of the keys
+# is evidence of nothing but their absence, so the sentence now comes from
+# the only place that KNOWS the reason: the run that did or did not read the
+# account. An unrecognised or absent code falls back to a sentence that
+# claims no cause at all.
+_PNL_UNAVAILABLE_REASONS = {
+    # The message's own mode does no account read at all (pre-market
+    # filing reader).
+    "no_account_read":
+        "This message was built without an account read, so there is no "
+        "figure yet.",
+    # The session ended — holiday short-circuit, kill switch, broker
+    # snapshot failure — before it reached its account read.
+    "ended_before_account_read":
+        "This run ended before the account was read, so there is no figure "
+        "yet.",
+    # The account WAS read, but the broker reported no usable prior-day
+    # close to measure today's change against.
+    "no_prior_close":
+        "The broker reported no prior-day close, so today's change cannot "
+        "be measured.",
+}
+_PNL_UNAVAILABLE_FALLBACK = "No P&L figure was recorded with this message."
+
+
+def _pnl_unavailable_sentence(result: dict) -> str:
+    code = result.get("pnl_unavailable_reason")
+    return _PNL_UNAVAILABLE_REASONS.get(str(code or ""), _PNL_UNAVAILABLE_FALLBACK)
 
 
 # === Evening report (2026-09-18 owner redesign) ===

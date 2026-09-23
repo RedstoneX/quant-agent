@@ -58,7 +58,7 @@ def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
 #: trend blind). Named here, not chosen here: it is the same 200 the
 #: `rolling(200)` below has always used. `PortfolioConstructor` reads it as
 #: the bar count under which an instrument is too YOUNG to be measured
-#: (docs/WORK.md item 54).
+#: (docs/WORK.md item 180; item 54 is retired).
 LONGEST_INDICATOR_WINDOW = 200
 
 
