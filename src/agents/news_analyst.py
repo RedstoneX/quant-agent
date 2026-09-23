@@ -147,6 +147,25 @@ class NewsAnalystAgent(BaseAgent):
             "include events that closed/resolved today. This report becomes "
             "tomorrow's 'previous_narrative' — be the history you want PM to read."
         ),
+        # 2026-09-23, the same defect as round 2 #24 above, in the other
+        # direction: `intra_check` had no entry, so the intraday re-read
+        # fell back to MORNING guidance and was told to "treat today as a
+        # fresh book" at, say, 14:00. It is reached only from the seat-heal
+        # re-ask, which fires when a market-moving headline supersedes the
+        # research the desk is holding. That re-ask is handed the wire text
+        # alone — no universe, no prior snapshot — and this text says so
+        # rather than letting the model assume it has a baseline it does
+        # not have.
+        "intra_check": (
+            "INTRA-CHECK mode — a mid-session re-read, triggered because a "
+            "market-moving headline superseded the research this desk was "
+            "holding. The market is OPEN and today's book already exists; "
+            "this is NOT a fresh-book rebuild and must not be written as "
+            "one. No prior snapshot and no universe list are supplied on "
+            "this path, so do not claim to be diffing against one: report "
+            "what the wire in front of you says, and say plainly where it "
+            "leaves you without enough context to judge."
+        ),
     }
 
     def build_user_message(self, **kwargs) -> str:

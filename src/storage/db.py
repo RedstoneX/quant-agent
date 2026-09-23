@@ -2324,6 +2324,56 @@ class Database:
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
 
+    def count_paid_seat_heals_today(self, seat: str) -> int:
+        """How many PAID research heals this seat has already had today (ET).
+
+        The in-context counter `RunContext.heal_paid_retries` says "at most
+        one paid retry per seat per session", but a RunContext lives for ONE
+        tick and `intra_check` fires every 30 minutes from 09:30 to 16:00 ET
+        — fourteen ticks, each with its own fresh counter. For a seat that
+        expires because the wire moved, the wire is still moved on the next
+        tick, so the in-context cap would have allowed the desk to buy the
+        same seat back fourteen times in a day and call that "one retry".
+        Nothing caught it before because the heal path was unreachable for
+        expired seats at all — see the category set the heal dispatcher
+        selects on, declared in `src/evidence_gate.py`.
+
+        The durable heal rows are the only cross-tick memory the heal path
+        has, so the day cap is read back from them. Row volume is a handful
+        per day; parsing in Python avoids depending on the JSON1 extension.
+        Best-effort by design: a read failure returns 0 and the in-context
+        cap plus the cost circuit remain, because a forensic-store hiccup
+        must not be able to block a legitimate refresh.
+        """
+        import json as _json
+        want = str(seat or "").strip()
+        if not want:
+            return 0
+        start, end = self._et_day_utc_bounds()
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT evidence_json FROM specialist_evidence "
+                    "WHERE kind = 'seat_heal' AND timestamp >= ? AND timestamp < ?",
+                    (start, end),
+                ).fetchall()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("count_paid_seat_heals_today failed: %s", e)
+            return 0
+        count = 0
+        for row in rows:
+            try:
+                payload = _json.loads(row[0])
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("seat") or "") != want:
+                continue
+            if payload.get("paid_retry") is True:
+                count += 1
+        return count
+
     # --- Conviction ledger (spec §9.5) -----------------------------------
     #
     # §9.1/§9.2 already persisted every raw nomination as a `pipeline_event`

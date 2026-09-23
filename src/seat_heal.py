@@ -5,8 +5,12 @@ Order (owner 2026-09-16):
      wipe dropped; coerce MacroAnalysis shape (dict ``sector_guidance`` →
      list; stored trim vs live model). Never invent thesis/catalyst/macro
      text. Never loosen validation so garbage parses as ok.
-  2. At most ONE paid retry for that LOST/empty seat, inside session/day
-     cost caps.
+  2. At most ONE paid retry for that seat PER ET TRADING DAY, inside the
+     cost circuit's session/day caps. Counted durably (see
+     `can_paid_retry`), not per tick. A seat that is EXPIRED rather than
+     lost is eligible too — the desk holds an older answer and is buying a
+     fresher one — and its owner alerts must say so rather than claim a
+     seat was lost (`HealResult.owner_consequence`).
   3. Durable machine-readable reason (which seat, why). Success is a log
      row, not a page. Heal FAILURE and a spend-cap block each get their
      OWN Telegram OWNER ALERT.
@@ -36,6 +40,11 @@ HEAL_PAID_RETRY = "paid_retry"
 HEAL_FAILED = "failed"
 HEAL_SKIPPED_GOOD = "skipped_good"
 HEAL_CAP_BLOCKED = "cap_blocked"
+#: The seat already had its one paid heal this ET trading day. Distinct from
+#: HEAL_CAP_BLOCKED, which is the cost circuit refusing a spend: this is the
+#: heal's own per-day allowance, and it is recorded rather than only logged
+#: because a decision not to spend is still a decision about money.
+HEAL_DAY_CAP = "day_cap"
 
 # Reverse of SECTOR_STANCE_TO_DIRECTION for restoring the live model shape
 # from MacroStore's {sector: bullish|neutral|bearish} snapshot. Not an
@@ -370,7 +379,22 @@ def mechanical_heal_macro(payload) -> HealResult:
 
 
 def can_paid_retry(retries_used: dict[str, int], seat: str, *, max_retries: int = 1) -> bool:
-    """At most one paid retry per seat per session."""
+    """At most one paid retry per seat, per whatever `retries_used` counts.
+
+    The caller supplies the ledger, and which ledger it supplies IS the
+    scope. `TradingPipeline._try_one_paid_research_retry` asks twice: once
+    with `RunContext.heal_paid_retries` (one tick) and once with the durable
+    per-ET-day count from `Database.count_paid_seat_heals_today`. Both must
+    allow it before the desk pays.
+
+    The day ledger exists because this docstring used to say "per session"
+    while the only caller passed a per-TICK dict, and `intra_check` runs
+    every 30 minutes. That was not theoretical: production shows EIGHT paid
+    news heals on 2026-09-18 [measured 2026-09-23, `kind='seat_heal'` rows
+    in `specialist_evidence`], each one believing it was the only retry of
+    the session. The number 1 is unchanged and is not a new number — only
+    the ledger it counts against was wrong.
+    """
     used = int(retries_used.get(seat, 0) or 0)
     return used < max_retries
 
@@ -383,18 +407,29 @@ def record_paid_retry(retries_used: dict[str, int], seat: str) -> dict[str, int]
 
 def heal_failure_alert_text(result: HealResult, *, cap_blocked: bool = False) -> str:
     """Own-message body for a heal failure or spend-cap block. Never empty."""
-    if cap_blocked:
-        return (
-            f"OWNER ALERT — research heal blocked by spend cap\n"
-            f"Seat: {result.seat}\n"
-            f"The desk could not pay a one-time retry to replace a lost or "
-            f"empty research seat because the session or day cost cap is "
-            f"already bound. The seat was not treated as green-empty. "
-            f"Reason: {result.reason}"
-        )
     consequence = (result.owner_consequence or "").strip() or (
         "The desk will not decide on this seat as if it had answered."
     )
+    if cap_blocked:
+        # `owner_consequence` is honoured here too, 2026-09-23. This branch
+        # used to return before reading it, so a spend-cap block on an
+        # EXPIRED seat told the owner the desk "could not replace a lost or
+        # empty research seat" — the seat was neither. That is the
+        # owner-facing-lie class of defect item 133 closed on the other
+        # branch, still live on this one.
+        subject = (
+            "buy a fresher answer for a seat whose research it already holds"
+            if result.owner_consequence else
+            "replace a lost or empty research seat"
+        )
+        return (
+            f"OWNER ALERT — research heal blocked by spend cap\n"
+            f"Seat: {result.seat}\n"
+            f"The desk could not pay a one-time retry to {subject} because "
+            f"the session or day cost cap is already bound. The seat was not "
+            f"treated as green-empty. {consequence} "
+            f"Reason: {result.reason}"
+        )
     return (
         f"OWNER ALERT — research heal failed\n"
         f"Seat: {result.seat}\n"

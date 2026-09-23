@@ -395,6 +395,10 @@ DONE WHEN:
   - [ ] whatever feeds external content into the session's prompt has a stated injection mitigation
   - [ ] the mechanism's safety claims are tested, not only asserted in prose
 
+**175. FRED overdue dates can land on a Saturday; fetch timeouts are chronic — filed 2026-09-23, report-only.** `expected_next_by` is a plain calendar date, so DFF (cadence 1d, lag 1d) came due Sat 09-19 and read OVERDUE Mon 09-21 before an agency business day passed [measured, 1 firing]. Also: every FRED failure in the log is `fetch_deadline_exceeded`, 4 of 12 runs full coverage, worst 5/15 [measured 09-17..23] — owned by the approved fetch redesign.
+DONE WHEN:
+  - [ ] `expected_next_by` rolls to a business day, or the artefact is accepted in writing
+
 **171. No test catches false prompt PROSE, only wrong NUMBERS — filed 2026-09-20 (3rd time: item 98, item 168 draft).**
 DONE WHEN:
   - [ ] a test flags prompt-prose vs code drift
