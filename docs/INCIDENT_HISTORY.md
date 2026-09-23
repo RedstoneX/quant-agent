@@ -22,33 +22,245 @@ what would catch it next time.
 
 ---
 
-### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
+### 2026-09-23 — item 157's schema fix survived a fourth adversary round, catching a regression IN a prior round's own fix
 
-**In plain words:** two items on the backlog board had already been marked
-retired, with their reasons squeezed into the board's own "retired numbers"
-footer instead of a real write-up here — the exact bloat this file exists to
-prevent. Neither is a new finding; both are being recorded properly now so
-the board text can be trimmed to a pointer.
+PR #568 (item 157, technical-seat answer schema) went through a fourth
+adversary pass after CI was already green, specifically because findings 1
+and 2 below are behaviour changes on the halt-authority seat and were held
+to the same scrutiny as the original schema change.
 
-**Item 146 — a stop-tolerance question that was already answered before it
-was filed.** The item asked whether the level-match tolerance should be
-derived from an ATR multiple (`level_match_atr_tolerance`). That setting key
-had already been removed on 2026-09-13 as part of item 46, and the tolerance
-was already being derived from `src.data.levels.CLUSTER_TOLERANCE_PCT`
-instead. The item's premise was false at filing, so it closed with no fix
-needed. Its one live piece — the horizon-arithmetic residue — was not
-discarded; it was folded into the standing DECIDE-BY mandate bullet at the
-top of the board, which it was only ever supporting evidence for. Retired
-2026-09-19.
+**Found and fixed:**
+1. A mis-keyed wrapper object (`{"signals": [...]}`, `{"analysis": [...]}`,
+   `{"results": null, "data": [...]}`) used to silently drop an entire
+   batch with no per-symbol reason — `AgentResult._rows_from` now prefers a
+   single top-level list-of-dicts value over treating the whole object as
+   one row, falling back to the old conservative behaviour when more than
+   one such list exists (no guessing). **Second-pass regression in that
+   same fix:** the first draft matched ANY list-of-dicts value, so an
+   ordinary single-row answer that happened to nest one (e.g. a future
+   `"levels": [{"price": 1}]` field) would have had its real row discarded
+   in favour of the unrelated nested list. Fixed by requiring the row's own
+   `key_field` (`"symbol"`) be present on each candidate list's elements
+   AND absent from the top-level object — a mis-keyed wrapper never has
+   `symbol` at its own top level, a single row always does.
+2. Three Pydantic docstrings (`TechReasoningChain`, `TechAnalystAnswerItem`,
+   `TechAnalystAnswer`) shipped internal engineering prose — item numbers,
+   file paths, `#538` — to the model on every single tech-seat call on both
+   routes, because pydantic emits a class's docstring verbatim as the JSON
+   schema's `description`. Measured: 5,237 bytes sent, ~3,200 of it
+   docstring text. Trimmed to short, model-safe sentences; engineering
+   history moved to comments beside each class. New mechanical test,
+   `test_schema_sent_to_model_has_no_engineering_markers`, fails on any of
+   `#\d+`, `items?\s+\d+`, `docs/`, a `src|tests|config/` path, a bare
+   `.py` filename, a bare `.md` filename, or an internal decision date
+   (`\d{4}-\d{2}-\d{2}`) appearing anywhere in the schema actually sent.
+   Schema now 2,875 bytes. **Third adversary pass caught a regression IN
+   this fix too:** the trimmed `TechReasoningChain` docstring said "one
+   sentence per framework step" — an instruction the field never enforced
+   (only non-empty), the main prompt never asks for, and that actively
+   contradicts `support_resistance`'s own request for both a level AND its
+   ATR distance. Removed; the docstring now only names the five steps.
+   Noted, not fixed here (pre-existing, out of scope for this PR): six
+   OTHER seats' schemas — earnings, macro, news, portfolio manager,
+   position reviewer, smart money — carry the same kind of internal-marker
+   leak. Flagged to the supervising session as separate rot to file, not
+   silently fixed in a PR about the technical seat.
+3. The runtime hygiene check added to replace the abandoned pytest live
+   plan (fenced markdown / undeclared keys, `AnalysisParseTelemetry` in
+   src/models.py) first only logged at the end of morning research — a
+   channel the owner never reads (Telegram and the dashboard are the only
+   two he sees). Moved to the same `RiskViolation` advisory path
+   `analysis_parse_loss`/`analysis_field_nulled` already use
+   (`rule=tech_answer_hygiene`, RiskStage in src/pipeline_stages.py), which
+   does reach the Risk Manager's own review. Also found: only
+   `openrouter`/`google` are ever given a schema at all
+   (`src/agents/base.py`), so a violation on any other provider's call is
+   not evidence the schema failed — every count is now tagged with
+   `AgentResult.actual_provider` so the two are never conflated.
+4. `tests/test_tech_schema_live.py`'s presence-only skip check (itself a
+   fix for the ORIGINAL arbitrary-shape-guess finding) was found to have
+   its own gap: `GOOGLE_API_KEY` is deliberately non-empty even as this
+   repo's placeholder, by convention, specifically so the OneCLI gateway
+   can substitute the real credential in-flight for the deployed trading
+   process. A bare presence check could fire a real, un-mocked, paid,
+   adversarial call in any environment sourcing that same wiring by
+   mistake. Resolved by skipping on an exact match to the one named,
+   already-documented placeholder string
+   (`placeholder-managed-by-onecli`) rather than any guessed shape — not a
+   guess, because it is one specific literal value this repo's own
+   deployment history already established as non-credential. If that exact
+   string is ever renamed, the failure direction is the safe one: this
+   starts attempting real calls (loud) rather than silently skipping
+   (quiet) forever. **Third adversary pass found this still had a gap:**
+   `scripts/backtest.py` sets its OWN placeholder
+   (`GOOGLE_API_KEY=backtest-tool-unused`) directly into `os.environ`
+   before running — not used by any test today (confirmed by grep), but
+   nothing stops a future placeholder from existing, and enumerating every
+   string anyone ever invents is the same guessing game with a longer
+   list. Closed with an INDEPENDENT second gate that guesses at nothing:
+   `QAMC_RUN_LIVE_TECH_SCHEMA_TEST=1` must ALSO be set, an explicit opt-in
+   nothing sets by accident, so this can never run against an
+   unverified/wrong-placeholder environment without a human deliberately
+   choosing to.
+5. The board entry's "292 production answers, 2026-09-22, zero
+   differences" claim could not be verified from this box (the most recent
+   read-only snapshot available here ends 2026-09-18) — and a THIRD
+   adversary pass found it may be conflated with a different, pre-existing
+   measurement of the same count over the same start date, above in this
+   file's 2026-09-19 entry (item #538's row-salvage validation — a
+   different code path, which found 9 differences and 45 recovered
+   analyses, not zero). Reworded in docs/WORK.md and
+   tests/test_tech_seat_production_replay.py to state the 292 figure as
+   reported-but-unconfirmed rather than fact, alongside the independently
+   verified 243-answer-chunk replay against this box's own snapshot
+   (7 kept as a standing fixture). This discrepancy is flagged to the
+   supervising session rather than resolved here — this box cannot reach
+   whatever live database produced the 292 figure to check it directly.
+6. `docs/WORK.md` item 157's `DONE WHEN` overclaimed "asserts after each
+   deploy" for what is actually a per-run count read during RiskStage, not
+   a deploy-time assertion — reworded to describe the mechanism as built.
 
-**Item 156 — the congressional-trading Form 4 drain could run past its own
-tick deadline.** The drain that pulls new Form 4 accessions for congressional
-trading shared its processing loop with the tick's overall time budget but
-had no budget or progress tracking of its own, so a slow issuer could burn
-the whole tick before later issuers were even attempted. Closed by PR #539
-(commit 0f758a95): the drain now runs against its own budget and tracks
-per-issuer progress, so a slow issuer no longer starves the ones queued
-behind it. Retired 2026-09-19.
+**Not fixed, recorded as residual limitation:** the wrong-key recovery in
+finding 1 only looks at the TOP LEVEL of the answer object, and only when
+the answer parses as clean JSON directly — a wrong-keyed wrapper that is
+ALSO malformed enough to need the fragment-scanning fallback, or one nested
+inside another object, is not covered by this round. Both are narrower,
+compounding failure modes than what was reproduced and are not blocking
+item 157's partial-done status.
+
+**Also flagged, not fixed (pre-existing, wider than this PR):** the new
+`tech_answer_hygiene` `RiskViolation` reaches the Risk Manager's prompt
+labelled `VIOLATION [tech_answer_hygiene]` in a block whose empty state
+reads "No hard rule violations detected" — `src/agents/risk_manager.py`
+renders every `RiskViolation` the same way regardless of whether it is a
+hard limit or an advisory count, which is already true of the two
+pre-existing entries (`analysis_parse_loss`, `analysis_field_nulled`) this
+one was modelled on. The risk seat may resize on advisories per the
+2026-09-19 owner ruling (RiskViolation is not itself a veto), so this is
+not a new capability, but the label vs. content mismatch is real and
+predates this PR.
+
+**Also flagged, not resolved here (a public-disclosure question, not a
+code question):** `tests/fixtures/tech_seat_production_answers_sample.json`
+holds real production trade reasoning, entries, targets and stops in a
+PUBLIC repository. Two much smaller pre-existing fixtures
+(`tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_*.txt`, ~16KB
+combined) set some precedent for this, but this file is larger (~90KB, 7
+answers, shrunk from an initial 16/~218KB specifically over this concern).
+Neither this session nor its adversary reviewer can authorise a
+public-disclosure decision; flagged to the supervising session.
+
+Full suite green apart from the pre-existing, unrelated
+`test_rehearsal_reproduces_cost_ceiling.py` failure (confirmed identical on
+unmodified `main`).
+
+---
+
+### 2026-09-23 — the desk counted a protective stop as if it had already sold the shares, so its own share count was wrong on live positions (item 173)
+
+**In plain words:** when the desk places a protective stop order at the
+broker, it writes a row saying so. That row is a *standing instruction* —
+"sell if the price falls this far" — not a sale. The bookkeeping treated it
+as a sale anyway, and subtracted the whole protected position from the
+desk's record of what it owns. On the live account this made the desk
+believe it held no AMD when it actually held 1.7662 shares, and believe it
+held *negative* COP and EQNR when both were flat.
+
+**Why it mattered, and why nobody saw it.** Nothing the owner reads was
+wrong. Positions, daily P&L and realized profit all come from broker truth
+or from a separate calculation that already ignored unfilled stops, and no
+protective-stop row anywhere in the live database carries a realized-P&L
+figure [verified read-only against the production database, 2026-09-23]. The
+damage was to a safety net. `_reconcile_stop_out_fills` is the check that
+compares what the ledger believes it holds against what the broker actually
+shows, and catches a protective stop that fired without being recorded — the
+gap that lost the 2026-08-28 ONDS/CCJ stop-outs. It skips any symbol it
+believes is flat. So the one thing that guarantees a symbol is skipped is
+having a protective stop on it, which is to say: exactly the symbols that
+can be stopped out were the symbols the stop-out detector could not see.
+AMD was in that state and held real money. The defect made itself invisible
+to the very detector it disabled, which is why it survived every pass that
+looked at the detector's own results.
+
+**The cause.** `Database.get_symbols_with_open_ledger_qty` signed rows from
+the action name alone: BUY and SWEEP_BUY add, everything else subtracts.
+That reasoning holds for every other exit action, because those rows are
+only written once the desk has decided to sell. A TRAIL_STOP row is written
+at *placement*. Compounding it, the shared "did this execute" predicate
+treats a row with no fill status as executed, which is the shape all three
+live rows carry.
+
+**What was ruled out.** Not a new rule and not a threshold: the repo already
+drew this distinction in four places (`_is_filled_trail_stop`,
+`compute_trade_calibration`, `_assign_position_ids`,
+`_categorize_exit_reason`) and this one function simply never used it.
+
+**The trap inside the fix.** Deferring to `_is_filled_trail_stop` alone
+would have introduced the same class of bug pointing the other way. That
+helper answers "is this a priceable realized exit", so it requires a
+`filled` status. A stop that fills *partially* and is then canceled carries
+a terminal status that is not `filled` but has really moved shares. A pure
+share-count ledger has to subtract those or it over-reports. The share-count
+question and the realized-exit question are genuinely different questions,
+and the fix now has its own small helper that says so in as many words.
+
+**What would catch it next time.** The class is "a ledger signing a row by
+its action name, when the row's meaning depends on its fill state." The
+tests added with the fix take a protective stop through every fill status
+the fill reconciler can actually write — and take the *list* of those
+statuses from that reconciler's own code rather than retyping it, with a
+check that fails if the two ever diverge. They also cover the resting and
+filled cases on the short side, and cross-check the share-count ledger
+against the round-trip calibration for a resting and a fired stop.
+
+**What the adversary pass found in the fix itself, and what changed.** Three
+of the fill-state tests passed for the wrong reason: the shared executed-row
+predicate admits no `submitted`, `canceled`, `expired` or `pending_submit`
+row that carries no fill quantity, so the new Python branch never ran and
+the assertion would have held even with the rule inverted. They now pin the
+Python rule directly as well as the end-to-end number — worth recording
+because a test that cannot fail is indistinguishable from one that passes.
+The new helper also answered "yes" for any row at all that carried a fill
+quantity, which would have handed a true-by-default answer to a future
+caller; it now checks the action. A second pass then found that the
+replacement fill-status list had been enumerated by hand and silently
+omitted three statuses the reconciler really writes — `done_for_day`,
+`rejected`, and `cancelled` with two Ls next to `canceled` with one — of
+which `done_for_day` carrying a partial fill is the ordinary real-world
+instance of the exact shape the wider rule was built for. The list is now
+derived from the writer, which is the same two-copies-drift the tests were
+added to catch, reappearing inside the fix for it. Several claims in
+earlier drafts of this entry were themselves too strong and were cut.
+
+**Not fixed here, carried as item 173:**
+
+- Correcting the count exposed a real EQNR gap the corrupted number had been
+  hiding. EQNR left the held book between 16:19 and 16:45 UTC on 2026-09-21
+  with no trades row for the remaining 8.5962 shares. That is inside the
+  seven-day lookback now, so the next pass should find the broker order and
+  write it back — but past roughly 2026-09-28 it falls out of the window,
+  and the owner alert has no dedup or throttle of any kind, so it would then
+  page CRITICAL at every session entry point, every day. Separately, nothing
+  establishes that EQNR's exit was a protective stop; writing it back as one
+  would stamp a cause the evidence does not support onto owner-facing P&L.
+- The reconciler still runs before the fill reconciler, so a sale the desk
+  placed and has not yet reconciled pages a false CRITICAL (NUE, 2026-09-21,
+  self-corrected 476 ms later).
+- The short side is still signed from the action name: a COVER, and a
+  buy-to-cover TRAIL_STOP the broker filled, subtract from a short instead
+  of retiring it. Unchanged by this fix and silent today, because the
+  reconciler skips any negative as a short. Pinned by a test that states it
+  is wrong.
+
+### 2026-09-23 — a proposed drift-detection test (item 171) was folded into an existing item instead of built, because it would not have caught either bug it cited
+
+**In plain words:** a request to build a test that catches a prompt sentence lying about what the code does, filed a third time, was retired — not because the idea is wrong, but because a check aimed only at deleted code cannot catch the two real bugs it names, and a stronger version of that check already belongs to another open item.
+
+**Why item 99(d) looked like enough, and why it wasn't quite.** 99(d) already tells the desk to grep for a removed mechanism's name across every prompt when it is deleted. An adversary review, asked directly whether folding 171 into 99(d) would lose anything, found it would: item 98 (the seat told 20 bars when the code sent 40) and item 168 (the seat told ~120 days when the code fetches 1800) are both a number going quietly stale against a config or code value that was never deleted — 99(d)'s own check only fires on a deletion, so neither bug would ever trip it. The adversary also caught 99(d)'s text claiming no drift defect ever lived in a prompt file, which is false for item 168: its wrong sentence is in `config/prompts/tech_analyst.md`.
+
+**What actually closed item 98** was not a scanner reading prompt text for suspicious numbers — that was tried in reasoning and rejected as too noisy (99(d) already records why: ~1,825 numeric tokens in the prompts are mostly dates and list numbering). It was rendering the sentence from the live value instead of typing a number by hand, with a test that fails if the two ever disagree again. Item 168 already carries that same fix as its own DONE WHEN.
+
+**What changed.** Item 99(d) gains a new criterion (99(g)): every prompt sentence stating a code- or config-controlled fact must either be rendered from that value or pinned by a drift test in item 168's pattern, on top of the existing deletion-site grep. Item 171 is retired — its number, not its intent.
 
 ---
 
@@ -148,6 +360,36 @@ null on this field is still counted exactly as before. Caught by running
 the full suite before opening the PR, not by inspection.
 
 ---
+### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
+
+**In plain words:** two items on the backlog board had already been marked
+retired, with their reasons squeezed into the board's own "retired numbers"
+footer instead of a real write-up here — the exact bloat this file exists to
+prevent. Neither is a new finding; both are being recorded properly now so
+the board text can be trimmed to a pointer.
+
+**Item 146 — a stop-tolerance question that was already answered before it
+was filed.** The item asked whether the level-match tolerance should be
+derived from an ATR multiple (`level_match_atr_tolerance`). That setting key
+had already been removed on 2026-09-13 as part of item 46, and the tolerance
+was already being derived from `src.data.levels.CLUSTER_TOLERANCE_PCT`
+instead. The item's premise was false at filing, so it closed with no fix
+needed. Its one live piece — the horizon-arithmetic residue — was not
+discarded; it was folded into the standing DECIDE-BY mandate bullet at the
+top of the board, which it was only ever supporting evidence for. Retired
+2026-09-19.
+
+**Item 156 — the congressional-trading Form 4 drain could run past its own
+tick deadline.** The drain that pulls new Form 4 accessions for congressional
+trading shared its processing loop with the tick's overall time budget but
+had no budget or progress tracking of its own, so a slow issuer could burn
+the whole tick before later issuers were even attempted. Closed by PR #539
+(commit 0f758a95): the drain now runs against its own budget and tracks
+per-issuer progress, so a slow issuer no longer starves the ones queued
+behind it. Retired 2026-09-19.
+
+---
+
 ### 2026-09-20 — the live desk's technical ranking still fell back to ticker spelling for one specific kind of trade, after the 2026-09-04 fix (WORK.md item 141, retired)
 
 **In plain words:** when several stocks the desk was considering scored exactly the same and none of them had a measurable reward-to-risk number — which only happens for "breakout" trades, the kind with no overhead price target to measure a reward against — the desk still picked among them by ticker spelling. Every other kind of tie was already fixed two weeks earlier. This was the one case that fix didn't reach, because a later, separate, correct decision (don't measure a reward-to-risk ratio for a breakout at all) removed the only number the earlier fix used to break ties.
@@ -13387,140 +13629,6 @@ required" and "auto-merge on green" are two separate mechanisms, and nothing
 here made the first one a precondition of the second. See
 `docs/OUTCOME.md`'s new "A gating review must block the merge, not race it"
 principle.
-
----
-
-### 2026-09-23 — item 157's schema fix survived a fourth adversary round, catching a regression IN a prior round's own fix
-
-PR #568 (item 157, technical-seat answer schema) went through a fourth
-adversary pass after CI was already green, specifically because findings 1
-and 2 below are behaviour changes on the halt-authority seat and were held
-to the same scrutiny as the original schema change.
-
-**Found and fixed:**
-1. A mis-keyed wrapper object (`{"signals": [...]}`, `{"analysis": [...]}`,
-   `{"results": null, "data": [...]}`) used to silently drop an entire
-   batch with no per-symbol reason — `AgentResult._rows_from` now prefers a
-   single top-level list-of-dicts value over treating the whole object as
-   one row, falling back to the old conservative behaviour when more than
-   one such list exists (no guessing). **Second-pass regression in that
-   same fix:** the first draft matched ANY list-of-dicts value, so an
-   ordinary single-row answer that happened to nest one (e.g. a future
-   `"levels": [{"price": 1}]` field) would have had its real row discarded
-   in favour of the unrelated nested list. Fixed by requiring the row's own
-   `key_field` (`"symbol"`) be present on each candidate list's elements
-   AND absent from the top-level object — a mis-keyed wrapper never has
-   `symbol` at its own top level, a single row always does.
-2. Three Pydantic docstrings (`TechReasoningChain`, `TechAnalystAnswerItem`,
-   `TechAnalystAnswer`) shipped internal engineering prose — item numbers,
-   file paths, `#538` — to the model on every single tech-seat call on both
-   routes, because pydantic emits a class's docstring verbatim as the JSON
-   schema's `description`. Measured: 5,237 bytes sent, ~3,200 of it
-   docstring text. Trimmed to short, model-safe sentences; engineering
-   history moved to comments beside each class. New mechanical test,
-   `test_schema_sent_to_model_has_no_engineering_markers`, fails on any of
-   `#\d+`, `items?\s+\d+`, `docs/`, a `src|tests|config/` path, a bare
-   `.py` filename, a bare `.md` filename, or an internal decision date
-   (`\d{4}-\d{2}-\d{2}`) appearing anywhere in the schema actually sent.
-   Schema now 2,875 bytes. **Third adversary pass caught a regression IN
-   this fix too:** the trimmed `TechReasoningChain` docstring said "one
-   sentence per framework step" — an instruction the field never enforced
-   (only non-empty), the main prompt never asks for, and that actively
-   contradicts `support_resistance`'s own request for both a level AND its
-   ATR distance. Removed; the docstring now only names the five steps.
-   Noted, not fixed here (pre-existing, out of scope for this PR): six
-   OTHER seats' schemas — earnings, macro, news, portfolio manager,
-   position reviewer, smart money — carry the same kind of internal-marker
-   leak. Flagged to the supervising session as separate rot to file, not
-   silently fixed in a PR about the technical seat.
-3. The runtime hygiene check added to replace the abandoned pytest live
-   plan (fenced markdown / undeclared keys, `AnalysisParseTelemetry` in
-   src/models.py) first only logged at the end of morning research — a
-   channel the owner never reads (Telegram and the dashboard are the only
-   two he sees). Moved to the same `RiskViolation` advisory path
-   `analysis_parse_loss`/`analysis_field_nulled` already use
-   (`rule=tech_answer_hygiene`, RiskStage in src/pipeline_stages.py), which
-   does reach the Risk Manager's own review. Also found: only
-   `openrouter`/`google` are ever given a schema at all
-   (`src/agents/base.py`), so a violation on any other provider's call is
-   not evidence the schema failed — every count is now tagged with
-   `AgentResult.actual_provider` so the two are never conflated.
-4. `tests/test_tech_schema_live.py`'s presence-only skip check (itself a
-   fix for the ORIGINAL arbitrary-shape-guess finding) was found to have
-   its own gap: `GOOGLE_API_KEY` is deliberately non-empty even as this
-   repo's placeholder, by convention, specifically so the OneCLI gateway
-   can substitute the real credential in-flight for the deployed trading
-   process. A bare presence check could fire a real, un-mocked, paid,
-   adversarial call in any environment sourcing that same wiring by
-   mistake. Resolved by skipping on an exact match to the one named,
-   already-documented placeholder string
-   (`placeholder-managed-by-onecli`) rather than any guessed shape — not a
-   guess, because it is one specific literal value this repo's own
-   deployment history already established as non-credential. If that exact
-   string is ever renamed, the failure direction is the safe one: this
-   starts attempting real calls (loud) rather than silently skipping
-   (quiet) forever. **Third adversary pass found this still had a gap:**
-   `scripts/backtest.py` sets its OWN placeholder
-   (`GOOGLE_API_KEY=backtest-tool-unused`) directly into `os.environ`
-   before running — not used by any test today (confirmed by grep), but
-   nothing stops a future placeholder from existing, and enumerating every
-   string anyone ever invents is the same guessing game with a longer
-   list. Closed with an INDEPENDENT second gate that guesses at nothing:
-   `QAMC_RUN_LIVE_TECH_SCHEMA_TEST=1` must ALSO be set, an explicit opt-in
-   nothing sets by accident, so this can never run against an
-   unverified/wrong-placeholder environment without a human deliberately
-   choosing to.
-5. The board entry's "292 production answers, 2026-09-22, zero
-   differences" claim could not be verified from this box (the most recent
-   read-only snapshot available here ends 2026-09-18) — and a THIRD
-   adversary pass found it may be conflated with a different, pre-existing
-   measurement of the same count over the same start date, above in this
-   file's 2026-09-19 entry (item #538's row-salvage validation — a
-   different code path, which found 9 differences and 45 recovered
-   analyses, not zero). Reworded in docs/WORK.md and
-   tests/test_tech_seat_production_replay.py to state the 292 figure as
-   reported-but-unconfirmed rather than fact, alongside the independently
-   verified 243-answer-chunk replay against this box's own snapshot
-   (7 kept as a standing fixture). This discrepancy is flagged to the
-   supervising session rather than resolved here — this box cannot reach
-   whatever live database produced the 292 figure to check it directly.
-6. `docs/WORK.md` item 157's `DONE WHEN` overclaimed "asserts after each
-   deploy" for what is actually a per-run count read during RiskStage, not
-   a deploy-time assertion — reworded to describe the mechanism as built.
-
-**Not fixed, recorded as residual limitation:** the wrong-key recovery in
-finding 1 only looks at the TOP LEVEL of the answer object, and only when
-the answer parses as clean JSON directly — a wrong-keyed wrapper that is
-ALSO malformed enough to need the fragment-scanning fallback, or one nested
-inside another object, is not covered by this round. Both are narrower,
-compounding failure modes than what was reproduced and are not blocking
-item 157's partial-done status.
-
-**Also flagged, not fixed (pre-existing, wider than this PR):** the new
-`tech_answer_hygiene` `RiskViolation` reaches the Risk Manager's prompt
-labelled `VIOLATION [tech_answer_hygiene]` in a block whose empty state
-reads "No hard rule violations detected" — `src/agents/risk_manager.py`
-renders every `RiskViolation` the same way regardless of whether it is a
-hard limit or an advisory count, which is already true of the two
-pre-existing entries (`analysis_parse_loss`, `analysis_field_nulled`) this
-one was modelled on. The risk seat may resize on advisories per the
-2026-09-19 owner ruling (RiskViolation is not itself a veto), so this is
-not a new capability, but the label vs. content mismatch is real and
-predates this PR.
-
-**Also flagged, not resolved here (a public-disclosure question, not a
-code question):** `tests/fixtures/tech_seat_production_answers_sample.json`
-holds real production trade reasoning, entries, targets and stops in a
-PUBLIC repository. Two much smaller pre-existing fixtures
-(`tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_*.txt`, ~16KB
-combined) set some precedent for this, but this file is larger (~90KB, 7
-answers, shrunk from an initial 16/~218KB specifically over this concern).
-Neither this session nor its adversary reviewer can authorise a
-public-disclosure decision; flagged to the supervising session.
-
-Full suite green apart from the pre-existing, unrelated
-`test_rehearsal_reproduces_cost_ceiling.py` failure (confirmed identical on
-unmodified `main`).
 
 ---
 
