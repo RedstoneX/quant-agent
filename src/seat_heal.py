@@ -5,12 +5,18 @@ Order (owner 2026-09-16):
      wipe dropped; coerce MacroAnalysis shape (dict ``sector_guidance`` →
      list; stored trim vs live model). Never invent thesis/catalyst/macro
      text. Never loosen validation so garbage parses as ok.
-  2. At most ONE paid retry for that seat PER ET TRADING DAY, inside the
-     cost circuit's session/day caps. Counted durably (see
-     `can_paid_retry`), not per tick. A seat that is EXPIRED rather than
-     lost is eligible too — the desk holds an older answer and is buying a
-     fresher one — and its owner alerts must say so rather than claim a
-     seat was lost (`HealResult.owner_consequence`).
+  2. At most ONE paid retry for that seat, inside the cost circuit's
+     session/day caps. WHICH ledger "one" counts against is the caller's,
+     not this module's — see `can_paid_retry`. The research-seat heal
+     (`TradingPipeline._try_one_paid_research_retry`) counts durably PER ET
+     TRADING DAY, because its per-tick predecessor bought the news seat
+     eight times in one day. The exit-trigger re-ask and the PM-accounting
+     heal still count per tick, deliberately: each is reachable once per
+     run. Do not read "per day" as a property of every heal.
+     A seat that is EXPIRED rather than lost is eligible too — the desk
+     holds an older answer and is buying a fresher one — and its owner
+     alerts must say so rather than claim a seat was lost
+     (`HealResult.owner_consequence`).
   3. Durable machine-readable reason (which seat, why). Success is a log
      row, not a page. Heal FAILURE and a spend-cap block each get their
      OWN Telegram OWNER ALERT.
@@ -417,17 +423,27 @@ def heal_failure_alert_text(result: HealResult, *, cap_blocked: bool = False) ->
         # empty research seat" — the seat was neither. That is the
         # owner-facing-lie class of defect item 133 closed on the other
         # branch, still live on this one.
-        subject = (
-            "buy a fresher answer for a seat whose research it already holds"
-            if result.owner_consequence else
-            "replace a lost or empty research seat"
-        )
+        # Keyed on the fact, not on whether someone remembered to set the
+        # sentence: `details["was_expired"]` is written by the heal path
+        # itself.
+        was_expired = bool(result.details.get("was_expired"))
+        if was_expired:
+            subject = (
+                "buy a fresher answer for a seat whose research it already "
+                "holds"
+            )
+            # "not treated as green-empty" is lost-seat wording and means
+            # nothing for a seat that was never empty.
+            reassurance = ""
+        else:
+            subject = "replace a lost or empty research seat"
+            reassurance = "The seat was not treated as green-empty. "
         return (
             f"OWNER ALERT — research heal blocked by spend cap\n"
             f"Seat: {result.seat}\n"
             f"The desk could not pay a one-time retry to {subject} because "
-            f"the session or day cost cap is already bound. The seat was not "
-            f"treated as green-empty. {consequence} "
+            f"the session or day cost cap is already bound. {reassurance}"
+            f"{consequence} "
             f"Reason: {result.reason}"
         )
     return (

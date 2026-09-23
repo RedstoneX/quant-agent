@@ -16116,47 +16116,6 @@ class TradingPipeline:
         retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
         if not can_paid_retry(retries, seat):
             return False
-        # Cross-tick cap. `retries` is per-RunContext and a RunContext is one
-        # tick; intra_check runs every 30 minutes, and an expired seat is
-        # still expired on the next tick, so without this the "one paid
-        # retry" would be one per tick. See Database.count_paid_seat_heals_today.
-        db = getattr(self, "db", None)
-        counter = getattr(db, "count_paid_seat_heals_today", None)
-        if callable(counter):
-            try:
-                spent_today = int(counter(seat) or 0)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("seat heal: day-cap read failed for %s: %s", seat, e)
-                spent_today = 0
-            if not can_paid_retry({seat: spent_today}, seat):
-                logger.info(
-                    "seat heal: %s already had its one paid retry today "
-                    "(%d spent); not re-asking", seat, spent_today,
-                )
-                # Durable, not just a log line. "The desk declined to pay
-                # for fresher research on this tick" is a decision about
-                # money, and it is the only record that could later show
-                # whether one refresh a day is the right number. Same
-                # argument the lost-seat row rests on. Not an owner page:
-                # the cap doing its job is not an incident.
-                self._record_heal(
-                    ctx,
-                    HealResult(
-                        seat=seat, outcome=HEAL_DAY_CAP,
-                        reason=(
-                            f"seat already had its one paid heal this ET day "
-                            f"({spent_today} recorded); not re-asking"
-                        ),
-                        paid_retry=False,
-                        details={
-                            "spent_today": spent_today,
-                            "was_expired": _expired_seat,
-                        },
-                        owner_consequence=_consequence,
-                    ),
-                    alert=False,
-                )
-                return False
         require = getattr(self, "_require_paid_analysis", None)
         agent_name = {
             "macro": "macro_analyst",
@@ -16187,6 +16146,66 @@ class TradingPipeline:
                 return False
         if seat == "tech":
             return False
+        # Cross-tick cap, checked HERE — after the honest-inputs checks
+        # above, never before them. A tick that has no wire text would have
+        # refused anyway, and a day-cap row on that tick would record the cap
+        # as the binding constraint when it was not. That row's whole purpose
+        # is to be the evidence that later settles whether one refresh a day
+        # is the right number, so it must only be written when the cap is
+        # what actually stopped the spend.
+        #
+        # `retries` above is per-RunContext and a RunContext is one tick;
+        # intra_check runs every 30 minutes and an expired seat is still
+        # expired on the next tick, so without this the "one paid retry" is
+        # one per tick. It was: production recorded EIGHT paid news heals on
+        # 2026-09-18. See Database.count_paid_seat_heals_today.
+        db = getattr(self, "db", None)
+        counter = getattr(db, "count_paid_seat_heals_today", None)
+        if callable(counter):
+            try:
+                spent_today = counter(seat)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("seat heal: day-cap read failed for %s: %s", seat, e)
+                spent_today = None
+            if spent_today is None:
+                # Could not find out, which is NOT the same as nothing spent.
+                # Allowed through on purpose: the cost circuit below is the
+                # fail-closed authority for spend and still runs, so a sick
+                # forensic store cannot silently stop the desk buying fresher
+                # news. Logged at WARNING so the degradation is visible
+                # rather than assumed.
+                logger.warning(
+                    "seat heal: could not read %s's day allowance; allowing "
+                    "the retry and leaving the spend to the cost circuit", seat,
+                )
+            elif not can_paid_retry({seat: int(spent_today)}, seat):
+                logger.info(
+                    "seat heal: %s already had its one paid retry today "
+                    "(%d spent); not re-asking", seat, spent_today,
+                )
+                # Durable, not just a log line. "The desk declined to pay for
+                # fresher research on this tick" is a decision about money,
+                # and it is the only record that could ever show whether one
+                # refresh a day is the right number. Not an owner page: the
+                # cap doing its job is not an incident.
+                self._record_heal(
+                    ctx,
+                    HealResult(
+                        seat=seat, outcome=HEAL_DAY_CAP,
+                        reason=(
+                            f"seat already had its one paid heal this ET day "
+                            f"({spent_today} recorded); not re-asking"
+                        ),
+                        paid_retry=False,
+                        details={
+                            "spent_today": int(spent_today),
+                            "was_expired": _expired_seat,
+                        },
+                        owner_consequence=_consequence,
+                    ),
+                    alert=False,
+                )
+                return False
         try:
             require(agent_name)
         except PaidAnalysisSuspended as exc:

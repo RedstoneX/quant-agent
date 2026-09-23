@@ -2324,7 +2324,8 @@ class Database:
             return cur.lastrowid or 0
         return self._locked_write(_do, label="insert_specialist_evidence")
 
-    def count_paid_seat_heals_today(self, seat: str) -> int:
+    def count_paid_seat_heals_today(self, seat: str, *,
+                                     trading_day: date | None = None) -> int | None:
         """How many PAID research heals this seat has already had today (ET).
 
         The in-context counter `RunContext.heal_paid_retries` says "at most
@@ -2335,21 +2336,22 @@ class Database:
         tick, so the in-context cap would have allowed the desk to buy the
         same seat back fourteen times in a day and call that "one retry".
         Nothing caught it before because the heal path was unreachable for
-        expired seats at all — see the category set the heal dispatcher
-        selects on, declared in `src/evidence_gate.py`.
+        expired seats at all (see `evidence_gate.HEALABLE_CATEGORIES`).
 
         The durable heal rows are the only cross-tick memory the heal path
         has, so the day cap is read back from them. Row volume is a handful
         per day; parsing in Python avoids depending on the JSON1 extension.
-        Best-effort by design: a read failure returns 0 and the in-context
-        cap plus the cost circuit remain, because a forensic-store hiccup
-        must not be able to block a legitimate refresh.
+        Returns None — NOT 0 — when the read fails, so the caller can tell
+        "nothing spent today" apart from "I could not find out". Those need
+        different answers and a shared 0 forced one global policy on both.
+        `trading_day` exists so the ET-day boundary itself is testable; the
+        default is today.
         """
         import json as _json
         want = str(seat or "").strip()
         if not want:
             return 0
-        start, end = self._et_day_utc_bounds()
+        start, end = self._et_day_utc_bounds(trading_day)
         try:
             with self._lock:
                 rows = self.conn.execute(
@@ -2359,7 +2361,7 @@ class Database:
                 ).fetchall()
         except Exception as e:  # noqa: BLE001
             logger.warning("count_paid_seat_heals_today failed: %s", e)
-            return 0
+            return None
         count = 0
         for row in rows:
             try:

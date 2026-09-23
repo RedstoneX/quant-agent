@@ -155,9 +155,14 @@ CATEGORY_EXPIRED = "expired"
 #: desk HOLDS an answer and holding an older answer is not the same as
 #: having none. But the heal dispatcher selected its work by testing for
 #: `CATEGORY_LOST`, so the split silently orphaned the refresh that had
-#: shipped that morning. It stayed dead until 2026-09-23: zero `seat heal`
-#: rows in the production log, while the owner got 14 `news=expired` alerts
-#: over 2026-09-21/22.
+#: shipped that morning. It stayed dead until 2026-09-23, and the DURABLE
+#: RECORD is what shows that, not a log grep — the heal's success path writes
+#: no matchable log string, so "zero hits" would have proved nothing.
+#: `specialist_evidence` holds 22 `seat_heal` rows, ALL dated 2026-09-18, the
+#: last at 19:46 UTC, and #535 merged at 21:24 UTC that same day. Meanwhile
+#: the owner received 15 `news=expired` alerts: 11 on 2026-09-21 and 4 on
+#: 2026-09-22. [Measured 2026-09-23 — sqlite over a read-only copy of the
+#: production DB, and a date-bucketed scan of the retained production log.]
 #:
 #: The lesson is the coupling was implicit. A category membership test in
 #: one module decided whether a paid refresh in another module ever ran, and

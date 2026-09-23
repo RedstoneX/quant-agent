@@ -419,6 +419,11 @@ def test_the_day_cap_counts_the_rows_the_heal_path_actually_writes():
         assert db.count_paid_seat_heals_today("macro") == 1
         assert db.count_paid_seat_heals_today("news") == 2
 
+        # And a read that cannot answer must say so rather than report a
+        # clean zero — the caller treats those two differently.
+        db.conn.close()
+        assert db.count_paid_seat_heals_today("news") is None
+
 
 def test_a_day_cap_refusal_leaves_a_durable_row_not_only_a_log_line():
     """Declining to spend is a decision about money, so it is recorded."""
@@ -444,6 +449,9 @@ def test_the_spend_cap_alert_does_not_call_an_expired_seat_lost_or_empty():
 
     expired = HealResult(
         seat="news", outcome=HEAL_CAP_BLOCKED, reason="session cap bound",
+        # The heal path writes both of these; the wording keys on the FACT
+        # in details, not on whether someone set the sentence.
+        details={"was_expired": True},
         owner_consequence=(
             "The desk still holds this seat's earlier answer and will decide "
             "on it. No trade was withheld for this."
@@ -452,6 +460,9 @@ def test_the_spend_cap_alert_does_not_call_an_expired_seat_lost_or_empty():
     body = heal_failure_alert_text(expired, cap_blocked=True)
     assert "lost or empty" not in body
     assert "still holds" in body and "No trade was withheld" in body
+    # "not treated as green-empty" is lost-seat reassurance and is
+    # meaningless for a seat that was never empty.
+    assert "green-empty" not in body
 
     # A genuinely lost seat keeps the original wording.
     lost = HealResult(seat="macro", outcome=HEAL_CAP_BLOCKED, reason="cap bound")
@@ -491,6 +502,115 @@ def test_the_re_ask_is_not_handed_morning_guidance_on_an_afternoon_tick():
     )
     assert guidance["intra_check"] != guidance["morning"]
     assert "fresh book" not in guidance["intra_check"].lower()
+
+
+def test_an_unreadable_day_ledger_is_not_the_same_as_nothing_spent():
+    """The counter returns None when it could not find out.
+
+    A shared 0 for "nothing spent" and "read failed" forced one global
+    policy on two different situations. The heal allows the retry through
+    and leaves the spend to the cost circuit, but it must not silently
+    record that as a clean zero.
+    """
+    class _Unreadable:
+        def count_paid_seat_heals_today(self, seat, **kw):
+            return None
+
+    from src.seat_heal import HEAL_DAY_CAP
+    analyst = _Analyst()
+    obj, ctx = _expired_news_tick(analyst=analyst, db=_Unreadable())
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert analyst.calls == 1
+    assert not [r for r, _a in obj.recorded if r.outcome == HEAL_DAY_CAP]
+
+
+def test_a_day_cap_row_is_only_written_when_the_cap_is_what_stopped_the_spend():
+    """The row is the evidence that could settle whether one-a-day is right,
+    so a tick that would have refused anyway must not be recorded as capped."""
+    from src.seat_heal import HEAL_DAY_CAP
+    analyst = _Analyst()
+    obj, ctx = _expired_news_tick(analyst=analyst, db=_DayLedger({"news": 1}))
+    # No wire text: this tick had nothing to re-ask with, cap or no cap.
+    ctx.heal_news_text = None
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert analyst.calls == 0
+    assert not [r for r, _a in obj.recorded if r.outcome == HEAL_DAY_CAP], (
+        "a tick with no inputs was recorded as blocked by the day cap"
+    )
+
+
+def test_the_day_boundary_the_cap_uses_is_the_et_trading_day():
+    """`_et_day_utc_bounds` is the half most likely to be wrong on a host in
+    another timezone, and it is unreachable without a day to ask about."""
+    import json
+    import tempfile
+    from datetime import date, timedelta
+    from pathlib import Path
+    from src.storage.db import Database
+    from src.seat_heal import HealResult, HEAL_PAID_RETRY
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Database(str(Path(tmp) / "t.db"))
+        db.initialize()
+        db.insert_specialist_evidence(
+            run_id="r1", agent_name="seat_heal", kind="seat_heal", scope="run",
+            evidence_json=json.dumps(HealResult(
+                seat="news", outcome=HEAL_PAID_RETRY, reason="r",
+                paid_retry=True,
+            ).to_evidence(), sort_keys=True),
+        )
+        from src.storage.db import et_today
+        today = et_today()
+        assert db.count_paid_seat_heals_today("news", trading_day=today) == 1
+        # Yesterday's allowance is a different allowance.
+        assert db.count_paid_seat_heals_today(
+            "news", trading_day=today - timedelta(days=1),
+        ) == 0
+        assert db.count_paid_seat_heals_today(
+            "news", trading_day=today + timedelta(days=1),
+        ) == 0
+
+
+def test_every_session_the_news_analyst_can_be_asked_for_has_its_own_guidance():
+    """The mechanism, not just today's missing key.
+
+    `_SESSION_GUIDANCE` used to fall back to MORNING for any unknown
+    session. That produced audit round 2 #24 (close) and then produced the
+    intra_check defect five months later. Asserting `"intra_check" in
+    guidance` would not have caught either one before it shipped.
+    """
+    import typing
+    from src.agents.news_analyst import NewsAnalystAgent
+    from src import pipeline_context
+
+    sessions = set(typing.get_args(pipeline_context.SessionType))
+    guidance = NewsAnalystAgent._SESSION_GUIDANCE
+    missing = sorted(sessions - set(guidance))
+    # A session with no entry must not silently look like morning. Either it
+    # has its own entry, or the neutral fallback claims nothing about the
+    # time of day — and the neutral fallback must exist.
+    neutral = NewsAnalystAgent._UNKNOWN_SESSION_GUIDANCE
+    assert "fresh book" not in neutral.lower()
+    assert neutral != guidance["morning"]
+    for session in missing:
+        # Documented as deliberately unguided, not silently morning-shaped.
+        assert session in {"earnings_preprocess"}, (
+            f"{session!r} reaches the news analyst with no guidance entry"
+        )
+
+
+def test_an_unknown_session_does_not_get_the_morning_fresh_book_instruction():
+    from src.agents.news_analyst import NewsAnalystAgent
+    agent = NewsAnalystAgent.__new__(NewsAnalystAgent)
+    message = agent.build_user_message(
+        news_text="- something crossed the wire", session="not_a_session",
+    )
+    assert "fresh book" not in message.lower()
+    assert "MORNING mode" not in message
 
 
 def test_a_suspended_cost_circuit_blocks_the_heal_and_pages_the_owner():
@@ -571,16 +691,42 @@ def test_healable_categories_is_only_read_by_the_heal_path():
         f"defined once and must be read nowhere in this module. It is a "
         f"refresh hint about cost, not a trading consequence."
     )
-    # And no other module may read it into a verdict either: the only
-    # readers anywhere are the heal dispatcher and this file.
-    import subprocess
+    # And no other module may READ it into a verdict either. Checked on
+    # code, not on filenames: an earlier version of this test matched any
+    # mention, which pushed a legitimate docstring cross-reference in
+    # src/storage/db.py into being reworded vaguely to keep the list short.
+    # A comment naming the constant is documentation and is welcome; a
+    # statement consulting it outside the heal dispatcher is the defect.
+    import ast as _ast
     from pathlib import Path
     root = Path(gate.__file__).resolve().parent.parent
-    hits = subprocess.run(
-        ["grep", "-rl", "--include=*.py", "HEALABLE_CATEGORIES", "src", "tests"],
-        cwd=root, capture_output=True, text=True,
-    ).stdout.split()
-    assert sorted(hits) == [
-        "src/evidence_gate.py", "src/pipeline.py",
-        "tests/test_seat_heal_wiring.py",
-    ], f"a new module reads HEALABLE_CATEGORIES: {hits}"
+    code_readers = set()
+    scanned = 0
+    for path in sorted(root.glob("src/**/*.py")) + sorted(root.glob("tests/**/*.py")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "HEALABLE_CATEGORIES" not in text:
+            continue
+        scanned += 1
+        tree = _ast.parse(text)
+        for node in _ast.walk(tree):
+            # A real reference in code, not a mention in a docstring or a
+            # comment. `x.HEALABLE_CATEGORIES` and a bare name both count.
+            name = None
+            if isinstance(node, _ast.Attribute):
+                name = node.attr
+            elif isinstance(node, _ast.Name):
+                name = node.id
+            if name != "HEALABLE_CATEGORIES":
+                continue
+            rel = str(path.relative_to(root))
+            if rel == "src/evidence_gate.py":
+                continue  # the definition itself
+            code_readers.add(rel)
+    assert scanned >= 3, "the scan found too few files — the check is broken"
+    assert code_readers == {
+        "src/pipeline.py", "tests/test_seat_heal_wiring.py",
+    }, (
+        f"HEALABLE_CATEGORIES is read in code outside the heal dispatcher: "
+        f"{sorted(code_readers)}. It is a refresh-cost hint, not a trading "
+        f"consequence."
+    )

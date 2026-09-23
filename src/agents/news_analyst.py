@@ -161,12 +161,24 @@ class NewsAnalystAgent(BaseAgent):
             "market-moving headline superseded the research this desk was "
             "holding. The market is OPEN and today's book already exists; "
             "this is NOT a fresh-book rebuild and must not be written as "
-            "one. No prior snapshot and no universe list are supplied on "
-            "this path, so do not claim to be diffing against one: report "
-            "what the wire in front of you says, and say plainly where it "
-            "leaves you without enough context to judge."
+            "one. Work from exactly what is supplied below and do not "
+            "claim to be diffing against a baseline unless one is actually "
+            "shown: report what the wire in front of you says, and say "
+            "plainly where it leaves you without enough context to judge."
         ),
     }
+
+    #: Used when a session has no entry above. Deliberately makes no claim
+    #: about what part of the day this is or what baseline exists, because
+    #: the failure this replaces was a WRONG claim ("treat today as a fresh
+    #: book", at 14:00), not a missing one.
+    _UNKNOWN_SESSION_GUIDANCE = (
+        "This run's session mode is not one this prompt has specific "
+        "guidance for. Do not assume it is a start-of-day full rebuild and "
+        "do not assume a prior snapshot is available: work from exactly "
+        "what is supplied below, and say plainly where you lack the context "
+        "to judge."
+    )
 
     def build_user_message(self, **kwargs) -> str:
         news_text: str = kwargs["news_text"]
@@ -188,7 +200,22 @@ class NewsAnalystAgent(BaseAgent):
         universe_text = ", ".join(universe) if universe else "N/A"
 
         # Session-specific guidance
-        guidance = self._SESSION_GUIDANCE.get(session, self._SESSION_GUIDANCE["morning"])
+        # NOT `.get(session, morning)`. That default silently mislabelled the
+        # close session as a fresh-book rebuild (audit round 2 #24) and then
+        # did the identical thing to `intra_check` (2026-09-23) — twice is a
+        # mechanism, not two accidents, and the mechanism is that a session
+        # with no entry LOOKS like morning instead of looking wrong. An
+        # unknown session now gets a neutral entry that claims nothing about
+        # what this run is, and says so out loud in the log.
+        # `tests/test_seat_heal_wiring.py` pins every SessionType value that
+        # can reach this analyst against the table.
+        guidance = self._SESSION_GUIDANCE.get(session)
+        if guidance is None:
+            logger.warning(
+                "news_analyst: no session guidance for session=%r; using the "
+                "neutral entry rather than defaulting to MORNING", session,
+            )
+            guidance = self._UNKNOWN_SESSION_GUIDANCE
         session_section = f"## Session Mode\n{guidance}\n"
 
         # Prior snapshot for midday/evening — lets the agent diff/summarize
