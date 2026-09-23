@@ -22,32 +22,47 @@ what would catch it next time.
 
 ---
 
-### 2026-09-23 — seven finished board items were still parked on the work board, and the board was 98.9% full
+### 2026-09-23 — five finished board items were still parked on the work board, and two more looked finished but were not
 
 **In plain words:** the desk's job list has a hard size limit so it stays
 short enough to read. It had filled to 98.9% and warned that it would soon
-stop accepting new work. Nothing was wrong with the list itself — seven jobs
-on it were already finished and nobody had taken them off. Each one below was
-checked against the code that is actually running, or against the desk's own
-production log, before it was removed. Nothing was removed for sounding
-finished.
+stop accepting new work. Seven jobs on it looked finished. Five actually were,
+and are removed below. Two — 82 and 120 — looked finished from their own
+write-ups but were not: a 2026-09-23 adversary pass, run before this closed,
+read the actual code each one names and found the original defect still live
+in both. Both stay on the board, open, with the adversary's evidence attached
+in place of a retirement.
 
 **Why this happens.** Taking an item off is a remembered step, not a checked
 one. A fix ships, the pull request says it closes the item, and the board is
-never edited. Two of the eight (120 and 130) even had a merged pull request
-naming the item in its own title; item 120's retirement had already been
-WRITTEN into the board's retired-items sentence on 2026-09-20 while the item
-itself stayed on the board as open work.
+never edited. Two of the seven retired here (120 and 130) even had a merged
+pull request naming the item in its own title — and item 120's SECOND attempt
+at closure (below) still failed the adversary's read of the code; item 120's
+first retirement had already been WRITTEN into the board's retired-items
+sentence on 2026-09-20 while the item itself stayed on the board as open work,
+which is the same failure this whole pass exists to catch.
 
-**Item 82 — the same trade was classified twice and the second answer won.**
-A trade's setup type (breakout, range, and so on) decides whether the risk
-reviewer is allowed to cut it. It was being worked out once when the trade was
-built and again when the order was sent, and on a top-up to a position the
-desk already held the second reading overwrote the one pinned on the original
-entry. Fixed by PR #494 (merged 2026-09-18) and verified on `main`: execution
-now carries the classification the constructor already made, and a scale-in
-re-reads the pinned row rather than re-deriving. The item's own stated fix was
-"classify once and carry it", which is what is there.
+**Item 82 — proposed for retirement, DROPPED, still OPEN.** The write-up
+below is what this pass believed before the adversary read the actual
+classification path; it is kept for the record and superseded by the finding
+after it. A trade's setup type (breakout, range, and so on) decides whether
+the risk reviewer is allowed to cut it. It was being worked out once when the
+trade was built and again when the order was sent, and on a top-up to a
+position the desk already held the second reading overwrote the one pinned on
+the original entry. PR #494 (merged 2026-09-18) made execution carry the
+classification the constructor already made, and a scale-in re-read the
+pinned row rather than re-deriving — which reads as "classify once and carry
+it", the item's own stated fix. **What the adversary found still wrong:**
+`is_trend_trade` (`src/risk/constants.py`) treats a trade as a breakout when
+the analyst TYPED "breakout" OR the level scan found no level in-direction,
+but only the typed label is stored (`portfolio_constructor.py` ~1807, 3437,
+3639) and the position reviewer (`src/pipeline.py` ~13183) checks only that
+stored label. A scan-only breakout — the level scan's own half of the
+definition — is still evaluated as if it were not one, and still gets the
+pace/progress checks a breakout is exempt from. PR #494 fixed which STORED
+label execution carries; it did not fix that only one of the two ways a
+trade becomes a breakout is ever stored. The item's own defect, moved one
+layer, not removed.
 
 **Item 84 — six timers firing in the same second.** The fix shipped the same
 night it was filed (PR #454) and was written up here then; the only thing
@@ -83,23 +98,31 @@ state:** there are no `trade_updates` lines at all on 2026-09-22 or
 2026-09-23, explained by there being no entry orders on either day, but the
 path has been seen working once and that is exactly what the item asked for.
 
-**Item 120 — a name priced off yesterday's last trade and called today's.**
-Closed by PR #572 (merged 2026-09-20), whose title names the item.
-`src/data/live_price.py` is now the one resolver every consumer goes through:
-last trade, then today's minute-bar close, then today's forming daily-bar
-close, then refusal naming which of two reasons, with the most recent winning
-among candidates that pass and a quote mid unreachable by construction. A name
-with no usable print is reported as a lost price seat, not as a low-confidence
-input. Both of the item's own criteria are met. The board's retired-items
-sentence had already recorded this retirement on 2026-09-20; the item block
-itself was simply never deleted, which is the failure this pass is fixing.
-**Residue the implementing module declares about itself, recorded here rather
-than re-filed:** `src/data/live_price.py` states that pinning the entitled
-feed "was part of what board item 120 described and is NOT done here", and
-that one thing in it is asserted and not yet observed — that Alpaca stamps a
-daily bar at a time whose ET date equals the session date. The item's two
-stated criteria are met without either; the feed-pinning half of its body is
-not, and nobody owns it.
+**Item 120 — proposed for retirement, DROPPED, still OPEN.** The write-up
+below is what this pass believed before the adversary read every consumer of
+the price it names; it is kept for the record and superseded by the finding
+after it. PR #572 (merged 2026-09-20) closed the item by title.
+`src/data/live_price.py` became a resolver that walks last trade, then
+today's minute-bar close, then today's forming daily-bar close, then a named
+refusal, with a quote mid unreachable by construction — which reads as both
+of the item's own criteria met. The board's retired-items sentence had
+already recorded this retirement on 2026-09-20; the item block itself was
+simply never deleted, which is the failure this pass believed it was fixing.
+**What the adversary found still wrong:** `live_price.py` is NOT the one
+resolver every consumer goes through. `src/pipeline_stages.py` ~6367 fills
+the constructor's price map for NEW names straight from the broker's
+bare-number price call (`broker.py` 2730-2805), which can return a quote mid
+or yesterday's last trade, and never touches `live_price.py` at all. That
+fails the item's own first criterion — "never from a quote mid" — on exactly
+the names being bought, which is the highest-stakes place for it to fail.
+Whether this has produced a bad live sizing decision is unconfirmed; the
+defect is that nothing would tell you if it had. **Residue the implementing
+module already declared about itself, unaffected by this finding:**
+`live_price.py` states that pinning the entitled feed "was part of what
+board item 120 described and is NOT done here", and that Alpaca stamping a
+daily bar at a time whose ET date equals the session date is asserted, not
+observed. The item stays open on both the adversary's finding and this
+pre-existing residue.
 
 **Item 130 — the number ledger's scope rule excluded the broker order path.**
 Closed by PR #544 (merged 2026-09-19) and verified on `main`:
@@ -199,16 +222,20 @@ position reviewer, needs a session in which a symbol was fully sold and a
 later review ran, and no such session appears in the retained logs. Half a
 confirmation is not the confirmation the item asked for.
 
-**Why the board's own checks did not catch any of this.** There is a check for
-an item whose title claims closure (`find_closed_items_not_marked_done`) and
-one for a finished-looking item left parked
-(`find_finished_items_still_on_board`). Neither flagged any of these seven,
-because none of them says "FIXED" in its own title — they say "OPEN", or they
-state a residue, and the residue is what quietly came true. What they cannot
-see is an item whose stated condition was met somewhere else: in a merged pull
-request that names the item in its own title, or in a line in the production
-log. Items 120 and 130 were both closed by a pull request whose title names
-them, which is the cheapest of those two signals to read.
+**Why the board's own checks did not catch any of this, and did not catch
+the two false positives either.** There is a check for an item whose title
+claims closure (`find_closed_items_not_marked_done`) and one for a
+finished-looking item left parked (`find_finished_items_still_on_board`).
+Neither flagged any of these seven, because none of them says "FIXED" in its
+own title — they say "OPEN", or they state a residue, and for five of them
+the residue is what quietly came true. What they cannot see is an item whose
+stated condition was met somewhere else: in a merged pull request that names
+the item in its own title, or in a line in the production log — and they
+cannot tell that signal apart from one that reads as met but is not. 120 and
+130 both had a merged pull request naming the item in its title, which is the
+cheapest of those two signals to read; 130 held up and 120 did not, so the
+signal itself is not sufficient and a check built on it alone would have
+retired 120 wrongly, exactly as this pass first tried to.
 
 ### 2026-09-23 — the owner has never once seen the end of a morning report, and the desk kept calling its own good decisions failures
 
