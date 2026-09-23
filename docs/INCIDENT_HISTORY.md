@@ -90,20 +90,33 @@ check runs against every day the shutdown spans, not just today — the
 clean, so checking only the current day would have waved through a shutdown
 whose actual unproven rows sat on the day before.
 
-**Both numbers are read off measurements, and the first attempt at reading
-them was wrong.** The first draft took both off the intraday control's
-30-minute cadence. An adversary review pointed out that the intraday
-control is the one scheduled job that explicitly makes no model calls at
-all, so it cannot be the instrument for anything about model-call failures
-— and that the runs actually lost that day, the close and the evening, are
-not intraday ticks. Re-derived: the cooldown is bracketed below by the
-longest real paid run on the production database (9.8 minutes) so a latch
-cannot expire while the run that tripped it is still going, and above by
-the smallest gap between two scheduled paid runs (90 minutes, the 08:00 to
-the 09:30) so a second run is never lost; 15 minutes sits just inside the
-lower bound, because the desk wants to be back as early as is safe. The
-daily allowance is one forgiveness per scheduled run that actually calls a
-model — five.
+**Both numbers took three attempts to derive, and the second attempt was
+wrong for an interesting reason.** The code's own description of the
+desk's every-30-minutes intraday check says it makes no model calls. That
+is false. On the production database the intraday check is the desk's
+LARGEST spender on models — 72% of the money on the day of this incident,
+90% on the day before, thirteen or fourteen paid runs a day — and the run
+that tripped this very latch was one of them. Two separate derivations
+were built on that one wrong sentence before anybody checked it against
+the database, including one written in response to an adversary review
+that had correctly rejected the first. The sentence is now corrected where
+it lives.
+
+Corrected: the only hard bound on the cooldown is the gap between
+consecutive runs that can spend money, which is that 30-minute cadence —
+at or above it a second run is lost, which is the damage being fixed.
+There is no floor, because the run that trips the latch stops at the trip;
+the one on 2026-09-22 ran 88 seconds end to end. So 15 minutes is the
+midpoint of the only interval that matters, which is the value furthest
+from both ways of getting it wrong. The daily allowance is one forgiveness
+per scheduled run that can spend money — nineteen, the fourteen intraday
+ticks plus the five named sessions.
+
+**The lesson worth keeping is not about 503s.** A comment describing what
+a job does was wrong, and two rounds of careful reasoning inherited the
+error because reading the comment is cheap and querying the database is
+not. Both times the number came out defensible-sounding. Check the claim
+the number rests on, not just the arithmetic on top of it.
 
 **What a self-clear does not do:** it moves no money and raises no cap.
 Recorded spend is left exactly as it stands, the caps are only read, and

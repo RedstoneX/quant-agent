@@ -14,12 +14,19 @@ raised by a provider call that FAILED with an unprovable cost expires on its
 own once its cooldown passes (see `_auto_clear_transient_latch_locked` in
 `src/cost_circuit.py` for the full guard list). Because ``status`` and
 ``check`` both go through the circuit's own authorization boundary, either of
-them can be the thing that OBSERVES an expiry that was already due, and the
-`auto_reset` event will then carry this script's run id. That is an
-observation, not an operator action: nothing about running this utility makes
-a latch expire earlier than it would have. Every other hard latch -- real
-unmeasured spend, an accounting-integrity fault, the durable infrastructure
-latch -- still requires ``reset`` and a reason.
+them can be the thing that PERFORMS an expiry that has come due, and the
+`auto_reset` event will then carry this script's run id.
+
+Be clear about what that means: ``status`` and ``check`` are read-NAMED but
+they write. Both already seeded the day and rearmed quota holds; either can
+now also clear that one hard latch, insert an `auto_reset` event and reset
+the day's unprovable-figure flag. The expiry's DUE time is not affected by
+running this utility -- every guard is evaluated against the database, not
+against the caller -- but the clear itself happens on whichever
+authorization boundary comes first, and running this is one. Do not treat
+``status`` as read-only. Every other hard latch -- real unmeasured spend, an
+accounting-integrity fault, the durable infrastructure latch -- still
+requires ``reset`` and a reason.
 """
 
 from __future__ import annotations

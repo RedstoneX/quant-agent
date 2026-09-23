@@ -2044,11 +2044,21 @@ class LLMCostCircuitBreaker:
             # by-construction-unknown run cost to the dashboard as an exact
             # dollar figure. The session row stays as the record of what
             # happened.
-            conn.executemany(
+            #
+            # CURRENT DAY ONLY, exactly the rows `reset` writes. A second
+            # adversary pass on 2026-09-23 caught an earlier draft clearing
+            # every spanned day: nothing reads a PAST day's flags (every
+            # consumer keys on the current ET day), so the write bought
+            # nothing, and it stamped costs_exact=1 on a historical day
+            # whose cost was never proven -- rewriting settled history to
+            # look provable is the same defect as the session-row rewrite,
+            # relocated. The spanned-day CHECK above stays: reading
+            # yesterday to decide is the safety, writing it is not.
+            conn.execute(
                 "UPDATE llm_budget_days SET unknown_cost_rows=0, "
                 "failed_call_unknown_rows=0, costs_exact=1, "
                 "updated_at=datetime('now') WHERE day=?",
-                [(day,) for day in sorted(spanned_days)],
+                (current_day,),
             )
         logger.warning(
             "cost-circuit auto-cleared hard latch %s: %s", code, reason,

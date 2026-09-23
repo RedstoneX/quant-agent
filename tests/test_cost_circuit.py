@@ -1976,9 +1976,20 @@ def test_alert_delivery_failures_accumulate_durably_instead_of_vanishing(tmp_pat
 
 
 def _cooldown_config(**overrides):
+    """Production's own defaults for the self-clear knobs, not stand-ins.
+
+    An earlier version pinned the allowance to 14, a number a later commit
+    superseded -- so every self-clear test was running against a value the
+    desk no longer uses. Read the real defaults instead.
+    """
+    from src.config import LLMCostCircuitConfig
+
+    defaults = LLMCostCircuitConfig()
     values = {
-        "transient_latch_cooldown_minutes": 15.0,
-        "max_transient_latch_auto_clears_per_day": 14,
+        "transient_latch_cooldown_minutes": defaults.transient_latch_cooldown_minutes,
+        "max_transient_latch_auto_clears_per_day": (
+            defaults.max_transient_latch_auto_clears_per_day
+        ),
     }
     values.update(overrides)
     return _config(**values)
@@ -2641,7 +2652,10 @@ def test_a_clean_overnight_latch_clears_and_forgives_both_days(tmp_path):
             "SELECT day, unknown_cost_rows, failed_call_unknown_rows, "
             "costs_exact FROM llm_budget_days ORDER BY day"
         ).fetchall()
-    assert rows == [(yesterday, 0, 0, 1), (today, 0, 0, 1)]
+    # Today is forgiven. Yesterday is READ to decide and deliberately left
+    # alone: nothing consumes a past day's flags, and stamping costs_exact=1
+    # on a historical day would rewrite settled history to look provable.
+    assert rows == [(yesterday, 1, 1, 0), (today, 0, 0, 1)]
 
 
 def test_a_corrupt_failed_call_counter_refuses_instead_of_escalating(tmp_path):
@@ -2687,26 +2701,87 @@ def test_the_self_clear_leaves_the_session_row_as_the_record(tmp_path):
     assert row == ("suspended", 0)
 
 
-def test_the_allowance_is_one_per_scheduled_paid_run_not_per_intra_tick(tmp_path):
-    """`intra_check` makes no paid call -- `src/trading_calendar.py` says so
-    in the window table -- so it cannot be the instrument for anything about
-    paid-call failures. The allowance counts the sessions that DO call a
-    model."""
+def test_the_allowance_is_one_per_scheduled_paid_run_including_intra_ticks(tmp_path):
+    """One forgiveness per scheduled run that can make a paid call.
+
+    intra_check counts, once per 30-minute tick. Its window comment said
+    "no LLM" and was wrong: measured on the production DB it is 13-14 paid
+    sessions a day and 72-90% of the daily spend, and the 2026-09-22 latch
+    was tripped by one."""
     from src.config import LLMCostCircuitConfig
     from src.trading_calendar import SESSION_WINDOWS
 
-    paid = [m for m in SESSION_WINDOWS if m != "intra_check"]
-    assert LLMCostCircuitConfig().max_transient_latch_auto_clears_per_day == len(paid)
-    assert "intra_check" not in paid
-    assert len(paid) == 5
+    # Pinned literally. Recomputing `_paid_run_count`'s own body and
+    # comparing it to `_paid_run_count` asserts nothing.
+    assert LLMCostCircuitConfig().max_transient_latch_auto_clears_per_day == 19
+    # And intra_check is IN it, which is the whole correction: it is the
+    # desk's largest paid cost centre, not the "no LLM" tick its window
+    # comment claimed for two derivations running.
+    assert "intra_check" in SESSION_WINDOWS
+    assert len(SESSION_WINDOWS) == 6  # 5 named + intra_check
 
 
-def test_the_cooldown_sits_between_its_two_measured_bounds(tmp_path):
-    """Lower bound: the longest real paid run measured on the production DB
-    (9.8 min), below which a latch could expire mid-run. Upper bound: the
-    smallest gap between consecutive scheduled paid runs (90 min, 08:00 to
-    09:30), at or above which a second paid run can be lost."""
+def test_the_cooldown_is_the_midpoint_of_one_paid_run_gap(tmp_path):
+    """The only hard bound is the gap between consecutive paid runs (the
+    30-minute intra tick): at or above it a second paid run is lost. Below
+    it nothing is unsafe, only wasteful. The midpoint is the value furthest
+    from both, and most tolerant of jitter."""
     from src.config import LLMCostCircuitConfig
 
+    from src.config import INTRA_CHECK_TICK_MINUTES
+
     cooldown = LLMCostCircuitConfig().transient_latch_cooldown_minutes
-    assert 9.8 < cooldown < 90.0
+    # Pinned to the midpoint of (0, one paid-run gap), not merely inside it.
+    assert cooldown == INTRA_CHECK_TICK_MINUTES / 2
+    assert cooldown == 15.0
+
+
+# --- adversary round 2 (2026-09-23) ---------------------------------------
+
+
+def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
+    """Guards the deleted `llm_budget_sessions` write for real.
+
+    The previous test for this could not: `_trip_locked` has already moved
+    the LATCHED run's session to 'suspended', so the deleted statement
+    (`WHERE day=? AND status='call_failed'`) could never have matched it,
+    and restoring the statement passed anyway. The row the statement WOULD
+    have matched is a different same-day session left at 'call_failed' --
+    which is exactly where the dashboard-lie risk lived, because
+    `_canonical_run_cost` reports a definite dollar figure for a run once
+    `costs_exact` flips to 1.
+    """
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path)
+    day, _, _ = _et_day_and_utc_bounds()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO llm_budget_sessions"
+            "(run_id, day, mode, actual_cost_usd, costs_exact, status) "
+            "VALUES ('run-other-failed', ?, 'midday', 0.0, 0, 'call_failed')",
+            (day,),
+        )
+
+    _age_latch(path, 16)
+
+    assert circuit.status()["suspended"] is False
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT status, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id='run-other-failed'"
+        ).fetchone()
+    assert row == ("call_failed", 0)
+
+
+def test_the_tick_spacing_this_module_pins_matches_the_scheduler(tmp_path):
+    """`INTRA_CHECK_TICK_MINUTES` is duplicated from the scheduler, which is
+    the authority. A silent divergence would move the cooldown's only hard
+    bound without anything noticing."""
+    from src.config import INTRA_CHECK_TICK_MINUTES
+    from src.scheduler import TradingScheduler
+    from src.trading_calendar import SESSION_WINDOWS
+
+    trigger = TradingScheduler._build_intra_check_trigger()
+    lo_min, hi_min = SESSION_WINDOWS["intra_check"]
+    expected = len(range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES))
+    assert len(trigger.triggers) == expected == 14

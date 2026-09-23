@@ -1607,18 +1607,33 @@ class StorageConfig(BaseModel):
     db_path: str
 
 
-def _paid_run_count() -> int:
-    """How many scheduled runs in a trading day actually call a model.
+#: The intraday control's tick spacing, in minutes. Duplicated from
+#: `src/scheduler.py::_build_intra_check_trigger`, which is the authority;
+#: pinned here so the two are at least visible in one grep, and asserted
+#: equal by `tests/test_cost_circuit.py`.
+INTRA_CHECK_TICK_MINUTES = 30
 
-    Every canonical session window except `intra_check`, which
-    `src/trading_calendar.py` labels "no LLM" in the window table itself --
-    it is the deterministic P&L circuit-breaker tick and makes no paid
-    call, so it cannot be the instrument for anything about paid-call
-    failures. Counted from the same table the scheduler reads, not copied,
-    so adding a session propagates. Currently 5: earnings_preprocess,
-    morning, midday, close, evening.
+
+def _paid_run_count() -> int:
+    """How many scheduled runs in a trading day can make a paid call.
+
+    Every canonical session window, with `intra_check` counted once per
+    30-minute tick because it fires that often.
+
+    `src/trading_calendar.py` used to label that window "no LLM" and an
+    earlier draft of this number excluded it on that basis. The label is
+    false: on the production DB intra_check is the desk's LARGEST paid
+    cost centre -- $0.5672 of the day's $0.7883 on 2026-09-22 (72%) and
+    $2.3839 of $2.6478 on 2026-09-21 (90%), 13-14 paid sessions a day
+    [measured 2026-09-23, llm_budget_sessions]. The 2026-09-22 latch this
+    whole change exists for was tripped BY an intra_check run. Excluding
+    it would derive a paid-call number by leaving out most of the paid
+    calls. Currently 19: 14 ticks plus earnings_preprocess, morning,
+    midday, close and evening.
     """
-    return len([m for m in SESSION_WINDOWS if m != "intra_check"])
+    lo_min, hi_min = SESSION_WINDOWS["intra_check"]
+    intra_ticks = len(range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES))
+    return intra_ticks + len([m for m in SESSION_WINDOWS if m != "intra_check"])
 
 
 class LLMCostCircuitConfig(BaseModel):
@@ -1677,20 +1692,25 @@ class LLMCostCircuitConfig(BaseModel):
     # close and evening runs and nine hours of refused analysis on $0.7883 of
     # a $2.75 day.
     #
-    # THE COOLDOWN IS BRACKETED BY TWO MEASUREMENTS, not picked:
-    #   lower bound 9.8 min -- the longest real paid run on the production
-    #     DB [measured 2026-09-23 over 2026-09-15..21; the six 2026-08-31
-    #     rows that look longer all end at the same 19:02:03 operator reset,
-    #     which bumped their `updated_at`, and are excluded for that reason].
-    #     Below this the latch could expire while the run that tripped it is
-    #     still going.
-    #   upper bound 90 min -- the smallest gap between consecutive scheduled
-    #     PAID runs, 08:00 earnings_preprocess to 09:30 morning [measured,
-    #     config/settings.yaml]. At or above it a second paid run can be lost.
-    # 15.0 sits just inside the lower bound with ~1.5x margin, because the
-    # desk wants the latch back as early as is safe. An adversary pass on
-    # 2026-09-23 correctly rejected the first derivation, which came off the
-    # 30-minute intra_check tick -- a job that makes no paid calls at all.
+    # THE COOLDOWN'S ADMISSIBLE INTERVAL, and why the midpoint:
+    #   Upper bound 30 min -- the gap between consecutive paid runs, which
+    #     is the intra_check tick, the most frequent paid run there is
+    #     [measured: 13-14 paid intra_check sessions a day]. At or above it
+    #     a second paid run is lost, which is the damage being fixed.
+    #   Lower bound 0 -- there is no run-duration floor. The run that trips
+    #     the latch STOPS at the trip (`_trip_locked` suspends its session
+    #     and every later `begin_call` raises); the 2026-09-22 tripper ran
+    #     1.47 min end to end [measured]. Too short is not unsafe, it just
+    #     wastes the day's allowance re-failing against a provider that is
+    #     still down.
+    # 15.0 is the midpoint of (0, 30): the value furthest from both failure
+    # modes, and the one most tolerant of run-start jitter and clock skew in
+    # either direction. Two earlier derivations were wrong and are recorded
+    # so the number is not re-derived from them: "half the intra tick"
+    # (right value, but justified by an aesthetic half) and "bracketed by
+    # the longest run at 9.8 min and the 90-min earnings-to-morning gap"
+    # (wrong on both ends -- the tripping run does not continue, and 90 min
+    # only looks like the smallest gap if intra_check is wrongly excluded).
     transient_latch_cooldown_minutes: float = Field(default=15.0, gt=0, allow_inf_nan=False)
     # One forgiveness per scheduled PAID run in a trading day. A fault
     # recurring past that has outlasted every paid run of the day and is not

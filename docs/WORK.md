@@ -399,7 +399,7 @@ DONE WHEN:
 DONE WHEN:
   - [ ] a test flags prompt-prose vs code drift
 
-**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back. Also unmeasured: the 15-min cooldown is bracketed by the longest real run (9.8 min) and the smallest paid-run gap (90 min), and the 5/day allowance is one per paid run — neither has met a real occurrence yet. Neither number is covered by the number-ledger check.
+**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back. Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
 DONE WHEN:
   - [ ] a self-clear reaches the owner on the same surface the suspension did
   - [ ] cooldown and allowance re-read against a real occurrence
