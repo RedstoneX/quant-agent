@@ -201,6 +201,7 @@ class AnalysisParseTelemetry:
         self._lock = threading.Lock()
         self._counts: Counter = Counter()
         self._drops: Counter = Counter()
+        self._hygiene: Counter = Counter()
         self._local = threading.local()
 
     @property
@@ -252,6 +253,27 @@ class AnalysisParseTelemetry:
         with self._lock:
             self._drops[(model_name, key)] += 1
 
+    def record_hygiene_violation(self, model_name: str, kind: str) -> None:
+        """The raw answer violated an answer-hygiene rule that a schema
+        can't express — fenced markdown around the JSON, or a key the
+        schema didn't declare (item 157's runtime check, 2026-09-23,
+        replacing the pytest-based live check that no deployed process
+        ever holds a real GOOGLE_API_KEY to run: see docs/WORK.md item
+        157 and tests/test_tech_schema_live.py). `kind` is a short label
+        ("fenced_markdown", "extra_keys") so `describe_hygiene_violations`
+        can tell them apart without a second counter to keep in sync.
+
+        This does not fail the row — the row still parses and is used —
+        it only means the schema is being followed less than a strict
+        response format is supposed to guarantee, which is exactly the
+        signal a human deciding item 157's live-enforcement question
+        needs and the self-skipping pytest file can never produce.
+        """
+        if self._suspended:
+            return
+        with self._lock:
+            self._hygiene[(model_name, kind)] += 1
+
     def snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
             return dict(self._counts)
@@ -259,6 +281,10 @@ class AnalysisParseTelemetry:
     def dropped_snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
             return dict(self._drops)
+
+    def hygiene_snapshot(self) -> dict[tuple[str, str], int]:
+        with self._lock:
+            return dict(self._hygiene)
 
     def total_null_coercions(self) -> int:
         with self._lock:
@@ -268,10 +294,15 @@ class AnalysisParseTelemetry:
         with self._lock:
             return sum(self._drops.values())
 
+    def total_hygiene_violations(self) -> int:
+        with self._lock:
+            return sum(self._hygiene.values())
+
     def reset(self) -> None:
         with self._lock:
             self._counts.clear()
             self._drops.clear()
+            self._hygiene.clear()
 
     def describe_null_coercions(self) -> str:
         """One-line, grep-able summary for the operator log / RM advisory."""
@@ -290,6 +321,16 @@ class AnalysisParseTelemetry:
         return ", ".join(
             f"{model}:{key}" + (f"x{n}" if n > 1 else "")
             for (model, key), n in sorted(snap.items(), key=lambda kv: -kv[1])
+        )
+
+    def describe_hygiene_violations(self) -> str:
+        """One-line, grep-able summary for the operator log / RM advisory."""
+        snap = self.hygiene_snapshot()
+        if not snap:
+            return ""
+        return ", ".join(
+            f"{model}.{kind}x{n}"
+            for (model, kind), n in sorted(snap.items(), key=lambda kv: -kv[1])
         )
 
 
@@ -935,13 +976,27 @@ RATING_DIRECTION: dict[str, str] = {
 
 
 class TechReasoningChain(LLMOutputModel):
-    """5-step CoT for a single symbol — forces the LLM to show its work per
-    framework step. Every field has `min_length=1` so the LLM cannot skip a
-    step by sending an empty string. This matches the discipline already in
-    place on the other CoT chains (Evening / Position / Meta) and closes
-    the audit gap that contradicted the README's 'schema-enforced CoT,
-    LLM cannot skip steps' claim.
-    """
+    """5-step chain of thought for a single symbol: trend, momentum,
+    volatility, volume, and support/resistance."""
+
+    # Every field has `min_length=1` so the LLM cannot skip a step by
+    # sending an empty string. This matches the discipline already in place
+    # on the other CoT chains (Evening / Position / Meta) and closes the
+    # audit gap that contradicted the README's "schema-enforced CoT, LLM
+    # cannot skip steps" claim. This class's docstring above IS the
+    # model-facing schema description (item 157 adversary review,
+    # 2026-09-23) — keep it short and free of internal references; put
+    # engineering notes here in comments instead.
+    #
+    # Adversary review, 2026-09-23, 2nd pass: an earlier draft of this
+    # docstring said "one sentence per framework step" — an instruction
+    # this class never actually enforced (only non-empty, via
+    # `min_length=1`) and that the main prompt never asks for either; real
+    # answers routinely use more than one sentence, and `support_resistance`
+    # below explicitly wants both a level AND its ATR distance, which a
+    # one-sentence rule would fight. Removed rather than left as an
+    # unenforced, prompt-contradicting instruction sent to the model on
+    # every call.
     trend: str = Field(min_length=1)                 # MA alignment, price vs MA20/50/200
     momentum: str = Field(min_length=1)              # RSI level, MACD cross direction
     volatility: str = Field(min_length=1)            # BB position, ATR expansion/contraction
@@ -950,30 +1005,39 @@ class TechReasoningChain(LLMOutputModel):
 
 
 class TechAnalystAnswerItem(LLMOutputModel):
-    """The part of a technical-seat row the MODEL actually fills in.
+    """One symbol's technical read: rating, structural levels, and the
+    reasoning behind them."""
 
-    Item 157 (docs/WORK.md; from #538's write-up): `TechAnalysisResult`
-    below mixes these LLM-emitted fields with eight fields the desk fills in
-    itself after the call (`atr_14`, `computed_levels`,
-    `computed_level_touches`, `levels_coverage`, `signal_bar_low`,
-    `signal_bar_high`, `bars_available`, `signal_age_days`). A strict
-    model-facing schema cannot require the model to emit fields it never
-    sees, so this class is exactly what is sent to the provider as the
-    response schema (via `TechAnalystAnswer` below). Nothing actually
-    constructs a `TechAnalystAnswerItem` in the parsing path today —
-    `TechAnalystAgent._analyze_chunk` still builds `TechAnalysisResult(**item)`
-    directly, same as before this split — so this class's only live job is
-    shaping the wire schema; `TechAnalysisResult` adds the eight desk-filled
-    fields on top for internal use once the row is enriched.
-
-    Splitting the python-set fields out of the model-facing schema also
-    removes `computed_level_touches` — the one free-form `dict[float, int]`
-    map that used to force `strict=false` on the whole thing (see
-    `_has_free_form_map` in src/agents/base.py). Whether that actually
-    yields `strict=true` in practice is verified, not assumed — see
-    `_response_format_for(TechAnalystAnswer)` and the live-call check in
-    tests/test_tech_schema_live.py.
-    """
+    # This is the part of a technical-seat row the MODEL actually fills in.
+    # `TechAnalysisResult` below mixes these LLM-emitted fields with eight
+    # fields the desk fills in itself after the call (`atr_14`,
+    # `computed_levels`, `computed_level_touches`, `levels_coverage`,
+    # `signal_bar_low`, `signal_bar_high`, `bars_available`,
+    # `signal_age_days`). A strict model-facing schema cannot require the
+    # model to emit fields it never sees, so this class is exactly what is
+    # sent to the provider as the response schema (via `TechAnalystAnswer`
+    # below). Nothing actually constructs a `TechAnalystAnswerItem` in the
+    # parsing path today — `TechAnalystAgent._analyze_chunk` still builds
+    # `TechAnalysisResult(**item)` directly, same as before this split — so
+    # this class's only live job is shaping the wire schema;
+    # `TechAnalysisResult` adds the eight desk-filled fields on top for
+    # internal use once the row is enriched. (Board item 157, from #538's
+    # write-up.)
+    #
+    # Splitting the python-set fields out of the model-facing schema also
+    # removes `computed_level_touches` — the one free-form
+    # `dict[float, int]` map that used to force `strict=false` on the whole
+    # thing (see `_has_free_form_map` in src/agents/base.py). Whether that
+    # actually yields `strict=true` in practice is verified, not assumed —
+    # see `_response_format_for(TechAnalystAnswer)` and the live-call check
+    # in tests/test_tech_schema_live.py.
+    #
+    # This class's docstring above IS what reaches the model on every call
+    # (item 157 adversary review, 2026-09-23: pydantic emits the class
+    # docstring verbatim as the schema's "description"). Keep it short and
+    # free of item numbers, file paths and internal decision history — put
+    # that here in a comment instead. `tests/test_tech_schema.py` fails if
+    # any of those markers reappear in the schema actually sent.
 
     symbol: str
     rating: Literal["strong_buy", "buy", "neutral", "sell", "strong_sell"]
@@ -1067,22 +1131,24 @@ class TechAnalystAnswerItem(LLMOutputModel):
 
 
 class TechAnalystAnswer(LLMOutputModel):
-    """Wrapper object the technical seat's schema-enforced routes are asked
-    to return: `{"results": [...]}` rather than a bare JSON array.
+    """Return your analysis as an object with one key, "results", whose
+    value is the list of per-symbol results."""
 
-    Item 157: OpenAI/OpenRouter/Google-compat strict `json_schema` response
-    formats require an OBJECT at the schema root (`_strictify_schema` in
-    src/agents/base.py only ever strictifies `type: object` nodes); the
-    seat's answer was a bare list, so no schema could ever be attached to
-    it. This wrapper is the model-facing top level; `results` is unwrapped
-    back to the underlying list by `AgentResult.parse_json_rows(...,
-    list_field="results")` before the existing per-row salvage runs, so a
-    provider that ignores or partially honours the schema (any legacy
-    stored answer, the non-schema-enforcing failover path, a model that
-    just answers with a bare array anyway) is still parsed exactly as
-    before.
-    """
-
+    # OpenAI/OpenRouter/Google-compat strict `json_schema` response formats
+    # require an OBJECT at the schema root (`_strictify_schema` in
+    # src/agents/base.py only ever strictifies `type: object` nodes); the
+    # seat's answer was a bare list, so no schema could ever be attached to
+    # it. This wrapper is the model-facing top level; `results` is unwrapped
+    # back to the underlying list by `AgentResult.parse_json_rows(...,
+    # list_field="results")` before the existing per-row salvage runs, so a
+    # provider that ignores or partially honours the schema (any legacy
+    # stored answer, the non-schema-enforcing failover path, a model that
+    # just answers with a bare array anyway) is still parsed exactly as
+    # before. (Board item 157.)
+    #
+    # This class's docstring above IS the schema description sent to the
+    # model on every call — see the comment on `TechAnalystAnswerItem`
+    # above for why it must stay free of internal references.
     results: list[TechAnalystAnswerItem] = Field(default_factory=list)
 
 

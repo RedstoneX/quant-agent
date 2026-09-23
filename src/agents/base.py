@@ -1002,6 +1002,53 @@ class AgentResult:
                 and isinstance(parsed.get(list_field), list)
             ):
                 return parsed[list_field]
+            if (
+                list_field is not None
+                and isinstance(parsed, dict)
+                and key_field not in parsed
+            ):
+                # Adversary review, 2026-09-23: a model can answer with a
+                # valid JSON OBJECT under the WRONG key — a differently
+                # named wrapper ("signals", "analysis") or a null under the
+                # right key with the real array under another
+                # ("results": null, "data": [...]). The prompt asking for a
+                # bare array made this impossible; 243 real answer-chunks
+                # replayed from a read-only production snapshot
+                # (2026-08-17 to 2026-09-18) are all bare arrays, so this
+                # path was never exercised before the wrapper schema
+                # (see tests/test_tech_seat_production_replay.py). Prefer
+                # any SINGLE list-of-dicts value found at the TOP LEVEL of
+                # the object over treating the whole object as one row —
+                # the old behaviour silently drops every real candidate in
+                # the chunk with no per-symbol reason.
+                #
+                # `key_field not in parsed` is required first, and each
+                # candidate's elements must themselves carry `key_field`
+                # (2nd adversary pass, 2026-09-23): without both checks, a
+                # perfectly normal SINGLE-ROW answer that happens to carry
+                # any nested list-of-objects field of its own (a model
+                # answering `{"symbol": "SPY", ..., "levels": [{"price":
+                # 1}]}` — a shape this schema doesn't ask for today, but
+                # nothing stops a future field from looking like it) would
+                # have its real row thrown away in favour of that unrelated
+                # nested list. Requiring `key_field` on both sides means
+                # this only ever fires for something that actually looks
+                # like a differently-keyed list OF ROWS, never for a
+                # single row that happens to nest a list.
+                #
+                # When more than one such candidate exists there is no way
+                # to tell which is the real one without guessing, so this
+                # deliberately falls through to the same conservative
+                # whole-object behaviour as before rather than picking one.
+                list_candidates = [
+                    v for v in parsed.values()
+                    if isinstance(v, list) and v
+                    and all(
+                        isinstance(e, dict) and key_field in e for e in v
+                    )
+                ]
+                if len(list_candidates) == 1:
+                    return list_candidates[0]
             return parsed if isinstance(parsed, list) else [parsed]
 
         text = self.raw_text.strip()

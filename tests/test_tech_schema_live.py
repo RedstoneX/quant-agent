@@ -4,15 +4,29 @@ the provider, not just silently accepted.
 
 This is the one part of item 157 that cannot be checked from a fixture: it
 needs a real network call against a real GOOGLE_API_KEY. It is SKIPPED
-whenever no live-looking key is present (this repo's own `.env` on
-2026-09-20 carries `GOOGLE_API_KEY=placeholder-managed-by-onecli`, a
-dev-box placeholder, not a real credential — the real one is injected by
-OneCLI elsewhere) so it never fails CI or a dev box that has no live key.
+whenever GOOGLE_API_KEY is absent, OR is exactly this repo's known
+non-credential placeholder string (see `_LOOKS_LIVE` below for why an
+exact, documented sentinel — not a guessed shape — is what decides this).
 When it runs, it does NOT assert enforcement in one direction. It records
 the real outcome (enforced / not enforced / call failed outright) so a
-human decides item 157's DONE WHEN checkbox from real evidence, per the
-item's own text ("a live call confirms whether the Google route enforces a
-sent response schema" — confirms, either way, not assumes).
+human decides item 157's remaining DONE WHEN from real evidence.
+
+HONEST LIMIT (adversary review, 2026-09-23, two passes): this repo's own
+`.env` and the production `.env` both carry
+`GOOGLE_API_KEY=placeholder-managed-by-onecli` by convention — OneCLI's
+gateway is meant to substitute the real credential in-flight over that
+non-empty placeholder for the DEPLOYED TRADING PROCESS specifically, never
+for a pytest run, local or CI. That means this file will, realistically,
+never see a real key and therefore never actually run its assertion. It is
+kept because it is correct and cheap and might one day run in a
+deliberately-provisioned environment, but item 157's live-enforcement DONE
+WHEN has been reworded to point at a runtime check instead of waiting on
+this file — see docs/WORK.md item 157. The skip condition checks for the
+EXACT known placeholder string rather than "any non-empty value" precisely
+because the second adversary pass could not fully rule out some future
+automated run sourcing this same wiring by mistake; skipping only on that
+one named, documented value (never on a guessed shape) keeps this from
+either silently skipping forever OR silently firing a real paid call.
 
 The adversarial design: the PROMPT explicitly instructs the model to
 violate the schema in three ways constrained decoding must specifically
@@ -34,18 +48,73 @@ from src.agents.base import _GOOGLE_BASE_URL, _response_format_for
 from src.models import TechAnalystAnswer
 
 _KEY = os.environ.get("GOOGLE_API_KEY", "")
-# A real Google AI Studio key is a long opaque token; this repo's checked-in
-# dev placeholder is human-readable text, so a crude shape check (long,
-# starts with the documented "AIza" prefix used by every real key we've
-# seen) is enough to avoid ever mistaking a placeholder for a live key.
-_LOOKS_LIVE = bool(_KEY) and _KEY.startswith("AIza") and len(_KEY) >= 35
+# The ONE named placeholder this exact repo's own convention uses for this
+# exact variable (docs/INCIDENT_HISTORY.md, 2026-08-31 deploy entry:
+# `GOOGLE_API_KEY=placeholder-managed-by-onecli`, same convention as
+# `OPENROUTER_API_KEY` — ".env only needs it non-empty" because the OneCLI
+# gateway substitutes the real credential on the way OUT of the process, not
+# by the process ever reading a real value itself). This is a literal,
+# documented sentinel, not a guessed shape.
+_KNOWN_PLACEHOLDER = "placeholder-managed-by-onecli"
+
+# Adversary review, 2026-09-23, TWO PASSES:
+#
+# Pass 1 objected that the original guess of whether `_KEY` "looked live" (a
+# prefix and a minimum length picked from recall, not read from anything)
+# was exactly the "number chosen rather than read" pattern this desk has a
+# standing rule against, and its failure mode was the worst kind: if the
+# guess was ever wrong, this test would skip forever, silently, with a
+# green check mark — precisely the permanently-unverified state item 157's
+# DONE WHEN exists to close. The fix was changed to run on bare presence.
+#
+# Pass 2 objected to THAT fix: `GOOGLE_API_KEY` is deliberately non-empty
+# even as a placeholder (see the convention above), specifically because
+# the OneCLI gateway is meant to inject the real credential in-flight over
+# whatever non-empty value is configured — so "present" is not evidence of
+# "real" here the way it would be for a key nobody ever wires a gateway
+# behind. A bare-presence check risks a REAL, un-mocked, paid, adversarial
+# call firing in any environment where this exact wiring is sourced,
+# including possibly a future automated test/auto-fix run neither review
+# could rule out with certainty.
+#
+# Resolution: skip on absence (reason visible) OR on an exact match to the
+# one named, documented placeholder string above — not a guessed shape,
+# a literal value this project's own docs already establish as "not a
+# credential". Anything else present is attempted for real, and a bad
+# credential fails LOUDLY (see the `except Exception` branch below), never
+# a quiet pass-through. If that named placeholder is ever renamed, the
+# failure direction is the SAFE one: this starts attempting real calls
+# (loud, visible) rather than silently skipping forever.
+#
+# 3rd adversary pass, 2026-09-23: named-placeholder matching is still a
+# STRING, and this repo already has a SECOND one of its own
+# ("backtest-tool-unused" in scripts/backtest.py's `_PLACEHOLDER_ENV`, set
+# directly into `os.environ` — not used by any test today, confirmed by
+# grep, but nothing stops a future one from existing). Enumerating every
+# placeholder string anyone ever invents is the same guessing game as the
+# original shape check, just with a longer list. A second, INDEPENDENT gate
+# closes that without guessing at any string: an explicit opt-in the
+# environment must ALSO set, which nothing sets by accident. Its absence is
+# not a guess about the key's shape — it is checking for the one thing
+# only a human deliberately running this specific live check would set.
+_RUN_LIVE_OPT_IN = os.environ.get("QAMC_RUN_LIVE_TECH_SCHEMA_TEST") == "1"
+_LOOKS_LIVE = bool(_KEY) and _KEY != _KNOWN_PLACEHOLDER and _RUN_LIVE_OPT_IN
 
 pytestmark = pytest.mark.skipif(
     not _LOOKS_LIVE,
     reason=(
-        "no live-looking GOOGLE_API_KEY in this process's environment — "
-        "item 157's live-enforcement check is UNVERIFIED, not passed; see "
-        "docs/WORK.md item 157"
+        (
+            "no GOOGLE_API_KEY in this process's environment"
+            if not _KEY else
+            "QAMC_RUN_LIVE_TECH_SCHEMA_TEST=1 was not set — this test never "
+            "runs on an unverified environment by accident, only when a "
+            "human deliberately opts in"
+            if not _RUN_LIVE_OPT_IN else
+            "GOOGLE_API_KEY is this repo's known non-credential placeholder "
+            "('placeholder-managed-by-onecli')"
+        )
+        + " — item 157's live-enforcement check is UNVERIFIED, not passed; "
+        "see docs/WORK.md item 157"
     ),
 )
 

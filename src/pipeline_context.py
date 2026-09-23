@@ -165,14 +165,26 @@ class RunContext:
     #                       The object survived; a real input did not. On
     #                       `thesis_invalid_if` that input is the soft-exit
     #                       signal, so the coercion is not free.
+    #   hygiene_violations  {(model[provider], kind): count} — item 157's
+    #                       runtime check: the tech seat's raw answer carried
+    #                       fenced markdown around the JSON, or a row carried
+    #                       a key the schema doesn't declare, on a route that
+    #                       was actually given a strict schema to honour.
+    #                       Never costs the row; recorded because no
+    #                       deployed process ever holds a real
+    #                       GOOGLE_API_KEY for a pytest-based live check to
+    #                       confirm schema enforcement instead (see
+    #                       docs/WORK.md item 157).
     #
     # WRITTEN BY RiskStage (not by the research stage): the Portfolio
     # Manager parses after research, so a reading taken any earlier would miss
     # every PM-side loss. RiskStage turns a non-empty pair into the
-    # `analysis_parse_loss` / `analysis_field_nulled` advisories. The counters
-    # behind them are zeroed at the top of MorningResearchStage.
+    # `analysis_parse_loss` / `analysis_field_nulled` / `tech_answer_hygiene`
+    # advisories. The counters behind them are zeroed at the top of
+    # MorningResearchStage.
     dropped_analyses: dict[tuple[str, str], int] = field(default_factory=dict)
     null_coerced_fields: dict[tuple[str, str], int] = field(default_factory=dict)
+    hygiene_violations: dict[tuple[str, str], int] = field(default_factory=dict)
 
     # === Populated by the decision stage ===
     # Memory layers built for PM that the RiskStage also needs. Before the

@@ -13390,3 +13390,137 @@ principle.
 
 ---
 
+### 2026-09-23 — item 157's schema fix survived a fourth adversary round, catching a regression IN a prior round's own fix
+
+PR #568 (item 157, technical-seat answer schema) went through a fourth
+adversary pass after CI was already green, specifically because findings 1
+and 2 below are behaviour changes on the halt-authority seat and were held
+to the same scrutiny as the original schema change.
+
+**Found and fixed:**
+1. A mis-keyed wrapper object (`{"signals": [...]}`, `{"analysis": [...]}`,
+   `{"results": null, "data": [...]}`) used to silently drop an entire
+   batch with no per-symbol reason — `AgentResult._rows_from` now prefers a
+   single top-level list-of-dicts value over treating the whole object as
+   one row, falling back to the old conservative behaviour when more than
+   one such list exists (no guessing). **Second-pass regression in that
+   same fix:** the first draft matched ANY list-of-dicts value, so an
+   ordinary single-row answer that happened to nest one (e.g. a future
+   `"levels": [{"price": 1}]` field) would have had its real row discarded
+   in favour of the unrelated nested list. Fixed by requiring the row's own
+   `key_field` (`"symbol"`) be present on each candidate list's elements
+   AND absent from the top-level object — a mis-keyed wrapper never has
+   `symbol` at its own top level, a single row always does.
+2. Three Pydantic docstrings (`TechReasoningChain`, `TechAnalystAnswerItem`,
+   `TechAnalystAnswer`) shipped internal engineering prose — item numbers,
+   file paths, `#538` — to the model on every single tech-seat call on both
+   routes, because pydantic emits a class's docstring verbatim as the JSON
+   schema's `description`. Measured: 5,237 bytes sent, ~3,200 of it
+   docstring text. Trimmed to short, model-safe sentences; engineering
+   history moved to comments beside each class. New mechanical test,
+   `test_schema_sent_to_model_has_no_engineering_markers`, fails on any of
+   `#\d+`, `items?\s+\d+`, `docs/`, a `src|tests|config/` path, a bare
+   `.py` filename, a bare `.md` filename, or an internal decision date
+   (`\d{4}-\d{2}-\d{2}`) appearing anywhere in the schema actually sent.
+   Schema now 2,875 bytes. **Third adversary pass caught a regression IN
+   this fix too:** the trimmed `TechReasoningChain` docstring said "one
+   sentence per framework step" — an instruction the field never enforced
+   (only non-empty), the main prompt never asks for, and that actively
+   contradicts `support_resistance`'s own request for both a level AND its
+   ATR distance. Removed; the docstring now only names the five steps.
+   Noted, not fixed here (pre-existing, out of scope for this PR): six
+   OTHER seats' schemas — earnings, macro, news, portfolio manager,
+   position reviewer, smart money — carry the same kind of internal-marker
+   leak. Flagged to the supervising session as separate rot to file, not
+   silently fixed in a PR about the technical seat.
+3. The runtime hygiene check added to replace the abandoned pytest live
+   plan (fenced markdown / undeclared keys, `AnalysisParseTelemetry` in
+   src/models.py) first only logged at the end of morning research — a
+   channel the owner never reads (Telegram and the dashboard are the only
+   two he sees). Moved to the same `RiskViolation` advisory path
+   `analysis_parse_loss`/`analysis_field_nulled` already use
+   (`rule=tech_answer_hygiene`, RiskStage in src/pipeline_stages.py), which
+   does reach the Risk Manager's own review. Also found: only
+   `openrouter`/`google` are ever given a schema at all
+   (`src/agents/base.py`), so a violation on any other provider's call is
+   not evidence the schema failed — every count is now tagged with
+   `AgentResult.actual_provider` so the two are never conflated.
+4. `tests/test_tech_schema_live.py`'s presence-only skip check (itself a
+   fix for the ORIGINAL arbitrary-shape-guess finding) was found to have
+   its own gap: `GOOGLE_API_KEY` is deliberately non-empty even as this
+   repo's placeholder, by convention, specifically so the OneCLI gateway
+   can substitute the real credential in-flight for the deployed trading
+   process. A bare presence check could fire a real, un-mocked, paid,
+   adversarial call in any environment sourcing that same wiring by
+   mistake. Resolved by skipping on an exact match to the one named,
+   already-documented placeholder string
+   (`placeholder-managed-by-onecli`) rather than any guessed shape — not a
+   guess, because it is one specific literal value this repo's own
+   deployment history already established as non-credential. If that exact
+   string is ever renamed, the failure direction is the safe one: this
+   starts attempting real calls (loud) rather than silently skipping
+   (quiet) forever. **Third adversary pass found this still had a gap:**
+   `scripts/backtest.py` sets its OWN placeholder
+   (`GOOGLE_API_KEY=backtest-tool-unused`) directly into `os.environ`
+   before running — not used by any test today (confirmed by grep), but
+   nothing stops a future placeholder from existing, and enumerating every
+   string anyone ever invents is the same guessing game with a longer
+   list. Closed with an INDEPENDENT second gate that guesses at nothing:
+   `QAMC_RUN_LIVE_TECH_SCHEMA_TEST=1` must ALSO be set, an explicit opt-in
+   nothing sets by accident, so this can never run against an
+   unverified/wrong-placeholder environment without a human deliberately
+   choosing to.
+5. The board entry's "292 production answers, 2026-09-22, zero
+   differences" claim could not be verified from this box (the most recent
+   read-only snapshot available here ends 2026-09-18) — and a THIRD
+   adversary pass found it may be conflated with a different, pre-existing
+   measurement of the same count over the same start date, above in this
+   file's 2026-09-19 entry (item #538's row-salvage validation — a
+   different code path, which found 9 differences and 45 recovered
+   analyses, not zero). Reworded in docs/WORK.md and
+   tests/test_tech_seat_production_replay.py to state the 292 figure as
+   reported-but-unconfirmed rather than fact, alongside the independently
+   verified 243-answer-chunk replay against this box's own snapshot
+   (7 kept as a standing fixture). This discrepancy is flagged to the
+   supervising session rather than resolved here — this box cannot reach
+   whatever live database produced the 292 figure to check it directly.
+6. `docs/WORK.md` item 157's `DONE WHEN` overclaimed "asserts after each
+   deploy" for what is actually a per-run count read during RiskStage, not
+   a deploy-time assertion — reworded to describe the mechanism as built.
+
+**Not fixed, recorded as residual limitation:** the wrong-key recovery in
+finding 1 only looks at the TOP LEVEL of the answer object, and only when
+the answer parses as clean JSON directly — a wrong-keyed wrapper that is
+ALSO malformed enough to need the fragment-scanning fallback, or one nested
+inside another object, is not covered by this round. Both are narrower,
+compounding failure modes than what was reproduced and are not blocking
+item 157's partial-done status.
+
+**Also flagged, not fixed (pre-existing, wider than this PR):** the new
+`tech_answer_hygiene` `RiskViolation` reaches the Risk Manager's prompt
+labelled `VIOLATION [tech_answer_hygiene]` in a block whose empty state
+reads "No hard rule violations detected" — `src/agents/risk_manager.py`
+renders every `RiskViolation` the same way regardless of whether it is a
+hard limit or an advisory count, which is already true of the two
+pre-existing entries (`analysis_parse_loss`, `analysis_field_nulled`) this
+one was modelled on. The risk seat may resize on advisories per the
+2026-09-19 owner ruling (RiskViolation is not itself a veto), so this is
+not a new capability, but the label vs. content mismatch is real and
+predates this PR.
+
+**Also flagged, not resolved here (a public-disclosure question, not a
+code question):** `tests/fixtures/tech_seat_production_answers_sample.json`
+holds real production trade reasoning, entries, targets and stops in a
+PUBLIC repository. Two much smaller pre-existing fixtures
+(`tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_*.txt`, ~16KB
+combined) set some precedent for this, but this file is larger (~90KB, 7
+answers, shrunk from an initial 16/~218KB specifically over this concern).
+Neither this session nor its adversary reviewer can authorise a
+public-disclosure decision; flagged to the supervising session.
+
+Full suite green apart from the pre-existing, unrelated
+`test_rehearsal_reproduces_cost_ceiling.py` failure (confirmed identical on
+unmodified `main`).
+
+---
+

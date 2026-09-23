@@ -26,6 +26,7 @@ item 157 stays open on the board. This file covers the new pieces:
     the NEW wrapper-object answer shape.
 """
 import json
+import re
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -124,6 +125,47 @@ def test_the_schema_is_strict_now_that_the_free_form_map_is_excluded():
     assert schema["additionalProperties"] is False
 
 
+# --- the wire schema must carry no internal engineering markers -------------
+#
+# Adversary review, 2026-09-23: the schema actually sent to the model was
+# 5,237 bytes, of which roughly 3,200 came from class docstrings — pydantic
+# emits a class's `__doc__` verbatim as that node's "description" — and
+# those docstrings named "item 157", "docs/WORK.md", "#538's write-up",
+# "tests/test_tech_schema_live.py" and internal decision narrative, on every
+# single tech-seat call, on both routes. This desk has an open item about
+# prompt text rotting unchecked (docs/WORK.md item 171); this is that same
+# failure mode reaching the model-facing SCHEMA rather than the prompt.
+# Engineering context now lives in comments beside each class, which do not
+# reach `model_json_schema()`. This check is mechanical, not a spot check:
+# it fails on any of these markers reappearing anywhere in the schema that
+# is actually transmitted, not just in the two classes fixed here.
+_INTERNAL_MARKER_PATTERNS = [
+    re.compile(r"#\d+"),                    # a PR/issue reference like #538
+    re.compile(r"\bitems?\s+\d+\b", re.I),  # "item 157" or "items 141 and 168"
+    re.compile(r"docs/"),                   # a repo doc path
+    re.compile(r"\b(?:src|tests|config)/[\w./-]*"),  # a repo source path
+    re.compile(r"\.py\b"),                  # a bare filename
+    re.compile(r"\b\w+\.md\b"),             # a bare doc filename ("WORK.md")
+    re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),  # an internal decision date
+]
+
+
+def test_schema_sent_to_model_has_no_engineering_markers():
+    response_format = _response_format_for(TechAnalystAnswer)
+    schema_text = json.dumps(response_format)
+    hits = {
+        pattern.pattern: pattern.findall(schema_text)
+        for pattern in _INTERNAL_MARKER_PATTERNS
+        if pattern.search(schema_text)
+    }
+    assert not hits, (
+        f"the schema sent to the model on every tech-seat call carries "
+        f"internal engineering markers, not just human-facing description: "
+        f"{hits}. Move this text into a comment beside the field/class "
+        f"instead of its docstring."
+    )
+
+
 # --- parse_json_rows: wrapper-aware, backward-compatible ---------------------
 
 def test_parse_json_rows_unwraps_the_results_key():
@@ -171,6 +213,75 @@ def test_a_sibling_array_after_results_does_not_win_over_the_real_rows():
     )
     salvage = _result(text).parse_json_rows(list_field="results")
     assert [r["symbol"] for r in salvage.rows] == ["AAA", "BBB"]
+
+
+# --- a valid object under the WRONG key (adversary review, 2026-09-23) ------
+#
+# The old bare-array prompt made this impossible — all 292 production tech
+# answers stored 2026-08-17 to 2026-09-22, replayed against both the old and
+# new parser, are bare arrays with zero differences (see the PR body for the
+# measured round-trip). The wrapper schema makes a mis-keyed object a real,
+# reproduced failure mode: the model can emit a perfectly valid JSON object
+# whose one list-of-dicts value simply isn't named "results". Before this
+# fix, `_rows_from` fell through to "treat the whole object as one row",
+# which is neither a real row nor a per-symbol MalformedRow — every name in
+# the chunk vanishes silently, with no reason logged against any symbol.
+
+def test_wrong_key_signals_is_recovered_as_the_row_list():
+    text = json.dumps({"signals": [{"symbol": "AAA"}, {"symbol": "BBB"}]})
+    salvage = _result(text).parse_json_rows(list_field="results")
+    assert [r["symbol"] for r in salvage.rows] == ["AAA", "BBB"]
+    assert salvage.malformed == []
+
+
+def test_wrong_key_analysis_is_recovered_as_the_row_list():
+    text = json.dumps({"analysis": [{"symbol": "AAA"}, {"symbol": "BBB"}]})
+    salvage = _result(text).parse_json_rows(list_field="results")
+    assert [r["symbol"] for r in salvage.rows] == ["AAA", "BBB"]
+    assert salvage.malformed == []
+
+
+def test_null_results_with_the_real_list_under_a_sibling_key_is_recovered():
+    text = json.dumps({
+        "results": None,
+        "data": [{"symbol": "AAA"}, {"symbol": "BBB"}],
+    })
+    salvage = _result(text).parse_json_rows(list_field="results")
+    assert [r["symbol"] for r in salvage.rows] == ["AAA", "BBB"]
+    assert salvage.malformed == []
+
+
+def test_two_candidate_lists_is_ambiguous_and_does_not_guess():
+    """With two equally plausible list-of-dicts values and no `results` key,
+    there is no principled way to tell which one is the real answer.
+    Guessing risks silently discarding the real rows in favour of an
+    unrelated array; this must fall back to the same conservative
+    whole-object behaviour parse_json_rows has always had for an
+    unrecognised dict, not pick one arbitrarily."""
+    text = json.dumps({
+        "signals": [{"symbol": "AAA"}],
+        "watchlist": [{"symbol": "ZZZ"}],
+    })
+    salvage = _result(text).parse_json_rows(list_field="results")
+    assert salvage.rows == [json.loads(text)]
+
+
+def test_a_single_row_that_happens_to_nest_a_list_is_not_mistaken_for_rows():
+    """2nd adversary pass, 2026-09-23: the fix for the wrong-key case above
+    must not itself break the far more common case — a single, ordinary
+    row answer that happens to carry ANY nested list-of-objects field of
+    its own. Nothing in today's schema does this, but the recovery logic
+    must not assume that stays true forever: a single row is recognisable
+    because IT carries `key_field` directly, which a mis-keyed wrapper of
+    rows never does."""
+    text = json.dumps({
+        "symbol": "SPY", "rating": "buy", "levels": [{"price": 1}],
+    })
+    salvage = _result(text).parse_json_rows(list_field="results")
+    assert salvage.rows == [json.loads(text)], (
+        "the real single-row answer was discarded in favour of an "
+        "unrelated nested list"
+    )
 
 
 # --- the old "malformed row needs salvaging" scenario, under the NEW wrapper -
@@ -276,3 +387,80 @@ def test_analyze_batch_still_parses_a_bare_list_answer(mock_cls):
 
     assert results["SPY"] is not None
     assert results["SPY"].rating == "buy"
+
+
+# --- item 157's runtime hygiene check (2026-09-23) --------------------------
+#
+# Replaces the abandoned pytest-based live-enforcement DONE WHEN: no
+# deployed process ever holds a real GOOGLE_API_KEY, so whether a strict
+# schema is actually suppressing fenced markdown and extra keys has to be
+# measured against real production answers instead, surfaced through the
+# same parse_telemetry path dropped-item and null-coercion counts already
+# use (src/pipeline_stages.py). These tests only prove the counters fire
+# correctly, not that a real provider violates the schema (that is what the
+# recorded counts are for, live).
+
+@pytest.fixture(autouse=True)
+def _reset_parse_telemetry():
+    from src.models import parse_telemetry as pt
+    pt.reset()
+    yield
+    pt.reset()
+
+
+@patch("anthropic.Anthropic")
+def test_fenced_markdown_around_the_answer_is_recorded_not_rejected(mock_cls):
+    from src.models import parse_telemetry as pt
+
+    resp = MagicMock()
+    fenced = "```json\n" + _wrapped_response_for("SPY") + "\n```"
+    resp.content = [MagicMock(text=fenced)]
+    resp.usage.input_tokens = 1
+    resp.usage.output_tokens = 1
+    mock_cls.return_value.messages.create.return_value = resp
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_symbols_data(["SPY"]))
+
+    assert results["SPY"] is not None, (
+        "a hygiene violation must never cost the row — it is evidence, not a gate"
+    )
+    assert pt.total_hygiene_violations() == 1
+    assert "fenced_markdown" in pt.describe_hygiene_violations()
+
+
+@patch("anthropic.Anthropic")
+def test_an_undeclared_key_on_a_row_is_recorded_not_rejected(mock_cls):
+    from src.models import parse_telemetry as pt
+
+    item = dict(_VALID_ITEM)
+    item["symbol"] = "SPY"
+    item["hacked"] = True
+    resp = MagicMock()
+    resp.content = [MagicMock(text=json.dumps({"results": [item]}))]
+    resp.usage.input_tokens = 1
+    resp.usage.output_tokens = 1
+    mock_cls.return_value.messages.create.return_value = resp
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_symbols_data(["SPY"]))
+
+    assert results["SPY"] is not None
+    assert pt.total_hygiene_violations() == 1
+    assert "extra_keys" in pt.describe_hygiene_violations()
+
+
+@patch("anthropic.Anthropic")
+def test_a_clean_answer_records_no_hygiene_violations(mock_cls):
+    from src.models import parse_telemetry as pt
+
+    resp = MagicMock()
+    resp.content = [MagicMock(text=_wrapped_response_for("SPY"))]
+    resp.usage.input_tokens = 1
+    resp.usage.output_tokens = 1
+    mock_cls.return_value.messages.create.return_value = resp
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    agent.analyze_batch(_symbols_data(["SPY"]))
+
+    assert pt.total_hygiene_violations() == 0
