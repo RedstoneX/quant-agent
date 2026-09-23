@@ -232,7 +232,11 @@ def test_categorically_ineligible_unprotected_holding_is_rotated_out(tmp_path):
     assert payload["reason"] == close.thesis
 
 
-def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
+def test_ranked_margin_tier_is_surfaced_only_while_its_flag_is_off(tmp_path):
+    """Board item 39 default posture: `rotation_ranked_margin_enabled` is
+    False, so the tier is information-only and byte-for-byte what it was —
+    no target appended, no rotation on the context, no protection check even
+    attempted."""
     pipeline, db, probe = _pipeline(
         tmp_path, precheck=_precheck(_opportunity("ranked_margin")),
     )
@@ -244,7 +248,7 @@ def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
     assert probe.calls == []
     (_, payload), = _rotation_events(db)
     assert payload["outcome"] == "skipped"
-    assert payload["reason"] == "ranked_margin_tier_is_surfaced_only"
+    assert payload["reason"] == "ranked_margin_tier_not_enabled"
 
 
 def test_nothing_surfaced_means_nothing_happens(tmp_path):
@@ -716,7 +720,13 @@ def test_pm_section_says_so_only_when_execution_is_enabled():
     on = PortfolioManagerAgent._render_rotation_section(**kwargs, execute_enabled=True)
     assert "AUTOMATIC ROTATION IS ENABLED" not in off
     assert "AUTOMATIC ROTATION IS ENABLED" in on
+    # Board item 39 deliberately does NOT reword the categorical tier's
+    # live prompt: "doing nothing is another [reasonable call]" is wrong
+    # once the desk can close the name itself, but fixing it is a
+    # behaviour change on a path that is trading today and belongs in its
+    # own change. So this invariant still holds for this tier.
     assert on.startswith(off), "enabling only APPENDS a note; the comparison text is unchanged"
+    assert "doing nothing is another" in off and "doing nothing is another" in on
     # And the precheck the pipeline acts on is the one the prompt was built from.
     precheck = PortfolioManagerAgent.rotation_precheck(**kwargs)
     assert precheck.opportunity is not None

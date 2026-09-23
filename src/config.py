@@ -470,6 +470,22 @@ class ExecutionConfig(BaseModel):
     execution path, to free room for the best-ranked new candidate the PM
     itself asked to buy. Every rotation fires a standalone owner alert."""
 
+    rotation_ranked_margin_enabled: bool = False
+    """SECOND switch, board item 39. Extends automatic rotation from the
+    CATEGORICAL tier to the RANKED-MARGIN tier (`src/rotation.py`: both
+    sides still pass the desk's own entry gates, and the new candidate
+    cleared the provisional 25% margin on the like-for-like sub-score).
+    OFF by default and required IN ADDITION to `rotation_enabled`.
+
+    Turning it on is NOT sufficient to put a ranked-margin sale on the
+    wire. `rotation_sell_reason` refuses to build the sale's reason at all
+    unless it is handed a `RotationClearance` — an object only
+    `src/pipeline_stages.py::_rotation_buy_leg_projected_refusal` can mint,
+    and only after the replacement BUY has been run through the downstream
+    refusal gates against PROJECTED POST-SALE state. That guard is
+    structural and unconditional: no value of this flag, and no config at
+    all, can substitute for the clearance."""
+
     repeg_poll_seconds: float = Field(default=5.0, gt=0, le=30)
     """How long to let the working order rest before the one reprice, and —
     only if the exchange has not yet acknowledged the order by then — how

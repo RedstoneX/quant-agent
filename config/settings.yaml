@@ -304,6 +304,22 @@ execution:
   # paused since ~2026-09-03, so the first real rotation will be the first
   # end-to-end proof. Watch the first one.
   rotation_enabled: true
+  # Board item 39, attempt 3. The RANKED-MARGIN rotation tier (both sides
+  # still eligible; the new name cleared the provisional 25% like-for-like
+  # margin) stays OFF. It is a second switch on top of `rotation_enabled`,
+  # and it is not enough on its own: a ranked-margin sale additionally
+  # requires a clearance object that only the projected-post-sale gate in
+  # src/pipeline_stages.py can mint.
+  #
+  # It stays false because item 39(a) is unanswered, not out of caution:
+  # ROTATION_MARGIN_PCT, the 25% score gap that decides when this tier
+  # fires at all, is recorded in config/number_ledger.yaml as `arbitrary` -
+  # "a round quarter percent with no source". Turning this on would make an
+  # unmeasured number the sole reason for selling a position whose thesis
+  # is intact, which this desk refuses everywhere else. docs/WORK.md item
+  # 39(a) holds what has already been ruled out (do not repeat it) and
+  # what would settle it. It is a research question, not an owner call.
+  rotation_ranked_margin_enabled: false
   # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
   # count the risk math produced is used as-is instead of being floored to a
   # whole number. Whole-share rounding is a silent, constant tax — V wanted

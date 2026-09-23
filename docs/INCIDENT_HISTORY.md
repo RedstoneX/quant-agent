@@ -22,6 +22,165 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — rotation sequencing, attempt 3: the naked-sale window was closed by ordering the sale last, not by predicting what would happen after it (item 39)
+
+**In plain words:** the desk has a rule that can sell one holding to buy a
+better one. As written, it sold first and only then found out whether the
+replacement purchase would be allowed — and if it was not, the desk was
+simply out of the position, with an alert as the only consequence. That rule
+has never been switched on, so nothing was ever actually sold this way. This
+change makes the sale the LAST thing the session does, and makes it
+conditional on the replacement purchase already having cleared every gate.
+
+**Why the first two attempts did not work.** Attempt 1 closed one of the
+paths and, in doing so, downgraded a hard barrier (an exception that could
+not be configured away) into an ordinary configuration boolean — a weaker
+guarantee than the one it replaced. Attempt 2 (PR #555) checked the state of
+the book BEFORE the sale. That cannot work, because the gate it was trying to
+anticipate recomputes from the held book AFTER the sale: what is deployable
+for the replacement purchase is a function of which positions, which gross
+exposure and which settled cash survive the sale. A pre-sale check is
+therefore blind to the very quantity it depends on. This is the general
+lesson and the reason for the title: a gate that reads live state cannot be
+predicted, only re-run.
+
+**What attempt 3 does instead.** The rotation close is ordered LAST among the
+session's SELLs and gated inside the sell loop immediately before submission.
+Because it is last, every other SELL in the session has already happened and
+can be RE-READ rather than guessed at; only the one unmade sale has to be
+projected, and that projection runs through the same functions execution
+itself runs, threshold included, not a reimplementation of them. The output
+is an object carrying those numbers rather than a flag, so no configuration
+setting produces clearance. **Bounded honestly, after adversary review:** the
+sole minting site in `src/` computes the numbers before it constructs that
+object, but nothing yet PINS it as the sole site — the type is a public
+frozen dataclass, its `gates_checked` tuple is supplied by the caller, and
+`covers()` checks that the gate NAMES are present rather than that the gates
+ran. The guarantee is therefore "one construction site today", not "one
+construction site by construction". A count-the-construction-sites check in
+the shape `src/number_sources.py` already uses would close that, and has not
+been built.
+
+**Five refusal paths are covered:** a missing price, a stale entry, a zero
+quantity, insufficient cash, and a notional below the broker minimum. It was
+six until this change landed. The sixth and first-listed was the daily-loss
+re-check, and it was DROPPED rather than replaced or absorbed, because the
+owner's removal of the account-level loss alarm (same day, separate change)
+deleted the refusal itself — the execution stage no longer has a
+`daily_loss_recheck` skip for any projection to anticipate. A gate standing
+in front of a refusal that cannot fire is a check that always passes, which
+is worse than no check because it reads like one. The gross-exposure
+exposure that alarm shared with the §11.2 de-levering ladder is still gated
+here, through the two funding paths: `_entry_deployment_budget` measures the
+ladder's headroom over the projected post-sale book.
+
+**Four are NOT covered, by construction, and this is deliberate:** the
+latency window, a limit price that turns out to be unfillable against the
+NBBO at submission time, the borrow gate, and outright broker rejection. None
+of these is knowable before the sale is placed, and a submitted sale cannot
+be unmade. Naming them is the honest position; claiming coverage would not
+be.
+
+**COVERs are refused rather than modelled, and that refusal has outlived its
+reason.** It was adopted because one projected book could not be the worst
+case for three disagreeing consumers: the loss numerator, the
+volatility-relative threshold and gross exposure. Two of the three were
+deleted with the halt. The survivor is cheaply boundable, which the
+adversary demonstrated and this desk checked: with margin on the budget is a
+function of equity and held gross alone, a cover lowers held gross, so
+applying no cover at all is already the minimum headroom; with margin off
+the budget is the smaller of headroom and cash, and both terms are monotone
+in the set of covers assumed, so the bound is two scalars rather than an
+enumeration of fill outcomes. The refusal is kept regardless, on one ground:
+it is strictly the more conservative posture, the tier ships disabled, and
+loosening a live-selling gate inside the change that resolves a merge is not
+a trade worth making. What is NOT kept is the old justification. A refusal
+standing on a reason that has been deleted is how a desk accumulates rules
+nobody can defend, and the honest record is that this one is now a choice
+rather than a necessity.
+
+**Why this is complete rather than merely narrower, and where that
+reasoning rests.** The replacement is never a name the desk already holds at
+research time: the opportunity evaluation filters held names out, and that
+filter is pinned by a test. That is what keeps the short-add block and the
+scale-in path out of reach of this sequence. Note the load it carries — the
+exclusion is one line reading a `held_symbols` argument the caller passes in,
+and no test asserts the DOWNSTREAM consequence, so a caller handing it a
+stale or empty held set would silently reopen both paths with nothing going
+red. Treat "out of reach" as an inference from that one argument, not as an
+independently enforced property.
+
+**Filed out of this review, not fixed here:** the execution SELL loop has two
+different staleness postures depending on whether a rotation is present. The
+rotation close is sized off a broker read taken moments earlier; every other
+SELL uses the position list as at research time, which the execution
+stage's own comment describes as five to ten minutes earlier. That is
+board item 178 (filed 2026-09-20 as 168 and renumbered on landing, because
+number 168 was taken on `main` in the meantime by the technical seat's
+history-length defect).
+
+**The account-level halt removal landed first, and this is what it cost.**
+This change was written to project the unmade sale through
+`daily_loss_numerator` and `check_daily_loss`. The owner's removal of the
+account-level loss alarm deleted both from `src/` outright, along with
+`daily_loss_recheck`, `measure_held_book_daily_vol`, `held_book_daily_vol_pct`
+and the volatility-relative threshold they fed. It reached `main` first, so
+the rework was this change's to do, exactly as the collision note written the
+day before predicted it would be.
+
+Three things were reworked rather than merged:
+
+  - **The gate list.** Six became five. The dropped gate is discussed above.
+    The count now agrees in three places that previously disagreed with each
+    other even before the halt was removed: the constant, the gate
+    function's own docstring (which had listed four while the constant held
+    six), and the `gate_coverage_incomplete` refusal that fires if the two
+    ever drift again. **All three of the existing guards are one-directional
+    — `all(gate in checked)` — so REMOVING an entry from the list was
+    mechanically silent, which is precisely the edit this change made.** The
+    pin test was worse than silent: it searched `src/pipeline_stages.py` for
+    the literal `"no_price",` and matched the rotation gate's own `return`
+    statement, so it would have passed had the execution stage never carried
+    that reason code at all. It now walks the AST for real
+    `_record_execution_skip` call sites outside the rotation gate, and a
+    second test fails if any required gate names a symbol in
+    `config/retired_mechanisms.yaml`. That second test is the one that would
+    have caught the stale gate without anybody noticing the merge.
+  - **The projection's output.** `_projected_post_sale_book` used to return a
+    projected account day-change alongside the projected positions, computed
+    by subtracting the marketable limit's concession against the marks. Its
+    only consumer was the deleted numerator. The concession is now taken off
+    the projected EQUITY instead, which is what the funding gates size
+    against. **The first version of this change left it out and justified
+    that with a direction argument the adversary measured as backwards.**
+    The argument was that a smaller projected equity would shrink the
+    replacement's cost without shrinking the settled-cash pool, and so could
+    clear an order reality then refuses. That reasons about the cash branch
+    of the deployment budget, and the shipped configuration does not execute
+    it: with `allow_margin: true` the budget is `ceiling_x x equity - held
+    gross` and never reads cash at all. The order ceiling therefore moves
+    with equity at between 0.65x and 2.0x (the ladder rung and
+    `max_position_pct`), while the replacement's cost moves with it only at
+    the allocation percentage. Subtracting the concession TIGHTENS the gate.
+    Leaving it out was the loosening choice, defended as the conservative
+    one. The dollars are trivial — around fifty on a ten-thousand-dollar
+    close — and the direction is not, because a docstring is what the next
+    person reads.
+  - **The audit row.** The clearance object recorded the projected day-change
+    and which rung of the daily limit governed it. It now records what the
+    sale was actually cleared on: the deployable budget the projected
+    post-sale book produced, and which pool that was.
+
+**What did NOT change, and that is the point.** The sequencing itself — close
+last, gate inside the sell loop, re-read the other exits rather than project
+them, mint the clearance only after the projection passes, withdraw both legs
+together — was never about the daily-loss gate. It is about the difference
+between a gate that reads live state and a prediction of one. Losing the
+loudest of the gates it stands in front of narrowed what it covers and left
+the mechanism intact.
+
+---
+
 ### 2026-09-23 — the desk had two backup routes to the same model, and never went back to the good one
 
 **In plain words:** when the desk's cheap analysis provider is busy, it switches to a backup. The backup was the *same AI model* reached down a different wire — so when the model itself was overloaded, both the main route and the backup were overloaded at the same moment and the desk got nothing. Worse, once it switched it never switched back: one bad minute bought a permanent move onto a paid route for the rest of the day. This change adds a third route that is a genuinely different model, and makes every backup temporary — the desk now tries the free primary again after a cooling-off period and goes back to it the moment it answers.
