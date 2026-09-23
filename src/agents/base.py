@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
 from src.token_rate import TokenRateGovernor
+from src import llm_route_journal
 from src.cost_circuit import (
     OptionalPaidAnalysisRetrySkipped,
     PaidAnalysisSuspended,
@@ -174,20 +175,66 @@ _DEEPSEEK_DEFAULT_CEILING = 8192  # unknown deepseek-* id -> conservative cap
 _DEFAULT_MAX_RETRIES = 2
 
 
+# Ceiling on one exponential-backoff sleep, seconds. Full jitter without a
+# cap is unbounded in the attempt index; the cap is what makes the published
+# formula usable. 60s sits well inside the 480s `_DEFAULT_RETRY_DEADLINE_S`
+# so a single sleep can never consume the whole primary window on its own.
+_BACKOFF_CAP_S = 60.0
+
+
 def _retry_backoff_seconds(attempt: int) -> float:
-    """Exponential base + full positive jitter on top.
+    """AWS "Full Jitter": ``random_between(0, min(cap, base * 2**attempt))``.
 
-    Returns a sleep duration in [2**attempt, 2 * 2**attempt). The
-    deterministic floor preserves exponential spacing (so retries
-    don't bunch right at the start), while the random ceiling
-    decorrelates retries within a single sequence and across
-    concurrent callers.
+    SOURCE: Marc Brooker, "Exponential Backoff And Jitter", AWS Architecture
+    Blog (https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/).
+    Quoted formula: ``sleep = random(0, min(cap, base * 2 ** attempt))``.
 
-    Sequence for attempt 0..5 (the 6 between-attempt sleeps with N=7):
-      [1, 2), [2, 4), [4, 8), [8, 16), [16, 32), [32, 64)
+    WHY THE DETERMINISTIC FLOOR WENT AWAY. The previous helper returned
+    ``2**attempt + uniform(0, 2**attempt)`` — i.e. a guaranteed minimum wait
+    equal to the full exponential term, with jitter only ADDED on top. Its
+    docstring defended that floor as "preserving exponential spacing". The
+    AWS article is a direct measurement of exactly that trade-off, and its
+    result is the opposite: schemes that keep a deterministic floor complete
+    the same work in MORE total time and with MORE competing calls than Full
+    Jitter, because the floor re-synchronises every client that failed at the
+    same instant onto the same next instant. A morning fan-out of four agents
+    against one saturated free-tier Google key is precisely that case.
+
+    The floor also bought nothing here that the cap does not: with only two
+    primary attempts (`_DEFAULT_MAX_RETRIES`) the "retries bunch at the
+    start" failure mode the floor guarded against is a single sleep, and the
+    error-aware dispatcher below independently honours a server's own
+    Retry-After when the server states one — which is a far better lower
+    bound than a self-invented constant.
+
+    THE ONE THING FULL JITTER ALONE GETS WRONG HERE, and how it is fixed.
+    With `_DEFAULT_MAX_RETRIES = 2` there is exactly ONE sleep in the whole
+    primary loop, so pure Full Jitter can return a few milliseconds and
+    re-hit a 15-requests-per-minute free-tier ceiling immediately. The
+    provider that actually fails on this desk says so itself: Google's Gemini
+    API troubleshooting page (https://ai.google.dev/gemini-api/docs/
+    troubleshooting, verified 2026-09-23) recommends, for 429
+    RESOURCE_EXHAUSTED and 503 UNAVAILABLE, "Wait a short time before the
+    first retry (for example, 1 second), then increase the delay
+    exponentially (for example, 2s, 4s, 8s)" and "Add random 'jitter'".
+    `_MIN_CAPACITY_BACKOFF_S` below is that 1 second, and it is applied by
+    the error-aware dispatcher to the rate-limit/capacity classes ONLY — the
+    classes Google's page is actually about. It is a floor read off a
+    provider's own published guidance, not a constant invented here.
+
+    Sequence of upper bounds for attempt 0..5: 1, 2, 4, 8, 16, 32 (then
+    capped at 60). Each returned value is uniform in [0, bound).
     """
-    base = 2 ** attempt
-    return base + random.uniform(0, base)
+    return random.uniform(0.0, min(_BACKOFF_CAP_S, float(2 ** attempt)))
+
+
+# Google's own documented "wait a short time before the first retry (for
+# example, 1 second)" for 429/503 — see `_retry_backoff_seconds`. Applied
+# only to the capacity/rate-limit classes, and only when the server did NOT
+# state a Retry-After of its own (a stated hint always wins; this is the
+# floor for when there is no hint, which on Google is ALWAYS, because that
+# same page documents no Retry-After header and no RetryInfo).
+_MIN_CAPACITY_BACKOFF_S = 1.0
 
 # Per-request HTTP timeout for LLM clients. OpenAI/Anthropic SDKs default to
 # 600s, which means a single stalled SSE stream could hang the morning
@@ -278,6 +325,396 @@ def _retry_after_hint_seconds(exc: Exception) -> float | None:
     if m:
         return float(m.group(1))
     return None
+
+
+# === Error-aware backoff taxonomy =========================================
+#
+# The owner's ruling: "back off by a sensible number of minutes or retry
+# randomly within a short window, DEPENDING ON WHAT THE ERROR SAYS." Three
+# classes, each read from a provider's own published error reference rather
+# than invented here. Every claim below carries its source; the ones we could
+# NOT verify are called out explicitly as unverified, not quietly assumed.
+#
+# CLASS "retry_after" — a 429 that states when to come back.
+#   OpenAI: "Follow the `Retry-After` header when it's present, then retry
+#   your request." — developers.openai.com/api/docs/guides/error-codes
+#   [verified 2026-09-23], which documents the header on both 429 and 503.
+#   Anthropic: "The official SDKs automatically retry transient failures ...
+#   honoring the `retry-after` header when present."
+#   — platform.claude.com/docs/en/api/errors [verified 2026-09-23]. That page
+#   also documents one 429 that carries NO retry-after (the usage-tier spend
+#   cap) and keeps failing until access resumes — so the absence of a header
+#   on a 429 is a real, documented case, not a parsing failure, and it falls
+#   through to the jitter class below rather than to a guessed constant.
+#   We honour a stated hint verbatim, floor 0, capped at _RETRY_AFTER_CAP_S.
+#
+# CLASS "jitter" — capacity/transient: 429 with no hint, 500, 502, 503, 504,
+#   529, and every transient transport class in _RETRYABLE_EXC_NAMES.
+#   OpenAI documents 500 ("server errors") and 503 ("model temporarily
+#   overloaded") [verified 2026-09-23]. Anthropic documents 500 `api_error`
+#   with the explicit instruction "Retry the request with exponential
+#   backoff", 504 `timeout_error`, and 529 `overloaded_error` "The API is
+#   temporarily overloaded" [verified 2026-09-23]. Google AI Studio's
+#   "This model is currently experiencing high demand" 503 is recorded in
+#   src/cost_circuit.py from THIS desk's own 2026-09-22 production log
+#   [measured, 17 occurrences] — that one is a first-party measurement, not
+#   a doc citation.
+#   NOT VERIFIED: 502. No provider reference consulted here documents a 502;
+#   it is included because an intermediary (Cloudflare, a load balancer) can
+#   emit one in front of any of them, which is an inference from HTTP
+#   semantics, not from a provider's published taxonomy. Treated as transient
+#   because the conservative direction for an unknown 5xx is to retry.
+#   NOT VERIFIED: OpenRouter publishes no error-code reference we fetched;
+#   its statuses are assumed to be the upstream provider's, passed through.
+#
+# CLASS "fatal" — never retried: 400, 401, 403, 404 (and 402, handled by
+#   _is_retryable already). Both references above describe these as request-
+#   validation / auth / not-found rejections; a repeat of the identical
+#   request cannot change the answer. This matches what `_is_retryable`
+#   already does (`status == 429 or status >= 500`); the class is named here
+#   so the behaviour is asserted by a test instead of being an emergent
+#   property of an inequality.
+_FATAL_STATUS_CODES = frozenset({400, 401, 403, 404})
+_CAPACITY_STATUS_CODES = frozenset({500, 502, 503, 504, 529})
+
+BACKOFF_FATAL = "fatal"
+BACKOFF_RETRY_AFTER = "retry_after"
+BACKOFF_JITTER = "jitter"
+
+
+def classify_backoff(exc: Exception) -> tuple[str, float | None]:
+    """Which backoff class this error falls in, and the hint if it stated one.
+
+    Returns ``(BACKOFF_FATAL, None)`` for a request the provider will reject
+    identically forever, ``(BACKOFF_RETRY_AFTER, seconds)`` when the server
+    told us when to come back, and ``(BACKOFF_JITTER, None)`` otherwise.
+
+    Deliberately consults `_is_retryable` for the final word on retryability
+    so the two can never disagree — a second, independent status test is how
+    the 2026-08-31 outage's budget mismatch happened.
+    """
+    if not _is_retryable(exc):
+        return BACKOFF_FATAL, None
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        if status in _FATAL_STATUS_CODES:
+            return BACKOFF_FATAL, None
+    hint = _retry_after_hint_seconds(exc)
+    if hint is not None:
+        return BACKOFF_RETRY_AFTER, min(max(0.0, hint), _RETRY_AFTER_CAP_S)
+    return BACKOFF_JITTER, None
+
+
+def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
+    """Seconds to sleep before the next attempt, or None to STOP retrying.
+
+    A stated Retry-After is honoured as stated (capped), NOT max()'d against
+    the exponential term. The previous loop took ``max(backoff, hint)``,
+    which means a server saying "come back in 1s" was still made to wait the
+    full exponential — the desk ignoring the one authoritative number in the
+    exchange. The cap still protects against a hostile hint.
+    """
+    kind, hint = classify_backoff(exc)
+    if kind == BACKOFF_FATAL:
+        return None
+    if kind == BACKOFF_RETRY_AFTER and hint is not None:
+        return hint
+    wait = _retry_backoff_seconds(attempt)
+    # No stated hint. If this is a rate-limit / capacity refusal, apply the
+    # provider-documented 1s floor (see _MIN_CAPACITY_BACKOFF_S). Everything
+    # else — a transport blip, a degenerate 200, a stream cut — gets pure
+    # Full Jitter, because no provider publishes a minimum for those and
+    # inventing one would be exactly the arbitrary number this desk forbids.
+    status = getattr(exc, "status_code", None)
+    is_capacity = (isinstance(status, int) and not isinstance(status, bool)
+                   and (status == 429 or status in _CAPACITY_STATUS_CODES))
+    if is_capacity:
+        return max(_MIN_CAPACITY_BACKOFF_S, wait)
+    return wait
+
+
+# === Route ladder and half-open return to the primary =====================
+#
+# The owner's ruling, verbatim: "a backup is temporary; the third backup is
+# temporary; it should ALWAYS be retrying the primary."
+#
+# Before this, one failed call moved a seat off the free Google-direct
+# primary and NOTHING ever moved it back for the life of the process. A
+# transient 503 therefore bought a permanent migration onto a paid route.
+#
+# The breaker is keyed on the PROVIDER ALONE and is process-wide, not
+# per-agent-instance and NOT per (provider, model) pair.
+#
+# Keying it on the pair was the first draft and it was wrong. The failure
+# domain of every limit that actually fires here is the ACCOUNT, not the
+# model: Google AI Studio's free tier is a per-PROJECT RPM/TPM ceiling (see
+# _GOOGLE_TOKENS_PER_MIN), and OpenRouter's limits are per-account. Three
+# seats run three different OpenRouter models (openai/gpt-5.5,
+# qwen/qwen3-235b-a22b-2507, google/gemini-2.5-flash-lite), so a pair-keyed
+# breaker fragments ONE shared quota into three independent breakers that
+# each have to learn the same outage separately and pay for it separately.
+# Provider-keying makes the breaker's unit the same unit the provider
+# rate-limits.
+#
+# Process-wide, because the morning fan-out is a ThreadPoolExecutor with five
+# branches (src/pipeline_stages.py) against a single key, plus whatever
+# scheduler job overlaps; a per-instance breaker would have every one of them
+# discover the same outage independently and pay a full ladder for it.
+#
+# KNOWN LIMITATION, stated rather than hidden: this breaker lives in process
+# memory, while the cost circuit is cross-process via SQLite. A demotion
+# learned by the morning run is not known to the close run, and the 30-minute
+# ceiling below can never be reached by a run shorter than that. Making it
+# durable means another table and another set of staleness rules; the
+# in-memory version already fixes the defect it was built for (a demotion
+# that NEVER ends), and the durable version can be added without changing
+# any call site here.
+#
+# COOLDOWN, and why neither number is invented here. Both are DERIVED from
+# constants this repo already sources, and both are asserted against their
+# bases by a test so a moving base cannot silently orphan them.
+#
+#   Base cooldown = `_RETRY_AFTER_CAP_S` (120s). That constant is the longest
+#   wait the desk will honour when a provider explicitly TELLS it how long to
+#   stay away. A provider that has told us nothing and failed every attempt
+#   has given us strictly less reason to come back soon than one that named a
+#   number, so the shortest defensible cooldown is the longest hint we would
+#   have obeyed. Below it, the desk would be probing a door the same provider
+#   might have said is shut for longer than that.
+#
+#   Ceiling = 60 * `src.config.INTRA_CHECK_TICK_MINUTES` (30 min -> 1800s).
+#   That is the gap between consecutive PAID runs, already sourced in the
+#   ledger off `src/scheduler.py`'s real trigger, and already used to derive
+#   the cost circuit's own transient-latch cooldown. It is the right ceiling
+#   for the same reason it is the right ceiling there: a breaker held down
+#   longer than the gap between runs can never be probed by the next run, so
+#   the "always be retrying the primary" half of the owner's ruling would
+#   quietly stop being true. Not imported, because `src.agents.base` importing
+#   `src.config` is circular; `tests/test_route_failover_ladder.py` asserts
+#   the two agree instead.
+#
+# The doubling factor of 2 is conventional binary exponential backoff, the
+# same factor `_retry_backoff_seconds` uses.
+_ROUTE_COOLDOWN_S = float(
+    os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_S", _RETRY_AFTER_CAP_S)
+)
+_ROUTE_COOLDOWN_MAX_S = float(
+    os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_MAX_S", 60.0 * 30.0)
+)
+
+
+class RouteBreaker:
+    """Half-open breaker for ONE provider (the account-level failure domain).
+
+    Three states, in the standard circuit-breaker vocabulary:
+
+      CLOSED    — `demoted_until is None`. The primary is used normally.
+      OPEN      — now < demoted_until. The primary is SKIPPED; calls start at
+                  the secondary. This is the state that saves time and, as it
+                  happens, also saves the cost latch (see `should_probe`).
+      HALF_OPEN — now >= demoted_until. Exactly ONE caller is handed the
+                  right to probe the primary; everyone else keeps skipping it
+                  until that probe reports back. Without the single-probe
+                  rule a four-way fan-out arriving one millisecond after the
+                  cooldown expires would send four probes at a provider that
+                  is very likely still saturated, which is the thundering
+                  herd the cooldown exists to prevent.
+    """
+
+    def __init__(self, key: str):
+        self.key = key
+        self._lock = threading.Lock()
+        self._demoted_until: float | None = None
+        self._cooldown_s: float = _ROUTE_COOLDOWN_S
+        self._probe_in_flight = False
+
+    # --- state queries ----------------------------------------------------
+
+    def primary_available(self) -> bool:
+        """True when a caller may use the primary as its first route.
+
+        True in CLOSED, and true for the single caller that wins the
+        half-open probe. False while OPEN and for every loser of the probe
+        race.
+        """
+        with self._lock:
+            if self._demoted_until is None:
+                return True
+            if time.monotonic() < self._demoted_until:
+                return False
+            if self._probe_in_flight:
+                return False
+            self._probe_in_flight = True
+            return True
+
+    def is_probing(self) -> bool:
+        with self._lock:
+            return self._probe_in_flight
+
+    def demoted(self) -> bool:
+        with self._lock:
+            return (self._demoted_until is not None
+                    and time.monotonic() < self._demoted_until)
+
+    # --- state transitions ------------------------------------------------
+
+    def record_success(self) -> bool:
+        """The primary answered. Returns True if this CLEARED a demotion."""
+        with self._lock:
+            was_demoted = self._demoted_until is not None
+            self._demoted_until = None
+            self._cooldown_s = _ROUTE_COOLDOWN_S
+            self._probe_in_flight = False
+            return was_demoted
+
+    def record_failure(self) -> float:
+        """The primary failed. Demote it and return the cooldown applied.
+
+        A failure while probing extends the cooldown (exponential, capped);
+        a first failure applies the base cooldown. The probe right is always
+        released, or a crashed probe would wedge the breaker permanently
+        half-open and the primary would never be tried again — the exact
+        never-comes-back defect this class exists to remove.
+        """
+        with self._lock:
+            if self._demoted_until is not None:
+                self._cooldown_s = min(self._cooldown_s * 2.0, _ROUTE_COOLDOWN_MAX_S)
+            else:
+                self._cooldown_s = _ROUTE_COOLDOWN_S
+            self._demoted_until = time.monotonic() + self._cooldown_s
+            self._probe_in_flight = False
+            return self._cooldown_s
+
+    def reset(self) -> None:
+        with self._lock:
+            self._demoted_until = None
+            self._cooldown_s = _ROUTE_COOLDOWN_S
+            self._probe_in_flight = False
+
+
+_ROUTE_BREAKERS: dict[str, RouteBreaker] = {}
+_ROUTE_BREAKERS_LOCK = threading.Lock()
+
+
+def route_breaker_for(provider: str) -> RouteBreaker:
+    """The process-wide breaker for this PROVIDER (created on demand).
+
+    Keyed on the provider alone — see the note above `_ROUTE_COOLDOWN_S` for
+    why the (provider, model) pair is the wrong unit.
+    """
+    key = provider
+    with _ROUTE_BREAKERS_LOCK:
+        breaker = _ROUTE_BREAKERS.get(key)
+        if breaker is None:
+            breaker = RouteBreaker(key)
+            _ROUTE_BREAKERS[key] = breaker
+        return breaker
+
+
+def _reset_route_breakers_for_tests() -> None:
+    with _ROUTE_BREAKERS_LOCK:
+        _ROUTE_BREAKERS.clear()
+
+
+# === The third route =======================================================
+#
+# REQUIREMENT: a genuinely DIFFERENT MODEL, not the same model on another
+# road. The existing secondary (OpenRouter serving the SAME
+# gemini-3.5-flash-lite the primary serves) is route diversity only — when
+# the MODEL is saturated rather than the road, both fail together, which is
+# the 2026-09-22 shape: Google direct returned "This model is currently
+# experiencing high demand" 17 times and the same-model failover went down
+# with it.
+#
+# CHOICE: `anthropic/claude-haiku-4.5`, served over OPENROUTER.
+#
+# WHY NOT ANTHROPIC OR OPENAI DIRECT — this is the load-bearing finding and
+# it overrode the first version of this design. QAMC does not hold its own
+# LLM credentials: `.env` carries placeholders and OneCLI's gateway injects
+# the real value, matched BY DESTINATION HOST, only for hosts that have an
+# explicit grant. docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md
+# enumerates the grants that exist and were verified end-to-end:
+# `openrouter.ai`, `api.stlouisfed.org`, `*.alpaca.markets`, plus
+# `generativelanguage.googleapis.com` (recorded in .env.example). There is
+# NO grant for `api.openai.com` and NO grant for `api.anthropic.com`, and
+# neither appears in that document's verification list. A route 3 on either
+# direct endpoint would send `Authorization: Bearer placeholder-...` and
+# collect a 401 every single time — a guaranteed-failing extra attempt
+# dressed up as a rescue. "The key is named in settings.yaml" and "the model
+# is in cost_table" prove the wiring and the price; neither proves the road
+# exists. Nothing in this repository has ever made a successful call on
+# `provider: openai` or `provider: anthropic`.
+#
+# So route 3 goes over OpenRouter — the one LLM road besides Google with a
+# verified grant — carrying a DIFFERENT MODEL. That satisfies the actual
+# requirement (model diversity) using the only road that is known to work.
+#
+# WHY HAIKU AND NOT `openai/o4-mini`. Both are on OpenRouter's catalog and
+# the prices cross over, so price does not decide it: haiku is $1.00 in /
+# $5.00 out and o4-mini is $1.10 in / $4.40 out per million tokens
+# [measured 2026-09-23, OpenRouter's live /api/v1/models]. What decides it is
+# family independence. The desk already depends on OpenAI for its Portfolio
+# Manager seat (`openai/gpt-5.5`) and on Google for routes 1 and 2. Anthropic
+# is the only major family the desk has no other dependency on, so an
+# OpenAI-side incident cannot take out the PM seat and the specialists'
+# last-resort route in the same stroke.
+#
+# WITHDRAWN ARGUMENT, recorded because it was wrong and the reasoning is
+# reusable. An earlier draft chose o4-mini on the grounds that Anthropic
+# documents a 529 `overloaded_error` (platform.claude.com/docs/en/api/errors)
+# that src/cost_circuit.py's zero-cost allow-list does not carry, so an
+# Anthropic tertiary's likeliest failure would be booked ambiguous. That is
+# true of Anthropic DIRECT and irrelevant here: OpenRouter "normalizes every
+# upstream provider error" into its own status codes and surfaces the
+# upstream code only in `error.metadata.provider_code`
+# (openrouter.ai/docs/api-reference/errors, verified 2026-09-23). A 529
+# never reaches this process as a 529. Choosing the desk's analyst by its
+# provider's HTTP error taxonomy was the wrong axis anyway.
+#
+# BONUS THE OPENROUTER ROAD BUYS, and the reason this is not a compromise:
+# `_openai_wire_call` builds `extra_body` for `openrouter` and `google` ONLY.
+# The `openai` and `anthropic` branches get NO `reasoning.effort` and NO
+# `response_format`. A tertiary on OpenAI direct would therefore have
+# violated the 2026-09-14 uniform-testing requirement recorded in that same
+# function, run a reasoning model at an undeclared effort against a 16k
+# output ceiling, and risk returning an empty body with
+# finish_reason="length" — which `_TRUNCATION_FINISH_REASONS` treats as a
+# SUCCESS that never fails over. Over OpenRouter route 3 gets the identical
+# declared effort, the identical structured-output constraint, and
+# `usage: {include: true}` — the last of which matters because a successful
+# call with no usage telemetry trips `unknown_actual_cost`, the one hard
+# latch that does NOT self-clear.
+#
+# HONEST RESIDUAL: routes 2 and 3 share the OpenRouter account, so an
+# account-level OpenRouter outage takes both. That is a real reduction in
+# road diversity relative to the first draft, accepted because the first
+# draft's extra road did not exist. Closing it means getting a grant for a
+# third host, which is an owner decision (a new paid dependency), not one to
+# make inside this change.
+#
+# RELATION TO THE 2026-08-31 "change the ROAD, not the REASONING" ruling
+# recorded at `_DEFAULT_FALLBACK_PROVIDER` above: that ruling is not
+# overturned, it is respected and then exhausted. Routes 1 and 2 are still
+# the same model on two roads, and route 3 is only ever reached when BOTH
+# have failed — i.e. when the alternative to a different model answering is
+# no analysis at all. A surprising answer is worse than an expected one; it
+# is better than the desk sitting out the open.
+_DEFAULT_TERTIARY_PROVIDER = "openrouter"
+_DEFAULT_TERTIARY_MODEL = "anthropic/claude-haiku-4.5"
+
+
+def _route_price(model: str) -> tuple[float | None, float | None]:
+    """Published list price of `model` in USD per MILLION tokens, for the
+    route journal. `(None, None)` when the model is not in the pricing table
+    — the journal records the gap rather than a confident zero."""
+    try:
+        from src.cost_table import PRICING
+        row = PRICING.get(model)
+        if not row:
+            return None, None
+        return row.get("input"), row.get("output")
+    except Exception:  # noqa: BLE001 — pricing must never break a call
+        return None, None
 
 
 def _int_env(name: str, default: int) -> int:
@@ -474,7 +911,8 @@ def _max_retries() -> int:
     return max(1, n)
 
 
-def provider_attempt_budget(*, failover_available: bool) -> int:
+def provider_attempt_budget(*, failover_available: bool,
+                            tertiary_available: bool = False) -> int:
     """Worst-case provider attempts ONE logical agent call can make.
 
     This is the single source of truth for that number, and the reason it
@@ -504,15 +942,33 @@ def provider_attempt_budget(*, failover_available: bool) -> int:
     just a Claude-to-Claude special case any more — see
     ``BaseAgent._failover_reachable``), so those agents never spend the extra
     attempt.
+
+    ``tertiary_available`` adds the SECOND ``+ 1`` for route 3 (a different
+    MODEL — see ``_DEFAULT_TERTIARY_PROVIDER``), on the same single-shot
+    terms. This addend is the whole reason route 3 could not simply be bolted
+    on: a third route that the circuit's ``max_provider_attempts_per_call``
+    does not know about reproduces the 2026-08-31 incident exactly — the new
+    rescue attempt becomes the attempt that trips the circuit, so the desk is
+    latched by the very mechanism added to keep it running. The ceiling in
+    ``config/settings.yaml`` moves with this function or the load-time check
+    in ``AppConfig._check_provider_attempt_budget`` refuses to boot.
+
+    NOTE the worst case is NOT made worse by the half-open breaker: while the
+    primary is demoted the loop SKIPS its ``_max_retries()`` attempts
+    entirely, so a demoted call spends at most 2 (secondary + tertiary),
+    below this ceiling. The ceiling describes the undemoted worst case.
     """
-    return _max_retries() + (1 if failover_available else 0)
+    return (_max_retries()
+            + (1 if failover_available else 0)
+            + (1 if tertiary_available else 0))
 
 
 def _is_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_PREFIXES)
 
 
-def _governor_domain_for(model: str, agent, *, is_failover: bool = False) -> str:
+def _governor_domain_for(model: str, agent, *, is_failover: bool = False,
+                         is_tertiary: bool = False) -> str:
     """Which provider's token budget this request will actually consume.
 
     Keyed on which PATH this attempt is taking, not on sniffing the model
@@ -530,7 +986,18 @@ def _governor_domain_for(model: str, agent, *, is_failover: bool = False) -> str
     and an OpenRouter-vendor-prefixed fallback of the "same" model
     ("google/gemini-3.5-flash-lite") happen to differ as strings, but that is
     incidental and nothing should depend on it.
+
+    ``is_tertiary`` is the same argument one rung further down: route 3 is a
+    different provider again, and charging its tokens to the SECONDARY's
+    governor would both understate route 3's own rate usage and let a
+    tertiary storm exhaust a ceiling that belongs to a route it is not using.
+    Checked FIRST because a tertiary attempt is also flagged as a failover by
+    the shared authorize closure.
     """
+    if is_tertiary:
+        tertiary_provider = getattr(agent, "_tertiary_provider", None)
+        return (tertiary_provider if tertiary_provider in _TOKEN_GOVERNORS
+                else "openai")
     if is_failover:
         fallback_provider = getattr(agent, "_fallback_provider", None)
         return fallback_provider if fallback_provider in _TOKEN_GOVERNORS else "openrouter"
@@ -1175,6 +1642,9 @@ class BaseAgent(ABC):
                  provider_order: list[str] | None = None,
                  fallback_provider: str = _DEFAULT_FALLBACK_PROVIDER,
                  fallback_model: str = _DEFAULT_FALLBACK_MODEL,
+                 tertiary_api_key: str = "",
+                 tertiary_provider: str = _DEFAULT_TERTIARY_PROVIDER,
+                 tertiary_model: str = _DEFAULT_TERTIARY_MODEL,
                  reasoning_effort: str = "medium",
                  structured_output: bool = True):
         self.model = model
@@ -1228,6 +1698,34 @@ class BaseAgent(ABC):
             (self._fallback_provider, self._fallback_model)
             != (self._provider, self.model)
         )
+        # === Route 3: a genuinely DIFFERENT model ===========================
+        # See _DEFAULT_TERTIARY_PROVIDER above for why haiku-over-OpenRouter
+        # and not either direct endpoint (neither is credentialed on this
+        # deployment). Reachability is gated exactly like the failover's:
+        # a key must be configured AND the pair must differ from BOTH routes
+        # already in the ladder, or route 3 is just a third attempt at
+        # something that has already failed twice.
+        self._tertiary_provider = resolve_provider(tertiary_model, tertiary_provider)
+        self._tertiary_model = tertiary_model
+        self._tertiary_api_key = (tertiary_api_key or "").strip()
+        self._tertiary_reachable = bool(self._tertiary_api_key) and (
+            (self._tertiary_provider, self._tertiary_model)
+            not in {(self._provider, self.model),
+                    (self._fallback_provider, self._fallback_model)}
+        )
+        # Process-wide half-open breaker for THIS primary pair. Shared with
+        # every other seat configured to the same primary — see RouteBreaker.
+        self._route_breaker = route_breaker_for(self._provider)
+        # Route 2 gets a breaker too. Without one the demotion logic is
+        # asymmetric and only ever protects the FREE road: if OpenRouter is
+        # the thing that is down, every call would pay two primary attempts
+        # plus a doomed secondary plus a tertiary, forever. When routes 2 and
+        # 3 share a provider (they do by default — see
+        # _DEFAULT_TERTIARY_PROVIDER's honest-residual note) this is the SAME
+        # breaker object, which is correct: one account, one failure domain.
+        self._fallback_breaker = route_breaker_for(self._fallback_provider)
+        self._tertiary_breaker = route_breaker_for(self._tertiary_provider)
+
         # Attached after TradingPipeline initializes the shared SQLite DB.
         self._cost_circuit = None
 
@@ -1425,7 +1923,8 @@ class BaseAgent(ABC):
                 )
                 _mark_circuit_unavailable(accounting_exc)
 
-        def _govern(model: str, *, is_failover: bool = False) -> None:
+        def _govern(model: str, *, is_failover: bool = False,
+                    is_tertiary: bool = False) -> None:
             """Pace this request so the desk never floods a provider.
 
             Deliberately placed AFTER the cost circuit has authorized the
@@ -1439,7 +1938,9 @@ class BaseAgent(ABC):
             governor, never the primary's — see _governor_domain_for.
             """
             nonlocal governed_estimate, governed_provider
-            governed_provider = _governor_domain_for(model, self, is_failover=is_failover)
+            governed_provider = _governor_domain_for(
+                model, self, is_failover=is_failover, is_tertiary=is_tertiary,
+            )
             governor = _TOKEN_GOVERNORS.get(governed_provider)
             if governor is None:
                 governed_estimate = 0
@@ -1448,10 +1949,11 @@ class BaseAgent(ABC):
             governed_estimate = int(chars / _GOVERNOR_CHARS_PER_TOKEN) + self.max_tokens
             governor.charge(governed_estimate)
 
-        def _authorize(model: str, *, is_failover: bool = False) -> None:
+        def _authorize(model: str, *, is_failover: bool = False,
+                       is_tertiary: bool = False) -> None:
             nonlocal provider_requests
             if self._cost_circuit is None:
-                _govern(model, is_failover=is_failover)
+                _govern(model, is_failover=is_failover, is_tertiary=is_tertiary)
                 provider_requests += 1
                 return
             try:
@@ -1464,11 +1966,17 @@ class BaseAgent(ABC):
                     "mandatory cost-circuit authorization failed",
                     state,
                 ) from exc
-            _govern(model, is_failover=is_failover)
+            _govern(model, is_failover=is_failover, is_tertiary=is_tertiary)
             provider_requests += 1
 
         def _authorize_failover(model: str) -> None:
             _authorize(model, is_failover=True)
+
+        def _authorize_tertiary(model: str) -> None:
+            # Route 3 is a failover for the cost circuit's purposes (it is an
+            # extra provider attempt on a logical call) but a DIFFERENT rate
+            # domain for the governor's — see _governor_domain_for.
+            _authorize(model, is_failover=True, is_tertiary=True)
 
         if self._cost_circuit is None and not self._allow_unmetered_for_tests:
             raise PaidAnalysisSuspended(
@@ -1501,6 +2009,47 @@ class BaseAgent(ABC):
                     "mandatory cost-circuit reservation failed",
                     state,
                 ) from exc
+        # === Half-open gate on the primary ==================================
+        # Ask the process-wide breaker whether the primary is usable. Three
+        # outcomes (see RouteBreaker):
+        #   closed              -> normal, full retry budget on the primary.
+        #   half-open, we won   -> ONE probe attempt on the primary. Its
+        #                          success un-demotes the route for everybody.
+        #   open / probe lost   -> skip the primary entirely, start at route 2.
+        #
+        # CRITICAL, cost-circuit: the skip records NO exception into
+        # `attempt_errors`. A synthetic "we didn't try" marker would carry no
+        # `status_code`, `_is_known_zero_cost_failure` would fail closed on
+        # it, and a call the desk deliberately DIDN'T make would be booked
+        # ambiguous and hard-latch the desk. The skip is an absence of an
+        # attempt, and it is represented as one.
+        primary_allowed = self._route_breaker.primary_available()
+        probing_primary = primary_allowed and self._route_breaker.is_probing()
+        if probing_primary:
+            # One attempt only. A probe is a question ("is it back?"), not a
+            # retry sequence; spending the full budget re-asking a route that
+            # was down 5 minutes ago burns the wall-clock deadline that the
+            # secondary and tertiary still have to fit inside.
+            max_retries = 1
+            logger.warning(
+                "Agent %s: HALF-OPEN probe of demoted primary %s/%s.",
+                self.name, self._provider, self.model,
+            )
+            in_price, out_price = _route_price(self.model)
+            llm_route_journal.record(
+                "probe_primary", agent_name=self.name,
+                run_id=getattr(reservation, "run_id", None),
+                route=f"{self._provider}/{self.model}", tier=1,
+                input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
+                detail="cooldown elapsed; probing whether the primary recovered",
+            )
+        elif not primary_allowed:
+            max_retries = 0
+            logger.warning(
+                "Agent %s: primary %s/%s is DEMOTED (cooling down) — starting "
+                "at the secondary route without attempting it.",
+                self.name, self._provider, self.model,
+            )
         for attempt in range(max_retries):
             try:
                 if self._use_deepseek:
@@ -1528,6 +2077,24 @@ class BaseAgent(ABC):
                         user_message, authorize=_authorize,
                     )
                 primary_error = None
+                # The primary answered. If it was demoted, this un-demotes it
+                # for EVERY seat sharing the pair — the "backups are
+                # temporary" half of the owner's ruling.
+                if self._route_breaker.record_success():
+                    in_price, out_price = _route_price(self.model)
+                    logger.warning(
+                        "Agent %s: primary %s/%s RESTORED — the desk is back "
+                        "on its configured route.",
+                        self.name, self._provider, self.model,
+                    )
+                    llm_route_journal.record(
+                        "route_restored", agent_name=self.name,
+                        run_id=getattr(reservation, "run_id", None),
+                        route=f"{self._provider}/{self.model}", tier=1,
+                        input_usd_per_mtok=in_price,
+                        output_usd_per_mtok=out_price,
+                        detail="half-open probe succeeded; breaker closed",
+                    )
                 break
             except PaidAnalysisSuspended as exc:
                 _safe_fail_reservation(exc)
@@ -1565,31 +2132,88 @@ class BaseAgent(ABC):
                         self.name, attempt + 1, e, deadline_s, elapsed,
                     )
                     break
-                wait = _retry_backoff_seconds(attempt)
-                # Honor a server retry-after hint (429/5xx): sleeping shorter
-                # than the server asked just burns attempts against a closed
-                # door. Capped so a hostile hint can't stall the session.
-                hint = _retry_after_hint_seconds(e)
-                if hint is not None:
-                    wait = min(max(wait, hint), _RETRY_AFTER_CAP_S)
-                logger.warning("Agent %s attempt %d failed: %s. Retrying in %.1fs...",
-                               self.name, attempt + 1, e, wait)
+                # Error-AWARE backoff (see error_aware_backoff_seconds): a
+                # server that stated a Retry-After is obeyed as stated, a
+                # capacity/transient failure gets AWS full jitter, and a
+                # fatal class returns None. The None branch is defensive —
+                # `_is_retryable` above has already broken out of the loop for
+                # every fatal class — but the two agreeing is asserted by a
+                # test rather than assumed.
+                kind, _hint = classify_backoff(e)
+                wait = error_aware_backoff_seconds(attempt, e)
+                if wait is None:
+                    logger.warning(
+                        "Agent %s attempt %d: %s classified non-retryable by "
+                        "the backoff taxonomy. Stopping.",
+                        self.name, attempt + 1, e,
+                    )
+                    break
+                if kind == BACKOFF_RETRY_AFTER:
+                    logger.warning(
+                        "Agent %s attempt %d failed: %s. Server stated "
+                        "Retry-After — honouring %.1fs.",
+                        self.name, attempt + 1, e, wait,
+                    )
+                    llm_route_journal.record(
+                        "retry_after", agent_name=self.name,
+                        run_id=getattr(reservation, "run_id", None),
+                        route=f"{self._provider}/{self.model}", tier=1,
+                        wait_s=wait, error=e,
+                        detail="honoured the server's own Retry-After",
+                    )
+                else:
+                    logger.warning(
+                        "Agent %s attempt %d failed: %s. Full-jitter backoff "
+                        "%.1fs...", self.name, attempt + 1, e, wait,
+                    )
                 time.sleep(wait)
 
-        # Model that actually produced the output — primary unless failover wins.
+        # Model that actually produced the output — primary unless a backup wins.
         actual_model = self.model
+        actual_route_provider: str | None = None
         if primary_error is not None:
-            # Primary failed after retries. Try ONE call on the configured
-            # fallback (provider, model) so a quota/balance/auth/rate-limit/
-            # outage on the primary keeps the session alive (DeepSeek 402
-            # "Insufficient Balance" and the 2026-08-31 OpenRouter rate-limit
-            # are both instances of the same shape this was built for).
-            # Single-shot (no retry) to stay inside the session window. Only
-            # when the fallback pair actually differs from the primary's
-            # (see _failover_reachable — never fail over onto the exact
-            # thing that just failed); otherwise re-raise.
+            # The primary failed on every attempt it was given. Demote it so
+            # the NEXT call in the next few minutes skips it instead of
+            # re-discovering the same outage, and so the half-open probe has
+            # something to come back to. Doing this before the backups run
+            # means a fan-out's later threads benefit immediately.
+            cooldown = self._route_breaker.record_failure()
+            in_price, out_price = _route_price(self.model)
+            llm_route_journal.record(
+                "route_demoted", agent_name=self.name,
+                run_id=getattr(reservation, "run_id", None),
+                route=f"{self._provider}/{self.model}", tier=1,
+                input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
+                wait_s=cooldown, error=primary_error,
+                detail=f"primary exhausted; demoted for {cooldown:.0f}s",
+            )
+        if primary_error is not None or not primary_allowed:
+            # === The ladder ===================================================
+            # Route 2 (same MODEL, different ROAD) then route 3 (different
+            # MODEL). Each is single-shot: the primary already burned the
+            # retry budget, and a second full budget per backup could blow
+            # the session window. Order matters — route 2 is the cheaper and
+            # the less surprising answer, and the 2026-08-31 "change the road,
+            # not the reasoning" ruling says to exhaust it first.
+            #
+            # `not primary_allowed` is the demoted path: the primary was
+            # skipped, so there IS no primary_error, but the ladder must still
+            # run. `_last_route_error` is what gets raised if the whole ladder
+            # fails on that path, since there is no primary error to re-raise.
             failover = None
-            if not single_provider_attempt and self._failover_reachable:
+            last_route_error: Exception | None = primary_error
+            # Skip route 2 when ITS provider is inside a cooldown: paying a
+            # call to an account that refused one minutes ago is the same
+            # waste the primary skip removes, one rung down.
+            secondary_open = not self._fallback_breaker.demoted()
+            if not secondary_open:
+                logger.warning(
+                    "Agent %s: secondary provider %s is DEMOTED — skipping "
+                    "route 2 and going straight to the tertiary.",
+                    self.name, self._fallback_provider,
+                )
+            if (not single_provider_attempt and self._failover_reachable
+                    and secondary_open):
                 try:
                     failover = self._try_failover(
                         user_message, primary_error, authorize=_authorize_failover,
@@ -1598,12 +2222,88 @@ class BaseAgent(ABC):
                 except PaidAnalysisSuspended as exc:
                     _safe_fail_reservation(exc)
                     raise
+                if failover is None:
+                    self._fallback_breaker.record_failure()
+                else:
+                    self._fallback_breaker.record_success()
+            if failover is not None:
+                actual_model = self._fallback_model
+                actual_route_provider = self._fallback_provider
+                in_price, out_price = _route_price(self._fallback_model)
+                llm_route_journal.record(
+                    "route_switch", agent_name=self.name,
+                    run_id=getattr(reservation, "run_id", None),
+                    route=f"{self._fallback_provider}/{self._fallback_model}",
+                    from_route=f"{self._provider}/{self.model}", tier=2,
+                    input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
+                    error=primary_error,
+                    detail="secondary route carried the call (same model, "
+                           "different road)",
+                )
+            else:
+                # Route 3. Only reached when the same model on two roads has
+                # already failed — which is the saturated-MODEL case route 3
+                # exists for, and precisely what happened on 2026-09-22.
+                tertiary = None
+                # Route 3 is the last rung; it is NOT skipped on its own
+                # breaker being demoted when that breaker is shared with a
+                # route already skipped, because "skip the last resort too"
+                # means the desk produces nothing. A demoted tertiary is
+                # still tried — the cooldown's job at this depth is to
+                # inform, not to forbid.
+                if not single_provider_attempt and self._tertiary_reachable:
+                    try:
+                        tertiary = self._try_tertiary(
+                            user_message, authorize=_authorize_tertiary,
+                            on_failure=_record_attempt_failure,
+                        )
+                    except PaidAnalysisSuspended as exc:
+                        _safe_fail_reservation(exc)
+                        raise
+                    if tertiary is None:
+                        self._tertiary_breaker.record_failure()
+                    else:
+                        self._tertiary_breaker.record_success()
+                if tertiary is not None:
+                    failover = tertiary
+                    actual_model = self._tertiary_model
+                    actual_route_provider = self._tertiary_provider
+                    in_price, out_price = _route_price(self._tertiary_model)
+                    llm_route_journal.record(
+                        "route_switch", agent_name=self.name,
+                        run_id=getattr(reservation, "run_id", None),
+                        route=f"{self._tertiary_provider}/{self._tertiary_model}",
+                        from_route=f"{self._fallback_provider}/{self._fallback_model}",
+                        tier=3,
+                        input_usd_per_mtok=in_price,
+                        output_usd_per_mtok=out_price,
+                        error=primary_error,
+                        detail="tertiary route carried the call (DIFFERENT "
+                               "model — both routes on the primary model failed)",
+                    )
+                elif primary_error is None and attempt_errors:
+                    # ONLY on the demoted path. When the primary DID fail,
+                    # the long-standing contract is that its error is what
+                    # the caller sees — the primary's failure is the one the
+                    # operator needs to diagnose, and a backup's error is a
+                    # consequence, not a cause. Overwriting it here was a
+                    # regression this line exists to prevent.
+                    last_route_error = attempt_errors[-1]
             if failover is None:
-                _safe_fail_reservation(primary_error)
-                raise primary_error
+                if last_route_error is None:
+                    # Demoted primary, and no backup was even reachable. Say
+                    # so precisely rather than raising something misleading:
+                    # nothing was attempted, so there is no provider error to
+                    # report and `attempt_errors` is correctly empty — which
+                    # keeps `fail_call` out of the ambiguous branch.
+                    last_route_error = RuntimeError(
+                        f"{self.name}: primary {self._provider}/{self.model} is "
+                        "demoted and no backup route is reachable"
+                    )
+                _safe_fail_reservation(last_route_error)
+                raise last_route_error
             (raw_text, input_tokens, output_tokens, finish_reason,
              reported_cost) = failover
-            actual_model = self._fallback_model
 
         # Truncation detection: a max_tokens / length cutoff means the output
         # is incomplete, NOT a deliberate "no action". Flag + log loudly so a
@@ -1699,12 +2399,17 @@ class BaseAgent(ABC):
             fmt_cost(cost), actual_model,
         )
         logger.info("Agent %s output:\n%s", self.name, raw_text)
-        used_fallback = primary_error is not None
+        # "A backup answered", which is now true on tier 2 OR tier 3, and
+        # true when the primary was SKIPPED (demoted) as well as when it
+        # failed — `actual_route_provider` is set by whichever ladder rung
+        # actually produced the text, so it is the honest test.
+        used_fallback = actual_route_provider is not None
         # A vendor/model OpenRouter id is not inferable from its text. Primary
         # success therefore uses the configured provider; only a failover
-        # changes attribution, to whichever provider is actually CONFIGURED
-        # as the fallback (never a fabricated/hardcoded "anthropic" string).
-        actual_provider = self._fallback_provider if used_fallback else requested_provider
+        # changes attribution, to whichever provider actually answered (never
+        # a fabricated/hardcoded "anthropic" string, and no longer an
+        # assumption that a failover means the SECONDARY — route 3 exists).
+        actual_provider = actual_route_provider or requested_provider
         latency_s = time.monotonic() - loop_start
         return AgentResult(
             raw_text=raw_text,
@@ -1816,6 +2521,54 @@ class BaseAgent(ABC):
                 "Agent %s: failover to %s/%s also FAILED: %s. Re-raising the "
                 "original primary error.", self.name, self._fallback_provider,
                 self._fallback_model, exc,
+            )
+            if on_failure is not None:
+                on_failure(exc)
+            return None
+
+    def _try_tertiary(self, user_message: str, *, authorize=None, on_failure=None):
+        """Route 3: one call on a genuinely DIFFERENT model.
+
+        Reached only when the primary AND the secondary have both failed —
+        i.e. when the same model on two different roads is unavailable, which
+        is the saturated-MODEL case that route diversity alone cannot survive
+        (2026-09-22: Google direct refused with "This model is currently
+        experiencing high demand" 17 times and the same-model OpenRouter
+        failover went down with it).
+
+        Single-shot, same as `_try_failover`, and structured identically so
+        the two cannot drift. Returns the result tuple or None.
+        """
+        logger.error(
+            "Agent %s: primary AND secondary both failed — escalating to the "
+            "TERTIARY route %s/%s (a DIFFERENT model).",
+            self.name, self._tertiary_provider, self._tertiary_model,
+        )
+        try:
+            client = _build_llm_client(self._tertiary_provider, self._tertiary_api_key)
+            if self._tertiary_provider == "anthropic":
+                result = self._anthropic_call(
+                    client, self._tertiary_model, user_message, authorize=authorize,
+                )
+            else:
+                result = self._openai_wire_call(
+                    client, self._tertiary_model, self._tertiary_provider,
+                    user_message, authorize=authorize,
+                )
+            logger.warning(
+                "Agent %s: TERTIARY %s/%s SUCCEEDED (in=%d out=%d) — the desk "
+                "continues on a different model. Treat this answer as coming "
+                "from a model the seat was not measured on.",
+                self.name, self._tertiary_provider, self._tertiary_model,
+                result[1], result[2],
+            )
+            return result
+        except PaidAnalysisSuspended:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Agent %s: tertiary %s/%s also FAILED: %s. Every route is down.",
+                self.name, self._tertiary_provider, self._tertiary_model, exc,
             )
             if on_failure is not None:
                 on_failure(exc)

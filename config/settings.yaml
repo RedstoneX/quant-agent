@@ -205,6 +205,26 @@ llm:
   # 2026-08-31 incident.
   fallback_provider: "openrouter"
   fallback_model: "google/gemini-3.5-flash-lite"
+  # === ROUTE 3 (2026-09-23) — the first rung that changes the MODEL ========
+  # Routes 1 and 2 above are the same model on two roads: that is ROUTE
+  # diversity, and it is exactly what failed on 2026-09-22, when Google
+  # direct refused with "This model is currently experiencing high demand"
+  # 17 times and the same-model OpenRouter failover went down with it. Route
+  # 3 is reached only after BOTH have failed.
+  #
+  # It runs over OpenRouter, not Anthropic direct, because OpenRouter is one
+  # of only two LLM hosts with a verified OneCLI credential grant (see
+  # docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md — api.anthropic.com and
+  # api.openai.com have none, so a route on either would collect a 401 every
+  # time). Routing it here also means it inherits the uniform reasoning
+  # effort, the structured-output constraint and `usage: {include: true}`,
+  # all of which src/agents/base.py builds for OpenRouter and Google only.
+  #
+  # Note the id spelling: OpenRouter uses a DOT (`claude-haiku-4.5`) where
+  # Anthropic's native id uses a dash. Set tertiary_model to "" to switch
+  # route 3 off; the attempt-budget floor drops back in step.
+  tertiary_provider: "openrouter"
+  tertiary_model: "anthropic/claude-haiku-4.5"
 
 # How aggressively an entry may cross the spread. Bounds EXECUTION cost, not
 # position risk. A too-tight cap does not make the book safer — it silently

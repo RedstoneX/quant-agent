@@ -177,6 +177,23 @@ class LLMConfig(BaseModel):
     # "fallback" for its own inherited-by-every-agent meaning.
     fallback_provider: str = "openrouter"
     fallback_model: str = "google/gemini-3.5-flash-lite"
+    # === Route 3: the TERTIARY, a genuinely DIFFERENT model ================
+    # The fallback above changes the ROAD but keeps the MODEL, which is route
+    # diversity only: when the model itself is saturated both routes fail
+    # together (2026-09-22). This third rung is a different model on a third
+    # provider, reached ONLY after both of the above have failed.
+    #
+    # `o4-mini` rather than `claude-haiku-4-5` — the two are within 10% on
+    # price and both are credentialed, and the deciding factor is the cost
+    # circuit: Anthropic documents a 529 `overloaded_error` that
+    # src/cost_circuit.py cannot prove cost $0, so an Anthropic tertiary's
+    # most likely failure would hard-latch the desk. See
+    # src/agents/base.py's _DEFAULT_TERTIARY_PROVIDER for the full note.
+    #
+    # Setting `tertiary_model` to "" disables route 3 outright, and the
+    # attempt-budget check below then stops requiring the extra attempt.
+    tertiary_provider: str = "openai"
+    tertiary_model: str = "o4-mini"
     # Global output-ceiling fallback — used by any agent without an explicit
     # override below.
     max_tokens: int
@@ -332,6 +349,31 @@ class LLMConfig(BaseModel):
     def _fallback_model_is_nonempty(cls, v: str) -> str:
         if not isinstance(v, str) or not v.strip():
             raise ValueError("llm.fallback_model must be a non-empty model id")
+        return v.strip()
+
+    @field_validator("tertiary_provider")
+    @classmethod
+    def _tertiary_provider_is_valid(cls, v: str) -> str:
+        # Same no-escape-hatch rule as `fallback_provider`: route 3 names its
+        # provider directly, so a typo must fail at load rather than resolve
+        # to whatever `tertiary_model`'s prefix implies and quietly misroute
+        # the desk's last line of defence.
+        normalized = (v or "").strip().lower()
+        if normalized not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid llm.tertiary_provider {v!r}; must be one of "
+                f"{sorted(VALID_PROVIDERS)}"
+            )
+        return normalized
+
+    @field_validator("tertiary_model")
+    @classmethod
+    def _tertiary_model_is_str(cls, v: str) -> str:
+        # Empty IS legal here, unlike `fallback_model`: it is how an operator
+        # turns route 3 off, and `AppConfig.tertiary_available` reads it as
+        # such so the attempt-budget floor drops back to 3 in step.
+        if not isinstance(v, str):
+            raise ValueError("llm.tertiary_model must be a string model id or \"\"")
         return v.strip()
 
     @field_validator(
@@ -1683,7 +1725,9 @@ class LLMCostCircuitConfig(BaseModel):
     # extra attempts — the retry loop, not this ceiling, decides how many
     # requests are made. This only decides when the circuit intervenes.
     max_provider_attempts_per_call: int = Field(
-        default_factory=lambda: provider_attempt_budget(failover_available=True),
+        default_factory=lambda: provider_attempt_budget(
+            failover_available=True, tertiary_available=True,
+        ),
         ge=1,
     )
     # === Transient-latch self-clear (Defect B, 2026-09-22) ===
@@ -2297,6 +2341,32 @@ class AppConfig(BaseModel):
             "google": self.api_keys.google,
         }.get(self.llm.fallback_provider, self.api_keys.anthropic)
 
+    def _tertiary_key_for_provider(self) -> str:
+        """The credential route 3 needs, by the same mapping as the fallback's.
+
+        Deliberately a separate method rather than a parameterised one: the
+        two are read in different places and a shared helper with a provider
+        argument invites a call site passing the wrong one silently.
+        """
+        return {
+            "openai": self.api_keys.openai,
+            "deepseek": self.api_keys.deepseek,
+            "openrouter": self.api_keys.openrouter,
+            "google": self.api_keys.google,
+        }.get(self.llm.tertiary_provider, self.api_keys.anthropic)
+
+    def tertiary_available(self) -> bool:
+        """True when route 3 is both configured and credentialed.
+
+        Mirrors `BaseAgent._tertiary_reachable` minus the per-agent
+        distinct-pair test, for the same reason `_fallback_reachable_for_any_
+        agent` exists: the load-time attempt-budget check and the runtime gate
+        drifting apart is the 2026-08-31 outage.
+        """
+        if not (self.llm.tertiary_model or "").strip():
+            return False
+        return bool((self._tertiary_key_for_provider() or "").strip())
+
     def _fallback_reachable_for_any_agent(self) -> bool:
         """True when at least one agent's (provider, model) pair differs from
         the configured fallback pair — i.e. failover could ever actually fire
@@ -2442,7 +2512,10 @@ class AppConfig(BaseModel):
             bool(self._fallback_key_for_provider())
             and self._fallback_reachable_for_any_agent()
         )
-        required = provider_attempt_budget(failover_available=failover_available)
+        required = provider_attempt_budget(
+            failover_available=failover_available,
+            tertiary_available=self.tertiary_available(),
+        )
         configured = int(self.llm_cost_circuit.max_provider_attempts_per_call)
         if configured < required:
             raise ValueError(
