@@ -22,6 +22,115 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — rotation sequencing, attempt 3: the naked-sale window was closed by ordering the sale last, not by predicting what would happen after it (item 39)
+
+**In plain words:** the desk has a rule that can sell one holding to buy a
+better one. As written, it sold first and only then found out whether the
+replacement purchase would be allowed — and if it was not, the desk was
+simply out of the position, with an alert as the only consequence. That rule
+has never been switched on, so nothing was ever actually sold this way. This
+change makes the sale the LAST thing the session does, and makes it
+conditional on the replacement purchase already having cleared every gate.
+
+**Why the first two attempts did not work.** Attempt 1 closed one of the
+paths and, in doing so, downgraded a hard barrier (an exception that could
+not be configured away) into an ordinary configuration boolean — a weaker
+guarantee than the one it replaced. Attempt 2 (PR #555) checked the state of
+the book BEFORE the sale. That cannot work, because the gate it was trying to
+anticipate recomputes from the held book AFTER the sale on both of its sides
+at once: the loss numerator and the volatility-relative threshold it is
+compared against are both functions of what is still held. A pre-sale check
+is therefore blind to the very quantity it depends on. This is the general
+lesson and the reason for the title: a gate that reads live state cannot be
+predicted, only re-run.
+
+**What attempt 3 does instead.** The rotation close is ordered LAST among the
+session's SELLs and gated inside the sell loop immediately before submission.
+Because it is last, every other SELL in the session has already happened and
+can be RE-READ rather than guessed at; only the one unmade sale has to be
+projected, and that projection runs through the same functions execution
+itself runs, threshold included, not a reimplementation of them. The output
+is an object carrying those numbers rather than a flag, so no configuration
+setting produces clearance. **Bounded honestly, after adversary review:** the
+sole minting site in `src/` computes the numbers before it constructs that
+object, but nothing yet PINS it as the sole site — the type is a public
+frozen dataclass, its `gates_checked` tuple is supplied by the caller, and
+`covers()` checks that the gate NAMES are present rather than that the gates
+ran. The guarantee is therefore "one construction site today", not "one
+construction site by construction". A count-the-construction-sites check in
+the shape `src/number_sources.py` already uses would close that, and has not
+been built.
+
+**Six refusal paths are covered:** the daily-loss re-check, a missing price,
+a stale entry, a zero quantity, insufficient cash, and a notional below the
+broker minimum.
+
+**Four are NOT covered, by construction, and this is deliberate:** the
+latency window, a limit price that turns out to be unfillable against the
+NBBO at submission time, the borrow gate, and outright broker rejection. None
+of these is knowable before the sale is placed, and a submitted sale cannot
+be unmade. Naming them is the honest position; claiming coverage would not
+be.
+
+**COVERs are refused rather than modelled.** A cover placed later in the same
+session can move the book, and its worst case differs for the loss
+numerator, for the volatility-relative threshold and for gross exposure —
+three different bounds, none of them tight. Rather than pick one, a session
+containing a cover that can move the book refuses the rotation outright.
+
+**Why this is complete rather than merely narrower, and where that
+reasoning rests.** The replacement is never a name the desk already holds at
+research time: the opportunity evaluation filters held names out, and that
+filter is pinned by a test. That is what keeps the short-add block and the
+scale-in path out of reach of this sequence. Note the load it carries — the
+exclusion is one line reading a `held_symbols` argument the caller passes in,
+and no test asserts the DOWNSTREAM consequence, so a caller handing it a
+stale or empty held set would silently reopen both paths with nothing going
+red. Treat "out of reach" as an inference from that one argument, not as an
+independently enforced property.
+
+**Filed out of this review, not fixed here:** the execution SELL loop has two
+different staleness postures depending on whether a rotation is present. The
+rotation close is sized off a broker read taken moments earlier; every other
+SELL uses the position list as at research time, which the daily-loss
+re-check's own comment describes as five to ten minutes earlier. That is
+board item 178 (filed 2026-09-20 as 168 and renumbered on landing, because
+number 168 was taken on `main` in the meantime by the technical seat's
+history-length defect).
+
+**Ordering constraint against the account-level halt removal, recorded
+2026-09-23.** This change projects the unmade sale through
+`daily_loss_numerator` and `check_daily_loss`. The open change that removes
+the account-level loss halt deletes both from `src/` outright [measured
+2026-09-23 against that branch: zero remaining occurrences of either name
+under `src/`, from 9 and 15 deleted reference lines respectively, and
+`daily_loss_recheck` goes with them].
+
+The two are NOT stacked in git — this one branches from `main` and stands up
+against `main` on its own, and the halt-removal branch is already current
+with `main` while this one was not. But they collide three ways, and the
+collision is not symmetric:
+
+  - A plain modify/delete conflict. This change adds parameters to
+    `daily_loss_limit_basis`, `_daily_loss_limit_and_basis` and
+    `check_daily_loss`; the other change deletes those functions.
+  - A content collision. `daily_loss_recheck` is the FIRST of the six
+    required buy-leg gates, and it ceases to exist. The "six covered refusal
+    paths" sentence above becomes false on landing, and the argument this
+    whole attempt rests on — that both sides of the comparison are projected
+    through the real gate — has no gate left to be about.
+  - A test collision. The daily-loss sections of a 1,172-line new test file
+    go with it.
+
+So whichever lands second needs rework, but the halt removal landing second
+is a mechanical deletion of six more call sites, while this change landing
+second is a conflict AND a design question (what the post-sale projection
+should be computed against once there is no account-level loss gate) AND a
+doc rewrite AND a test rewrite. Do not land them in ignorance of each other,
+and do not assume this one can simply be rebased.
+
+---
+
 ### 2026-09-23 — every short position on the live dashboard was labeled "long" (item 176)
 
 **In plain words:** the owner spotted it himself — a position's quantity showed negative on the dashboard while the word next to it said "long." Two real shorts were affected on the day this was found: FLNC (qty -36, $268.56 short) and UPS (qty -7, $670.53 short), both confirmed live via the running API.
