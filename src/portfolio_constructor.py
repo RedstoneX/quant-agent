@@ -906,7 +906,8 @@ class PortfolioConstructor:
         """True unless the instrument is too YOUNG to be measured.
 
         The one narrow refusal that survived the 2026-09-12 replacement of
-        "no floor, no trade" (docs/WORK.md item 54): a listing with fewer
+        "no floor, no trade" (item 54, retired; this gate is now
+        docs/WORK.md item 180): a listing with fewer
         completed sessions than the longest indicator window the analyst is
         briefed with (`LONGEST_INDICATOR_WINDOW`, the 200-session moving
         average) is refused by name, on both setup types, from the ONE
