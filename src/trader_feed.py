@@ -23,6 +23,7 @@ from src.notifier import (
     _DB_PATH as _NOTIFIER_DB_PATH,
     _fmt_signed_money,
     _lookup_company_profiles,
+    _margin_interest_lines,
     _new_block,
     _new_section,
     _seal_section,
@@ -1837,6 +1838,20 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     # right after the first line, which is really the heading." A repeat
     # correction: it kept drifting below whatever banner was added next.
     _new_section(lines, *_pnl_section_lines(result))
+
+    # Margin interest — the price of money the desk borrowed. This is the
+    # actual sent morning path (`_format_decision_session`, mode
+    # morning/once); `src.notifier`'s own `_margin_interest_lines()` call
+    # sits on `format_session_result`'s base formatter, which trader_feed
+    # only falls back to for statuses that never reach here (see
+    # `_BASE_ONLY_STATUSES` above) — so this line was built and correct but
+    # never actually sent (measured: 0 of 78 `notifier_sends` rows contain
+    # "margin interest"). Reused verbatim from `src.notifier`, including its
+    # own ESTIMATE caveat and the owner's "show it every day, even at zero"
+    # policy (2026-09-18) — placed here, right after P&L and before every
+    # section subject to the message-length budget, so it survives a clip
+    # the way the P&L block above it does.
+    _new_section(lines, *_margin_interest_lines())
 
     _new_block(lines, _append_coverage_gaps, result)
 

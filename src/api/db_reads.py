@@ -677,6 +677,38 @@ def get_recent_daily_pnl(limit: int = 30) -> list[dict]:
             conn.close()
 
 
+def get_earliest_daily_pnl() -> dict | None:
+    """SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1 — the oldest row
+    this table actually has.
+
+    Same query and same "never reconstructed from an archive" posture as
+    `Database.get_earliest_daily_pnl` (src/storage/db.py), which the
+    Telegram feed's own "Total P&L since <date>" line already uses
+    (`TradingPipeline._total_pnl_since_reset`). Duplicated here rather than
+    imported — `src/api` is forbidden by a ratified structural guardrail
+    (tests/test_api_safety.py) from importing the trading/risk stack — the
+    same reason `get_recent_daily_pnl` above re-states its own SQL instead
+    of calling the Database class.
+
+    Used by `routes_live.get_account` for the dashboard's own total-P&L
+    figure, read-only, on the same `mode=ro` connection as every other
+    query in this module. Returns `None` on any read failure — never a
+    fabricated baseline.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1",
+        ).fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def session_prefixes_logged_on() -> list[str]:
     """Distinct run_id prefixes (e.g. "run", "midday") logged in agent_logs
     today (ET trading day). Mirrors `Database.session_prefixes_logged_on`'s
