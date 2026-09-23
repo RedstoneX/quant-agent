@@ -13524,3 +13524,109 @@ here made the first one a precondition of the second. See
 principle.
 
 ---
+
+### 2026-09-23 — the paid intraday tick, its cadence and its trigger are one unanswered question, not three defects
+
+**Why this entry exists.** The owner hit the same cluster three separate ways
+in one night, each piece filed somewhere different or not filed at all, and
+nothing said they were one thing. The evidence is gathered here so board item
+177 can stay short. Nothing here was fixed; this is the measurement record.
+
+**What the tick actually is.** `intra_check` runs 13 times a day, every 30
+minutes from 09:30 to 16:00 ET [measured: 13 distinct `intra_check` run_ids
+per day in `llm_budget_sessions`, on both 2026-09-21 and 2026-09-22]. It is
+not a monitor. Each run is a FULL trading session: it re-reads the whole book
+and asks the portfolio manager whether to trade.
+
+**What it produced.** 5 material actions across 26 runs over those two days;
+21 runs changed nothing [measured]. All of 2026-09-21's trading came from this
+tick — the NUE sale, the META, ETN and MRVL buys, the RKLB buy and the UPS
+short. 2026-09-22 ran 13 times and took zero actions [measured].
+
+**What it cost.** 2026-09-21 spent $2.6478 against a $2.75 daily cap, 96% of
+the ceiling, of which this tick was 90%. 2026-09-22 spent $0.7883, 72% of it
+this tick. Median paid run about $0.18 [all measured, `llm_budget_sessions`].
+
+**Where the 30 minutes comes from: nowhere.** The interval exists only in a
+systemd timer, `OnCalendar=*:15,45`, with no config key anywhere. The `:15/:45`
+PHASE is justified — it avoids a measured 90 ms timer race on 2026-09-17 (see
+that day's entry above). The 30 itself is derived from nothing; the only
+written reasoning is a code comment saying the scan "runs in ~5 seconds; OK for
+a 30-minute cadence", which justifies feasibility, not frequency.
+
+**The cost driver is the held book, not the movers.** Portfolio-manager input
+was 40,573 to 42,444 tokens across all 12 paid runs — a 4.6% spread — while the
+mover count over the same runs ranged from 1 to 5 [measured]. A 1-mover tick
+cost $0.2009; a 5-mover tick cost $0.1495. So the trigger threshold controls
+whether a run happens, and barely touches what it costs when it does. The
+remaining 2x run-to-run spread is not the book either: it is OpenRouter's cheap
+`flex` endpoint saturating and falling through to full price, confirmed by
+arithmetic against the published rates.
+
+**Protection does not depend on this tick.** A separate, free unit,
+`quant-agent-coverage-sweep`, re-checks every stop every 30 minutes all day
+(49 runs on 2026-09-22 [measured]) and repaired all 10 coverage gaps itself at
+the open. The cadence of the paid tick can therefore change without touching
+deterministic safety. BUT three cheap jobs currently ride the paid tick and
+would have to be scheduled separately first: the daily-loss breaker, order-fill
+reconciliation, and stop-out write-back.
+
+**The numbers that govern it.** All are already registered in
+`config/number_ledger.yaml`; that file, not this one, carries their open
+questions and their stated cost while unanswered. They are
+`src.config.IntradayScanConfig.move_threshold_pct` (3, `arbitrary`),
+`cooldown_hours` (3, `arbitrary`), `max_candidates_per_scan` (5, `arbitrary`),
+and a SECOND number with the same name and a different value,
+`src.pipeline.TradingPipeline._build_missed_opportunities_digest(move_threshold_pct)`
+(8, registered `not-trade-governing` as a dead default whose live value is a
+call-site literal). `config/settings.yaml`'s own comment beside these already
+admits they "carry no source".
+
+**Why it is one decision and not several.** The threshold decides whether a
+tick spends anything at all; the cadence decides how many ticks there are; the
+held-book context decides what each one costs regardless of either. Answering
+any one alone gives a wrong answer — which is exactly the trap an orchestrator
+fell into by bringing the owner the cadence question on its own, and he
+correctly refused to answer it.
+
+**The wider frame.** Board item 90's half two — read each arbitrary entry off
+its instrument — is the parent. 213 entries are marked arbitrary in the ledger
+[measured: `grep -c arbitrary config/number_ledger.yaml`]. The gate that forces
+a written justification exists and works; the work of actually deriving the
+numbers has not started. This cluster is the first tranche because it is the
+one the owner has now hit three times and the one spending his whole budget.
+
+**Two corrections to the brief this entry was written from, found by the
+adversary review on 2026-09-23 and verified here.** First, the cadence is NOT
+defined in one place: besides the systemd timer there is
+`src/scheduler.py::_build_intra_check_trigger`, whose `range(lo_min, hi_min+1,
+30)` produces 14 ticks rather than 13, and `src/silence_watchdog.py`'s
+`SLACK_MINUTES = 45`, whose own comment says it is derived from the timer
+cadence. None of the three is in `src/number_sources.py`'s scope, so the
+cadence has no ledger entry and no mechanical cover at all — a change to it
+fails nothing. Second, "213 entries marked arbitrary" is wrong: `grep -c
+arbitrary` counts LINES containing the word, including prose inside notes. The
+entry count is 148 [measured: `grep -c '^    status: arbitrary'`], which is
+also `MAX_ARBITRARY_ENTRIES` in `src/number_sources.py`, and because that
+constant is an EQUALITY, re-deriving any of the three intraday entries fails
+the build until it is lowered. That is what makes item 177 mechanically
+checkable rather than prose.
+
+**One nuance the cost measurement hides.** A tick with no qualifying mover
+returns `intraday_scan_no_opportunity` before any paid discovery
+(`src/pipeline.py`), so the trigger is a cost lever too, not only a quality
+lever: it decides whether a tick is paid at all. The held-book finding above
+describes what a PAID run costs once the trigger has let it through. Both are
+true, and they are why the two cannot be settled separately.
+
+**The jobs riding the tick are more than three.** The brief named the
+daily-loss breaker, order-fill reconciliation and stop-out write-back; the
+intra preamble also carries the protection-restore drain, the repeg drain, the
+retired-cash-park release and the orphan-submit reconciler, and the whole
+preamble is SKIPPED whenever another process holds the broker-write lock or a
+live session owns the desk. Item 177 therefore says "every intra-preamble job",
+not "the three". Note also that item 32's owner ruling points at deleting the
+account-level loss halt, so rescheduling that particular job may be moot —
+check item 32 before doing it.
+
+---
