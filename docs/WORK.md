@@ -164,6 +164,11 @@ DONE WHEN:
   - [ ] estimated-vs-real is visible wherever lag reaches a seat or owner
 
 
+**173. Residue of the ledger share-count fix — filed 2026-09-23.** Defect and fix: `docs/INCIDENT_HISTORY.md`. **(a) HAS A DEADLINE.** The bad count hid a real gap: EQNR left the book 2026-09-21 16:19-16:45 UTC with no trades row for 8.5962 sh [measured, production DB, read-only, 2026-09-23]. Inside the 7-day lookback the next pass writes it back; past ~2026-09-28 it turns unexplained, and `send_owner_alert` has NO dedup or throttle, so it pages CRITICAL at all five session entries, daily. Nothing shows the exit was a stop, so writing it back as one stamps an unevidenced cause onto owner P&L. **(b)** `_reconcile_stop_out_fills` runs BEFORE `_reconcile_fills` at every session entry, so the desk's own unreconciled sale pages a false CRITICAL (NUE 2026-09-21). **(c)** Signed from the action name, so a COVER — and a filled buy-to-cover TRAIL_STOP — subtracts from a short instead of retiring it (36 short, fully covered, reads -72). Silent today; pinned by a test saying it is wrong.
+DONE WHEN:
+  - [ ] EQNR resolved on its own evidence before the lookback expires, or the alert bounded
+  - [ ] (b) and (c) designed and approved, or accepted — (b) suppresses a live page, so it needs a bound or a never-reconciled fill goes silent
+
 **111. The gross-exposure de-lever ladder's multi-symbol trim leaves the EARLIEST-trimmed symbol naked for the rest of the loop, not just the resting-order wait — TIER 1, filed 2026-09-18 out of the item 87 audit.** `_submit_protected_sell` cancels a symbol's stops immediately, but `_finalize_pending_protections` — the only thing that restores them — runs once, AFTER every symbol in the batch has been sold, at both the sweep/de-lever site and `_enforce_gross_ceiling` in `src/pipeline.py`; `_force_delever` shares the batch shape. With N trims the first symbol sold carries no stop for the rest of the loop plus every later symbol's terminal-fill wait, and the ladder fires only in a drawdown. There is no per-symbol finalize anywhere in the file, so finalizing per symbol is a real behaviour change on the live risk path.
 NO CRITERIA: this is a live-selling-path behaviour change during a drawdown — filing it is not authorization to act, and the owner decides whether and how to fix it before any completion criteria can be written.
 
