@@ -36,7 +36,8 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.rotation import (
-    RotationOpportunity, RotationPrecheck, evaluate_rotation_opportunity,
+    RotationOpportunity, RotationPrecheck, evaluate_rotation,
+    funding_view_measured, rotation_binding_constraints,
 )
 from src.trading_calendar import et_today
 from src.verdicts import RankedCandidate, rank_verdicts
@@ -665,10 +666,35 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         # inputs that may have moved in between. Reset first so a stale
         # value from a previous session can never leak into this one.
         self.last_rotation_precheck = None
+        # 2026-09-23. The funding half of the rotation precondition, from
+        # the SAME `_entry_deployment_budget` figure the Margin Capacity
+        # section above is rendered from and execution sizes entries
+        # against — never a second computation of "is the book full".
+        # `margin_ladder_backed=False` means that computation could not
+        # resolve this session, and `None` then switches the funding test
+        # off rather than letting an unreadable input read as "there is
+        # room". See `src/rotation.py` for why this constraint, and not the
+        # risk budget alone, is what has bound this desk.
+        _entry_budget_usd = kwargs.get("margin_headroom_usd")
+        if not bool(kwargs.get("margin_ladder_backed", False)) or not isinstance(
+            _entry_budget_usd, (int, float),
+        ) or isinstance(_entry_budget_usd, bool):
+            _entry_budget_usd = None
+        _min_order_usd = kwargs.get("min_order_usd")
+        if not isinstance(_min_order_usd, (int, float)) or isinstance(
+            _min_order_usd, bool,
+        ):
+            _min_order_usd = None
         rotation_precheck = self.rotation_precheck(
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
+            entry_budget_usd=(
+                None if _entry_budget_usd is None else float(_entry_budget_usd)
+            ),
+            min_order_usd=(
+                None if _min_order_usd is None else float(_min_order_usd)
+            ),
         )
         self.last_rotation_precheck = rotation_precheck
         rotation_section = self._render_rotation_section(
@@ -1838,6 +1864,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         held_symbols: set[str],
         existing_risk_pct: dict[str, float] | None,
         ceiling_pct: float,
+        entry_budget_usd: float | None = None,
+        min_order_usd: float | None = None,
     ) -> RotationPrecheck:
         """Phase 14 — run the opportunity-cost comparison once and keep its
         inputs. `_render_rotation_section` renders this for the prompt;
@@ -1851,24 +1879,95 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         check is skipped rather than run against a fabricated "book is
         empty" view, the same fail-open posture `allocate_risk_budget`
         itself already requires of every caller.
+
+        `entry_budget_usd` is `_entry_deployment_budget`'s own figure — the
+        dollars EXECUTION will size this session's entries against, already
+        carrying the §11.2 gross ladder, settled cash and the min of the two
+        — and `min_order_usd` the §10.3 `cash_sweep.min_order_usd` floor
+        under the smallest order the desk will place. Together they are the
+        funding half of the precondition (2026-09-23; see
+        `src/rotation.py`'s docstring for the measurement that added it).
+        Both `None` means the funding view was not resolvable this session,
+        and the funding test is then simply absent — this agent never
+        derives either number itself, for the same reason the Margin
+        Capacity section does not.
         """
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
+                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
             ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
         ).headroom_pct
-        opportunity: RotationOpportunity | None = evaluate_rotation_opportunity(
+        outcome = evaluate_rotation(
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             headroom_pct=headroom_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
         )
+        opportunity: RotationOpportunity | None = outcome.opportunity
         return RotationPrecheck(
             opportunity=opportunity, headroom_pct=headroom_pct,
             ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            refusal=outcome.refusal,
+            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+            binding=(
+                () if outcome.refusal is None else outcome.refusal.binding
+            ) or rotation_binding_constraints(
+                headroom_pct=headroom_pct,
+                floor_pct=STARTER_POSITION_RISK_PCT,
+                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+            ),
         )
+
+    @staticmethod
+    def _rotation_constraint_line(
+        precheck: RotationPrecheck, *, ceiling_pct: float,
+    ) -> str:
+        """The one sentence naming WHICH limit has the book pinned.
+
+        2026-09-23. The old wording said "capital is constrained" and then
+        quoted only the risk budget, because the risk budget was the only
+        thing the pre-check looked at. Now that the funding view can be the
+        binding one — and on this book it usually is, while the risk budget
+        almost never is — the sentence has to say which, or the model reads
+        a number that is not the one stopping it and plans around the wrong
+        limit. That mis-statement is the same class of defect as the
+        2026-09-17 CRM incident, where the prompt said no margin was
+        deployable while $11.4k of ladder headroom existed.
+        """
+        parts: list[str] = []
+        if "risk_budget" in precheck.binding:
+            parts.append(
+                f"only {precheck.headroom_pct:.2f}% risk headroom against "
+                f"the {ceiling_pct:.2f}% ceiling (existing book only, "
+                "before anything you propose today), under the "
+                f"{precheck.floor_pct:.2f}% minimum tradeable size"
+            )
+        if "funding" in precheck.binding:
+            budget = precheck.entry_budget_usd
+            floor = precheck.min_order_usd
+            parts.append(
+                f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
+                "ladder-and-cash budget execution sizes entries against), "
+                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "no new position can be funded at all without freeing "
+                "capital first"
+                if isinstance(budget, (int, float))
+                and isinstance(floor, (int, float))
+                else "the deployable budget will not fund a new order"
+            )
+        if not parts:
+            # Unreachable while callers check `precheck.binding` first; here
+            # so a future caller that does not gets a true sentence rather
+            # than an assertion of constraint that was never established.
+            return (
+                f"{precheck.headroom_pct:.2f}% risk headroom against the "
+                f"{ceiling_pct:.2f}% ceiling; no constraint is binding."
+            )
+        return "Capital is constrained — " + " and ".join(parts) + "."
 
     @classmethod
     def _render_rotation_section(
@@ -1911,32 +2010,39 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             )
         headroom_pct = precheck.headroom_pct
         opportunity = precheck.opportunity
+        constraint_line = cls._rotation_constraint_line(
+            precheck, ceiling_pct=ceiling_pct,
+        )
         if opportunity is None:
-            if headroom_pct < STARTER_POSITION_RISK_PCT:
+            if precheck.binding:
                 return (
                     f"{header}\n"
-                    f"Capital is constrained — {headroom_pct:.2f}% risk "
-                    f"headroom left against the {ceiling_pct:.2f}% ceiling "
-                    "(existing book only, before anything you propose "
-                    f"today), under the {STARTER_POSITION_RISK_PCT:.2f}% "
-                    "minimum tradeable size — but no eligible new "
-                    "candidate outranks a held position by enough to "
-                    "recommend trimming one for the other. Nothing to "
-                    "surface."
+                    f"{constraint_line} But no eligible new candidate "
+                    "outranks a held position by enough to recommend "
+                    "trimming one for the other. Nothing to surface."
                 )
+            if funding_view_measured(
+                precheck.entry_budget_usd, precheck.min_order_usd,
+            ):
+                return (
+                    f"{header}\n"
+                    f"{headroom_pct:.2f}% risk headroom left against the "
+                    f"{ceiling_pct:.2f}% ceiling, and "
+                    f"${precheck.entry_budget_usd:,.2f} is still deployable "
+                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
+                    "minimum order — real room exists on every constraint, "
+                    "so there is nothing to rotate for."
+                )
+            # Adversary review 2026-09-23: do NOT tell a seat that can sell
+            # that room exists on a constraint that was never measured.
             return (
                 f"{header}\n"
                 f"{headroom_pct:.2f}% risk headroom left against the "
-                f"{ceiling_pct:.2f}% ceiling — real room exists, so there "
-                "is nothing to rotate for."
+                f"{ceiling_pct:.2f}% ceiling. The session's deployable-entry "
+                "budget could NOT be read, so the funding constraint was not "
+                "tested and this check covers the risk budget only."
             )
-        lines = [
-            header,
-            f"Capital is constrained — {headroom_pct:.2f}% risk headroom "
-            f"left against the {ceiling_pct:.2f}% ceiling (existing book "
-            "only, before anything you propose today), under the "
-            f"{STARTER_POSITION_RISK_PCT:.2f}% minimum tradeable size.",
-        ]
+        lines = [header, constraint_line]
         if opportunity.tier == "ineligible_hold":
             reasons = "; ".join(opportunity.reasons)
             lines.append(
@@ -2111,6 +2217,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                margin_ladder_backed: bool = False,
                margin_ladder_multiple: float | None = None,
                margin_ladder_rung: str | None = None,
+               # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
+               # smallest order this desk will place. Threaded rather than
+               # defaulted to a literal so the rotation pre-check tests the
+               # DEPLOYED floor, not a second copy of it. `None` switches
+               # the funding half of the rotation precondition off.
+               min_order_usd: float | None = None,
                symbol_sectors: dict[str, str] | None = None,
                session_type: str = "morning",
                allowed_buy_symbols: set[str] | None = None,
@@ -2194,6 +2306,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
+            min_order_usd=min_order_usd,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
             allowed_buy_symbols=allowed_buy_symbols or set(),
