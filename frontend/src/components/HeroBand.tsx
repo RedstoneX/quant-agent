@@ -79,6 +79,96 @@ function RegimeCard({ regime }: { regime: { macro: MacroBroaderContext; asOf: st
   );
 }
 
+/* Portfolio-exposure card — net exposure gauge plus the Long/Hedge/Short/
+ * Liquidity breakdown. Extracted so the page layout (variant="page", iPad
+ * header) and the redesigned Account dockview panel (variant="panel")
+ * render exactly the same card from the same server-computed numbers, with
+ * no second copy to drift. All figures come in already computed by
+ * HeroBand — nothing is re-derived here (the defect that made this gauge
+ * and its own ceiling disagree by 13.6 points came from re-derivation). */
+function ExposureCard({
+  deployedLabel,
+  riskDeployedPct,
+  maxTotalPct,
+  longMv,
+  hedgeMv,
+  shortMv,
+  cashMv,
+}: {
+  deployedLabel: string;
+  riskDeployedPct: number | null;
+  maxTotalPct: number | null;
+  longMv: number;
+  hedgeMv: number;
+  shortMv: number;
+  cashMv: number;
+}) {
+  return (
+    <Card decoration="top" decorationColor="cyan" className="!bg-panel !p-3.5 !ring-border h-full">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Text className="uppercase tracking-wide">Portfolio exposure</Text>
+          <Title
+            className="mt-1 font-mono !text-2xl text-ink"
+            title="Net exposure: holdings after hedges are netted off, leveraged funds at their true multiple. Same measure as the ceiling beside it."
+          >
+            {deployedLabel} net exposure
+          </Title>
+        </div>
+        {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
+      </div>
+      <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
+      <Grid numItems={shortMv !== 0 ? 4 : 3} className="mt-3 gap-2">
+        <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
+        <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
+        {shortMv !== 0 && (
+          <div><Text className="text-xs uppercase">Short</Text><Metric className="font-mono text-base text-neg">{fmtMoneyCompact(shortMv)}</Metric></div>
+        )}
+        <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
+      </Grid>
+    </Card>
+  );
+}
+
+/* One tile in the panel's PRIMARY STAT ROW — the full-width, equally
+ * weighted row of headline glances (NLV, day P&L, total P&L, interest/day)
+ * that replaced the old three-full-width-rows-hugging-the-left layout
+ * (owner 2026-09-23: "weirdly horizontally dead spaced ... hard to find,
+ * the data I wanna see"). The row itself uses an auto-fit grid so the
+ * tiles fill the panel's real width and reflow as it is resized, rather
+ * than leaving a dead band on the right. */
+function StatTile({
+  label,
+  value,
+  valueClass = "text-ink",
+  sub,
+  badge,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  sub?: React.ReactNode;
+  badge?: React.ReactNode;
+  tooltip?: string;
+}) {
+  return (
+    <div
+      className="flex min-w-0 flex-col rounded-lg border border-border bg-panel-alt px-3 py-2"
+      title={tooltip}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="label-xs truncate">{label}</span>
+        {badge}
+      </div>
+      <div className={`mt-0.5 font-mono text-[length:var(--fs-stat)] font-semibold leading-tight tabular-nums ${valueClass}`}>
+        {value}
+      </div>
+      {sub != null && <div className="mt-0.5 text-[length:var(--fs-meta)] text-dim tabular-nums">{sub}</div>}
+    </div>
+  );
+}
+
 export function HeroBand({
   account,
   accountError,
@@ -225,13 +315,133 @@ export function HeroBand({
     );
   }
 
+  /* ==== Account Dockview panel (desktop) — redesigned 2026-09-23 ====
+   *
+   * Owner, live, verbatim: "Can you redesign that panel? It's just weirdly
+   * horizontally dead spaced ... it's just hard to read and hard to find,
+   * the data I wanna see." The three sub-sections used to stack as
+   * full-width rows whose content hugged the left third — a tall panel
+   * with a dead band down the right, and the margin-interest figure buried
+   * at the very bottom where he could not find it.
+   *
+   * The fix is two grids that USE THE FULL WIDTH:
+   *   1. PRIMARY STAT ROW — NLV, day P&L, total P&L since inception, and
+   *      interest/day as four equally weighted tiles in an auto-fit grid.
+   *      This one row answers both complaints: it fills the horizontal
+   *      space, and it lifts interest/day from the bottom to a headline
+   *      glance beside the P&L figures the owner named.
+   *   2. SECONDARY GRID — the exposure gauge and the regime card side by
+   *      side (auto-fit), compact, below the headline.
+   *
+   * Every honest datum and caveat is preserved: the ESTIMATE badge on
+   * interest stays VISIBLE (not tooltip-only), the real "$0.00/day" zero
+   * state and the "not available" degraded state both render as text, and
+   * total P&L still degrades to "—" rather than fabricating a number. The
+   * borrowed/annual/rate ESTIMATE detail continues below in
+   * MarginInterestStrip; this row is the glance, that strip is the detail.
+   */
+  if (isPanel) {
+    const mi = account.margin_interest;
+    // Interest tile — mirrors MarginInterestStrip's own rules so the two
+    // never disagree: a null/errored estimate degrades to "not available"
+    // (never a fabricated $0.00), a real zero shows "$0.00/day", and a
+    // carried debit balance shows the figure with the ESTIMATE badge
+    // rendered as visible text, per the standing desk rule that an
+    // estimate is never dressed as a measurement.
+    const interestUnavailable = !mi || mi.error;
+    const interestZero = !interestUnavailable && mi!.daily_usd === 0;
+    let interestValue: string;
+    let interestBadge: React.ReactNode = null;
+    let interestSub: React.ReactNode = null;
+    if (interestUnavailable) {
+      interestValue = "not available";
+    } else if (interestZero) {
+      interestValue = "$0.00/day";
+      interestSub = "Nothing borrowed overnight";
+    } else {
+      interestValue = `${fmtMoney(mi!.daily_usd)}/day`;
+      interestBadge = (
+        <Badge color="amber" size="xs">
+          ESTIMATE
+        </Badge>
+      );
+      interestSub = mi!.rate_pct === null ? undefined : `${mi!.rate_pct.toFixed(2)}% annual`;
+    }
+
+    return (
+      <div className="min-w-0 overflow-x-hidden">
+        <div
+          className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]"
+          aria-label="Account headline"
+        >
+          <StatTile
+            label="Net liquidation value"
+            value={fmtMoney(account.portfolio_value)}
+            badge={accountError ? <Badge color="amber" size="xs">stale</Badge> : undefined}
+            tooltip="Total account equity — cash plus the market value of every position."
+          />
+          <StatTile
+            label="P&L today"
+            value={fmtMoney(account.daily_pnl)}
+            valueClass={pnlClass(account.daily_pnl)}
+            sub={<span className={pnlClass(account.daily_pnl_pct)}>{fmtPct(account.daily_pnl_pct)}</span>}
+            tooltip={`${fmtMoney(unrealized)} unrealized`}
+          />
+          <StatTile
+            label="Total P&L"
+            value={account.total_pnl === null ? "—" : fmtMoney(account.total_pnl)}
+            valueClass={pnlClass(account.total_pnl)}
+            sub={
+              account.total_pnl === null
+                ? undefined
+                : `${fmtPct(account.total_pnl_pct)}${account.total_pnl_since ? ` since ${account.total_pnl_since}` : ""}`
+            }
+            tooltip={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+          />
+          <StatTile
+            label="Interest / day"
+            value={interestValue}
+            valueClass={interestUnavailable ? "text-dim" : "text-ink"}
+            badge={interestBadge}
+            sub={interestSub}
+            tooltip={marginInterest.note}
+          />
+        </div>
+
+        {history.length > 1 && (
+          <SparkAreaChart
+            data={history}
+            index="date"
+            categories={["equity"]}
+            colors={["cyan"]}
+            className="mt-2 h-8"
+            showGradient
+          />
+        )}
+
+        <div className="mt-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))]">
+          <ExposureCard
+            deployedLabel={deployedLabel}
+            riskDeployedPct={riskDeployedPct}
+            maxTotalPct={maxTotalPct}
+            longMv={longMv}
+            hedgeMv={hedgeMv}
+            shortMv={shortMv}
+            cashMv={cashMv}
+          />
+          <RegimeCard regime={regime} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     /* Vertical-space reallocation pass, 2026-09-11: outer mt-3 -> mt-2,
        same low-risk inter-section trim as the other stacked chrome
        sections (HoldingsStrip/LiquidityPanel/TodaySessionsStrip/
        DecisionStateBanner) — internal mt-3 spacing inside this component
        is untouched. */
-    <div className={`${isPanel ? "min-w-0 overflow-x-hidden " : "mx-3 mt-2 "}grid grid-cols-1 gap-3 ${isPanel ? "" : regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
+    <div className={`mx-3 mt-2 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}
@@ -292,29 +502,15 @@ export function HeroBand({
         </div>
       </Card>
 
-      <Card decoration="top" decorationColor="cyan" className="!bg-panel !p-3.5 !ring-border h-full">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <Text className="uppercase tracking-wide">Portfolio exposure</Text>
-            <Title
-              className="mt-1 font-mono !text-2xl text-ink"
-              title="Net exposure: holdings after hedges are netted off, leveraged funds at their true multiple. Same measure as the ceiling beside it."
-            >
-              {deployedLabel} net exposure
-            </Title>
-          </div>
-          {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
-        </div>
-        <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
-        <Grid numItems={shortMv !== 0 ? 4 : 3} className="mt-3 gap-2">
-          <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
-          <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
-          {shortMv !== 0 && (
-            <div><Text className="text-xs uppercase">Short</Text><Metric className="font-mono text-base text-neg">{fmtMoneyCompact(shortMv)}</Metric></div>
-          )}
-          <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
-        </Grid>
-      </Card>
+      <ExposureCard
+        deployedLabel={deployedLabel}
+        riskDeployedPct={riskDeployedPct}
+        maxTotalPct={maxTotalPct}
+        longMv={longMv}
+        hedgeMv={hedgeMv}
+        shortMv={shortMv}
+        cashMv={cashMv}
+      />
 
       <RegimeCard regime={regime} />
     </div>

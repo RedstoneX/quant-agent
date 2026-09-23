@@ -21,7 +21,9 @@ from src.refusal_signature import (
     normalise,
     signature_key,
     status_line,
+    streak_and_skipped,
     unvarying_streak,
+    _plain_key,
 )
 from src.trading_calendar import ET
 
@@ -330,3 +332,468 @@ def test_the_alert_names_no_day_count(db, tmp_path):
     ))
     assert "not a count of empty days" in text
     assert "the reason never varied while the input did" in text
+
+
+# ---------------------------------------------------------------------------
+# a beginning is not an end (2026-09-22 false alert, both halves)
+# ---------------------------------------------------------------------------
+#
+# What the owner was sent on 2026-09-22, and why every clause of it was
+# false:
+#
+#   🔴 THE DESK HAS REFUSED EVERY IDEA FOR THE SAME REASON
+#   Across the last 6 session(s) with candidates, every single candidate was
+#   refused, and every refusal carried the SAME reason ...
+#   The one reason: the desk recorded a reason it has no plain wording for.
+#   (... opportunity|discovered|intraday_move_threshold||)
+#
+# Nothing was refused. The six runs were the 17:15–19:45 UTC intra_check
+# ticks, every one of which the cost circuit suspended at paid-analysis
+# entry; each had already told the owner so in its own message. The only
+# pipeline_event any of them wrote was the DISCOVERY of a mover — SNDK
+# 6.69% past a 3.0% threshold — which says the desk found the name, not
+# that it turned it down. And the reason it claimed to have no wording for
+# was sitting in the key: `intraday_move_threshold`.
+
+def _report_tables(con) -> None:
+    """The two run-scoped report tables the desk records its own verdict in.
+
+    Deliberately NOT created by `_make_db`, so every test above this point
+    still exercises the no-report-tables path a fresh database presents.
+    """
+    con.execute(
+        "CREATE TABLE intra_check_reports (run_id TEXT PRIMARY KEY,"
+        " date TEXT NOT NULL, payload_json TEXT NOT NULL,"
+        " positions_json TEXT, timestamp TEXT NOT NULL)",
+    )
+    con.execute(
+        "CREATE TABLE session_reports (date TEXT NOT NULL, mode TEXT NOT NULL,"
+        " run_id TEXT, payload_json TEXT NOT NULL, positions_json TEXT,"
+        " timestamp TEXT NOT NULL, PRIMARY KEY (date, mode))",
+    )
+
+
+def _intra_report(con, run_id, day, scan_status, hour=10):
+    con.execute(
+        "INSERT INTO intra_check_reports (run_id, date, payload_json,"
+        " positions_json, timestamp) VALUES (?,?,?,?,?)",
+        (run_id, day, json.dumps({
+            "status": "ok",
+            "run_id": run_id,
+            # The tick itself completed — the deterministic loss check is
+            # never the part that gets suspended. The scan's own nested
+            # status is the half that either reached a decision or did not,
+            # which is exactly why this module reads the nested one.
+            "intraday_scan": {"status": scan_status, "run_id": run_id},
+        }), None, _et_stamp(day, hour)),
+    )
+
+
+def _discovery(move_pct):
+    """`opportunity|discovered` — what `_run_intraday_opportunity_scan`
+    writes the moment it notices a mover, before anything looks at it."""
+    return {
+        "stage": "opportunity", "outcome": "discovered",
+        "reason": "intraday_move_threshold",
+        "move_pct": move_pct, "threshold_pct": 3.0,
+    }
+
+
+#: The six suspended 2026-09-22 intra_check ticks, verbatim in shape: the
+#: run's short id, and the movers it discovered before it stopped.
+SUSPENDED_20260922 = (
+    ("intra_check-d784af8d", 13, [("SNDK", 6.688374200124576),
+                                  ("GME", 5.533596837944671)]),
+    ("intra_check-cd97d679", 13, [("MU", 3.922339028854545)]),
+    ("intra_check-fa514b8a", 14, [("JPM", 3.3014313302283314)]),
+    ("intra_check-dc092d5c", 14, [("ONDS", 3.2498307379823994),
+                                  ("RKLB", 3.12477654629961),
+                                  ("FLNC", 3.0446549391068967)]),
+    ("intra_check-3d70b931", 15, [("DRAM", 3.165584415584408),
+                                  ("VLO", 3.1553521484871663),
+                                  ("WDC", 3.052549369630706)]),
+    ("intra_check-d8eb4cf4", 15, [("MRVL", 3.1790447320352913)]),
+)
+TUE_20260922 = "2026-09-22"
+
+
+def test_the_2026_09_22_false_alert_is_never_sent_again(db, tmp_path):
+    """The exact production evidence, pinned. Six runs, changing movers,
+    one identical key — every surface condition the detector fires on — and
+    it must stay silent, because not one of those runs ran a gate."""
+    con, path = db
+    _report_tables(con)
+    for run_id, hour, movers in SUSPENDED_20260922:
+        for symbol, move_pct in movers:
+            _event(con, run_id, TUE_20260922, symbol, _discovery(move_pct), hour)
+        _intra_report(con, run_id, TUE_20260922, "paid_analysis_suspended", hour)
+    con.commit()
+
+    sessions, err = load_sessions(path)
+    assert err is None
+    assert sessions == [], (
+        "a run whose every candidate is still undecided considered nothing "
+        "this check has an opinion about"
+    )
+    status = check_refusal_signature(
+        now=_now_after(TUE_20260922), db_path=path,
+        state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is False
+    assert status.key is None
+
+
+def test_a_discovery_is_never_a_terminal_outcome(db):
+    """Finding a name is a beginning. It cannot be what killed it."""
+    con, path = db
+    _event(con, "r1", WED, "AAPL", _refusal("AAPL"))
+    _event(con, "r1", WED, "SNDK", _discovery(6.69))
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].candidates == frozenset({"AAPL"})
+    assert "SNDK" not in sessions[0].outcomes_by_symbol
+
+
+def test_a_later_discovery_discards_an_earlier_disposition(db):
+    """The evidence stream only moves a candidate forward, so a discovery
+    arriving after something else means this run re-opened the name."""
+    con, path = db
+    _event(con, "r1", WED, "AAPL", _refusal("AAPL"))
+    _event(con, "r1", WED, "AAPL", _discovery(4.2))
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions == []
+
+
+def test_a_specialist_evaluation_is_a_beginning_too(db):
+    """`opportunity` is not the only stage with that character, which is
+    why the rule is keyed on the outcome word and not on one stage name."""
+    con, path = db
+    _event(con, "r1", WED, "AAPL", {
+        "stage": "specialist", "outcome": "evaluated",
+        "reason": "technical_analysis_validated",
+    })
+    con.commit()
+    assert load_sessions(path)[0] == []
+
+
+# ---------------------------------------------------------------------------
+# a run that never reached a decision is not evidence about the gate
+# ---------------------------------------------------------------------------
+
+def _jam_session(con, run_id, day, symbols, hour=10, code="stop_wider_than_instrument_reach"):
+    """A run that really did put candidates through the gate and had every
+    one of them refused by the same rule."""
+    for symbol in symbols:
+        _event(con, run_id, day, symbol, _refusal(symbol, code=code), hour)
+
+
+def test_a_cost_circuit_suspension_is_excluded_by_the_desks_own_record(db, tmp_path):
+    """The 15:15 tick of 2026-09-22 is the case the undecided-outcome rule
+    does NOT catch: it got as far as running its specialists, one of them
+    failed, and that failure reads as a disposition. Only the run's own
+    recorded status says it never reached the gate."""
+    con, path = db
+    _report_tables(con)
+    _event(con, "r1", TUE_20260922, "AAPL", {
+        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+    }, 11)
+    _intra_report(con, "r1", TUE_20260922, "paid_analysis_suspended", 11)
+    con.commit()
+
+    sessions, _ = load_sessions(path)
+    assert len(sessions) == 1
+    assert sessions[0].disposition == "paid_analysis_suspended"
+    assert sessions[0].reached_decision is False
+
+    streak, skipped = streak_and_skipped(sessions)
+    assert streak == []
+    assert [s.run_id for s in skipped] == ["r1"]
+    assert check_refusal_signature(
+        now=_now_after(TUE_20260922), db_path=path,
+        state_path=tmp_path / "state.json",
+    ).should_alert is False
+
+
+def test_a_suspended_tick_inside_a_real_jam_neither_joins_it_nor_breaks_it(db, tmp_path):
+    """Stepped over, not counted. A jam does not clear because one tick was
+    switched off, and a switched-off tick is not proof of one either."""
+    con, path = db
+    _report_tables(con)
+    _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
+    _intra_report(con, "r1", WED, "intraday_no_trades")
+    # The suspended tick sits BETWEEN two jammed sessions.
+    _event(con, "r2", THU, "NVDA", {
+        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+    })
+    _intra_report(con, "r2", THU, "paid_analysis_suspended")
+    _jam_session(con, "r3", FRI, ["TSLA", "AMD", "INTC"])
+    _intra_report(con, "r3", FRI, "intraday_no_trades")
+    con.commit()
+
+    streak, skipped = streak_and_skipped(load_sessions(path)[0])
+    assert [s.run_id for s in streak] == ["r1", "r3"]
+    assert [s.run_id for s in skipped] == ["r2"]
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is True
+
+
+def test_an_unrecognised_status_still_counts_as_evidence(db):
+    """The failure direction is deliberate: an abort word nobody has taught
+    this module keeps its run in the streak, where the changing-candidates
+    test still has to pass. Silencing on the unknown would let one new
+    status word hide a real jam."""
+    con, path = db
+    _report_tables(con)
+    _jam_session(con, "r1", WED, ["AAPL"])
+    _intra_report(con, "r1", WED, "some_status_invented_next_year")
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].reached_decision is True
+
+
+# ---------------------------------------------------------------------------
+# the detector must still do its real job
+# ---------------------------------------------------------------------------
+
+def test_a_genuine_jam_still_fires(db, tmp_path):
+    """Real candidates, a real gate, one unvarying refusal reason, and
+    every run's own record saying it reached a decision."""
+    con, path = db
+    _report_tables(con)
+    for run, day, syms in (("r1", WED, ["AAPL", "MSFT"]),
+                           ("r2", THU, ["NVDA"]),
+                           ("r3", FRI, ["TSLA", "AMD"])):
+        _jam_session(con, run, day, syms)
+        _intra_report(con, run, day, "intraday_no_trades")
+    con.commit()
+
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is True
+    assert len(status.streak) == 3
+    assert status.inputs_varied is True
+    assert "JAMMED" in status_line(status)
+    text = alert_text(status)
+    assert "shape of a jammed gate" in text
+    assert "NOT counted above" not in text
+
+
+def test_the_alert_says_what_it_did_not_count(db, tmp_path):
+    con, path = db
+    _report_tables(con)
+    _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
+    _intra_report(con, "r1", WED, "intraday_no_trades")
+    _event(con, "r2", THU, "NVDA", {
+        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+    })
+    _intra_report(con, "r2", THU, "paid_analysis_suspended")
+    _jam_session(con, "r3", FRI, ["TSLA", "AMD"])
+    _intra_report(con, "r3", FRI, "intraday_no_trades")
+    con.commit()
+    text = alert_text(check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    ))
+    assert "1 other run(s) are NOT counted above" in text
+    assert "paid_analysis_suspended" in text
+    assert "reached a decision" in text
+
+
+# ---------------------------------------------------------------------------
+# the plain wording must use the field that is actually there
+# ---------------------------------------------------------------------------
+
+def test_a_reason_in_an_earlier_field_is_read_not_thrown_away():
+    """The exact key from the 2026-09-22 message. `_plain_key` read the
+    CODE field (empty) and announced it had no wording, while the reason
+    text sat two fields to its left."""
+    said = _plain_key("opportunity|discovered|intraday_move_threshold||")
+    assert "intraday_move_threshold" in said
+    assert "has no plain wording for this one" in said
+
+
+def test_the_detail_field_is_used_when_the_reason_is_empty():
+    said = _plain_key("some_gate|blocked|||the book is already full")
+    assert "the book is already full" in said
+
+
+def test_the_admission_appears_only_when_nothing_is_describable():
+    assert _plain_key("some_gate|blocked|||") == (
+        "the desk recorded a reason it has no plain wording for"
+    )
+
+
+def test_a_named_code_is_still_preferred_over_the_raw_reason():
+    said = _plain_key("some_gate|blocked|some_reason|some_code|")
+    assert "some_code" in said
+    assert "some_reason" not in said
+
+
+# ---------------------------------------------------------------------------
+# a full book is not a jammed gate (2026-09-23, the alert that was next)
+# ---------------------------------------------------------------------------
+#
+# Measured on the live desk on 2026-09-23: gross exposure 1.9908x against a
+# 2.0x ceiling, roughly $92 of headroom on ~$10,000 of equity. Every session
+# on a book that full produces a run of `portfolio_manager|held_unchanged`
+# rows and no orders — twelve of them that morning — and the desk's own
+# accounting line read "every one of the 69 non-targeted candidate(s)
+# carries a named ground". Monomorphic, over a candidate set that shifts as
+# the book does, for as long as the book stays full.
+#
+# `held_unchanged` means the portfolio manager holds the position, still
+# rates it, and left it out of the target list on purpose. That is the gate
+# working. Reported as "THE DESK HAS REFUSED EVERY IDEA FOR THE SAME REASON
+# — the shape of a jammed gate" it is the same class of falsehood as reading
+# a discovery as a refusal.
+
+#: The exact row the portfolio manager writes for a held name, from
+#: `src/pm_accounting.py` and verbatim in shape from production.
+HELD_UNCHANGED = {
+    "stage": "portfolio_manager", "outcome": "held_unchanged",
+    "reason": "pm_left_holding_unchanged", "refusal": "held_unchanged",
+    "note": ("the seat left a held name out of its targets, which its own "
+             "instructions define as leaving the position alone"),
+}
+
+#: Two consecutive real intra_check runs on the full book, with the held
+#: names they each reported. The sets differ, which is the condition that
+#: would have satisfied the "the input varied" half of the trigger.
+FULL_BOOK_20260923 = (
+    ("intra_check-d62ee54c", ["BRK-B", "NET", "META", "ETN", "FLNC", "NOK",
+                              "MRVL", "AMD", "AAPL", "RKLB", "RSG", "UPS"]),
+    ("intra_check-55044038", ["ETN", "AMD", "NET", "FLNC", "MRVL", "BRK-B",
+                              "META", "AAPL", "NOK", "RKLB", "UPS", "RSG",
+                              "PLTR"]),
+)
+
+
+def test_a_full_book_of_held_names_is_not_a_jammed_gate(db, tmp_path):
+    con, path = db
+    _report_tables(con)
+    for (run_id, held), day in zip(FULL_BOOK_20260923, (THU, FRI)):
+        for symbol in held:
+            _event(con, run_id, day, symbol, HELD_UNCHANGED)
+        _intra_report(con, run_id, day, "intraday_no_trades")
+    con.commit()
+
+    sessions, err = load_sessions(path)
+    assert err is None
+    assert sessions == [], (
+        "a run that only held what it already owns refused nothing, so it "
+        "is not a session this check has an opinion about"
+    )
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is False
+
+
+def test_a_jam_still_fires_underneath_a_full_book(db, tmp_path):
+    """The reason `held_unchanged` is NOT in SURVIVED_OUTCOMES. A surviving
+    candidate ends the streak outright, so holding the book there would make
+    this alarm unfireable on a fully invested desk — which is exactly when a
+    stuck gate is hardest to see. Dropping the held names instead leaves the
+    genuinely refused ones visible."""
+    con, path = db
+    _report_tables(con)
+    held = ["AAPL", "META", "NET", "RSG"]
+    for run, day, fresh in (("r1", WED, ["NVDA"]),
+                            ("r2", THU, ["AMD", "INTC"]),
+                            ("r3", FRI, ["TSLA"])):
+        for symbol in held:
+            _event(con, run, day, symbol, HELD_UNCHANGED)
+        _jam_session(con, run, day, fresh)
+        _intra_report(con, run, day, "intraday_no_trades")
+    con.commit()
+
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is True
+    assert status.symbols == ["AMD", "INTC", "NVDA", "TSLA"], (
+        "the held names must not be reported to the owner as refused ideas"
+    )
+
+
+def test_holding_the_book_does_not_end_a_streak_the_way_a_fill_does(db):
+    """`held_unchanged` and `filled` must land in different categories:
+    one drops its candidate, the other ends the streak."""
+    con, path = db
+    _jam_session(con, "r1", WED, ["AAPL"])
+    _event(con, "r1", WED, "META", HELD_UNCHANGED)
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].any_survived is False
+    assert sessions[0].candidates == frozenset({"AAPL"})
+
+
+# ---------------------------------------------------------------------------
+# the rest of the outcome vocabulary, audited 2026-09-23
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("opportunity", "nominated"),          # a seat put the name forward
+    ("opportunity", "admitted"),           # eligibility was widened for it
+    ("opportunity", "already_covered"),    # duplicates an analysis this run has
+    ("portfolio_manager", "held_unchanged"),
+    ("portfolio_manager", "proposed"),     # a target was put up
+    ("evidence_gate", "not_decided"),      # says so in the word itself
+    ("funding", "attempted"),              # a cash sweep in flight
+    ("funding", "not_required"),           # no sweep was needed
+    ("position_management", "exited"),     # a SELL is not a refused idea
+    ("scale_in", "protective_sell_cancelled"),
+    ("reconciliation", "stop_out_gap_unexplained"),
+])
+def test_no_outcome_word_that_refuses_nothing_is_read_as_a_refusal(db, stage, outcome):
+    con, path = db
+    _event(con, "r1", WED, "AAPL", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    assert load_sessions(path)[0] == []
+
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("risk", "modified"),        # resized and let through — `approved` with a haircut
+    ("execution", "safety_net"), # catch-up reprice, the order then proceeds
+    ("order", "filled"),
+    ("risk", "approved"),
+])
+def test_an_entry_that_went_ahead_ends_the_streak(db, stage, outcome):
+    con, path = db
+    _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
+    _event(con, "r1", WED, "NVDA", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].any_survived is True
+    assert unvarying_streak(sessions) == []
+
+
+@pytest.mark.parametrize("stage,outcome", [
+    ("deterministic_gate", "blocked"),
+    ("risk", "rejected"),
+    ("portfolio_manager", "not_selected"),
+    ("portfolio_manager", "omitted"),
+    ("funding", "no_additional_cash"),
+    ("protection", "not_placed"),
+    ("specialist", "failed"),
+    ("order", "rejected"),
+    ("an_outcome_word_invented_next_year", "who_knows"),
+])
+def test_a_word_that_kills_a_candidate_still_reads_as_a_refusal(db, stage, outcome):
+    """The default is unchanged and stays conservative: anything not
+    classified as harmless kills its candidate, so the audit cannot have
+    quietly disarmed the check."""
+    con, path = db
+    _event(con, "r1", WED, "AAPL", {
+        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
+    })
+    con.commit()
+    sessions, _ = load_sessions(path)
+    assert sessions[0].candidates == frozenset({"AAPL"})
