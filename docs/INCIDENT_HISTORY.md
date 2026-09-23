@@ -140,15 +140,62 @@ one was modelled on. The risk seat may resize on advisories per the
 not a new capability, but the label vs. content mismatch is real and
 predates this PR.
 
-**Also flagged, not resolved here (a public-disclosure question, not a
-code question):** `tests/fixtures/tech_seat_production_answers_sample.json`
-holds real production trade reasoning, entries, targets and stops in a
-PUBLIC repository. Two much smaller pre-existing fixtures
-(`tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_*.txt`, ~16KB
-combined) set some precedent for this, but this file is larger (~90KB, 7
-answers, shrunk from an initial 16/~218KB specifically over this concern).
-Neither this session nor its adversary reviewer can authorise a
-public-disclosure decision; flagged to the supervising session.
+**Partly addressed 2026-09-23 by redacting the file; the disclosure
+question itself is NOT closed and is not this session's to close.**
+`tests/fixtures/tech_seat_production_answers_sample.json` held real
+production trade reasoning, entries, targets and stops in a PUBLIC
+repository. The file has been redacted at the branch tip, because the
+fixture never needed the values — `tests/test_tech_seat_production_replay.py`
+reads only the structure. The substitution is value-for-value and
+shape-preserving: 49 distinct tickers mapped one-to-one onto synthetic
+same-length names, assigned in HASH order rather than alphabetical order so
+the map does not leak the ranking or spelling of the real universe (an
+alphabetical first attempt did, and was caught in adversary review);
+prices, targets, stops and levels regenerated from a per-row synthetic base
+at each literal's original decimal precision and made RATING-AWARE, so a
+sell row keeps its stop above and its target below entry (the first attempt
+gave every row long geometry and turned eleven valid production short rows
+into schema violations — also caught in review); and every free-text field
+replaced with a fixed synthetic sentence. Untouched: row counts, key names,
+key order, null patterns, fencing and whitespace. Verified after the swap
+[measured 2026-09-23]: zero of the 49 real tickers survive anywhere in the
+file; all 68 parsed rows land on the same side of `TechAnalysisResult`
+validation as before, 45 valid and 23 invalid, each individual row matching;
+and both parsers still produce identical rows on all seven samples.
+
+**What redaction does NOT do, stated plainly.** The unredacted file is
+already published. It was added in this branch's own commit `af40b567`,
+which is reachable from `refs/heads/item157-ta-schema` on the public remote
+and is listed in pull request #568's own commit list [verified 2026-09-23
+against `git ls-remote`]. Rewriting the tip does not remove a blob from a
+branch's history. Actually removing it requires a history rewrite and a
+force-push, or closing this PR and recreating it from a clean branch — a
+disclosure-and-force-push decision that neither this session nor its
+adversary reviewer can authorise. It is flagged to the supervising session
+and remains open.
+
+**Also true of the fixture after redaction, and recorded rather than
+fixed:** it no longer reproduces the character distribution of real model
+prose — the synthetic sentences contain no `$`, `%`, apostrophes or
+parentheses, which real answers carry in quantity — so it cannot exercise a
+future salvage path that trips on one of those inside prose. And no sample
+in it has ever been a malformed-JSON case; all seven parse cleanly, before
+and after, so the earlier in-file comment claiming otherwise was wrong and
+has been corrected. Neither weakens what this fixture actually asserts
+(parser equivalence), but both bound what it can be cited for.
+
+**Wider than this PR, reported not fixed:** six other files under
+`tests/fixtures/` carry real desk output and are already public —
+`constructor_drop_paths_archive.json` (real tickers with entry/stop pairs),
+`holding_why_rsg_20260917.json` (a real holding with its stop and broker
+order id), `pm_response_11_targets_20260817.txt` and
+`pm_response_17_targets_20260820.txt` (real portfolio-manager reasoning and
+targets), `tech_answer_20260917_intra_check_26f52bf2_first.txt` and
+`..._retry.txt` (real symbols and prices), plus
+`log_health_production_excerpt.txt`, whose own header states its lines are
+verbatim production log output. Per the desk's own audit rule this ends in
+a board item or a mechanical check over `tests/fixtures/`, not in one file
+being cleaned; filing that is the supervising session's call.
 
 Full suite green apart from the pre-existing, unrelated
 `test_rehearsal_reproduces_cost_ceiling.py` failure (confirmed identical on

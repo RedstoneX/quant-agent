@@ -14,7 +14,20 @@ against shapes the model actually produced.
 `tests/fixtures/tech_seat_production_answers_sample.json` is a bounded,
 evenly-spaced sample of real `agent_logs.full_response` rows for
 `agent_name='tech_analyst'`, read from the read-only production snapshot
-available on this box (`/tmp/qamc_ro.db`, generated 2026-09-18 19:24 UTC).
+available on this box (`/tmp/qamc_ro.db`, generated 2026-09-18 19:24 UTC),
+and then REDACTED: this repository is public, so every symbol, entry price,
+stop, target, level and piece of reasoning text in it is synthetic. What is
+real, and what this file tests, is the STRUCTURE the model produced — row
+counts, key names, key order, null patterns, fence markers (including the
+double-fenced self-correction in log 283) and indentation. The replay below
+reads none of the values, and the substitution was checked to leave every
+row's outcome against `TechAnalysisResult` unchanged: 68 rows, 45 valid and
+23 invalid before and after, with each individual row landing on the same
+side [measured 2026-09-23]. Two things this fixture does NOT reproduce, and
+should not be relied on for: the character distribution of real model prose
+(the synthetic sentences carry no `$`, `%`, apostrophes or parentheses,
+which real answers carry in quantity), and any malformed-JSON case — all
+seven samples parse cleanly, before and after.
 That snapshot's `agent_logs` table holds 116 tech-seat calls spanning
 2026-08-17 13:32:41 to 2026-09-18 19:16:18, which split (on the desk's own
 `--- chunk N/M ---` markers) into 243 individual raw answers. ALL 243 were
@@ -68,11 +81,13 @@ def test_fixture_is_not_empty_and_is_really_bare_arrays():
         # fenced block after the first, or none at all — some real answers
         # are unfenced); when fenced, the LAST block is what the parser
         # actually takes (see `parse_json`'s "latest correction" rule).
-        # Not every real answer is well-formed JSON at this point — some of
-        # these are exactly the "one garbled row" shape the row-by-row
-        # salvage exists for (see tests/test_tech_row_salvage.py) — so this
-        # only checks the outer shape is array-like, not that the whole
-        # thing parses.
+        # This only checks the outer shape is array-like, not that the
+        # whole thing parses. An earlier version of this comment claimed
+        # some of these samples are the "one garbled row" shape the
+        # row-by-row salvage exists for; that was never true of this
+        # fixture — all seven parse cleanly [measured 2026-09-23]. The
+        # garbled-row path is covered by tests/test_tech_row_salvage.py,
+        # not here.
         matches = _FENCED_RE.findall(text)
         body = matches[-1] if matches else text
         inner = body.lstrip()
