@@ -260,10 +260,15 @@ class PositionItem(BaseModel):
     # True only for the configured cash-sweep vehicle (e.g. SGOV) — parked
     # idle cash, never a Portfolio Manager thesis. See LiquidityBreakdown.
     is_cash_equivalent: bool = False
-    # "long" (ordinary equity/ETF) | "bearish_hedge" (an inverse ETF already
-    # in the trading universe — see `src.quantities.inverse_etf_symbols()`,
-    # derived from the one leverage table) | "cash_equivalent" (the sweep
-    # vehicle).
+    # "long" (ordinary equity/ETF, qty > 0) | "short" (qty < 0, any symbol —
+    # see docs/WORK.md item 176: this value did not exist before that fix,
+    # every short position was mislabeled "long") | "bearish_hedge" (qty > 0
+    # in an inverse ETF already in the trading universe — see
+    # `src.quantities.inverse_etf_symbols()`, derived from the one leverage
+    # table; a SHORT position in an inverse ETF is labeled "short", not
+    # "bearish_hedge" — see `_position_direction` in
+    # `src/api/broker_reads.py` for the precedence and why) |
+    # "cash_equivalent" (the sweep vehicle).
     #
     # Display labeling ONLY; computes no exposure/risk math — and unlike
     # before, that is now true on both sides of the wire. The cockpit used

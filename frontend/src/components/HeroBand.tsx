@@ -113,13 +113,27 @@ export function HeroBand({
     .reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0);
   const liquidity = account.liquidity;
   const total = account.portfolio_value || 0;
-  // longMv / hedgeMv are DISPLAY sums only — a breakdown of where the money
-  // sits, using `direction` for exactly the labeling it is documented for.
+  // longMv / hedgeMv / shortMv are DISPLAY sums only — a breakdown of where
+  // the money sits, using `direction` for exactly the labeling it is
+  // documented for. `shortMv` is its own bucket (docs/WORK.md item 176):
+  // before that fix every short position was labeled "long" here too, so
+  // its negative market_value was counted inside `longMv`, silently
+  // UNDERSTATING the Long tile by the short's magnitude (a $268 short read
+  // as if it made Long $268 smaller) with no Short tile to show it in.
+  // `cashMv`'s residual (total minus everything identified) already came
+  // out to the SAME number either way — algebraically, subtracting an
+  // unlabeled short from `total - longMv - hedgeMv` and subtracting a
+  // labeled short via a dedicated `- shortMv` term cancel out identically
+  // — so this fix does not change the Liquidity figure, only which tile a
+  // short's value is honestly shown in.
   const longMv = positions.filter((p) => p.direction === "long").reduce((sum, p) => sum + (p.market_value || 0), 0);
   const hedgeMv = positions
     .filter((p) => p.direction === "bearish_hedge")
     .reduce((sum, p) => sum + (p.market_value || 0), 0);
-  const cashMv = Math.max(total - longMv - hedgeMv, 0);
+  const shortMv = positions
+    .filter((p) => p.direction === "short")
+    .reduce((sum, p) => sum + (p.market_value || 0), 0);
+  const cashMv = Math.max(total - longMv - hedgeMv - shortMv, 0);
   // "% deployed" comes from the SERVER, computed by the same function the
   // risk engine's max_total_position_pct rule uses. This used to be
   // (longMv + hedgeMv) / total — hedges ADDED instead of netted, leverage
@@ -260,9 +274,12 @@ export function HeroBand({
           {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
         </div>
         <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
-        <Grid numItems={3} className="mt-3 gap-2">
+        <Grid numItems={shortMv !== 0 ? 4 : 3} className="mt-3 gap-2">
           <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
           <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
+          {shortMv !== 0 && (
+            <div><Text className="text-xs uppercase">Short</Text><Metric className="font-mono text-base text-neg">{fmtMoneyCompact(shortMv)}</Metric></div>
+          )}
           <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
         </Grid>
       </Card>

@@ -88,6 +88,20 @@
 # NO VALUE WAS CHANGED -- changing a live trade-governing number is the
 # owner's call and several are ratified-but-unsourced.
 numbers:
+  - id: src.config.INTRA_CHECK_TICK_MINUTES
+    value: 30
+    status: sourced
+    site: src/config.py
+    source: >-
+      src/scheduler.py:56 (`for tick_min in range(lo_min, hi_min + 1, 30)` in
+      `_build_intra_check_trigger`, the authority for how often the intraday
+      control actually fires) and src/trading_calendar.py:48 (the window those
+      ticks span). Not an independent number: it is pinned in config only so
+      the cost circuit's transient-latch cooldown can be derived from the gap
+      between consecutive PAID runs instead of chosen, and
+      tests/test_cost_circuit.py asserts the two agree by building the real
+      trigger and counting its ticks. Changing the schedule changes this;
+      changing this alone changes nothing about when anything runs.
   - id: src.config.CashSweepConfig.min_order_usd
     value: 500
     status: arbitrary
@@ -244,6 +258,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       How long after an intraday scan does a re-scan of the same name produce
       information the first scan did not?
@@ -259,6 +276,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       How many intraday candidates can one session actually size and place
       without exceeding the risk envelope?
@@ -274,6 +294,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       What intraday move size, relative to the name's OWN ATR, marks a
       development worth re-reading rather than ordinary noise?
@@ -3708,6 +3731,9 @@ numbers:
       (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_movers_count)
     value: 15
     status: arbitrary
