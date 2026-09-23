@@ -295,9 +295,12 @@ execution:
   # full: *"Auto selling isn't gonna happen until the portfolio is full. And
   # then pruning needs to have really good logic in place."* Both halves of
   # that condition are structural here, not conventions — the first gate is
-  # the capital-constrained test (a half-empty book has headroom, so nothing
-  # fires), and the third is the holding-discipline break (a position whose
-  # thesis is still intact is never rotated out). He also asked for it on
+  # the capital-constrained test (a half-empty book has headroom on every
+  # limit, so nothing fires; 2026-09-23 that test became the UNION of the
+  # risk budget and the deployable-entry budget, because the risk budget
+  # alone had never once said "full" while the book sat at 1.99x of a 2.0x
+  # gross ceiling), and the third is the holding-discipline break (a
+  # position whose thesis is still intact is never rotated out). He also asked for it on
   # rather than shipped dark: *"I'd like it turned on at the start because
   # I'm gonna forget otherwise."*
   # NOTE: this has never executed against a live broker. The desk has been
