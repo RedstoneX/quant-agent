@@ -21,6 +21,8 @@ A safety rule that depends on a language model remembering to apply it is not a 
 
 **Fix:** move it into `src/risk/rules.py` as a hard gate. Cheap, deterministic.
 
+**RETIRED (2026-09-20).** This finding is void: the rule it was about no longer exists. The owner removed the entire account-level loss-alarm mechanism — the daily halt and the 5-day/20-day BUY-halving brakes — on the grounds that an ordinary market fluctuation could halt the desk and that per-position stops are enough (`docs/INCIDENT_HISTORY.md`, board item 32). There is nothing left for either the model or the code to enforce. The fix recorded below is kept as the record of what was done at the time.
+
 **FIXED (2026-08-27, commit `c89e957`, branch `feat/risk-metrics-and-pm-correlation`).** `src/risk/rules.py::apply_drawdown_scale` halves every BUY's allocation before the hard filter runs, so the cash budget, sector accumulation, RM and execution all see the halved size; `drawdown_buy_cap` joins `HARD_BLOCK_RULES` (`src/pipeline.py`) as a fail-closed backstop for any BUY that reaches the engine unscaled. The PM prompt's own `drawdown = 0.5` multiplier was deleted in the same change — two independent halvings would quarter the position, so exactly one layer owns it.
 
 ### 1.2 The Portfolio Manager receives no correlation data
@@ -141,11 +143,13 @@ Correctly filters to transaction codes P/S, non-derivative rows only, with a $10
 
 ## Is the LLM Risk Manager earning its seat?
 
-**Yes, but narrowly.** `src/risk/rules.py` already enforces position caps, total exposure, daily loss, stop presence, correlation clustering, cash-only and sector caps. The Risk Manager adds narrative coherence auditing and PM-versus-Tech signal-fidelity checking, which rules cannot do.
+**Yes, but narrowly.** `src/risk/rules.py` already enforces position caps, total exposure, stop presence, correlation clustering, cash-only and sector caps. The Risk Manager adds narrative coherence auditing and PM-versus-Tech signal-fidelity checking, which rules cannot do.
 
 The uncomfortable part: its most safety-critical contribution is **covering for a missing deterministic control** (§1.1), not adding judgment. Once the drawdown gate is real code, this seat should be re-examined honestly.
 
 **Status (2026-08-27):** the drawdown gate is real code (§1.1, above). That re-examination has not happened yet.
+
+**Superseded (2026-09-20).** "daily loss" was struck from the enforced list above, and the question this section asked is now moot in the direction nobody expected: the owner removed the account-level loss alarm entirely rather than the seat covering for it or the code replacing it (§1.1's RETIRED banner, `docs/INCIDENT_HISTORY.md`, retired board item 32). There is no drawdown gate for this seat to be re-examined against. Whatever case the Risk Manager seat has now, it does not rest on this control.
 
 ---
 

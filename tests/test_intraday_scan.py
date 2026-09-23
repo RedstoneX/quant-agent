@@ -512,39 +512,12 @@ def test_candidates_capped_at_max_per_scan(mock_compute_indicators):
 
 # ---------- run_intra_check wiring ----------
 
-def test_run_intra_check_skips_scan_on_daily_loss_breach_even_with_no_positions():
-    """A daily-loss breach must suppress the intraday scan even in the
-    branch where there's nothing to force-liquidate (no positions) —
-    a breach day must never add new risk."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.config = SimpleNamespace(
-        trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
-        intraday_scan=IntradayScanConfig(enabled=True),
-    )
-    p.broker = MagicMock()
-    p.broker.is_trading_day.return_value = True
-    p.broker.get_account.return_value = {
-        "cash": 1000.0, "portfolio_value": 9600.0, "last_equity": 10000.0,
-        "non_marginable_buying_power": 1000.0,
-    }
-    p.broker.get_positions.return_value = []  # nothing to force-liquidate
-    p.db = MagicMock()
-    p._drain_pending_protection_restores = MagicMock()
-    p._reconcile_stop_coverage = MagicMock(return_value=[])
-    p._reconcile_orphan_pending_submits = MagicMock()
-    p._is_trading_day = MagicMock(return_value=True)
-    p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = MagicMock(message="breach")
-    p._run_intraday_opportunity_scan = MagicMock(return_value={"status": "intraday_executed"})
 
-    result = p.run_intra_check()
-
-    assert result["status"] == "ok"
-    assert "intraday_scan" not in result
-    p._run_intraday_opportunity_scan.assert_not_called()
-
-
-def test_run_intra_check_runs_scan_when_no_breach():
+def test_run_intra_check_runs_the_scan():
+    """Renamed 2026-09-20 (retired item 32). The `..._when_no_breach` half of
+    the old name referred to a daily-loss gate that used to skip the scan;
+    that gate and its sibling test are gone, so the name promised a
+    distinction this test could no longer draw."""
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
@@ -563,7 +536,6 @@ def test_run_intra_check_runs_scan_when_no_breach():
     p._reconcile_orphan_pending_submits = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p._run_intraday_opportunity_scan = MagicMock(
         return_value={"status": "intraday_no_trades", "candidates": []},
     )
@@ -606,7 +578,6 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
     p._reconcile_orphan_pending_submits = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p._run_intraday_opportunity_scan = MagicMock(side_effect=RuntimeError("boom"))
 
     result = p.run_intra_check()
@@ -845,7 +816,6 @@ def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
     p._reconcile_orphan_pending_submits = MagicMock()
     p._await_paid_scan_slot = MagicMock(return_value=False)
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.broker.get_account.return_value = {
         "cash": 10_000.0,
         "portfolio_value": 10_100.0,

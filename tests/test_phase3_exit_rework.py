@@ -614,7 +614,9 @@ def test_trigger_vocabulary_covers_every_category_spec_38_sanctions():
         "macro regime shift to defensive today",
         "regime flip confirmed this morning",
         "macro flipped risk-off today",
-        "daily loss circuit breaker fired",
+        # "daily loss circuit breaker fired" left this list 2026-09-20 with
+        # the account-level loss alarm itself (WORK.md item 32); nothing
+        # computes that event now.
         "stopped out at the broker",
     ):
         assert _reason_cites_hard_trigger(reason) is True, reason

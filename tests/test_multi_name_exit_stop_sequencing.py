@@ -184,7 +184,6 @@ def _execution_stage_pipeline(events, positions):
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, positions, {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     _wire_broker_seams(pipeline.broker, events)
     pipeline._write_ahead_protection_restore.return_value = 1
     pipeline._finalize_protection_after_sell = _recording_finalize(events)

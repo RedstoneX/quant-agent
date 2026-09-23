@@ -389,65 +389,6 @@ numbers:
     note: >-
       The measured move claimed when no structural level stands in the way, in
       sqrt(session)-scaled ATRs (src/config.py:879-884).
-  - id: src.config.RiskConfig.daily_loss_risk_multiple
-    value: 1.34
-    status: derived
-    site: src/config.py
-    source: >-
-      Scales the 5-session drawdown anchor to a one-day window. The definition
-      site states that the RELATIVE scaling between windows is doctrine and is
-      what was fixed; the anchor it scales (drawdown_5d_risk_multiple) is
-      itself INHERITED and unsourced, so this entry records a real derivation
-      over an arbitrary base. That is not a laundering trick: recording it as
-      `derived` is what arms the base-drift check, so if the anchor is ever
-      re-derived this number cannot silently keep a ratio computed against the
-      old one.
-    derived_from: src.config.RiskConfig.drawdown_5d_risk_multiple
-    base_value: 3
-  - id: src.config.RiskConfig.drawdown_20d_risk_multiple
-    value: 4
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The 20-session arm of the same brake ladder. The RELATIVE scaling
-      between windows is doctrine per the definition site; the absolute value
-      inherits the unsourced 5d anchor and no separate derivation is written
-      down. Not recorded as `derived` because the arithmetic tying it to the
-      anchor is not stated anywhere -- claiming a derivation nobody wrote
-      would be worse than admitting there is none.
-    open_question: >-
-      What 20-session peak-to-trough drawdown, measured in multiples of this
-      book's OWN realized volatility, marks a regime the desk should de-risk
-      into?
-    cost_while_unanswered: >-
-      The brake fires early on an ordinary volatile stretch, or late on a
-      genuine drawdown.
-  - id: src.config.RiskConfig.drawdown_5d_risk_multiple
-    value: 3
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The ANCHOR of the drawdown-brake scaling, and the definition site says
-      so plainly: "still INHERITED, not re-derived: there is no measured
-      drawdown/track record to validate it against" after the 2026-09-02 reset
-      wiped the equity history. Everything else in the brake ladder hangs off
-      this one number.
-    open_question: >-
-      Same question at the 5-session window. src/config.py:576 says the 3 is
-      INHERITED, not re-derived, with no measured drawdown record to validate
-      it against.
-    cost_while_unanswered: >-
-      This is the ANCHOR the one-day multiple is derived from, so its error
-      propagates into the daily brake.
-  - id: src.config.RiskConfig.drawdown_vol_sensitivity
-    value: 3
-    status: derived
-    site: src/config.py
-    derived_from: src.risk.constants.DEFAULT_DRAWDOWN_VOL_SENSITIVITY
-    base_value: 3
-    note: >-
-      Import alias of the risk constant (src/config.py:764). One number, two
-      sites; recorded as derived so the pair cannot fall out of step silently.
   - id: src.config.RiskConfig.maintenance_margin_pct
     value: 25
     status: instrument
@@ -2077,20 +2018,6 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.risk.constants.DEFAULT_DRAWDOWN_VOL_SENSITIVITY
-    value: 3
-    status: arbitrary
-    site: src/risk/constants.py
-    note: >-
-      Scales the drawdown brakes by realised volatility. Recorded unsourced in
-      the 2026-09-11 audit and still unsourced 2026-09-14.
-    open_question: >-
-      How many multiples of the book's own realized volatility marks a
-      drawdown that warrants de-risking?
-    cost_while_unanswered: >-
-      The drawdown brake's basis; it and the fixed-percentage GROSS_LADDER can
-      disagree, which src/risk/rules.py:572-576 records as an open owner-level
-      design question.
   - id: src.risk.constants.MARGIN_DEFICIT_FLOOR_USD
     value: 1
     status: not-trade-governing
@@ -2264,19 +2191,6 @@ numbers:
       UNDER-deployment only. CORRECTION 2026-09-18: the first version put
       "fully invested" in quotation marks as text at this site; it is not
       there.
-  - id: src.risk.rules.DRAWDOWN_BUY_SCALE
-    value: 0.5
-    status: arbitrary
-    site: src/risk/rules.py
-    note: >-
-      Halves buying while the book is in drawdown. A flat one-half with
-      nothing behind it.
-    open_question: >-
-      By how much should new-buy size be scaled back in a drawdown, measured
-      against this desk's own recovery record?
-    cost_while_unanswered: >-
-      Either the desk keeps risking full size into a losing regime, or it
-      under-sizes the recovery.
   - id: src.risk.rules.EARNINGS_STANCE_MAX_AGE_DAYS
     value: 90
     status: arbitrary
@@ -2389,46 +2303,6 @@ numbers:
     cost_while_unanswered: >-
       The owner either hears about ordinary volatility or first hears at the
       floor rung.
-  - id: src.risk.rules.MIN_REALIZED_VOL_RETURNS
-    value: 10
-    status: arbitrary
-    site: src/risk/rules.py
-    note: >-
-      The realised-volatility estimation window and the minimum sample it will
-      accept. Round 20 and 10 sessions. The estimate feeds the drawdown
-      brakes, so the window length changes when the brakes bite.
-    open_question: >-
-      How many return observations does a realized-volatility estimate need
-      before the alarm keyed off it is meaningful?
-    cost_while_unanswered: >-
-      The volatility yardstick is computed from too few sessions, or refuses
-      to compute when it had enough.
-  - id: src.risk.rules.REALIZED_VOL_SKIP_NEWEST_SESSIONS
-    value: 1
-    status: sourced
-    site: src/risk/rules.py
-    source: >-
-      src/risk/rules.py:682-689. 1 is read off the question, not chosen: the
-      yardstick must not include the session being judged, or a violent day
-      widens its own alarm threshold and re-classifies itself as ordinary. The
-      window therefore ends at the previous session, which is exactly one
-      session dropped.
-    note: >-
-      Sessions dropped from the NEWEST end before the volatility window
-      starts.
-  - id: src.risk.rules.REALIZED_VOL_WINDOW_SESSIONS
-    value: 20
-    status: arbitrary
-    site: src/risk/rules.py
-    note: >-
-      The realised-volatility estimation window and the minimum sample it will
-      accept. Round 20 and 10 sessions. The estimate feeds the drawdown
-      brakes, so the window length changes when the brakes bite.
-    open_question: >-
-      Over what window should this book's realized volatility be measured,
-      given its own turnover?
-    cost_while_unanswered: >-
-      The yardstick every volatility-relative brake divides by.
   - id: src.risk.rules.SEAT_WEIGHT
     value: 1
     status: sourced
@@ -2955,6 +2829,39 @@ numbers:
     note: >-
       LLM plumbing: ceiling applied to a provider-returned Retry-After
       value, not a trading decision.
+  - id: src.agents.base._BACKOFF_CAP_S
+    value: 60.0
+    status: sourced
+    site: src/agents/base.py
+    source: >-
+      https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+      -- the "cap" term of the published Full Jitter formula
+      `sleep = random(0, min(cap, base * 2 ** attempt))`. The formula is
+      unbounded in the attempt index without it; the article treats the cap
+      as a required part of the pattern, not an optional tuning knob.
+    note: >-
+      LLM plumbing, not a trading decision. The VALUE 60s is bounded by
+      `_DEFAULT_RETRY_DEADLINE_S` (480s) in the same module: one sleep must
+      not be able to consume the primary window on its own. Any value
+      comfortably below 480 satisfies the constraint; 60 is the round number
+      inside it, and that choice is the arbitrary part -- stated rather than
+      dressed up as measured.
+  - id: src.agents.base._MIN_CAPACITY_BACKOFF_S
+    value: 1.0
+    status: sourced
+    site: src/agents/base.py
+    source: >-
+      https://ai.google.dev/gemini-api/docs/troubleshooting (verified
+      2026-09-23) -- for 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE: "Wait a
+      short time before the first retry (for example, 1 second), then
+      increase the delay exponentially ... Add random 'jitter'." Read off the
+      page of the provider that is the desk's PRIMARY route and the one that
+      actually rate-limits it.
+    note: >-
+      LLM plumbing, not a trading decision. Applied only to the rate-limit
+      and capacity classes the cited page is about; a transport-class failure
+      gets pure Full Jitter, because no source publishes a floor for those
+      and inventing one would be arbitrary.
   - id: src.agents.base._ANTHROPIC_MAX_CONCURRENT
     value: 4
     status: not-trade-governing
@@ -3189,6 +3096,30 @@ numbers:
       Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
     cost_while_unanswered: >-
       Same as src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic'].
+  - id: src.agents.tech_analyst._WEEKDAYS_PER_WEEK
+    value: 5
+    status: sourced
+    site: src/agents/tech_analyst.py
+    source: >-
+      The definition of the seven-day week: five of its days are
+      Monday-to-Friday. Not a market-structure number and not a measurement —
+      no market data could change it. Used only to state the technical seat's
+      history depth back to it in sessions as well as calendar days (board
+      item 168); it is not a lookback, a threshold or a weight, and changing
+      it changes no fetch, no indicator and no trade. Consistency with the
+      desk's existing weekday counter (src/trading_calendar.py:106, which
+      shares the same Monday-to-Friday assumption rather than independently
+      evidencing it) is asserted at
+      tests/test_tech_analyst_history_window.py:312.
+  - id: src.agents.tech_analyst._DAYS_PER_WEEK
+    value: 7
+    status: sourced
+    site: src/agents/tech_analyst.py
+    source: >-
+      The definition of the week: seven days. The denominator of the weekday
+      fraction above, checked for consistency at the same site,
+      tests/test_tech_analyst_history_window.py:312. Same scope, same absence
+      of any trading effect.
   - id: src.agents.tech_analyst._BARS_PER_SYMBOL
     value: 40
     status: arbitrary
@@ -4289,8 +4220,8 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:16921-16935). Its output reaches a prompt only as a
-      STAGED edit a human applies: config/settings.yaml:1497-1498 deploys
+      (src/pipeline.py:16365-16379). Its output reaches a prompt only as a
+      STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     value: 0.995
@@ -4348,12 +4279,12 @@ numbers:
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
-      Board item 39, attempt 3. The rotation sequencing gate projects the
-      equity the account will hold once this session's exits have gone
-      through, and an exit fills at the SELL loop's own limit rather than at
-      the mark. This is that same 0.5% offset, read from the loop it
-      mirrors - not a second number. If the two ever differ, the projection
-      is describing a fill that never happens.
+      Board item 39, attempt 3. The COVER mirror of the SELL offset below,
+      1.005 = 2 - 0.995, exactly as the COVER loop mirrors it. One number,
+      mirrored, in the projection as in the execution. This note and the
+      one below sat on each other's entry - the 1.005 row carried the SELL
+      text and the 0.995 row the COVER text - from the day they were filed
+      until 2026-09-23.
   - id: src.pipeline_stages._projected_post_sale_book:factor[1]
     value: 0.995
     status: derived
@@ -4361,9 +4292,12 @@ numbers:
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
-      Board item 39, attempt 3. The COVER mirror of the offset above,
-      1.005 = 2 - 0.995, exactly as the COVER loop mirrors it. One number,
-      mirrored, in the projection as in the execution.
+      Board item 39, attempt 3. The rotation sequencing gate projects the
+      equity the account will hold once this session's exits have gone
+      through, and an exit fills at the SELL loop's own limit rather than
+      at the mark. This is that same 0.5% offset, read from the loop it
+      mirrors - not a second number. If the two ever differ, the projection
+      is describing a fill that never happens.
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[1]
     value: 1.005
     status: derived
@@ -4445,9 +4379,9 @@ numbers:
     note: >-
       Correlated-cluster advisory cap: a BUY whose |corr|>=0.7 cluster would
       exceed 50% of the book raises an advisory violation
-      (src/risk/rules.py:2660-2696). The one caller (src/pipeline.py:2398)
+      (src/risk/rules.py:1700-1740). The one caller (src/pipeline.py:2115)
       passes nothing, so the default is live. Advisory (absent from
-      HARD_BLOCK_RULES, src/pipeline.py:205), but advisories reach the risk
+      HARD_BLOCK_RULES, src/pipeline.py:175), but advisories reach the risk
       seat.
     open_question: >-
       What share of the book in one correlated cluster does the ratified per-

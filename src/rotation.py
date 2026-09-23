@@ -193,7 +193,18 @@ __all__ = [
 #: `rotation_sell_reason` for the paths that remain open by construction and
 #: why no pre-check can close them.
 REQUIRED_BUY_LEG_GATES = (
-    "daily_loss_recheck",
+    # The list was SIX long until 2026-09-23. `daily_loss_recheck` (retired-ok) led it
+    # (retired-ok), and it is gone because the refusal it named is gone:
+    # the owner's ruling on board item 32 removed the account-level loss
+    # halt outright (PR #584), so the execution stage no longer records a
+    # skip under that name for a projection to anticipate. Nothing replaces
+    # it and nothing
+    # absorbs it — a gate for a refusal that cannot fire is a check that
+    # always passes, which is worse than no check because it reads like
+    # one. The gross-exposure half of what that halt used to police
+    # survives untouched in the §11.2 ladder, and this list still gates it
+    # through `insufficient_cash` / `below_min_notional`, both of which are
+    # measured by `_entry_deployment_budget` on its ladder-backed branch.
     "no_price",
     "stale_entry",
     "qty_zero",
@@ -430,20 +441,25 @@ class RotationClearance:
     config read anywhere in the refusal — to build the sale's reason
     without one whose contents match the opportunity in hand.
 
-    `projected_positions` / `projected_equity` / `projected_daily_pnl` /
-    `projected_basis` are recorded so the audit row states the numbers the
-    sale was actually cleared on, rather than asserting that a check
-    happened.
+    `projected_positions` / `projected_equity` / `projected_entry_budget` /
+    `projected_budget_basis` are recorded so the audit row states the
+    numbers the sale was actually cleared on, rather than asserting that a
+    check happened.
     """
 
     held_symbol: str
     new_symbol: str
     #: Every gate evaluated. Must cover `REQUIRED_BUY_LEG_GATES`.
     gates_checked: tuple[str, ...]
-    #: The day-change number the projected post-sale book produced, and
-    #: which rung of `daily_loss_limit_pct` governed it.
-    projected_daily_pnl: float
-    projected_basis: str
+    #: What `_entry_deployment_budget` said was deployable on the projected
+    #: post-sale book, and the note it gave for WHICH pool that was — the
+    #: §11.2 gross-ladder headroom or settled cash. This pair replaced the
+    #: projected day-change and its limit rung on 2026-09-23, when the
+    #: account-level loss halt those described was removed (PR #584). It is
+    #: the quantity the funding gates below actually clear the sale on, so
+    #: it is the one the audit row should carry.
+    projected_entry_budget: float
+    projected_budget_basis: str
     #: Held names remaining after every SELL/COVER this session, the
     #: rotation's own included, and the equity those were measured against.
     projected_positions: tuple[str, ...]
@@ -563,10 +579,11 @@ def _ranked_margin_sell_reason(
         (`shared_seats`, `docs/INCIDENT_HISTORY.md` 2026-09-14), because
         the full composite is a coverage-sensitive weighted SUM and is not
         comparable term-for-term between two names; and
-      * the projected post-sale daily-loss number the replacement BUY was
-        cleared against, so the Risk Manager and the evening review can
-        check that the sale was sequenced behind the buy's gates rather
-        than ahead of them (board item 39).
+      * the deployable budget the projected post-sale book produced, which
+        is what the replacement BUY was cleared against, so the Risk
+        Manager and the evening review can check that the sale was
+        sequenced behind the buy's gates rather than ahead of them (board
+        item 39).
 
     Kept compact for the same 500-character truncation in
     `PortfolioConstructor._build_sell`.
@@ -576,8 +593,9 @@ def _ranked_margin_sell_reason(
     new_shared = opportunity.new_shared_score
     held_score = opportunity.held_score
     tail = (
-        f"BUY pre-cleared post-sale (day chg "
-        f"${clearance.projected_daily_pnl:.0f}, {clearance.projected_basis})."
+        f"BUY pre-cleared post-sale (deployable "
+        f"${clearance.projected_entry_budget:.0f}, "
+        f"{clearance.projected_budget_basis})."
         if clearance is not None else
         "CONTINGENT on the replacement BUY clearing its gates; withdrawn "
         "with it if it does not."

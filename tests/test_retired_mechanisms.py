@@ -277,3 +277,29 @@ def test_an_identifier_is_not_mistaken_for_prose(tmp_path):
     )
     findings = scan(root)
     assert [f.line for f in findings] == [3]
+
+
+def test_a_trailing_marker_exempts_a_string_literal_line(tmp_path):
+    """The opt-out works on a STRING LITERAL, not only on a whole-line
+    comment.
+
+    Filed 2026-09-20 (retired item 32). `_prose_lines` hands `scan` the
+    CONTENT of a literal, so a `# retired-ok` written as a trailing comment
+    on the same source line could never reach the check — which is what
+    `OPT_OUT_MARKER`'s own documentation promised it would. Five such
+    markers were already sitting inert in `src/config.py`, reading to every
+    later author as though they worked. A historical status label kept for
+    replaying old runs is exactly the shape that needs this, and it cannot
+    be written as a whole-line comment.
+    """
+    agent = (
+        'LEGACY = {\n'
+        '    "emergency sell-all": 1,  # retired-ok\n'
+        '    "emergency sell-all too": 2,\n'
+        '}\n'
+    )
+    root = _tree(
+        tmp_path, prompt="# reviewer\n", agent=agent, pipeline=_FIXED_PIPELINE,
+    )
+    findings = scan(root)
+    assert [f.line for f in findings] == [3], [str(f) for f in findings]

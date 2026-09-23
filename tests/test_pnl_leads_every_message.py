@@ -70,12 +70,16 @@ def test_morning_decision_session_leads_with_pnl():
 
 
 def test_midday_position_review_leads_with_pnl():
+    # A stop-coverage gap renders a banner, so the P&L assertion has
+    # something to be ahead OF. (This used to use the daily-loss halt
+    # status; that mechanism was removed 2026-09-20, retired item 32.)
     msg = trader_feed._format_position_review(
-        "midday", {**PNL_RESULT, "status": "daily_loss_halted"}, 10.0,
+        "midday",
+        {**PNL_RESULT, "stop_coverage_gaps": [
+            {"symbol": "NVDA", "state": "uncovered", "coverage": "none"},
+        ]},
+        10.0,
     )
-    # A status that renders the halt banner, so the assertion has something
-    # to be ahead OF.
-    assert "CIRCUIT BREAKER" in msg
     assert_pnl_leads(msg)
 
 

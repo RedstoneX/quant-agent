@@ -73,7 +73,6 @@ def _pipeline(live_price=100.0, cash=50_000.0, positions=None):
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 100_000.0}, held, {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     return pipeline
 
 

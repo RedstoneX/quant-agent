@@ -196,14 +196,13 @@ def test_newly_passed_inputs_reach_the_message():
         review_mode=risk_review_mode.EXIT_REVIEW,
         cash=1234.0,
         recent_performance={"rolling_5d_pct": -1.4, "rolling_20d_pct": 2.2,
-                            "in_drawdown": False, "trailing_days": 20},
+                            "trailing_days": 20},
         position_history={"DIS": {"days_held": 6}, "V": {"days_held": 11}},
         earnings_analyses=[{"symbol": "DIS", "queued": True,
                             "form_type": "8-K", "filing_date": "2026-09-01"}],
     )
     assert "Cash (deployable this session): $1,234" in message
     assert "System performance: not provided" not in message
-    assert "in_drawdown=false" in message
     assert "held: 6d" in message and "held: 11d" in message
     assert "held: unknown" not in message
     assert "## Earnings" in message
@@ -348,14 +347,14 @@ def test_call_site_declares_exit_review_mode_and_passes_the_evidence():
             _Review(), _positions(), run_id="r1", total_value=9817.0,
             macro_summary={"vix": {"current": 14.9}},
             news_intel=None, earnings_analyses=[], cash=1234.0,
-            reserve_balance=0.0, recent_performance={"in_drawdown": False},
+            reserve_balance=0.0, recent_performance={"rolling_5d_pct": -1.2},
         )
 
     assert vetoed == set() and got is verdict
     kwargs = pipe.risk_manager.review.call_args.kwargs
     assert kwargs["review_mode"] == risk_review_mode.EXIT_REVIEW
     assert kwargs["cash"] == 1234.0
-    assert kwargs["recent_performance"] == {"in_drawdown": False}
+    assert kwargs["recent_performance"] == {"rolling_5d_pct": -1.2}
     assert kwargs["position_history"] == {"DIS": {"days_held": 6}}
     assert kwargs["event_risk_block"].strip()
     # The two PM-only audit fields are left unset — never invented.

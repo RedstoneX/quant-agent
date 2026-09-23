@@ -123,24 +123,31 @@ def test_agent_retry_budget_respects_env_override(mock_anthropic, monkeypatch):
     assert calls["n"] == 2
 
 
-def test_retry_backoff_exponential_floor_with_positive_jitter():
-    """The backoff helper must produce values in [base, 2*base) where
-    base = 2**attempt. The deterministic floor preserves exponential
-    spacing (no retry can fire before its expected time) while the
-    random ceiling adds spread to decorrelate retries from outage
-    timing."""
-    from src.agents.base import _retry_backoff_seconds
+def test_retry_backoff_is_aws_full_jitter():
+    """`_retry_backoff_seconds` must implement AWS Full Jitter exactly:
+    `random_between(0, min(cap, base * 2**attempt))`.
 
-    for attempt in range(7):
-        base = 2 ** attempt
-        # 200 samples is enough to cover both ends of [base, 2*base)
-        # without flake risk.
+    SOURCE: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+
+    REPLACES the old "deterministic floor plus jitter on top" assertion
+    ([base, 2*base)). That floor re-synchronises every client that failed at
+    the same instant onto the same next instant, which is the behaviour the
+    AWS article measures as completing the same work in MORE time with MORE
+    competing calls. The lower bound the desk still needs for a rate limit
+    is asserted separately, and read off Google's own published guidance —
+    see test_capacity_backoff_honours_googles_documented_one_second_floor.
+    """
+    from src.agents.base import _retry_backoff_seconds, _BACKOFF_CAP_S
+
+    for attempt in range(9):
+        bound = min(_BACKOFF_CAP_S, float(2 ** attempt))
         for _ in range(200):
             wait = _retry_backoff_seconds(attempt)
-            assert base <= wait < 2 * base, (
-                f"attempt={attempt}: expected wait in [{base}, {2 * base}), "
-                f"got {wait}"
+            assert 0.0 <= wait < bound or bound == 0.0, (
+                f"attempt={attempt}: expected wait in [0, {bound}), got {wait}"
             )
+    # The cap must actually bind, or "full jitter" is unbounded in attempt.
+    assert all(_retry_backoff_seconds(20) <= _BACKOFF_CAP_S for _ in range(200))
 
 
 def test_retry_backoff_decorrelates_across_calls():
@@ -1029,6 +1036,13 @@ def test_anthropic_empty_content_raises_unless_truncation(monkeypatch):
         agent = ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)
         with pytest.raises(LLMEmptyResponseError):
             agent.run(data="x")
+    # The call above exhausted the primary, which now DEMOTES the provider
+    # process-wide for a cooldown (see RouteBreaker) — that is the point of
+    # the half-open breaker and it is shared by every seat on that provider.
+    # This test's second half is a separate scenario, not a second call in
+    # the same outage, so the breaker is cleared between them.
+    from src.agents.base import _reset_route_breakers_for_tests
+    _reset_route_breakers_for_tests()
     with patch("anthropic.Anthropic") as anth_cls:
         r = _good_anthropic_response()
         r.content = []
@@ -1137,6 +1151,11 @@ def test_retry_sleeps_at_least_the_server_hint(monkeypatch):
             agent.run(data="x")
     assert sleeps == [90.0]
 
+    # Same reason as in the empty-content test: the call above exhausted the
+    # primary and demoted the provider process-wide. The second scenario is a
+    # fresh outage, not a continuation.
+    from src.agents.base import _reset_route_breakers_for_tests
+    _reset_route_breakers_for_tests()
     sleeps.clear()
     oai2 = MagicMock()
     oai2.chat.completions.create.side_effect = ConnectionError(

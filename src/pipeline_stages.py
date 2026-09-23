@@ -593,23 +593,21 @@ def _projected_sale_qty(decision, position) -> float:
     return held_qty
 
 
-def _projected_post_sale_book(pipeline, ctx, positions, total_value: float,
+def _projected_post_sale_book(positions, total_value: float,
                               sell_decisions: list, cover_decisions: list):
     """The held book and the equity as they will be once THIS SESSION'S
     exits have gone through — the state the downstream gates will actually
     read, projected before any of them has been submitted.
 
-    Board item 39. The daily-loss re-check that can refuse a rotation's
-    replacement BUY recomputes from `ctx.positions` AFTER the sale, on both
-    sides of its comparison: the numerator is the held book's own intraday
-    change (`daily_loss_numerator`) and the volatility-relative rung of the
-    threshold is measured from the held book too
-    (`RiskRuleEngine.portfolio_vol_provider`). Removing a position
-    therefore removes its intraday P&L from the loss AND moves the limit
-    that loss is tested against. A check fed PRE-sale state is blind to
-    both — which is exactly why attempt 2 on this item was unsafe by
+    Board item 39. The gates that can refuse a rotation's replacement BUY
+    are measured from the book the desk will be holding once the sale has
+    gone through, not the one it holds while proposing it: the deployment
+    budget reads the remaining positions' gross exposure and the remaining
+    settled cash, and the sizing reads the equity those are measured
+    against. A check fed PRE-sale state is blind to the state change it
+    depends on, which is exactly why attempt 2 on this item was unsafe by
     construction, and why this builds the post-sale book instead of
-    re-implementing the check against the pre-sale one.
+    re-implementing the gates against the pre-sale one.
 
     **Exactly the exits it is handed are applied, and no others.** The
     rotation gate hands it ONE decision — the rotation's own close — and
@@ -618,21 +616,29 @@ def _projected_post_sale_book(pipeline, ctx, positions, total_value: float,
     guessing at fills nobody controls; measuring them is free, because the
     rotation's close is ordered last.
 
-    Returns `(projected_positions, equity_for_weights, account_pnl)`.
+    Returns `(projected_positions, equity_for_weights)`.
 
-      * `equity_for_weights` is `total_value` unchanged. A sale is
-        mark-to-market neutral: it converts a marked position into the cash
-        that position was already marked at, so the book's composition
-        changes and its total does not.
-      * `account_pnl` is `total_value - concession - ctx.last_equity`,
-        where `concession` is what the limit prices below give up against
-        the marks (`_submit_protected_sell` sells at `0.995 * price`). That
-        is the one real equity effect of executing, it is knowable, and it
-        is subtracted rather than ignored — a more negative day change
-        trips the breaker SOONER, which is the side to be wrong on.
+      * `equity_for_weights` is `total_value` LESS the concession the
+        marketable limits give up against the marks (0.995 for a SELL, its
+        1.005 COVER mirror). A sale is otherwise mark-to-market neutral: it
+        converts a marked position into the cash that position was already
+        marked at, so the book's composition changes and its total does
+        not. The concession is the one real equity effect of executing, it
+        is knowable, and it is subtracted rather than ignored.
+        **Direction, measured rather than assumed (adversary review,
+        2026-09-23).** `config/settings.yaml` ships `allow_margin: true`, so
+        `_entry_deployment_budget` returns `ceiling_x * equity - held_gross`
+        and never reads cash at all. The order ceiling therefore falls by
+        between 0.65 and 2.0 times any reduction in equity (the §11.2 rung
+        and `max_position_pct: 65`), while the replacement's estimated cost
+        falls only by the allocation percentage of it. Subtracting the
+        concession TIGHTENS this gate; leaving it out loosens it. An
+        earlier version of this docstring asserted the opposite and was
+        wrong — it reasoned about the settled-cash branch, which the
+        shipped configuration does not execute.
 
     Cover decisions are applied the same way: a COVER closes a short, which
-    also removes that name's intraday change from the held book.
+    also removes that name from the held book.
     """
     from src.rotation import ROTATION_MARGIN_PCT  # noqa: F401  (module sanity)
 
@@ -678,22 +684,21 @@ def _projected_post_sale_book(pipeline, ctx, positions, total_value: float,
             continue  # position gone
         projected.append(_scaled_position(position, remaining / abs(held_qty)))
 
-    try:
-        last_equity = float(getattr(ctx, "last_equity", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        last_equity = 0.0
-    account_pnl = float(total_value) - concession - last_equity
-    return projected, float(total_value), account_pnl
+    return projected, max(0.0, float(total_value) - concession)
 
 
 def _scaled_position(position, remaining_fraction: float):
     """A copy of `position` holding `remaining_fraction` of what it holds.
 
-    Used only for a PARTIAL exit. Quantity, market value and — the field
-    the daily-loss numerator actually reads — `unrealized_intraday_pnl` all
-    scale by the same fraction, because selling half a position leaves half
-    its intraday change on the books. Any field this does not know about is
-    carried through unchanged.
+    Used only for a PARTIAL exit. Quantity and market value scale by the
+    fraction, because selling half a position leaves half of it on the
+    books, and `gross_exposure` — which is what the deployment budget
+    measures the remaining book with — reads market value. The P&L fields
+    are scaled with them for consistency of the object rather than because
+    any gate now reads them: the projected account day-change that used to
+    read `unrealized_intraday_pnl` went with the account-level loss halt
+    (PR #584, retired-ok). Any field this does not know about is carried
+    through unchanged.
 
     `copy.copy` rather than a constructor call: `Position` is not stable
     across this repo's fixtures (several tests use simple stand-ins), and a
@@ -814,21 +819,30 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     stage runs later, fed projected post-sale inputs — not a second
     implementation of it:
 
-      * `daily_loss_recheck` — `risk.rules.daily_loss_numerator` over the
-        projected book, then `RiskRuleEngine.check_daily_loss` with the
-        threshold ALSO measured from the projected book
-        (`TradingPipeline.held_book_daily_vol_pct(positions=..., equity=...)`
-        feeding `use_supplied_vol`). Both halves of that comparison are
-        measured from the held book, so both move when a holding is sold;
-        moving only one is the mismatch `docs/WORK.md` item 32 exists
-        about, and testing a projected numerator against a pre-sale
-        denominator would reintroduce it.
+    The list below is FIVE long and so is `REQUIRED_BUY_LEG_GATES`; a
+    `gate_coverage_incomplete` refusal at the bottom of this function is
+    what keeps the two from drifting, and this paragraph is the third copy
+    of the count, so change all three together. It was six until
+    2026-09-23, when the owner's removal of the account-level loss halt
+    (PR #584) deleted the `daily_loss_recheck` refusal (retired-ok) the
+    first gate anticipated. Nothing replaced it: the gross exposure that
+    halt shared with the §11.2 ladder is still gated, by the two funding
+    gates. Nothing replaced it: the gross-exposure exposure that halt
+    shared with the §11.2 ladder is still gated, by the two funding gates.
+
       * `no_price` / `stale_entry` — `_live_fill_price` and the same 5%
         deviation test the preflight applies. Neither depends on the sale
         at all, so these are exact now, not projected.
       * `qty_zero` — the preflight's own sizing helpers (`_size_shares`,
         `_qty_by_risk_budget`, `_fractional_sizing_allowed`) at the
         projected equity.
+      * `insufficient_cash` / `below_min_notional` — `_entry_deployment_budget`
+        over the projected post-sale positions, equity and settled cash,
+        drained by every entry earlier in the same session exactly as the
+        submit loop drains it. This is the pair that still carries the
+        §11.2 gross ladder: the budget's ladder-backed branch measures the
+        headroom the sale frees, so a rotation that would breach gross is
+        refused here even though the account-level alarm is gone.
 
     **What this does NOT close, stated plainly.** The BUY submit loop can
     still refuse an entry for reasons no pre-check can evaluate in advance:
@@ -841,29 +855,10 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     PR and in `docs/INCIDENT_HISTORY.md` rather than papered over.
     """
     from src.rotation import REQUIRED_BUY_LEG_GATES, RotationClearance
-    from src.risk.rules import RiskRuleEngine, daily_loss_numerator
 
     symbol = str(getattr(buy_decision, "symbol", "") or "").strip().upper()
     checked: list[str] = []
 
-    # TWO projections, not one, because the two gates below need opposite
-    # assumptions about the OTHER exits this session (adversary review of
-    # attempt 3):
-    #
-    #   * `every_exit` — every SELL and COVER fills. That is what the real
-    #     daily-loss re-check will read IF they all fill.
-    #   * `rotation_only` — only the rotation's own close fills. The desk
-    #     already knows exits do not always fill; that is why
-    #     `_drop_rotation_buy_if_room_not_freed` exists. An exit that does
-    #     not fill leaves its gross exposure in place, so this is the
-    #     book with the LEAST room.
-    #
-    # The daily-loss gate is run against BOTH and refuses if EITHER trips,
-    # because an unfilled exit can leave the held book either more or less
-    # negative and neither branch may be assumed. The funding gate uses
-    # `rotation_only`, the smaller pool. Both choices refuse rotations that
-    # would have worked and neither clears one that would not — the
-    # direction this desk is wrong on everywhere else.
     # ONE projection, over the rotation's own close and nothing else.
     #
     # An earlier version projected the other exits this session too, and
@@ -887,65 +882,12 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # is already in it. A session with a COVER still pending never reaches
     # this function at all (`_pending_cover_symbols`), so the only thing
     # left to project is the one sale that has not happened yet.
-    projected_positions, equity_for_weights, account_pnl = (
-        _projected_post_sale_book(
-            pipeline, ctx, positions, total_value,
-            [rotation_sell] if rotation_sell is not None else [], [],
-        )
+    projected_positions, equity_for_weights = _projected_post_sale_book(
+        positions, total_value,
+        [rotation_sell] if rotation_sell is not None else [], [],
     )
 
-    # --- gate 1: the daily-loss re-check, both halves projected ----------
-    checked.append("daily_loss_recheck")
-    park = getattr(
-        getattr(pipeline.config, "cash_sweep", None), "symbol", None,
-    )
-    try:
-        projected_vol = pipeline.held_book_daily_vol_pct(
-            positions=projected_positions, equity=equity_for_weights,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Rotation gate: projected held-book volatility unreadable (%s) "
-            "— the projected breaker falls back to its fixed rung, exactly "
-            "as the live one does.", exc,
-        )
-        projected_vol = None
-    try:
-        basis = pipeline.risk_engine.daily_loss_limit_basis(
-            portfolio_vol_pct=projected_vol, use_supplied_vol=True,
-        )
-        vol_relative = basis == RiskRuleEngine.VOL_RELATIVE_BASIS
-    except Exception:  # noqa: BLE001
-        # Same defensive read as `_limit_is_vol_relative`: an engine that
-        # cannot answer is treated as fixed-percentage, the more negative
-        # numerator on any day with realized losses.
-        vol_relative = False
-    projected_pnl, projected_pnl_basis = daily_loss_numerator(
-        account_pnl, projected_positions,
-        vol_relative=vol_relative, cash_park_symbol=park,
-    )
-    try:
-        violation = pipeline.risk_engine.check_daily_loss(
-            float(getattr(ctx, "last_equity", 0.0) or 0.0), projected_pnl,
-            portfolio_vol_pct=projected_vol, use_supplied_vol=True,
-        )
-    except TypeError:
-        # An engine stub predating the projected-threshold arguments.
-        # Refuse rather than silently fall back to the live threshold,
-        # which is the pre-sale one and is what made attempt 2 unsafe.
-        return None, "daily_loss_recheck", (
-            "the risk engine cannot evaluate the daily-loss limit against "
-            "a projected book, so the replacement buy cannot be cleared"
-        )
-    if violation is not None:
-        return None, "daily_loss_recheck", (
-            f"projected post-sale {violation.message} "
-            f"({projected_pnl_basis} basis, day change "
-            f"${projected_pnl:.2f} over {len(projected_positions)} "
-            f"remaining holding(s))"
-        )
-
-    # --- gate 2/3: price and entry staleness, exact now ------------------
+    # --- gates 1/2: price and entry staleness, exact now -----------------
     checked.append("no_price")
     market_price = _live_fill_price(pipeline, symbol)
     if not isinstance(market_price, (int, float)) or isinstance(
@@ -970,7 +912,7 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
                 f"market ${market_price:.2f} (threshold 5%)"
             )
 
-    # --- gate 4: does the replacement round to a tradeable size? ---------
+    # --- gate 3: does the replacement round to a tradeable size? ---------
     checked.append("qty_zero")
     sizing_price = max(market_price, entry_price or 0.0)
     is_short = getattr(buy_decision, "action", "BUY") == "SHORT"
@@ -1008,7 +950,7 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
             f"shares"
         )
 
-    # --- gates 5/6: can the post-sale book actually FUND the replacement? -
+    # --- gates 4/5: can the post-sale book actually FUND the replacement? -
     # Added after adversary review of attempt 3. These are the refusals a
     # rotation is MOST likely to hit, because a rotation only surfaces when
     # the risk headroom is already under the floor — and risk-based sizing
@@ -1085,8 +1027,12 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
         held_symbol=str(rotation.get("held_symbol") or ""),
         new_symbol=symbol,
         gates_checked=tuple(checked),
-        projected_daily_pnl=float(projected_pnl),
-        projected_basis=str(projected_pnl_basis),
+        projected_entry_budget=float(order_ceiling),
+        # Truncated: this string reaches `rotation_sell_reason`, whose text
+        # is cut at `ROTATION_REASON_MAX_CHARS` with the clearance clause
+        # LAST, so an over-long note would delete the very thing it
+        # documents.
+        projected_budget_basis=str(budget_note)[:60],
         projected_positions=tuple(
             str(getattr(p, "symbol", "") or "").strip().upper()
             for p in projected_positions
@@ -1115,26 +1061,34 @@ def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
     no cover has happened and none can be measured — unlike the other
     SELLs, which the reorder makes measurable.
 
-    They also cannot be usefully BOUNDED. An earlier attempt kept a pending
-    exit in the projected book when it carried an intraday loss and dropped
-    it when it carried a gain, on the grounds that
-    `held_book_daily_pnl` is a plain sum and that selection is its worst
-    case. It is — for the NUMERATOR. But the daily-loss threshold's
-    volatility-relative rung is `sensitivity * sigma` measured from the
-    same book (`vol_relative_drawdown_threshold_pct`), sigma is a property
-    of the basket's price history and not of today's P&L sign, and the
-    limit is strictly INCREASING in it: keeping a volatile losing name in
-    the projected book widens the limit far more than its loss narrows it,
-    which is the loosening direction. Gross exposure wants a third
-    selection again (an exit that does not fill keeps its gross, so the
-    worst case there is keeping ALL of them). One book cannot be the worst
-    case for three consumers that disagree.
+    **This refusal has outlived the argument that produced it, and that is
+    recorded here rather than papered over (adversary review, 2026-09-23).**
+    It was adopted because one projected book could not be the worst case
+    for three disagreeing consumers: the daily-loss numerator, the
+    volatility-relative threshold, and gross exposure. The owner's removal
+    of the account-level loss halt (PR #584) deleted the first two. The
+    survivor, `_entry_deployment_budget`, turns out to be cheaply boundable
+    in both of its regimes: with `allow_margin: true` — what ships — it
+    returns `ceiling_x * equity - held_gross` and never reads cash, a COVER
+    lowers held gross, so simply NOT applying any cover is already the
+    minimum headroom; with margin off it returns `min(headroom, cash)` and
+    both terms are monotone in the set of covers assumed, so the lower
+    bound over every fill outcome is `min(headroom with no covers, cash
+    with all covers)` — two scalars, no enumeration.
 
-    So the desk does not guess: a rotation is refused outright on any
+    The refusal is kept anyway, and on one ground only: it is strictly the
+    more conservative posture, `execution.rotation_ranked_margin_enabled`
+    ships FALSE, and loosening a live-selling gate is not something to do
+    in the same change that resolves a merge. Whoever turns the flag on
+    should take the bound above instead of inheriting this. What must NOT
+    be inherited is the old justification, which claimed the bound was
+    impossible; it is not, and saying so kept a refusal standing on a
+    reason that no longer exists.
+
+    So today the desk does not guess: a rotation is refused outright on any
     session with a cover pending. That costs a rotation on cover days and
     fails toward not trading, which is the direction every other guard on
-    this path fails in. Whether cover days are common enough for that to
-    matter is a count, and it is `docs/WORK.md` item 165's count.
+    this path fails in.
     """
     by_symbol = {
         str(getattr(p, "symbol", "") or "").strip().upper(): p
@@ -1356,8 +1310,8 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
         pipeline, ctx, held_symbol, "rotation", "buy_leg_cleared",
         "projected_post_sale_gates_passed", new_symbol=new_symbol,
         gates=list(clearance.gates_checked),
-        projected_daily_pnl=clearance.projected_daily_pnl,
-        projected_basis=clearance.projected_basis,
+        projected_entry_budget=clearance.projected_entry_budget,
+        projected_budget_basis=clearance.projected_budget_basis,
         projected_positions=list(clearance.projected_positions),
         projected_equity=clearance.projected_equity,
         tier="ranked_margin",
@@ -6765,10 +6719,9 @@ class RiskStage:
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "RiskStage: recent-performance rebuild failed — the "
-                    "drawdown gate cannot fire this run: %s", e,
+                    "seat sees no rolling-return context this run: %s", e,
                 )
                 rm_recent_performance = {}
-        in_drawdown = bool(rm_recent_performance.get("in_drawdown"))
 
         # Spec §11.2 — the session's gross-exposure ceiling, resolved from
         # ACCOUNT STATE and never from PM output. The run preamble already
@@ -6777,22 +6730,11 @@ class RiskStage:
         # same rung the constructor sized them under.
         session_gross_ceiling = _session_gross_ceiling(pipeline, ctx)
 
-        # Audit §1.1 — the drawdown-halve is deterministic code now, applied
-        # before the hard filter so every downstream consumer (cash budget,
-        # sector accumulation, RM, execution) sees the halved size rather than
-        # PM's pre-halving intent. The PM prompt no longer pre-applies it.
-        if in_drawdown:
-            from src.risk.rules import apply_drawdown_scale
-            portfolio_decision.decisions, drawdown_notes = apply_drawdown_scale(
-                portfolio_decision.decisions, in_drawdown=True,
-                ceiling=session_gross_ceiling,
-            )
-            for note in drawdown_notes:
-                symbol = note.split(" ", 1)[0]
-                _record_pipeline_event(
-                    pipeline, ctx, symbol, "deterministic_gate", "modified",
-                    "drawdown_buy_halved", detail=note,
-                )
+        # The rolling-return drawdown halve used to run here, scaling every
+        # BUY and SHORT by 0.5 whenever `in_drawdown` was true. Removed  # retired-ok
+        # 2026-09-20 on the owner's instruction together with the daily-loss
+        # halt (retired item 32, docs/INCIDENT_HISTORY.md). The §11.2 gross
+        # ceiling resolved above is untouched and still sizes and blocks.
 
         # Memoized by DecisionStage so PM and this gate score the same numbers.
         # On the RC2 resume lane DecisionStage never ran and this is the first
@@ -6803,14 +6745,11 @@ class RiskStage:
         portfolio_decision.decisions, rule_violations, blocked_reasons = (
             pipeline._filter_hard_risk_decisions(
                 portfolio_decision.decisions,
-                positions, total_value, daily_pnl,
-                baseline=last_equity,
+                positions, total_value,
                 invested_target_pct=invested_target_pct,
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
-                in_drawdown=in_drawdown,
-                gross_ceiling=session_gross_ceiling,
-            )
+                gross_ceiling=session_gross_ceiling,)
         )
         _apply_sector_unresolved_alert(data_status, rule_violations)
         if blocked_reasons:
@@ -7413,14 +7352,11 @@ class RiskStage:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
                 pipeline._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
-                    positions, total_value, daily_pnl,
-                    baseline=last_equity,
+                    positions, total_value,
                     invested_target_pct=invested_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
-                    in_drawdown=in_drawdown,
-                    gross_ceiling=session_gross_ceiling,
-                )
+                    gross_ceiling=session_gross_ceiling,)
             )
             _apply_sector_unresolved_alert(data_status, post_mod_violations)
             if blocked_reasons:
@@ -7813,16 +7749,14 @@ class ExecutionStage:
         else:
             price_map = {p.symbol: p.current_price for p in positions}
 
-        # Daily-loss re-check before BUYs. The initial circuit breaker ran
-        # ~10 min ago (before LLM research); the tape may have gapped
-        # through the limit while PM/RM was thinking, especially relevant
-        # now that intra_check fires concurrently per #46. We block BUYs
-        # (no new risk during a confirmed breach) but let any pending SELLs
-        # stay — they reduced exposure already. intra's next tick handles
-        # full emergency liquidation; morning's job here is just to not
-        # add to the hole. Refresh first when sells didn't fire so the
-        # check uses fresh portfolio_value, not the stale research-stage
-        # snapshot.
+        # Refresh the account before BUYs when no SELL fired, so sizing and
+        # the entry-staleness guard read a current snapshot rather than the
+        # research-stage one from ~10 minutes ago.
+        #
+        # An account-level daily-loss re-check used to run here too, dropping
+        # every remaining BUY when the day's loss crossed the limit. Removed
+        # 2026-09-20 on the owner's instruction with the rest of that
+        # mechanism (retired item 32, docs/INCIDENT_HISTORY.md).
         if buy_decisions:
             if not sell_decisions:
                 # Take the FRESH price_map too (2026-07-16 audit): it was
@@ -7842,39 +7776,6 @@ class ExecutionStage:
                 ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
-            # docs/WORK.md item 32 (2026-09-14): the number compared against
-            # the daily limit is the HELD BOOK's day change, chosen by the
-            # same one rule the breaker itself uses
-            # (`risk.rules.daily_loss_numerator`) — a threshold built from
-            # the held book's volatility must not be tested against the whole
-            # account's day change. Uses the FRESH locals: the refresh above
-            # updates ctx.total_value but not ctx.account.
-            from src.pipeline import _limit_is_vol_relative
-            from src.risk.rules import daily_loss_numerator
-            daily_pnl_now, _basis = daily_loss_numerator(
-                total_value - ctx.last_equity, ctx.positions,
-                vol_relative=_limit_is_vol_relative(pipeline.risk_engine),
-                cash_park_symbol=getattr(
-                    getattr(pipeline.config, "cash_sweep", None), "symbol", None,
-                ),
-            )
-            loss_violation_now = pipeline.risk_engine.check_daily_loss(
-                ctx.last_equity, daily_pnl_now,
-            )
-            if loss_violation_now:
-                logger.warning(
-                    "ExecutionStage daily-loss re-check: %s — DROPPING "
-                    "%d BUY(s). The session's remaining new risk is refused; "
-                    "intra HALTS on the next tick (it no longer liquidates, "
-                    "docs/WORK.md item 32) — nothing held is sold because of "
-                    "this.", loss_violation_now.message, len(buy_decisions),
-                )
-                for d in buy_decisions:
-                    _record_execution_skip(
-                        pipeline, ctx, d.symbol, "daily_loss_recheck",
-                        loss_violation_now.message,
-                    )
-                buy_decisions = []
 
         # Phase 14b — the rotation's BUY leg may only proceed on room that
         # is REAL. The constructor granted the new candidate its risk on the

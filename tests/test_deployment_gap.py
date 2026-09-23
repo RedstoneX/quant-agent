@@ -132,7 +132,7 @@ def _engine_pipeline():
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=50, max_total_position_pct=200,
-        max_daily_loss_pct=10, max_sector_pct=100,
+        max_sector_pct=100,
         require_stop_loss=True, allow_margin=False,
     ))
     return pipeline
@@ -144,10 +144,8 @@ def test_under_deployment_advisory_does_not_ask_for_scale_down():
                              entry_price=100.0, stop_loss=90.0,
                              take_profit=130.0, reasoning="x")
     _, violations, _ = pipeline._filter_hard_risk_decisions(
-        [decision], [], total_value=100_000.0, daily_pnl=0.0,
-        baseline=100_000.0, invested_target_pct=DESK_INVESTED_TARGET_PCT,
-        cash=95_000.0,
-    )
+        [decision], [], total_value=100_000.0, invested_target_pct=DESK_INVESTED_TARGET_PCT,
+        cash=95_000.0,)
     dev = [v for v in violations if v.rule == "deployment_gap"]
     assert dev, "5% projected vs the 100% mandate must fire the advisory"
     assert "UNDER" in dev[0].message
@@ -179,9 +177,7 @@ def test_advisory_never_scales_down_for_being_above_target():
     ):
         for target in (DESK_INVESTED_TARGET_PCT, 50.0):
             _, violations, _ = pipeline._filter_hard_risk_decisions(
-                list(decisions), positions, total_value=100_000.0, daily_pnl=0.0,
-                baseline=100_000.0, invested_target_pct=target, cash=100_000.0,
-            )
+                list(decisions), positions, total_value=100_000.0, invested_target_pct=target, cash=100_000.0,)
             assert not [v for v in violations if v.rule == "deployment_gap"], target
             assert not any("scale_all_buys" in v.message for v in violations), target
 
@@ -197,8 +193,6 @@ def test_within_band_below_mandate_is_quiet():
                           unrealized_pnl=10_000, unrealized_intraday_pnl=0.0,
                           sector="Technology")]
     _, violations, _ = pipeline._filter_hard_risk_decisions(
-        [], positions, total_value=100_000.0, daily_pnl=0.0,
-        baseline=100_000.0, invested_target_pct=DESK_INVESTED_TARGET_PCT,
-        cash=700.0,
-    )
+        [], positions, total_value=100_000.0, invested_target_pct=DESK_INVESTED_TARGET_PCT,
+        cash=700.0,)
     assert not [v for v in violations if v.rule == "deployment_gap"]

@@ -8,7 +8,9 @@ from datetime import date, timedelta
 import pandas as pd
 from fredapi import Fred
 
-from src.trading_calendar import et_today
+from src.data.fred_publication_days import roll_to_publication_day
+from src.data.macro_series_cache import MacroSeriesCache
+from src.trading_calendar import et_now, et_today
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,34 @@ logger = logging.getLogger(__name__)
 # (same shape of problem: feed/series failures are almost always short, but a
 # verbose exception should never blow up the coverage section of the prompt).
 _FAILURE_REASON_MAX_LEN = 200
+
+
+#: Every FRED series one `get_macro_summary()` call fetches, in no particular
+#: order. This exists so the pre-open prefetch can size its own wall-clock
+#: bound (`prefetch_deadline_s`) from the real workload instead of from a
+#: guessed count. It is a list of NAMES, not a number, and it is kept honest
+#: mechanically: `tests/test_macro_prefetch.py` runs a full
+#: `get_macro_summary()` against a stub and asserts the set of series actually
+#: requested is exactly this tuple, so adding a sixteenth series to a fetcher
+#: without adding it here fails the build rather than silently under-budgeting
+#: the prefetch.
+CONFIGURED_SERIES: tuple[str, ...] = (
+    "VIXCLS",
+    "DGS10",
+    "DGS2",
+    "DGS3MO",
+    "DFF",
+    "CPIAUCSL",
+    "CPILFESL",
+    "PCEPI",
+    "UNRATE",
+    "BAMLH0A0HYM2",
+    "DFII10",
+    "T10YIE",
+    "DTWEXBGS",
+    "BAMLC0A0CM",
+    "ICSA",
+)
 
 
 @dataclass
@@ -308,6 +338,7 @@ class MacroDataProvider:
         retry_backoff_jitter_s: float = 1.0,
         breaker_after_failed_series: int = 1,
         total_fetch_deadline_s: float = 90.0,
+        series_cache: "MacroSeriesCache | None" = None,
     ):
         # Fail fast on missing/empty FRED_API_KEY. Without this guard, an
         # unset key silently fails on every series fetch inside
@@ -373,6 +404,103 @@ class MacroDataProvider:
         # evening_analyst downstream, so changing its shape to a tuple
         # would be a much larger blast radius than this fix calls for.
         self.last_coverage: MacroCoverage | None = None
+        # --- board item 119: the fetch moves off the trading path ---------
+        #
+        # On-disk copy of every series, written by the pre-open prefetch job
+        # (`prefetch_series_cache()`, run from
+        # `scripts/refresh_macro_series.py`) and read by the sessions. See
+        # `src/data/macro_series_cache.py` for the measured starvation this
+        # exists to remove and for what makes a cached copy usable.
+        self.series_cache = series_cache if series_cache is not None else MacroSeriesCache()
+        # True only inside prefetch_series_cache(). It is what makes this
+        # provider WRITE the cache and pace itself; a trading session never
+        # sets it, so a session's own partial fetch can never become
+        # tomorrow's cached answer.
+        self._prefetch_mode = False
+        # Series ids served from the cache on the CURRENT call, for the
+        # operator-facing line at the end of get_macro_summary().
+        self._run_cache_served: list[str] = []
+
+    @property
+    def prefetch_deadline_s(self) -> float:
+        """Wall-clock ceiling for one `prefetch_series_cache()` run.
+
+        Computed from the settings already in force, never stored:
+
+            observations  15 series x (max_retries + 1) attempts x request_timeout_s
+            backoff       15 series x the capped backoff curve
+            metadata      15 series x 1 attempt x request_timeout_s
+
+        At the shipped defaults (15 s timeout, 2 retries, 2 s/8 s/1 s backoff)
+        that is 675 + 120 + 225 = 1,020 s, and it is a gross upper bound:
+        `breaker_after_failed_series` drops every series after the first total
+        failure to a single attempt, so a real outage finishes far sooner.
+
+        1,020 s is what makes the schedule work. The prefetch fires at 08:45 ET
+        — after the 08:30 BLS release slot, so it cannot hold a pre-CPI
+        snapshot — and the morning session reads macro at the measured
+        09:30:49 ET. Even the gross bound lands at 09:02 ET, 28 minutes clear.
+
+        THERE IS NO PACING SLEEP, deliberately. An earlier draft spaced each
+        request by `request_timeout_s` to stay under FRED's rate limit. Two
+        findings killed it: FRED publishes no rate limit on its own API
+        documentation (checked 2026-09-23 — the 120/min figure circulates only
+        in third-party clients), and `fredapi` is a bare `urlopen` with no
+        internal retry or sleep of its own (verified against the installed
+        package: zero occurrences of retry/sleep/backoff in `fredapi/fred.py`).
+        So a strictly serial walk already has exactly one request in flight and
+        is paced by round-trip latency itself — a structural guarantee. A sleep
+        on top of that would be an unsourced constant defending against nothing
+        anyone can name, which is precisely what this desk's no-arbitrary-
+        numbers rule exists to stop. What PR #565 tripped was CONCURRENCY, not
+        serial throughput.
+        """
+        attempts = self.max_retries + 1
+        backoff_per_series = sum(
+            min(self.retry_backoff_base_s * (2 ** attempt), self.retry_backoff_max_s)
+            + self.retry_backoff_jitter_s
+            for attempt in range(self.max_retries)
+        )
+        wire = len(CONFIGURED_SERIES) * self.request_timeout_s * (attempts + 1)
+        backoff = len(CONFIGURED_SERIES) * backoff_per_series
+        return wire + backoff
+
+    def _serve_from_cache(self, series_id: str, kwargs: dict) -> pd.Series | None:
+        """The cached copy of this series, or None to go to the wire.
+
+        Never used in prefetch mode: the prefetch's whole job is to refresh
+        the cache, so reading it would make the job a no-op after the first
+        successful day.
+        """
+        if self._prefetch_mode:
+            return None
+        try:
+            entry = self.series_cache.load(series_id, kwargs)
+        except Exception as e:  # noqa: BLE001 — a broken cache is a miss
+            logger.warning("FRED series cache unusable for %s: %s", series_id, e)
+            return None
+        if entry is None or not MacroSeriesCache.is_usable(entry, et_now()):
+            return None
+        try:
+            rows = entry["observations"]
+            index = pd.DatetimeIndex([pd.Timestamp(d) for d, _ in rows])
+            values = [float("nan") if v is None else float(v) for _, v in rows]
+            series = pd.Series(values, index=index, dtype=float)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "FRED series cache for %s did not parse (%s) — fetching live",
+                series_id, e,
+            )
+            return None
+        if len(series) == 0:
+            return None
+        # Seed the metadata the due-date derivation needs so _record_freshness
+        # below re-derives freshness from FRED's own numbers WITHOUT a second
+        # HTTP call. A cache-served series therefore reports exactly what a
+        # wire-served one would, `overdue` included — nothing is laundered.
+        info = entry.get("info")
+        self._series_info_cache[series_id] = info if isinstance(info, dict) else None
+        return series
 
     def _next_backoff(self, attempt: int) -> float:
         """Exponential backoff with jitter, clipped to whatever remains of
@@ -578,7 +706,28 @@ class MacroDataProvider:
         # Publication lag, from FRED's own metadata pair: how far behind its
         # reference date this series' current print actually published.
         lag_days = max(0, (last_updated - observation_end).days)
-        expected_next_by = last_obs + timedelta(days=cadence_days + lag_days)
+        # Board item 119, second defect. This used to be the bare calendar
+        # sum `last_obs + cadence + lag`, which can land on a day the
+        # publisher does not work — and the series was then judged against a
+        # date on which nothing could ever have been published.
+        #
+        # Measured false positive, production log 2026-09-21 13:32:19 UTC:
+        # "DFF: OVERDUE — latest reading is 2026-09-17; on this series' own
+        # cadence (1d between readings) and its own publication lag (1d) a
+        # newer print was due by 2026-09-19". 2026-09-19 was a SATURDAY. DFF
+        # comes from the Federal Reserve Board's H.15 release, which publishes
+        # on business days, so nothing was missing — and yet the macro seat
+        # then ran the whole 2026-09-21 session at low confidence citing
+        # exactly this, sixteen prompt renderings deep.
+        #
+        # Rolling forward to the next federal publication day is the minimum
+        # correction and is one-directional: it can only move the due date
+        # later, so it removes false alarms and cannot manufacture a false
+        # all-clear beyond the length of the closure itself. See
+        # `src/data/fred_publication_days.py` for the statutory basis.
+        expected_next_by = roll_to_publication_day(
+            last_obs + timedelta(days=cadence_days + lag_days)
+        )
         today = et_today()
         if today > expected_next_by:
             return _store(SeriesFreshness(
@@ -632,6 +781,21 @@ class MacroDataProvider:
         return {"freshness": FRESHNESS_UNKNOWN, "freshness_detail": ""}
 
     def _safe_get_series(self, series_id: str, **kwargs) -> pd.Series:
+        # Board item 119: the cache comes BEFORE the deadline check and before
+        # the wire. When the pre-open prefetch already has this series and its
+        # own derived due date has not passed, re-fetching could only return
+        # the same rows — so the trading session spends no wall clock and no
+        # FRED tolerance on it at all. That is what stops the 09:30:49 ET
+        # macro stage from racing the open: on a normal morning it makes few
+        # or no HTTP calls, and the measured "8 of 15 skipped without an
+        # attempt" outcome has nothing left to consume.
+        cached = self._serve_from_cache(series_id, kwargs)
+        if cached is not None:
+            self._run_cache_served.append(series_id)
+            self._note_coverage(series_id, ok=True, reason="")
+            self._record_freshness(series_id, cached)
+            return cached
+
         # Hard wall-clock ceiling check FIRST: if get_macro_summary()'s
         # total_fetch_deadline_s has already elapsed (e.g. earlier series in
         # this same run ate the whole budget retrying), skip this series
@@ -734,8 +898,42 @@ class MacroDataProvider:
         # Freshness is classified on the RAW series (NaN rows included) —
         # see _record_freshness. Callers `.dropna()` for values afterwards;
         # this must run before that, on what FRED actually sent.
-        self._record_freshness(series_id, result)
+        freshness = self._record_freshness(series_id, result)
+        if self._prefetch_mode:
+            self._write_cache(series_id, kwargs, result, freshness)
         return result
+
+    def _write_cache(
+        self, series_id: str, kwargs: dict, result: pd.Series, freshness: SeriesFreshness,
+    ) -> None:
+        """Persist one successfully fetched series. Prefetch path only."""
+        try:
+            observations: list[tuple[str, float | None]] = []
+            for stamp, value in result.items():
+                day = pd.Timestamp(stamp).date().isoformat()
+                observations.append(
+                    (day, None if pd.isna(value) else float(value))
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Could not serialise %s for the FRED series cache: %s", series_id, e,
+            )
+            return
+        self.series_cache.save(
+            series_id=series_id,
+            kwargs=kwargs,
+            observations=observations,
+            info=self._series_info_cache.get(series_id),
+            # Only a series whose next print is genuinely not due yet earns a
+            # due date in the cache. `overdue` deliberately stores None, so a
+            # series the desk already knows is late is served for the prefetch
+            # day only and is re-asked tomorrow rather than being pinned.
+            expected_next_by=(
+                freshness.expected_next_by
+                if freshness.status == FRESHNESS_CURRENT else None
+            ),
+            fetched_at=et_now(),
+        )
 
     @staticmethod
     def _staleness_days(series: pd.Series) -> int | None:
@@ -1134,11 +1332,16 @@ class MacroDataProvider:
         MacroCoverage's docstring for why this is a side channel rather
         than a change to this method's own (widely-consumed) return shape.
         """
-        self._deadline = time.monotonic() + self.total_fetch_deadline_s
+        deadline_s = (
+            self.prefetch_deadline_s if self._prefetch_mode
+            else self.total_fetch_deadline_s
+        )
+        self._deadline = time.monotonic() + deadline_s
         self._run_configured = 0
         self._run_succeeded = 0
         self._run_failed = []
         self._run_freshness = {}
+        self._run_cache_served = []
         # Metadata is only valid until the next print lands, so it is never
         # carried across calls.
         self._series_info_cache = {}
@@ -1165,6 +1368,14 @@ class MacroDataProvider:
                     "due by each series' own cadence and publication lag: %s",
                     "; ".join(f.describe() for f in overdue),
                 )
+            if self._run_cache_served:
+                logger.info(
+                    "FRED: %d of %d series served from the pre-open cache "
+                    "without an HTTP call (%s) — freshness re-derived from the "
+                    "metadata each entry was stored with, not assumed",
+                    len(self._run_cache_served), self._run_configured,
+                    ", ".join(self._run_cache_served),
+                )
             self.last_coverage = MacroCoverage(
                 configured=self._run_configured,
                 succeeded=self._run_succeeded,
@@ -1177,3 +1388,44 @@ class MacroDataProvider:
             # (outside get_macro_summary()) must not inherit a stale,
             # already-expired deadline from a previous run.
             self._deadline = None
+
+    def prefetch_series_cache(self) -> MacroCoverage | None:
+        """Fill the on-disk series cache ahead of the open. Board item 119.
+
+        Runs the ordinary fetch path with three differences, and no others —
+        which is the point: the prefetch asks FRED for exactly what the
+        session would ask for, with exactly the same arguments, so a cached
+        entry can never be a near-enough match for the query that reads it.
+
+        1. It is strictly serial — one request in flight, no bursts, no sleep
+           on top (see `prefetch_deadline_s` for why a pacing constant was
+           written and then deleted). This is the opposite lever from PR #565,
+           which fetched the same series in PARALLEL at the open and got this
+           box's IP blocked by FRED's abuse detection while being stress-tested.
+        2. The wall-clock ceiling is `prefetch_deadline_s`, computed from the
+           settings in force, instead of the 90 s the trading path imposes.
+           90 s exists to stop a FRED outage stalling a live session; nothing
+           is waiting on this job, so borrowing that ceiling here would be the
+           starvation all over again, just earlier.
+        3. Every series that comes back is written to the cache.
+
+        Returns the run's coverage, or None if the fetch raised outright.
+        """
+        self._prefetch_mode = True
+        started = time.monotonic()
+        logger.info(
+            "FRED pre-open prefetch starting: %d series, strictly serial "
+            "(one request in flight), ceiling %.0fs",
+            len(CONFIGURED_SERIES), self.prefetch_deadline_s,
+        )
+        try:
+            self.get_macro_summary()
+        finally:
+            self._prefetch_mode = False
+        coverage = self.last_coverage
+        logger.info(
+            "FRED pre-open prefetch finished in %.0fs: %s",
+            time.monotonic() - started,
+            coverage.describe() if coverage is not None else "no coverage recorded",
+        )
+        return coverage

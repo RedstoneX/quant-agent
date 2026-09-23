@@ -61,7 +61,6 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False,
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.config.cash_sweep.min_order_usd = min_order_usd
     pipeline.config.execution.fractional_enabled = fractional
     pipeline.config.execution.fractional_share_decimals = 4

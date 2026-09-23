@@ -21,7 +21,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -65,7 +64,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -102,7 +100,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -141,7 +138,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -190,7 +186,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -370,7 +365,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -432,34 +426,6 @@ def test_llm_config_rejects_tiny_per_agent_max_tokens():
     assert cfg.get_max_tokens("portfolio_manager") == 4096
 
 
-def test_risk_rules_warn_when_baseline_missing(caplog):
-    """The daily-loss denominator silently falling back to current total_value
-    should emit a warning — the check appears correct but the semantic changed.
-    """
-    import logging
-
-    from src.config import RiskConfig
-    from src.models import TradeDecision
-    from src.risk.rules import RiskRuleEngine
-
-    engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=40, require_stop_loss=True,
-    ))
-    decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=5,
-        entry_price=500, stop_loss=480, take_profit=530, reasoning="test",
-    )
-
-    with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
-        engine.check(
-            decision=decision, positions=[], total_value=100_000.0,
-            daily_pnl=-1_000.0, baseline=0,  # broker returned 0 for last_equity
-        )
-
-    assert any("baseline missing" in rec.message for rec in caplog.records)
-
-
 def test_trading_config_rejects_empty_universe():
     """Empty universe → no data, no analyses, no trades all session.
     Pre-fix this loaded silently; catch at config load so a typo in
@@ -486,30 +452,6 @@ def test_trading_config_rejects_non_positive_lookback():
         TradingConfig(universe=["SPY"], lookback_days=-5, schedule=schedule)
 
 
-def test_risk_config_rejects_max_daily_loss_pct_boundary():
-    """max_daily_loss_pct must be in (0, 100]:
-    - 0 hard-blocks all trading on first micro-loss (the abs() check
-      makes every -$0.01 a violation)
-    - >100 is semantic nonsense (can't lose more than 100% of account)
-    Boundary 100 is allowed: rare but legal "full-account loss" cap.
-    """
-    import pytest
-    from src.config import RiskConfig
-
-    base_kwargs = dict(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40, require_stop_loss=True,
-    )
-    with pytest.raises(ValueError, match="greater than 0"):
-        RiskConfig(**base_kwargs, max_daily_loss_pct=0.0)
-    with pytest.raises(ValueError, match="greater than 0"):
-        RiskConfig(**base_kwargs, max_daily_loss_pct=-1.0)
-    with pytest.raises(ValueError, match="less than or equal to 100"):
-        RiskConfig(**base_kwargs, max_daily_loss_pct=150.0)
-    cfg = RiskConfig(**base_kwargs, max_daily_loss_pct=100.0)
-    assert cfg.max_daily_loss_pct == 100.0
-
-
 def test_risk_config_rejects_position_and_sector_bound_violations():
     """max_position_pct and max_sector_pct also bounded to (0, 100]
     for the same reasons (0 blocks any BUY; >100 is nonsense single-name).
@@ -521,7 +463,7 @@ def test_risk_config_rejects_position_and_sector_bound_violations():
     def kw(**overrides):
         base = dict(
             max_position_pct=20, max_total_position_pct=90,
-            max_daily_loss_pct=3, max_sector_pct=40,
+            max_sector_pct=40,
             require_stop_loss=True,
         )
         base.update(overrides)
@@ -566,7 +508,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
   allow_margin: {margin}
@@ -635,7 +576,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -688,7 +628,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -735,7 +674,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -803,7 +741,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -875,7 +812,7 @@ def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path
             llm=LLMConfig(max_tokens=4096, tech_analyst_model="gpt-5.5",
                          tech_analyst_provider="openrouter"),
             risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                            max_daily_loss_pct=3, max_sector_pct=40, require_stop_loss=True),
+                            max_sector_pct=40, require_stop_loss=True),
             trading=TradingConfig(universe=["SPY"], lookback_days=60,
                                   schedule=ScheduleConfig(morning="06:00", midday="12:00", evening="16:30")),
             storage=StorageConfig(db_path="data/test.db"),
@@ -1043,7 +980,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -1097,7 +1033,6 @@ llm:
 risk:
   max_position_pct: 20
   max_total_position_pct: 90
-  max_daily_loss_pct: 3
   max_sector_pct: 40
   require_stop_loss: true
 trading:
@@ -1123,3 +1058,83 @@ llm_cost_circuit:
 
     assert "max_paid_sessions_per_mode_per_day" in str(exc_info.value)
     assert "max_calls_per_session" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# The account-level loss alarm — retired 2026-09-20, board item 32.
+# ---------------------------------------------------------------------------
+#
+# `RiskConfig` inherits pydantic's default `extra="ignore"`. Without the
+# validator these tests pin, a deployment whose settings.yaml still carried
+# `max_daily_loss_pct` would load silently and an operator would believe a
+# daily halt was armed when nothing in the desk reads it. That belief is a
+# belief about loss protection, which is why this removal is guarded by
+# code rather than only by the retired-mechanism prose scanner — and why
+# these five keys are deliberately absent from `config/retired_mechanisms
+# .yaml`'s symbol list (listing them there would flag the validator itself).
+# The registry says so; until 2026-09-20 nothing tested it.
+
+_DELETED_LOSS_ALARM_KEYS = (
+    "max_daily_loss_pct",
+    "daily_loss_risk_multiple",
+    "drawdown_vol_sensitivity",
+    "drawdown_5d_risk_multiple",
+    "drawdown_20d_risk_multiple",
+)
+
+
+def _live_risk_kwargs(**overrides):
+    base = dict(
+        max_position_pct=20, max_total_position_pct=90,
+        max_sector_pct=40, require_stop_loss=True,
+    )
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("key", _DELETED_LOSS_ALARM_KEYS)
+def test_a_stale_settings_file_cannot_resurrect_the_loss_alarm(key):
+    """Each deleted key is REFUSED on load, not ignored."""
+    from pydantic import ValidationError
+    from src.config import RiskConfig
+
+    with pytest.raises(ValidationError) as excinfo:
+        RiskConfig(**_live_risk_kwargs(**{key: 3.0}))
+    message = str(excinfo.value)
+    assert key in message
+    # The refusal must say there is no replacement, or the next operator
+    # goes looking for the new spelling of an account-level loss limit.
+    assert "NO replacement" in message
+
+
+def test_the_refusal_does_not_fire_on_an_ordinary_unknown_key():
+    """`extra="ignore"` still applies to everything else, so this validator
+    is a targeted refusal and not a new strictness regime that would fail
+    every older settings file."""
+    from src.config import RiskConfig
+
+    cfg = RiskConfig(**_live_risk_kwargs(some_unrelated_future_key=1))
+    assert cfg.max_position_pct == 20
+
+
+@pytest.mark.parametrize("key", _DELETED_LOSS_ALARM_KEYS)
+def test_the_live_settings_file_carries_none_of_them(key):
+    """The repo's own settings.yaml must stay loadable."""
+    import yaml
+
+    raw = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
+    )
+    assert key not in (raw.get("risk") or {}), (
+        f"config/settings.yaml carries risk.{key} — the account-level loss "
+        "alarm is retired and this file will not load"
+    )
+
+
+def test_riskconfig_has_no_loss_alarm_field_left():
+    from src.config import RiskConfig
+
+    cfg = RiskConfig(**_live_risk_kwargs())
+    for key in _DELETED_LOSS_ALARM_KEYS:
+        assert not hasattr(cfg, key)
+    assert not hasattr(cfg, "effective_max_daily_loss_pct")

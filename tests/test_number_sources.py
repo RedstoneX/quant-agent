@@ -85,7 +85,7 @@ def test_a_default_bound_to_a_name_is_still_a_site() -> None:
     the gate. Constant arithmetic (`5 * 366`) did the same.
     """
     sites = {s.site_id: s.value for s in collect_sites()}
-    assert sites["src.config.RiskConfig.drawdown_vol_sensitivity"] == 3.0
+    assert sites["src.config.RiskConfig.max_position_risk_pct"] == 5.0
     assert sites["src.config.RiskConfig.min_reward_risk_after_widening"] == 1.5
     assert sites["src.config.SmartMoneyConfig.insider_history_retention_days"] == 5 * 366
 
@@ -158,7 +158,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 148, (
+    assert MAX_ARBITRARY_ENTRIES == 142, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -305,7 +305,14 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 147, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 149, (
+        "147 -> 149 on 2026-09-23, the three-route failover ladder: +2 for "
+        "`src.llm_route_journal._DEFAULT_DB_RELATIVE`'s companions in that "
+        "new module (the journal's SQLite timeout and its read_events page "
+        "size). Both are plumbing on a durable log of which LLM road "
+        "answered; neither decides, sizes, prices or exits a trade. The four "
+        "numbers the same change added to src/agents/base.py are NOT here -- "
+        "that module is in SCOPED_PATHS and they carry ledger entries. "
         "145 -> 147 on 2026-09-19: +2 for src/number_sources.py's own "
         "FACTOR_BAND, the scanner's classifier band, not a trade number. "
 

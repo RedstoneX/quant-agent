@@ -95,7 +95,6 @@ def test_correlation_cluster_advisory_fires():
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=30,
         max_total_position_pct=95,
-        max_daily_loss_pct=3,
         max_sector_pct=90,
         require_stop_loss=True,
     ))
@@ -121,10 +120,9 @@ def test_correlation_cluster_advisory_fires():
     with patch("src.execution.broker._get_sector", side_effect=lambda s: {"NVDA": "Technology", "AVGO": "Technology", "GOOGL": "Communication Services"}.get(s, "Unknown")):
         violations = engine.check(
             decision=decision, positions=positions,
-            total_value=100_000, daily_pnl=0,
+            total_value=100_000,
             correlation_matrix=corr_matrix,
-            max_correlated_cluster_pct=50.0,
-        )
+            max_correlated_cluster_pct=50.0,)
 
     rules = [v.rule for v in violations]
     assert "correlation_cluster" in rules, f"expected advisory, got {rules}"
@@ -143,7 +141,7 @@ def test_correlation_cluster_uses_gross_multiplier_for_leveraged_etfs():
     """
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=80, max_total_position_pct=300,
-        max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
+        max_sector_pct=90, require_stop_loss=True,
     ))
     # Held: SQQQ $10k (3x inverse → gross 30k), SDS $5k (2x inverse →
     # gross 10k), GOOGL $20k (1x). Total raw 35k, total gross 60k.
@@ -175,10 +173,9 @@ def test_correlation_cluster_uses_gross_multiplier_for_leveraged_etfs():
     ):
         violations = engine.check(
             decision=decision, positions=positions,
-            total_value=100_000, daily_pnl=0,
+            total_value=100_000,
             correlation_matrix=corr_matrix,
-            max_correlated_cluster_pct=40.0,
-        )
+            max_correlated_cluster_pct=40.0,)
 
     # Post-fix cluster math:
     #   peer_value = SQQQ × 3 + SDS × 2 = 30k + 10k = 40k
@@ -203,7 +200,7 @@ def test_correlation_cluster_silent_when_below_threshold():
     """If peers are lightly correlated, no cluster advisory."""
     engine = RiskRuleEngine(RiskConfig(
         max_position_pct=30, max_total_position_pct=95,
-        max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
+        max_sector_pct=90, require_stop_loss=True,
     ))
     positions = [
         Position(symbol="JPM", qty=100, avg_entry=200, current_price=220,
@@ -217,7 +214,6 @@ def test_correlation_cluster_silent_when_below_threshold():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = engine.check(
             decision=decision, positions=positions,
-            total_value=100_000, daily_pnl=0,
-            correlation_matrix=corr_matrix,
-        )
+            total_value=100_000,
+            correlation_matrix=corr_matrix,)
     assert not any(v.rule == "correlation_cluster" for v in violations)

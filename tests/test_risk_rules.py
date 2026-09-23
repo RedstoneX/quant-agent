@@ -9,7 +9,6 @@ def risk_config():
     return RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_daily_loss_pct=3,
         max_sector_pct=40,
         require_stop_loss=True,
     )
@@ -26,7 +25,7 @@ def test_position_size_within_limit(engine):
         entry_price=500.0, stop_loss=485.0, take_profit=530.0,
         reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=10000.0)
     assert len(violations) == 0
 
 
@@ -36,7 +35,7 @@ def test_position_size_exceeds_limit(engine):
         entry_price=500.0, stop_loss=485.0, take_profit=530.0,
         reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=10000.0)
     assert any(v.rule == "max_position_pct" for v in violations)
 
 
@@ -58,7 +57,7 @@ def test_existing_position_plus_new_buy_exceeds_limit(engine):
         reasoning="Add to winner",
     )
 
-    violations = engine.check(decision, positions=positions, total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=positions, total_value=10000.0)
     assert any(v.rule == "max_position_pct" for v in violations)
 
 
@@ -73,9 +72,7 @@ def test_pending_same_symbol_buy_exceeds_limit(engine):
         decision,
         positions=[],
         total_value=10000.0,
-        daily_pnl=0.0,
-        pending_symbol_investment={"SPY": 1500.0},
-    )
+        pending_symbol_investment={"SPY": 1500.0},)
     assert any(v.rule == "max_position_pct" for v in violations)
 
 
@@ -93,49 +90,8 @@ def test_total_exposure_exceeds_limit(engine):
         entry_price=850.0, stop_loss=810.0, take_profit=920.0,
         reasoning="Test",
     )
-    violations = engine.check(decision, positions=positions, total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=positions, total_value=10000.0)
     assert any(v.rule == "max_total_position_pct" for v in violations)
-
-
-def test_daily_loss_limit(engine):
-    decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
-        reasoning="Test",
-    )
-    violations = engine.check(decision, positions=[], total_value=10000.0, daily_pnl=-350.0)
-    assert any(v.rule == "max_daily_loss_pct" for v in violations)
-
-
-def test_check_daily_loss_rule_handles_nan_daily_pnl(engine, caplog):
-    """Per-BUY daily-loss rule mirrors the standalone check_daily_loss
-    NaN guard. A non-finite daily_pnl (Alpaca portfolio_value glitches
-    propagate into total_value - last_equity) used to make
-    `abs(NaN / baseline * 100) > limit` evaluate False, silently
-    disabling rule 3 INSIDE the per-BUY pipeline path while the
-    standalone breaker remained protected. Audit 2026-05-27.
-
-    Contract: NaN does not violate (we don't know the actual loss), and
-    the engine does not crash. force_delever + check_daily_loss handle
-    the disabling-on-NaN class of failure elsewhere."""
-    import logging
-    decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
-        reasoning="Test",
-    )
-    caplog.set_level(logging.WARNING, logger="src.risk.rules")
-    violations = engine.check(
-        decision, positions=[], total_value=10000.0, daily_pnl=float("nan"),
-    )
-    # rule 3 must NOT spuriously violate on NaN (it's not "we crossed
-    # the loss limit" — it's "we don't know").
-    assert not any(v.rule == "max_daily_loss_pct" for v in violations)
-    # And the bypass must be logged so the operator sees it.
-    assert any(
-        "non-finite" in r.getMessage() and "SPY" in r.getMessage()
-        for r in caplog.records
-    ), "expected a WARNING about non-finite daily_pnl"
 
 
 def test_no_stop_loss(engine):
@@ -144,7 +100,7 @@ def test_no_stop_loss(engine):
         entry_price=500.0, stop_loss=0.0, take_profit=530.0,
         reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=10000.0)
     assert any(v.rule == "require_stop_loss" for v in violations)
 
 
@@ -164,8 +120,7 @@ def test_sector_concentration(engine):
     from unittest.mock import patch
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = engine.check(
-            decision, positions=positions, total_value=10000.0, daily_pnl=0.0,
-        )
+            decision, positions=positions, total_value=10000.0,)
     assert any(v.rule == "max_sector_pct" for v in violations)
 
 
@@ -175,60 +130,8 @@ def test_sell_decision_skips_buy_rules(engine):
         entry_price=0, stop_loss=0, take_profit=0,
         reasoning="Take profit",
     )
-    violations = engine.check(decision, positions=[], total_value=10000.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=10000.0)
     assert len(violations) == 0
-
-
-# ===========================================================================
-# NaN-guard tests — check_daily_loss must NOT silently disable on NaN
-# ===========================================================================
-
-def test_check_daily_loss_nan_baseline_does_not_disable_silently(engine, caplog):
-    """Alpaca has been observed to return NaN portfolio_value during
-    market-open glitches; that propagates to last_equity → baseline.
-    Pre-fix: `NaN <= 0` is False → falls through → `abs(NaN/NaN*100)`
-    is NaN → `NaN > limit` is False → no violation → circuit breaker
-    silently disabled on exactly the kind of broken-snapshot day where
-    it's most valuable.
-
-    Fix: NaN baseline returns None (same as the "no signal" path) but
-    LOGS a warning so the operator can see the breaker was bypassed,
-    AND force_delever downstream catches the actual cash deficit.
-    """
-    import logging
-    import math
-    with caplog.at_level(logging.WARNING):
-        v = engine.check_daily_loss(baseline=float("nan"), daily_pnl=-100.0)
-    assert v is None
-    assert any(
-        "non-finite" in r.message and "baseline" in r.message
-        for r in caplog.records
-    ), "non-finite baseline must log a warning so the bypass is visible"
-
-
-def test_check_daily_loss_nan_daily_pnl_does_not_disable_silently(engine, caplog):
-    import logging
-    with caplog.at_level(logging.WARNING):
-        v = engine.check_daily_loss(baseline=10000.0, daily_pnl=float("nan"))
-    assert v is None
-    assert any(
-        "non-finite" in r.message and "daily_pnl" in r.message
-        for r in caplog.records
-    )
-
-
-def test_check_daily_loss_inf_baseline_treated_as_non_finite(engine):
-    """Defense-in-depth: +/- inf is also not a usable baseline."""
-    assert engine.check_daily_loss(baseline=float("inf"), daily_pnl=-100.0) is None
-    assert engine.check_daily_loss(baseline=float("-inf"), daily_pnl=-100.0) is None
-
-
-def test_check_daily_loss_finite_inputs_still_fire_breaker(engine):
-    """Sanity: the NaN guard must not regress the legitimate breach
-    detection. 4% loss with 3% cap → violation."""
-    v = engine.check_daily_loss(baseline=10000.0, daily_pnl=-400.0)
-    assert v is not None
-    assert v.rule == "max_daily_loss_pct"
 
 
 # ===========================================================================
@@ -251,7 +154,7 @@ def test_check_zero_total_value_emits_blocking_violation(engine):
         action="BUY", symbol="NVDA", allocation_pct=10.0,
         entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=0.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=0.0)
     assert len(violations) == 1
     # Must be in HARD_BLOCK_RULES so _filter_hard_risk_decisions blocks
     from src.pipeline import HARD_BLOCK_RULES
@@ -268,7 +171,7 @@ def test_check_nan_total_value_emits_blocking_violation(engine):
         action="BUY", symbol="NVDA", allocation_pct=10.0,
         entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=float("nan"), daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=float("nan"))
     assert len(violations) == 1
     from src.pipeline import HARD_BLOCK_RULES
     assert violations[0].rule in HARD_BLOCK_RULES
@@ -281,7 +184,7 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
         action="BUY", symbol="NVDA", allocation_pct=10.0,
         entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
     )
-    violations = engine.check(decision, positions=[], total_value=-100.0, daily_pnl=0.0)
+    violations = engine.check(decision, positions=[], total_value=-100.0)
     assert len(violations) == 1
 
 
@@ -291,9 +194,9 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
 #
 # Answer, from the code: NO. `RiskRuleEngine.check`'s very first statement
 # is `if decision.action in ("SELL", "COVER"): return []` — before ANY of
-# HARD_BLOCK_RULES (max_daily_loss_pct, max_total_position_pct,
-# max_position_pct, require_stop_loss, max_sector_hard_pct, cash_only,
-# drawdown_buy_cap, max_gross_exposure) is even
+# HARD_BLOCK_RULES (max_total_position_pct, max_position_pct,
+# require_stop_loss, max_sector_hard_pct, cash_only, max_gross_exposure) is
+# even
 # evaluated. These tests pin that property directly: SELL/COVER return no
 # violations even when EVERY other check would fail if it ran.
 #
@@ -330,10 +233,7 @@ def test_sell_bypasses_every_hard_block_even_at_extreme_breach(engine):
     violations = engine.check(
         decision, positions=_breaching_positions(),
         total_value=-1.0,          # would hard-block a BUY outright
-        daily_pnl=-999_999.0,      # would blow max_daily_loss_pct
-        cash=float("nan"),         # would hard-block cash_only
-        in_drawdown=True,
-    )
+        cash=float("nan"),)        # would hard-block cash_only
     assert violations == []
 
 
@@ -346,10 +246,7 @@ def test_cover_bypasses_every_hard_block_even_at_extreme_breach(engine):
     violations = engine.check(
         decision, positions=_breaching_positions(),
         total_value=float("nan"),
-        daily_pnl=-999_999.0,
-        cash=float("nan"),
-        in_drawdown=True,
-    )
+        cash=float("nan"),)
     assert violations == []
 
 
@@ -364,8 +261,7 @@ def test_buy_is_NOT_exempt_under_the_same_breaching_state(engine):
     )
     violations = engine.check(
         decision, positions=_breaching_positions(),
-        total_value=-1.0, daily_pnl=0.0,
-    )
+        total_value=-1.0,)
     assert len(violations) > 0
 
 

@@ -24,7 +24,6 @@ def _risk_config(allow_margin: bool = False) -> RiskConfig:
     return RiskConfig(
         max_position_pct=50.0,
         max_total_position_pct=200.0,  # generous — not what we're testing
-        max_daily_loss_pct=10.0,
         max_sector_pct=100.0,
         require_stop_loss=True,
         allow_margin=allow_margin,
@@ -51,8 +50,7 @@ def test_cash_only_blocks_buy_that_exceeds_cash():
         reasoning="breakout",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0,
-        daily_pnl=0, cash=5_000.0,  # only $5k cash available
+        decision=decision, positions=[], total_value=100_000.0, cash=5_000.0,  # only $5k cash available
     )
     assert any(v.rule == "cash_only" for v in violations)
 
@@ -65,9 +63,7 @@ def test_cash_only_allows_buy_when_fits_in_cash():
         reasoning="fits",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0,
-        daily_pnl=0, cash=10_000.0,
-    )
+        decision=decision, positions=[], total_value=100_000.0, cash=10_000.0,)
     assert not any(v.rule == "cash_only" for v in violations)
 
 
@@ -79,8 +75,7 @@ def test_margin_mode_true_skips_cash_rule():
         reasoning="margin ok",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0,
-        daily_pnl=0, cash=1_000.0,  # margin would be used
+        decision=decision, positions=[], total_value=100_000.0, cash=1_000.0,  # margin would be used
     )
     assert not any(v.rule == "cash_only" for v in violations)
 
@@ -112,9 +107,7 @@ def test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy():
     assert ceiling.ceiling_x == 2.0
 
     violations = engine.check(
-        decision=decision, positions=[held], total_value=9_736.0,
-        daily_pnl=0.0, cash=-915.83, gross_ceiling=ceiling,
-    )
+        decision=decision, positions=[held], total_value=9_736.0, cash=-915.83, gross_ceiling=ceiling,)
 
     assert not any(v.rule == "cash_only" for v in violations), (
         "cash_only must never fire with allow_margin=True — negative cash "
@@ -139,9 +132,7 @@ def test_filter_accumulates_pending_buys_against_cash():
     )
 
     allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
-        [d1, d2], positions=[], total_value=100_000.0,
-        daily_pnl=0, baseline=100_000.0, cash=10_000.0,
-    )
+        [d1, d2], positions=[], total_value=100_000.0, cash=10_000.0,)
 
     symbols = [d.symbol for d in allowed]
     assert symbols == ["NVDA"]  # first passes, second blocked by cash
@@ -166,8 +157,7 @@ def test_filter_anticipates_same_session_sell_proceeds():
     )
 
     allowed, _, blocked = pipeline._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0,
-        daily_pnl=0, baseline=100_000.0, cash=5_000.0,  # low starting cash
+        [sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # low starting cash
     )
 
     symbols = {d.symbol for d in allowed}
@@ -181,7 +171,6 @@ def _generous_config() -> RiskConfig:
     return RiskConfig(
         max_position_pct=100.0,
         max_total_position_pct=1000.0,
-        max_daily_loss_pct=100.0,
         max_sector_pct=100.0,
         require_stop_loss=True,
         allow_margin=False,
@@ -211,9 +200,7 @@ def test_presum_partial_sell_does_not_overcredit_proceeds():
     # cash $2k + actual proceeds $54k = $56k < $58k BUY → must block.
     # The pre-fix code credited 99% ($59.4k) → $61.4k effective → wrongly allowed.
     allowed, _, blocked = pipeline._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0,
-        daily_pnl=0, baseline=100_000.0, cash=2_000.0,
-    )
+        [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
     symbols = {d.symbol for d in allowed}
     assert "NVDA" not in symbols, (
         "BUY must block — it exceeds cash + the 90% the rounded SELL realizes"
@@ -242,9 +229,7 @@ def test_presum_partial_sell_rounding_up_to_full_credits_full_proceeds():
     # cash $2k + full proceeds $60k = $62k > $58k → must allow. The pre-fix
     # code credited only 40% ($24k) → $26k effective → wrongly blocked.
     allowed, _, blocked = pipeline._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0,
-        daily_pnl=0, baseline=100_000.0, cash=2_000.0,
-    )
+        [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
     symbols = {d.symbol for d in allowed}
     assert "NVDA" in symbols, (
         f"BUY should pass — the partial SELL rounds up to a full exit "
@@ -474,8 +459,7 @@ def test_filter_does_not_credit_zero_allocation_sell_as_proceeds():
     )
 
     allowed, _, blocked = pipeline._filter_hard_risk_decisions(
-        [phantom_sell, buy], positions=[held], total_value=100_000.0,
-        daily_pnl=0, baseline=100_000.0, cash=5_000.0,  # only $5k actual
+        [phantom_sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # only $5k actual
     )
 
     symbols = {d.symbol for d in allowed}

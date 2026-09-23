@@ -67,7 +67,6 @@ def mock_config():
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
     cfg.risk.max_total_position_pct = 90
-    cfg.risk.max_daily_loss_pct = 3
     cfg.risk.max_sector_pct = 40
     cfg.risk.require_stop_loss = True
     cfg.trading.universe = ["SPY"]

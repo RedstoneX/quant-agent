@@ -165,8 +165,8 @@ class PositionReviewerAgent(BaseAgent):
         # back by the stop-out reconciler (2026-08-28 ONDS/CCJ). The
         # `EMERGENCY_SELL` / `EMERGENCY_COVER` tags are still matched here
         # because historical rows carry them; NOTHING EMITS THEM ANY MORE.
-        # The daily-loss breaker stopped liquidating on 2026-09-14 (item 32)
-        # and now halts without closing anything. These bypass the
+        # The account-level loss breaker was removed entirely on 2026-09-20
+        # (retired item 32). These bypass the
         # reviewer — the closed positions are already gone from ctx.positions
         # — but surfacing them prevents the reviewer from reasoning in a
         # vacuum about why the book shrank. A circuit-breaker cover
@@ -579,10 +579,8 @@ class PositionReviewerAgent(BaseAgent):
 
             r5 = _pct(recent_performance.get("rolling_5d_pct"))
             r20 = _pct(recent_performance.get("rolling_20d_pct"))
-            dd = recent_performance.get("in_drawdown")
-            dd_note = " ⚠️ IN DRAWDOWN — bias toward HOLDING quality, don't panic-sell the bottom" if dd else ""
             perf_section = (
-                f"### Recent System Performance{dd_note}\n"
+                f"### Recent System Performance\n"
                 f"- 5d: {r5} | 20d: {r20}\n"
             )
         else:
@@ -694,7 +692,7 @@ class PositionReviewerAgent(BaseAgent):
                 "cited level, fundamental signal flipped, etc.)\n"
                 "  - HIGH-conviction bearish stock-specific state_change reversal landed today\n"
                 "  - Bearish earnings filing analysis posted today for this symbol\n"
-                "  - Daily-loss circuit breaker engaged\n\n"
+                "\n"
                 "`TARGET_BREACH`, slowing pace, geopolitical noise, valuation stretch, "
                 "concentration drift — these are NOT hard triggers. The earlier action "
                 "already harvested them. Trimming a second time on the same flag is the "

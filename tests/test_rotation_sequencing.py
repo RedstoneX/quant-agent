@@ -39,6 +39,7 @@ What is pinned here:
 """
 from __future__ import annotations
 
+import ast
 import json
 import pathlib
 from types import SimpleNamespace
@@ -77,24 +78,16 @@ def _risk_kwargs(**overrides) -> dict:
     return base
 
 
-#: The held book's daily volatility that makes the volatility-relative rung
-#: of the daily-loss limit come out at exactly 2% of equity
-#: (`vol_relative_drawdown_threshold_pct` = sensitivity x sigma x sqrt(1)).
-#: Derived from the config's own sensitivity rather than hardcoded, so a
-#: change to that default retunes these fixtures instead of silently
-#: changing what they prove.
-#:
-#: The vol-relative rung matters here specifically: it is the ONLY basis
-#: whose numerator is the held book (`daily_loss_numerator`), and the held
-#: book is what a sale changes. Under either fixed-percentage rung the
-#: numerator is the account's day change, which a sale barely moves — so
-#: the defect this file is about lives on this rung.
-SIGMA_FOR_2PCT = 2.0 / RiskConfig(**_risk_kwargs()).drawdown_vol_sensitivity
-
-
 # ---------------------------------------------------------------------------
-# Fixtures — a pipeline stub with the REAL risk engine and the REAL
-# daily-loss arithmetic behind it.
+# Fixtures — a pipeline stub with the REAL risk engine behind it.
+#
+# The account-level loss halt these fixtures used to drive was removed
+# outright on 2026-09-23 (PR #584, owner ruling on board item 32), so the
+# gate this file exercises is now the FUNDING pair — `insufficient_cash`
+# and `below_min_notional`, measured by `_entry_deployment_budget` over the
+# projected post-sale book. `budget_by_book` below is what makes a fixture
+# able to tell a pre-sale book from a post-sale one, which is the property
+# every attempt on this item has actually turned on.
 # ---------------------------------------------------------------------------
 
 def _pos(symbol, qty=10.0, price=100.0, intraday=0.0) -> Position:
@@ -128,14 +121,8 @@ def _opportunity() -> RotationOpportunity:
 
 
 def _pipeline(tmp_path, *, positions=None, total_value=100_000.0,
-              cash=50_000.0, vol_by_book=None, prices=None):
-    """A pipeline stub carrying a REAL `RiskRuleEngine`.
-
-    `vol_by_book` maps a frozenset of remaining symbols to the held book's
-    daily volatility in percent, so a test can make the THRESHOLD depend on
-    which names are still held — which is what the real
-    `held_book_daily_vol_pct` does, and what a pre-sale check cannot see.
-    """
+              cash=50_000.0, prices=None):
+    """A pipeline stub carrying a REAL `RiskRuleEngine`."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     risk_config = RiskConfig(**_risk_kwargs())
@@ -148,20 +135,8 @@ def _pipeline(tmp_path, *, positions=None, total_value=100_000.0,
         cash_sweep=SimpleNamespace(symbol="SGOV"),
         risk=risk_config,
     )
-    pipeline.risk_engine = RiskRuleEngine(
-        risk_config, portfolio_vol_provider=lambda: SIGMA_FOR_2PCT,
-    )
+    pipeline.risk_engine = RiskRuleEngine(risk_config)
     pipeline._prices = prices if prices is not None else {"NEW": 50.0}
-
-    def _vol(positions=None, equity=None):
-        if vol_by_book is None:
-            return None
-        key = frozenset(
-            str(getattr(p, "symbol", "")).upper() for p in (positions or [])
-        )
-        return vol_by_book.get(key)
-
-    pipeline.held_book_daily_vol_pct = _vol
 
     #: The gate refreshes the account before projecting, because the state
     #: this stage is handed is the research snapshot from 5-10 minutes
@@ -203,16 +178,31 @@ def _ctx(positions, total_value=100_000.0, last_equity=100_000.0,
 
 
 def _stub_sizing(monkeypatch, *, qty=40.0, risk_qty=40.0, price=50.0,
-                 budget=1_000_000.0, single_name_cap=1_000_000.0,
-                 min_order_usd=100.0):
+                 budget=1_000_000.0, budget_by_book=None,
+                 single_name_cap=1_000_000.0, min_order_usd=100.0):
     """Hold the price, size and funding helpers still so a test can aim at
-    ONE gate at a time."""
-    monkeypatch.setattr(
-        ps, "_entry_deployment_budget",
-        lambda pipeline, ctx, positions, equity, cash: (
-            budget, True, "stubbed budget",
-        ),
-    )
+    ONE gate at a time.
+
+    `budget_by_book` maps a frozenset of the symbols still held to what is
+    deployable over THAT book, so a test can make the funding answer depend
+    on which names survive the sale — which is exactly what a pre-sale
+    check cannot see, and the property every attempt on board item 39 has
+    turned on.
+    """
+    def _budget(pipeline, ctx, positions, equity, cash):
+        if budget_by_book is None:
+            return budget, True, "stubbed budget"
+        key = frozenset(
+            str(getattr(p, "symbol", "")).upper() for p in (positions or [])
+        )
+        if key not in budget_by_book:
+            raise AssertionError(
+                f"the budget was measured over {sorted(key)}, which the "
+                f"fixture did not expect"
+            )
+        return budget_by_book[key], True, "stubbed budget"
+
+    monkeypatch.setattr(ps, "_entry_deployment_budget", _budget)
     monkeypatch.setattr(
         ps, "_single_name_execution_cap",
         lambda pipeline, equity: single_name_cap,
@@ -270,114 +260,97 @@ def _rotation_events(db) -> list[dict]:
 # The failure this closes — the one attempt 2's pre-sale check cannot see
 # ---------------------------------------------------------------------------
 
-def test_selling_a_winner_out_of_a_losing_book_trips_the_real_gate(
+def test_the_funding_gate_reads_the_post_sale_book_not_the_pre_sale_one(
     tmp_path, monkeypatch,
 ):
-    """OLD is UP today; the rest of the book is DOWN. Before the sale the
-    held book's day change is -$400 and the breaker is quiet. The sale
-    removes OLD's +$500 from the very number the REAL post-sale check
-    recomputes, leaving -$900 — over the 2% limit on a $100k account — so
-    the replacement BUY would be refused and the desk would be left naked.
+    """The defect every attempt on this item is about, on the mechanism that
+    survived.
 
-    A pre-sale check sees -$400 and clears the sale. This one projects the
-    post-sale book and refuses it.
+    Until 2026-09-23 this was demonstrated on the daily-loss re-check: OLD
+    up on the day, the rest of the book down, and the sale removing OLD's
+    gain from the very number the real post-sale check recomputes. The
+    owner removed that whole alarm (PR #584), so the demonstration moves to
+    the gate that is still there and still post-sale: the deployment
+    budget, which `_entry_deployment_budget` measures over the remaining
+    positions and their gross exposure.
+
+    Here the PRE-sale book has room for the replacement and the POST-sale
+    book does not. A check fed pre-sale state clears the sale and the desk
+    is left holding neither name; this one projects the post-sale book,
+    sees no room, and withdraws the close before it reaches the wire.
     """
-    _stub_sizing(monkeypatch)
     positions = [
-        _pos("OLD", qty=10.0, price=100.0, intraday=500.0),
-        _pos("KEEP", qty=10.0, price=100.0, intraday=-2500.0),
+        _pos("OLD", qty=10.0, price=100.0),
+        _pos("KEEP", qty=10.0, price=100.0),
     ]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
+    _stub_sizing(monkeypatch, budget_by_book={
+        # What a pre-sale check would have measured: plenty of room.
+        frozenset({"OLD", "KEEP"}): 1_000_000.0,
+        # What the sale actually leaves: none.
+        frozenset({"KEEP"}): 0.0,
     })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
-    sell, buy = _sell(), _buy()
-
-    # Sanity: the PRE-sale number does not trip the breaker. This is
-    # precisely what attempt 2 measured, and why it cleared the sale.
-    from src.risk.rules import daily_loss_numerator
-    pre_sale_pnl, _ = daily_loss_numerator(
-        0.0, positions, vol_relative=True, cash_park_symbol="SGOV",
-    )
-    assert pre_sale_pnl == -2000.0
-    assert pipeline.risk_engine.check_daily_loss(100_000.0, pre_sale_pnl) is None
 
     (cleared, *_rest), ordered = _gate(
-        pipeline, ctx, positions, sells=[sell], buys=[buy],
+        pipeline, ctx, positions, sells=[_sell()], buys=[_buy()],
     )
 
     assert cleared is False, "the rotation SELL must not reach the wire"
     assert ctx.rotation["withdrawn"].startswith("buy_leg_would_be_refused")
     assert ctx.rotation.get("sell_order_id") is None
     withdrawn, = [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
-    assert withdrawn["reason"] == "buy_leg_would_be_refused:daily_loss_recheck"
-    assert "-2500.00" in withdrawn["detail"]
+    assert withdrawn["reason"] == "buy_leg_would_be_refused:insufficient_cash"
     skips = {s["reason"] for s in ctx.execution_skips}
-    assert skips == {"daily_loss_recheck", "rotation_withdrawn"}
+    assert skips == {"insufficient_cash", "rotation_withdrawn"}
 
 
-def test_the_projection_moves_the_threshold_not_only_the_loss(
+def test_the_projection_is_what_the_budget_and_the_sizing_are_measured_on(
     tmp_path, monkeypatch,
 ):
-    """The volatility-relative rung of the daily limit is measured FROM the
-    held book, so selling a holding moves the threshold too. Same day
-    change either way here; only the surviving book differs, and that alone
-    decides the outcome.
+    """The post-sale book, the post-sale cash and the equity behind them all
+    reach `_entry_deployment_budget` together.
+
+    A projected position list measured against live equity, or the reverse,
+    describes a book that never exists — which is the mismatch attempt 2
+    shipped one layer up. This pins all three arguments at once.
     """
+    seen = {}
+
+    def _budget(pipeline, ctx, positions, equity, cash):
+        seen["symbols"] = [p.symbol for p in positions]
+        seen["equity"] = equity
+        seen["cash"] = cash
+        return 1_000_000.0, True, "stubbed budget"
+
     _stub_sizing(monkeypatch)
+    monkeypatch.setattr(ps, "_entry_deployment_budget", _budget)
     positions = [
-        _pos("OLD", qty=10.0, price=100.0, intraday=0.0),
-        _pos("KEEP", qty=10.0, price=100.0, intraday=-1500.0),
-    ]  # -$1,500 all session: inside the wide limit, outside the tight one
-    # No explicit max_daily_loss_pct, so the vol-relative rung governs.
-    wide, tight = SIGMA_FOR_2PCT * 4, SIGMA_FOR_2PCT * 0.25
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        # Pre-sale the book looks volatile, so a wide limit; post-sale, with
-        # the volatile name gone, the measured volatility collapses and the
-        # limit tightens under the loss that is still there.
-        frozenset({"OLD", "KEEP"}): wide,
-        frozenset({"KEEP"}): tight,
-    })
-    pipeline.risk_engine = RiskRuleEngine(
-        RiskConfig(**_risk_kwargs()), portfolio_vol_provider=lambda: wide,
-    )
+        _pos("OLD", qty=10.0, price=100.0),
+        _pos("KEEP", qty=10.0, price=100.0),
+    ]
+    pipeline, _db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
 
-    pre_sale_limit = pipeline.risk_engine.daily_loss_limit_pct
-    post_sale_limit, _basis = pipeline.risk_engine._daily_loss_limit_and_basis(
-        portfolio_vol_pct=tight, use_supplied_vol=True,
-    )
-    assert post_sale_limit < pre_sale_limit, (
-        "the fixture must actually tighten the limit, or this test proves "
-        "nothing about the threshold"
-    )
+    _gate(pipeline, ctx, positions, sells=[_sell()], buys=[_buy()],
+          cash=50_000.0, total_value=100_000.0)
 
-    (cleared, *_rest), ordered = _gate(
-        pipeline, ctx, positions, sells=[_sell()], buys=[_buy()],
-    )
-    assert cleared is False
-    withdrawn, = [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
-    assert withdrawn["reason"] == "buy_leg_would_be_refused:daily_loss_recheck"
+    assert seen["symbols"] == ["KEEP"], "OLD must be gone from the projection"
+    # A sale is mark-to-market neutral apart from what the marketable limit
+    # gives up: 10 shares marked at $100, sold at $99.50.
+    assert seen["equity"] == pytest.approx(100_000.0 - 10 * 0.50)
+    # 10 shares marked at $100, sold at the SELL loop's own 0.995 limit.
+    assert seen["cash"] == pytest.approx(50_000.0 + 10 * 99.50)
 
 
 # ---------------------------------------------------------------------------
-# Each of the four downstream refusal paths withdraws BOTH legs
+# Each of the five downstream refusal paths withdraws BOTH legs
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("gate", REQUIRED_BUY_LEG_GATES)
 def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
     positions = [_pos("OLD", intraday=0.0), _pos("KEEP", intraday=0.0)]
-    vol = {
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    }
-    if gate == "daily_loss_recheck":
-        positions = [
-            _pos("OLD", intraday=500.0), _pos("KEEP", intraday=-2500.0),
-        ]
-        _stub_sizing(monkeypatch)
-    elif gate == "no_price":
+    if gate == "no_price":
         _stub_sizing(monkeypatch)
         monkeypatch.setattr(ps, "_live_fill_price", lambda p, s: None)
     elif gate == "stale_entry":
@@ -392,7 +365,7 @@ def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
         # Enough deployable for 1 share, under the $500 minimum worth
         # trading, so the re-size lands below the floor.
         _stub_sizing(monkeypatch, budget=60.0, min_order_usd=500.0)
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book=vol)
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
 
     (cleared, *_rest), ordered = _gate(
@@ -414,10 +387,7 @@ def test_qty_zero_from_the_risk_budget_alone_also_withdraws(
     and a separate code path from the first."""
     _stub_sizing(monkeypatch, qty=40.0, risk_qty=0.0)
     positions = [_pos("OLD"), _pos("KEEP")]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     (cleared, *_rest), ordered = _gate(
         pipeline, ctx, positions, sells=[_sell()], buys=[_buy()],
@@ -458,24 +428,25 @@ def test_a_partial_exit_leaves_a_proportional_share_of_its_intraday_pnl(
     positions = [_pos("PART", qty=10.0, intraday=1000.0)]
     pipeline, _db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions, rotation=False)
-    projected, equity, account_pnl = ps._projected_post_sale_book(
-        pipeline, ctx, positions, 100_000.0, [_sell("PART", 40.0)], [],
+    projected, equity = ps._projected_post_sale_book(
+        positions, 100_000.0, [_sell("PART", 40.0)], [],
     )
     remaining, = projected
     # Whole-share position: 40% of 10 floors to 4 shares sold, 6 left.
     assert remaining.qty == pytest.approx(6.0)
-    assert remaining.unrealized_intraday_pnl == pytest.approx(600.0)
-    assert equity == 100_000.0
-    # The limit concession on 4 shares marked at $100 sold at $99.50.
-    assert account_pnl == pytest.approx(-2.0)
+    assert remaining.market_value == pytest.approx(600.0)
+    # The limit concession on the 4 shares sold: marked at $100, sold at
+    # the SELL loop's own $99.50 limit. Subtracting it TIGHTENS the funding
+    # gate under the shipped `allow_margin: true` — see the docstring.
+    assert equity == pytest.approx(100_000.0 - 4 * 0.50)
 
 
 def test_a_full_exit_removes_the_position_entirely(tmp_path):
     positions = [_pos("GONE", qty=10.0, intraday=1000.0), _pos("KEEP")]
     pipeline, _db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions, rotation=False)
-    projected, _equity, _pnl = ps._projected_post_sale_book(
-        pipeline, ctx, positions, 100_000.0, [_sell("GONE")], [],
+    projected, _equity = ps._projected_post_sale_book(
+        positions, 100_000.0, [_sell("GONE")], [],
     )
     assert [p.symbol for p in projected] == ["KEEP"]
 
@@ -489,10 +460,7 @@ def test_a_clean_projection_mints_a_clearance_and_keeps_both_legs(
 ):
     _stub_sizing(monkeypatch)
     positions = [_pos("OLD", intraday=100.0), _pos("KEEP", intraday=100.0)]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     sell, buy = _sell(), _buy()
 
@@ -602,7 +570,8 @@ def _clearance(**overrides) -> RotationClearance:
     base = dict(
         held_symbol="OLD", new_symbol="NEW",
         gates_checked=tuple(REQUIRED_BUY_LEG_GATES),
-        projected_daily_pnl=-100.0, projected_basis="held_book",
+        projected_entry_budget=12_500.0,
+        projected_budget_basis="gross ladder headroom",
         projected_positions=("KEEP",), projected_equity=100_000.0,
     )
     base.update(overrides)
@@ -629,7 +598,7 @@ def test_a_real_clearance_builds_a_reason_naming_what_it_was_cleared_on():
     assert "ranked margin" in reason
     assert "OLD" in reason and "NEW" in reason
     assert "technical" in reason, "the like-for-like seats must be named"
-    assert "held_book" in reason and "$-100" in reason
+    assert "gross ladder headroom" in reason and "$12500" in reason
 
 
 def test_the_proposal_reason_says_the_close_is_contingent():
@@ -675,10 +644,7 @@ def test_the_wire_barrier_ignores_every_non_rotation_sell(tmp_path):
 def test_the_gate_function_evaluates_every_required_gate(tmp_path, monkeypatch):
     _stub_sizing(monkeypatch)
     positions = [_pos("OLD"), _pos("KEEP")]
-    pipeline, _db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, _db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     clearance, reason, _detail = ps._rotation_buy_leg_projected_refusal(
         pipeline, ctx, rotation=ctx.rotation, buy_decision=_buy(),
@@ -691,14 +657,70 @@ def test_the_gate_function_evaluates_every_required_gate(tmp_path, monkeypatch):
     )
 
 
+def _recorded_skip_reasons_outside_the_rotation_gate() -> set[str]:
+    """Every literal reason code `_record_execution_skip` is called with in
+    `src/pipeline_stages.py`, EXCLUDING the rotation gate's own calls.
+
+    The exclusion is the whole point. The earlier version of this test
+    searched the file for the literal `"no_price",` and the rotation gate's
+    own `return None, "no_price", (...)` matched it, so the test would have
+    passed even if the execution stage had never carried that reason code —
+    it was reading this change's own text back to itself (adversary review,
+    2026-09-23). Walking the AST for actual `_record_execution_skip` calls
+    outside `_rotation_buy_leg_projected_refusal` is what makes the
+    comparison mean anything.
+    """
+    tree = ast.parse((REPO_ROOT / "src" / "pipeline_stages.py").read_text())
+    excluded = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.FunctionDef)
+                and node.name == "_rotation_buy_leg_projected_refusal"):
+            excluded.update(id(n) for n in ast.walk(node))
+    reasons = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or id(node) in excluded:
+            continue
+        func = node.func
+        name = getattr(func, "id", None) or getattr(func, "attr", None)
+        if name != "_record_execution_skip":
+            continue
+        # `_record_execution_skip(pipeline, ctx, symbol, reason, detail)`.
+        if len(node.args) >= 4 and isinstance(node.args[3], ast.Constant):
+            value = node.args[3].value
+            if isinstance(value, str):
+                reasons.add(value)
+    return reasons
+
+
 def test_required_gates_name_real_execution_skip_reasons():
-    """The gate names are the execution stage's own `_record_execution_skip`
-    reason codes, so the two can be compared by reading the file."""
-    source = (REPO_ROOT / "src" / "pipeline_stages.py").read_text()
-    for gate in REQUIRED_BUY_LEG_GATES:
-        assert f'"{gate}",' in source, (
-            f"{gate} is not a reason code the execution stage records"
-        )
+    """Every required gate is a reason code the EXECUTION stage really
+    records, read off its own call sites rather than off this file."""
+    recorded = _recorded_skip_reasons_outside_the_rotation_gate()
+    assert recorded, "the AST walk found no skip sites at all — it is broken"
+    missing = [g for g in REQUIRED_BUY_LEG_GATES if g not in recorded]
+    assert not missing, (
+        f"{missing} are not reason codes the execution stage records; a gate "
+        f"standing in front of a refusal that cannot fire always passes"
+    )
+
+
+def test_no_required_gate_names_a_retired_mechanism():
+    """The counterpart to the test above, and the one that would have caught
+    `daily_loss_recheck` staying in the list after the account-level loss
+    halt was deleted. Dropping an entry from `REQUIRED_BUY_LEG_GATES` is
+    otherwise mechanically silent: all three existing guards — the pin
+    above, the gate function's `missing` check, and `RotationClearance.
+    covers()` — are `all(gate in ...)` and see additions only."""
+    from src.retired_mechanisms import load_registry
+
+    retired = set()
+    for entry in load_registry():
+        retired.update(getattr(entry, "symbols", ()) or ())
+    offenders = [g for g in REQUIRED_BUY_LEG_GATES if g in retired]
+    assert not offenders, (
+        f"{offenders} name mechanisms this desk has retired — the refusal "
+        f"they gate against cannot fire"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -813,8 +835,8 @@ def test_a_cover_is_projected_as_a_real_close_not_a_no_op(tmp_path):
         symbol="SHRT", action="COVER", allocation_pct=100.0,
         entry_price=0.0, stop_loss=0.0, reasoning="cover",
     )
-    projected, _equity, _pnl = ps._projected_post_sale_book(
-        pipeline, ctx, positions, 100_000.0, [], [cover],
+    projected, _equity = ps._projected_post_sale_book(
+        positions, 100_000.0, [], [cover],
     )
     assert [p.symbol for p in projected] == ["KEEP"], (
         "the covered short must leave the projected book"
@@ -830,10 +852,7 @@ def test_earlier_entries_drain_the_projected_budget_first(tmp_path, monkeypatch)
     taken its share by the time the rotation's is reached."""
     _stub_sizing(monkeypatch, budget=2_100.0, min_order_usd=500.0)
     positions = [_pos("OLD"), _pos("KEEP")]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     earlier = _buy("FIRST", allocation_pct=2.0)  # $2,000 of a $100k book
     rotation_buy = _buy()  # 40 shares at $50 = $2,000
@@ -871,8 +890,8 @@ def test_a_sell_on_a_short_is_not_projected_as_a_close(tmp_path):
     ctx = _ctx(positions, rotation=False)
 
     # A SELL aimed at the short: the loop skips it, so must the projection.
-    projected, _e, _p = ps._projected_post_sale_book(
-        pipeline, ctx, positions, 100_000.0, [_sell("SHRT")], [],
+    projected, _e = ps._projected_post_sale_book(
+        positions, 100_000.0, [_sell("SHRT")], [],
     )
     assert {p.symbol for p in projected} == {"SHRT", "LONG"}
 
@@ -881,8 +900,8 @@ def test_a_sell_on_a_short_is_not_projected_as_a_close(tmp_path):
         symbol="LONG", action="COVER", allocation_pct=100.0,
         entry_price=0.0, stop_loss=0.0, reasoning="cover",
     )
-    projected, _e, _p = ps._projected_post_sale_book(
-        pipeline, ctx, positions, 100_000.0, [], [cover_long],
+    projected, _e = ps._projected_post_sale_book(
+        positions, 100_000.0, [], [cover_long],
     )
     assert {p.symbol for p in projected} == {"SHRT", "LONG"}
 
@@ -926,11 +945,7 @@ def test_the_other_exits_are_measured_not_projected(tmp_path, monkeypatch):
     # What the broker reports once the earlier exit has gone through.
     after_other_exit = [_pos("OLD"), _pos("KEEP")]
     pipeline, _db = _pipeline(
-        tmp_path, positions=after_other_exit, cash=59_950.0, vol_by_book={
-            frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-            frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-        },
-    )
+        tmp_path, positions=after_other_exit, cash=59_950.0)
     ctx = _ctx(stale)
     (cleared, *_rest), ordered = _gate(
         pipeline, ctx, stale, sells=[_sell("OTHEREXIT"), _sell("OLD")],
@@ -950,32 +965,31 @@ def test_the_other_exits_are_measured_not_projected(tmp_path, monkeypatch):
 def test_an_unfilled_earlier_exit_is_seen_because_it_is_measured(
     tmp_path, monkeypatch,
 ):
-    """The failure a projection cannot bound: an earlier exit carrying an
-    intraday LOSS does not fill, so its loss is still in the book when the
-    daily-loss gate runs.
+    """The failure a projection cannot bound: an earlier exit does not fill,
+    so its gross exposure is still on the book when the funding gate runs.
 
-    A gate that assumed every planned exit fills would drop that loss and
-    clear the sale. This one re-reads the account and finds the position
-    still there, because the rotation's close is ordered last."""
-    _stub_sizing(monkeypatch)
-    stale = [
-        _pos("OLD", intraday=0.0),
-        _pos("STUCK", intraday=-2400.0),
-        _pos("KEEP", intraday=0.0),
-    ]
-    # The broker still reports STUCK: its exit did not fill.
-    pipeline, db = _pipeline(tmp_path, positions=stale, vol_by_book={
-        frozenset({"OLD", "STUCK", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"STUCK", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
+    A gate that assumed every planned exit fills would credit STUCK's room
+    to the replacement and clear the sale. This one re-reads the account,
+    finds the position still there, and measures the budget over a book
+    that still carries it — which is possible only because the rotation's
+    close is ordered last."""
+    stale = [_pos("OLD"), _pos("STUCK"), _pos("KEEP")]
+    _stub_sizing(monkeypatch, budget_by_book={
+        # If STUCK's exit had filled there would be room for the
+        # replacement. It did not, so the only book this may be measured
+        # over is the one that still holds it — and that book has none.
+        frozenset({"KEEP"}): 1_000_000.0,
+        frozenset({"STUCK", "KEEP"}): 0.0,
     })
+    # The broker still reports STUCK: its exit did not fill.
+    pipeline, db = _pipeline(tmp_path, positions=stale)
     ctx = _ctx(stale)
     (cleared, *_rest), _ordered = _gate(
         pipeline, ctx, stale, sells=[_sell("STUCK"), _sell("OLD")],
     )
     assert cleared is False
     withdrawn, = [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
-    assert withdrawn["reason"] == "buy_leg_would_be_refused:daily_loss_recheck"
+    assert withdrawn["reason"] == "buy_leg_would_be_refused:insufficient_cash"
 
 
 def test_the_replacement_buy_dies_with_the_withdrawn_close(tmp_path, monkeypatch):
@@ -986,10 +1000,7 @@ def test_the_replacement_buy_dies_with_the_withdrawn_close(tmp_path, monkeypatch
     `_drop_rotation_buy_if_room_not_freed` already reads as no room."""
     _stub_sizing(monkeypatch, qty=0.0)
     positions = [_pos("OLD"), _pos("KEEP")]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     buy, other = _buy(), _buy("UNRELATED")
     (cleared, *_rest), _ordered = _gate(
@@ -1015,10 +1026,7 @@ def test_the_refreshed_book_is_handed_back_to_the_sell_loop(
     _stub_sizing(monkeypatch)
     stale = [_pos("OLD", qty=10.0), _pos("KEEP")]
     fresh = [_pos("OLD", qty=4.0), _pos("KEEP")]
-    pipeline, _db = _pipeline(tmp_path, positions=fresh, vol_by_book={
-        frozenset({"OLD", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, _db = _pipeline(tmp_path, positions=fresh)
     pipeline.stub_total_value = 99_000.0
     pipeline.stub_cash = 44_000.0
     ctx = _ctx(stale)
@@ -1068,11 +1076,7 @@ def test_any_pending_cover_refuses_the_rotation_outright(tmp_path, monkeypatch):
         _pos("SHRT", qty=-10.0, intraday=4000.0),
         _pos("KEEP", intraday=0.0),
     ]
-    pipeline, db = _pipeline(tmp_path, positions=positions, vol_by_book={
-        frozenset({"OLD", "SHRT", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"SHRT", "KEEP"}): SIGMA_FOR_2PCT,
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
     cleared, *_rest = ps._rotation_sell_gate(
         pipeline, ctx, _sell(), [_buy()], positions, 100_000.0, 50_000.0,
@@ -1161,9 +1165,7 @@ def test_a_position_the_broker_no_longer_holds_is_withdrawn_with_a_reason(
     durable, per-symbol reason."""
     _stub_sizing(monkeypatch)
     stale = [_pos("OLD"), _pos("KEEP")]
-    pipeline, db = _pipeline(tmp_path, positions=[_pos("KEEP")], vol_by_book={
-        frozenset({"KEEP"}): SIGMA_FOR_2PCT,
-    })
+    pipeline, db = _pipeline(tmp_path, positions=[_pos("KEEP")])
     ctx = _ctx(stale)
     (cleared, *_rest), _ordered = _gate(pipeline, ctx, stale)
     assert cleared is False

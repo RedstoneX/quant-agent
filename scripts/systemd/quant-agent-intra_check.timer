@@ -18,7 +18,9 @@ Description=quant-agent intra_check — check every 30 min at :15/:45, offset fr
 #      sell.
 #
 # intra_check is the one timer that can move: it is a stateless, idempotent
-# circuit breaker (see run_if_et_window.sh) with no once-per-day guard and
+# tick (see run_if_et_window.sh — it used to be described here as a circuit
+# breaker; that mechanism was removed 2026-09-20, retired item 32) with no
+# once-per-day guard and
 # no dependency on landing at :00/:30 specifically — only on firing every
 # ~30 minutes somewhere inside its 09:30-16:00 ET window. Moving it to
 # :15/:45 keeps that cadence, keeps every session-lock exemption in

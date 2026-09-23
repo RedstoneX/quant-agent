@@ -1439,32 +1439,12 @@ def test_format_evening_no_meta_line_on_normal_day():
     assert "🧪 meta" not in msg
 
 
-# === deterministic escalation + dead-man's banner + action ordering ===
-
-def test_format_evening_deterministic_loss_escalation_independent_of_llm():
-    """A loss within 80% of the daily-loss circuit-breaker raises a 🚨 even
-    when the LLM under-rated the day (risk_rating=moderate). The deterministic
-    layer must not depend on the model grading its own day correctly."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -4500.0, "total_value": 95_500.0,   # prior_eq=100k → 4.5% loss
-        "max_daily_loss_pct": 5.0,                        # 0.8*5 = 4.0% threshold
-        "analysis": {"risk_rating": "moderate"},          # LLM did NOT escalate
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" in msg
-    assert "OPERATOR ATTENTION" not in msg  # LLM banner correctly stays quiet
-
-
-def test_format_evening_no_deterministic_alert_when_loss_modest():
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -500.0, "total_value": 99_500.0,     # 0.5% loss
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" not in msg
+# === dead-man's banner + action ordering ===
+# The deterministic daily-loss escalation banner that was also covered in
+# this section is gone: its four tests were deleted 2026-09-20 with the
+# account-level loss alarms (retired board item 32). Two of them asserted
+# the banner FIRED; the other two asserted it stayed quiet, and those two
+# would have gone on passing against a feature that no longer exists.
 
 
 def test_format_evening_missing_morning_session_is_red():
@@ -1633,35 +1613,6 @@ def test_format_evening_risk_capital_line_uses_realtime_fallback_pnl():
     msg = format_session_result("evening", result, 10.0)
     assert "4pm close" not in msg
     assert "vs risk capital: +20.00%" in msg   # 300 / 1500
-
-
-def test_deterministic_escalation_uses_4pm_basis_not_realtime():
-    """[B] The deterministic alert must evaluate the SAME 4pm basis as the
-    headline. Here the 4pm loss is 4.5% (≥80% of the 5% cap → fire) while the
-    real-time daily_pnl is tiny — proves it no longer keys off daily_pnl."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -100.0, "total_value": 99_900.0,      # real-time: ~0.1% loss
-        "pnl_4pm": -4500.0, "equity_close": 95_500.0,      # 4pm: 4.5% loss (baseline 100k)
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},                # LLM did NOT escalate
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" in msg
-
-
-def test_deterministic_escalation_ignores_realtime_loss_when_4pm_small():
-    """[B] inverse: a big real-time AH loss must NOT fire the alert when the
-    4pm close-to-close loss is small (the 4pm basis is authoritative)."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -4500.0, "total_value": 95_500.0,     # real-time: big AH loss
-        "pnl_4pm": -100.0, "equity_close": 99_900.0,       # 4pm: ~0.1% loss
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" not in msg
 
 
 def test_rehearsal_mode_suppresses_operator_alerts(monkeypatch):

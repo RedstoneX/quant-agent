@@ -444,20 +444,6 @@ def test_midday_without_structured_review_is_not_mislabelled_as_pm_failure(tmp_p
     assert "PM" not in msg
 
 
-def test_emergency_position_review_has_explicit_circuit_breaker_banner(tmp_path, monkeypatch):
-    db = _make_db(tmp_path, monkeypatch)
-    run = "close-emergency"
-    _trade(db, run, "AAPL", "EMERGENCY_SELL", qty=5, price=180.0)
-    msg = trader_feed.format_session_result(
-        "close",
-        {"status": "emergency_sold", "run_id": run, "positions": 1,
-         "orders": [{"symbol": "AAPL"}], "review": None},
-        6.0,
-    )
-    assert "DAILY-LOSS CIRCUIT BREAKER" in msg
-    assert "EMERGENCY_SELL AAPL" in msg
-
-
 def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     msg = trader_feed.format_session_result(
@@ -1875,7 +1861,6 @@ def _evening_result(**overrides):
         "total_return_pct": -0.85,
         "total_pnl_since": "2026-09-02",
         "risk_capital_dollars": 720.60,
-        "max_daily_loss_pct": 6.7,
         "missing_sessions": [],
         "auto_meta": None,
         "stop_coverage_gaps": [],
@@ -2271,10 +2256,10 @@ def test_coverage_gap_names_the_company_and_says_what_to_do(tmp_path, monkeypatc
     }
     with _profiles_patch({"NVDA": NVDA_PROFILE, "MRVL": MRVL_PROFILE}):
         msg = trader_feed.format_session_result("morning", result, 1.0)
-    assert "🚨 NO STOP AT ALL: 1 position(s) with nothing protecting them" in msg
+    assert "🛑🛑🛑 NO STOP AT ALL: 1 position(s) with nothing protecting them" in msg
     assert "MRVL (Marvell Technology), holding 2, stop covers 0, $151.30 unprotected — no recorded stop level to rebuild from" in msg
     assert "Place a protective stop by hand or close the position." in msg
-    assert "🚨 STOP MIS-SIZED: 1 position(s) only partly protected" in msg
+    assert "⚠️ STOP MIS-SIZED: 1 position(s) only partly protected" in msg
     assert "NVDA (NVIDIA), holding 10, stop covers 4" in msg
 
 
