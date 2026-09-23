@@ -27,15 +27,23 @@ The resolver's own branch coverage (a quote mid can never become a price; a
 prior-session trade is never returned) lives in tests/test_desk_sees_today.py.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
+import src.pipeline_stages as pipeline_stages
 from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.execution.broker import LivePrice
-from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
-from src.pipeline_stages import _rotation_buy_leg_projected_refusal, _today_sizing_price
+from src.models import (
+    Position, PortfolioDecision, TargetPosition, TradeDecision,
+    TechAnalysisResult, TechReasoningChain,
+)
+from src.pipeline_context import RunContext
+from src.pipeline_stages import (
+    ExecutionStage, _rotation_buy_leg_projected_refusal, _today_sizing_price,
+)
 from src.portfolio_constructor import PortfolioConstructor
 
 ET = ZoneInfo("America/New_York")
@@ -257,3 +265,120 @@ def test_rotation_buy_leg_refuses_to_size_off_a_quote_mid():
     assert clearance is None
     assert reason == "no_price"
     assert "today trade print" in detail
+
+
+# --- REAL ExecutionStage submit loop ----------------------------------------
+
+def _pm_rc():
+    from src.models import ReasoningChain
+    return ReasoningChain(
+        macro_filter="x", news_check="x", earnings_check="x",
+        signal_conflicts="x", sizing_logic="x",
+        portfolio_balance="x", cash_target="x",
+    )
+
+
+def _exec_pipeline_with_print(price: float):
+    """A MagicMock pipeline whose broker returns a REAL today last-trade
+    LivePrice (so the sizing gate uses it), a crossable quote, and accepts
+    orders — enough to drive the real BUY/SHORT submit loop."""
+    now = datetime.now(ET)
+    pipeline = MagicMock()
+    pipeline.broker.get_latest_price_stamped.return_value = LivePrice(
+        price=price, source="last_trade", trade_at=now,
+        is_today=True, is_today_print=True,
+    )
+    pipeline.broker.get_latest_price.return_value = price
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": price - 1.0, "ask_price": price + 1.0,
+    }
+    pipeline.broker.submit_order.return_value = {
+        "id": "o1", "status": "accepted",
+    }
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._order_accepted.return_value = True
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+    )
+    return pipeline
+
+
+def _run_exec(pipeline, decision, monkeypatch):
+    """Drive the real ExecutionStage submit loop, capturing the sizing_price
+    actually handed to the risk-budget sizer (the share-count divisor)."""
+    captured = {}
+
+    real = pipeline_stages._qty_by_risk_budget
+
+    def _spy(pipe, *, total_value, sizing_price, stop_price, is_short, fractional):
+        captured["sizing_price"] = sizing_price
+        return None  # non-binding: qty falls back to the allocation count
+
+    monkeypatch.setattr(pipeline_stages, "_qty_by_risk_budget", _spy)
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 50_000.0
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.positions = []
+    ctx.symbols_bars = {}
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=[decision], portfolio_view="t",
+    )
+    ExecutionStage(pipeline=pipeline).run(ctx)
+    _ = real  # keep a reference; monkeypatch restores it after the test
+    return captured
+
+
+def test_submit_loop_short_is_not_over_sized_off_the_below_market_limit(monkeypatch):
+    """The dangerous-direction bug: a SHORT's share count must divide by the
+    today PRINT, never the below-market `bid_limit` (which would give MORE
+    shares — a bigger short). Drives the real submit loop."""
+    pipeline = _exec_pipeline_with_print(100.0)
+    short = TradeDecision(
+        action="SHORT", symbol="TSLA", allocation_pct=10,
+        entry_price=100.0, stop_loss=106.0, take_profit=88.0,
+        reasoning="short new name",
+    )
+    captured = _run_exec(pipeline, short, monkeypatch)
+    # bid_limit would be ~99.6 (100 * (1 - 40bp)); sizing must be the print.
+    assert captured["sizing_price"] == 100.0
+
+
+def test_submit_loop_buy_never_sizes_below_the_print(monkeypatch):
+    """A BUY sizes off the print, raised only to the offer ceiling — never
+    below the print. The ceiling can only make the buy SMALLER (accepted)."""
+    pipeline = _exec_pipeline_with_print(100.0)
+    buy = TradeDecision(
+        action="BUY", symbol="TSLA", allocation_pct=10,
+        entry_price=100.0, stop_loss=94.0, take_profit=118.0,
+        reasoning="buy new name",
+    )
+    captured = _run_exec(pipeline, buy, monkeypatch)
+    # offer ceiling ~100.4 (100 * (1 + 40bp)); sizing >= the print, never below.
+    assert captured["sizing_price"] >= 100.0
+
+
+def test_execution_and_constructor_agree_on_a_today_session_bar():
+    """An IEX-thin name with a today forming SESSION BAR but no last-trade
+    print is item 120's exact population. Both stages must size it off that
+    bar (a real intraday price, never a mid), so a name the paid seats size
+    is not silently skipped at execution."""
+    now = datetime.now(ET)
+    snapshot = _snap(
+        last_price=161.79, last_trade_at=now - timedelta(days=1),  # stale
+        session_bar_at=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        session_open=158.38, session_close=158.55,
+    )
+    constructor_price = resolve_live_price(snapshot).price  # session bar close
+
+    broker = MagicMock()
+    broker.get_latest_price_stamped.return_value = LivePrice(
+        price=161.79, source="last_trade", trade_at=now - timedelta(days=1),
+        is_today=False, is_today_print=False,  # stale print, refused for sizing
+    )
+    broker.get_intraday_snapshots.return_value = {"NVDA": snapshot}
+    pipeline = SimpleNamespace(broker=broker)
+
+    exec_price = _today_sizing_price(pipeline, "NVDA")
+    assert exec_price == constructor_price == 158.55

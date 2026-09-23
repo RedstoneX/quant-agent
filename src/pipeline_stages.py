@@ -1913,34 +1913,69 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
     refuses it. When this returns None the caller must refuse the name as
     unmeasurable rather than size it on a bad price.
 
+    It accepts the SAME today prices the constructor sizes off, so the two
+    stages agree: a real last-trade print, and — when there is none — today's
+    forming SESSION or minute bar via `resolve_live_price` (a real intraday
+    price on the entitled venue, never a quote mid). Without this second
+    branch an IEX-thin name with a today bar but no print — item 120's exact
+    population — would be sized and approved by the paid PM/Risk seats and
+    then silently skipped here, wasting those seats.
+
     Test compatibility: when the broker is a MagicMock whose
-    `get_latest_price_stamped` does not return a real `LivePrice`, this falls
+    `get_latest_price_stamped` does not return a real `LivePrice` and whose
+    `get_intraday_snapshots` does not return a usable payload, this falls
     through to the bare `get_latest_price` exactly as `_today_order_price`
     does, so the many MagicMock-broker execution tests keep their behaviour.
-    The `is_today_print` gate only bites on a real stamped price.
+    The freshness gate only bites on a real stamped price / real snapshot.
     """
     broker = getattr(pipeline, "broker", None)
+
+    # 1. A real today PRINT from the stamped getter is the best sizing ref.
     stamped_getter = getattr(broker, "get_latest_price_stamped", None)
+    stamped_is_real = False
     if callable(stamped_getter):
         try:
             from src.execution.broker import LivePrice
 
             candidate = stamped_getter(symbol)
             if isinstance(candidate, LivePrice):
+                stamped_is_real = True
                 if candidate.price and candidate.price > 0 and candidate.is_today_print:
                     return float(candidate.price)
-                # A REAL stamped price that is a quote mid or a stale print:
-                # not a sizing reference. Refuse rather than size on it.
-                logger.warning(
-                    "%s sizing price refused: source %s is not a today print "
-                    "(is_today_print=%s) — a quote mid or stale price cannot "
-                    "set the share count",
-                    symbol, getattr(candidate, "source", "?"),
-                    getattr(candidate, "is_today_print", False),
-                )
-                return None
         except Exception:  # noqa: BLE001
             return None
+
+    # 2. No today print: accept today's forming SESSION/minute bar through the
+    #    same resolver the constructor uses (never a quote mid), so both
+    #    stages agree on a thin name that has a bar but no print.
+    snap_getter = getattr(broker, "get_intraday_snapshots", None)
+    if callable(snap_getter):
+        snap_is_real = False
+        try:
+            snaps = snap_getter([symbol])
+            if isinstance(snaps, dict):
+                snap_is_real = True
+                resolved = resolve_live_price(snaps.get(symbol))
+                if resolved.is_today_print:
+                    return float(resolved.price)
+        except Exception:  # noqa: BLE001
+            snap_is_real = False
+        # A REAL stamped price (real broker) that was a quote mid or stale,
+        # and no usable today bar either: refuse rather than fall through to
+        # the mid-capable bare getter.
+        if stamped_is_real or snap_is_real:
+            if stamped_is_real:
+                logger.warning(
+                    "%s sizing price refused: no today print and no today "
+                    "session/minute bar — a quote mid or stale price cannot "
+                    "set the share count", symbol,
+                )
+            return None
+    elif stamped_is_real:
+        return None
+
+    # 3. Test / back-compat: a MagicMock broker that returned neither a real
+    #    LivePrice nor a real snapshot dict. Keep existing behaviour.
     getter = getattr(broker, "get_latest_price", None)
     if not callable(getter):
         return None
@@ -8573,10 +8608,14 @@ class ExecutionStage:
                     )
                     continue
                 if decision.entry_price and decision.entry_price > 0:
-                    sizing_price = (
-                        min(sizing_print, float(decision.entry_price)) if is_short
-                        else max(sizing_print, float(decision.entry_price))
-                    )
+                    # Conservative for BOTH directions: the HIGHER divisor
+                    # gives FEWER shares — less capital deployed on a buy, a
+                    # SMALLER short on a short (whose downside is unbounded).
+                    # Never size off a below-market number. (A short used to
+                    # take min() here and was then overwritten by the
+                    # below-market `bid_limit` below, which over-sized it —
+                    # the one dangerous-direction bug this pass fixes.)
+                    sizing_price = max(sizing_print, float(decision.entry_price))
                 else:
                     sizing_price = sizing_print
 
@@ -8811,7 +8850,14 @@ class ExecutionStage:
                             bid, bid_discount_bps,
                         )
                     limit_price = bid_limit
-                    sizing_price = bid_limit
+                    # `bid_limit` is the LIMIT (a marketable floor BELOW
+                    # market); it is deliberately NOT the sizing divisor.
+                    # docs/WORK.md item 120: dividing the allocation by a
+                    # below-market price OVER-sizes the short (more shares) —
+                    # the dangerous direction. Sizing stays anchored to the
+                    # today print set above, mirroring the BUY, which raises
+                    # its divisor to the offer ceiling (fewer shares) and
+                    # never lowers it.
                     original_entry = getattr(decision, "entry_price", None)
                     if (
                         getattr(ctx, "desk_latency_stall", False)
