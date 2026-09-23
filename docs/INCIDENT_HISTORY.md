@@ -22,6 +22,141 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the jam alarm told the owner the desk had refused every idea, on six runs where the desk refused nothing and was in fact switched off
+
+**In plain words:** the owner was told, in red, that the desk had turned down
+every single idea for one identical reason across six sessions, and that this
+was the shape of a jammed gate. Nothing had been turned down. Those six runs
+were intraday ticks the cost circuit had suspended before any paid analysis
+ran — each of which had already sent him its own message saying so. The only
+thing any of them had recorded was that it had FOUND a mover. The alarm read
+"we found this stock" as "we rejected this stock", and then said it could not
+explain the reason in English while the reason was sitting unread inside the
+very key it pasted into the message.
+
+**The two defects, which are independent.**
+
+*A discovery was read as a refusal.* The detector takes the LAST recorded
+event for a candidate as what killed it — a deliberate design choice, because
+an allow-list of "refusal" outcomes rots the moment a new gate is added. But
+"what killed it last" is only true of an event that killed it. A run that
+stops at paid-analysis suspension writes no further stage event, so the last
+event is the DISCOVERY: SNDK moved 6.69% past a 3% discovery threshold and
+the desk noted it and then stopped. Read as a terminal outcome, that is six
+sessions of unanimous refusal over a changing candidate set — precisely the
+alarm's trigger.
+
+*The reason was describable and was thrown away.* A signature key is
+`stage|outcome|reason|code|detail`, and the plain-wording lookup consulted
+the CODE field alone. The discovery key carries no code, so the owner got
+"the desk recorded a reason it has no plain wording for" while the words
+`intraday_move_threshold` sat two fields to the left of where the code would
+have been.
+
+**What was ruled out.** Special-casing the string `opportunity` was rejected
+twice over. The same stage also writes `already_covered`, which genuinely IS
+a terminal disposition — the desk holds the name already — so the stage name
+is the wrong thing to key on; and `specialist / evaluated`, a different stage
+entirely, is just as much a beginning as `discovered` is. The property
+belongs to the OUTCOME word, because the outcome word is what says whether
+anything ruled. So the rule is a named, documented set of outcomes that
+record a candidate ARRIVING rather than a stage ruling on it, and a candidate
+whose last event is one of them has no terminal outcome at all: not refused,
+not survived, simply never reached.
+
+**The deeper half: a run that never ran the gate is not evidence about the
+gate.** The alarm's whole premise is "the candidates varied, the outcome did
+not, therefore something is stuck". That premise says nothing about a run
+that was switched off before the gate. Such a run is now EXCLUDED from the
+streak — stepped over, not counted and not treated as breaking it, because a
+jam does not clear just because one tick was suspended in the middle of it,
+and a suspended tick is not proof of a jam either.
+
+Crucially this is read from the desk's OWN record, not inferred: each run
+writes its verdict on itself into `intra_check_reports` (the intraday scan's
+nested status) or `session_reports` (the morning/midday/close status), both
+keyed by run id. That matters because the undecided-outcome rule alone does
+NOT catch every abort. The 15:15 tick of the same afternoon got as far as
+running its specialists, one of them failed, and a failure DOES read as a
+disposition — only the run's own recorded `paid_analysis_suspended` reveals
+that it never reached a gate. Two rules, neither subsuming the other.
+
+**The failure direction was chosen deliberately, and it is not the safe-
+looking one.** An unrecognised status keeps its run in the streak. Excluding
+on the unknown would have been the cautious-sounding choice and is wrong
+here: one new status word nobody had taught the module would then silence a
+real jam outright. An unknown status instead leaves the run as evidence,
+where it still has to be monomorphic over a CHANGING candidate set before
+anything is sent. The detector's real job is unweakened and is pinned by a
+test that a genuine jam — real candidates, a real gate, one unvarying reason,
+every run recording that it reached a decision — still fires.
+
+**The message's own prose was corrected too.** It now says every candidate
+that REACHED A DECISION was refused, and it names how many runs it did not
+count and what the desk's own word for them was, so the "shape of a jammed
+gate" claim is only made about evidence that can support it.
+
+**Measured against the production evidence after the fix:** the six 2026-09-22
+runs disappear from the session list entirely, the 15:15 tick is present but
+marked as never having reached a decision, and the streak is empty — no alert.
+NO GATE, THRESHOLD, SIZE OR TRADE-GOVERNING NUMBER CHANGED; no constant was
+added.
+
+**And the same alarm was about to do it again, for a different word.** A
+review of the fix asked what else the outcome vocabulary contained. The
+answer was ugly: `SURVIVED_OUTCOMES` is a seven-word positive list and
+everything outside it reads as a refusal, which is the design that produced
+the discovery bug in the first place. Measured on the live desk the same
+day — gross exposure 1.9908x against a 2.0x ceiling, about $92 of headroom
+on roughly $10,000 of equity — every session produced a run of
+`portfolio_manager|held_unchanged` rows and no orders, twelve of them that
+morning. `held_unchanged` means the portfolio manager holds the position,
+still rates it, and left it out of the target list on purpose. Monomorphic,
+over a candidate set that shifts as the book does, for as long as the book
+stays full. The next alert was going to tell the owner his desk had refused
+every idea for the same reason, when what had happened is that it had
+deliberately kept a full book.
+
+**Why `held_unchanged` did NOT go into the survived list, which was the
+one-word fix.** A single surviving candidate ends the streak outright. Put
+held names there and this alarm can never fire again on a fully invested
+desk — which is precisely when a stuck gate is hardest to notice by eye, and
+precisely the condition the book is in. So a third category was added
+instead: outcomes where something DID rule and ruled that no new entry was
+right. A candidate ending there is dropped from the evidence, the same
+mechanical treatment an undecided one gets, for a different stated reason.
+Twelve held names and nothing else means the run is absent and nothing is
+sent. Twelve held names beside five candidates all killed by one stuck rule
+still leaves those five, monomorphic, and the alarm still fires — pinned by
+a test.
+
+**The audit found four more words that would have produced a false alarm,
+and two that were suppressing true ones.** Read out of the production
+evidence rows rather than guessed from the source. Not refusals, but read as
+refusals: `opportunity|already_covered` (a nomination that duplicates an
+analysis the same run already holds — a dedupe, not a verdict),
+`evidence_gate|not_decided` (which says so in the word itself, 145 rows),
+`position_management|exited` (a SELL; this module already held that an exit
+does not make a day non-empty, and it is equally not a refusal of a new
+idea), `funding|not_required`, plus the in-flight steps `nominated`,
+`admitted`, `proposed`, `attempted` and `protective_sell_cancelled`. Going
+the other way, `risk|modified` — the risk manager resizing an entry and
+letting it through, which is `approved` with a haircut — and
+`execution|safety_net` were both absent from the survived list, so a session
+that genuinely did take an idea could still have been counted as refusing
+everything.
+
+**What was deliberately left as a refusal.** `specialist|failed` — the data
+layer could not analyse the name — still reads as a refusal, and a
+multi-session identical data outage would therefore fire this alarm
+describing itself as a jammed gate. That is a real stuck condition with the
+wrong prose on it, recorded here rather than fixed in the same pass. The
+default for an unclassified word is also unchanged and still conservative:
+anything not named as harmless kills its candidate, so the audit cannot have
+quietly disarmed the check.
+
+---
+
 ### 2026-09-23 — the owner has never once seen the end of a morning report, and the desk kept calling its own good decisions failures
 
 **In plain words:** two separate things, both in the morning Telegram message,

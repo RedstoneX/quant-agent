@@ -188,7 +188,7 @@ DONE WHEN:
   - [ ] the board's "only remaining automatic seller" claim is either supported by that answer or corrected wherever it appears
 
 
-**133. The portfolio manager was never asked why it dropped a candidate, so every refusal read identically and the jam detector could not work — filed and fixed 2026-09-18, item STILL OPEN on the unresolved objection below.** Full account of the defect and the fix: `docs/INCIDENT_HISTORY.md` (2026-09-18). NO GATE, THRESHOLD, SIZE OR TRADE-GOVERNING NUMBER CHANGED. **Why it is not retired:** the adversary pass found `held_unchanged` becomes a second distinct signature key for any held name the manager does not re-target, so on a fully-invested book `src/refusal_signature.py`'s monomorphic test may never be satisfiable again.
+**133. The portfolio manager was never asked why it dropped a candidate, so every refusal read identically and the jam detector could not work — filed and fixed 2026-09-18, item STILL OPEN on the unresolved objection below.** Full account of the defect and the fix: `docs/INCIDENT_HISTORY.md` (2026-09-18). NO GATE, THRESHOLD, SIZE OR TRADE-GOVERNING NUMBER CHANGED. **Why it is not retired, half-closed 2026-09-23:** `held_unchanged` is a second signature key for any held name not re-targeted; a full book's monomorphic test could stay unsatisfiable — until measured at 1.99x of 2.0x, satisfiable for the wrong reason. Held names are now dropped from its evidence: a full book reports nothing, a stuck gate underneath still fires. `docs/INCIDENT_HISTORY.md`.
 
 DONE WHEN:
 - [x] The seat accounts for every candidate it was shown, and a name it will not account for gets a mechanical heal, one capped re-ask and then a durable per-symbol reason.
