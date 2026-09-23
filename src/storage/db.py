@@ -35,22 +35,30 @@ def _is_filled_trail_stop(row, action: str) -> bool:
         return False
 
 
-def _trail_stop_reduced_position(row) -> bool:
+def _trail_stop_reduced_position(row, action: str) -> bool:
     """True when a TRAIL_STOP row actually took shares OUT of the book.
 
     Share-count answer to `_is_filled_trail_stop`'s realized-exit question,
-    and deliberately the WIDER of the two. The helper answers "is this a
-    priceable realized exit", so it requires fill_status='filled' (or a
-    legacy NULL status with a recorded fill_qty). A stop that filled
+    and deliberately the WIDER of the two — they are different questions,
+    so do NOT collapse them. `_is_filled_trail_stop` asks "is this a
+    priceable realized exit" and therefore requires fill_status='filled'
+    (or a legacy NULL status with a recorded fill_qty). A stop that filled
     PARTIALLY and was then canceled or expired carries a terminal status
-    with `fill_qty > 0`: no clean round trip to price, but those shares
-    are genuinely gone from the broker's book, so a pure quantity ledger
-    must still subtract them or it will believe it holds stock it sold.
+    that is not 'filled' while still holding `fill_qty > 0`: there is no
+    clean round trip to price, but those shares are genuinely gone from
+    the broker's book, so a pure quantity ledger must subtract them or it
+    will believe it holds stock it has already sold.
 
-    Anything else — fill_status NULL/'submitted'/'pending_submit' with no
-    fill, or a cancel that never traded — is protection resting at the
-    broker and moves no shares.
+    Anything else — fill_status NULL / 'submitted' / 'pending_submit' with
+    no fill, or a cancel or expiry that never traded — is protection
+    resting at the broker and moves no shares.
+
+    `action` is required and checked: this answers a question only about
+    TRAIL_STOP rows, and every other action's quantity effect is decided
+    by the signing rule in `get_symbols_with_open_ledger_qty`, not here.
     """
+    if (action or "").upper() != "TRAIL_STOP":
+        return False
     try:
         executed = float(row["fill_qty"] or 0)
     except (KeyError, IndexError, TypeError, ValueError):
@@ -1761,10 +1769,24 @@ class Database:
         production DB 2026-09-23, that made the ledger read AMD 0 (1.7662
         actually held, so a real AMD stop-out would never have been
         detected — the caller skips any symbol it believes is flat) and
-        drove COP/EQNR negative. The same distinction
+        drove COP/EQNR negative. The rule here is the quantity the broker
+        actually EXECUTED (`_trail_stop_reduced_position`).
+
         `_is_filled_trail_stop`, `compute_trade_calibration`,
-        `_assign_position_ids` and `_categorize_exit_reason` already draw:
-        only the quantity the broker actually EXECUTED leaves the book.
+        `_assign_position_ids` and `_categorize_exit_reason` all separate
+        a resting stop from a fired one too, but they ask the NARROWER
+        question — "is this a priceable realized exit" — and this function
+        deliberately departs from them on one row shape: a stop that
+        partially filled and was then canceled is not a round trip they
+        can price, yet its shares really did leave the book. See
+        `_trail_stop_reduced_position` for why that is not drift.
+
+        STILL SIGNED FROM THE ACTION NAME, and wrong on the short side:
+        a COVER family action, and a FILLED buy-to-cover TRAIL_STOP,
+        subtract from a short instead of retiring it (a SHORT 36 covered
+        in full reads -72, not 0) [measured 2026-09-23]. Pre-existing and
+        unchanged here; the caller reads any negative as a short and skips
+        it, so nothing acts on the number today. Carried as item 173(c).
         """
         with self._lock:
             rows = self.conn.execute(
@@ -1776,7 +1798,7 @@ class Database:
             action = (row["action"] or "").upper()
             if action == "HOLD":
                 continue
-            if action == "TRAIL_STOP" and not _trail_stop_reduced_position(row):
+            if action == "TRAIL_STOP" and not _trail_stop_reduced_position(row, action):
                 # Protection sitting at the broker, not a sale: no
                 # quantity effect at all.
                 continue

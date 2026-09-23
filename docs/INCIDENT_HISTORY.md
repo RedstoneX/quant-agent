@@ -73,14 +73,41 @@ and the fix now has its own small helper that says so in as many words.
 **What would catch it next time.** The class is "a ledger signing a row by
 its action name, when the row's meaning depends on its fill state." The
 tests added with the fix walk a protective stop through every fill state on
-both the long and short side, and cross-check that the share-count ledger
-and the round-trip calibration agree on which stops closed something.
+the long side, cover the resting and filled cases on the short side, and
+cross-check the share-count ledger against the round-trip calibration for a
+resting and a fired stop.
 
-**Not fixed here, carried as item 173:** correcting the count exposed a real
-EQNR gap the corrupted number had been hiding; the reconciler still runs
-before the fill reconciler and so pages a false CRITICAL on the desk's own
-unreconciled sale (NUE, 2026-09-21, self-corrected 476 ms later); and a
-COVER is still signed as a reduction.
+**What the adversary pass found in the fix itself, and what changed.** Three
+of the fill-state tests passed for the wrong reason: the shared executed-row
+predicate admits no `submitted`, `canceled`, `expired` or `pending_submit`
+row that carries no fill quantity, so the new Python branch never ran and
+the assertion would have held even with the rule inverted. They now pin the
+Python rule directly as well as the end-to-end number — worth recording
+because a test that cannot fail is indistinguishable from one that passes.
+The new helper also answered "yes" for any row at all that carried a fill
+quantity, which would have handed a true-by-default answer to a future
+caller; it now checks the action. Two claims in an earlier draft of this
+entry were themselves too strong and were cut.
+
+**Not fixed here, carried as item 173:**
+
+- Correcting the count exposed a real EQNR gap the corrupted number had been
+  hiding. EQNR left the held book between 16:19 and 16:45 UTC on 2026-09-21
+  with no trades row for the remaining 8.5962 shares. That is inside the
+  seven-day lookback now, so the next pass should find the broker order and
+  write it back — but past roughly 2026-09-28 it falls out of the window,
+  and the owner alert has no dedup or throttle of any kind, so it would then
+  page CRITICAL at every session entry point, every day. Separately, nothing
+  establishes that EQNR's exit was a protective stop; writing it back as one
+  would stamp a cause the evidence does not support onto owner-facing P&L.
+- The reconciler still runs before the fill reconciler, so a sale the desk
+  placed and has not yet reconciled pages a false CRITICAL (NUE, 2026-09-21,
+  self-corrected 476 ms later).
+- The short side is still signed from the action name: a COVER, and a
+  buy-to-cover TRAIL_STOP the broker filled, subtract from a short instead
+  of retiring it. Unchanged by this fix and silent today, because the
+  reconciler skips any negative as a short. Pinned by a test that states it
+  is wrong.
 
 ### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
 

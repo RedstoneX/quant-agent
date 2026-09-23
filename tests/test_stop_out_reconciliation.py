@@ -25,8 +25,10 @@ directly for filled SELL orders the ledger has never recorded
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.pipeline import TradingPipeline
-from src.storage.db import Database
+from src.storage.db import Database, _trail_stop_reduced_position
 
 
 def _mk_pipeline(db: Database, broker, lookback_days: int = 7) -> TradingPipeline:
@@ -645,18 +647,38 @@ def test_filled_trail_stop_is_an_exit(tmp_path):
     assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
 
 
-def test_submitted_trail_stop_is_not_an_exit(tmp_path):
-    """A stop resting with an explicit 'submitted' status. Excluded by the
-    SQL predicate today, but the Python rule must agree independently —
-    the SQL and Python copies of this contract have drifted before."""
+@pytest.mark.parametrize("status", ["submitted", "pending_submit", "canceled", "expired"])
+def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
+    """A stop that rests, is pulled, or lapses without trading moves no
+    shares — asserted TWICE on purpose.
+
+    The end-to-end number is currently decided by the SQL predicate, which
+    admits none of these rows at all (measured: 0 rows) so the Python
+    branch never runs. That makes the end-to-end assertion alone vacuous —
+    it would still pass if the Python rule were inverted. The SQL and
+    Python copies of this contract have drifted before, so the Python rule
+    is pinned directly as well."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade("NVDA", "BUY", 10, 500.0, "entry", "r1",
                     broker_order_id="nv-buy", fill_status="filled")
     db.insert_trade("NVDA", "TRAIL_STOP", 10, 450.0, "protect", "r1",
-                    broker_order_id="nv-stop", fill_status="submitted")
+                    broker_order_id="nv-stop", fill_status=status)
 
     assert db.get_symbols_with_open_ledger_qty()["NVDA"] == 10.0
+    row = db.conn.execute(
+        "SELECT fill_qty, fill_status FROM trades WHERE broker_order_id = 'nv-stop'"
+    ).fetchone()
+    assert _trail_stop_reduced_position(row, "TRAIL_STOP") is False
+
+
+def test_trail_stop_rule_does_not_answer_for_other_actions(tmp_path):
+    """The helper is named for TRAIL_STOP and must say so. Without the
+    action check it returned True for any row carrying a fill_qty, which
+    would quietly hand a true-by-default answer to a future caller."""
+    filled_sell = {"fill_qty": 9.0, "fill_status": "filled"}
+    assert _trail_stop_reduced_position(filled_sell, "SELL") is False
+    assert _trail_stop_reduced_position(filled_sell, "TRAIL_STOP") is True
 
 
 def test_trail_stop_with_fill_qty_but_null_status_is_an_exit(tmp_path):
@@ -685,29 +707,6 @@ def test_partially_filled_trail_stop_subtracts_only_what_traded(tmp_path):
     _set_fill(db, "pep-stop", status="partially_filled", qty=12.0)
 
     assert db.get_symbols_with_open_ledger_qty()["PEP"] == 18.0
-
-
-def test_canceled_trail_stop_that_never_traded_is_not_an_exit(tmp_path):
-    """A stop pulled before it fired moves no shares."""
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade("WMT", "BUY", 12, 80.0, "entry", "r1",
-                    broker_order_id="wmt-buy", fill_status="filled")
-    db.insert_trade("WMT", "TRAIL_STOP", 12, 75.0, "protect", "r1",
-                    broker_order_id="wmt-stop", fill_status="canceled")
-
-    assert db.get_symbols_with_open_ledger_qty()["WMT"] == 12.0
-
-
-def test_expired_trail_stop_that_never_traded_is_not_an_exit(tmp_path):
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade("CVX", "BUY", 9, 150.0, "entry", "r1",
-                    broker_order_id="cvx-buy", fill_status="filled")
-    db.insert_trade("CVX", "TRAIL_STOP", 9, 140.0, "protect", "r1",
-                    broker_order_id="cvx-stop", fill_status="expired")
-
-    assert db.get_symbols_with_open_ledger_qty()["CVX"] == 9.0
 
 
 def test_canceled_trail_stop_that_partially_traded_still_subtracts(tmp_path):
@@ -758,6 +757,34 @@ def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
     _rest_the_stops(db, clear_order_id=True)
 
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
+
+
+def test_short_side_cover_sign_is_wrong_and_this_change_does_not_fix_it(tmp_path):
+    """KNOWN DEFECT, pinned so it cannot be mistaken for correct — item
+    173(c). The signing rule still reads the action name, so anything that
+    RETIRES a short subtracts from it instead: a full cover of a 36-share
+    short reads -72, not 0, whether it comes as a COVER or as a
+    buy-to-cover TRAIL_STOP the broker filled. Unchanged by this fix (the
+    old code produced -72 too) and silent today, because the reconciler
+    treats any negative as a short and skips it. Change this test only
+    together with the signing rule it describes."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
+                    broker_order_id="flnc-stop", fill_status="submitted")
+    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
+
+    db.insert_trade("UPS", "SHORT", 7, 94.75, "short entry", "r1",
+                    broker_order_id="ups-short", fill_status="filled")
+    db.insert_trade("UPS", "COVER", 7, 92.0, "cover", "r2",
+                    broker_order_id="ups-cover", fill_status="filled")
+    _set_fill(db, "ups-cover", status="filled", qty=7.0)
+
+    net = db.get_symbols_with_open_ledger_qty()
+    assert net["FLNC"] == -72.0  # should be 0.0 — see item 173(c)
+    assert net["UPS"] == -14.0   # should be 0.0 — same defect, same cause
 
 
 def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
