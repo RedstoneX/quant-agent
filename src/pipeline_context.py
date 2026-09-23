@@ -156,10 +156,12 @@ class RunContext:
     # source, these carry the evidence behind it.
     #
     #   dropped_analyses    {(model, symbol): count} — a parsed item that was
-    #                       discarded outright. The desk researched the name
-    #                       and the Portfolio Manager never saw it. Recorded
-    #                       even when a retry later recovers the symbol, which
-    #                       is the case data_status cannot show at all.
+    #                       discarded outright at that moment. Recorded even
+    #                       when a retry later recovers the symbol and the
+    #                       Portfolio Manager does see it, which is the case
+    #                       data_status cannot show at all — so an entry here
+    #                       is NOT by itself evidence the name is missing from
+    #                       the book, and RiskStage checks before saying so.
     #   null_coerced_fields {(model, field): count} — a defaulted field
     #                       arrived as an explicit null and took its default.
     #                       The object survived; a real input did not. On
@@ -169,8 +171,11 @@ class RunContext:
     # WRITTEN BY RiskStage (not by the research stage): the Portfolio
     # Manager parses after research, so a reading taken any earlier would miss
     # every PM-side loss. RiskStage turns a non-empty pair into the
-    # `analysis_parse_loss` / `analysis_field_nulled` advisories. The counters
-    # behind them are zeroed at the top of MorningResearchStage.
+    # `analysis_parse_loss` / `analysis_parse_loss_recovered` /
+    # `analysis_field_nulled` advisories — the first two split by whether the
+    # dropped symbol is in the book RiskStage holds, which is why that
+    # reconciliation cannot happen anywhere earlier. The counters behind them
+    # are zeroed at the top of MorningResearchStage.
     dropped_analyses: dict[tuple[str, str], int] = field(default_factory=dict)
     null_coerced_fields: dict[tuple[str, str], int] = field(default_factory=dict)
 

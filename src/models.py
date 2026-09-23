@@ -243,10 +243,15 @@ class AnalysisParseTelemetry:
         This is the loss the null-tolerance rule above is designed to prevent,
         counted separately so "we kept it but blanked a field" is never
         confused with "the desk never saw this candidate at all". Recorded
-        even when a retry later recovers the symbol: today that case logs at
-        INFO, leaves `data_status["tech"]` reading "ok", and is therefore
-        completely invisible to the operator while still costing a paid LLM
-        round-trip.
+        even when a retry later recovers the symbol, and NOT un-recorded when
+        it does: that case logs at INFO, leaves `data_status["tech"]` reading
+        "ok", and would otherwise be completely invisible to the operator
+        while still costing a paid LLM round-trip. Since 2026-09-23 the risk
+        stage reconciles these entries against the book it holds and reports a
+        recovered one as the `analysis_parse_loss_recovered` COST note instead
+        of as missing coverage (`_reconcile_parse_loss` in
+        `src/pipeline_stages.py`), so the signal this counter exists to give
+        survives without the counter ever being erased.
         """
         if self._suspended:
             return
