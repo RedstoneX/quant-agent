@@ -66,6 +66,7 @@ class _NewsStore:
 
 def _bind_reuse(obj):
     obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
+    obj._latest_news_read_today = TradingPipeline._latest_news_read_today.__get__(obj)
     obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
     obj._carry_forward_insider = TradingPipeline._carry_forward_insider.__get__(obj)
     obj._macro_regime_or_print_changed = (

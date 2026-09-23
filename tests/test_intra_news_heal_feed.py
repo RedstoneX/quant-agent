@@ -70,6 +70,8 @@ class _Provider:
 def _bind(obj):
     for name in (
         "_carry_forward_news",
+        "_latest_news_read_today",
+        "_cover_healed_news_wire",
         "_news_has_newer_material_wire",
         "_watched_research_symbols",
         "_peek_news_headlines",

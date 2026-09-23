@@ -15217,6 +15217,66 @@ class TradingPipeline:
             return CarryForward(None, verdict.status, same_session=same_session)
         return CarryForward(payload, verdict.status, same_session=same_session)
 
+    def _latest_news_read_today(self) -> dict | None:
+        """Today's news report, INCLUDING an answer a paid heal bought.
+
+        The scheduled sessions write `data/news/<ET day>/full_report.json`.
+        A paid heal does not, and must not: four readers walk that file
+        ACROSS days — `NewsStore.recent_state_changes` and the three
+        missed-ops/thesis scans in this module — so overwriting it would
+        push a heal's baseline-less `state_changes` into a multi-week
+        catalyst memory and delete the morning's from it. A file written for
+        a cross-day window is the wrong place to put a within-day refresh.
+
+        So the file stays the base, and the freshest PAID read of the day is
+        layered over it from `specialist_evidence`, which is already written
+        for every news answer (heal and scheduled alike) and is already
+        ET-day scoped. Nothing is written here.
+
+        LIFETIME, because this is the whole question: unchanged. Both
+        sources are bounded by the same ET trading day, and what expires the
+        result is still `evidence_kind.news_reuse` — the next material wire,
+        or the session ending. No clock, no N-minute refresh, no new number.
+        What changes is only WHICH of today's paid reads the desk finds.
+
+        Per-symbol coverage the newer read was never asked about is kept
+        (`seat_heal.merge_carried_stock_news`). Returns the file alone when
+        there is no newer row, when it will not parse, or when the store is
+        unreachable — a sick forensic table must never cost the desk the
+        news it already has on disk.
+        """
+        report = self.news_store.load_daily_report()
+        fetch = getattr(getattr(self, "db", None), "latest_news_analysis_today", None)
+        if not callable(fetch):
+            return report
+        try:
+            raw = fetch()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: latest news answer read failed: %s", e)
+            return report
+        if not raw:
+            return report
+        try:
+            import json as _json
+            from src.models import NewsIntelligenceReport
+            from src.seat_heal import merge_carried_stock_news
+            fresher = _json.loads(raw)
+            if not isinstance(fresher, dict):
+                return report
+            # Must still be a real report. A row that cannot parse is not
+            # allowed to demote a file that can — that would turn an
+            # `expired` seat into a LOST one, which is strictly worse.
+            NewsIntelligenceReport(**fresher)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Intraday scan: stored news answer would not parse; using "
+                "the day's report file: %s", e,
+            )
+            return report
+        if not report:
+            return fresher
+        return merge_carried_stock_news(fresher, report)
+
     def _carry_forward_news(self, ctx: RunContext | None = None) -> CarryForward:
         """This session's news intelligence, re-validated from its stored dump.
 
@@ -15237,7 +15297,7 @@ class TradingPipeline:
         """
         from src.evidence_kind import news_reuse
         try:
-            report = self.news_store.load_daily_report()
+            report = self._latest_news_read_today()
             if not report:
                 return CarryForward(None, "carry_forward_empty", same_session=False)
             from src.models import NewsIntelligenceReport
@@ -15245,9 +15305,11 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=False)
-        # load_daily_report only opens today's dated directory. A successful
-        # load is therefore same-session; there is no undated news snapshot
-        # on this path. Empty/failed above cannot claim it.
+        # Both sources `_latest_news_read_today` can return are bounded by
+        # the SAME ET trading day — the dated report directory and the
+        # ET-day evidence-row filter — so a successful load is same-session
+        # either way; there is no undated news snapshot on this path.
+        # Empty/failed above cannot claim it.
         wire_moved = self._news_has_newer_material_wire(payload)
         verdict = news_reuse(
             payload,
@@ -15510,6 +15572,59 @@ class TradingPipeline:
             kind="analysis", scope="run", evidence_json=evidence_json,
         )
 
+    def _cover_healed_news_wire(self, ctx: RunContext) -> None:
+        """Record the wire a paid news heal just read, so it stops expiring.
+
+        THE SECOND HALF OF THE SAME DEFECT. `_persist_heal_call` keeps the
+        ANSWER; this keeps the QUESTION. Without it the answer alone changes
+        nothing, because `_news_has_newer_material_wire` compares live RSS
+        titles against `covered_news_headlines(report)` — the analyst's own
+        REWRITTEN headlines — union today's `raw_headlines.json`. Those two
+        strings are not the same ID (`NewsStore.load_raw_headlines` says so
+        outright), so a healed report is compared against titles it never
+        claimed to contain, the same wire reads as newly moved on the next
+        tick, and the seat expires again 30 minutes after the desk bought it.
+
+        Only headlines the model was ACTUALLY SHOWN are recorded — measured
+        off the prompt text, not the fetch (`seat_heal.wire_titles_shown_to_
+        model`). A title the peek fetched but the prompt truncated away is
+        left uncovered on purpose: it must still be able to expire the seat.
+        That is the difference between recording research and buying silence.
+
+        Appends, never replaces: overwriting would drop the morning's
+        per-symbol titles and re-arm the very compare this is quieting.
+        Never raises — a coverage write must not undo a paid heal.
+        """
+        from src.seat_heal import wire_titles_shown_to_model
+        try:
+            items = list(getattr(self, "_last_news_peek_items", None) or [])
+            titles: list[str] = []
+            for item in items:
+                title = getattr(item, "title", None)
+                if title is None and isinstance(item, dict):
+                    title = item.get("title") or item.get("headline")
+                text = str(title or "").strip()
+                if text:
+                    titles.append(text)
+            shown = wire_titles_shown_to_model(
+                titles, getattr(ctx, "heal_news_text", "") or "",
+            )
+            if not shown:
+                return
+            append = getattr(
+                getattr(self, "news_store", None), "append_raw_headlines", None,
+            )
+            if not callable(append):
+                return
+            added = append([{"title": t, "source": "seat_heal", "summary": ""}
+                            for t in shown])
+            logger.info(
+                "seat heal: recorded %d of %d peeked wire titles as read by "
+                "the paid news re-ask", added, len(titles),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: wire-coverage write failed: %s", e)
+
     def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
         """One paid retry for a LOST or EXPIRED seat, once per ET day.
 
@@ -15702,6 +15817,8 @@ class TradingPipeline:
         # own per-session cost line sums `agent_logs.cost_usd` by `run_id`
         # (`src/notifier.py`), so those eight calls read as free.
         self._persist_heal_call(ctx, seat, agent_name, analysis, call_result)
+        if seat == "news":
+            self._cover_healed_news_wire(ctx)
         status = dict(ctx.data_status or {})
         status[seat] = "ok"
         ctx.data_status = status

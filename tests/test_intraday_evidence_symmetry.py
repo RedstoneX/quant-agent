@@ -127,6 +127,7 @@ def _pipeline(macro=None, news=None):
 
     obj = _Pipeline(macro, news)
     obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
+    obj._latest_news_read_today = TradingPipeline._latest_news_read_today.__get__(obj)
     obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
     obj._macro_regime_or_print_changed = (
         TradingPipeline._macro_regime_or_print_changed.__get__(obj)

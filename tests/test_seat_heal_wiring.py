@@ -55,13 +55,34 @@ def _stored_report() -> dict:
 class _NewsStore:
     def __init__(self, report=None, raw_headlines=None):
         self._report = report
-        self._raw = raw_headlines or []
+        self._raw = list(raw_headlines or [])
+        #: Every `save_daily_report` this stub ever saw. It must stay EMPTY
+        #: on a heal: `full_report.json` is walked ACROSS days by
+        #: `recent_state_changes` and the missed-ops scans, so a heal
+        #: writing there would push a baseline-less state change into a
+        #: multi-week catalyst memory and delete the morning's from it.
+        self.saved: list[tuple] = []
 
     def load_daily_report(self, session=None):
         return self._report
 
+    def save_daily_report(self, report, session=None):
+        self.saved.append((report, session))
+
     def load_raw_headlines(self, session_date=None):
         return list(self._raw)
+
+    def append_raw_headlines(self, headlines):
+        seen = {str((i or {}).get("title") or "").strip() for i in self._raw}
+        added = 0
+        for item in headlines or []:
+            title = str((item or {}).get("title") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            self._raw.append(item)
+            added += 1
+        return added
 
 
 class _Provider:
@@ -128,6 +149,21 @@ class _DayLedger:
     def insert_specialist_evidence(self, **kw):
         self.evidence.append(kw)
 
+    def latest_news_analysis_today(self, trading_day=None):
+        """The newest news answer on record today — heal or scheduled read.
+
+        The real one is an ET-day-bounded query over the SAME
+        `agent_name='news_analyst', kind='analysis', scope='run'` row the
+        ordinary sessions already write; newest-last here stands in for
+        newest-first there.
+        """
+        for row in reversed(self.evidence):
+            if (row.get("kind") == "analysis"
+                    and row.get("agent_name") == "news_analyst"
+                    and row.get("scope") == "run"):
+                return row.get("evidence_json")
+        return None
+
 
 class _Recorded:
     """A stand-in for `AgentResult` carrying what a paid call costs."""
@@ -148,6 +184,8 @@ class _Recorded:
 def _bind(obj):
     for name in (
         "_carry_forward_news",
+        "_latest_news_read_today",
+        "_cover_healed_news_wire",
         "_news_has_newer_material_wire",
         "_watched_research_symbols",
         "_peek_news_headlines",
@@ -866,3 +904,242 @@ def test_a_broken_forensic_store_never_undoes_a_heal_that_worked():
 
     assert ctx.data_status["news"] == "ok"
     assert ctx.news_intel is not None
+
+
+# ── the write-back: what the desk paid for must survive the next tick ─────
+#
+# THE DEFECT THIS SECTION EXISTS TO PREVENT FROM RECURRING.
+# Reconnecting the dispatcher (above) made the desk BUY fresher news. It did
+# not make the desk KEEP it. The paid answer was written to `ctx` and to
+# `specialist_evidence` and nowhere the next tick reads, and the wire the
+# desk paid the model to read was never recorded as read. So 30 minutes
+# later the carry-forward re-loaded the superseded morning file, the same
+# RSS titles compared as newly-moved all over again, and the seat expired a
+# second time — at which point the durable per-ET-day cap correctly refused
+# to buy what the desk had already bought. Pay, discard, then decline to
+# re-buy. Production, 2026-09-18, before the cap existed: EIGHT paid news
+# heals, 15:19 to 19:46 UTC, roughly one per tick, every one thrown away
+# [measured 2026-09-23 over a read-only copy of the production DB].
+
+def _report_with(stock_news: dict) -> dict:
+    from src.models import MacroNarrative, NewsIntelligenceReport
+    return NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-09-23", era_themes=["AI capex"],
+            current_regime="risk-on",
+        ),
+        state_changes=[], stock_news=stock_news,
+        pm_briefing="re-asked", market_sentiment="bullish", confidence="medium",
+    ).model_dump()
+
+
+class _RealAnalyst(_Analyst):
+    """Returns a report that actually validates, so the write-back is real."""
+
+    def __init__(self, stock_news=None, **kw):
+        super().__init__(**kw)
+        self._payload = _report_with(
+            stock_news if stock_news is not None
+            else {"AAPL": [{"headline": "Apple guidance cut", "sentiment": "bearish",
+                            "conviction": "high", "impact_summary": "cut"}]},
+        )
+
+    def analyze(self, payload, *args, **kwargs):
+        import json as _json
+        self.calls += 1
+        self.seen = payload
+        return (
+            SimpleNamespace(
+                model_dump=lambda: dict(self._payload),
+                model_dump_json=lambda: _json.dumps(self._payload),
+            ),
+            self.call_result,
+        )
+
+
+def _healed_desk(analyst=None, titles=None):
+    """Run ONE tick that heals, and hand back the stores it wrote to."""
+    analyst = analyst if analyst is not None else _RealAnalyst()
+    obj, ctx = _expired_news_tick(analyst=analyst, titles=titles or _MOVED_WIRE)
+    obj._heal_lost_research_seats(ctx)
+    assert ctx.data_status["news"] == "ok", "first tick did not heal"
+    return obj, ctx, analyst
+
+
+def _next_tick(obj, titles=None):
+    """The tick 30 minutes later: same stores, brand-new RunContext."""
+    obj.news_provider = _Provider(titles if titles is not None else _MOVED_WIRE)
+    obj.recorded.clear()
+    ctx = _ctx()
+    carried = obj._carry_forward_news(ctx)
+    ctx.data_status = {"tech": "ok", "news": carried.status}
+    ctx.news_intel = carried.payload
+    return ctx, carried
+
+
+def test_the_next_tick_finds_the_research_the_desk_just_paid_for():
+    """THE regression test for the write-back. Fails on origin/main.
+
+    One heal, then the tick 30 minutes later. The seat must be usable and
+    must NOT be expired — the desk already holds this session's freshest
+    paid read of the wire.
+    """
+    obj, _ctx1, analyst = _healed_desk()
+
+    ctx2, carried = _next_tick(obj)
+
+    assert carried.status != "expired", (
+        "the paid answer was discarded; the seat expired again on the next tick"
+    )
+    assert carried.status == "carried_from_morning"
+    assert ctx2.news_intel is not None
+    assert analyst.calls == 1, "the second tick must not re-ask a seat already bought"
+
+
+def test_the_seat_is_not_bought_twice_and_is_not_left_degraded_either():
+    """The two failure modes are one defect and both must go.
+
+    Before this change the second tick either re-bought the seat (production,
+    2026-09-18, eight times) or — once the per-ET-day cap landed — left it
+    `expired` for the rest of the day having already been paid for. A single
+    degraded seat is invisible to the `data_degraded` advisory, which needs
+    two, so nothing would have said so.
+    """
+    obj, _c1, analyst = _healed_desk()
+
+    ctx2, carried = _next_tick(obj)
+    obj._heal_lost_research_seats(ctx2)
+
+    assert analyst.calls == 1, "the desk paid for the same research twice"
+    from src import evidence_gate
+    assert evidence_gate.STATUS_CATEGORY[carried.status] == \
+        evidence_gate.CATEGORY_REPORTED
+    assert not evidence_gate.counts_as_degraded(carried.status)
+
+
+def test_the_wire_the_model_was_paid_to_read_is_recorded_as_read():
+    """Keeping the ANSWER is not enough; the QUESTION has to be kept too.
+
+    Expiry compares live RSS titles against the analyst's REWRITTEN
+    headlines union `raw_headlines.json`, and those are not the same string
+    — the news store says so in its own docstring. Without recording the
+    wire, the healed report gets compared against titles it never claimed to
+    contain and the seat expires again immediately.
+    """
+    obj, _c1, _a = _healed_desk()
+
+    recorded = {i["title"] for i in obj.news_store.load_raw_headlines()}
+
+    assert "AAPL guidance cut after close" in recorded
+    assert "Apple beats" in recorded, "the morning's own titles were not dropped"
+
+
+def test_a_headline_the_model_never_saw_can_still_expire_the_seat():
+    """The bound is what the model WAS SHOWN, not what the peek fetched.
+
+    Marking a headline covered suppresses it for the rest of the session, so
+    covering one the re-ask never read would be buying silence rather than
+    research. The prompt is truncated to `news.max_prompt_items`, so the two
+    sets genuinely differ.
+    """
+    from src.seat_heal import wire_titles_shown_to_model
+
+    shown = wire_titles_shown_to_model(
+        ["- seen one", "never in the prompt"], "- seen one\n",
+    )
+
+    assert shown == ["- seen one"]
+    assert wire_titles_shown_to_model(["anything"], "") == []
+
+
+def test_a_thin_heal_does_not_lose_the_mornings_per_symbol_coverage():
+    """The re-ask gets general wire text, no universe and no stock_mentions.
+
+    It is the fresher answer about the wire and a narrower one about the
+    book. A name the morning covered and the afternoon wire never mentioned
+    must keep its coverage rather than silently vanish.
+    """
+    obj, _c1, _a = _healed_desk(analyst=_RealAnalyst(stock_news={}))
+
+    _ctx2, carried = _next_tick(obj)
+
+    assert carried.payload is not None
+    assert "AAPL" in carried.payload.stock_news, (
+        "the morning's only covered symbol was dropped by a thinner re-ask"
+    )
+
+
+def test_a_heal_never_rewrites_the_file_the_cross_day_scans_walk():
+    """`full_report.json` is read ACROSS days — `recent_state_changes` and
+    the missed-ops/thesis scans all open it for a multi-week window. A heal
+    writing there would push its baseline-less `state_changes` into that
+    catalyst memory and delete the morning's from it. The refresh is
+    within-day; the file is not."""
+    obj, _c1, _a = _healed_desk()
+
+    assert obj.news_store.saved == [], (
+        "a within-day refresh was written to a file read across days"
+    )
+
+
+def test_a_stored_answer_that_will_not_parse_never_costs_the_desk_the_file():
+    """Demoting an `expired` seat to a LOST one is strictly worse. A row
+    that cannot be read must fall back to the day's report, not to nothing."""
+    ledger = _DayLedger()
+    ledger.evidence.append({
+        "agent_name": "news_analyst", "kind": "analysis", "scope": "run",
+        "evidence_json": '{"pm_briefing": "half a report"}',
+    })
+    obj = _pipeline(_MOVED_WIRE, db=ledger)
+    ctx = _ctx()
+
+    carried = obj._carry_forward_news(ctx)
+
+    assert carried.status == "expired", "fell through to lost instead of the file"
+    assert ctx.heal_news_text, "the wire text handoff survived the fallback"
+
+
+def test_an_unreachable_forensic_store_still_leaves_the_day_report_readable():
+    class _Broken(_DayLedger):
+        def latest_news_analysis_today(self, trading_day=None):
+            raise RuntimeError("db locked")
+
+    obj = _pipeline(["Apple beats"], db=_Broken())
+
+    carried = obj._carry_forward_news(_ctx())
+
+    assert carried.payload is not None
+    assert carried.status == "carried_from_morning"
+
+
+def test_recording_the_wire_appends_and_is_idempotent(tmp_path):
+    """The REAL store, not the stub. `save_raw_headlines` replaces, which
+    would wipe the morning's titles and re-arm the very compare this is
+    quieting; repeating must not grow the file either."""
+    from src.data.news_store import NewsStore
+    store = NewsStore(data_dir=str(tmp_path))
+    store.save_raw_headlines([{"title": "Apple beats"}])
+
+    first = store.append_raw_headlines([{"title": "Apple beats"}, {"title": "new one"}])
+    second = store.append_raw_headlines([{"title": "new one"}])
+
+    assert (first, second) == (1, 0)
+    assert [i["title"] for i in store.load_raw_headlines()] == [
+        "Apple beats", "new one",
+    ]
+
+
+def test_the_day_cap_still_binds_after_the_write_back():
+    """The write-back must reduce demand on the cap, never defeat it. A seat
+    that has had its paid heal today is still refused one, and the cap is
+    still counted from the durable rows rather than from anything new."""
+    analyst = _RealAnalyst()
+    obj, ctx = _expired_news_tick(analyst=analyst, db=_DayLedger({"news": 1}))
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert analyst.calls == 0
+    assert ctx.data_status["news"] == "expired"
+    assert obj.news_store.load_raw_headlines() == [{"title": "Apple beats"}], (
+        "a refused heal recorded wire coverage it never paid to read"
+    )
