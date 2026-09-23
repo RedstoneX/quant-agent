@@ -481,7 +481,7 @@ def test_user_message_states_no_history_depth() -> None:
         ],
         prior_macro_regime="risk_off",
         prior_macro_outlook="cautious",
-        intraday_context={"SPY": {"last_price": 300.0, "prev_close": 295.0}},
+        intraday_context={"SPY": {"live_price": 300.0, "prev_close": 295.0}},
     )
     claims = _history_claims(msg)
     assert not claims, (
@@ -571,7 +571,7 @@ def test_every_sent_block_is_explained_in_the_sheet(marker: str, heading: str) -
         prior_macro_regime="risk_off",
         prior_macro_outlook="cautious",
         intraday_context={"SPY": {
-            "last_price": 300.0, "prev_close": 295.0,
+            "live_price": 300.0, "prev_close": 295.0,
             "session_open": 296.0, "session_high": 301.0,
             "session_low": 295.5, "session_volume": 4_000_000,
         }},
