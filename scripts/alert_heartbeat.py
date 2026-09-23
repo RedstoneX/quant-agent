@@ -456,7 +456,7 @@ def run_coverage_check(now: datetime | None = None) -> str:
     from src.coverage_watchdog import (
         SWEEP_AGENT_NAME, SWEEP_LOG_NAME, alert_text, check_coverage,
         record_sweep_run, repair_failure_text, status_line, sweep_log_line,
-        sweep_summary,
+        sweep_summary, unreadable_stop_text,
     )
 
     # Board item 131: every run leaves a named line in the desk's log and
@@ -479,9 +479,33 @@ def run_coverage_check(now: datetime | None = None) -> str:
         raise
     line = status_line(status)
     sent: list[str] = []
-    if status.should_alert or status.should_alert_repair_failure:
+    if (
+        status.should_alert or status.should_alert_repair_failure
+        or status.should_alert_unreadable
+    ):
         from src.notifier import send_owner_alert
 
+        # Board item 172, sent FIRST. A stop the broker could not be asked
+        # about is the only one of these three conditions where the desk
+        # does not know what it is looking at, and it must not arrive after
+        # two messages about measured gaps.
+        #
+        # Claim-before-send is already done inside `check_coverage`, which
+        # wrote the per-symbol marker into the shared state file the same
+        # way it does for a placement failure. Re-claiming here would find
+        # the marker it just wrote and silence the message it was written
+        # for. The live session's own reconcile reads that same marker, so
+        # whichever process sees the symbol first is the one that tells him.
+        if status.should_alert_unreadable:
+            text = unreadable_stop_text(status.unreadable)
+            print(text, file=sys.stderr)
+            ok = bool(send_owner_alert(
+                text, symbols=[r.symbol for r in status.unreadable],
+            ))
+            sent.append(
+                f"unreadable-stop alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
         if status.should_alert_repair_failure:
             text = repair_failure_text(status)
             print(text, file=sys.stderr)
@@ -504,7 +528,9 @@ def run_coverage_check(now: datetime | None = None) -> str:
             )
     summary = sweep_summary(status, entry=entry, run_id=run_id, alerts=sent)
     finished = sweep_log_line(summary)
-    if summary["outcome"] in ("repair_failed", "could_not_check"):
+    if summary["outcome"] in (
+        "repair_failed", "could_not_check", "unreadable_stops",
+    ):
         # WARNING, not ERROR: the failure itself is already logged at ERROR
         # by the module that hit it, under wording `src/log_health.py`
         # already classifies; a second ERROR here would be counted twice.

@@ -2983,6 +2983,13 @@ class TradingPipeline:
         # row as "no stop at all" or "stop mis-sized", and this is neither —
         # the stop is present and correctly sized, it simply did not fill.
         elected_unfilled: list[dict] = []
+        # Positions whose protective stops could NOT BE READ at the broker
+        # (board item 172). Kept in their own list and appended to `gaps`
+        # only at the very end, after every classifier, repair attempt and
+        # escalation filter has run over the measured rows — so an unknown
+        # can never be repaired against a guessed level, counted into the
+        # overnight dollar total, or reclassified as a fractional lapse.
+        unreadable: list[dict] = []
         longs_checked = 0
         shorts_checked = 0
         sweeper = self._sweeper()
@@ -3017,17 +3024,85 @@ class TradingPipeline:
                 shorts_checked += 1
             else:
                 longs_checked += 1
+            held = abs(qty)
+            # ---- CANNOT BE ASKED, board item 172 --------------------------
+            # This used to `continue` on a warning, which dropped the symbol
+            # out of `gaps` entirely — so a position whose stops the broker
+            # refused to describe was reported to nobody and read downstream
+            # exactly like a position confirmed covered. Removing the
+            # account-level halt made per-position stops the desk's only
+            # loss protection, which makes "I could not check this one" the
+            # single most important thing this sweep can find and the one
+            # thing it was silent about.
+            #
+            # Recorded as its own condition and the sweep carries on to the
+            # next symbol: a read failure on one name says nothing about any
+            # other, and aborting would hide the rest of the book behind it.
             try:
-                _ok, specs = self.broker.snapshot_protective_stops(
+                ok, specs = self.broker.snapshot_protective_stops(
                     symbol, side=("buy" if is_short else "sell"),
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "coverage reconcile: snapshot failed for %s: %s", symbol, exc,
-                )
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": f"snapshot_protective_stops raised: {exc}",
+                })
                 continue
-            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
-            held = abs(qty)
+            # `ok=False` is the COMMON read failure and the reason this
+            # whole item exists: the broker's order listing swallows its own
+            # exception, so a snapshot that raises is the rare case and a
+            # snapshot that comes back False-with-nothing is the usual one.
+            # Before it was honoured here, an outage read as 'none' — a
+            # confirmed naked position — and was repaired against.
+            if not ok:
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": (
+                        "the broker's open-order listing failed, so whether "
+                        "a protective stop exists could not be established"
+                    ),
+                })
+                continue
+            if specs is not None and not isinstance(specs, list):
+                # Not iterable in the loop below, and `for s in (specs or [])`
+                # would raise straight out of this method and take the whole
+                # sweep — every other position included — with it.
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": (
+                        f"protective-stop snapshot in an unusable shape: "
+                        f"{type(specs).__name__}"
+                    ),
+                })
+                continue
+            # A stop order whose quantity cannot be parsed is a stop nobody
+            # can size, and neither possible guess is safe: counting it as
+            # zero invents a gap, skipping it invents coverage. Left
+            # unparsed, the old `sum(...)` raised straight out of this whole
+            # method and took the entire sweep — every other position
+            # included — with it.
+            covered = 0.0
+            unparsable = ""
+            for s in (specs or []):
+                try:
+                    covered += float(s.get("qty", 0) or 0)
+                except (TypeError, ValueError, AttributeError) as exc:
+                    unparsable = f"protective stop in an unreadable shape: {exc}"
+                    break
+            if unparsable:
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": unparsable,
+                })
+                continue
             # ---- ELECTED BUT UNFILLED -------------------------------------
             # Runs for EVERY held position, including the ones this sweep is
             # about to call perfectly covered — which is the entire point.
@@ -3174,10 +3249,21 @@ class TradingPipeline:
                     resting_stops=list(specs or []),
                 )
                 gaps.append(gap)
-        if (longs_checked or shorts_checked) and not gaps:
+        if (longs_checked or shorts_checked) and not gaps and not unreadable:
             logger.info(
                 "Stop-coverage reconcile: all %d long / %d short position(s) "
                 "adequately stop-covered", longs_checked, shorts_checked,
+            )
+        elif unreadable and not gaps:
+            # Board item 172. The clean line above says every position is
+            # covered. A pass that could not read one is not entitled to
+            # say that about the book, only about the part it could read.
+            logger.error(
+                "Stop-coverage reconcile: %d of %d position(s) UNREADABLE "
+                "(%s) — every position that COULD be read is adequately "
+                "stop-covered; the rest is unknown.",
+                len(unreadable), longs_checked + shorts_checked,
+                ", ".join(str(g.get("symbol")) for g in unreadable),
             )
         # Spec §11.1 hybrid fractional stops, observability half. Total the
         # deliberate overnight exposure into ONE line the owner can read at a
@@ -3240,6 +3326,13 @@ class TradingPipeline:
         ]
         if session_failures:
             self._alert_owner_session_repair_failed(session_failures)
+        # Board item 172. Appended AFTER every filter above has been built
+        # from `gaps`, so an unreadable row cannot reach the naked list, the
+        # session-failure list, the overnight dollar total or a repair — all
+        # of which require a measured shortfall this row does not have.
+        if unreadable:
+            self._alert_owner_unreadable_stop(unreadable)
+            gaps.extend(unreadable)
         try:
             from src.execution.stop_records import (
                 reconcile_recorded_stop_levels, report_stop_level_mismatches,
@@ -3535,6 +3628,69 @@ class TradingPipeline:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_unreadable_stop(rows: list[dict]) -> None:
+        """Page the owner, BY SYMBOL, about positions whose protective stops
+        could not be READ at the broker. Board item 172. Never raises.
+
+        Same path a missing stop uses (`notifier.send_owner_alert` with the
+        symbols attached), because it is the same question — does this
+        position have loss protection — with the answer "unknown" instead of
+        "no". Removing the account-level loss alarm made per-position stops
+        the only protection the desk has, so an unanswerable question about
+        one of them is worth the owner's attention, not a log line.
+
+        Deduped per symbol per trading day on the SAME state file and the
+        SAME claim discipline as the placement-failure and elected-unfilled
+        alerts, and shared with the standalone coverage watchdog: this sweep
+        runs at every session entry and the watchdog every thirty minutes,
+        both can find the identical condition, and `send_owner_alert` has no
+        throttle of its own. Whichever process sees the symbol first is the
+        one that tells him.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                UnreadableStop, claim_unreadable_stop_alert,
+                unreadable_stop_text,
+            )
+
+            by_symbol = {
+                str(r.get("symbol", "")).strip().upper(): r for r in rows
+                if str(r.get("symbol", "")).strip()
+            }
+            fresh = claim_unreadable_stop_alert(list(by_symbol))
+            if not fresh:
+                return
+            described = []
+            for sym in fresh:
+                row = by_symbol.get(sym, {})
+                try:
+                    held = abs(float(row.get("held_qty") or 0))
+                except (TypeError, ValueError):
+                    held = 0.0
+                described.append(UnreadableStop(
+                    symbol=sym, held_qty=held,
+                    reason=str(row.get("read_error") or "reason not recorded"),
+                    is_short=bool(row.get("is_short")),
+                ))
+            delivered = _notifier.send_owner_alert(
+                unreadable_stop_text(described), symbols=fresh,
+            )
+            if not delivered:
+                # The claim was already recorded, so these symbols are now
+                # silent for the rest of the trading day. Releasing the
+                # claim would trade one lost message for a page on every
+                # 30-minute tick, so the delivery failure is made loud in
+                # the journal instead of being a discarded return value.
+                logger.error(
+                    "UNREADABLE-STOP ALERT NOT DELIVERED for %s — the "
+                    "finding stands and is claimed for today; read it here.",
+                    ", ".join(fresh),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("unreadable-stop owner alert failed: %s", exc)
 
     def _wire_protective_stop_block_recorder(self) -> None:
         """The broker holds no database, so a protective stop its kill

@@ -1189,19 +1189,47 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
         return
     from src.notifier import _gap_is_expected_fractional
 
+    from src.notifier import _gap_is_unreadable
+
+    # Board item 172. Third bucket, not folded into either of the two that
+    # state a measured fact about coverage.
+    unreadable = [
+        row for row in gaps
+        if isinstance(row, dict) and _gap_is_unreadable(row)
+    ]
     rows = [
         row for row in gaps
         if isinstance(row, dict) and not _gap_is_expected_fractional(row)
+        and not _gap_is_unreadable(row)
     ]
     uncovered = [row for row in rows if _gap_is_uncovered(row)]
     partial = [row for row in rows if not _gap_is_uncovered(row)]
-    if not uncovered and not partial:
+    if not uncovered and not partial and not unreadable:
         return
-    profiles = _profiles(uncovered, partial)
+    profiles = _profiles(uncovered, partial, unreadable)
 
     def _gap_line(row: dict) -> str:
         return format_coverage_gap_line(row, profiles)
 
+    if unreadable:
+        lines.append(
+            f"🚨 STOP UNREADABLE: {len(unreadable)} position(s) the broker "
+            "could not be asked about"
+        )
+        for row in unreadable[:8]:
+            symbol = str(row.get("symbol", "?")).upper()
+            held = _number(row.get("held_qty"))
+            held_text = f", holding {abs(held):g}" if held is not None else ""
+            reason = str(row.get("read_error") or "").strip()
+            lines.append(
+                f"   • {_ticker_co(symbol, profiles)}{held_text} — "
+                + (reason or "the stop query failed")
+            )
+        lines.append(
+            "   Whether these have a stop is UNKNOWN — not confirmed "
+            "missing and not confirmed present. Check the position's open "
+            "orders at the broker directly."
+        )
     if uncovered:
         lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} position(s) with nothing protecting them")
         lines.extend(_gap_line(row) for row in uncovered[:8])
@@ -1321,8 +1349,13 @@ def _watch_rows(result: dict) -> list[dict]:
     STOP MIS-SIZED half of `_append_coverage_gaps` (the milder of its two
     banners; "NO STOP AT ALL" stays the loud top-of-message 🚨 banner it
     already is). No new threshold is invented here — only what
-    `_gap_is_uncovered` already classifies."""
-    from src.notifier import _gap_is_uncovered
+    `_gap_is_uncovered` already classifies.
+
+    Board item 172: a row whose stops could not be READ is excluded. WATCH
+    renders "the stop covers only part of the position", which states that a
+    stop exists and is undersized — two facts an unreadable row establishes
+    neither of. It has its own banner above the numbers instead."""
+    from src.notifier import _gap_is_uncovered, _gap_is_unreadable
 
     gaps = result.get("stop_coverage_gaps")
     if not isinstance(gaps, list):
@@ -1330,6 +1363,7 @@ def _watch_rows(result: dict) -> list[dict]:
     return [
         row for row in gaps
         if isinstance(row, dict) and not _gap_is_uncovered(row)
+        and not _gap_is_unreadable(row)
     ]
 
 
@@ -1767,10 +1801,25 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
         if soft:
             lines.append(f"⚠️ No activity logged today for: {', '.join(soft)}")
 
+    from src.notifier import _gap_is_unreadable
+
     gaps = [g for g in (result.get("stop_coverage_gaps") or []) if isinstance(g, dict)]
-    faults = [g for g in gaps if not _gap_is_expected_fractional(g)]
+    # Board item 172 — same partition the base formatter uses, for the same
+    # reason: an unreadable row asserts nothing about coverage and must not
+    # be counted into a banner that does.
+    unreadable = [g for g in gaps if _gap_is_unreadable(g)]
+    faults = [
+        g for g in gaps
+        if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
+    ]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
+    if unreadable:
+        names = ", ".join(str(g.get("symbol", "?")) for g in unreadable[:6])
+        lines.append(
+            f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) the broker "
+            f"could not be asked about — coverage UNKNOWN — {names}"
+        )
     if uncovered:
         names = ", ".join(str(g.get("symbol", "?")) for g in uncovered[:6])
         lines.append(

@@ -160,6 +160,29 @@ class CoverageGap:
 
 
 @dataclass(frozen=True)
+class UnreadableStop:
+    """A held position whose protective stops could not be READ at all.
+
+    Board item 172. This is not a `CoverageGap` and must never be rendered
+    as one: a gap is a measured shortfall, and this is the absence of a
+    measurement. The position may be perfectly protected or completely
+    naked — the desk does not know which, and "does not know" is the
+    finding. Folding it into either the covered set or the gap set would
+    state a fact nobody established.
+
+    Produced only by a FAILED READ: the broker raised, or the snapshot came
+    back in a shape whose quantities cannot be parsed. A snapshot that
+    returns cleanly and lists no stops is a readable answer meaning "there
+    is no stop", which is a `CoverageGap`, not this.
+    """
+
+    symbol: str
+    held_qty: float
+    reason: str
+    is_short: bool = False
+
+
+@dataclass(frozen=True)
 class RepairOutcome:
     """One attempt to put a missing protective stop back. `placed` False with
     a `detail` is a FAILURE that must be reported, never swallowed."""
@@ -196,6 +219,13 @@ class CoverageStatus:
     #: session owns the desk, or another desk process holds the repair
     #: lock). Empty when nothing was deferred. Observability only.
     repair_deferred: str = ""
+    #: Held positions whose protective stops could not be READ this run
+    #: (board item 172). Kept OUT of `gaps` and out of `unprotected_total`:
+    #: their exposure is unknown, not zero and not measured, and adding a
+    #: guessed number to a dollar total the owner reads would be worse than
+    #: saying the read failed.
+    unreadable: list[UnreadableStop] = field(default_factory=list)
+    already_alerted_unreadable_for_day: bool = False
 
     @property
     def unprotected_total(self) -> float:
@@ -241,6 +271,20 @@ class CoverageStatus:
         can find the identical condition in a process this one knows
         nothing about."""
         return bool(self.repair_failures) and not self.already_alerted_repair_failure_for_day
+
+    @property
+    def should_alert_unreadable(self) -> bool:
+        """A stop the broker could not be ASKED about is its own alarm, on
+        its own once-a-day-per-symbol marker. Board item 172.
+
+        Deliberately NOT gated on `session_ran`, unlike `should_alert`.
+        That gate exists because an uncovered remainder is expected to be
+        re-covered by the next session's own sweep, so alerting before the
+        session has had its chance would be noise. Nothing re-reads a stop
+        the broker refused to describe — a session running changes nothing
+        about it — so waiting for one would only delay the report.
+        """
+        return bool(self.unreadable) and not self.already_alerted_unreadable_for_day
 
 
 def _utc_now() -> datetime:
@@ -354,10 +398,35 @@ def _parse_iso(stamp: str) -> datetime | None:
 # broker truth — read only
 # ---------------------------------------------------------------------------
 
+def _record_unreadable(
+    sink: list[UnreadableStop] | None, *, symbol: str, held_qty: float,
+    reason: str, is_short: bool,
+) -> None:
+    """Log an unreadable stop at ERROR and, when a sink was supplied, record
+    it for the caller. Board item 172.
+
+    The log line is unconditional ON PURPOSE. A caller that does not pass a
+    sink still must not be able to lose the finding silently, because
+    silently losing it is the defect this exists to close.
+    """
+    logger.error(
+        "STOP UNREADABLE: %s holding %.4f — %s. Whether a protective stop "
+        "exists for this position is UNKNOWN; this is not a measured gap "
+        "and must not be reported as coverage.",
+        symbol, held_qty, reason,
+    )
+    if sink is not None:
+        sink.append(UnreadableStop(
+            symbol=symbol, held_qty=held_qty, reason=reason,
+            is_short=is_short,
+        ))
+
+
 def uncovered_positions(
     broker: Any, *, sweep_symbol: str | None = None,
     skip_symbols: set[str] | None = None,
     counts: dict[str, int] | None = None,
+    unreadable: list[UnreadableStop] | None = None,
 ) -> tuple[list[CoverageGap], str | None]:
     """Every held position whose open protective stops cover less than the
     held quantity. Longs are checked against SELL stops, shorts against BUY
@@ -370,6 +439,19 @@ def uncovered_positions(
     `counts`, when given, receives `positions_checked` — how many held
     positions were compared against their stops — so a clean run can say
     how much it looked at (board item 131). It changes nothing here.
+
+    `unreadable`, when given, receives one `UnreadableStop` per position
+    whose stops could not be READ (board item 172).
+
+    ONE SYMBOL'S READ FAILURE NO LONGER ENDS THE PASS. It used to
+    `return [], error` the instant `snapshot_protective_stops` raised for
+    any single symbol, which threw away every gap already found and every
+    symbol not yet reached — so one flaky name could hide a genuinely naked
+    position behind it, and the whole run reported "could not check". The
+    unreadable symbol is now recorded by name and the sweep carries on. A
+    `get_positions` failure is still a whole-pass error, because without the
+    position list there is nothing to iterate and no per-symbol finding to
+    make.
     """
     try:
         positions = broker.get_positions()
@@ -391,19 +473,61 @@ def uncovered_positions(
         if counts is not None:
             counts["positions_checked"] = counts.get("positions_checked", 0) + 1
         is_short = qty < 0
+        held = abs(qty)
         try:
-            _ok, specs = broker.snapshot_protective_stops(
+            ok, specs = broker.snapshot_protective_stops(
                 symbol, side=("buy" if is_short else "sell"),
             )
         except Exception as exc:  # noqa: BLE001
-            return [], f"snapshot_protective_stops failed for {symbol}: {exc}"
+            _record_unreadable(
+                unreadable, symbol=str(symbol), held_qty=held,
+                is_short=is_short,
+                reason=f"snapshot_protective_stops raised: {exc}",
+            )
+            continue
+        # The broker's own order listing swallows its exception, so
+        # `ok=False` with no specs — not a raise — is the COMMON way a stop
+        # becomes unreadable. Ignoring it here is what made a broker outage
+        # read as a confirmed naked position. Board item 172.
+        if not ok:
+            _record_unreadable(
+                unreadable, symbol=str(symbol), held_qty=held,
+                is_short=is_short,
+                reason=(
+                    "the broker's open-order listing failed, so whether a "
+                    "protective stop exists could not be established"
+                ),
+            )
+            continue
+        if specs is not None and not isinstance(specs, list):
+            _record_unreadable(
+                unreadable, symbol=str(symbol), held_qty=held,
+                is_short=is_short,
+                reason=(
+                    "protective-stop snapshot in an unusable shape: "
+                    f"{type(specs).__name__}"
+                ),
+            )
+            continue
         covered = 0.0
+        unparsable = ""
         for s in specs or []:
             try:
                 covered += float(s.get("qty", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-        held = abs(qty)
+            except (TypeError, ValueError, AttributeError) as exc:
+                # A stop order whose quantity cannot be parsed is a stop
+                # nobody can size. Counting it as zero would understate
+                # coverage and read as a gap; skipping it would overstate
+                # coverage by omission. Neither is known, so neither is
+                # claimed — the symbol is reported unreadable instead.
+                unparsable = f"protective stop in an unreadable shape: {exc}"
+                break
+        if unparsable:
+            _record_unreadable(
+                unreadable, symbol=str(symbol), held_qty=held,
+                is_short=is_short, reason=unparsable,
+            )
+            continue
         if covered + _QTY_EPSILON < held:
             uncovered = round(held - covered, 9)
             gaps.append(CoverageGap(
@@ -803,6 +927,95 @@ def claim_kill_switch_block_alert(
     return fresh
 
 
+# ---------------------------------------------------------------------------
+# the unreadable-stop marker — its own identity again, board item 172
+# ---------------------------------------------------------------------------
+# "I could not ask the broker whether this position has a stop" is a third
+# condition, distinct from a placement failure and from an elected-unfilled
+# stop, and it gets a third key for the reason the second one got a second:
+# one key lets either condition silence the other on the same name, and the
+# owner would be told about one real fault while another went unreported.
+
+
+def _unreadable_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    raw = state.get("unreadable_stop_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def claim_unreadable_stop_alert(
+    symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's unreadable-stop alert for `symbols` and return the
+    ones NOT already alerted today, in the order given. Board item 172.
+
+    Same contract as `claim_repair_failure_alert`, including that an
+    unwritable state file errs towards telling the owner twice rather than
+    not at all — which is the right way round when what is unknown is
+    whether a position has any loss protection at all.
+
+    Per SYMBOL, not per run: a broker that cannot describe AAPL's stops at
+    09:35 and cannot describe MSFT's at 14:05 is two findings, and the
+    second must not be swallowed by the first. The coverage sweep runs on a
+    30-minute cadence, so without this the same name would page the owner
+    roughly a dozen times a session.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _unreadable_alerted_symbols(state, day)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    merged = already | set(fresh)
+    state["unreadable_stop_alerted_symbols"] = {
+        "day": day, "symbols": sorted(merged),
+    }
+    save_state(state, path)
+    return fresh
+
+
+def unreadable_stop_text(rows: Iterable[UnreadableStop]) -> str:
+    """The owner message for stops that could not be READ. Board item 172.
+
+    Says the unknown as an unknown. It does not claim the positions are
+    naked and it does not reassure that they are covered, because the whole
+    point is that neither was established. Severity in the leading words,
+    never colour alone (`src/notifier.py` convention).
+    """
+    rows = list(rows)
+    detail = "\n".join(
+        f"  {r.symbol}: holding {r.held_qty:.4f}"
+        f"{' (short)' if r.is_short else ''} — {r.reason}"
+        for r in rows
+    )
+    return (
+        "🛑🛑 PROTECTIVE STOP UNREADABLE\n"
+        f"The broker could not be asked whether {len(rows)} held "
+        "position(s) have a protective stop. This is NOT a report that they "
+        "are unprotected — it is a report that the desk does not know, and "
+        "cannot find out, which of the two is true.\n"
+        f"{detail}\n"
+        "Per-position stops are the desk's only loss protection, so an "
+        "unanswerable question about one is worth a look now: check the "
+        "position's open orders at the broker directly and place a stop by "
+        "hand if none is standing. Nothing has been sold, resized or "
+        "cancelled. THIS ALERT is sent at most once per symbol per trading "
+        "day; the condition itself keeps showing in the session messages "
+        "for as long as it lasts, the same way a missing stop does."
+    )
+
+
 def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 
@@ -904,9 +1117,10 @@ def check_coverage(
     state = load_state(state_path)
 
     counts: dict[str, int] = {}
+    unreadable: list[UnreadableStop] = []
     gaps, broker_error = uncovered_positions(
         broker, sweep_symbol=sweep_symbol, skip_symbols=_scale_in_skip(broker, db_path),
-        counts=counts,
+        counts=counts, unreadable=unreadable,
     )
     positions_checked = (
         None if broker_error else int(counts.get("positions_checked", 0))
@@ -966,11 +1180,24 @@ def check_coverage(
                     refreshed, refresh_error = uncovered_positions(
                         broker, sweep_symbol=sweep_symbol,
                         skip_symbols=_scale_in_skip(broker, db_path),
+                        unreadable=unreadable,
                     )
                     if refresh_error is None:
                         gaps = refreshed
                     else:
                         broker_error = broker_error or refresh_error
+                    # The re-read can surface a symbol the first read could
+                    # describe, and can repeat one it could not. Dedupe on
+                    # symbol, keeping the FIRST reason seen, so the owner
+                    # message names each position once.
+                    seen: set[str] = set()
+                    deduped: list[UnreadableStop] = []
+                    for row in unreadable:
+                        if row.symbol in seen:
+                            continue
+                        seen.add(row.symbol)
+                        deduped.append(row)
+                    unreadable[:] = deduped
     elif gaps and market_open and last_buy is not None and session_active:
         repair_deferred = (
             "a trading session currently holds the lock, so this tick defers "
@@ -1022,6 +1249,20 @@ def check_coverage(
         if not r.placed and str(r.symbol).strip()
     ]
 
+    # Board item 172. Claimed BEFORE the status is built, exactly as the
+    # placement-failure marker is: the claim is what makes the report
+    # once-per-symbol-per-day across this unit and the live session, which
+    # are separate processes that can each find the same unreadable stop.
+    already_unreadable = _unreadable_alerted_symbols(state, failure_day)
+    # Upper-cased to match what `_unreadable_alerted_symbols` reads back and
+    # what `claim_unreadable_stop_alert` writes. A raw symbol here would
+    # never match the stored set, so a mixed-case name from the broker would
+    # page on every 30-minute tick — the dedup silently not applying.
+    unreadable_symbols = [
+        str(r.symbol).strip().upper() for r in unreadable
+        if str(r.symbol).strip()
+    ]
+
     status = CoverageStatus(
         trading_day=day.isoformat(),
         session_ran=ran,
@@ -1037,11 +1278,20 @@ def check_coverage(
         ),
         positions_checked=positions_checked,
         repair_deferred=repair_deferred,
+        unreadable=list(unreadable),
+        already_alerted_unreadable_for_day=bool(unreadable_symbols) and all(
+            sym in already_unreadable for sym in unreadable_symbols
+        ),
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
     if status.should_alert_repair_failure:
         _record_repair_failure_alert(state, failure_day, failing_symbols)
+    if status.should_alert_unreadable:
+        state["unreadable_stop_alerted_symbols"] = {
+            "day": failure_day,
+            "symbols": sorted(already_unreadable | set(unreadable_symbols)),
+        }
     state["last_result"] = {
         "trading_day": status.trading_day,
         "session_ran": status.session_ran,
@@ -1051,6 +1301,7 @@ def check_coverage(
         "market_open": market_open,
         "market_reason": market_reason,
         "repairs": [r.__dict__ for r in repairs],
+        "unreadable": [r.__dict__ for r in unreadable],
     }
     state["updated_at"] = moment.replace(microsecond=0).isoformat()
     save_state(state, state_path)
@@ -1150,7 +1401,20 @@ def status_line(status: CoverageStatus) -> str:
         placed += "; FAILED to place " + ", ".join(
             f"{r.symbol} {r.qty:.4f}" for r in status.repair_failures
         )
+    # Board item 172. Appended to EVERY branch below, including the clean
+    # one: a pass that could not read one symbol's stops has not checked
+    # every held position, and a line saying it has would be false.
+    if status.unreadable:
+        placed += "; COULD NOT READ the stops of " + ", ".join(
+            r.symbol for r in status.unreadable
+        )
     if not status.gaps:
+        if status.unreadable:
+            return (
+                f"coverage_watchdog: {len(status.unreadable)} position(s) "
+                "UNREADABLE; every position that could be read is fully "
+                "stop-covered" + placed
+            )
         return (
             "coverage_watchdog: OK — every held position is fully stop-covered"
             + placed
@@ -1210,6 +1474,12 @@ def sweep_summary(
         outcome = "could_not_check"
     elif status.repair_failures:
         outcome = "repair_failed"
+    # Board item 172, ranked ABOVE 'repaired', 'clean' and 'gaps_left'. A
+    # pass that could not read a position's stops did not establish that
+    # position's coverage, and 'clean' is the one word that must never
+    # describe a run holding an unanswered question about loss protection.
+    elif status.unreadable:
+        outcome = "unreadable_stops"
     elif status.repaired:
         outcome = "repaired"
     elif not status.gaps:
@@ -1244,6 +1514,11 @@ def sweep_summary(
         "repair_deferred": status.repair_deferred,
         "broker_error": status.broker_error,
         "db_error": status.db_error,
+        # Board item 172. `positions_checked` counts positions the sweep
+        # LOOKED at, which includes the ones it could not read, so the two
+        # numbers together say how much of the book was actually settled.
+        "unreadable_count": len(status.unreadable),
+        "unreadable_symbols": [r.symbol for r in status.unreadable],
         "alerts": list(alerts),
     }
 
@@ -1266,6 +1541,11 @@ def sweep_log_line(summary: dict[str, Any]) -> str:
         f"{'; '.join(alerts) if alerts else 'none sent'}"
         + (f", deferred: {summary['repair_deferred']}" if summary.get("repair_deferred") else "")
         + (f", broker error: {summary['broker_error']}" if summary.get("broker_error") else "")
+        + (
+            ", UNREADABLE stops: "
+            + ", ".join(summary.get("unreadable_symbols") or [])
+            if summary.get("unreadable_count") else ""
+        )
     )
 
 

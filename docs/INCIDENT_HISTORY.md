@@ -247,15 +247,103 @@ as void rather than as fixed. The §11.2 ladder has its own
 unmeasurable-drawdown question and that one is untouched and still live —
 do not read these two retirements as covering it.
 
-Filed the other way: **item 172**, because this removal deleted the only
-path that told the owner, by symbol, that a position's protective stop
-could not be READ at the broker — as distinct from not being there. Both
-remaining readers of stop coverage fail quiet on a broker snapshot error,
-and both did so before this change [verified against `origin/main`]; what
-this change did was remove the layer covering for them, in the same breath
-as making per-position stops the desk's only loss protection. That is the
-one place this change leaves the desk worse rather than simpler, and it is
-on the board rather than in this paragraph alone.
+**Item 172, FIXED IN THIS SAME CHANGE rather than filed.** The removal
+deleted the only path that told the owner, by symbol, that a position's
+protective stop could not be READ at the broker — as distinct from not
+being there. Both remaining readers of stop coverage failed quiet on a
+broker snapshot error, and both did so before this change [verified
+against `origin/main`]; what this change did was remove the layer covering
+for them, in the same breath as making per-position stops the desk's only
+loss protection.
+
+It was first written up as a board item, on the reasoning that designing a
+new alerting path inside a removal would be scope creep. That reasoning
+was rejected on review: an alert saying "I cannot tell whether this stock
+has a stop" becomes MORE important the moment per-stock stops are the only
+protection, so deleting it is collateral damage rather than part of what
+the owner ruled out, and landing a safety regression with a board item
+attached is the filed-then-buried pattern the desk has been told not to
+repeat. No account-level mechanism was rebuilt — that ruling stands. The
+fix is per-symbol reporting on the existing per-position path only.
+
+**The producer was lying, and that was the half that mattered.** The first
+version of this fix changed only the two readers, and an adversary review
+caught that it closed the rarer half of the condition. `AlpacaBroker`'s own
+`_list_open_sell_stop_orders` and `_list_open_stop_orders_by_side` catch
+their listing exception and return an empty list, so
+`snapshot_protective_stops` returned `(True, [])` on a broker outage — its
+docstring said `ok` "is always True" and named the swallow explicitly.
+An empty stop list means "this position has no protective stop", so an
+outage was reported as a CONFIRMED NAKED POSITION, and
+`_repair_stop_coverage` then placed a full-size stop over a live stop it
+could not see. Both the strongest possible false statement about loss
+protection and a duplicate-protection write, from one swallowed exception,
+and reached by the common path rather than the rare one. The listers now
+report the failure to a caller that asks for it, `snapshot_protective_stops`
+returns `ok=False`, and both readers honour it. Every other caller's
+behaviour is byte-identical: the empty-list return is unchanged for anyone
+who does not ask.
+
+What was wrong, in the readers, in two places:
+
+  * `TradingPipeline._reconcile_stop_coverage` logged a WARNING and
+    `continue`d when `snapshot_protective_stops` raised, so the symbol
+    vanished from `stop_coverage_gaps` and read downstream exactly like a
+    position confirmed covered. It now records a `coverage='unreadable'`
+    row with `covered_qty=None` and pages the owner by symbol through
+    `send_owner_alert`, the same path a missing stop uses.
+  * `coverage_watchdog.uncovered_positions` did `return [], error` on the
+    FIRST symbol that raised, discarding every gap already found and every
+    symbol not yet reached — so one flaky name could hide a genuinely
+    naked position standing behind it in the position list. A per-symbol
+    read failure is now recorded by name and the pass carries on. A
+    `get_positions` failure remains a whole-pass error, because without
+    the position list there is no per-symbol finding to make.
+
+Further holes closed on the way. A snapshot that comes back in a shape the
+loop cannot iterate used to raise OUTSIDE the inner guard and take the
+entire sweep — every other position included — with it. A protective stop
+whose quantity could not be parsed is now its own unreadable condition,
+because counting it as zero invents a gap and skipping it invents
+coverage; note honestly that the real Alpaca adapter coerces quantities
+before they reach here, so that particular branch is defence for a
+non-adapter spec source rather than a reproduced production failure. The
+watchdog's dedup key is upper-cased at both ends, which it was not — a
+mixed-case symbol would have matched nothing and paged on every tick. And
+a sweep outcome of `clean` is no longer reachable while any position went
+unread: `clean` is the one word that must never describe a run holding an
+unanswered question about loss protection.
+
+**Stated honestly, two limits.** The per-symbol-per-day claim is recorded
+BEFORE the send, so a delivery failure costs that symbol its message for
+the day; releasing the claim instead would trade one lost message for a
+page every thirty minutes, so the failure is logged loudly rather than
+retried. And the once-a-day bound is on the ALERT only — while the
+condition lasts it keeps appearing in the session messages, exactly as a
+missing stop does. The owner-facing text says so rather than promising a
+silence it does not deliver.
+
+The load-bearing NEGATIVE behaviour: a sub-share remainder whose DAY stop
+lapsed overnight is a read that SUCCEEDED and a gap that was MEASURED, and
+it stays `fractional_overnight`. That state happens to every fractional
+position every night — $2,425.96 across ten positions on the 2026-09-22
+close [measured from the production log's own `stop_coverage_gaps` line,
+read-only, 2026-09-23] — so reporting it as unreadable would bury the one
+real signal in ten lines of expected noise, which is how a banner gets
+tuned out. The owner alert is deduped per symbol per trading day on the
+same state file and the same claim discipline as the placement-failure and
+elected-unfilled alerts, and shared with the standalone watchdog, because
+`send_owner_alert` has no throttle of its own and the two processes can
+each find the identical condition.
+
+Pinned by `tests/test_unreadable_stop_alerting.py` (24 tests, all passing
+[measured 2026-09-23]), which was itself checked by mutation: thirteen
+deliberate reversions — restoring each original defect, restoring the
+broker's swallowed listing error, making each reader ignore `ok=False`,
+removing the dedup, dropping its case normalisation, letting an unreadable
+pass report `clean`, and reclassifying the accepted fractional lapse as
+unreadable — were each caught by at least one failing test [measured
+2026-09-23].
 
 **The one real entanglement, and how it was resolved.** Board item 39's
 rotation-sequencing work (PR #563, open and unmerged at the time of this

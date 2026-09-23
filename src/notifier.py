@@ -1949,9 +1949,34 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     # alert on every single run, which is how the owner learns to stop
     # reading the banner that matters.
     expected = [g for g in rows if _gap_is_expected_fractional(g)]
-    faults = [g for g in rows if not _gap_is_expected_fractional(g)]
+    # Board item 172. A position whose stops could not be READ is neither a
+    # measured gap nor a covered position, and it must not be swept into the
+    # mis-sized banner, which asserts that a stop IS standing watch over
+    # most of the position — a claim nobody established here.
+    unreadable = [g for g in rows if _gap_is_unreadable(g)]
+    faults = [
+        g for g in rows
+        if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
+    ]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
+    if unreadable:
+        # Below NO STOP AT ALL, above MIS-SIZED. It cannot be the top tier:
+        # the triple mark means unbounded loss confirmed, and this is a
+        # question, not a confirmation. It cannot be the warning tier
+        # either: with per-position stops the desk's only loss protection,
+        # an unanswerable question about one may BE the top tier and
+        # nothing here can rule that out.
+        lines.append(
+            f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) whose "
+            "protective stops the broker could not be asked about — "
+            "coverage UNKNOWN, not confirmed either way — "
+            + "; ".join(
+                f"{g.get('symbol', '?')} holding "
+                f"{_fmt_qty(g.get('held_qty', 0) or 0)}"
+                for g in unreadable[:6]
+            )
+        )
     if uncovered:
         # Top severity tier (item 21b): a held position with ZERO stop
         # coverage is unbounded loss, not just a degraded state — the one
@@ -1968,6 +1993,19 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
             f"protected — {_describe(partial)}"
         )
     _append_fractional_overnight_line(lines, expected)
+
+
+def _gap_is_unreadable(gap: dict) -> bool:
+    """Board item 172 — is this row an unanswered question rather than a
+    measured shortfall?
+
+    Keyed on the `coverage` stamp alone and never derived from
+    `covered_qty`, unlike `_gap_is_uncovered`: an unreadable row carries
+    `covered_qty=None` precisely because no quantity was established, and
+    deriving a classification from the absence of a number is how it would
+    end up in the wrong banner.
+    """
+    return str(gap.get("coverage", "")).strip().lower() == "unreadable"
 
 
 def _gap_is_expected_fractional(gap: dict) -> bool:

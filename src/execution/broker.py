@@ -3036,13 +3036,36 @@ class AlpacaBroker:
         SOLD, so the default is unchanged; the coverage reconciler is the
         one caller that passes `side="buy"` to check a short.
 
-        Returns ``(ok, specs)``. ``ok`` is kept for call-site symmetry
-        with cancel_protective_stops; a pure read can't "fail to clear"
-        so it is always True (a listing API error is swallowed by
-        _list_open_protective_stop_orders and surfaces as no stops, exactly
-        as in the pre-split behaviour).
+        Returns ``(ok, specs)``. ``ok`` is FALSE when the broker's own
+        order listing failed — board item 172, and this used to be the
+        single most dangerous lie on the read path.
+
+        It was documented as "always True", because a listing API error was
+        swallowed by `_list_open_protective_stop_orders` and surfaced as an
+        empty list. An empty list means "this position has no protective
+        stop", so a broker outage was reported to the desk as a CONFIRMED
+        NAKED POSITION — and the coverage reconciler then repaired against
+        it, placing a full-size stop on top of a live stop it could not
+        see. Both the strongest possible false statement about loss
+        protection and a duplicate-protection write, from one swallowed
+        exception.
+
+        Callers that ignore `ok` are no worse off than before: `specs` is
+        still empty in that case. Callers that read it can tell "there is
+        no stop" from "I could not ask", which is the whole distinction
+        item 172 exists for.
         """
-        stops = self._list_open_protective_stop_orders(symbol, side=side)
+        errors: list = []
+        stops = self._list_open_protective_stop_orders(
+            symbol, side=side, errors=errors,
+        )
+        if errors:
+            logger.error(
+                "snapshot_protective_stops: could not READ %s's protective "
+                "stops (%s) — reporting UNKNOWN, not 'no stop'.",
+                symbol, "; ".join(errors),
+            )
+            return False, []
         if not stops:
             return True, []
         specs: list[dict] = []
@@ -5236,7 +5259,9 @@ class AlpacaBroker:
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status))}
 
-    def _list_open_stop_orders_by_side(self, symbol: str) -> tuple[list, list]:
+    def _list_open_stop_orders_by_side(
+        self, symbol: str, *, errors: list | None = None,
+    ) -> tuple[list, list]:
         """Single order-book fetch for `symbol`, split into (sell_stops, buy_stops).
 
         A long's protective stop is a SELL stop; a short's is a BUY stop.
@@ -5259,6 +5284,9 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            # Board item 172 — same contract as the sell-side lister above.
+            if errors is not None:
+                errors.append(f"open-order listing failed: {exc}")
             return [], []
 
         sell_orders: list = []
@@ -5276,7 +5304,9 @@ class AlpacaBroker:
                 buy_orders.append(order)
         return sell_orders, buy_orders
 
-    def _list_open_protective_stop_orders(self, symbol: str, *, side: str = "sell") -> list:
+    def _list_open_protective_stop_orders(
+        self, symbol: str, *, side: str = "sell", errors: list | None = None,
+    ) -> list:
         """List open stop orders on `side` for `symbol`.
 
         `side="sell"` (default) finds the stops protecting a long — the only
@@ -5289,11 +5319,22 @@ class AlpacaBroker:
         protected short as NAKED and try to "repair" over it).
         """
         if side.lower() == "buy":
-            _, buy_orders = self._list_open_stop_orders_by_side(symbol)
+            _, buy_orders = self._list_open_stop_orders_by_side(
+                symbol, errors=errors,
+            )
             return buy_orders
-        return self._list_open_sell_stop_orders(symbol)
+        return self._list_open_sell_stop_orders(symbol, errors=errors)
 
-    def _list_open_sell_stop_orders(self, symbol: str) -> list:
+    def _list_open_sell_stop_orders(self, symbol: str, *, errors: list | None = None) -> list:
+        """Board item 172: `errors`, when given, receives the listing
+        failure instead of it being swallowed into an empty list.
+
+        The empty-list return is UNCHANGED for every caller that does not
+        pass `errors`, because `replace_stop_loss` and its tests depend on
+        it. What changes is that a caller who needs to tell "no stops" from
+        "could not ask" can now do so — and `snapshot_protective_stops` is
+        exactly that caller.
+        """
         try:
             from alpaca.trading.requests import GetOrdersRequest
 
@@ -5306,6 +5347,8 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            if errors is not None:
+                errors.append(f"open-order listing failed: {exc}")
             return []
 
         stop_orders = []
