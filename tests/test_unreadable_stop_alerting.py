@@ -23,6 +23,17 @@ were reported as "unreadable" the real signal would arrive buried in ten
 lines of expected noise, which is the same way a banner gets tuned out.
 That case MUST stay a measured `fractional_overnight` gap.
 
+THIS SUITE WAS ITSELF CHECKED BY MUTATION. Thirteen deliberate reversions
+were applied one at a time and each was caught by at least one failing test
+[measured 2026-09-23]: restoring both original defects, restoring the
+broker's swallowed listing error, making each reader ignore `ok=False`,
+reintroducing the non-list crash, removing the per-symbol dedup, dropping
+its case normalisation, letting an unreadable pass report `clean`, folding
+the row into the MIS-SIZED banner and into WATCH, downgrading a genuinely
+empty order book to unreadable, and reclassifying the accepted fractional
+lapse as unreadable. A test suite nobody tried to break is a suite nobody
+knows the strength of.
+
 Nothing here touches the network, a real broker, or a real chat.
 """
 from __future__ import annotations
