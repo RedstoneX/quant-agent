@@ -258,6 +258,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       How long after an intraday scan does a re-scan of the same name produce
       information the first scan did not?
@@ -273,6 +276,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       How many intraday candidates can one session actually size and place
       without exceeding the risk envelope?
@@ -288,6 +294,9 @@ numbers:
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
       claiming it was disabled. A round 3% move and a round 3 hours, neither
       read off any instrument.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
     open_question: >-
       What intraday move size, relative to the name's OWN ATR, marks a
       development worth re-reading rather than ordinary noise?
@@ -3848,6 +3857,9 @@ numbers:
       (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
+      Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
+      number is settled together with the tick cadence and the per-run held-book
+      context, never alone.
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_movers_count)
     value: 15
     status: arbitrary
