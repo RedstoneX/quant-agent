@@ -378,6 +378,20 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
         them.
         """
         text = analysis.investment_implications.reasoning_chain.valuation_context or ""
+        if text.strip() == _UNSOURCED_VALUATION_DISCLOSURE:
+            # The disclosure this detector writes CONTAINS "share price" and
+            # "market cap", which are two of the patterns above, so without
+            # this guard every later run matched the field on the desk's own
+            # boilerplate, redacted it to the identical text and rewrote the
+            # identical cache file — 106 detect/re-save pairs for two symbols
+            # over five days, none of them a real fabricated claim.
+            #
+            # Deliberately EXACT equality, not startswith/substring: a model
+            # that prepends this marker to an invented multiple must still be
+            # caught. And deliberately NOT a reword of the disclosure to dodge
+            # the patterns — that fix would silently come undone the day
+            # someone edits either the disclosure or the pattern list.
+            return []
         matched = [label for rx, label in _PRICE_DERIVED_CLAIM_RE if rx.search(text)]
         if matched:
             logger.warning(

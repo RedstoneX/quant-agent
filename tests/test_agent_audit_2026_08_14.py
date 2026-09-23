@@ -614,6 +614,37 @@ def test_f7b_cached_analyses_are_checked_too() -> None:
     ]
 
 
+def test_f7b_the_disclosure_does_not_trip_its_own_detector() -> None:
+    """The redaction text contains "share price" and "market cap", two of the
+    detector's own patterns. Unguarded, every run after the first loaded the
+    redacted cache, matched on the desk's own boilerplate, redacted it to the
+    identical text and rewrote the identical file — measured at 106
+    detect/re-save pairs for two symbols over five days, not one of them a
+    real fabricated claim."""
+    from src.agents.earnings_analyst import _UNSOURCED_VALUATION_DISCLOSURE
+
+    assert _flag(_UNSOURCED_VALUATION_DISCLOSURE, source="cache") == []
+    assert _flag(f"  {_UNSOURCED_VALUATION_DISCLOSURE}  ") == []
+
+
+@pytest.mark.parametrize("wrap", (
+    lambda d: f"{d} The P/E of 34 is rich.",
+    lambda d: f"The P/E of 34 is rich. {d}",
+))
+def test_f7b_disclosure_marker_cannot_be_used_to_smuggle_a_claim(wrap) -> None:
+    """The exemption is exact equality, never a prefix or substring test: a
+    model that pastes the marker around an invented multiple must still be
+    caught, or the guard becomes the evasion."""
+    from src.agents.earnings_analyst import _UNSOURCED_VALUATION_DISCLOSURE
+
+    assert "P/E" in _flag(wrap(_UNSOURCED_VALUATION_DISCLOSURE))
+
+
+def test_f7b_real_claims_still_caught_alongside_the_exemption() -> None:
+    """The exemption must not weaken ordinary detection."""
+    assert _flag("trading at 28x forward earnings", source="cache") != []
+
+
 def test_f7b_detection_is_advisory_and_never_drops_the_analysis() -> None:
     """A false positive must not cost the whole filing read — it is the only
     fundamentals input PM and position_reviewer get for that name."""
