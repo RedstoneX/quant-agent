@@ -817,7 +817,7 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
 
     Board item 39. Every gate below is the SAME computation the execution
     stage runs later, fed projected post-sale inputs — not a second
-    implementation of it:
+    implementation of it.
 
     The list below is FIVE long and so is `REQUIRED_BUY_LEG_GATES`; a
     `gate_coverage_incomplete` refusal at the bottom of this function is
@@ -827,8 +827,7 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     (PR #584) deleted the `daily_loss_recheck` refusal (retired-ok) the
     first gate anticipated. Nothing replaced it: the gross exposure that
     halt shared with the §11.2 ladder is still gated, by the two funding
-    gates. Nothing replaced it: the gross-exposure exposure that halt
-    shared with the §11.2 ladder is still gated, by the two funding gates.
+    gates.
 
       * `no_price` / `stale_entry` — `_live_fill_price` and the same 5%
         deviation test the preflight applies. Neither depends on the sale
