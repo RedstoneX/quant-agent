@@ -338,21 +338,54 @@ def test_intraday_snapshots_reads_last_trade_prior_close_and_session_bar():
     """Also carries TODAY's still-forming bar under a distinct `session_*`
     namespace so no caller can mistake it for a completed daily bar."""
     b = _broker()
+    from datetime import datetime as _dt
+
+    from src.trading_calendar import ET
+
+    trade_at = _dt(2026, 9, 17, 10, 30, tzinfo=ET)
+    bar_at = _dt(2026, 9, 17, 0, 0, tzinfo=ET)
+    minute_at = _dt(2026, 9, 17, 10, 29, tzinfo=ET)
+    b._data_client = _snapshot_client({
+        "NVDA": SimpleNamespace(
+            symbol="NVDA",
+            latest_trade=SimpleNamespace(price=185.0, timestamp=trade_at),
+            previous_daily_bar=SimpleNamespace(close=180.0),
+            minute_bar=SimpleNamespace(close=184.9, timestamp=minute_at),
+            daily_bar=SimpleNamespace(open=181.0, high=186.0, low=180.5,
+                                      close=185.0, volume=1_250_000,
+                                      timestamp=bar_at),
+        ),
+    })
+    out = b.get_intraday_snapshots(["NVDA"])
+    # `session_bar_at`, `minute_close`, `minute_bar_at` and `session_close`
+    # are board item 120: without the two timestamps nothing downstream can
+    # tell WHICH session the `session_*` block belongs to, and without the
+    # two prices a name whose last trade is a prior session's has no today
+    # print to fall back to on the same entitled venue.
+    assert out == {"NVDA": {
+        "last_price": 185.0, "last_trade_at": trade_at, "prev_close": 180.0,
+        "session_bar_at": bar_at,
+        "minute_close": 184.9, "minute_bar_at": minute_at,
+        "session_open": 181.0, "session_close": 185.0, "session_high": 186.0,
+        "session_low": 180.5, "session_volume": 1_250_000.0,
+    }}
+
+
+def test_intraday_snapshots_report_an_absent_minute_or_daily_bar_as_none():
+    """A snapshot with no `minute_bar`/`daily_bar` must not invent stamps —
+    the resolver reads a missing timestamp as not-today, which fails visible."""
+    b = _broker()
     b._data_client = _snapshot_client({
         "NVDA": SimpleNamespace(
             symbol="NVDA",
             latest_trade=SimpleNamespace(price=185.0),
             previous_daily_bar=SimpleNamespace(close=180.0),
-            daily_bar=SimpleNamespace(open=181.0, high=186.0, low=180.5,
-                                      close=185.0, volume=1_250_000),
         ),
     })
-    out = b.get_intraday_snapshots(["NVDA"])
-    assert out == {"NVDA": {
-        "last_price": 185.0, "last_trade_at": None, "prev_close": 180.0,
-        "session_open": 181.0, "session_high": 186.0,
-        "session_low": 180.5, "session_volume": 1_250_000.0,
-    }}
+    out = b.get_intraday_snapshots(["NVDA"])["NVDA"]
+    for field in ("session_bar_at", "minute_close", "minute_bar_at",
+                  "session_close", "session_open"):
+        assert out[field] is None, field
 
 
 def test_intraday_snapshots_carries_the_trades_own_timestamp():
@@ -442,7 +475,8 @@ def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():
     out = b.get_intraday_snapshots(["SGOV"])
     assert out == {"SGOV": {
         "last_price": None, "last_trade_at": None, "prev_close": None,
-        "session_open": None, "session_high": None,
+        "session_bar_at": None, "minute_close": None, "minute_bar_at": None,
+        "session_open": None, "session_close": None, "session_high": None,
         "session_low": None, "session_volume": None,
     }}
 

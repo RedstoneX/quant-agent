@@ -24,6 +24,7 @@ from src.pipeline_context import RunContext
 from src.risk.rules import RiskRuleEngine
 from src.storage.db import Database
 from src.trading_calendar import ET, UTC
+from src.trading_calendar import et_now
 
 
 def _risk_config() -> RiskConfig:
@@ -505,7 +506,11 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     )
     p.broker = MagicMock()
     p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": {"last_price": 110.0, "prev_close": 100.0},
+        # `last_trade_at`/`session_bar_at` are board item 120: a payload
+        # with no timestamps is correctly not-today and buys no paid
+        # look, so a fixture that means "this traded today" says so.
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0,
+                 "last_trade_at": et_now()},
     }
     p.db = MagicMock()
     p.db.get_trades.return_value = []
