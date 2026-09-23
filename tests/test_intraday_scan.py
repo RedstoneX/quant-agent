@@ -143,13 +143,19 @@ def _snapshot(last, prev, *, trade_at="today"):
     board item 120: the mover scan now resolves the price through
     `src.data.live_price.resolve_live_price`, so a payload with no timestamp
     at all is correctly not-today and buys no paid look. Every test here
-    means "this name traded today and moved", so the default stamps it now;
-    pass `trade_at=<datetime>` or `trade_at=None` to say otherwise.
+    means "this name traded today and moved", so the default stamps it
+    inside today's regular session; pass `trade_at=<datetime>` or
+    `trade_at=None` to say otherwise.
+
+    The default used to be `et_now()`, which made every one of these tests
+    fail between midnight and 09:30 ET — the resolver requires a stamp at or
+    after today's open, not merely on today's date. See
+    `tests/session_clock.py` for the whole story.
     """
-    from src.trading_calendar import et_now
+    from tests.session_clock import todays_session_stamp
 
     if trade_at == "today":
-        trade_at = et_now()
+        trade_at = todays_session_stamp()
     return {"last_price": last, "prev_close": prev, "last_trade_at": trade_at}
 
 
@@ -884,14 +890,22 @@ def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None,
     Alpaca fills with the PREVIOUS session's daily bar for a name that has
     not printed. Defaults stamp both as today; pass `bar_at=None` to model
     a name whose session bar is a prior session's.
-    """
-    from src.trading_calendar import et_now
 
-    now = et_now()
+    The trade stamp lands inside today's regular session, not at `et_now()`:
+    the resolver's point-in-time test is date-equality AND at/after 09:30 ET,
+    so an `et_now()` default was silently not-today for the fourteen hours a
+    day outside the session. The BAR stamp is 00:00 ET and always was —
+    a daily bar is dated, not stamped. See `tests/session_clock.py`.
+    """
+    from tests.session_clock import todays_session_snapshot_stamps
+
+    # ONE clock read for both, so a run crossing ET midnight cannot date the
+    # trade and the bar to different sessions.
+    today_trade_at, today_bar_at = todays_session_snapshot_stamps()
     if trade_at == "today":
-        trade_at = now
+        trade_at = today_trade_at
     if bar_at == "today":
-        bar_at = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        bar_at = today_bar_at
     return {
         "last_price": last, "prev_close": prev, "last_trade_at": trade_at,
         "session_bar_at": bar_at,
