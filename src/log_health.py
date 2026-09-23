@@ -374,7 +374,19 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"error during websocket communication",
             r"order-fill stream unavailable",
         ),
-        board_item=86,
+        # NO BOARD ITEM, and that is the honest state rather than an omission.
+        # This pointed at item 86 ("the live-fill websocket has never once
+        # authenticated") until that item was retired on 2026-09-23: the
+        # socket authenticated nine times on 2026-09-21, which was the single
+        # condition item 86 set for itself. The FAMILY is still live and still
+        # right to match — the broker can turn the desk away again tomorrow —
+        # but no open item tracks that, so the disposition must say "not yet
+        # on the list" and prompt someone to file one. Do NOT re-point this at
+        # 86; that number is retired and never reused. If this starts firing,
+        # the write-up to read first is docs/INCIDENT_HISTORY.md, 2026-09-23,
+        # and the credential research is in
+        # docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md.
+        board_item=None,
     ),
     FaultFamily(
         key="broker_not_sure_who_we_are",
@@ -411,7 +423,17 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"entry protection:.* placed for",
             r"COVERAGE REPAIRED:",
         ),
-        board_item=86,
+        # NO BOARD ITEM — same retirement as the family above, and this one
+        # was the second dangling pointer at item 86, which the board guard
+        # could not report because it fails on the first it meets. This family
+        # never really belonged to item 86 anyway: 86 was about the websocket,
+        # and it carried this only because the process holding the placeholder
+        # was 86's own root cause until 2026-09-18. The placeholder alarm is
+        # emphatically still live — PR #592 (2026-09-23) found the daily
+        # export unit running on the placeholder and spending the day's one
+        # real credential alert — but that was fixed in the same change that
+        # found it and no open item owns the class.
+        board_item=None,
     ),
     FaultFamily(
         key="news_source_dead",
