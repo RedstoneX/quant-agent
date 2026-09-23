@@ -595,6 +595,19 @@ def _empty_snapshot() -> dict[str, Any]:
         # These rows only ever ADD lines to a message that is already going
         # out; they never cause one to be sent.
         "constructor_blocks": [],
+        # The portfolio manager's per-candidate accounting (board item 133,
+        # `src/pm_accounting.py`) — the named ground for every candidate it
+        # did not target, keyed by symbol. It was written to
+        # `specialist_evidence` from the day item 133 shipped and read by
+        # nothing: `_read_run` only ever admitted `deterministic_gate`
+        # pipeline events, so the reasons never reached this snapshot and
+        # LOOKED AT told the owner the desk "did not record why" about
+        # candidates it had recorded a ground for seconds earlier.
+        "pm_accounting": {},
+        # The opportunity-rotation pre-check for this run (one row, see
+        # `_record_rotation_precheck`). A full book is a normal state, and
+        # this is where the report gets to say so.
+        "rotation": None,
         "trades": [],
         "positions": [],
         "agent_summaries": {},
@@ -654,14 +667,35 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                     # owner could not know a decision had been made. Read
                     # only the terminal blocked outcomes; `unmeasurable`
                     # (data faults) already pages separately.
+                    stage = str(data.get("stage") or "")
+                    outcome = str(data.get("outcome") or "")
                     if (
-                        str(data.get("stage") or "") == "deterministic_gate"
-                        and str(data.get("outcome") or "") == "blocked"
+                        stage == "deterministic_gate"
+                        and outcome == "blocked"
                         and row["symbol"]
                     ):
                         snapshot["constructor_blocks"].append(
                             {**data, "symbol": row["symbol"]}
                         )
+                    # The PM's per-candidate accounting. One row per
+                    # non-targeted candidate, every one carrying the named
+                    # ground the seat gave (or the honest record that it
+                    # would not give one). Last row for a symbol wins: the
+                    # accounting re-ask re-records the names it healed.
+                    elif stage == "portfolio_manager" and row["symbol"]:
+                        snapshot["pm_accounting"][
+                            str(row["symbol"]).upper()
+                        ] = dict(data)
+                    elif stage == "rotation" and outcome == "precheck":
+                        # The event's `reason` slot carries the named
+                        # pre-check outcome (`rotation.precheck_outcome`);
+                        # `outcome` here is the event kind. Renamed back to
+                        # the field `owner_precheck_lines` reads, so the
+                        # audit row and the owner's sentence stay one
+                        # vocabulary rather than two spellings of it.
+                        snapshot["rotation"] = {
+                            **data, "outcome": data.get("reason"),
+                        }
         except sqlite3.DatabaseError:
             pass
 
@@ -1287,15 +1321,41 @@ def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
         )
 
 
-def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str | None:
-    """The Portfolio Manager's own recorded reason for leaving `symbol`
-    alone this run (its HOLD row), or None when nothing was recorded.
+def _pm_pass_reason(
+    symbol: str, snap: dict[str, Any] | None,
+) -> tuple[str | None, str]:
+    """The desk's own recorded ground for not trading `symbol` this run, in
+    plain words, or None when there genuinely is not one.
 
-    Returns None rather than the old literal "no reason recorded" — that
-    phrasing read as a status code on the end of the owner's line. The
-    caller says the same fact in words instead. This is still an honest
-    gap, not an assertion that the desk had no reason.
+    TWO sources, in the order of how directly they answer the question:
+
+      1. The per-candidate accounting row (`src/pm_accounting.py`, board
+         item 133). This is the seat being MADE to account for every
+         candidate it dropped, so on an ordinary session it covers all of
+         them. It was persisted from the day item 133 shipped and read by
+         nothing — see the `pm_accounting` note in `_empty_snapshot` — and
+         that is the whole defect this function fixes: on 2026-09-23 the
+         desk logged "every one of the 69 non-targeted candidate(s) carries
+         a named ground" seven-tenths of a second before telling the owner,
+         sixty-eight times over, that it "did not record why".
+      2. Failing that, a HOLD order the PM wrote its own reasoning on.
+
+    The accounting row's CODE is never shown; `pm_accounting.plain_reason`
+    turns it into the sentence a person would use.
+
+    Returns `(ground, detail)`. The GROUND is the shared sentence the
+    renderer groups on — several names die on the same one — and the DETAIL
+    is that one name's own specifics, which must stay off the group header
+    or nothing would ever group. A `None` ground is reserved for an honest
+    gap: a candidate with no recorded ground at all.
     """
+    from src.pm_accounting import plain_reason
+
+    accounted = ((snap or {}).get("pm_accounting") or {}).get(symbol)
+    if isinstance(accounted, dict):
+        code = str(accounted.get("refusal") or "").strip()
+        if code:
+            return plain_reason(code), _clip(accounted.get("note"), 300) or ""
     for row in (snap or {}).get("pm_orders") or []:
         if (
             isinstance(row, dict)
@@ -1304,33 +1364,86 @@ def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str | None:
         ):
             reason = _clip(row.get("reasoning"), 300)
             if reason:
-                return reason
-    return None
+                return reason, ""
+    return None, ""
 
 
 def _append_looked_at(
     lines: list[str], rows: list[dict], profiles: dict,
     snap: dict[str, Any] | None = None,
 ) -> None:
-    """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on,
-    one line each: ticker, company, rating/conviction, plain outcome, and
-    (2026-09-18) the PM's own reason where one was recorded — "PM passed"
-    alone told the owner nothing about why."""
+    """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on.
+
+    GROUPED BY THE GROUND, not one reason per name. A real session leaves
+    sixty-odd candidates here and most of them die on the SAME ground — on
+    2026-09-23, thirty-nine of sixty-nine on one — so a reason per bullet
+    printed the identical sentence thirty-nine times on a phone screen.
+    The layout is `_append_coverage_gaps`': a sub-header naming the
+    condition and how many it covers, then the names beneath it. No new
+    idiom and no cap — every name still appears exactly once, because a
+    grouping that hides a name is a worse failure than a repetitive one.
+
+    Groups keep the order their first name appears in, which is the
+    existing priority ordering from `_signal_rows`, so the strongest
+    ratings still lead.
+    """
     if not rows:
         return
     lines.append(_b("👀 LOOKED AT, NO TRADE"))
+    grouped: dict[str, list[tuple[str, str]]] = {}
     for row in rows:
         symbol = str(row.get("symbol", "?")).upper()
         rating = str(row.get("rating", "?")).upper()
         conviction = str(row.get("conviction", "?")).lower()
-        reason = _pm_pass_reason(symbol, snap)
-        tail = (
-            f"PM passed — {reason}" if reason
-            else "not traded — the desk did not record why"
+        reason, detail = _pm_pass_reason(symbol, snap)
+        # The honest fallback is conditioned on there being NO recorded
+        # ground — never on the renderer being unable to reach one.
+        ground = (
+            f"the desk did not take these because {reason}" if reason
+            else "the desk did not record why it passed on these"
         )
-        lines.append(
-            f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — {tail}"
+        grouped.setdefault(ground, []).append(
+            (f"{_ticker_co(symbol, profiles)} {rating}/{conviction}", detail),
         )
+    for ground, entries in grouped.items():
+        lines.append(f"   ▪ {len(entries)} — {ground}")
+        # A per-name detail that is word-for-word the same for every name
+        # under the heading is the heading again — the `held_unchanged`
+        # accounting note is one fixed sentence, and printing it twelve
+        # times under a heading that already says it is the repetition this
+        # grouping exists to remove. Dropped only when it is shared by the
+        # whole group AND the group has more than one name, so a name whose
+        # detail is its own is never silently lost.
+        details = {detail for _, detail in entries}
+        shared = len(entries) > 1 and len(details) == 1
+        for name, detail in entries:
+            lines.append(
+                f"      • {name} — {detail}"
+                if detail and not shared else f"      • {name}"
+            )
+
+
+def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
+    """The opportunity-rotation pre-check, said to the owner.
+
+    Sits directly under LOOKED AT because it answers the same question from
+    the other side: LOOKED AT says why each individual candidate was passed
+    on, and this says whether the desk weighed the whole field against what
+    it already holds and what that comparison concluded.
+
+    Deliberately NOT under a warning heading and deliberately not phrased as
+    a fault. A full book is how this desk is meant to run; the owner's
+    words, 2026-09-23: "Yes portfolio is full. But we're still reviewing
+    things, which is how we built it."
+
+    One vocabulary — the sentences come from `rotation.owner_precheck_lines`,
+    reading the same durable row `_record_rotation_precheck` wrote. Renders
+    nothing for a run with no pre-check row (every session before this
+    shipped, and any stored report replayed from one).
+    """
+    from src.rotation import owner_precheck_lines
+
+    lines.extend(owner_precheck_lines((snap or {}).get("rotation")))
 
 
 def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:
@@ -1438,6 +1551,7 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
     _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
+    _new_block(lines, _append_rotation, snap)
 
     detail_lines: list[str] = []
     _new_block(detail_lines, _append_signals, snap)

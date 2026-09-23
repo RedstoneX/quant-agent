@@ -58,6 +58,13 @@ def _refuse(
     """
     if isinstance(outcome, dict):
         outcome["repair_refusal"] = reason
+        # The machine-readable half of the same fact. The sentence above is
+        # for the owner; `code` is what the alerting path needs in order to
+        # tell an EXPECTED refusal apart from a fault, and until now it went
+        # only to the durable row — so the caller could render the reason
+        # and could not classify it. Adding it here changes no refusal and
+        # no return value; `_refuse` still returns False for every code.
+        outcome["repair_refusal_code"] = code
     if record is not None:
         from src.execution.exit_path_records import record_stop_repair_refusal
         record_stop_repair_refusal(

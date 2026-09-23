@@ -482,6 +482,23 @@ def run_coverage_check(now: datetime | None = None) -> str:
         raise
     line = status_line(status)
     sent: list[str] = []
+    if status.resolution_notice_symbols:
+        # The all-clear, sent whether or not anything else fires this run: a
+        # red "place the stop by hand" the desk itself resolved has to be
+        # retracted, and nothing did that before. Claimed inside
+        # `check_coverage`, so this sends what was reserved rather than
+        # re-claiming and silencing itself.
+        from src.coverage_watchdog import repair_resolution_text
+        from src.notifier import send_owner_alert as _send_resolution
+
+        names = list(status.resolution_notice_symbols)
+        text = repair_resolution_text(names)
+        print(text, file=sys.stderr)
+        ok = bool(_send_resolution(text, symbols=names))
+        sent.append(
+            f"stop-repair all-clear "
+            f"{'delivered' if ok else 'could NOT be delivered'}"
+        )
     if (
         status.should_alert or status.should_alert_repair_failure
         or status.should_alert_unreadable

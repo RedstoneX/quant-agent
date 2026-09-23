@@ -295,6 +295,50 @@ def _rotation_skip(pipeline, ctx, opportunity, reason: str, **details) -> None:
     )
 
 
+def _record_rotation_precheck(pipeline, ctx) -> None:
+    """One durable `rotation` / `precheck` row per session, whatever the
+    pre-check concluded — including when it concluded nothing.
+
+    The gap this closes: `_apply_rotation_execution` returns silently when
+    `precheck.opportunity is None`, and that silent return is the desk's
+    COMMONEST rotation outcome — the book is full, every candidate was
+    still ranked against what is held, and none of them won. It left no log
+    line, no durable row and nothing in the owner's report, so a session
+    that did the comparison looked identical to one that never made it.
+
+    Runs regardless of `execution.rotation_enabled`: the comparison happens
+    in the PM's own prompt either way, and whether the desk may ACT on it is
+    a separate fact this row records rather than a reason to stay silent.
+    Never raises — bookkeeping must not take a live session with it.
+    """
+    from src.rotation import RotationPrecheck, precheck_record
+
+    try:
+        precheck = getattr(
+            getattr(pipeline, "portfolio_manager", None),
+            "last_rotation_precheck", None,
+        )
+        if not isinstance(precheck, RotationPrecheck):
+            return
+        record = precheck_record(
+            precheck,
+            execute_enabled=_rotation_execution_enabled(pipeline),
+            ranked_margin_enabled=_rotation_ranked_margin_enabled(pipeline),
+        )
+        logger.info(
+            "Rotation pre-check: %s (headroom %.2f%% of a %.2f%% ceiling)",
+            record["outcome"], record["headroom_pct"], record["ceiling_pct"],
+        )
+        _record_pipeline_event(
+            pipeline, ctx, None, "rotation", "precheck",
+            record["outcome"], **{
+                k: v for k, v in record.items() if k != "outcome"
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Rotation pre-check record failed: %s", exc)
+
+
 def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
                               position_history: dict | None) -> None:
     """Phase 14b — turn the CATEGORICAL rotation comparison into an ordinary
@@ -6332,6 +6376,11 @@ class DecisionStage:
         # Sits BEFORE the constructor on purpose: the freed risk must be
         # visible to `allocate_risk_budget` when it rations the new
         # candidate's BUY, and the close must pass every gate downstream.
+        # Unconditional, and BEFORE the acting path: the owner's report has
+        # to be able to say the comparison was made even in the (commonest)
+        # session where it surfaced nothing and the acting path returns
+        # silently. See `_record_rotation_precheck`.
+        _record_rotation_precheck(pipeline, ctx)
         _apply_rotation_execution(
             pipeline, ctx, portfolio_decision, positions, position_history,
         )
