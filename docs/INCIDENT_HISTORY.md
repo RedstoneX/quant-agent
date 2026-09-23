@@ -14195,3 +14195,84 @@ principle.
 
 ---
 
+## 2026-09-23 — strict structured output turned six desk-owned fields into required model output
+
+**What was wrong.** `BaseAgent._response_format_for` renders a seat's
+`result_model.model_json_schema()` into the OpenRouter / OpenAI
+`response_format`, and `_strictify_schema` (shipped 2026-09-14) then forces
+EVERY property in that schema to be `required` with
+`additionalProperties: false`. Nothing filtered that schema, so fields the
+pipeline fills for itself were being demanded of the model as output. Three
+seats were affected; five other seats with a `result_model` were checked and
+were clean.
+
+- **Portfolio Manager.** `PortfolioDecision.decisions` — a full
+  `TradeDecision` array, fourteen required sub-fields each, including
+  `entry_price`, `stop_loss` and `take_profit` — and
+  `constructor_dropped`. Both are documented in `src/models.py` as
+  pipeline-written and never LLM-written, and
+  `config/prompts/portfolio_manager.md` mentions neither, so nothing told
+  the seat to leave them empty. `PortfolioManagerAgent.validate_grounding`
+  refuses the entire answer if `decisions` comes back non-empty
+  ("portfolio manager supplied concrete decisions; only grounded targets
+  may cross the PM boundary"), which discards every target and the whole
+  book for the session. The schema demanded exactly what the validator
+  refuses. **Not measured in production** — this checkout has no run log or
+  run table, so how often (or whether) the seat actually filled the field is
+  unknown. The contradiction between the two contracts is what is measured.
+- **Smart Money.** `SmartMoneyFinding.observations` carried `minItems: 1`
+  into the strict schema, and `SmartMoneyObservation` is a 45-property
+  internal row (`accession_number`, `transaction_row`, `signal_weight`,
+  `freshness`, `admission_eligible`, `transient_admitted`,
+  `in_core_universe`, `lag_days`, …) — 5,876 of the synthesis schema's
+  9,356 bytes. The seat also had to emit `evidence_hash` (a SHA-256 it
+  cannot compute), `support_eligible` and `transient_admission_eligible`.
+  `_parse_findings` overwrites the observations and the hash from the
+  desk's own source rows on every finding, cached or live, and
+  `deterministic_eligibility` recomputes both booleans — so 100% of it was
+  discarded, and nothing ever compared the echo against the source rows, so
+  it was not a grounding device either.
+- **News.** `dropped_news_symbols`, whose own field comment already claimed
+  it was "never asked of the model". It was, and `analyze()` overwrote
+  whatever came back one line after parsing. This one is the mildest of the
+  three: `NewsIntelligenceReport` carries a free-form map, so
+  `_response_format_for` sends it `strict: False` and the field was an
+  invitation rather than a compulsion.
+
+**The fix.** `pydantic.json_schema.SkipJsonSchema` on those six fields, in
+`src/models.py` and nowhere else. The marker sits on the field itself, so
+the storage model and the model-facing schema cannot drift apart — the
+alternative considered and rejected was a per-seat shadow "wrapper" model
+for `response_format`, which would have created two classes per seat that
+can silently diverge, and which `_RESPONSE_FORMAT_CACHE` (keyed on the bare
+class `__name__`) would have been liable to confuse. Nothing is deleted:
+every field is still validated, assigned, dumped, persisted and read back.
+
+**Measured effect.** Rendered schema bytes: `SmartMoneySynthesis`
+9,356 → 1,265; `PortfolioDecision` 8,714 → 6,812; `NewsIntelligenceReport`
+4,249 → 4,129. `tests/test_response_format_desk_only_fields.py` is the
+mechanical check — it walks every `properties` block of the rendered
+`response_format` and fails if a declared desk-owned field reappears, and it
+separately asserts each field still exists and round-trips on the storage
+model. Ten tests; four of them fail against the unfixed tree.
+
+**Found and deliberately left alone**, because these are a different defect
+— a desk-computed number laundered through the model and read back, rather
+than a bookkeeping marker the model is asked to invent — and fixing them
+needs post-parse re-injection that would change stored values:
+`BuyGrade.market_relative_move_pct` (computed in `src/pipeline.py`, rendered
+into the evening prompt, required back from the model, and then read out of
+the stored grade by `src/evolution/quarterly_digest.py` into
+`alpha_destruction_sum` — a model-asserted copy of a number the desk already
+holds, steering the aggregate that drives quarterly prompt edits), its
+siblings `BuyGrade.buy_price` / `current_price` / `pct_move_since_buy`,
+`MissedOpportunity.move_pct`, and `LossPattern.occurrences` /
+`total_loss_pct` on the meta-reflector. The right fix for these is to
+validate the echo against the injected value, or to have the digest read the
+desk's own number — not to hide the field, which would zero the aggregate. Also
+left alone: the smart-money user payload sends `in_core_universe`,
+`in_trading_universe`, `admission_eligible` and `transient_admitted` while
+`config/prompts/smart_money_analyst.md` explains only
+`transient_admission_eligible`; and `config/settings.yaml`'s smart-money
+token-budget justification still derives its ceiling from a schema that no
+longer exists, so that number's stated basis is stale.
