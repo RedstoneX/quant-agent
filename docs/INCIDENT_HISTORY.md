@@ -5601,8 +5601,12 @@ whenever this loss is detected on an otherwise-clean run — checked ahead of
 the existing `low_confidence` self-report, since a confirmed loss is worse
 than the model's own stated doubt. That value already pages the owner
 through the standalone data-quality Telegram alert shipped 2026-09-11
-(`maybe_alert_data_quality` — any status other than "ok"/"empty" pages, no
-new alert code was needed).
+(`maybe_alert_data_quality` — no new alert code was needed). That
+parenthetical said "any status other than \"ok\"/\"empty\" pages" and has
+not been true since the reuse words were classified: the paging set is
+`evidence_gate.warrants_data_quality_page`, which is everything outside
+`INTEGRITY_CLEAN_STATUSES` MINUS `DISCLOSE_ONLY_STATUSES`. Corrected in
+place 2026-09-23; `symbol_dropped` itself still pages, unchanged.
 
 **Known, accepted false-positive.** The news prompt explicitly permits the
 model to see a stock mentioned in a headline and judge it incidental,
@@ -14969,3 +14973,84 @@ one budget, so a day spent proving EDGAR's own count is a day not spent
 reading. And nothing persists per-day read-through for the market-wide pass,
 so every morning re-walks the whole 86-day window from the freshest slice.
 Both are real and both are wider than this fix.
+
+## 2026-09-23 — a red page fired eighteen times to repeat a line the owner already had in the same second
+
+**What he received.** A standalone DATA QUALITY ALERT: "the intra_check
+session at 10:18 AM ET ran on incomplete research … the Portfolio Manager
+and the Risk Manager may have sized or decided this session on incomplete
+or unreadable input". Eighteen of them survive in the retained log and its
+five rotations — 15 on 2026-09-21, 6 on 2026-09-22 and 3 on 2026-09-23 by
+CRITICAL timestamp. Sixteen name `news=expired` (fifteen alone, one
+alongside `tech=partial`); the other two are `macro=partial` and
+`macro=release_overdue`.
+
+**Why that sentence was false for sixteen of them.** `expired` means the
+desk HOLDS a good answer and knows a newer one exists. `src/evidence_gate.py`
+says so in its own words and has since the state was split out of
+`CATEGORY_LOST` on 2026-09-18: it is neither "nothing to say" nor "the
+answer never arrived". On an intraday tick the news seat carries the
+morning's wire forward, which is the designed behaviour of the carry-forward,
+not a fault. The input was readable and complete. It was read earlier.
+
+**And the owner already knew.** Every one of those ticks sent its session
+report in the same second carrying the freshness disclosure — "carried over
+from earlier, not re-read: the news research" and "already known to be out
+of date: the news research". The red push was a second message repeating a
+line in the first.
+
+**The real defect: one predicate answering two questions.**
+`evidence_gate.counts_as_degraded` is a DISCLOSURE test — was this session's
+evidence less than clean? — and three consumers use it as one: Risk's ">= 2
+sources degraded" advisory, the session report's "degraded:" line and the
+postmortem log line. A fourth, the standalone alert, used the same answer to
+decide whether to INTERRUPT the owner. Those questions have different right
+answers for a held-but-superseded seat, and nothing had ever separated them.
+
+**The fix.** `warrants_data_quality_page` and `DISCLOSE_ONLY_STATUSES` in
+`src/evidence_gate.py`, and `main.py` hands the alert
+`page_worthy_statuses` instead of the raw `data_status`. `expired` is NOT
+reclassified: it stays out of `INTEGRITY_CLEAN_STATUSES`, stays degraded,
+stays in the Risk advisory, stays in the report's "degraded:" line, stays
+named in the freshness disclosure and stays healable. Only the separate red
+push goes away. The notifier's own per-seat exemption (tech's per-symbol
+`low_confidence`) is not duplicated in the gate; it applies on top of
+whatever the gate leaves.
+
+**Ruling out the thing that would make this dangerous.** Four code paths
+write `expired` into `data_status`: news (a prior session's wire, or a newer
+material wire landed), macro (regime or print changed), earnings (a new
+report with placeholders held) and insider (a new Form 4, or the Form 4
+freshness probe could not call the seat current). In each the desk still
+holds the prior payload, and a genuinely lost answer has its own separate
+words — `failed`, `parse_error`, `provider_error`, `truncated`,
+`content_missing`, `carry_forward_empty`, `carry_forward_failed` — every one
+of which still pages, pinned by a parametrised test over
+`STATUS_CATEGORY`, and a status may only join `DISCLOSE_ONLY_STATUSES` if
+this module already classifies it `CATEGORY_EXPIRED`.
+
+The one arguable path is the insider fail-closed added 2026-09-19: a failed
+or partial Form 4 freshness probe expires the seat even when the remembered
+payload is empty. That is a remembered claim the desk declines to call
+current, not an answer that never arrived — and it is not going silent: it
+still logs WARNING, still counts as degraded, still feeds the advisory and
+still appears in the session report. It has never produced one of these
+alerts; zero `smart_money=expired` pages appear in the retained log.
+
+**Expected effect.** Sixteen of the eighteen retained alerts would not have
+been sent — on the measured days, twelve fewer pushes on 2026-09-21, four
+fewer on 2026-09-22, and the tick that also carried `tech=partial` still
+pages, naming the chart seat only. `macro=partial` and
+`macro=release_overdue` are untouched.
+
+**No constant moved and none was needed.** The change is a set-membership
+split, not a threshold.
+
+**Found and deliberately not fixed.** The alert is undeduplicated by design,
+so a genuinely broken seat still pages once per session, five or six times a
+day — correct for a real fault, and untouched here. And the wording
+`_DATA_STATUS_WORDS["expired"]` uses ("had only an out-of-date answer") is
+listed in `src/notifier.py` under a comment calling it one of "the four
+remaining CATEGORY_LOST states", which stopped being true when the category
+was split on 2026-09-18; the comment is stale, the wording is right, and
+`src/notifier.py` had changes in flight when this shipped.

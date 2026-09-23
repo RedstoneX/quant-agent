@@ -86,6 +86,12 @@ It now has its own category. It is not integrity-clean, so it still counts
 toward the `data_degraded` advisory, and the freshness disclosure names it
 explicitly as an answer known to be out of date.
 
+What it does NOT do, since 2026-09-23, is raise the owner a separate red
+page saying the session "ran on incomplete research" — that page is for a
+seat whose answer never arrived, and the desk holds this one. See
+`DISCLOSE_ONLY_STATUSES` and `warrants_data_quality_page` below for the
+split and for what was measured before making it.
+
 WHAT IT DOES NOT DO
 --------------------
 It never zeroes a target and never drops an individual candidate: a 0%
@@ -330,8 +336,121 @@ INTEGRITY_CLEAN_STATUSES: frozenset[str] = frozenset({
 })
 
 
+#: DEGRADED-AND-DISCLOSED vs DEGRADED-AND-WORTH-A-RED-PAGE.
+#:
+#: These are two questions and until 2026-09-23 one predicate answered
+#: both. `counts_as_degraded` is a DISCLOSURE test — "was this session's
+#: evidence less than clean?" — and three consumers use it for exactly
+#: that: Risk's ">= 2 sources degraded" advisory, the "degraded:" line in
+#: the session report, and the postmortem log line. A fourth consumer,
+#: `notifier.maybe_alert_data_quality`, used the same answer to decide
+#: whether to send the owner a SEPARATE standalone alert saying the
+#: session "ran on incomplete research". That is a different question and
+#: it has a different right answer for `expired`.
+#:
+#: `expired` means the desk HOLDS a good answer and knows a newer one
+#: exists (see CATEGORY_EXPIRED). It is not absence, and this module's
+#: whole categorical line — "a seat that had NOTHING TO SAY is not the
+#: same as a seat whose ANSWER WAS LOST" — puts it on the holding side.
+#: The alert text tells the owner his Portfolio Manager and Risk Manager
+#: "may have sized or decided this session on incomplete or unreadable
+#: input". For a carried-over news read that sentence is not true: the
+#: input was readable and complete, it was simply read earlier in the
+#: session.
+#:
+#: MEASURED, 2026-09-23, from the retained production log: 18 data-quality
+#: alerts survive in the log and its five rotations; 16 of them name
+#: `news=expired` (15 alone, 1 alongside `tech=partial`), and the other
+#: two are `macro=partial` and `macro=release_overdue`. Every one of the
+#: `expired` ticks was an `intra_check`, and every one of those ticks
+#: ALSO sent the owner, in its own session report in the same second, the
+#: freshness line "carried over from earlier, not re-read: the news
+#: research" — which `describe_evidence_freshness` produces from
+#: STATUS_FRESHNESS above and which this change does not touch. So the
+#: red page was a second push duplicating a line the owner already had,
+#: for the desk's designed intraday carry-forward behaviour.
+#:
+#: WHAT THIS IS NOT. It is not a reclassification: `expired` stays out of
+#: INTEGRITY_CLEAN_STATUSES, stays degraded, stays in the Risk advisory,
+#: stays in the report's "degraded:" line and stays named in the freshness
+#: disclosure. Nothing about the session gets quieter except the separate
+#: red push.
+#:
+#: MEMBERSHIP RULE, AND THE ONE THING THAT MUST NEVER HAPPEN HERE: a
+#: status may only sit in this set if STATUS_CATEGORY maps it to
+#: CATEGORY_EXPIRED. Every CATEGORY_LOST word — `failed`, `parse_error`,
+#: `provider_error`, `truncated`, `content_missing`, `carry_forward_empty`,
+#: `carry_forward_failed` — is a seat whose answer never arrived, is
+#: exactly the hazard this alert exists for, and must keep paging.
+#: `tests/test_expired_is_not_a_page.py` fails if any non-EXPIRED status
+#: is ever added here.
+DISCLOSE_ONLY_STATUSES: frozenset[str] = frozenset({"expired"})
+
+
+def warrants_data_quality_page(status: str) -> bool:
+    """True when this seat-status deserves its OWN red owner alert.
+
+    Strictly narrower than `counts_as_degraded`: everything that pages is
+    degraded, but a degraded seat the desk still HOLDS an answer for is
+    disclosed in the session report rather than pushed separately. Never
+    raises, and an unknown word pages — same fail-loud default as
+    `counts_as_degraded`, for the same reason.
+    """
+    return counts_as_degraded(status) and str(status) not in DISCLOSE_ONLY_STATUSES
+
+
+def page_worthy_statuses(data_status: dict | None) -> dict:
+    """The `{seat: status}` subset that may raise a standalone red alert.
+
+    Returned rather than a bare bool so the caller hands the alert the
+    seats it should NAME, and so a page raised by a genuinely lost seat
+    cannot be padded with seats that were never worth a page. Seat-level
+    exemptions (tech's per-symbol `low_confidence`) are NOT duplicated
+    here — they stay in the notifier, which applies them to whatever this
+    returns. Never raises.
+    """
+    if not isinstance(data_status, dict):
+        return {}
+    return {
+        seat: value for seat, value in data_status.items()
+        if warrants_data_quality_page(value)
+    }
+
+
+def data_quality_page_input(result):
+    """The session result as the standalone data-quality alert should see it.
+
+    The alert's own code is unchanged and still decides, from the
+    `data_status` it is handed, whether to fire and which seats to name.
+    This narrows what it is handed to the seats that warrant a page at
+    all, so the decision lives here — beside the categories — rather than
+    being a second copy of them inside the notifier.
+
+    Returns the SAME object when nothing is filtered out, so the ordinary
+    clean-session path allocates nothing and the alert sees byte-identical
+    input to before. Never raises: an alerting refinement must not be able
+    to break the session it reports on.
+    """
+    try:
+        if not isinstance(result, dict):
+            return result
+        current = result.get("data_status")
+        pageable = page_worthy_statuses(current)
+        if pageable == (current if isinstance(current, dict) else {}):
+            return result
+        return {**result, "data_status": pageable}
+    except Exception:  # noqa: BLE001
+        logger.exception("data-quality page filter failed; alerting unfiltered")
+        return result
+
+
 def counts_as_degraded(status: str) -> bool:
     """True when this seat-status should feed the 2+ data_degraded advisory.
+
+    DISCLOSURE test, not a paging test. "Should the owner and the Risk
+    Manager be told this session's evidence was not clean?" — not "should
+    this interrupt him with its own red message?". That second question is
+    `warrants_data_quality_page` above, and it is strictly narrower.
 
     Never raises. An unknown word counts as degraded so a new failure
     mode cannot silently drop out of the advisory; classify it in

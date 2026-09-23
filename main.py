@@ -255,10 +255,25 @@ def main():
         # above. Fires independently of whether `message` exists at all, so
         # it can't be suppressed by a mode's normal noise policy. See
         # notifier.maybe_alert_data_quality's docstring for why.
+        #
+        # What may raise that separate push is NARROWER than what counts as
+        # degraded, and 2026-09-23 is when those two stopped being the same
+        # question. A seat the desk still HOLDS an answer for — `expired`,
+        # a carried-over news read on an intraday tick — is disclosed in the
+        # session report's own freshness line ("carried over from earlier,
+        # not re-read") and in its "degraded:" line, and does not also get
+        # a red page saying the session "ran on incomplete research". A seat
+        # whose answer never arrived still pages, unchanged. The rule lives
+        # in `evidence_gate.page_worthy_statuses`, next to the categories it
+        # is reasoning about; the notifier keeps its own per-seat exemptions
+        # and applies them on top of whatever this leaves.
         try:
+            from src import evidence_gate
             from src.notifier import maybe_alert_data_quality
 
-            maybe_alert_data_quality(result, mode=args.mode)
+            maybe_alert_data_quality(
+                evidence_gate.data_quality_page_input(result), mode=args.mode,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("data-quality alert failed in finally: %s", exc)
         if message:
