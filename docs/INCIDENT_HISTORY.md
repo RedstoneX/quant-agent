@@ -22,6 +22,144 @@ what would catch it next time.
 
 ---
 
+### 2026-09-23 — the desk counted a protective stop as if it had already sold the shares, so its own share count was wrong on live positions (item 173)
+
+**In plain words:** when the desk places a protective stop order at the
+broker, it writes a row saying so. That row is a *standing instruction* —
+"sell if the price falls this far" — not a sale. The bookkeeping treated it
+as a sale anyway, and subtracted the whole protected position from the
+desk's record of what it owns. On the live account this made the desk
+believe it held no AMD when it actually held 1.7662 shares, and believe it
+held *negative* COP and EQNR when both were flat.
+
+**Why it mattered, and why nobody saw it.** Nothing the owner reads was
+wrong. Positions, daily P&L and realized profit all come from broker truth
+or from a separate calculation that already ignored unfilled stops, and no
+protective-stop row anywhere in the live database carries a realized-P&L
+figure [verified read-only against the production database, 2026-09-23]. The
+damage was to a safety net. `_reconcile_stop_out_fills` is the check that
+compares what the ledger believes it holds against what the broker actually
+shows, and catches a protective stop that fired without being recorded — the
+gap that lost the 2026-08-28 ONDS/CCJ stop-outs. It skips any symbol it
+believes is flat. So the one thing that guarantees a symbol is skipped is
+having a protective stop on it, which is to say: exactly the symbols that
+can be stopped out were the symbols the stop-out detector could not see.
+AMD was in that state and held real money. The defect made itself invisible
+to the very detector it disabled, which is why it survived every pass that
+looked at the detector's own results.
+
+**The cause.** `Database.get_symbols_with_open_ledger_qty` signed rows from
+the action name alone: BUY and SWEEP_BUY add, everything else subtracts.
+That reasoning holds for every other exit action, because those rows are
+only written once the desk has decided to sell. A TRAIL_STOP row is written
+at *placement*. Compounding it, the shared "did this execute" predicate
+treats a row with no fill status as executed, which is the shape all three
+live rows carry.
+
+**What was ruled out.** Not a new rule and not a threshold: the repo already
+drew this distinction in four places (`_is_filled_trail_stop`,
+`compute_trade_calibration`, `_assign_position_ids`,
+`_categorize_exit_reason`) and this one function simply never used it.
+
+**The trap inside the fix.** Deferring to `_is_filled_trail_stop` alone
+would have introduced the same class of bug pointing the other way. That
+helper answers "is this a priceable realized exit", so it requires a
+`filled` status. A stop that fills *partially* and is then canceled carries
+a terminal status that is not `filled` but has really moved shares. A pure
+share-count ledger has to subtract those or it over-reports. The share-count
+question and the realized-exit question are genuinely different questions,
+and the fix now has its own small helper that says so in as many words.
+
+**What would catch it next time.** The class is "a ledger signing a row by
+its action name, when the row's meaning depends on its fill state." The
+tests added with the fix take a protective stop through every fill status
+the fill reconciler can actually write — and take the *list* of those
+statuses from that reconciler's own code rather than retyping it, with a
+check that fails if the two ever diverge. They also cover the resting and
+filled cases on the short side, and cross-check the share-count ledger
+against the round-trip calibration for a resting and a fired stop.
+
+**What the adversary pass found in the fix itself, and what changed.** Three
+of the fill-state tests passed for the wrong reason: the shared executed-row
+predicate admits no `submitted`, `canceled`, `expired` or `pending_submit`
+row that carries no fill quantity, so the new Python branch never ran and
+the assertion would have held even with the rule inverted. They now pin the
+Python rule directly as well as the end-to-end number — worth recording
+because a test that cannot fail is indistinguishable from one that passes.
+The new helper also answered "yes" for any row at all that carried a fill
+quantity, which would have handed a true-by-default answer to a future
+caller; it now checks the action. A second pass then found that the
+replacement fill-status list had been enumerated by hand and silently
+omitted three statuses the reconciler really writes — `done_for_day`,
+`rejected`, and `cancelled` with two Ls next to `canceled` with one — of
+which `done_for_day` carrying a partial fill is the ordinary real-world
+instance of the exact shape the wider rule was built for. The list is now
+derived from the writer, which is the same two-copies-drift the tests were
+added to catch, reappearing inside the fix for it. Several claims in
+earlier drafts of this entry were themselves too strong and were cut.
+
+**Not fixed here, carried as item 173:**
+
+- Correcting the count exposed a real EQNR gap the corrupted number had been
+  hiding. EQNR left the held book between 16:19 and 16:45 UTC on 2026-09-21
+  with no trades row for the remaining 8.5962 shares. That is inside the
+  seven-day lookback now, so the next pass should find the broker order and
+  write it back — but past roughly 2026-09-28 it falls out of the window,
+  and the owner alert has no dedup or throttle of any kind, so it would then
+  page CRITICAL at every session entry point, every day. Separately, nothing
+  establishes that EQNR's exit was a protective stop; writing it back as one
+  would stamp a cause the evidence does not support onto owner-facing P&L.
+- The reconciler still runs before the fill reconciler, so a sale the desk
+  placed and has not yet reconciled pages a false CRITICAL (NUE, 2026-09-21,
+  self-corrected 476 ms later).
+- The short side is still signed from the action name: a COVER, and a
+  buy-to-cover TRAIL_STOP the broker filled, subtract from a short instead
+  of retiring it. Unchanged by this fix and silent today, because the
+  reconciler skips any negative as a short. Pinned by a test that states it
+  is wrong.
+
+### 2026-09-23 — a proposed drift-detection test (item 171) was folded into an existing item instead of built, because it would not have caught either bug it cited
+
+**In plain words:** a request to build a test that catches a prompt sentence lying about what the code does, filed a third time, was retired — not because the idea is wrong, but because a check aimed only at deleted code cannot catch the two real bugs it names, and a stronger version of that check already belongs to another open item.
+
+**Why item 99(d) looked like enough, and why it wasn't quite.** 99(d) already tells the desk to grep for a removed mechanism's name across every prompt when it is deleted. An adversary review, asked directly whether folding 171 into 99(d) would lose anything, found it would: item 98 (the seat told 20 bars when the code sent 40) and item 168 (the seat told ~120 days when the code fetches 1800) are both a number going quietly stale against a config or code value that was never deleted — 99(d)'s own check only fires on a deletion, so neither bug would ever trip it. The adversary also caught 99(d)'s text claiming no drift defect ever lived in a prompt file, which is false for item 168: its wrong sentence is in `config/prompts/tech_analyst.md`.
+
+**What actually closed item 98** was not a scanner reading prompt text for suspicious numbers — that was tried in reasoning and rejected as too noisy (99(d) already records why: ~1,825 numeric tokens in the prompts are mostly dates and list numbering). It was rendering the sentence from the live value instead of typing a number by hand, with a test that fails if the two ever disagree again. Item 168 already carries that same fix as its own DONE WHEN.
+
+**What changed.** Item 99(d) gains a new criterion (99(g)): every prompt sentence stating a code- or config-controlled fact must either be rendered from that value or pinned by a drift test in item 168's pattern, on top of the existing deletion-site grep. Item 171 is retired — its number, not its intent.
+
+---
+
+### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
+
+**In plain words:** two items on the backlog board had already been marked
+retired, with their reasons squeezed into the board's own "retired numbers"
+footer instead of a real write-up here — the exact bloat this file exists to
+prevent. Neither is a new finding; both are being recorded properly now so
+the board text can be trimmed to a pointer.
+
+**Item 146 — a stop-tolerance question that was already answered before it
+was filed.** The item asked whether the level-match tolerance should be
+derived from an ATR multiple (`level_match_atr_tolerance`). That setting key
+had already been removed on 2026-09-13 as part of item 46, and the tolerance
+was already being derived from `src.data.levels.CLUSTER_TOLERANCE_PCT`
+instead. The item's premise was false at filing, so it closed with no fix
+needed. Its one live piece — the horizon-arithmetic residue — was not
+discarded; it was folded into the standing DECIDE-BY mandate bullet at the
+top of the board, which it was only ever supporting evidence for. Retired
+2026-09-19.
+
+**Item 156 — the congressional-trading Form 4 drain could run past its own
+tick deadline.** The drain that pulls new Form 4 accessions for congressional
+trading shared its processing loop with the tick's overall time budget but
+had no budget or progress tracking of its own, so a slow issuer could burn
+the whole tick before later issuers were even attempted. Closed by PR #539
+(commit 0f758a95): the drain now runs against its own budget and tracks
+per-issuer progress, so a slow issuer no longer starves the ones queued
+behind it. Retired 2026-09-19.
+
+---
+
 ### 2026-09-20 — the desk's second, account-level loss response was REMOVED ENTIRELY on the owner's instruction (board item 32 retired)
 
 **In plain words:** the desk used to have two separate ways of reacting to
@@ -178,6 +316,59 @@ load silently, and an operator would believe a daily halt was armed when
 nothing reads it. That validator refuses all five loudly at config load.
 It is the one way this removal could rot into a false belief about loss
 protection, so it is guarded by code rather than by a scanner.
+
+---
+
+### 2026-09-20 — the live desk's technical ranking still fell back to ticker spelling for one specific kind of trade, after the 2026-09-04 fix (WORK.md item 141, retired)
+
+**In plain words:** when several stocks the desk was considering scored exactly the same and none of them had a measurable reward-to-risk number — which only happens for "breakout" trades, the kind with no overhead price target to measure a reward against — the desk still picked among them by ticker spelling. Every other kind of tie was already fixed two weeks earlier. This was the one case that fix didn't reach, because a later, separate, correct decision (don't measure a reward-to-risk ratio for a breakout at all) removed the only number the earlier fix used to break ties.
+
+**What was actually still broken, and what was not.** Item 141 was filed citing the same measured tie rates (64% of technical reads sharing a composite score; 9 of 12 names tied one real day, 23 of 33 another) as the 2026-09-04 fix to `src/verdicts.py::rank_verdicts`, which already breaks a tied composite score on each candidate's reward:risk ratio before falling back to the ticker symbol. That fix is live and wired into `PortfolioManagerAgent.rank_candidates` today — most of what item 141 described was already closed. The gap it still exposed: the 2026-09-11 change (item 1(d)) correctly stopped scoring a reward:risk ratio for breakout trades at all (a breakout has no overhead level being defended, so any "reward" number for one is invented). But `rank_verdicts`'s tier-neutral placement gives every candidate with no ratio the same value, so a tied tier where every member is a breakout still fell straight through to alphabetical order.
+
+**Fix.** A third-stage tiebreak, reached only after both the composite score and the reward:risk ratio are equal (including all-absent). `TechAnalysisResult.to_verdict()` now attaches `stop_side_level_touches`: the number of prior chart pivots backing the structural levels on the RISK side of the trade only (below entry for a long, above it for a short) — the same touch count `PortfolioConstructor._level_backing_stop` already trusts elsewhere to decide whether a stop earns a tight-stop exemption, and the only side of the chart `reward_risk_floor_applies`'s own doctrine says a breakout is judged on at all. The first version of this fix summed touches from BOTH sides of the chart (overhead resistance included), which a qamc-adversary review caught as scoring supply-in-the-way for a long as if it were support — fixed by filtering to the risk side before shipping. The same review caught that the tiebreak was being weighted by `SEAT_WEIGHT`, a published prior on how reliably a TYPE of analysis forecasts direction — inapplicable to a deterministic pivot count, and latently double-counting if a second seat ever attached the same evidence label; the weighting was removed.
+
+**What this does not close.** The adversary review raised two points accepted as real, unresolved limits, not blockers for a third-tier tiebreak among already-tied, already-eligible candidates: (1) a distance-discounted version of this signal (`Level.strength` in `src/data/levels.py`) already exists and would resolve a non-monotonicity this raw touch-count doesn't handle, but plumbing it onto `TechAnalysisResult` was judged out of scope for a tiebreak this far down the order — a candidate for a future item if the residual tie rate after this fix is ever measured and found to matter; (2) neither this tiebreak nor the 2026-09-04 risk_reward one is rendered into the PM's prompt or any owner-facing surface — a pre-existing gap this change adds one more field to rather than fixes. Neither is a live-capital risk today because both are third- and second-stage tiebreaks among names the desk's own gates already judged equally eligible; the volatility/listing-age tilt raised as a hypothetical was not measured and is not asserted here as real.
+
+**What would catch it next time.** `tests/test_analyst_verdict.py`: a fixture reproducing the exact 9-of-12 measured tie pattern, all breakout, asserting the order is touch-count-driven and not alphabetical; a direct test that overhead-side touches are excluded, on both the long and short side; a test that the tiebreak component is present and unweighted even when the seat weight would change it if misapplied.
+
+---
+
+### 2026-09-18 — a mechanical gate now exists so a trade-governing number can no longer be invented without being written down (item 90, half one)
+
+**In plain words:** every numeric constant on the path from a seat's verdict
+to a trade order now has to be recorded in one place with where it came
+from, or the test suite fails the build. Before this, a number could be
+typed into the code with no source and nobody would ever know.
+
+**What was built.** `src/number_sources.py` walks every module-level
+constant and `*Config` default inside a declared, reviewed set of files
+(including numbers nested in literals or bound to a name) and requires a
+matching entry in `config/number_ledger.yaml`. Six rules are enforced:
+every in-scope site is covered; the ledger's recorded value matches the
+live code literal; it also matches the DEPLOYED value in
+`config/settings.yaml` where a setting routes that way (52 sites do); a
+`sourced` or `instrument` entry must cite a URL or a `path:line`, never
+prose; an `arbitrary` entry must state the open question and what the desk
+pays while it stays unanswered; and a derivation whose base later moves
+fails the build (base-drift). A separate check fails if the count of
+module-level constants in files OUTSIDE the declared scope rises, so the
+scope itself cannot quietly narrow.
+
+**What it found, and its own honest limit.** At filing, 178 sites were in
+scope with 87 distinct numbers marked arbitrary (45 not trade-governing, 25
+derived, 16 sourced, 5 fixed by broker/exchange/statute); the count moved
+to 88 the next day (#529) before the sub-split was re-verified, so that
+breakdown is a snapshot, not a live figure — read `config/number_ledger.yaml`
+directly for the current count. The gate proves a justification was
+WRITTEN, never that it is TRUE: its own flagship entry, the 0.50%
+minimum-risk floor, was false in four separate places and now carries a
+written correction, along with six other corrected entries.
+
+**What is still open.** Reading each arbitrary entry off its actual
+instrument — settling the open question the ledger states for it — is
+unstarted and is board item 90's remaining half. `MAX_ARBITRARY_ENTRIES` is
+enforced as an EQUALITY, not a ceiling, specifically so deleting a row is
+never rewarded.
 
 ---
 

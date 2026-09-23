@@ -14931,9 +14931,14 @@ class TradingPipeline:
         When the wire DID move, the peek that proved it holds current wire
         text. Hand that to the heal path (`ctx.heal_news_text`) so the
         expired seat is re-asked with the data this tick already paid for,
-        instead of being lost while fresh headlines are thrown away. The
-        evidence gate is untouched: expired is still LOST unless the
-        re-ask actually succeeds.
+        instead of being lost while fresh headlines are thrown away.
+
+        The evidence gate is untouched by this, but NOT because expired is
+        lost — it stopped being lost when #535 split `CATEGORY_EXPIRED` out
+        on 2026-09-18, which is what orphaned this hand-off for five days.
+        The gate is untouched because the re-ask changes only whether a
+        fresher answer exists, never what the gate does with the answer the
+        desk already holds. See `evidence_gate.HEALABLE_CATEGORIES`.
         """
         from src.evidence_kind import news_reuse
         try:
@@ -15143,7 +15148,12 @@ class TradingPipeline:
             logger.error("seat heal: owner alert failed: %s", e)
 
     def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
-        """One paid retry for a LOST seat. False if we cannot honestly retry.
+        """One paid retry for a LOST or EXPIRED seat, once per ET day.
+
+        False if we cannot honestly retry. An EXPIRED seat is a REFRESH, not
+        a recovery: the desk holds the earlier answer and will decide on it
+        either way, so every owner-facing sentence out of here must say that
+        rather than claim the seat was lost.
 
         Intra often has no FRED/news stack. A retry without inputs would
         invent the seat — refuse that, and do not burn the retry slot.
@@ -15151,9 +15161,25 @@ class TradingPipeline:
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import (
-            HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_PAID_RETRY,
-            can_paid_retry, record_paid_retry,
+            HealResult, HEAL_CAP_BLOCKED, HEAL_DAY_CAP, HEAL_FAILED,
+            HEAL_PAID_RETRY, can_paid_retry, record_paid_retry,
         )
+        from src import evidence_gate as _gate
+        # An EXPIRED seat is being REFRESHED, not recovered: the desk holds
+        # the earlier answer and will decide on it whatever happens here. Any
+        # owner page from this function must say so, because the default
+        # sentence ("the desk will not decide on this seat as if it had
+        # answered") is true of a lost seat and false of this one — the
+        # owner-facing-lie class of defect item 133 closed.
+        _incoming = (getattr(ctx, "data_status", None) or {}).get(seat)
+        _expired_seat = (
+            _gate.STATUS_CATEGORY.get(_incoming) == _gate.CATEGORY_EXPIRED
+        )
+        _consequence = (
+            "The desk still holds this seat's earlier answer and will decide "
+            "on it, labelled as carried rather than read this tick. No trade "
+            "was withheld for this."
+        ) if _expired_seat else ""
         retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
         if not can_paid_retry(retries, seat):
             return False
@@ -15187,13 +15213,74 @@ class TradingPipeline:
                 return False
         if seat == "tech":
             return False
+        # Cross-tick cap, checked HERE — after the honest-inputs checks
+        # above, never before them. A tick that has no wire text would have
+        # refused anyway, and a day-cap row on that tick would record the cap
+        # as the binding constraint when it was not. That row's whole purpose
+        # is to be the evidence that later settles whether one refresh a day
+        # is the right number, so it must only be written when the cap is
+        # what actually stopped the spend.
+        #
+        # `retries` above is per-RunContext and a RunContext is one tick;
+        # intra_check runs every 30 minutes and an expired seat is still
+        # expired on the next tick, so without this the "one paid retry" is
+        # one per tick. It was: production recorded EIGHT paid news heals on
+        # 2026-09-18. See Database.count_paid_seat_heals_today.
+        db = getattr(self, "db", None)
+        counter = getattr(db, "count_paid_seat_heals_today", None)
+        if callable(counter):
+            try:
+                spent_today = counter(seat)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("seat heal: day-cap read failed for %s: %s", seat, e)
+                spent_today = None
+            if spent_today is None:
+                # Could not find out, which is NOT the same as nothing spent.
+                # Allowed through on purpose: the cost circuit below is the
+                # fail-closed authority for spend and still runs, so a sick
+                # forensic store cannot silently stop the desk buying fresher
+                # news. Logged at WARNING so the degradation is visible
+                # rather than assumed.
+                logger.warning(
+                    "seat heal: could not read %s's day allowance; allowing "
+                    "the retry and leaving the spend to the cost circuit", seat,
+                )
+            elif not can_paid_retry({seat: int(spent_today)}, seat):
+                logger.info(
+                    "seat heal: %s already had its one paid retry today "
+                    "(%d spent); not re-asking", seat, spent_today,
+                )
+                # Durable, not just a log line. "The desk declined to pay for
+                # fresher research on this tick" is a decision about money,
+                # and it is the only record that could ever show whether one
+                # refresh a day is the right number. Not an owner page: the
+                # cap doing its job is not an incident.
+                self._record_heal(
+                    ctx,
+                    HealResult(
+                        seat=seat, outcome=HEAL_DAY_CAP,
+                        reason=(
+                            f"seat already had its one paid heal this ET day "
+                            f"({spent_today} recorded); not re-asking"
+                        ),
+                        paid_retry=False,
+                        details={
+                            "spent_today": int(spent_today),
+                            "was_expired": _expired_seat,
+                        },
+                        owner_consequence=_consequence,
+                    ),
+                    alert=False,
+                )
+                return False
         try:
             require(agent_name)
         except PaidAnalysisSuspended as exc:
             blocked = HealResult(
                 seat=seat, outcome=HEAL_CAP_BLOCKED,
                 reason=f"spend cap blocked the one paid retry: {exc}",
-                paid_retry=False,
+                paid_retry=False, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, blocked, alert=True)
             return False
@@ -15205,12 +15292,24 @@ class TradingPipeline:
             if seat == "macro":
                 analysis, _raw = analyze(ctx.macro_summary)
             else:
-                analysis, _raw = analyze(getattr(ctx, "heal_news_text", ""))
+                # Pass this run's session. The analyst's session guidance
+                # defaults to MORNING ("treat today as a fresh book... this
+                # report sets the tone for the day's trading"), which is
+                # false on a 14:00 intra_check — the same mislabelling audit
+                # round 2 #24 already fixed for the close session. The other
+                # arguments stay at their defaults: a heal re-ask genuinely
+                # has no universe or prior-session baseline to offer, and
+                # inventing one would be worse than admitting it.
+                analysis, _raw = analyze(
+                    getattr(ctx, "heal_news_text", ""),
+                    session=getattr(ctx, "session", None) or "intra_check",
+                )
         except Exception as exc:  # noqa: BLE001
             failed = HealResult(
                 seat=seat, outcome=HEAL_FAILED,
                 reason=f"paid heal retry raised: {exc}",
-                paid_retry=True,
+                paid_retry=True, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
@@ -15218,7 +15317,8 @@ class TradingPipeline:
             failed = HealResult(
                 seat=seat, outcome=HEAL_FAILED,
                 reason="paid heal retry returned no usable output",
-                paid_retry=True,
+                paid_retry=True, owner_consequence=_consequence,
+                details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
@@ -15236,39 +15336,79 @@ class TradingPipeline:
             ctx,
             HealResult(
                 seat=seat, outcome=HEAL_PAID_RETRY,
-                reason="one paid retry replaced a lost seat",
+                reason=(
+                    "one paid retry refreshed a superseded seat"
+                    if _expired_seat else
+                    "one paid retry replaced a lost seat"
+                ),
                 payload=payload, paid_retry=True, usable=True,
+                details={"was_expired": _expired_seat},
             ),
             alert=False,
         )
         return True
 
     def _heal_lost_research_seats(self, ctx: RunContext) -> None:
-        """After carry-forward: log lost seats. Don't page empty-store gaps
+        """After carry-forward: log unhealed seats. Don't page empty-store gaps
         (the evidence gate already pages those). Attempt a paid retry only
-        when the seat's inputs actually exist on this run."""
+        when the seat's inputs actually exist on this run.
+
+        Selects work by `evidence_gate.HEALABLE_CATEGORIES`, which covers a
+        LOST seat (no answer) and an EXPIRED one (an answer the desk knows is
+        superseded). Those two are deliberately different categories to the
+        evidence gate and stay different: this loop reads the set only to
+        decide whether to go and LOOK again, and changes no verdict, no skip,
+        no degraded count and no freshness label. Testing for CATEGORY_LOST
+        here is what orphaned the expired-news refresh on 2026-09-18.
+        """
         from src import evidence_gate
         from src.seat_heal import HealResult, HEAL_FAILED
         data_status = ctx.data_status or {}
         for seat, status in list(data_status.items()):
-            if evidence_gate.STATUS_CATEGORY.get(status) != evidence_gate.CATEGORY_LOST:
+            category = evidence_gate.STATUS_CATEGORY.get(status)
+            if category not in evidence_gate.HEALABLE_CATEGORIES:
                 continue
             # Empty store: nothing to heal. Gate skip is the owner page.
             if status == "carry_forward_empty":
                 continue
+            was_expired = category == evidence_gate.CATEGORY_EXPIRED
             attempted = self._try_one_paid_research_retry(ctx, seat)
             still = (ctx.data_status or {}).get(seat)
-            if evidence_gate.STATUS_CATEGORY.get(still) == evidence_gate.CATEGORY_LOST:
-                result = HealResult(
-                    seat=seat, outcome=HEAL_FAILED,
-                    reason=f"seat still {still} after mechanical heal",
-                    details={"status": still, "paid_retry_attempted": attempted},
-                )
-                # Page only when we actually paid a retry and it failed.
-                # Kind-expiry / empty-store without inputs is the evidence
-                # gate's skip, not a second owner page.
-                alert = bool(attempted)
-                self._record_heal(ctx, result, alert=alert)
+            if evidence_gate.STATUS_CATEGORY.get(still) not in evidence_gate.HEALABLE_CATEGORIES:
+                continue
+            # A LOST seat is recorded whether or not a retry was possible —
+            # that row is the forensic trail for an absent answer. An EXPIRED
+            # seat is not absent, and most expired seats (insider, earnings)
+            # have no heal wired at all by design (#535 dissolved that
+            # asymmetry rather than repairing it), so recording every one of
+            # them would bury the real rows in noise. Record an expired seat
+            # only when the desk actually tried and failed.
+            if was_expired and not attempted:
+                continue
+            # An expired seat that could not be refreshed is NOT a seat the
+            # desk will refuse to decide on — it still holds the earlier
+            # answer. Saying otherwise in the alert would repeat the
+            # owner-facing lie item 133 fixed, so the consequence sentence is
+            # overridden rather than defaulted.
+            consequence = (
+                "The desk still holds this seat's earlier answer and will "
+                "decide on it, labelled as carried rather than read this "
+                "tick. No trade was withheld for this."
+            ) if was_expired else ""
+            result = HealResult(
+                seat=seat, outcome=HEAL_FAILED,
+                reason=f"seat still {still} after mechanical heal",
+                details={
+                    "status": still,
+                    "paid_retry_attempted": attempted,
+                    "was_expired": was_expired,
+                },
+                owner_consequence=consequence,
+            )
+            # Page only when we actually paid a retry and it failed.
+            # Kind-expiry / empty-store without inputs is the evidence
+            # gate's skip, not a second owner page.
+            self._record_heal(ctx, result, alert=bool(attempted))
 
     def _intraday_held_tech_symbols(self, ctx: RunContext) -> list[str]:
         """Investable holdings that need current-run Technical on this scan.
