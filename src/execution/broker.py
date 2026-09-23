@@ -2851,18 +2851,33 @@ class AlpacaBroker:
         truthful intraday evidence:
 
             {"last_price", "last_trade_at", "prev_close",
-             "session_open", "session_high", "session_low", "session_volume"}
+             "session_bar_at", "minute_close", "minute_bar_at",
+             "session_open", "session_close", "session_high",
+             "session_low", "session_volume"}
 
         `last_trade_at` is the raw provider datetime (or None) for the
         latest trade's own `timestamp` field — used by `broker_reads.py`
         to tell a stale last_price from a live one (docs/WORK.md item 15).
 
-        The `session_*` fields come from Alpaca's TODAY bar, which is an
-        INCOMPLETE, still-forming bar — callers must present it as such and
-        must never append it to a series of completed daily bars. Any field
-        is `None` when unavailable. Never raises — broker/network failure
-        degrades to an empty dict (caller treats that as "no signal this
-        tick", not a crash).
+        The `session_*` fields come from Alpaca's `daily_bar`, which during
+        the session is an INCOMPLETE, still-forming bar — callers must
+        present it as such and must never append it to a series of completed
+        daily bars. **It is not guaranteed to be TODAY's**: for a name that
+        has not printed today, Alpaca returns the previous session's daily
+        bar in that slot. `session_bar_at` is that bar's own opening
+        timestamp so a caller can check the date before calling it "today"
+        (docs/WORK.md item 120). `minute_close` / `minute_bar_at` are the
+        snapshot's 1-minute bar and carry the same caveat.
+
+        NONE of these fields is freshness-checked here. Use
+        `src.data.live_price.resolve_live_price` to turn this payload into a
+        price that is known to come from today — this method deliberately
+        reports what the provider said, and the judgement about what counts
+        as today lives in one place.
+
+        Any field is `None` when unavailable. Never raises — broker/network
+        failure degrades to an empty dict (caller treats that as "no signal
+        this tick", not a crash).
         """
         if not symbols:
             return {}
@@ -2950,11 +2965,30 @@ class AlpacaBroker:
             # a guess. Kept as the raw datetime (or None); broker_reads.py
             # serializes it and derives freshness from it.
             last_trade_at = getattr(trade, "timestamp", None) if trade is not None else None
+            # board item 120: the `session_*` block was returned with no way
+            # to tell WHICH session it belongs to. Alpaca's snapshot carries
+            # the previous session's daily bar in `daily_bar` for a name that
+            # has not printed today, so a caller rendering "CURRENT SESSION
+            # (TODAY)" off these fields could be showing yesterday. `Bar
+            # .timestamp` is a required field on the installed SDK's model
+            # (`alpaca/data/models/bars.py`, verified 2026-09-20) and is the
+            # bar's OPENING timestamp, so its ET date is the session date.
+            session_bar_at = getattr(today_bar, "timestamp", None) if today_bar is not None else None
+            # The 1-minute bar is an aggregation of REAL PRINTS on the same
+            # entitled venue — not a quote. It is the finest-grained today
+            # print the snapshot carries, and it exists for names whose
+            # `latest_trade` is still yesterday's (item 120, 2026-09-17).
+            minute_bar = getattr(snap, "minute_bar", None) if snap is not None else None
+            minute_bar_at = getattr(minute_bar, "timestamp", None) if minute_bar is not None else None
             out[symbol] = {
                 "last_price": _num(trade, "price"),
                 "last_trade_at": last_trade_at,
                 "prev_close": _num(prev_bar, "close"),
+                "session_bar_at": session_bar_at,
+                "minute_close": _num(minute_bar, "close"),
+                "minute_bar_at": minute_bar_at,
                 "session_open": _num(today_bar, "open"),
+                "session_close": _num(today_bar, "close"),
                 "session_high": _num(today_bar, "high"),
                 "session_low": _num(today_bar, "low"),
                 "session_volume": _num(today_bar, "volume"),
