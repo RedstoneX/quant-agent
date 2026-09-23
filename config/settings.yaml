@@ -1272,8 +1272,18 @@ storage:
 # _reconcile_stop_out_fills for the fix. This section is optional; omitting
 # it keeps the documented default (7-day lookback) unchanged.
 reconciliation:
-  stop_out_lookback_days: 7   # how far back to ask the broker for a filled
-                               # SELL the ledger doesn't already know about
+  stop_out_lookback_days: 60  # how far back to ask the broker for a filled
+                               # SELL the ledger doesn't already know about.
+                               # Set to the maximum the schema permits rather
+                               # than a chosen number: the broker query itself
+                               # is deliberately NOT date-bounded (see
+                               # `list_filled_sell_orders`), dedup is by
+                               # broker_order_id so a wider window cannot
+                               # double-record, and a window narrower than the
+                               # gap makes a real stop-out permanently
+                               # unrecoverable — which is what happened to
+                               # EQNR on 2026-09-21 and to ONDS/CCJ on
+                               # 2026-08-28.
 
 # Tap-through link TelegramNotifier appends to session alerts so the
 # operator can jump from a phone notification straight into Mission
