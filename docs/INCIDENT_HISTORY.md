@@ -22,45 +22,6 @@ what would catch it next time.
 
 ---
 
-### 2026-09-18 — a mechanical gate now exists so a trade-governing number can no longer be invented without being written down (item 90, half one)
-
-**In plain words:** every numeric constant on the path from a seat's verdict
-to a trade order now has to be recorded in one place with where it came
-from, or the test suite fails the build. Before this, a number could be
-typed into the code with no source and nobody would ever know.
-
-**What was built.** `src/number_sources.py` walks every module-level
-constant and `*Config` default inside a declared, reviewed set of files
-(including numbers nested in literals or bound to a name) and requires a
-matching entry in `config/number_ledger.yaml`. Six rules are enforced:
-every in-scope site is covered; the ledger's recorded value matches the
-live code literal; it also matches the DEPLOYED value in
-`config/settings.yaml` where a setting routes that way (52 sites do); a
-`sourced` or `instrument` entry must cite a URL or a `path:line`, never
-prose; an `arbitrary` entry must state the open question and what the desk
-pays while it stays unanswered; and a derivation whose base later moves
-fails the build (base-drift). A separate check fails if the count of
-module-level constants in files OUTSIDE the declared scope rises, so the
-scope itself cannot quietly narrow.
-
-**What it found, and its own honest limit.** At filing, 178 sites were in
-scope with 87 distinct numbers marked arbitrary (45 not trade-governing, 25
-derived, 16 sourced, 5 fixed by broker/exchange/statute); the count moved
-to 88 the next day (#529) before the sub-split was re-verified, so that
-breakdown is a snapshot, not a live figure — read `config/number_ledger.yaml`
-directly for the current count. The gate proves a justification was
-WRITTEN, never that it is TRUE: its own flagship entry, the 0.50%
-minimum-risk floor, was false in four separate places and now carries a
-written correction, along with six other corrected entries.
-
-**What is still open.** Reading each arbitrary entry off its actual
-instrument — settling the open question the ledger states for it — is
-unstarted and is board item 90's remaining half. `MAX_ARBITRARY_ENTRIES` is
-enforced as an EQUALITY, not a ceiling, specifically so deleting a row is
-never rewarded.
-
----
-
 ### 2026-09-21 — two board retirements were never written up, backfilled during the WORK.md housekeeping pass (items 146 and 156)
 
 **In plain words:** two items on the backlog board had already been marked
@@ -88,6 +49,20 @@ the whole tick before later issuers were even attempted. Closed by PR #539
 (commit 0f758a95): the drain now runs against its own budget and tracks
 per-issuer progress, so a slow issuer no longer starves the ones queued
 behind it. Retired 2026-09-19.
+
+---
+
+### 2026-09-20 — the live desk's technical ranking still fell back to ticker spelling for one specific kind of trade, after the 2026-09-04 fix (WORK.md item 141, retired)
+
+**In plain words:** when several stocks the desk was considering scored exactly the same and none of them had a measurable reward-to-risk number — which only happens for "breakout" trades, the kind with no overhead price target to measure a reward against — the desk still picked among them by ticker spelling. Every other kind of tie was already fixed two weeks earlier. This was the one case that fix didn't reach, because a later, separate, correct decision (don't measure a reward-to-risk ratio for a breakout at all) removed the only number the earlier fix used to break ties.
+
+**What was actually still broken, and what was not.** Item 141 was filed citing the same measured tie rates (64% of technical reads sharing a composite score; 9 of 12 names tied one real day, 23 of 33 another) as the 2026-09-04 fix to `src/verdicts.py::rank_verdicts`, which already breaks a tied composite score on each candidate's reward:risk ratio before falling back to the ticker symbol. That fix is live and wired into `PortfolioManagerAgent.rank_candidates` today — most of what item 141 described was already closed. The gap it still exposed: the 2026-09-11 change (item 1(d)) correctly stopped scoring a reward:risk ratio for breakout trades at all (a breakout has no overhead level being defended, so any "reward" number for one is invented). But `rank_verdicts`'s tier-neutral placement gives every candidate with no ratio the same value, so a tied tier where every member is a breakout still fell straight through to alphabetical order.
+
+**Fix.** A third-stage tiebreak, reached only after both the composite score and the reward:risk ratio are equal (including all-absent). `TechAnalysisResult.to_verdict()` now attaches `stop_side_level_touches`: the number of prior chart pivots backing the structural levels on the RISK side of the trade only (below entry for a long, above it for a short) — the same touch count `PortfolioConstructor._level_backing_stop` already trusts elsewhere to decide whether a stop earns a tight-stop exemption, and the only side of the chart `reward_risk_floor_applies`'s own doctrine says a breakout is judged on at all. The first version of this fix summed touches from BOTH sides of the chart (overhead resistance included), which a qamc-adversary review caught as scoring supply-in-the-way for a long as if it were support — fixed by filtering to the risk side before shipping. The same review caught that the tiebreak was being weighted by `SEAT_WEIGHT`, a published prior on how reliably a TYPE of analysis forecasts direction — inapplicable to a deterministic pivot count, and latently double-counting if a second seat ever attached the same evidence label; the weighting was removed.
+
+**What this does not close.** The adversary review raised two points accepted as real, unresolved limits, not blockers for a third-tier tiebreak among already-tied, already-eligible candidates: (1) a distance-discounted version of this signal (`Level.strength` in `src/data/levels.py`) already exists and would resolve a non-monotonicity this raw touch-count doesn't handle, but plumbing it onto `TechAnalysisResult` was judged out of scope for a tiebreak this far down the order — a candidate for a future item if the residual tie rate after this fix is ever measured and found to matter; (2) neither this tiebreak nor the 2026-09-04 risk_reward one is rendered into the PM's prompt or any owner-facing surface — a pre-existing gap this change adds one more field to rather than fixes. Neither is a live-capital risk today because both are third- and second-stage tiebreaks among names the desk's own gates already judged equally eligible; the volatility/listing-age tilt raised as a hypothetical was not measured and is not asserted here as real.
+
+**What would catch it next time.** `tests/test_analyst_verdict.py`: a fixture reproducing the exact 9-of-12 measured tie pattern, all breakout, asserting the order is touch-count-driven and not alphabetical; a direct test that overhead-side touches are excluded, on both the long and short side; a test that the tiebreak component is present and unweighted even when the seat weight would change it if misapplied.
 
 ---
 
@@ -420,6 +395,45 @@ fetches `trading.lookback_days`, which has been 1800 calendar days since
 2026-08-27. That claim is wrong by a much larger factor than the bar count was
 and was left untouched — it is a separate defect on a seat that can halt the
 desk, and it is filed as board item 168 rather than folded in here.
+
+---
+
+### 2026-09-18 — a mechanical gate now exists so a trade-governing number can no longer be invented without being written down (item 90, half one)
+
+**In plain words:** every numeric constant on the path from a seat's verdict
+to a trade order now has to be recorded in one place with where it came
+from, or the test suite fails the build. Before this, a number could be
+typed into the code with no source and nobody would ever know.
+
+**What was built.** `src/number_sources.py` walks every module-level
+constant and `*Config` default inside a declared, reviewed set of files
+(including numbers nested in literals or bound to a name) and requires a
+matching entry in `config/number_ledger.yaml`. Six rules are enforced:
+every in-scope site is covered; the ledger's recorded value matches the
+live code literal; it also matches the DEPLOYED value in
+`config/settings.yaml` where a setting routes that way (52 sites do); a
+`sourced` or `instrument` entry must cite a URL or a `path:line`, never
+prose; an `arbitrary` entry must state the open question and what the desk
+pays while it stays unanswered; and a derivation whose base later moves
+fails the build (base-drift). A separate check fails if the count of
+module-level constants in files OUTSIDE the declared scope rises, so the
+scope itself cannot quietly narrow.
+
+**What it found, and its own honest limit.** At filing, 178 sites were in
+scope with 87 distinct numbers marked arbitrary (45 not trade-governing, 25
+derived, 16 sourced, 5 fixed by broker/exchange/statute); the count moved
+to 88 the next day (#529) before the sub-split was re-verified, so that
+breakdown is a snapshot, not a live figure — read `config/number_ledger.yaml`
+directly for the current count. The gate proves a justification was
+WRITTEN, never that it is TRUE: its own flagship entry, the 0.50%
+minimum-risk floor, was false in four separate places and now carries a
+written correction, along with six other corrected entries.
+
+**What is still open.** Reading each arbitrary entry off its actual
+instrument — settling the open question the ledger states for it — is
+unstarted and is board item 90's remaining half. `MAX_ARBITRARY_ENTRIES` is
+enforced as an EQUALITY, not a ceiling, specifically so deleting a row is
+never rewarded.
 
 ---
 
