@@ -7512,50 +7512,76 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
-        # BOOK-level veto, evaluated FIRST and unchanged. A correlation
-        # cluster, a total-exposure breach or a drawdown state is a property
-        # of the whole account, so when the book is what fails, every leg
-        # dying is the correct outcome — and a verdict that sets this AND
-        # names individual symbols still refuses everything.
+        # WHOLE-PLAN veto REMOVED. Owner ruling 2026-09-24 (final): the risk
+        # seat may NEVER cancel or reject the whole batch of new trades. Its
+        # only levers are (a) SHRINK — `scale_all_buys` (all the way to 0.0 to
+        # stop new buying) and per-trade `modifications`; and (b) DROP specific
+        # named NEW entries via `rejected_symbols`. It must never block a
+        # protective exit or touch existing holdings.
+        #
+        # `approved=False` is therefore a NO-OP for batch rejection. It is
+        # recorded in the durable trail so we can see the seat was uneasy, but
+        # it never stops the plan: the run always proceeds to apply the drops +
+        # modifications + scale below, and the survivors flow through the
+        # deterministic hard gate (gross/exposure), which runs before AND after
+        # scaling and is the only thing that can block on a hard limit.
+        #
+        # DELIBERATE: the old "veto the whole plan on an incoherent
+        # reasoning_chain / >5 mods" capability is gone WITH the batch veto —
+        # that is the ruling, not an oversight. The seat records unease and
+        # proceeds; a coherence concern is expressed by dropping/shrinking the
+        # affected names, never by stopping the batch.
         if not verdict.approved:
             logger.info(
-                "Risk manager REJECTED trades: %s",
-                verdict.reasoning,
+                "Risk manager set approved=False; per owner ruling 2026-09-24 "
+                "this no longer rejects the batch — recording and proceeding to "
+                "apply rejected_symbols + modifications + scale_all_buys. "
+                "Reasoning: %s", verdict.reasoning,
             )
-            # Board item 164: a book-level veto refuses every leg for the
-            # book's reason, but where the seat ALSO named this symbol with
-            # its own reason, that reason is what the symbol's record
-            # carries — the book reason rides beside it, not over it.
-            book_veto_symbol_reasons = verdict.rejections_by_symbol()
-            for decision in portfolio_decision.decisions:
-                own = book_veto_symbol_reasons.get(
-                    decision.symbol.strip().upper()
-                )
-                _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "rejected",
-                    own or verdict.reasoning,
-                    gate="risk_manager_book_veto",
-                    book_level_reason=verdict.reasoning,
-                    reason_category=getattr(verdict, "reason_category", None),
-                )
-            return {
-                "status": "rejected", "orders": [],
-                "reason": verdict.reasoning,
-            }
+            _record_pipeline_event(
+                pipeline, ctx, None, "risk", "batch_veto_ignored",
+                verdict.reasoning,
+                gate="risk_manager_batch_veto_disabled",
+                reason_category=getattr(verdict, "reason_category", None),
+            )
 
-        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone.
-        # Before this, `approved` was the only refusal the schema had, so a
-        # single sub-floor R/R took the whole plan with it — run-64290730
-        # (2026-09-01) refused the morning citing XLE alone and killed CHPX,
-        # a passing trade in a different sector, with it.
+        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone —
+        # this is the seat's ONLY way to remove a trade, and it can only remove
+        # a NEW entry. Before Phase 10.1, `approved` was the only refusal the
+        # schema had, so a single sub-floor R/R took the whole plan with it —
+        # run-64290730 (2026-09-01) refused the morning citing XLE alone and
+        # killed CHPX, a passing trade in a different sector, with it.
         rejections = verdict.rejections_by_symbol()
         refused_decisions: list = []
+        protected_exit_symbols: list[str] = []
         if rejections:
             surviving: list = []
             for decision in portfolio_decision.decisions:
                 reason = rejections.get(decision.symbol.strip().upper())
                 if reason is None:
                     surviving.append(decision)
+                    continue
+                # PROTECTIVE-EXIT GUARD (owner ruling 2026-09-24): the seat may
+                # only drop a NEW entry (BUY / SHORT). A SELL or COVER is a
+                # protective exit and a HOLD touches an existing holding —
+                # none of these may EVER be dropped or blocked by the seat,
+                # under any path. Naming one in `rejected_symbols` is recorded
+                # and IGNORED; the decision stays in the plan.
+                if decision.action not in ("BUY", "SHORT"):
+                    surviving.append(decision)
+                    protected_exit_symbols.append(decision.symbol)
+                    logger.warning(
+                        "Risk manager named %s (%s) in rejected_symbols, but a "
+                        "protective exit / holding is never droppable by the "
+                        "seat — keeping it. Reason given: %s",
+                        decision.symbol, decision.action, reason,
+                    )
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "risk",
+                        "exit_refusal_ignored", reason,
+                        gate="risk_manager_exit_protected",
+                        action=decision.action,
+                    )
                     continue
                 refused_decisions.append(decision)
                 logger.info(
@@ -7565,9 +7591,11 @@ class RiskStage:
                 _record_pipeline_event(
                     pipeline, ctx, decision.symbol, "risk", "rejected", reason,
                 )
-            unmatched = sorted(
-                set(rejections) - {d.symbol.strip().upper() for d in refused_decisions}
+            matched = (
+                {d.symbol.strip().upper() for d in refused_decisions}
+                | {s.strip().upper() for s in protected_exit_symbols}
             )
+            unmatched = sorted(set(rejections) - matched)
             if unmatched:
                 logger.warning(
                     "Risk manager refused %s, which is not in the proposed "
@@ -7580,10 +7608,13 @@ class RiskStage:
             # nothing: an empty plan plus a stray symbol name is not a
             # refusal of anything and must not become one.
             if refused_decisions and not surviving:
-                # Every leg refused individually. Same terminal status as a
-                # book veto because the outcome is the same — no orders — but
-                # each symbol carries its OWN reason above, not one shared
-                # sentence about a different symbol.
+                # Every leg refused INDIVIDUALLY. This is the SUM of per-symbol
+                # drops, not a whole-batch veto: it is reachable only when every
+                # decision was a droppable NEW entry (BUY/SHORT) and each was
+                # named on its own merits. A protective exit is guarded into
+                # `surviving` above, so it can never be here — this path cannot
+                # kill a SELL/COVER. There is simply nothing left to place, and
+                # each symbol carries its OWN reason.
                 reasons = "; ".join(
                     f"{sym}: {rejections[sym]}"
                     for sym in sorted(

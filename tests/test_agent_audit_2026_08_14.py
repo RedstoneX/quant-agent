@@ -397,26 +397,27 @@ def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:
 
 
 @pytest.mark.parametrize("anchor", (
-    "**Veto is nuclear.**",
-    "≥ 5 separate `modifications`",
+    # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto. The
+    # old "**Veto is nuclear.**" and "≥ 5 separate `modifications`" anchors were
+    # REMOVED with the veto itself — the seat may only drop named NEW entries
+    # and shrink sizing. These anchors pin the new contract.
+    "You have NO veto. There is no whole-batch reject.",
+    "no `approved: false` lever",
     # "R/R discipline is non-negotiable" was an anchor here until
     # 2026-09-11. It was REMOVED deliberately, by owner decision
     # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
     # setup type was the largest measured cause of proposals that never
     # became trades, and it is meaningless on a trend trade with no
-    # overhead level. What replaces it is anchored below — the veto
-    # framing this test protects is otherwise untouched.
+    # overhead level. What replaces it is anchored below.
     "R/R discipline is by SETUP TYPE, not universal",
     "Err on the side of capital preservation",
 ))
 def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:
-    """INTENTIONALLY RETAINED. The audit flagged the veto framing as
-    near-forbidding disagreement. It is kept: a rejection kills the whole
-    plan and PM learns only a one-word `reason_category`, while
-    `modifications` are surgical and carry a reason per symbol. Loosening
-    the threshold changes trading behaviour and is exactly the kind of
-    change that needs paper-trading evidence, not a prompt edit. The
-    independence work above changes what RM KNOWS, never what it may DO.
+    """Owner ruling 2026-09-24 (final): the whole-batch veto is REMOVED. The
+    seat reduces risk only by dropping named NEW entries (`rejected_symbols`)
+    and shrinking (`scale_all_buys` / `modifications`); `approved=False` is a
+    recorded no-op. It can never block a protective exit or touch a holding.
+    These anchors pin that contract in the prompt.
     """
     assert anchor in (PROMPT_DIR / "risk_manager.md").read_text()
 

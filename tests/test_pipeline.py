@@ -718,10 +718,18 @@ def test_pipeline_risk_rejected(
     ), _mock_agent_result())
     mock_pm_cls.return_value = mock_pm
 
-    # Risk Manager REJECTS
+    # Risk Manager refuses the (only) proposed new entry.
     mock_rm = MagicMock()
+    # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto —
+    # approved=False alone no longer stops anything. The way the seat removes a
+    # trade is by naming it in rejected_symbols. Here SPY is the only proposed
+    # entry, so dropping it leaves nothing to execute (per-symbol drops summing
+    # to empty), and no order is submitted.
     mock_rm.review.return_value = (RiskVerdict(
-        approved=False, modifications=[], reasoning="Too risky",
+        approved=False, modifications=[],
+        rejected_symbols=[{"symbol": "SPY", "reason": "thesis fails on the primary data"}],
+        reason_category="signal_fidelity",
+        reasoning="SPY refused on its own merits",
         reasoning_chain=_risk_rc(),
     ), _mock_agent_result())
     mock_rm_cls.return_value = mock_rm
