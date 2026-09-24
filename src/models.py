@@ -769,6 +769,12 @@ class TechnicalIndicators(BaseModel):
     ma_20: float | None = None
     ma_50: float | None = None
     ma_200: float | None = None
+    #: The 200-session SMA one completed session earlier, so the exit guard can
+    #: read the 200-MA SLOPE (rising vs falling) — not just the level — when it
+    #: classifies a structural break's trend regime (owner mandate 2026-09-24,
+    #: trend-scaled exit). None until there is one extra bar beyond the 200-MA
+    #: warm-up.
+    ma_200_prior: float | None = None
     rsi_14: float | None = None
     macd: float | None = None
     macd_signal: float | None = None
@@ -777,6 +783,17 @@ class TechnicalIndicators(BaseModel):
     bb_middle: float | None = None
     bb_lower: float | None = None
     atr_14: float | None = None
+    #: Wilder's Average Directional Index and its two directional components,
+    #: all on the same 14-session lookback (`src.data.technical.ADX_PERIOD`).
+    #: ADX measures trend STRENGTH only (never direction); +DI/-DI carry the
+    #: direction. Used by `src.risk.exit_guard.check_structural_protection` to
+    #: select a support/resistance break's trend-scaled confirmation regime
+    #: (owner mandate 2026-09-24): a break against the trend or in a weak tape
+    #: exits fast, while a break WITH a strong trend (a likely shakeout) is held
+    #: longer. None until there are enough bars to warm the recursive smoothing.
+    adx_14: float | None = None
+    di_plus_14: float | None = None
+    di_minus_14: float | None = None
     volume_change_pct: float | None = None
 
     @field_validator("symbol")

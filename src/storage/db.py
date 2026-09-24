@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import sqlite3
 import threading
 import uuid
@@ -2964,17 +2965,29 @@ class Database:
 
     def save_holding_protection_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        close: float | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
-        still be broken before treating the break as confirmed."""
+        still be broken before treating the break as confirmed.
+
+        `close` is that session's closing price, persisted so a later read can
+        re-test whether it cleared the break margin IN FORCE under the current
+        trend regime (the margin-consistency guard #4 in
+        `src.risk.exit_guard`), rather than trusting a stale broken flag."""
+        payload: dict = {"raw_broken": bool(raw_broken), "bar_date": str(bar_date)}
+        try:
+            if close is not None:
+                cf = float(close)
+                if math.isfinite(cf):
+                    payload["close"] = cf
+        except (TypeError, ValueError):
+            pass
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.HOLDING_PROTECTION_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
-            evidence_json=json.dumps({
-                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
-            }),
+            evidence_json=json.dumps(payload),
         )
 
     def get_prior_holding_protection_break(
@@ -2997,6 +3010,57 @@ class Database:
             symbols, kind=self.HOLDING_PROTECTION_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
         )
+
+    def get_recent_holding_protection_breaks(
+        self, symbol: str, *, before_bar_date: str,
+        exclude_run_id: str | None = None, limit: int = 30,
+    ) -> list[dict]:
+        """The recent per-session holding-protection break records for one
+        `symbol`, dated STRICTLY BEFORE `before_bar_date`, most-recent first and
+        DEDUPED to one record per `bar_date` (the latest write for that session
+        wins). Each record is `{"bar_date", "raw_broken", "close"}` (close may be
+        absent on a legacy row).
+
+        The exit guard reconstructs the CONSECUTIVE-confirming-close streak from
+        these, so it can enforce adjacency (a gap session resets — #3) and
+        margin-consistency (a prior close counts only if it cleared the margin
+        now in force — #4). Returning the raw records rather than a precomputed
+        count keeps this method free of the trend/margin policy, which lives in
+        `src.risk.exit_guard`."""
+        sym = str(symbol).strip().upper()
+        if not sym:
+            return []
+        sql = (
+            "SELECT evidence_json FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol=?"
+        )
+        params: list = [self.HOLDING_PROTECTION_BREAK_KIND, sym]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        out: list[dict] = []
+        seen_dates: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(dict(row).get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            bar_date = str(payload.get("bar_date") or "")
+            if not bar_date or bar_date >= str(before_bar_date):
+                continue
+            if bar_date in seen_dates:
+                continue
+            seen_dates.add(bar_date)
+            rec = {"bar_date": bar_date, "raw_broken": bool(payload.get("raw_broken"))}
+            if payload.get("close") is not None:
+                rec["close"] = payload.get("close")
+            out.append(rec)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
 
     # --- Take-profit revision record (`src.risk.target_revision`) -------
     #
