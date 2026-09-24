@@ -489,14 +489,16 @@ def _jam_session(con, run_id, day, symbols, hour=10, code="stop_wider_than_instr
 
 
 def test_a_cost_circuit_suspension_is_excluded_by_the_desks_own_record(db, tmp_path):
-    """The 15:15 tick of 2026-09-22 is the case the undecided-outcome rule
-    does NOT catch: it got as far as running its specialists, one of them
-    failed, and that failure reads as a disposition. Only the run's own
-    recorded status says it never reached the gate."""
+    """The 15:15 tick of 2026-09-22, restated with an outcome word that is
+    NOT `specialist|failed` (that one is now dropped at the event level by
+    `NOT_A_REFUSAL_STAGE_OUTCOMES`, tested separately below — it would never
+    reach the disposition check at all). This still has to prove the run's
+    OWN recorded status excludes a run that never reached the gate, for
+    outcome words that are not otherwise classified as harmless."""
     con, path = db
     _report_tables(con)
     _event(con, "r1", TUE_20260922, "AAPL", {
-        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
     }, 11)
     _intra_report(con, "r1", TUE_20260922, "paid_analysis_suspended", 11)
     con.commit()
@@ -517,14 +519,20 @@ def test_a_cost_circuit_suspension_is_excluded_by_the_desks_own_record(db, tmp_p
 
 def test_a_suspended_tick_inside_a_real_jam_neither_joins_it_nor_breaks_it(db, tmp_path):
     """Stepped over, not counted. A jam does not clear because one tick was
-    switched off, and a switched-off tick is not proof of one either."""
+    switched off, and a switched-off tick is not proof of one either.
+
+    Uses `risk|rejected`, not `specialist|failed`, for the suspended tick's
+    event: the latter is now dropped before the disposition check even runs
+    (`NOT_A_REFUSAL_STAGE_OUTCOMES`), which would make this run absent from
+    `sessions` entirely rather than present-but-skipped — a different code
+    path than the one this test means to exercise."""
     con, path = db
     _report_tables(con)
     _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
     _intra_report(con, "r1", WED, "intraday_no_trades")
     # The suspended tick sits BETWEEN two jammed sessions.
     _event(con, "r2", THU, "NVDA", {
-        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
     })
     _intra_report(con, "r2", THU, "paid_analysis_suspended")
     _jam_session(con, "r3", FRI, ["TSLA", "AMD", "INTC"])
@@ -587,8 +595,10 @@ def test_the_alert_says_what_it_did_not_count(db, tmp_path):
     _report_tables(con)
     _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
     _intra_report(con, "r1", WED, "intraday_no_trades")
+    # `risk|rejected`, not `specialist|failed` — see the note on the
+    # suspended-tick test above for why.
     _event(con, "r2", THU, "NVDA", {
-        "stage": "specialist", "outcome": "failed", "reason": "tech_analyst_error",
+        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
     })
     _intra_report(con, "r2", THU, "paid_analysis_suspended")
     _jam_session(con, "r3", FRI, ["TSLA", "AMD"])
@@ -782,7 +792,10 @@ def test_an_entry_that_went_ahead_ends_the_streak(db, stage, outcome):
     ("portfolio_manager", "omitted"),
     ("funding", "no_additional_cash"),
     ("protection", "not_placed"),
-    ("specialist", "failed"),
+    # NOTE: ("specialist", "failed") is deliberately NOT here any more
+    # (2026-09-24) — see NOT_A_REFUSAL_STAGE_OUTCOMES and the
+    # specialist-data-outage tests below. "failed" from every OTHER stage
+    # stays a refusal, which is exactly what this parametrize still proves.
     ("order", "rejected"),
     ("an_outcome_word_invented_next_year", "who_knows"),
 ])
@@ -797,3 +810,83 @@ def test_a_word_that_kills_a_candidate_still_reads_as_a_refusal(db, stage, outco
     con.commit()
     sessions, _ = load_sessions(path)
     assert sessions[0].candidates == frozenset({"AAPL"})
+
+
+# ---------------------------------------------------------------------------
+# specialist|failed is a data outage, not a gate refusal (2026-09-24)
+# ---------------------------------------------------------------------------
+#
+# `_record_pipeline_event(..., "specialist", "failed", ...)` fires at four
+# sites (src/pipeline.py ~16441, ~16448, ~16548; src/pipeline_stages.py
+# ~5673, ~6046): a bar fetch raised, no bars came back, or a batch response
+# left a symbol unresolved after its bounded retry. None of those is a seat
+# forming an opinion — the seat never got far enough to have one. A feed
+# outage across sessions, with each run still finishing as a normal decided
+# `no_trades`/`no_orders` tick, must not read as "the desk refused every
+# idea for the same reason."
+
+def test_a_specialist_data_outage_does_not_alert(db, tmp_path):
+    """Three sessions, changing candidates, every one dying only on
+    `specialist|failed` — and every run's OWN status says it reached a
+    decision (`no_trades`/`no_orders`), unlike the suspended-tick tests
+    above. Without the stage-scoped exclusion this is exactly the shape the
+    detector is built to alarm on."""
+    con, path = db
+    _report_tables(con)
+    for run, day, syms, status in (
+        ("r1", WED, ["AAPL", "MSFT"], "no_trades"),
+        ("r2", THU, ["NVDA"], "no_orders"),
+        ("r3", FRI, ["TSLA", "AMD", "INTC"], "no_trades"),
+    ):
+        for symbol in syms:
+            _event(con, run, day, symbol, {
+                "stage": "specialist", "outcome": "failed",
+                "reason": "market_data_exception", "detail": "feed outage",
+            })
+        _intra_report(con, run, day, status)
+    con.commit()
+
+    sessions, _ = load_sessions(path)
+    assert sessions == [], (
+        "a run whose only candidate events are specialist data failures "
+        "refused nothing and must not appear as evidence for this check"
+    )
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is False
+
+
+def test_a_genuine_gate_refusal_streak_still_fires_beside_specialist_failures(
+    db, tmp_path,
+):
+    """The exclusion must not be able to mask a real jam. Each session has
+    both a specialist data failure (dropped) and candidates genuinely
+    refused by the same gate rule (kept) — the real refusals must still form
+    an unvarying, monomorphic streak and still alert."""
+    con, path = db
+    _report_tables(con)
+    for run, day, gated, broken in (
+        ("r1", WED, ["AAPL", "MSFT"], ["IBM"]),
+        ("r2", THU, ["NVDA"], ["ORCL"]),
+        ("r3", FRI, ["TSLA", "AMD"], ["CSCO"]),
+    ):
+        for symbol in broken:
+            _event(con, run, day, symbol, {
+                "stage": "specialist", "outcome": "failed",
+                "reason": "market_data_exception",
+            })
+        for symbol in gated:
+            _event(con, run, day, symbol, _refusal(symbol))
+        _intra_report(con, run, day, "intraday_no_trades")
+    con.commit()
+
+    status = check_refusal_signature(
+        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+    )
+    assert status.should_alert is True
+    assert status.symbols == ["AAPL", "AMD", "MSFT", "NVDA", "TSLA"], (
+        "the specialist-failure symbols (IBM/ORCL/CSCO) must not be "
+        "reported as refused ideas, but the genuinely gated ones must still "
+        "surface"
+    )
