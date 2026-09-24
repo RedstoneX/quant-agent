@@ -776,6 +776,14 @@ class TelegramNotifier:
             text, link_url, link_label, symbols,
             preserve_structural_markup=preserve_structural_markup,
         )
+        # 2026-09-24: `notifier_sends` used to record the ORIGINAL `text`
+        # here on both branches below, but `_build_payload` may have
+        # truncated it (`MAX_MESSAGE_CHARS`, see `_clip_text` above) before
+        # it went on the wire. The stored record then differed from what
+        # Telegram actually delivered, with no marker that a truncation
+        # happened at all. `payload["text"]` is the exact string sent, so
+        # recording it (rather than `text`) makes the record match delivery.
+        delivered_text = payload["text"]
 
         try:
             response = requests.post(
@@ -784,7 +792,9 @@ class TelegramNotifier:
                 timeout=self.HTTP_TIMEOUT_S,
             )
             response.raise_for_status()
-            self._safe_record_send(kind=kind, status="sent", text=text, run_id=run_id)
+            self._safe_record_send(
+                kind=kind, status="sent", text=delivered_text, run_id=run_id,
+            )
             return True
         except Exception as exc:
             # Catch broadly on purpose — TelegramNotifier is a
@@ -793,7 +803,7 @@ class TelegramNotifier:
             # those should bubble up and crash the trading session.
             logger.warning("Telegram notify failed: %s", self._redact(exc))
             self._safe_record_send(
-                kind=kind, status="failed", text=text,
+                kind=kind, status="failed", text=delivered_text,
                 detail=self._redact(exc), run_id=run_id,
             )
             return False
@@ -2990,6 +3000,26 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
     `src.trader_feed._format_earnings`. This names each filing when the
     run recorded them (`result["filings"]`, 2026-09-18) and falls back to
     the bare counts for a result that predates that field."""
+    # 2026-09-24: a suspended run (`status: paid_analysis_suspended`) has no
+    # `filings` -- the LLM reader never ran -- but it may still carry the
+    # `filings_waiting` backlog computed before the circuit tripped. Without
+    # this branch the code below falls through to "analyzed:0 confirmed:0
+    # failed:0", which reads as "nothing happened" even when N filings are
+    # queued and waiting on the circuit to close.
+    if result.get("paid_analysis_suspended"):
+        waiting = [f for f in (result.get("filings_waiting") or []) if isinstance(f, dict)]
+        if waiting:
+            lines.append(
+                f"suspended: paid analysis is off, {len(waiting)} filing(s) waiting"
+            )
+            for row in waiting:
+                lines.append(
+                    f"  {row.get('symbol', '?')} {row.get('form_type', '')} filed "
+                    f"{row.get('filing_date', 'date not recorded')}: waiting"
+                )
+        else:
+            lines.append("suspended: paid analysis is off, no filings waiting")
+        return
     filings = [f for f in (result.get("filings") or []) if isinstance(f, dict)]
     if filings:
         for row in filings:

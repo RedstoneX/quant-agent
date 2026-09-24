@@ -1236,6 +1236,46 @@ def test_format_earnings_preprocess_fetch_error_is_silent():
     assert msg is None
 
 
+def test_format_earnings_preprocess_suspended_shows_backlog_not_nothing():
+    """2026-09-24: a suspended run used to render 'analyzed:0 confirmed:0
+    failed:0' — indistinguishable from a day with no filings at all — even
+    when N filings were queued and waiting on the cost circuit. The
+    suspended payload now carries `filings_waiting`, and the message must
+    say so rather than the misleading zero counts."""
+    result = {
+        "status": "paid_analysis_suspended",
+        "run_id": "run-ep-suspended",
+        "paid_analysis_suspended": True,
+        "error": "mandatory cost circuit is open",
+        "orders": [],
+        "filings_waiting": [
+            {"symbol": "NVDA", "form_type": "10-Q",
+             "filing_date": "2026-09-24", "outcome": "waiting"},
+        ],
+        "filings_waiting_count": 1,
+    }
+    msg = format_session_result("earnings_preprocess", result, 4.0)
+    assert msg is not None
+    assert "analyzed: 0" not in msg
+    assert "1 filing(s) waiting" in msg
+    assert "NVDA" in msg
+
+
+def test_format_earnings_preprocess_suspended_with_no_backlog_says_so():
+    result = {
+        "status": "paid_analysis_suspended",
+        "run_id": "run-ep-suspended-empty",
+        "paid_analysis_suspended": True,
+        "error": "mandatory cost circuit is open",
+        "orders": [],
+        "filings_waiting": [],
+        "filings_waiting_count": 0,
+    }
+    msg = format_session_result("earnings_preprocess", result, 4.0)
+    assert msg is not None
+    assert "no filings waiting" in msg
+
+
 def test_format_intra_check_ok_is_silent():
     """intra_check fires every 30 min. The 14 silent OK ticks per day
     must NOT generate notifications."""
@@ -2361,6 +2401,37 @@ def test_recorded_output_never_contains_token_or_chat_id(tmp_path, monkeypatch):
     assert token not in dump
     assert chat_id not in dump
     assert "<redacted>" in dump
+
+
+def test_truncated_send_records_the_delivered_text_not_the_original(tmp_path, monkeypatch):
+    """2026-09-24: `send()` truncates oversized text inside `_build_payload`
+    before it goes on the wire, but used to record the ORIGINAL `text` in
+    `notifier_sends` regardless — so the durable record differed from what
+    Telegram actually delivered, with no marker a truncation happened at
+    all. The recorded row must now match what was actually sent."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    oversized = "x" * (n.MAX_MESSAGE_CHARS + 500)
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send(oversized, kind="generic") is True
+
+    delivered = mock_post.call_args.kwargs["json"]["text"]
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    # The record must match what actually went on the wire...
+    assert rows[0]["text"] == delivered
+    # ...which is shorter than (not equal to) the original oversized text.
+    assert len(rows[0]["text"]) < len(oversized)
+    assert rows[0]["text"] != oversized
+    assert "[...truncated]" in rows[0]["text"]
 
 
 def test_recording_failure_does_not_prevent_the_send(tmp_path, monkeypatch):

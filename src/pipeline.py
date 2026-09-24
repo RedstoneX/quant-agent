@@ -12254,14 +12254,29 @@ class TradingPipeline:
 
     @staticmethod
     def _paid_suspended_payload(
-        run_id: str, *, orders: list[dict] | None = None, error: BaseException | None = None,
+        run_id: str,
+        *,
+        orders: list[dict] | None = None,
+        error: BaseException | None = None,
+        filings_waiting: list[dict] | None = None,
     ) -> dict:
+        # `filings_waiting` (2026-09-24): when the cost circuit trips after
+        # `run_earnings_preprocess` has already computed which filings were
+        # queued for the LLM reader, that backlog was silently dropped here
+        # -- the suspended payload carried no earnings keys at all, so
+        # `_append_earnings_body` rendered "analyzed:0 confirmed:0
+        # failed:0" for a run that actually found N new filings. Passing it
+        # through lets the owner-facing message say "suspended, N filing(s)
+        # waiting" instead of implying nothing happened.
+        waiting = list(filings_waiting or [])
         return {
             "status": "paid_analysis_suspended",
             "run_id": run_id,
             "orders": list(orders or []),
             "error": str(error or "mandatory cost circuit is open"),
             "paid_analysis_suspended": True,
+            "filings_waiting": waiting,
+            "filings_waiting_count": len(waiting),
             "preserved": [
                 "broker_resident_protection",
                 "order_fill_reconciliation",
@@ -14240,8 +14255,13 @@ class TradingPipeline:
             results = self.earnings_analyst.analyze_reports(new_reports)
         except PaidAnalysisSuspended as exc:
             # No filing failure is recorded: the filing remains new and will
-            # be eligible after an operator resets the circuit.
-            payload = self._paid_suspended_payload(run_id, error=exc)
+            # be eligible after an operator resets the circuit. Attach the
+            # already-computed `filings_waiting` backlog so the notifier
+            # renders "suspended, N filing(s) waiting" instead of the bare
+            # counts, which read as "nothing happened" for a real backlog.
+            payload = self._paid_suspended_payload(
+                run_id, error=exc, filings_waiting=filings_waiting,
+            )
             payload["smart_money_refresh"] = smart_money_refresh
             return payload
         except Exception as e:
