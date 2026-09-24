@@ -791,9 +791,7 @@ class TestSLB:
         The derivation itself is what this class exists for and is unchanged
         — the target still comes from the computed shelf, not the model's
         guess, and the divergence is still measured."""
-        constructor = PortfolioConstructor(ConstructorConfig(
-            min_reward_risk_after_widening=self.FLOOR,
-        ))
+        constructor = PortfolioConstructor(ConstructorConfig())
         # Structural stop deliberately inside the noise band, so widening
         # fires and the reward:risk gate is reached.
         #

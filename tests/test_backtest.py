@@ -68,7 +68,7 @@ def _risk_config(**overrides) -> SimpleNamespace:
         # Tracks the production default (2.5 since 2026-09-10, 1.5 before
         # that from 2026-09-04); a backtest fixture pinned to a stale floor
         # would silently backtest a rule the desk no longer runs.
-        min_stop_atr_multiple=2.5, min_reward_risk_after_widening=1.5,
+        min_stop_atr_multiple=2.5,
     )
     fields.update(overrides)
     # Spec §9.4's graduated agreement ceiling was retired 2026-09-14, so

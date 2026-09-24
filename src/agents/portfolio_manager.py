@@ -54,12 +54,11 @@ SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
 # this exact string.
 CONFLICT_UNADJUDICATED_STATUS = "pm_conflict_unadjudicated"
 
-# 2026-09-01 (measured 2026-09-02) — greppable status keys for the sub-floor
-# catalyst gate, same naming convention as the two above. See
-# `_apply_subfloor_catalyst_rule` for what each one means. Logs and tests key
-# on these exact strings.
+# 2026-09-01 (measured 2026-09-02) — greppable status key for the sub-floor
+# catalyst gate, same naming convention as the one above. See
+# `_apply_subfloor_catalyst_rule` for what it means. Logs and tests key on
+# this exact string.
 SUBFLOOR_CATALYST_UNVERIFIED_STATUS = "pm_subfloor_catalyst_unverified"
-SUBFLOOR_SIZE_CAPPED_STATUS = "pm_subfloor_size_capped"
 
 #: One rendered `active_state_changes` row, as
 #: `TradingPipeline._build_active_state_changes` emits it:

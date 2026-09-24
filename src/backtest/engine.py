@@ -454,7 +454,6 @@ def run_backtest(
         max_cluster_risk_share_pct=config.risk.max_cluster_risk_share_pct,
         max_position_pct=config.risk.max_position_pct,
         min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
-        min_reward_risk_after_widening=config.risk.min_reward_risk_after_widening,
         # Spec §12.1 — a stop at a COMPUTED level is honoured whatever the
         # band says, down to a deterministic 1x ATR floor. Wired here so a
         # change to `config.risk.*` is the same experiment in the backtest

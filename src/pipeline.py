@@ -727,9 +727,6 @@ def build_constructor_config(config, risk_engine_config):
                 else None
             ),
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
-            min_reward_risk_after_widening=_risk_setting(
-                "min_reward_risk_after_widening", 1.5,
-            ),
             # Spec §12.1 — a stop sitting at a level the system COMPUTED is
             # honoured whatever the band says, down to a deterministic 1x ATR
             # floor. Same "wire from the ratified setting, not the

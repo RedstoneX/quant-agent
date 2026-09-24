@@ -680,8 +680,9 @@ risk:
   # data, and for RANGE setups — this desk's majority setup — 0 of 222 real
   # signals clear at any horizon this desk has ever stated. Not tight;
   # categorically closed. The arithmetic says why: a 3.0 ATR stop needs a 4.5
-  # ATR target to clear min_reward_risk_after_widening (1.5) below, and
-  # published doctrine puts 2-3x ATR on a TRAILING stop that moves up as a
+  # ATR target to clear a 1.5 reward:risk floor (since removed as dead code,
+  # board item 81 — it never refused or shrank a trade), and published
+  # doctrine puts 2-3x ATR on a TRAILING stop that moves up as a
   # trade works — never on a fixed entry stop combined with a reward:risk
   # floor. That specific combination is self-defeating and does not appear in
   # the literature.
@@ -710,26 +711,6 @@ risk:
   # a range this desk's own stated holds can plausibly clear, it does not
   # guarantee it. Re-measure once honest post-fix trade history exists.
   min_stop_atr_multiple: 2.5
-  # A widened stop lowers reward:risk because the target does not move. Under
-  # this, the setup only ever qualified on a stop too tight to survive.
-  #
-  # The name is historical. Since 2026-09-02 (spec 12.1b) this is checked on
-  # EVERY entry against the stop that will actually ship, not only ones the
-  # constructor widened. It previously sat behind two early returns, so a stop
-  # that was already wide enough was never checked at all — 14 of 49 orders in
-  # the pre-reset production database shipped under this floor, and one filled
-  # at 0.81. The number did not change; where it is applied did.
-  #
-  # **2026-09-17 — THIS KEY IS INERT.** Owner: residual invented R/R is a
-  # defect. It refuses nothing and caps nothing:
-  #   * a BREAKOUT / trend setup is not measured against reward:risk at all;
-  #   * a RANGE setup's real ratio is still computed and still feeds ranking;
-  #   * a computed ratio, however thin, is neither refused nor size-capped;
-  #   * only an UNMEASURABLE range payoff (cannot compute the ratio at all)
-  #     is refused — honesty about unknown geometry, not this number.
-  # The 1.5 default is kept so a silent rename cannot drop a deployed key.
-  # Do not re-arm it as a gate. Do not invent a replacement floor.
-  min_reward_risk_after_widening: 1.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level
   # sat closer than the band. The stop then pointed at nothing real, and the
@@ -823,9 +804,9 @@ risk:
   # by arithmetic, whatever it was worth. Measured: 0 of 222 real signals.
   #
   # Raising this is the lever if the desk decides too much is being refused.
-  # Lowering min_reward_risk_after_widening is NOT — and as of 2026-09-11 it
-  # would do nothing anyway: that key no longer refuses anything (see its own
-  # note above).
+  # The old `min_reward_risk_after_widening` reward:risk floor is NOT — it
+  # never refused anything since 2026-09-11 and was removed as dead code
+  # (board item 81).
   #
   # 2026-09-11, funnel item 6: this projection now also covers the case where
   # the chart yielded levels but NONE of them sit in the trade's direction. It
