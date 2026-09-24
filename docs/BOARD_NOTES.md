@@ -620,10 +620,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** `quant-agent-coverage-sweep.timer` is installed on the host (`OnCalendar=*:0/30`), but the sweep writes nothing identifiable into `quant_agent.log` and `~/quant-agent/logs/` is empty, so it cannot be confirmed to have ever placed a stop. This matters twice over: it is the process that holds `should_alert_repair_failure` (`src/coverage_watchdog.py:219`), the owner-facing alarm for a failed stop repair; and it is the strongest remaining trigger for item 127's collision. Same class as the fill notification path that five changes optimised before anyone checked it had ever worked once — prove it runs before improving it.
 
-## item 132
-
-**Moved from WORK.md (2026-09-24) —** PR #476 sat red for hours with a complete, genuine adversary record in its description. The gate also requires each `Response-N: CHANGED <path>` to cite a path THIS diff touches, so a record citing the PR where the fix really landed fails the check. Both behaviours are defensible as written; what is missing is that an author meets neither of them anywhere until CI is red.
-
 ## item 134
 
 **Moved from WORK.md (2026-09-24) —** The fault is the briefing: it asks for judgement and is executed as arithmetic. This is the standing no-arbitrary-numbers principle applied to a model's output rather than to a constant.

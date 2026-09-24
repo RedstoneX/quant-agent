@@ -150,9 +150,20 @@ def base_ref(repo: Path | None = None) -> str | None:
     the same reason: in CI both events check out a commit whose FIRST PARENT
     is main as it stands, so `HEAD^1` is "main before this change" for a
     pull-request run and for a push of the merge alike, measured against main
-    at run time rather than a stale fork point. Actions checks out at depth
-    1, so the parent is fetched on demand rather than requiring a workflow
-    change. A local run measures against the merge base with `origin/main`.
+    at run time rather than a stale fork point.
+
+    Item 132 (2026-09-18): the `tests` workflow's checkout used to default to
+    depth 1, which left not just `HEAD^1` unresolvable but the earlier
+    commits of a multi-commit PR branch unreadable even once the base was
+    found — a trailer written two commits back on the branch never showed up
+    in `git log base..HEAD`, and the failure said nothing about why. The
+    workflow now passes `fetch-depth: 0` (`.github/workflows/test.yml`), so
+    the FIRST attempt below is a real `merge-base` against `origin/main`, the
+    same computation a local run does. The on-demand deepen-to-2 fetch below
+    is kept only as a fallback for a checkout that for some other reason
+    still ran shallow (a manual `workflow_dispatch`, a third-party fork of
+    this workflow, a local shallow clone) — on a full-history checkout it
+    never fires because `origin/main` is already reachable.
 
     The on-demand fetch fetches the exact checked-out SHA into an explicit
     destination ref, not a bare `--deepen=1`: a pull_request run's HEAD lives
@@ -160,13 +171,20 @@ def base_ref(repo: Path | None = None) -> str | None:
     refspec (`refs/heads/*`), so a refspec-less deepen fetches nothing for it
     and silently leaves `HEAD^1` unresolvable on every such run — see the
     dated evidence in `tests/test_status_board.py::_work_md_base_ref`, which
-    hit exactly this and shares the fix.
+    hit exactly this and shares the fix. Even that fallback only resolves the
+    base commit; it does NOT recover a multi-commit branch's earlier commit
+    messages, which is why `fetch-depth: 0` in the workflow is the real fix
+    and this is a fallback for base resolution only, not a substitute for it.
 
     Duplicated rather than shared because that helper is inside a module
     `pytest` collects, and importing a test module from a script to reuse one
     twelve-line function is a worse coupling than the copy.
     """
     if os.environ.get("GITHUB_ACTIONS"):
+        _git("fetch", "-q", "origin", "main", repo=repo)
+        mb = _git("merge-base", "HEAD", "origin/main", repo=repo)
+        if mb.returncode == 0 and mb.stdout.strip():
+            return mb.stdout.strip()
         if _git("rev-parse", "--verify", "-q", "HEAD^1", repo=repo).returncode != 0:
             head = _git("rev-parse", "HEAD", repo=repo)
             if head.returncode == 0:
@@ -178,6 +196,47 @@ def base_ref(repo: Path | None = None) -> str | None:
     _git("fetch", "-q", "origin", "main", repo=repo)
     r = _git("merge-base", "HEAD", "origin/main", repo=repo)
     return r.stdout.strip() or None
+
+
+def is_shallow(repo: Path | None = None) -> bool:
+    """Whether this checkout's history is truncated.
+
+    Read by `read_scope_note` so a false-empty adversary/trailer record can
+    be told apart from a genuinely absent one — see item 132.
+    """
+    r = _git("rev-parse", "--is-shallow-repository", repo=repo)
+    return r.stdout.strip() == "true"
+
+
+def read_scope_note(change: "Change | None", repo: Path | None = None) -> str:
+    """One line naming exactly which commits a failing check just read.
+
+    Item 132: every check below reads `commit_messages`, which is `git log
+    base..HEAD` — commit messages ONLY. The pull request's own description
+    box is never read by anything in this file. Before this note existed,
+    a shallow or badly-based checkout produced an empty or wrong commit
+    range and the resulting failure gave no way to tell "you forgot the
+    trailer" from "the gate could not see the commit that has it" — costing
+    real hours (see docs/WORK.md item 132). This is printed whenever there
+    is at least one problem to report, so an author can tell which case
+    they are in without opening this script.
+    """
+    if change is None:
+        return ("no base commit could be resolved — every check below is "
+                "silent, not passing; nothing was read")
+    head = _git("rev-parse", "HEAD", repo=repo)
+    head_sha = head.stdout.strip()[:12] if head.returncode == 0 else "HEAD"
+    base_sha = change.base[:12] if change.base else change.base
+    note = (f"read commit messages only, range {base_sha}..{head_sha} "
+            f"(`git log {base_sha}..{head_sha}`) — the pull request "
+            f"DESCRIPTION box is never read by this gate, only commit "
+            f"messages count")
+    if is_shallow(repo):
+        note += ("; this checkout is SHALLOW, so an earlier commit on a "
+                 "multi-commit branch may be missing from that range even "
+                 "though the base above resolved — see item 132 and make "
+                 "sure the workflow's checkout step uses `fetch-depth: 0`")
+    return note
 
 
 def file_at(ref: str, path: str, repo: Path | None = None) -> str | None:
@@ -1034,9 +1093,13 @@ def main(argv: list[str] | None = None) -> int:
 
     change = Change.from_git()
     results = run_all(change)
+    failing = any(results.values())
     if args.json:
-        print(json.dumps({"base": change.base if change else None,
-                          "problems": results}, indent=2))
+        payload = {"base": change.base if change else None,
+                   "problems": results}
+        if failing:
+            payload["read_scope"] = read_scope_note(change)
+        print(json.dumps(payload, indent=2))
     else:
         if change is None:
             print("no base commit to measure against; every check is silent")
@@ -1044,7 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}: {'OK' if not problems else f'{len(problems)} problem(s)'}")
             for problem in problems:
                 print(f"  - {problem}")
-    return 1 if any(results.values()) else 0
+        if failing:
+            print(f"\n{read_scope_note(change)}")
+    return 1 if failing else 0
 
 
 if __name__ == "__main__":

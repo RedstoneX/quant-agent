@@ -51,8 +51,17 @@ jobs:
         shard: [0, 1]
 
     steps:
+      # fetch-depth: 0 (full history) so scripts/definition_of_done.py can
+      # resolve the true merge-base against origin/main and read every
+      # commit message on the change, not just the tip and its immediate
+      # parent. Item 132: a depth-1 checkout of a PR's merge commit left
+      # earlier branch commits' trailers unreadable even after the gate's
+      # own on-demand deepen-to-2 fix, because that only resolves HEAD^1,
+      # not the full ancestry of a multi-commit branch.
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         id: setup-python
