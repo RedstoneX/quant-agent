@@ -47,6 +47,8 @@ describe("MarginInterestStrip", () => {
           annual_usd: 0,
           label: null,
           broker_check_note: null,
+          days_charged: 1,
+          period_usd: 0,
           error: null,
         })}
       />,
@@ -71,6 +73,8 @@ describe("MarginInterestStrip", () => {
           annual_usd: 358,
           label: ESTIMATE_LABEL,
           broker_check_note: "no INT activity on the account",
+          days_charged: 1,
+          period_usd: 0.99,
           error: null,
         })}
       />,
@@ -90,6 +94,35 @@ describe("MarginInterestStrip", () => {
     expect(screen.getByText(/Broker check: no INT activity/)).toBeTruthy();
   });
 
+  it("shows the 3-day weekend carry total on a Friday, not just the flat per-day figure", () => {
+    // The defect this pins: /account used to return `days_charged`/
+    // `period_usd` unset (defaulting to a flat 1-day figure) even on a
+    // Friday, while the Telegram alert already named the same debit's
+    // real 3-day (Fri+Sat+Sun) weekend carry. Same wording as
+    // `src.margin_interest._closure_name`/`format_alert_line`.
+    render(
+      <MarginInterestStrip
+        account={account({
+          debit_balance: 5729,
+          rate_pct: 6.25,
+          daily_usd: 0.99,
+          annual_usd: 358,
+          label: ESTIMATE_LABEL,
+          broker_check_note: null,
+          days_charged: 3,
+          period_usd: 2.97,
+          error: null,
+        })}
+      />,
+    );
+    // The flat per-day figure is still shown...
+    expect(screen.getByText("$0.99")).toBeTruthy();
+    // ...but so is the real 3-day weekend total, so the per-day figure
+    // cannot be misread as tonight's whole bill.
+    expect(screen.getByText("3 days ≈ $2.97")).toBeTruthy();
+    expect(screen.getByText("Over the weekend")).toBeTruthy();
+  });
+
   it("says a fault is a fault and never renders it as a zero", () => {
     // "not available" and "$0.00" are different claims about the world.
     // Printing the reassuring one over a broken read is the exact failure
@@ -103,6 +136,8 @@ describe("MarginInterestStrip", () => {
           annual_usd: null,
           label: null,
           broker_check_note: null,
+          days_charged: null,
+          period_usd: null,
           error: "no borrowing rate is configured",
         })}
       />,

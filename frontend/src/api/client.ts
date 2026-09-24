@@ -146,6 +146,14 @@ export interface MarginInterestEstimate {
   /** Plain-language result of checking the estimate against the broker's
    * own INT activity records. Null until a debit has been carried. */
   broker_check_note: string | null;
+  /** Calendar days tonight's carry spans before the next trading day — 1 on
+   * a normal weeknight, 3 over a weekend (Friday), 4 before a Monday
+   * holiday. Same figure the Telegram alert names. Null only in the fault
+   * case, alongside the other numeric fields. */
+  days_charged: number | null;
+  /** `daily_usd * days_charged` — the real total for tonight's carry, not
+   * just the per-day rate. */
+  period_usd: number | null;
   error: string | null;
 }
 

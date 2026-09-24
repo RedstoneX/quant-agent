@@ -81,6 +81,8 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
             annual_usd: 0,
             label: null,
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: null,
           },
         })}
@@ -103,6 +105,8 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
             annual_usd: 358,
             label: "ESTIMATE — unconfirmed",
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: null,
           },
         })}
@@ -132,6 +136,8 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             annual_usd: 358,
             label: "ESTIMATE — unconfirmed",
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: null,
           },
         })}
@@ -160,6 +166,8 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             annual_usd: 358,
             label: "ESTIMATE — unconfirmed",
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: null,
           },
         })}
@@ -185,6 +193,8 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             annual_usd: 0,
             label: null,
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: null,
           },
         })}
@@ -209,6 +219,8 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             annual_usd: null,
             label: null,
             broker_check_note: null,
+            days_charged: null,
+            period_usd: null,
             error: "no borrowing rate is configured",
           },
         })}

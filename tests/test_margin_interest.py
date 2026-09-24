@@ -358,7 +358,7 @@ def test_read_margin_interest_no_debit_balance_is_an_explicit_zero(monkeypatch):
     assert out == {
         "debit_balance": 0.0, "rate_pct": 6.25, "daily_usd": 0.0,
         "annual_usd": 0.0, "label": None, "broker_check_note": None,
-        "error": None,
+        "days_charged": 1, "period_usd": 0.0, "error": None,
     }
 
 
@@ -445,6 +445,38 @@ def test_read_margin_interest_int_activity_failure_does_not_hide_the_estimate(mo
     assert out["error"] is None
     assert out["daily_usd"] == pytest.approx(1.71, abs=0.01)
     assert out["broker_check_note"] is None
+
+
+def test_read_margin_interest_friday_reflects_the_three_day_weekend_carry(monkeypatch):
+    """THE DEFECT THIS PINS: the /account panel (`GET /account` ->
+    `routes_live._compute_margin_interest` -> this function) used to call
+    `build_estimate(debit_balance, rate_pct)` with NO `days_charged`,
+    silently defaulting to 1 every day — a flat per-day figure even on a
+    Friday, while the Telegram alert (`src.notifier._margin_interest_lines`)
+    already named the same debit's real 3-day (Fri+Sat+Sun) weekend carry
+    via `days_charged_until_next_trading_day`. Same calendar helper, same
+    stubbed `is_trading_day`, proving the dashboard no longer disagrees with
+    the alert."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: SimpleNamespace(
+            is_trading_day=_weekday_calendar(),
+            get_margin_interest_activities=lambda: [],
+        ),
+    )
+    monkeypatch.setattr("src.util.time.et_today", lambda: _date(2026, 9, 25))  # Friday
+
+    out = broker_reads.read_margin_interest(-5_000.0)
+
+    assert out["error"] is None
+    assert out["daily_usd"] == pytest.approx(0.87, abs=0.01)
+    assert out["days_charged"] == 3
+    assert out["period_usd"] == pytest.approx(2.60, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
