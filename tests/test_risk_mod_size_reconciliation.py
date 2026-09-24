@@ -242,6 +242,121 @@ def test_reconcile_helper_preserves_risk_fraction_exactly():
     assert math.isclose(reconciled, 4.0, abs_tol=0.01)
 
 
+def test_short_through_real_constructor_reconciles_within_budget():
+    """Drive a SHORT through the REAL constructor so `short_gap_risk_multiple`
+    is actually baked into the shipped `allocation_pct`, then widen its stop via
+    the risk seat. The reconciliation must keep realized-at-stop dollar risk
+    within both the pre-edit budget and the 5% ceiling — pinning the "the
+    haircut cancels in the ratio" claim, so a future change that makes the
+    haircut stop-distance-dependent breaks THIS test rather than silently
+    breaking the budget math."""
+    from src.models import TargetPosition, TechAnalysisResult, TechReasoningChain
+    from src.portfolio_constructor import PortfolioConstructor
+
+    equity = 100_000.0
+    constructor = PortfolioConstructor()
+    budget_pct = constructor.cfg.risk_budget_pct   # 5.0
+    assert constructor.cfg.short_gap_risk_multiple > 1.0  # haircut is real
+
+    rc = TechReasoningChain(trend="x", momentum="x", volatility="x",
+                            volume="x", support_resistance="x")
+    analysis = TechAnalysisResult(
+        symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
+        reference_target=220.0, reasoning="test",
+        support_levels=[220.0], resistance_levels=[262.5],
+        computed_levels=[220.0, 262.5], atr_14=12.5 / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
+        reasoning_chain=rc, thesis_invalid_if="closes below support",
+    )
+    decisions = constructor.construct_orders(
+        targets=[TargetPosition(symbol="TSLA", direction="short",
+                                risk_allocation_pct=2.0, conviction="high",
+                                thesis="overvalued")],
+        positions=[], analyses=[analysis], total_value=equity,
+        price_map={"TSLA": 250.0},
+    )
+    short = next(d for d in decisions if d.action == "SHORT")
+    assert short.stop_loss > short.entry_price   # short geometry
+    before_dollar_risk = _risk_fraction(short) * equity
+    # Sanity: the constructor already sized it within the 5% budget.
+    assert before_dollar_risk <= equity * budget_pct / 100 + 1e-6
+
+    # Risk seat widens the stop well beyond its original distance.
+    new_stop = short.entry_price + (short.stop_loss - short.entry_price) * 2.5
+    pipeline = _pipeline()
+    updated, rejected = pipeline._apply_risk_modifications(
+        [short],
+        [RiskModification(symbol="TSLA", field="stop_loss",
+                          original_value=short.stop_loss, new_value=new_stop,
+                          reason="wider room")],
+    )
+    assert rejected == []
+    reconciled = updated[0]
+    assert reconciled.stop_loss == new_stop
+    assert reconciled.allocation_pct < short.allocation_pct
+    after_dollar_risk = _risk_fraction(reconciled) * equity
+    # The two things the reconciliation guarantees, with the haircut live:
+    assert after_dollar_risk <= before_dollar_risk + 1e-6   # never enlarged
+    assert after_dollar_risk <= equity * budget_pct / 100 + 1e-6  # within 5%
+
+
+def test_risk_event_attributes_the_reconciliation_allocation_drop():
+    """Owner-facing transparency: when the reconciliation drops allocation_pct
+    after a seat stop edit, the per-symbol `risk` event must attribute the drop
+    with its own reason, not leave it unexplained or bucketed under the stop
+    edit."""
+    from types import SimpleNamespace
+    from src.pipeline_stages import _risk_edit_snapshot, _risk_event_for
+
+    pre = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=490, take_profit=530, reasoning="t",
+    )
+    snapshot = _risk_edit_snapshot([pre])
+    # What the leg looks like AFTER the stop edit + reconciliation.
+    post = pre.model_copy(update={"stop_loss": 480, "allocation_pct": 5.0})
+    verdict = SimpleNamespace(
+        modifications=[RiskModification(
+            symbol="SPY", field="stop_loss",
+            original_value=490, new_value=480, reason="give it room",
+        )],
+        reason_category="clean",
+    )
+    outcome, reason, details = _risk_event_for(post, snapshot, verdict, 1.0)
+
+    assert outcome == "modified"
+    assert "stop_loss" in details["changes"]
+    assert "allocation_pct" in details["changes"]
+    assert "give it room" in reason                    # seat's own stop reason
+    assert "granted budget" in reason                  # reconciliation attributed
+
+
+def test_risk_event_does_not_invent_reconciliation_reason_on_direct_alloc_edit():
+    """If the seat itself edited allocation_pct (not the reconciliation), the
+    reconciliation reason must NOT be appended — that would misattribute a
+    direct seat cut."""
+    from types import SimpleNamespace
+    from src.pipeline_stages import _risk_edit_snapshot, _risk_event_for
+
+    pre = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=480, take_profit=530, reasoning="t",
+    )
+    snapshot = _risk_edit_snapshot([pre])
+    post = pre.model_copy(update={"allocation_pct": 6.0})
+    verdict = SimpleNamespace(
+        modifications=[RiskModification(
+            symbol="SPY", field="allocation_pct",
+            original_value=10, new_value=6, reason="oversized",
+        )],
+        reason_category="oversized",
+    )
+    outcome, reason, details = _risk_event_for(post, snapshot, verdict, 1.0)
+    assert outcome == "modified"
+    assert "oversized" in reason
+    assert "granted budget" not in reason
+
+
 def test_reconcile_helper_degenerate_returns_none():
     # A zero pre-edit risk-per-share cannot be validly constructed (the schema
     # forbids stop == entry), so reach the degenerate state via model_copy,

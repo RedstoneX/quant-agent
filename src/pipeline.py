@@ -2742,6 +2742,27 @@ class TradingPipeline:
         the position. None when either ticket is geometrically degenerate
         (non-finite or non-positive entry, or a zero pre/post risk-per-share),
         in which case the caller leaves the size untouched.
+
+        Precision of the preserved budget:
+
+        - For a STOP edit the reconciliation is EXACT: the entry is unchanged,
+          so `allocation_pct` and stop distance are the only moving parts and
+          the identity holds against whatever entry execution ultimately sizes
+          off.
+        - For an ENTRY edit it is exact ONLY when execution's sizing
+          denominator equals the edited entry. Execution actually sizes off
+          `sizing_price = max(today_print, entry)` for a long / `min(...)` for
+          a short (`_place_buy_with_sizing` in `pipeline_stages.py`), so under
+          market drift the denominator differs and the preserved budget is
+          APPROXIMATE. It is bounded on the high side by the execution-time 5%
+          `_qty_by_risk_budget` ceiling and this reconciliation only ever
+          REDUCES the allocation, so the approximation can under-risk but never
+          over-risk.
+
+        Scope: this guarantee covers the RM EDIT only. An execution-time ATR
+        stop-widen applied AFTER this stage is reconciled solely against that
+        same 5% `_qty_by_risk_budget` ceiling (pre-existing behaviour, not
+        introduced here) — this method does not and cannot re-run for it.
         """
         e0, s0 = original.entry_price, original.stop_loss
         e1, s1 = modified.entry_price, modified.stop_loss
@@ -2756,7 +2777,15 @@ class TradingPipeline:
         original_risk_fraction = alloc0 * (rps0 / e0)
         new_risk_per_alloc = rps1 / e1
         reconciled = original_risk_fraction / new_risk_per_alloc
-        return round(min(alloc0, reconciled), 2)
+        if reconciled >= alloc0:
+            # A tighter stop (or unchanged risk-per-share) — never auto-enlarge;
+            # keep the ticket's own already-valid size untouched.
+            return alloc0
+        # FLOOR to 2 dp rather than round: rounding could nudge the size back UP
+        # a hundredth of a percent and, with it, dollar risk a hair over the
+        # pre-edit budget. Flooring guarantees the reconciled size never exceeds
+        # the exact budget-preserving allocation.
+        return math.floor(reconciled * 100) / 100
 
     @staticmethod
     def _has_actionable_signal_fn(
