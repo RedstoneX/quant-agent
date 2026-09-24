@@ -321,7 +321,17 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 152, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 153, (
+        "152 -> 153 on 2026-09-24, item 163: +1 for "
+        "src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT (0.5), the "
+        "tolerance the new PM risk-narrative-mismatch check uses to compare "
+        "an explicit risk-% claim in TargetPosition.thesis prose against the "
+        "authoritative risk_allocation_pct field. Not independent -- it is "
+        "RiskConfig.min_position_risk_pct (already ledgered) duplicated as a "
+        "literal because TargetPosition has no RiskConfig in scope at "
+        "validation time. It only sets a surfaced flag; risk_allocation_pct "
+        "is never overridden, so it cannot decide, size, price or exit a "
+        "trade. "
         "151 -> 152 on 2026-09-24: +1 for "
         "src.margin_interest.MAX_LOOKBACK_MONTHS (6), the owner's own ask "
         "for how many months back the cumulative margin-interest view "
