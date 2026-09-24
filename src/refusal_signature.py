@@ -95,12 +95,28 @@ across six intraday ticks that never ran a gate at all:
     gate in either direction. It is stepped over: it neither joins a streak
     nor breaks one, because a jam does not clear just because one tick was
     switched off, and a switched-off tick is not proof of a jam either.
+  * a last event of `specialist|failed` (`NOT_A_REFUSAL_STAGE_OUTCOMES`,
+    2026-09-24) is a seat that could not ANALYZE the candidate — a bar fetch
+    exception, no bars returned, a batch response left unresolved — not a
+    seat that formed an opinion and turned it down. This one is scoped by
+    STAGE as well as outcome, because "failed" is a real refusal at other
+    stages (`risk|failed`, `funding|failed`, `portfolio_manager|failed`) and
+    excluding it everywhere would hide a jam sitting behind one of those.
+    Unlike the run-level rule just above, this fires even when the run's OWN
+    status is a deciding one (`no_trades`, `no_orders`): a data outage can
+    starve every specialist while the run still finishes as a normal, decided
+    tick, and it is the candidate-level event, not the run's status word,
+    that was reading as a refusal.
 
-The two are separate rules on purpose, and neither subsumes the other. The
+The three are separate rules on purpose, and none subsumes another. The
 17:15–19:45 ticks of 2026-09-22 are caught by the first (their only events
-were `opportunity|discovered`); the 15:15 tick the same afternoon is caught
-only by the second, because it ran its specialists first and one of them
-failed, leaving a last event that does read as a disposition.
+were `opportunity|discovered`); the 15:15 tick the same afternoon was, at the
+time this docstring was first written, caught only by the second, because its
+overall run status happened to land on a non-deciding word — but a
+`specialist|failed` streak sitting inside runs that finish `no_trades` or
+`no_orders` (a deciding status, by design) passed both of the first two rules
+and still misread as a jam. The third rule closes that gap directly at the
+event, rather than depending on the run's status word to catch it.
 
 CADENCE, AND WHY IT CANNOT PAGE A PAUSED DESK
 ------------------------------------------------------------------------
@@ -254,6 +270,35 @@ NO_ENTRY_DECIDED_OUTCOMES = frozenset({
 #: on — an outcome nobody has classified can only ever lengthen a streak
 #: that must still be monomorphic over a CHANGING candidate set.
 NOT_A_REFUSAL_OUTCOMES = UNDECIDED_OUTCOMES | NO_ENTRY_DECIDED_OUTCOMES
+
+#: `(stage, outcome)` pairs excluded by WHICH STAGE wrote them, not by the
+#: outcome word alone — unlike `NOT_A_REFUSAL_OUTCOMES` above, which is
+#: deliberately outcome-only. "failed" cannot be added there: `risk|failed`
+#: (src/pipeline_stages.py, the risk manager's output was unparseable),
+#: `funding|failed`, `portfolio_manager|failed` and `macro_parse|failed` are
+#: all real stages that gate an idea, and excluding "failed" everywhere would
+#: hide a genuine jam sitting behind one of them.
+#:
+#: `specialist|failed` is different in kind: every site that writes it
+#: (`src/pipeline.py` ~16441, ~16448, ~16548; `src/pipeline_stages.py` ~5673,
+#: ~6046) fires when a seat could not even ANALYZE the candidate — a bar
+#: fetch raised, no bars came back, or a batch response left the symbol
+#: unresolved after its bounded retry. None of those is the specialist
+#: forming an opinion and turning the idea down; the seat never got that
+#: far. 2026-09-22's own incident record above already says as much: "the
+#: 15:15 tick ... ran its specialists first and one of them failed, leaving
+#: a last event that does read as a disposition" — a data-fetch fault, read
+#: as a verdict.
+#:
+#: Left unfixed, a multi-session DATA OUTAGE (a bad market-data feed, say)
+#: that still lets each run finish as `no_trades` or `no_orders` writes
+#: `specialist|failed` as the terminal event for every candidate in every
+#: session — monomorphic across a changing candidate set, which is exactly
+#: this detector's trigger shape, and the owner is told the desk "refused
+#: every idea" when nothing was ever put in front of a decision at all.
+NOT_A_REFUSAL_STAGE_OUTCOMES = frozenset({
+    ("specialist", "failed"),
+})
 
 #: The desk's OWN recorded words for a run that stopped before the decision
 #: stage. This detector's premise is "the candidates varied, the outcome did
@@ -576,7 +621,11 @@ def load_sessions(
         # with it, because the evidence stream only ever moves a candidate
         # FORWARD.
         outcome = str(payload.get("outcome") or "")
-        if outcome in NOT_A_REFUSAL_OUTCOMES:
+        stage = str(payload.get("stage") or "")
+        if (
+            outcome in NOT_A_REFUSAL_OUTCOMES
+            or (stage, outcome) in NOT_A_REFUSAL_STAGE_OUTCOMES
+        ):
             keys[run_id].pop(symbol, None)
             outcomes[run_id].pop(symbol, None)
         else:
