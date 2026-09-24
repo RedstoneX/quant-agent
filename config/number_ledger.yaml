@@ -4159,26 +4159,32 @@ numbers:
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
   - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[0]
-    value: 1.01
+    value: 1.03
     status: derived
     site: src/pipeline.py
-    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
-    base_value: 0.99
+    derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
+    base_value: 0.03
     note: >-
-      Board item 138, the de-lever ladder's BUY-to-cover limit
-      (src/pipeline.py:11829): the same 1% applied on the other side, 1.01 = 2
-      - 0.99. One number, mirrored.
+      Item 118, the gross-ceiling de-lever's BUY-to-cover limit. Priced 3%
+      ABOVE the market so a must-fill emergency cover clears routine
+      volatility on a gapping day; 1.03 = 1 + STOP_LIMIT_BUFFER_PCT. Was 1.01
+      (a mirrored 1% via _force_delever:factor[1]), which could rest unfilled
+      exactly when the ladder fires and leave the book over its ceiling. Now
+      derived from the desk's ratified protective-exit buffer, not a fresh
+      number.
   - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]
-    value: 0.99
+    value: 0.97
     status: derived
     site: src/pipeline.py
-    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
-    base_value: 0.99
+    derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
+    base_value: 0.03
     note: >-
-      Board item 138, the de-lever ladder's SELL limit
-      (src/pipeline.py:11818-11830): the comment calls it the 'same
-      1%-through-the-market buffer _force_delever uses'. One number, two
-      sites.
+      Item 118, the gross-ceiling de-lever's SELL limit. Priced 3% BELOW the
+      market so a must-fill emergency trim clears routine volatility on a
+      gapping day; 0.97 = 1 - STOP_LIMIT_BUFFER_PCT. Was 0.99 (a 1% buffer),
+      which could rest unfilled and leave the book over its ceiling. The same
+      "prioritize fill over price" buffer the protective-stop leg already
+      uses, applied on both sides with the correct sign.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
     value: 1.02
     status: arbitrary

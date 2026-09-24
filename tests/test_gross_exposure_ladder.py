@@ -1831,3 +1831,177 @@ def test_a_failed_shortfall_write_never_breaks_the_delever():
     assert pipeline._enforce_gross_ceiling(ctx)
     assert ctx.leverage["delever_incomplete"] is True
     assert pipeline.db.insert_specialist_evidence.called
+
+
+# ===========================================================================
+# docs/WORK.md item 118 — the de-lever trim must actually FILL.
+#
+# The trim was priced only 1% through the market (SELL @ 0.99x, COVER @
+# 1.01x). On a fast or gapping day — the very conditions that trip the
+# ladder — a limit only 1% through can rest unfilled, leaving the book OVER
+# its gross ceiling exactly when it must shed risk. The fix prices the trim
+# 3% through, matching the desk's ratified protective-exit buffer
+# (AlpacaBroker.STOP_LIMIT_BUFFER_PCT), so routine gap volatility clears it.
+#
+# These drive the REAL `_enforce_gross_ceiling` -> `_submit_protected_sell`
+# -> `_finalize_pending_protections` path. The broker seam FILLS or RESTS an
+# order depending only on whether its limit is marketable against a simulated
+# gapped print — the exact mechanism the defect is about.
+# ===========================================================================
+
+
+def _gap_fill_pipeline(*, gap_price, originals):
+    """Real de-lever loop against a broker that fills or rests by limit price.
+
+    A SELL fills only when its limit is at/below the tradeable print; a
+    BUY-to-cover fills only when its limit is at/above it. `get_positions`
+    then reports the book that actually remains after those fills, which is
+    what `_alert_owner_delever_incomplete` re-measures against the ceiling.
+    """
+    pipeline, events = _stop_timeline_pipeline(allow_margin=True)
+    submitted: dict = {}
+
+    def _submit(*, symbol, side, limit_price, qty, **_kw):
+        events.append(("submit", symbol))
+        oid = f"ord-{symbol}"
+        fillable = (
+            limit_price <= gap_price if side == "sell"
+            else limit_price >= gap_price
+        )
+        submitted[oid] = {
+            "symbol": symbol, "side": side, "limit_price": limit_price,
+            "qty": qty, "fillable": fillable,
+        }
+        return {"id": oid, "symbol": symbol, "status": "accepted"}
+
+    def _terminal(order_id):
+        return "filled" if submitted.get(order_id, {}).get("fillable") else "canceled"
+
+    def _positions():
+        out = []
+        for p in originals:
+            filled = sum(
+                o["qty"] for o in submitted.values()
+                if o["symbol"] == p.symbol and o["fillable"]
+            )
+            remaining = abs(p.qty) - filled
+            if remaining <= 1e-9:
+                continue
+            signed = remaining if p.qty > 0 else -remaining
+            out.append(_position(p.symbol, qty=signed, current_price=p.current_price))
+        return out
+
+    pipeline.broker.submit_order.side_effect = _submit
+    pipeline.broker.wait_for_order_terminal.side_effect = _terminal
+    pipeline.broker.get_positions.side_effect = _positions
+    return pipeline, events, submitted
+
+
+def test_a_gross_delever_sell_fills_on_a_gap_the_old_1pct_limit_would_have_missed():
+    """DANGER CASE. A 2% gap-down: the old 1%-through SELL limit ($99) sits
+    ABOVE the $98 tradeable print and rests unfilled — the book stays over
+    the ceiling. The new 3%-through limit ($97) is marketable and fills."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    gap_price = 98.0
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=gap_price, originals=originals,
+    )
+    ctx = RunContext(run_id="run-gap-sell", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders, "an over-ceiling book must be trimmed with no PM involved"
+    order = submitted["ord-NVDA"]
+    assert order["side"] == "sell"
+    assert order["limit_price"] == pytest.approx(97.0)
+    assert order["limit_price"] <= gap_price, "the new limit must fill on the gap"
+    assert round(ref * 0.99, 2) > gap_price, (
+        "guard on the danger case: under this SAME gap the OLD 1%-through "
+        "limit ($99) sat above the $98 print and would have rested unfilled"
+    )
+    assert order["fillable"] is True
+    assert "delever_incomplete" not in ctx.leverage, (
+        "the trim filled, so the refreshed book is back at its ceiling"
+    )
+
+
+def test_a_gross_delever_covers_a_short_up_through_a_gap_up():
+    """The short-side twin. A 2% gap-UP: the old 1%-through COVER limit
+    ($101) sits BELOW the $102 print and rests; the new $103 pays up through
+    it and fills. The trim is a BUY (cover) of exactly half the short."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    gap_price = 102.0
+    originals = [_position("TSLA", qty=-200.0, current_price=ref)]  # 2.0x gross
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=gap_price, originals=originals,
+    )
+    ctx = RunContext(run_id="run-gap-cover", session="morning")
+    ctx.positions = [_position("TSLA", qty=-200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders
+    order = submitted["ord-TSLA"]
+    assert order["side"] == "buy", "covering a short is a BUY-to-cover"
+    assert order["limit_price"] == pytest.approx(103.0)
+    assert order["limit_price"] >= gap_price, "a cover must pay up through the gap"
+    assert round(ref * 1.01, 2) < gap_price, (
+        "guard: the OLD 1%-through cover limit ($101) sat below the $102 "
+        "print and would have rested unfilled"
+    )
+    assert order["fillable"] is True
+    assert order["qty"] == pytest.approx(100.0), "cover exactly half the short"
+    assert "delever_incomplete" not in ctx.leverage
+
+
+def test_a_gross_delever_trims_down_to_the_ceiling_and_never_below_it():
+    """Correct quantity and no over-trim, both directions.
+
+    Exact case: a 2.0x book ($20k on $10k, 1.0x ceiling) is trimmed by
+    exactly the 100 shares that bring it to $10k — leaving 100 at 1.0x, not a
+    share less. Whole-share case: a 1.5x book ($15k) needs 50 shares but the
+    trim floors to 49, leaving 101 shares (1.01x) — the desk deliberately
+    rounds the trim DOWN so it can never sell the book BELOW its ceiling; the
+    one-share sliver still over is reported, not silently over-corrected."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+
+    # Exact: trims to the ceiling, never past it.
+    exact = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, _events, submitted = _gap_fill_pipeline(gap_price=ref, originals=exact)
+    ctx = RunContext(run_id="run-qty-exact", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+    assert pipeline._enforce_gross_ceiling(ctx)
+    assert submitted["ord-NVDA"]["qty"] == pytest.approx(100.0), (
+        "trim exactly the 100 shares that bring $20k gross to the $10k ceiling"
+    )
+    remaining = pipeline.broker.get_positions()
+    assert remaining and remaining[0].qty == pytest.approx(100.0), (
+        "100 shares left = 1.0x, exactly the ceiling and never below it"
+    )
+    assert "delever_incomplete" not in ctx.leverage
+
+    # Whole-share flooring: never over-trims below the ceiling.
+    frac = [_position("MSFT", qty=150.0, current_price=ref)]  # 1.5x
+    pipeline2, _e2, submitted2 = _gap_fill_pipeline(gap_price=ref, originals=frac)
+    ctx2 = RunContext(run_id="run-qty-floor", session="morning")
+    ctx2.positions = [_position("MSFT", qty=150.0, current_price=ref)]
+    ctx2.total_value = EQUITY
+    assert pipeline2._enforce_gross_ceiling(ctx2)
+    trimmed = submitted2["ord-MSFT"]["qty"]
+    assert trimmed == pytest.approx(49.0), (
+        "the trim floors to whole shares (49), never rounding UP to 50 and "
+        "selling the book below its ceiling"
+    )
+    left = pipeline2.broker.get_positions()[0].qty
+    assert left * ref >= 10_000.0, "the remaining book is never below the ceiling"

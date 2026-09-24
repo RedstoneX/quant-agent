@@ -11949,18 +11949,36 @@ class TradingPipeline:
                 qty = self._full_sell_qty(held_qty)
             if qty is None or qty <= 0:
                 continue
-            # Same 1%-through-the-market buffer `_force_delever` uses: when
-            # clearing unintended leverage, fill beats price. A COVER is a
-            # BUY, so it pays UP through the market rather than down.
+            # Price the trim 3% THROUGH the market, not the old 1%. This is
+            # emergency risk reduction: the book already exceeds its gross
+            # ceiling and the whole point of the trim is to shed that
+            # exposure NOW. A limit only 1% through can rest unfilled on a
+            # fast or gapping day — precisely the conditions that trigger the
+            # ladder — leaving the book OVER its ceiling exactly when it must
+            # come down (docs/WORK.md item 118).
             #
-            # `FORCE_DELEVER` is already an EITHER-SIDE exit action in the
-            # ledger (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
+            # 3% is not a new invented number: it is the SAME buffer the
+            # desk's protective-stop legs already use
+            # (`AlpacaBroker.STOP_LIMIT_BUFFER_PCT`), chosen there as "wide
+            # enough that routine volatility clears it — prioritize fill over
+            # price". Matching it keeps this the least-surprising must-fill
+            # exit on the desk and, like the stop leg, deliberately keeps a
+            # LIMIT (capping worst-case fill) rather than a market order
+            # (unbounded gap slippage) — the same ratified trade-off, which
+            # still misses on a gap wider than 3%. That residual miss is
+            # reported by `_alert_owner_delever_incomplete` and the item-112
+            # shortfall record below.
+            #
+            # A COVER is a BUY, so it pays UP through the market (1.03); a
+            # SELL sits DOWN through it (0.97). `FORCE_DELEVER` is already an
+            # EITHER-SIDE exit action in the ledger
+            # (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
             # deterministic de-lever fires against whatever position is
             # open" — so the same label correctly retires a short chain
             # without inventing a second action name.
             is_cover = trim.action == "COVER"
             limit_price = round(
-                position.current_price * (1.01 if is_cover else 0.99), 2,
+                position.current_price * (1.03 if is_cover else 0.97), 2,
             )
             sale = self._submit_protected_sell(
                 symbol=trim.symbol, qty=qty, limit_price=limit_price,
