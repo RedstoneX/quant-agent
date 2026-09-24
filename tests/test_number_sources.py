@@ -667,8 +667,13 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # (d) class attributes.
     assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
     assert "src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT" in ids
-    # (e) item 138: the 1% de-lever ladder, the 0.5% exit offsets.
-    assert "src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]" in ids
+    # (e) item 138: inline order-price factors. The de-lever ladder's own
+    # SELL/COVER fill limits are no longer inline % literals — the emergency
+    # de-lever now crosses the LIVE quote or sends a MARKET order
+    # (delever-live-fill), so `_enforce_gross_ceiling` carries no factor site
+    # and `_force_delever:factor[1]` is now its conservative proceeds haircut.
+    # The forced de-lever's sweep cushion (factor[0]) still proves rule (e).
+    assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids

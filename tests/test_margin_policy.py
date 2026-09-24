@@ -376,6 +376,18 @@ def test_force_delever_picks_biggest_loser_first():
         "cash": 500.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
     }
     pipeline.broker.get_positions.return_value = []
+    # _live_delever_price reads the CURRENT bid/ask and prices a marketable
+    # limit AT the live bid (docstring on _live_delever_price / item 118) —
+    # a stale-mark % buffer rests above a falling market on a real gap and
+    # never fills. A bare MagicMock() default for get_latest_quote (no
+    # explicit bid/ask) is NOT "no live quote": MagicMock auto-implements
+    # __float__ to return 1.0, so an unconfigured quote silently prices a
+    # $1.00 limit on a $250 stock instead of exercising the no-quote/MARKET
+    # path — set an explicit live quote so the test measures live-quote
+    # pricing, not a mock artifact.
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 248.50, "ask_price": 248.90,
+    }
     pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
@@ -395,9 +407,9 @@ def test_force_delever_picks_biggest_loser_first():
     first_call = pipeline.broker.submit_order.call_args_list[0].kwargs
     assert first_call["symbol"] == "LOSER"
     assert first_call["side"] == "sell"
-    # 3% below market limit (item 118: the desk's must-fill-exit buffer,
-    # AlpacaBroker.STOP_LIMIT_BUFFER_PCT, so a forced de-lever fills on a gap)
-    assert first_call["limit_price"] == round(250 * 0.97, 2)
+    # Marketable limit AT the live bid (item 118: live-quote de-lever pricing
+    # via _live_delever_price), not a % off the stale last-print mark.
+    assert first_call["limit_price"] == 248.50
 
 
 def test_force_delever_stops_once_deficit_covered():

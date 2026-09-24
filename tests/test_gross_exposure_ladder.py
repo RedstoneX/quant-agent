@@ -1850,24 +1850,56 @@ def test_a_failed_shortfall_write_never_breaks_the_delever():
 # ===========================================================================
 
 
-def _gap_fill_pipeline(*, gap_price, originals, allow_margin=True):
+def _gap_fill_pipeline(
+    *, gap_price, originals, allow_margin=True, live_quote="gap",
+    reject_limit=False, reject_all=False,
+):
     """Real de-lever loop against a broker that fills or rests by limit price.
 
     A SELL fills only when its limit is at/below the tradeable print; a
-    BUY-to-cover fills only when its limit is at/above it. `get_positions`
-    then reports the book that actually remains after those fills, which is
-    what `_alert_owner_delever_incomplete` re-measures against the ceiling.
+    BUY-to-cover fills only when its limit is at/above it. A MARKET order
+    (limit_price is None) always fills — that is what a market order is.
+    `get_positions` then reports the book that actually remains after those
+    fills, which is what `_alert_owner_delever_incomplete` re-measures against
+    the ceiling.
+
+    ``live_quote`` models what `broker.get_latest_quote` returns at submit
+    time — the price the de-lever now crosses instead of a fixed % of a stale
+    mark:
+      * "gap" (default): a fresh quote AT the gapped print (bid=ask=gap_price),
+        so a marketable limit is priced at the gap and fills however far the
+        name moved;
+      * None: no usable quote (bid/ask None), so the de-lever falls back to a
+        MARKET order.
     """
     pipeline, events = _stop_timeline_pipeline(allow_margin=allow_margin)
     submitted: dict = {}
 
+    if live_quote == "gap":
+        quote = {"bid_price": gap_price, "ask_price": gap_price}
+    elif live_quote is None:
+        quote = {"bid_price": None, "ask_price": None}
+    else:
+        quote = live_quote
+    pipeline.broker.get_latest_quote.side_effect = lambda _symbol: dict(quote)
+
     def _submit(*, symbol, side, limit_price, qty, **_kw):
         events.append(("submit", symbol))
         oid = f"ord-{symbol}"
-        fillable = (
-            limit_price <= gap_price if side == "sell"
-            else limit_price >= gap_price
-        )
+        # `reject_all` refuses every order (id=None) — even the market
+        # escalation, the genuinely-unfillable case. `reject_limit` refuses
+        # only a LIMIT order (a wide-spread quote tripping the broker's
+        # fat-finger guard -> rejected_outlier, which carries no id) so the
+        # de-lever must escalate to a MARKET order (limit_price is None).
+        if reject_all or (reject_limit and limit_price is not None):
+            return {"id": None, "status": "rejected_outlier", "symbol": symbol}
+        if limit_price is None:
+            fillable = True  # a MARKET order fills unconditionally
+        else:
+            fillable = (
+                limit_price <= gap_price if side == "sell"
+                else limit_price >= gap_price
+            )
         submitted[oid] = {
             "symbol": symbol, "side": side, "limit_price": limit_price,
             "qty": qty, "fillable": fillable,
@@ -1897,19 +1929,66 @@ def _gap_fill_pipeline(*, gap_price, originals, allow_margin=True):
     return pipeline, events, submitted
 
 
-def test_a_gross_delever_sell_fills_on_a_gap_the_old_1pct_limit_would_have_missed():
-    """DANGER CASE. A 2% gap-down: the old 1%-through SELL limit ($99) sits
-    ABOVE the $98 tradeable print and rests unfilled — the book stays over
-    the ceiling. The new 3%-through limit ($97) is marketable and fills."""
+def test_live_delever_price_crosses_the_correct_side_and_falls_back_to_market():
+    """`_live_delever_price` prices off the LIVE quote, not a stale mark:
+    a SELL crosses the bid, a COVER (buy) crosses the ask, and the reference
+    is the live mid so the broker's fat-finger guard passes a gapped fill.
+    A missing/failed quote returns (None, ...) so the caller sends a MARKET
+    order — the graceful no-quote fallback."""
+    from unittest.mock import MagicMock
+    from src.pipeline import TradingPipeline
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+
+    # Full two-sided quote: SELL -> bid, COVER -> ask, reference -> mid.
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 79.0, "ask_price": 81.0,
+    }
+    assert pipeline._live_delever_price("NVDA", "sell") == (79.0, 80.0)
+    assert pipeline._live_delever_price("NVDA", "buy") == (81.0, 80.0)
+
+    # One-sided quote: the missing side yields a None limit (-> MARKET) while
+    # the present side still prices and references off itself.
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 79.0, "ask_price": None,
+    }
+    assert pipeline._live_delever_price("NVDA", "sell") == (79.0, 79.0)
+    assert pipeline._live_delever_price("NVDA", "buy") == (None, 79.0)
+
+    # No quote at all -> (None, None): a MARKET order, no reference.
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": None, "ask_price": None,
+    }
+    assert pipeline._live_delever_price("NVDA", "sell") == (None, None)
+
+    # A zero/garbage bid is treated as no bid (not a $0 sell limit).
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 0.0, "ask_price": 81.0,
+    }
+    assert pipeline._live_delever_price("NVDA", "sell") == (None, 81.0)
+
+    # A broker/data failure degrades to a MARKET order rather than raising.
+    pipeline.broker.get_latest_quote.side_effect = RuntimeError("data down")
+    assert pipeline._live_delever_price("NVDA", "sell") == (None, None)
+
+
+@pytest.mark.parametrize("gap_pct", [0.03, 0.08, 0.20])
+def test_a_gross_delever_sell_fills_at_any_gap_size_off_the_live_quote(gap_pct):
+    """The old fixed-3%-off-stale-mark SELL limit rested ABOVE the falling
+    market on any gap wider than 3% (docs/WORK.md item 118). The de-lever now
+    crosses the LIVE quote: a marketable limit AT the live bid, which is the
+    gapped print itself, so it fills at a 3%, 8% and 20% gap-down alike — the
+    gap is already IN the quote. The stale reference is gone."""
     from src.pipeline_context import RunContext
 
     ref = 100.0
-    gap_price = 98.0
+    gap_price = round(ref * (1 - gap_pct), 2)
     originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
     pipeline, _events, submitted = _gap_fill_pipeline(
         gap_price=gap_price, originals=originals,
     )
-    ctx = RunContext(run_id="run-gap-sell", session="morning")
+    ctx = RunContext(run_id=f"run-gap-sell-{int(gap_pct * 100)}", session="morning")
     ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
     ctx.total_value = EQUITY
 
@@ -1918,31 +1997,37 @@ def test_a_gross_delever_sell_fills_on_a_gap_the_old_1pct_limit_would_have_misse
     assert orders, "an over-ceiling book must be trimmed with no PM involved"
     order = submitted["ord-NVDA"]
     assert order["side"] == "sell"
-    assert order["limit_price"] == pytest.approx(97.0)
-    assert order["limit_price"] <= gap_price, "the new limit must fill on the gap"
-    assert round(ref * 0.99, 2) > gap_price, (
-        "guard on the danger case: under this SAME gap the OLD 1%-through "
-        "limit ($99) sat above the $98 print and would have rested unfilled"
+    assert order["limit_price"] == pytest.approx(gap_price), (
+        "the SELL limit is the LIVE bid (the gapped print), not a % of the "
+        "stale $100 mark"
     )
+    assert order["limit_price"] <= gap_price, "a live-bid limit is marketable"
+    if gap_pct > 0.03:
+        assert round(ref * 0.97, 2) > gap_price, (
+            "guard: on this gap the OLD fixed 3%-off-stale-mark limit ($97) "
+            "sat ABOVE the print and would have rested unfilled"
+        )
     assert order["fillable"] is True
     assert "delever_incomplete" not in ctx.leverage, (
         "the trim filled, so the refreshed book is back at its ceiling"
     )
 
 
-def test_a_gross_delever_covers_a_short_up_through_a_gap_up():
-    """The short-side twin. A 2% gap-UP: the old 1%-through COVER limit
-    ($101) sits BELOW the $102 print and rests; the new $103 pays up through
-    it and fills. The trim is a BUY (cover) of exactly half the short."""
+@pytest.mark.parametrize("gap_pct", [0.03, 0.08, 0.20])
+def test_a_gross_delever_covers_a_short_at_any_gap_up_off_the_live_quote(gap_pct):
+    """The short-side twin. A BUY-to-cover crosses the LIVE ask (the gapped-up
+    print), so it fills at a 3%, 8% and 20% gap-UP alike, where the old fixed
+    3%-off-stale-mark cover limit ($103) sat BELOW a bigger gap and rested.
+    The trim is a BUY (cover) of exactly half the short."""
     from src.pipeline_context import RunContext
 
     ref = 100.0
-    gap_price = 102.0
+    gap_price = round(ref * (1 + gap_pct), 2)
     originals = [_position("TSLA", qty=-200.0, current_price=ref)]  # 2.0x gross
     pipeline, _events, submitted = _gap_fill_pipeline(
         gap_price=gap_price, originals=originals,
     )
-    ctx = RunContext(run_id="run-gap-cover", session="morning")
+    ctx = RunContext(run_id=f"run-gap-cover-{int(gap_pct * 100)}", session="morning")
     ctx.positions = [_position("TSLA", qty=-200.0, current_price=ref)]
     ctx.total_value = EQUITY
 
@@ -1951,14 +2036,44 @@ def test_a_gross_delever_covers_a_short_up_through_a_gap_up():
     assert orders
     order = submitted["ord-TSLA"]
     assert order["side"] == "buy", "covering a short is a BUY-to-cover"
-    assert order["limit_price"] == pytest.approx(103.0)
-    assert order["limit_price"] >= gap_price, "a cover must pay up through the gap"
-    assert round(ref * 1.01, 2) < gap_price, (
-        "guard: the OLD 1%-through cover limit ($101) sat below the $102 "
-        "print and would have rested unfilled"
+    assert order["limit_price"] == pytest.approx(gap_price), (
+        "the COVER limit is the LIVE ask (the gapped print), not a % of the "
+        "stale $100 mark"
     )
+    assert order["limit_price"] >= gap_price, "a live-ask limit is marketable"
+    if gap_pct > 0.03:
+        assert round(ref * 1.03, 2) < gap_price, (
+            "guard: on this gap the OLD fixed 3%-off-stale-mark cover limit "
+            "($103) sat BELOW the print and would have rested unfilled"
+        )
     assert order["fillable"] is True
     assert order["qty"] == pytest.approx(100.0), "cover exactly half the short"
+    assert "delever_incomplete" not in ctx.leverage
+
+
+def test_a_gross_delever_uses_a_market_order_when_no_live_quote_is_available():
+    """No usable live quote (bid/ask both None) must not leave the book over
+    its ceiling. The de-lever falls back to a MARKET order — the guaranteed
+    fill — rather than resting on a stale % of the mark."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    gap_price = 80.0  # a 20% gap-down; the market order fills regardless
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=gap_price, originals=originals, live_quote=None,
+    )
+    ctx = RunContext(run_id="run-gap-noquote", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders, "no quote must still de-lever, via a market order"
+    order = submitted["ord-NVDA"]
+    assert order["side"] == "sell"
+    assert order["limit_price"] is None, "no live quote -> a MARKET order"
+    assert order["fillable"] is True, "a market order is a guaranteed fill"
     assert "delever_incomplete" not in ctx.leverage
 
 
@@ -2007,21 +2122,22 @@ def test_a_gross_delever_trims_down_to_the_ceiling_and_never_below_it():
     assert left * ref >= 10_000.0, "the remaining book is never below the ceiling"
 
 
-def test_a_cash_only_force_delever_fills_on_a_gap_the_old_1pct_limit_would_have_missed():
+@pytest.mark.parametrize("gap_pct", [0.03, 0.08, 0.20])
+def test_a_cash_only_force_delever_fills_at_any_gap_size_off_the_live_quote(gap_pct):
     """Item 118, the `_force_delever` sibling (allow_margin=False). A cash
-    deficit forces a SELL; on a 2% gap-down the old 1%-through limit ($99) sat
-    above the $98 print and rested — the deficit stayed uncleared. The new
-    3%-through limit ($97) is marketable and fills. Same must-fill situation,
-    same buffer, so both de-lever paths now behave identically."""
+    deficit forces a SELL; the old fixed 3%-off-stale-mark limit ($97) rested
+    above the print on any gap wider than 3% and left the deficit uncleared.
+    The de-lever now crosses the LIVE bid (the gapped print), so it fills at a
+    3%, 8% and 20% gap-down alike — both de-lever paths behave identically."""
     from src.pipeline_context import RunContext
 
     ref = 100.0
-    gap_price = 98.0
+    gap_price = round(ref * (1 - gap_pct), 2)
     originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     pipeline, _events, submitted = _gap_fill_pipeline(
         gap_price=gap_price, originals=originals, allow_margin=False,
     )
-    ctx = RunContext(run_id="run-force-gap", session="morning")
+    ctx = RunContext(run_id=f"run-force-gap-{int(gap_pct * 100)}", session="morning")
     ctx.cash = -5_000.0  # a real margin deficit forces the sweep
     ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     ctx.total_value = EQUITY
@@ -2031,10 +2147,176 @@ def test_a_cash_only_force_delever_fills_on_a_gap_the_old_1pct_limit_would_have_
     assert orders, "a negative-cash book must be de-levered with no PM involved"
     order = submitted["ord-NVDA"]
     assert order["side"] == "sell"
-    assert order["limit_price"] == pytest.approx(97.0)
-    assert order["limit_price"] <= gap_price, "the new limit must fill on the gap"
-    assert round(ref * 0.99, 2) > gap_price, (
-        "guard: under this SAME gap the OLD 1%-through limit ($99) sat above "
-        "the $98 print and would have rested, leaving the deficit uncleared"
+    assert order["limit_price"] == pytest.approx(gap_price), (
+        "the SELL limit is the LIVE bid (the gapped print), not a % of the "
+        "stale $100 mark"
     )
+    assert order["limit_price"] <= gap_price, "a live-bid limit is marketable"
+    if gap_pct > 0.03:
+        assert round(ref * 0.97, 2) > gap_price, (
+            "guard: on this gap the OLD fixed 3%-off-stale-mark limit ($97) "
+            "sat above the print and would have rested, leaving the deficit "
+            "uncleared"
+        )
     assert order["fillable"] is True
+
+
+def test_a_cash_only_force_delever_uses_a_market_order_when_no_live_quote():
+    """The `_force_delever` sibling of the no-quote fallback: a cash deficit
+    with no usable live quote must still clear, via a MARKET order."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=80.0, originals=originals, allow_margin=False, live_quote=None,
+    )
+    ctx = RunContext(run_id="run-force-noquote", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._force_delever(ctx)
+
+    assert orders, "a negative-cash book with no quote must still de-lever"
+    order = submitted["ord-NVDA"]
+    assert order["side"] == "sell"
+    assert order["limit_price"] is None, "no live quote -> a MARKET order"
+    assert order["fillable"] is True, "a market order is a guaranteed fill"
+
+
+def test_a_gross_delever_escalates_to_market_when_the_marketable_limit_is_rejected():
+    """The residual the adversary flagged. A wide-spread live quote (LULD
+    halt-reopen, thin/inverse name in a fast market) makes the marketable limit
+    deviate >20% from mid, so the broker's fat-finger guard returns
+    rejected_outlier. The de-lever must NOT skip the name — it ESCALATES to a
+    MARKET order, the guaranteed fill, and coverage is rebuilt on that fill."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, reject_limit=True,
+    )
+    ctx = RunContext(run_id="run-gross-escalate", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders, "a rejected limit must escalate, not skip the name"
+    order = submitted["ord-NVDA"]
+    assert order["limit_price"] is None, (
+        "the marketable limit was rejected, so the order that landed is a "
+        "MARKET order"
+    )
+    assert order["side"] == "sell"
+    assert order["fillable"] is True
+    assert ("covered", "NVDA") in events, (
+        "stop coverage must be rebuilt on the escalated fill — the "
+        "cancel->submit->restore invariant holds through the escalation"
+    )
+    pipeline.broker._restore_stop_orders.assert_not_called()
+    assert "delever_incomplete" not in ctx.leverage
+
+
+def test_a_cash_only_force_delever_escalates_to_market_when_the_limit_is_rejected():
+    """The `_force_delever` twin of the escalation: a rejected marketable limit
+    escalates to a MARKET order rather than leaving the account on margin."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, allow_margin=False, reject_limit=True,
+    )
+    ctx = RunContext(run_id="run-force-escalate", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._force_delever(ctx)
+
+    assert orders, "a rejected limit must escalate, not skip the name"
+    order = submitted["ord-NVDA"]
+    assert order["limit_price"] is None, "escalated to a MARKET order"
+    assert order["side"] == "sell"
+    assert order["fillable"] is True
+    assert ("covered", "NVDA") in events
+    pipeline.broker._restore_stop_orders.assert_not_called()
+
+
+def test_a_gross_delever_reports_incomplete_only_if_even_the_market_order_fails():
+    """The name is reported incomplete ONLY when even the market escalation
+    fails — never on the first rejection. With every order refused, nothing
+    fills, the book stays over its ceiling, the stops are restored (no naked
+    position), and the incompleteness flag is set."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, reject_all=True,
+    )
+    ctx = RunContext(run_id="run-gross-incomplete", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders == [], "no order was accepted, so none is recorded"
+    assert submitted == {}, "neither the limit nor the market order filled"
+    # On total failure the cancelled stops must be restored — no naked position.
+    pipeline.broker._restore_stop_orders.assert_called()
+    assert ctx.leverage.get("delever_incomplete") is True, (
+        "still over the ceiling after a failed de-lever must be reported"
+    )
+
+
+def test_a_cash_only_force_delever_reports_incomplete_when_even_market_fails():
+    """The `_force_delever` twin: when even the market escalation fails, the
+    name is not silently skipped — the owner is paged that the sweep could not
+    clear the margin deficit."""
+    from unittest.mock import patch
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, allow_margin=False, reject_all=True,
+    )
+    ctx = RunContext(run_id="run-force-incomplete", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        orders = pipeline._force_delever(ctx)
+
+    assert orders == [], "no order was accepted, so none is recorded"
+    pipeline.broker._restore_stop_orders.assert_called()
+    assert alert.called, (
+        "a sweep that could not clear the deficit even at market must page "
+        "the owner, not skip silently"
+    )
+    (msg,), _kw = alert.call_args
+    assert "INCOMPLETE" in msg and "NVDA" in msg
+
+
+def test_a_cash_only_force_delever_reports_incomplete_when_no_long_to_sell():
+    """No long position to sell is itself a residual miss: the account stays on
+    margin, so the owner must be paged rather than only a log line written."""
+    from unittest.mock import patch
+    from src.pipeline_context import RunContext
+
+    pipeline, _events = _stop_timeline_pipeline(allow_margin=False)
+    ctx = RunContext(run_id="run-force-nolong", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=-50.0, current_price=100.0)]  # short only
+    ctx.total_value = EQUITY
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        orders = pipeline._force_delever(ctx)
+
+    assert orders == []
+    assert alert.called, "no long to sell leaves the account on margin — page it"

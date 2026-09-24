@@ -1594,6 +1594,37 @@ def test_submit_order_rejects_outlier_limit_price(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
+def test_a_market_order_skips_the_fat_finger_guard(mock_tc_cls):
+    """The emergency de-lever's fallback: a MARKET order (limit_price=None)
+    must submit even when the reference is far from the live market, because
+    the fat-finger guard measures the LIMIT against the reference and a market
+    order carries no limit. This is why the no-quote fallback is a guaranteed
+    fill (delever-live-fill). The guard only fires on a limit that is >20%
+    from the reference; None is never a limit."""
+    from alpaca.trading.requests import MarketOrderRequest
+
+    mock_client = MagicMock()
+    mock_order = MagicMock()
+    mock_order.id = "order-mkt"
+    mock_order.status = "accepted"
+    mock_order.symbol = "NVDA"
+    mock_client.submit_order.return_value = mock_order
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    # A stale $300 reference against a name that has gapped to ~$80 (73% away):
+    # a LIMIT there would be rejected as an outlier, but a MARKET order submits.
+    result = broker.submit_order(
+        symbol="NVDA", qty=10, side="sell",
+        limit_price=None, reference_price=300.0,
+    )
+    assert result["status"] == "accepted"
+    assert result["id"] == "order-mkt"
+    submitted_req = mock_client.submit_order.call_args.args[0]
+    assert isinstance(submitted_req, MarketOrderRequest)
+
+
+@patch("src.execution.broker.TradingClient")
 def test_submit_order_deviation_band_no_longer_applies_to_the_stop(mock_tc_cls):
     """REPLACES `test_submit_order_rejects_outlier_stop_price` (2026-09-17).
 

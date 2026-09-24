@@ -3781,10 +3781,11 @@ numbers:
     site: src/pipeline.py
     note: >-
       Dead. Defined at src/pipeline.py:1466 and described in comments as the
-      de-lever cushion, but nothing reads it: the live buffer is the inline
-      literal src.pipeline.TradingPipeline._force_delever:factor[1], now 3%
-      (0.97) after item 118. Recorded so it cannot come back into use without
-      a reviewer seeing it.
+      de-lever cushion, but nothing reads it: the de-lever no longer prices off
+      a fixed % of the mark at all -- it crosses the LIVE quote or sends a
+      MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
+      delever-live-fill). Recorded so this dead cushion cannot come back into
+      use without a reviewer seeing it.
   - id: src.pipeline.TradingPipeline._another_session_recently_active(within_minutes)
     value: 15
     status: not-trade-governing
@@ -4172,33 +4173,6 @@ numbers:
       A name with an unread filing is capped at 5% of the book whatever its
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
-  - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[0]
-    value: 1.03
-    status: derived
-    site: src/pipeline.py
-    derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
-    base_value: 0.03
-    note: >-
-      Item 118, the gross-ceiling de-lever's BUY-to-cover limit. Priced 3%
-      ABOVE the market so a must-fill emergency cover clears routine
-      volatility on a gapping day; 1.03 = 1 + STOP_LIMIT_BUFFER_PCT. Was 1.01
-      (a mirrored 1% via _force_delever:factor[1]), which could rest unfilled
-      exactly when the ladder fires and leave the book over its ceiling. Now
-      derived from the desk's ratified protective-exit buffer, not a fresh
-      number.
-  - id: src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]
-    value: 0.97
-    status: derived
-    site: src/pipeline.py
-    derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
-    base_value: 0.03
-    note: >-
-      Item 118, the gross-ceiling de-lever's SELL limit. Priced 3% BELOW the
-      market so a must-fill emergency trim clears routine volatility on a
-      gapping day; 0.97 = 1 - STOP_LIMIT_BUFFER_PCT. Was 0.99 (a 1% buffer),
-      which could rest unfilled and leave the book over its ceiling. The same
-      "prioritize fill over price" buffer the protective-stop leg already
-      uses, applied on both sides with the correct sign.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
     value: 1.02
     status: arbitrary
@@ -4220,22 +4194,16 @@ numbers:
     derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     base_value: 0.03
     note: >-
-      Item 118. The must-fill SELL limit on a forced de-lever: price x 0.97,
-      i.e. 3% below the market so the sale clears routine volatility on a fast
-      day. Was 0.99 (a 1% buffer), which could rest unfilled and leave the
-      cash deficit uncleared. Now the SAME "prioritize fill over price" buffer
-      the protective-stop leg and the gross-ceiling de-lever use, 1 -
-      STOP_LIMIT_BUFFER_PCT, not a fresh number.
-  - id: src.pipeline.TradingPipeline._force_delever:factor[2]
-    value: 0.97
-    status: derived
-    site: src/pipeline.py
-    derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
-    base_value: 0.97
-    note: >-
-      Projected proceeds of a de-lever sell, estimated at the same 0.97 the
-      sell limit uses (the comment says 'matches our limit'). One number, two
-      sites.
+      The CONSERVATIVE proceeds estimate for the sweep's break-early guard:
+      projected_proceeds += mark x 0.97. The de-lever no longer prices its SELL
+      off a fixed % of a stale mark -- it crosses the LIVE quote or sends a
+      MARKET order (see _live_delever_price, delever-live-fill, supersedes the
+      former fixed-3%-limit sites) -- so this is now solely an accounting
+      haircut: it assumes the marketable fill lands up to 3% below the mark
+      (the same must-fill slippage STOP_LIMIT_BUFFER_PCT budgets for a gapping
+      exit) so the loop never stops one position too early and leaves a
+      residual deficit. Under-counting proceeds is the safe error. 0.97 =
+      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary

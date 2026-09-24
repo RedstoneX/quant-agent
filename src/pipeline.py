@@ -4208,11 +4208,12 @@ class TradingPipeline:
         *,
         symbol: str,
         qty: float,
-        limit_price: float,
+        limit_price: float | None,
         reference_price: float,
         position_qty_before_sell: float,
         label: str,
         side: str = "sell",
+        escalate_to_market_on_reject: bool = False,
     ) -> tuple[dict, dict] | None:
         """Head half of the SELL/COVER discipline: clear protective stops
         (write-ahead) → submit the order → guarantee stops are restored if
@@ -4343,12 +4344,55 @@ class TradingPipeline:
                 )
             return None
         if not self._order_accepted(order, symbol, side):
-            # Broker rejected — restore the stops we just cancelled.
-            if stop_specs:
-                self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+            # A MUST-FILL emergency de-lever cannot afford to skip a name here.
+            # A wide-spread live quote (e.g. a LULD halt-reopen or a thin /
+            # inverse name in a fast market) can make the marketable limit
+            # deviate >20% from the mid, so the broker's own fat-finger guard
+            # returns `rejected_outlier`. Skipping the name would re-open
+            # exactly the over-ceiling / uncleared-deficit miss the de-lever
+            # exists to kill. So the de-lever callers pass
+            # `escalate_to_market_on_reject=True`: on a NON-accept of the
+            # marketable LIMIT, escalate once to a MARKET order — the
+            # guaranteed fill, which carries no limit and so skips the guard.
+            # Every other caller keeps the prior skip-on-reject behaviour
+            # (default False). The stops are still cancelled and the rejected
+            # order did not fill, so the position is intact; submit the market
+            # order against the SAME cancelled stops (no restore in between)
+            # and let finalize rebuild coverage on its fill, exactly as for the
+            # limit.
+            if escalate_to_market_on_reject and limit_price is not None:
+                rejected_status = (
+                    order.get("status") if isinstance(order, dict) else order
                 )
-            return None
+                logger.warning(
+                    "%s: marketable-limit exit for %s was not accepted (%s) — "
+                    "escalating to a MARKET order (guaranteed fill).",
+                    label, symbol, rejected_status,
+                )
+                try:
+                    order = self.broker.submit_order(
+                        symbol=symbol, qty=qty, side=side,
+                        limit_price=None, reference_price=reference_price,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "%s: MARKET escalation submit failed for %s: %s",
+                        label, symbol, exc,
+                    )
+                    if stop_specs:
+                        self.broker._restore_stop_orders(
+                            symbol, stop_specs, check_idempotency=False,
+                            **stop_side_kwargs,
+                        )
+                    return None
+            if not self._order_accepted(order, symbol, side):
+                # Broker rejected (no escalation, or the market order itself was
+                # not accepted) — restore the stops we just cancelled.
+                if stop_specs:
+                    self.broker._restore_stop_orders(
+                        symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+                    )
+                return None
         # audit F5: tag the order dict so the notifier's intervention banner +
         # inline action labels fire (broker.submit_order returns no 'action').
         if isinstance(order, dict):
@@ -11790,6 +11834,70 @@ class TradingPipeline:
                 )
         return orders
 
+    def _live_delever_price(
+        self, symbol: str, side: str,
+    ) -> tuple[float | None, float | None]:
+        """Price a MUST-FILL emergency de-lever off the LIVE quote at submit
+        time, never off a fixed % of a possibly-stale mark.
+
+        The emergency de-lever exists to shed exposure NOW when the book is
+        over its gross ceiling (or the cash-only account is on margin); it
+        must fill regardless of how far a name has gapped. A fixed-% limit off
+        a stale `current_price` is the wrong mechanism: on an 8/10/20% gap the
+        limit rests ABOVE the falling market and the book stays over its
+        ceiling exactly when it must come down (docs/WORK.md item 118); inside
+        normal noise the same % is oversized. So this reads the CURRENT bid/ask
+        and prices a MARKETABLE limit that crosses it:
+
+          * SELL  -> a limit AT the live BID. A sell limit at/below the bid is
+                     immediately marketable and fills at the bid however far
+                     the name gapped, because the gap is already IN the quote.
+          * COVER -> a limit AT the live ASK (the buy-side mirror).
+
+        The returned reference price is the live MID, so the broker's
+        fat-finger guard (`OUTLIER_MAX_DEVIATION`) sees a ~zero deviation
+        between the limit and the reference and passes the order however far
+        the live quote has moved from yesterday's mark — the guard is
+        measuring the limit against a STALE mark today, which is what would
+        reject a legitimately gapped fill.
+
+        Returns ``(None, reference_or_None)`` when no usable live quote exists
+        (missing/zero/non-finite bid-or-ask, or a broker/data failure) so the
+        caller submits a MARKET order — the guaranteed fill, and the correct
+        fallback when there is no live price to cross. No new % constant is
+        introduced on either branch: the price is the live quote or the market
+        itself.
+        """
+        bid = ask = None
+        try:
+            quote = self.broker.get_latest_quote(symbol) or {}
+            raw_bid = quote.get("bid_price")
+            raw_ask = quote.get("ask_price")
+            if raw_bid is not None:
+                b = float(raw_bid)
+                bid = b if math.isfinite(b) and b > 0 else None
+            if raw_ask is not None:
+                a = float(raw_ask)
+                ask = a if math.isfinite(a) and a > 0 else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "de-lever: live quote unusable for %s (%s) — falling back to a "
+                "MARKET order, the guaranteed fill", symbol, exc,
+            )
+            bid = ask = None
+        if bid is not None and ask is not None:
+            mid: float | None = (bid + ask) / 2
+        elif bid is not None:
+            mid = bid
+        elif ask is not None:
+            mid = ask
+        else:
+            mid = None
+        # COVER is a BUY (side='buy'); cross the ASK. Everything else is a
+        # SELL; cross the BID. A missing side of the book -> None -> MARKET.
+        limit = ask if side == "buy" else bid
+        return limit, mid
+
     def _force_delever(self, ctx: RunContext) -> list[dict]:
         """Safety net for `allow_margin=False` accounts.
 
@@ -11805,16 +11913,17 @@ class TradingPipeline:
         in to `allow_margin=False` want structural enforcement, not an LLM
         nudge. Speed and safety > LLM judgment here.
 
-        Sell limit uses a 3% below-market buffer because we prioritize fill
-        over price when clearing an unintended margin position (docs/WORK.md
-        item 118): a limit only 1% through can rest unfilled on a fast day and
-        leave the deficit uncleared. 3% is the desk's own ratified must-fill-
-        exit buffer `AlpacaBroker.STOP_LIMIT_BUFFER_PCT`, the same one the
-        protective-stop leg and the gross-ceiling de-lever use — not a fresh
-        number. Note the contrast with the deleted daily-loss liquidator
-        (docs/WORK.md item 32): this path clears a MEASURED cash deficit of
-        known size, not a whole book on a gap day, and it is reached only when
-        `allow_margin` is false.
+        The sell is priced off the LIVE quote at submit time, not a fixed % of
+        a possibly-stale mark: a marketable limit AT the live bid (crosses the
+        spread, so it fills however far the name has gapped — the gap is in the
+        quote), and a MARKET order when no live quote is available (the
+        guaranteed fill). We prioritize fill over price when clearing an
+        unintended margin position (docs/WORK.md item 118): a fixed % of a
+        stale price rests ABOVE the falling market on a gap day and leaves the
+        deficit uncleared. See `_live_delever_price`. Note the contrast with
+        the deleted daily-loss liquidator (docs/WORK.md item 32): this path
+        clears a MEASURED cash deficit of known size, not a whole book on a gap
+        day, and it is reached only when `allow_margin` is false.
 
         Returns the submitted orders list (empty when no de-lever is needed).
         ctx.cash / positions / total_value are refreshed from broker after
@@ -11848,6 +11957,12 @@ class TradingPipeline:
                 "FORCE DE-LEVER: cash=$%.2f deficit=$%.2f but no long positions "
                 "to sell — account stuck on margin until cash arrives externally",
                 ctx.cash, deficit,
+            )
+            # Loud, not silent: no long to sell IS a residual miss (the sibling
+            # of the gross-ceiling path's incompleteness alert) — the account
+            # stays on margin, so page the owner rather than only logging.
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=0.0, failed_symbols=[],
             )
             return []
 
@@ -11889,6 +12004,7 @@ class TradingPipeline:
 
         orders: list[dict] = []
         projected_proceeds = 0.0
+        failed_symbols: list[str] = []
         for p in targets:
             if projected_proceeds >= deficit:
                 break
@@ -11908,7 +12024,16 @@ class TradingPipeline:
                 qty = self._full_sell_qty(p.qty)
             if qty is None or qty <= 0:
                 continue
-            sell_limit = round(p.current_price * 0.97, 2)
+            # Price the must-fill exit off the LIVE quote at submit time: a
+            # marketable limit AT the live bid, or a MARKET order (limit=None)
+            # when no live quote is available. See `_live_delever_price`. The
+            # reference is the live mid so the broker's fat-finger guard passes
+            # a legitimately gapped fill; it falls back to the mark only when
+            # there is no quote, in which case the order is a MARKET order the
+            # guard skips anyway.
+            sell_limit, quote_ref = self._live_delever_price(p.symbol, "sell")
+            exec_ref = quote_ref if quote_ref is not None else p.current_price
+            limit_str = f"${sell_limit:.2f}" if sell_limit is not None else "market"
             # The sweep vehicle's exit is recorded as SWEEP_SELL, not
             # FORCE_DELEVER (audit round 2): action names are the sweep's
             # ledger-isolation mechanism — a FORCE_DELEVER row on SGOV leaks
@@ -11916,10 +12041,16 @@ class TradingPipeline:
             # trading decision.
             sale = self._submit_protected_sell(
                 symbol=p.symbol, qty=qty, limit_price=sell_limit,
-                reference_price=p.current_price, position_qty_before_sell=p.qty,
+                reference_price=exec_ref, position_qty_before_sell=p.qty,
                 label="SWEEP_SELL" if is_sweep else "FORCE_DELEVER",
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
+                # Even the MARKET escalation could not place (stop-clear failed,
+                # or the market order itself was rejected). This name is a real
+                # residual miss — record it so the sweep is reported incomplete
+                # below rather than silently skipped.
+                failed_symbols.append(p.symbol)
                 continue
             order, prot = sale
             try:
@@ -11931,13 +12062,18 @@ class TradingPipeline:
                 # position to cover a deficit the in-flight order had already
                 # covered — liquidating real holdings over a bookkeeping
                 # failure (2026-07-16 audit).
-                # Conservative estimate: market × 0.97 (matches our limit).
+                # Conservative proceeds estimate for the break-early guard:
+                # mark × 0.97, i.e. assume the marketable fill lands up to 3%
+                # below the mark (the same must-fill slippage the desk's
+                # STOP_LIMIT_BUFFER_PCT budgets for a gapping exit). Under-
+                # counting proceeds is the safe error here — it never stops the
+                # sweep one position too early and leaves a residual deficit.
                 projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
-                    "FORCE DE-LEVER SELL %s qty=%s @ limit=$%.2f "
+                    "FORCE DE-LEVER SELL %s qty=%s @ limit=%s "
                     "(unrealized_pnl=$%.2f, mkt_value=$%.2f)",
-                    p.symbol, self._format_qty(qty), sell_limit,
+                    p.symbol, self._format_qty(qty), limit_str,
                     p.unrealized_pnl, p.market_value,
                 )
                 self.db.insert_trade(
@@ -11987,7 +12123,48 @@ class TradingPipeline:
         except Exception as e:
             logger.error("FORCE DE-LEVER: broker refresh failed: %s", e)
 
+        # Report parity with the gross-ceiling path's
+        # `_alert_owner_delever_incomplete`: if the sweep could not raise
+        # enough to cover the deficit (projected proceeds fell short) or a name
+        # could not be sold even at market, the account is still on margin and
+        # the owner must hear it — never a silent skip.
+        if failed_symbols or projected_proceeds < deficit:
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=projected_proceeds,
+                failed_symbols=failed_symbols,
+            )
+
         return orders
+
+    def _alert_owner_force_delever_incomplete(
+        self, *, deficit: float, projected_proceeds: float,
+        failed_symbols: list[str],
+    ) -> None:
+        """Page the owner when the cash-only forced de-lever could NOT clear
+        the margin deficit — the sibling of `_alert_owner_delever_incomplete`
+        for the `allow_margin=False` sweep path. Never raises.
+
+        Without this a genuinely unfillable name here (a market order the broker
+        rejected, a stop-clear that failed, or simply not enough sellable value)
+        would leave the account on margin with only a log line nobody reads. It
+        is reporting-only: it changes no order, no sizing and no sequencing.
+        """
+        try:
+            from src import notifier as _notifier
+
+            shortfall = max(0.0, deficit - projected_proceeds)
+            names = ", ".join(sorted(failed_symbols)) if failed_symbols else "—"
+            msg = (
+                f"FORCE DE-LEVER INCOMPLETE: the cash-only sweep could not "
+                f"clear the ${deficit:,.2f} margin deficit (still ~"
+                f"${shortfall:,.2f} short). Names that could not be sold even "
+                f"at a MARKET order: {names}. The account remains on margin "
+                f"until this is resolved."
+            )
+            logger.error(msg)
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("force de-lever incomplete owner alert failed: %s", exc)
 
     # --- Spec §11.2 — the gross-exposure ceiling and the de-levering ladder
 
@@ -12187,43 +12364,46 @@ class TradingPipeline:
                 qty = self._full_sell_qty(held_qty)
             if qty is None or qty <= 0:
                 continue
-            # Price the trim 3% THROUGH the market, not the old 1%. This is
-            # emergency risk reduction: the book already exceeds its gross
-            # ceiling and the whole point of the trim is to shed that
-            # exposure NOW. A limit only 1% through can rest unfilled on a
-            # fast or gapping day — precisely the conditions that trigger the
+            # Price the trim off the LIVE quote at submit time, not a fixed %
+            # of a possibly-stale mark. This is emergency risk reduction: the
+            # book already exceeds its gross ceiling and the whole point of the
+            # trim is to shed that exposure NOW, regardless of how far a name
+            # has gapped. A fixed % of a stale price rests ABOVE the falling
+            # market on a gap day — precisely the conditions that trigger the
             # ladder — leaving the book OVER its ceiling exactly when it must
             # come down (docs/WORK.md item 118).
             #
-            # 3% is not a new invented number: it is the SAME buffer the
-            # desk's protective-stop legs already use
-            # (`AlpacaBroker.STOP_LIMIT_BUFFER_PCT`), chosen there as "wide
-            # enough that routine volatility clears it — prioritize fill over
-            # price". Matching it keeps this the least-surprising must-fill
-            # exit on the desk and, like the stop leg, deliberately keeps a
-            # LIMIT (capping worst-case fill) rather than a market order
-            # (unbounded gap slippage) — the same ratified trade-off, which
-            # still misses on a gap wider than 3%. That residual miss is
-            # reported by `_alert_owner_delever_incomplete` and the item-112
-            # shortfall record below.
+            # `_live_delever_price` reads the CURRENT bid/ask and returns a
+            # MARKETABLE limit that crosses it — a SELL at the live bid, a
+            # COVER (BUY) at the live ask — so the order fills at ANY gap size,
+            # because the gap is already IN the quote. When no live quote is
+            # available it returns a limit of None, and the order becomes a
+            # MARKET order: the guaranteed fill, and the correct fallback when
+            # there is no live price to cross. No new % constant is introduced
+            # on either branch, and the must-fill requirement (fill NOW over a
+            # few bps of price) is met without resting on a stale reference.
+            # The reference passed to the broker is the live mid, so the
+            # fat-finger guard passes a legitimately gapped fill instead of
+            # rejecting it for deviating from yesterday's mark.
             #
-            # A COVER is a BUY, so it pays UP through the market (1.03); a
-            # SELL sits DOWN through it (0.97). `FORCE_DELEVER` is already an
-            # EITHER-SIDE exit action in the ledger
-            # (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
+            # `FORCE_DELEVER` is already an EITHER-SIDE exit action in the
+            # ledger (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
             # deterministic de-lever fires against whatever position is
             # open" — so the same label correctly retires a short chain
             # without inventing a second action name.
             is_cover = trim.action == "COVER"
-            limit_price = round(
-                position.current_price * (1.03 if is_cover else 0.97), 2,
+            side = "buy" if is_cover else "sell"
+            limit_price, quote_ref = self._live_delever_price(trim.symbol, side)
+            exec_ref = (
+                quote_ref if quote_ref is not None else position.current_price
             )
             sale = self._submit_protected_sell(
                 symbol=trim.symbol, qty=qty, limit_price=limit_price,
-                reference_price=position.current_price,
+                reference_price=exec_ref,
                 position_qty_before_sell=abs(position.qty),
                 label="FORCE_DELEVER",
-                side="buy" if is_cover else "sell",
+                side=side,
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
                 continue
@@ -12231,8 +12411,9 @@ class TradingPipeline:
             pending_protections.append(protection)
             orders.append(order)
             logger.info(
-                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=$%.2f (%s)",
-                trim.action, trim.symbol, self._format_qty(qty), limit_price,
+                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=%s (%s)",
+                trim.action, trim.symbol, self._format_qty(qty),
+                (f"${limit_price:.2f}" if limit_price is not None else "market"),
                 ceiling.reason,
             )
             try:
