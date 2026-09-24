@@ -1,6 +1,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock, AsyncMock
+from tests.session_clock import todays_session_stamp
 from src.pipeline import TradingPipeline
 from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
@@ -32,6 +33,19 @@ def _news_stub():
         state_changes=[], stock_news={},
         pm_briefing="stub", market_sentiment="neutral", confidence="medium",
     )
+
+
+def _today_snapshot(price: float) -> dict:
+    """A `get_intraday_snapshots` payload with a real print from TODAY.
+
+    Item 120: sizing a new-name BUY now goes through
+    `src.data.live_price.resolve_live_price`, which requires a fresh today
+    print (or today's forming session bar) rather than the bare
+    `get_latest_price` mock these fixtures used to rely on. Stamped via
+    `tests.session_clock.todays_session_stamp` so it resolves as today's
+    print at any hour the suite runs, not only 09:30-16:00 ET.
+    """
+    return {"last_price": price, "last_trade_at": todays_session_stamp()}
 
 
 def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
@@ -290,6 +304,7 @@ def test_pipeline_morning_run_buy(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -421,6 +436,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -594,6 +610,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(100.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -720,6 +737,7 @@ def test_pipeline_risk_rejected(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker_cls.return_value = mock_broker
@@ -2556,6 +2574,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
+    mock_broker.get_intraday_snapshots.return_value = {"QQQ": _today_snapshot(100.0)}
     # 2 account snapshots: (1) initial pre-research, (2) post-sell refresh.
     # The two late-breach account reads that used to sit between them went
     # with the account-level loss breaker on 2026-09-20 (retired item 32).

@@ -51,6 +51,8 @@ from src.data.event_calendar import (
     EventCalendarCoverage, FOMCCoverage, fetch_earnings_proximity,
     format_event_risk_block,
 )
+from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
+from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
@@ -969,6 +971,21 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
             "close is not a fill reference)"
         )
     market_price = float(market_price)
+    # docs/WORK.md item 120: the SHARE COUNT divides the dollar allocation by
+    # the sizing price, so it must be a real TODAY PRINT, never a quote mid
+    # or a prior-session trade. `market_price` above (the fill reference) may
+    # be a quote mid by design; the sizing divisor may not. Folded into the
+    # `no_price` gate so `REQUIRED_BUY_LEG_GATES` coverage is unchanged.
+    sizing_print = _today_sizing_price(pipeline, symbol)
+    if not isinstance(sizing_print, (int, float)) or isinstance(
+        sizing_print, bool,
+    ) or sizing_print <= 0:
+        return None, "no_price", (
+            "no today trade print to size the replacement buy against (a "
+            "quote mid or a prior-session price is not a sizing reference) — "
+            "refused rather than sized on a bad price"
+        )
+    sizing_print = float(sizing_print)
 
     checked.append("stale_entry")
     try:
@@ -985,7 +1002,9 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
 
     # --- gate 3: does the replacement round to a tradeable size? ---------
     checked.append("qty_zero")
-    sizing_price = max(market_price, entry_price or 0.0)
+    # Size off the TODAY PRINT (item 120), bounded conservatively by the
+    # already-approved entry — never off the fill-reference mid.
+    sizing_price = max(sizing_print, entry_price or 0.0)
     is_short = getattr(buy_decision, "action", "BUY") == "SHORT"
     fractional = _fractional_sizing_allowed(
         pipeline, symbol, is_short=is_short,
@@ -1875,6 +1894,98 @@ def _today_order_price(pipeline, symbol) -> float | None:
 def _live_fill_price(pipeline, symbol) -> float | None:
     """Back-compat alias for `_today_order_price`."""
     return _today_order_price(pipeline, symbol)
+
+
+def _today_sizing_price(pipeline, symbol) -> float | None:
+    """A price the SHARE COUNT may divide the dollar allocation by, or None.
+
+    docs/WORK.md item 120. The number of shares an entry buys is
+    `dollars / price`, so this price is the DIVISOR of the allocation and a
+    wrong one mis-sizes the position PROPORTIONALLY. It must therefore be a
+    real TODAY PRINT (`LivePrice.is_today_print`), never a quote MID and
+    never a prior-session last trade.
+
+    This is deliberately stricter than `_today_order_price`, the FILL
+    reference, where a live quote mid IS a legitimate marketable-limit
+    reference mid-session (owner 2026-09-12) — bounding an order you are
+    about to cross against the current book is a different act from setting
+    how many shares to buy. `_today_order_price` accepts a quote mid; this
+    refuses it. When this returns None the caller must refuse the name as
+    unmeasurable rather than size it on a bad price.
+
+    It accepts the SAME today prices the constructor sizes off, so the two
+    stages agree: a real last-trade print, and — when there is none — today's
+    forming SESSION or minute bar via `resolve_live_price` (a real intraday
+    price on the entitled venue, never a quote mid). Without this second
+    branch an IEX-thin name with a today bar but no print — item 120's exact
+    population — would be sized and approved by the paid PM/Risk seats and
+    then silently skipped here, wasting those seats.
+
+    Test compatibility: when the broker is a MagicMock whose
+    `get_latest_price_stamped` does not return a real `LivePrice` and whose
+    `get_intraday_snapshots` does not return a usable payload, this falls
+    through to the bare `get_latest_price` exactly as `_today_order_price`
+    does, so the many MagicMock-broker execution tests keep their behaviour.
+    The freshness gate only bites on a real stamped price / real snapshot.
+    """
+    broker = getattr(pipeline, "broker", None)
+
+    # 1. A real today PRINT from the stamped getter is the best sizing ref.
+    stamped_getter = getattr(broker, "get_latest_price_stamped", None)
+    stamped_is_real = False
+    if callable(stamped_getter):
+        try:
+            from src.execution.broker import LivePrice
+
+            candidate = stamped_getter(symbol)
+            if isinstance(candidate, LivePrice):
+                stamped_is_real = True
+                if candidate.price and candidate.price > 0 and candidate.is_today_print:
+                    return float(candidate.price)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # 2. No today print: accept today's forming SESSION/minute bar through the
+    #    same resolver the constructor uses (never a quote mid), so both
+    #    stages agree on a thin name that has a bar but no print.
+    snap_getter = getattr(broker, "get_intraday_snapshots", None)
+    if callable(snap_getter):
+        snap_is_real = False
+        try:
+            snaps = snap_getter([symbol])
+            if isinstance(snaps, dict):
+                snap_is_real = True
+                resolved = resolve_live_price(snaps.get(symbol))
+                if resolved.is_today_print:
+                    return float(resolved.price)
+        except Exception:  # noqa: BLE001
+            snap_is_real = False
+        # A REAL stamped price (real broker) that was a quote mid or stale,
+        # and no usable today bar either: refuse rather than fall through to
+        # the mid-capable bare getter.
+        if stamped_is_real or snap_is_real:
+            if stamped_is_real:
+                logger.warning(
+                    "%s sizing price refused: no today print and no today "
+                    "session/minute bar — a quote mid or stale price cannot "
+                    "set the share count", symbol,
+                )
+            return None
+    elif stamped_is_real:
+        return None
+
+    # 3. Test / back-compat: a MagicMock broker that returned neither a real
+    #    LivePrice nor a real snapshot dict. Keep existing behaviour.
+    getter = getattr(broker, "get_latest_price", None)
+    if not callable(getter):
+        return None
+    try:
+        live = getter(symbol)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(live, (int, float)) and not isinstance(live, bool) and live > 0:
+        return float(live)
+    return None
 
 
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
@@ -6359,17 +6470,65 @@ class DecisionStage:
         )
 
         price_map = {p.symbol: p.current_price for p in positions}
-        for target in portfolio_decision.targets:
-            sym = target.symbol.strip().upper()
-            if sym in price_map:
-                continue
+        # A new name (one not already held) needs a live price to SIZE its
+        # BUY: the constructor and ExecutionStage both do
+        # `qty = total_value * alloc/100 / price`, so the price is the
+        # divisor of the dollar allocation and a wrong price mis-sizes the
+        # position PROPORTIONALLY. The bare broker call used here previously
+        # (`get_latest_price`) returns whatever `get_latest_price_stamped`
+        # finds FIRST — a real trade print if there is one, but otherwise a
+        # QUOTE MIDPOINT or a prior-session last trade, unlabelled — so a
+        # stale or mid price silently set the share count (docs/WORK.md item
+        # 120).
+        #
+        # Route each new name through the desk's one freshness resolver
+        # instead. `resolve_live_price` turns a `get_intraday_snapshots`
+        # payload into a today price that is a real print OR today's forming
+        # session bar — never a quote mid (the module has no branch that
+        # reads a quote) — subject to the date-equality + 09:30-open
+        # freshness rule, or an explicit refusal. A fresh price sizes the
+        # buy; a name with NO usable today price this session is REFUSED as
+        # unmeasurable (`unpriceable_new_syms` below, routed into the
+        # constructor's existing data-fault / unmeasurable drop path) rather
+        # than sized on a bad price. No fallback price is invented.
+        #
+        # IEX FREE-FEED CAVEAT: the price comes from the single free feed the
+        # account defaults to (`get_intraday_snapshots` pins no `feed`), so
+        # for a very thin name a fresh today price can simply be absent. That
+        # name is then correctly refused — the safe, intended outcome, not a
+        # regression.
+        new_syms = list(dict.fromkeys(
+            t.symbol.strip().upper()
+            for t in portfolio_decision.targets
+            if t.symbol.strip().upper() not in price_map
+        ))
+        unpriceable_new_syms: dict[str, str] = {}
+        if new_syms:
             try:
-                live = pipeline.broker.get_latest_price(sym)
+                snapshots = pipeline.broker.get_intraday_snapshots(new_syms)
             except Exception as e:
-                logger.warning("Constructor price lookup failed for %s: %s", sym, e)
-                continue
-            if live and live > 0:
-                price_map[sym] = live
+                # get_intraday_snapshots is documented never to raise; guard
+                # anyway so a broker fault fails CLOSED (every new name
+                # refused) rather than reaching a bad-price fallback.
+                logger.warning("Constructor snapshot lookup failed: %s", e)
+                snapshots = {}
+            for sym in new_syms:
+                resolved = resolve_live_price(snapshots.get(sym))
+                if resolved.is_today_print:
+                    price_map[sym] = resolved.price
+                else:
+                    # Distinguish "only a stale prior-session price" from
+                    # "no usable price at all" so the census counts them
+                    # apart — the same split the resolver already draws.
+                    unpriceable_new_syms[sym] = (
+                        FAULT_STALE_PRICE if resolved.unavailable == ONLY_STALE
+                        else FAULT_NO_PRICE
+                    )
+                    logger.warning(
+                        "Constructor: no fresh today price for new name %s "
+                        "(%s) — refusing as unmeasurable, not sizing the buy "
+                        "on a stale or mid price", sym, resolved.describe(),
+                    )
         # Spec §2.2 — the book's risk as the constructor must ration it, both
         # already computed above (before `decide()`) so the Phase 14
         # rotation pre-check and the constructor ration against the exact
@@ -6452,6 +6611,10 @@ class DecisionStage:
             analyses=analyses,
             total_value=total_value,
             price_map=price_map,
+            # New names with no fresh today print this session (item 120):
+            # the constructor refuses each as a DATA FAULT rather than
+            # sizing it off a stale/mid price or the TA entry fallback.
+            unpriceable_symbols=unpriceable_new_syms,
             existing_risk_pct=existing_risk_pct,
             clusters=risk_clusters,
             # Live broker stops from the same heat roll-up as
@@ -8085,7 +8248,20 @@ class ExecutionStage:
                         f"${market_price:.2f} (threshold 5%)",
                     )
                     continue
-            preflight_price = max(market_price, decision.entry_price or 0)
+            # docs/WORK.md item 120: the funding preflight must size off the
+            # same TODAY PRINT the submit loop will, never the fill-reference
+            # mid. No print -> the submit loop will refuse this name, so the
+            # sweep must not sell SGOV to fund it.
+            sizing_print = _today_sizing_price(pipeline, decision.symbol)
+            if not isinstance(sizing_print, (int, float)) or sizing_print <= 0:
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "no_sizing_print",
+                    "no today trade print to size the buy against (a quote "
+                    "mid or a prior-session price is not a sizing reference) "
+                    "— refused rather than sized on a bad price",
+                )
+                continue
+            preflight_price = max(sizing_print, decision.entry_price or 0)
             # Spec §11.1: quantized the SAME way the submit loop below will,
             # or the sweep funds a whole-share notional for an order that is
             # about to be placed fractionally — under-funding it, and letting
@@ -8383,7 +8559,6 @@ class ExecutionStage:
                                 decision.symbol, limit_price, market_price,
                             )
                             limit_price = market_price
-                            sizing_price = market_price
                         elif is_short and limit_price > market_price:
                             # Mirror: a resting SHORT limit sitting ABOVE
                             # market is not marketable — you can't sell short
@@ -8395,14 +8570,11 @@ class ExecutionStage:
                                 decision.symbol, limit_price, market_price,
                             )
                             limit_price = market_price
-                            sizing_price = market_price
-                        else:
-                            sizing_price = (
-                                min(market_price, limit_price) if is_short
-                                else max(market_price, limit_price)
-                            )
-                    else:
-                        sizing_price = market_price
+                    # `sizing_price` is deliberately NOT set from market_price
+                    # here: market_price is the FILL reference (a quote mid is
+                    # legitimate for the marketable limit) and the SHARE COUNT
+                    # must not divide by a mid. It is anchored to a today
+                    # print just below (docs/WORK.md item 120).
                 else:
                     logger.error(
                         "%s %s skipped: no verifiable price reference "
@@ -8416,6 +8588,43 @@ class ExecutionStage:
                         "unavailable)",
                     )
                     continue
+
+                # docs/WORK.md item 120: SIZING vs FILL. `market_price` above
+                # is the fill reference and may be a quote mid (a legitimate
+                # marketable-limit reference, owner 2026-09-12); it drives the
+                # limit price. The SHARE COUNT, however, divides the dollar
+                # allocation by the price, so it must be a real TODAY PRINT —
+                # never a quote mid, never a prior-session trade. Size off the
+                # print, bounded conservatively by the already-approved entry
+                # (which passed the 5% freshness check above); refuse the name
+                # when no print is available rather than size on a bad price.
+                sizing_print = _today_sizing_price(pipeline, decision.symbol)
+                if sizing_print is None or sizing_print <= 0:
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "no_sizing_print",
+                        "no today trade print to size the order against (a "
+                        "quote mid or a prior-session price is not a sizing "
+                        "reference) — refused rather than sized on a bad price",
+                    )
+                    continue
+                if decision.entry_price and decision.entry_price > 0:
+                    # Size off a today print, bounded by the approved entry.
+                    # The HIGHER divisor is conservative on the ALLOCATION
+                    # path for BOTH directions (fewer shares: less capital on
+                    # a buy, a smaller short on a short). On the RISK-BUDGET
+                    # path it is conservative for a BUY only: there
+                    # `risk_per_share = entry - stop` and a higher entry
+                    # WIDENS it, shrinking qty_by_risk; for a SHORT
+                    # (`stop - entry`) a higher entry NARROWS it and can
+                    # INFLATE qty_by_risk when the analyst entry sits above
+                    # the today print — a distinct short-side risk-sizing
+                    # defect tracked as its own board item, NOT fixed here.
+                    # What this line does fix: the short no longer divides by
+                    # the below-market `bid_limit` (the over-size bug of
+                    # item 120). Never size off a below-market number.
+                    sizing_price = max(sizing_print, float(decision.entry_price))
+                else:
+                    sizing_price = sizing_print
 
                 # Liquid-equity execution policy: cross the displayed quote
                 # with a limit (never a market order). A wider spread remains
@@ -8648,7 +8857,14 @@ class ExecutionStage:
                             bid, bid_discount_bps,
                         )
                     limit_price = bid_limit
-                    sizing_price = bid_limit
+                    # `bid_limit` is the LIMIT (a marketable floor BELOW
+                    # market); it is deliberately NOT the sizing divisor.
+                    # docs/WORK.md item 120: dividing the allocation by a
+                    # below-market price OVER-sizes the short (more shares) —
+                    # the dangerous direction. Sizing stays anchored to the
+                    # today print set above, mirroring the BUY, which raises
+                    # its divisor to the offer ceiling (fewer shares) and
+                    # never lowers it.
                     original_entry = getattr(decision, "entry_price", None)
                     if (
                         getattr(ctx, "desk_latency_stall", False)

@@ -33,6 +33,7 @@ from src.data.levels import (
     COVERAGE_UNKNOWN,
     FAULT_NO_ANALYSIS,
     FAULT_NO_ENTRY,
+    FAULT_NO_PRICE,
     TargetDerivation,
     derive_structural_target,
     horizon_reach,
@@ -786,6 +787,16 @@ class PortfolioConstructor:
         # the caller's job to drain once per session.
         self.last_data_faults: dict[str, dict[str, str]] = {}
 
+        # New names the caller could not price to a fresh today print (item
+        # 120), mapping SYMBOL -> the fault code to file (FAULT_NO_PRICE or
+        # FAULT_STALE_PRICE). Populated per `construct_orders` call from its
+        # `unpriceable_symbols` argument; consulted by
+        # `_resolve_entry_and_stop` so such a name is refused as a data fault
+        # rather than sized on a stale/mid price. Initialised here so the
+        # backtest shim and older tests that call `_resolve_entry_and_stop`
+        # directly never hit an unset attribute.
+        self._unpriceable_symbols: dict[str, str] = {}
+
         # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
         # "direction"}} for every trade this instance refused BY NAME —
         # today STOP_REFUSAL_WIDER_THAN_REACH and
@@ -974,6 +985,7 @@ class PortfolioConstructor:
         gross_ceiling=None,
         ranking: Sequence[str] | None = None,
         live_stops: dict[str, float] | None = None,
+        unpriceable_symbols: dict[str, str] | set[str] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -985,6 +997,20 @@ class PortfolioConstructor:
         `price_map`: optional {symbol: live_price} — required for BUYs so
         the constructor can sanity-check TA's entry. If absent for a BUY
         symbol, we fall back to TA's entry_price.
+
+        `unpriceable_symbols`: new names (docs/WORK.md item 120) for which
+        the caller's freshness resolver (`src.data.live_price`) could NOT
+        obtain a fresh today print this session — a thin name with no print,
+        or a feed that returned only a stale print. A mapping SYMBOL ->
+        fault code (`FAULT_NO_PRICE` / `FAULT_STALE_PRICE`); a bare set is
+        also accepted and defaults every entry to `FAULT_NO_PRICE`. Sizing a
+        buy off a stale price (or a quote mid) mis-sizes it proportionally,
+        so each of these is refused as a DATA FAULT and dropped rather than
+        sized on a bad price OR on the TA entry fallback. It never affects a
+        held name: the caller only lists new targets it tried and failed to
+        price. `resolve_live_price` returns a real print or today's forming
+        session bar and never a quote mid, so an absent value here means no
+        usable today price of any kind — not merely "no last trade".
 
         `existing_risk_pct` / `clusters`: spec §2.2. The book's current
         per-symbol budget risk (`src/risk/metrics.py`) and its measured
@@ -1038,6 +1064,21 @@ class PortfolioConstructor:
         if total_value <= 0:
             return []
         price_map = price_map or {}
+        # New names the caller could not price to a fresh today print (item
+        # 120), keyed upper-cased so the lookup in `_resolve_entry_and_stop`
+        # cannot miss on case/whitespace drift; the value is the fault code
+        # to file. A bare set defaults every entry to FAULT_NO_PRICE. Reset
+        # every call — per-run state, like `price_map` itself.
+        if isinstance(unpriceable_symbols, dict):
+            self._unpriceable_symbols = {
+                str(s).strip().upper(): str(code or FAULT_NO_PRICE)
+                for s, code in unpriceable_symbols.items()
+            }
+        else:
+            self._unpriceable_symbols = {
+                str(s).strip().upper(): FAULT_NO_PRICE
+                for s in (unpriceable_symbols or ())
+            }
         current_weights = self._current_weights(positions, total_value)
         analyses_by_sym = {a.symbol: a for a in analyses}
         positions_by_sym = {p.symbol: p for p in positions}
@@ -1899,6 +1940,32 @@ class PortfolioConstructor:
         exactly one definition of what a tradeable entry/stop pair is.
         """
         is_short = target.direction == "short"
+
+        # Item 120: a new name the caller could not price to a fresh today
+        # print is refused HERE, before the TA-entry fallback below can size
+        # it off a stale analyst number. The freshness resolver
+        # (`src.data.live_price.resolve_live_price`) already rejected a quote
+        # mid and a prior-session trade for this name — it returns a real
+        # print or today's forming session bar, never a quote mid — so an
+        # entry here means no usable today price of any kind. Falling back to
+        # the TA entry would reintroduce exactly the bad-price sizing the
+        # resolver exists to prevent. Filed under its own SIZING fault code
+        # (FAULT_NO_PRICE / FAULT_STALE_PRICE, carried from the caller) so it
+        # routes through the existing unmeasurable-drop path
+        # (`_record_constructor_drops` / `_alert_unmeasurable_symbols`) and
+        # is never counted as a trade the desk judged.
+        fault_code = self._unpriceable_symbols.get(target.symbol.strip().upper())
+        if fault_code is not None:
+            self._note_data_fault(
+                target.symbol, target.direction, fault_code,
+                "DATA FAULT: no fresh today print to size this new name this "
+                "session (a quote mid or a prior-session price is not a "
+                "sizing reference) — the buy cannot be sized without "
+                "inventing a price, so the name is refused as unmeasurable "
+                "rather than mis-sized",
+            )
+            return (None, None)
+
         entry_price = 0.0
         if market_price and market_price > 0:
             entry_price = float(market_price)
