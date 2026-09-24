@@ -1850,7 +1850,10 @@ def test_a_failed_shortfall_write_never_breaks_the_delever():
 # ===========================================================================
 
 
-def _gap_fill_pipeline(*, gap_price, originals, allow_margin=True, live_quote="gap"):
+def _gap_fill_pipeline(
+    *, gap_price, originals, allow_margin=True, live_quote="gap",
+    reject_limit=False, reject_all=False,
+):
     """Real de-lever loop against a broker that fills or rests by limit price.
 
     A SELL fills only when its limit is at/below the tradeable print; a
@@ -1883,6 +1886,13 @@ def _gap_fill_pipeline(*, gap_price, originals, allow_margin=True, live_quote="g
     def _submit(*, symbol, side, limit_price, qty, **_kw):
         events.append(("submit", symbol))
         oid = f"ord-{symbol}"
+        # `reject_all` refuses every order (id=None) — even the market
+        # escalation, the genuinely-unfillable case. `reject_limit` refuses
+        # only a LIMIT order (a wide-spread quote tripping the broker's
+        # fat-finger guard -> rejected_outlier, which carries no id) so the
+        # de-lever must escalate to a MARKET order (limit_price is None).
+        if reject_all or (reject_limit and limit_price is not None):
+            return {"id": None, "status": "rejected_outlier", "symbol": symbol}
         if limit_price is None:
             fillable = True  # a MARKET order fills unconditionally
         else:
@@ -2173,3 +2183,140 @@ def test_a_cash_only_force_delever_uses_a_market_order_when_no_live_quote():
     assert order["side"] == "sell"
     assert order["limit_price"] is None, "no live quote -> a MARKET order"
     assert order["fillable"] is True, "a market order is a guaranteed fill"
+
+
+def test_a_gross_delever_escalates_to_market_when_the_marketable_limit_is_rejected():
+    """The residual the adversary flagged. A wide-spread live quote (LULD
+    halt-reopen, thin/inverse name in a fast market) makes the marketable limit
+    deviate >20% from mid, so the broker's fat-finger guard returns
+    rejected_outlier. The de-lever must NOT skip the name — it ESCALATES to a
+    MARKET order, the guaranteed fill, and coverage is rebuilt on that fill."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, reject_limit=True,
+    )
+    ctx = RunContext(run_id="run-gross-escalate", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders, "a rejected limit must escalate, not skip the name"
+    order = submitted["ord-NVDA"]
+    assert order["limit_price"] is None, (
+        "the marketable limit was rejected, so the order that landed is a "
+        "MARKET order"
+    )
+    assert order["side"] == "sell"
+    assert order["fillable"] is True
+    assert ("covered", "NVDA") in events, (
+        "stop coverage must be rebuilt on the escalated fill — the "
+        "cancel->submit->restore invariant holds through the escalation"
+    )
+    pipeline.broker._restore_stop_orders.assert_not_called()
+    assert "delever_incomplete" not in ctx.leverage
+
+
+def test_a_cash_only_force_delever_escalates_to_market_when_the_limit_is_rejected():
+    """The `_force_delever` twin of the escalation: a rejected marketable limit
+    escalates to a MARKET order rather than leaving the account on margin."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, allow_margin=False, reject_limit=True,
+    )
+    ctx = RunContext(run_id="run-force-escalate", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._force_delever(ctx)
+
+    assert orders, "a rejected limit must escalate, not skip the name"
+    order = submitted["ord-NVDA"]
+    assert order["limit_price"] is None, "escalated to a MARKET order"
+    assert order["side"] == "sell"
+    assert order["fillable"] is True
+    assert ("covered", "NVDA") in events
+    pipeline.broker._restore_stop_orders.assert_not_called()
+
+
+def test_a_gross_delever_reports_incomplete_only_if_even_the_market_order_fails():
+    """The name is reported incomplete ONLY when even the market escalation
+    fails — never on the first rejection. With every order refused, nothing
+    fills, the book stays over its ceiling, the stops are restored (no naked
+    position), and the incompleteness flag is set."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, reject_all=True,
+    )
+    ctx = RunContext(run_id="run-gross-incomplete", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._enforce_gross_ceiling(ctx)
+
+    assert orders == [], "no order was accepted, so none is recorded"
+    assert submitted == {}, "neither the limit nor the market order filled"
+    # On total failure the cancelled stops must be restored — no naked position.
+    pipeline.broker._restore_stop_orders.assert_called()
+    assert ctx.leverage.get("delever_incomplete") is True, (
+        "still over the ceiling after a failed de-lever must be reported"
+    )
+
+
+def test_a_cash_only_force_delever_reports_incomplete_when_even_market_fails():
+    """The `_force_delever` twin: when even the market escalation fails, the
+    name is not silently skipped — the owner is paged that the sweep could not
+    clear the margin deficit."""
+    from unittest.mock import patch
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=95.0, originals=originals, allow_margin=False, reject_all=True,
+    )
+    ctx = RunContext(run_id="run-force-incomplete", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        orders = pipeline._force_delever(ctx)
+
+    assert orders == [], "no order was accepted, so none is recorded"
+    pipeline.broker._restore_stop_orders.assert_called()
+    assert alert.called, (
+        "a sweep that could not clear the deficit even at market must page "
+        "the owner, not skip silently"
+    )
+    (msg,), _kw = alert.call_args
+    assert "INCOMPLETE" in msg and "NVDA" in msg
+
+
+def test_a_cash_only_force_delever_reports_incomplete_when_no_long_to_sell():
+    """No long position to sell is itself a residual miss: the account stays on
+    margin, so the owner must be paged rather than only a log line written."""
+    from unittest.mock import patch
+    from src.pipeline_context import RunContext
+
+    pipeline, _events = _stop_timeline_pipeline(allow_margin=False)
+    ctx = RunContext(run_id="run-force-nolong", session="morning")
+    ctx.cash = -5_000.0
+    ctx.positions = [_position("NVDA", qty=-50.0, current_price=100.0)]  # short only
+    ctx.total_value = EQUITY
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        orders = pipeline._force_delever(ctx)
+
+    assert orders == []
+    assert alert.called, "no long to sell leaves the account on margin — page it"

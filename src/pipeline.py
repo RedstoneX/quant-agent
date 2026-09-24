@@ -4206,6 +4206,7 @@ class TradingPipeline:
         position_qty_before_sell: float,
         label: str,
         side: str = "sell",
+        escalate_to_market_on_reject: bool = False,
     ) -> tuple[dict, dict] | None:
         """Head half of the SELL/COVER discipline: clear protective stops
         (write-ahead) → submit the order → guarantee stops are restored if
@@ -4336,12 +4337,55 @@ class TradingPipeline:
                 )
             return None
         if not self._order_accepted(order, symbol, side):
-            # Broker rejected — restore the stops we just cancelled.
-            if stop_specs:
-                self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+            # A MUST-FILL emergency de-lever cannot afford to skip a name here.
+            # A wide-spread live quote (e.g. a LULD halt-reopen or a thin /
+            # inverse name in a fast market) can make the marketable limit
+            # deviate >20% from the mid, so the broker's own fat-finger guard
+            # returns `rejected_outlier`. Skipping the name would re-open
+            # exactly the over-ceiling / uncleared-deficit miss the de-lever
+            # exists to kill. So the de-lever callers pass
+            # `escalate_to_market_on_reject=True`: on a NON-accept of the
+            # marketable LIMIT, escalate once to a MARKET order — the
+            # guaranteed fill, which carries no limit and so skips the guard.
+            # Every other caller keeps the prior skip-on-reject behaviour
+            # (default False). The stops are still cancelled and the rejected
+            # order did not fill, so the position is intact; submit the market
+            # order against the SAME cancelled stops (no restore in between)
+            # and let finalize rebuild coverage on its fill, exactly as for the
+            # limit.
+            if escalate_to_market_on_reject and limit_price is not None:
+                rejected_status = (
+                    order.get("status") if isinstance(order, dict) else order
                 )
-            return None
+                logger.warning(
+                    "%s: marketable-limit exit for %s was not accepted (%s) — "
+                    "escalating to a MARKET order (guaranteed fill).",
+                    label, symbol, rejected_status,
+                )
+                try:
+                    order = self.broker.submit_order(
+                        symbol=symbol, qty=qty, side=side,
+                        limit_price=None, reference_price=reference_price,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "%s: MARKET escalation submit failed for %s: %s",
+                        label, symbol, exc,
+                    )
+                    if stop_specs:
+                        self.broker._restore_stop_orders(
+                            symbol, stop_specs, check_idempotency=False,
+                            **stop_side_kwargs,
+                        )
+                    return None
+            if not self._order_accepted(order, symbol, side):
+                # Broker rejected (no escalation, or the market order itself was
+                # not accepted) — restore the stops we just cancelled.
+                if stop_specs:
+                    self.broker._restore_stop_orders(
+                        symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+                    )
+                return None
         # audit F5: tag the order dict so the notifier's intervention banner +
         # inline action labels fire (broker.submit_order returns no 'action').
         if isinstance(order, dict):
@@ -11866,6 +11910,12 @@ class TradingPipeline:
                 "to sell — account stuck on margin until cash arrives externally",
                 ctx.cash, deficit,
             )
+            # Loud, not silent: no long to sell IS a residual miss (the sibling
+            # of the gross-ceiling path's incompleteness alert) — the account
+            # stays on margin, so page the owner rather than only logging.
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=0.0, failed_symbols=[],
+            )
             return []
 
         # Two-tier ordering: prefer longs over inverse-ETF hedges before
@@ -11906,6 +11956,7 @@ class TradingPipeline:
 
         orders: list[dict] = []
         projected_proceeds = 0.0
+        failed_symbols: list[str] = []
         for p in targets:
             if projected_proceeds >= deficit:
                 break
@@ -11944,8 +11995,14 @@ class TradingPipeline:
                 symbol=p.symbol, qty=qty, limit_price=sell_limit,
                 reference_price=exec_ref, position_qty_before_sell=p.qty,
                 label="SWEEP_SELL" if is_sweep else "FORCE_DELEVER",
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
+                # Even the MARKET escalation could not place (stop-clear failed,
+                # or the market order itself was rejected). This name is a real
+                # residual miss — record it so the sweep is reported incomplete
+                # below rather than silently skipped.
+                failed_symbols.append(p.symbol)
                 continue
             order, prot = sale
             try:
@@ -12018,7 +12075,48 @@ class TradingPipeline:
         except Exception as e:
             logger.error("FORCE DE-LEVER: broker refresh failed: %s", e)
 
+        # Report parity with the gross-ceiling path's
+        # `_alert_owner_delever_incomplete`: if the sweep could not raise
+        # enough to cover the deficit (projected proceeds fell short) or a name
+        # could not be sold even at market, the account is still on margin and
+        # the owner must hear it — never a silent skip.
+        if failed_symbols or projected_proceeds < deficit:
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=projected_proceeds,
+                failed_symbols=failed_symbols,
+            )
+
         return orders
+
+    def _alert_owner_force_delever_incomplete(
+        self, *, deficit: float, projected_proceeds: float,
+        failed_symbols: list[str],
+    ) -> None:
+        """Page the owner when the cash-only forced de-lever could NOT clear
+        the margin deficit — the sibling of `_alert_owner_delever_incomplete`
+        for the `allow_margin=False` sweep path. Never raises.
+
+        Without this a genuinely unfillable name here (a market order the broker
+        rejected, a stop-clear that failed, or simply not enough sellable value)
+        would leave the account on margin with only a log line nobody reads. It
+        is reporting-only: it changes no order, no sizing and no sequencing.
+        """
+        try:
+            from src import notifier as _notifier
+
+            shortfall = max(0.0, deficit - projected_proceeds)
+            names = ", ".join(sorted(failed_symbols)) if failed_symbols else "—"
+            msg = (
+                f"FORCE DE-LEVER INCOMPLETE: the cash-only sweep could not "
+                f"clear the ${deficit:,.2f} margin deficit (still ~"
+                f"${shortfall:,.2f} short). Names that could not be sold even "
+                f"at a MARKET order: {names}. The account remains on margin "
+                f"until this is resolved."
+            )
+            logger.error(msg)
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("force de-lever incomplete owner alert failed: %s", exc)
 
     # --- Spec §11.2 — the gross-exposure ceiling and the de-levering ladder
 
@@ -12257,6 +12355,7 @@ class TradingPipeline:
                 position_qty_before_sell=abs(position.qty),
                 label="FORCE_DELEVER",
                 side=side,
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
                 continue
