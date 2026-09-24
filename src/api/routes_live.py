@@ -393,6 +393,8 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
         annual_usd=data.get("annual_usd"),
         label=data.get("label"),
         broker_check_note=data.get("broker_check_note"),
+        days_charged=data.get("days_charged"),
+        period_usd=data.get("period_usd"),
         error=data.get("error"),
     )
 

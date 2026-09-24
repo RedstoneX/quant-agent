@@ -175,6 +175,17 @@ class MarginInterestEstimate(BaseModel):
     daily_usd: float | None = None
     annual_usd: float | None = None
     label: str | None = None
+    #: Calendar days tonight's carry spans before the next trading day —
+    #: 1 on a normal weeknight, 3 over a weekend (Friday), 4 before a
+    #: Monday holiday. Same figure the Telegram alert names
+    #: (`src.margin_interest.days_charged_until_next_trading_day`); `None`
+    #: only in the fault case, alongside the other numeric fields.
+    days_charged: int | None = None
+    #: `daily_usd * days_charged` — what tonight's carry actually costs in
+    #: total, not just the per-day rate. `daily_usd` is deliberately left
+    #: unchanged by the multi-day carry so the dashboard can show both the
+    #: per-day figure and the real period total without conflating them.
+    period_usd: float | None = None
     #: Result of comparing the estimate against the broker's own `INT`
     #: account-activity records — plain-language, e.g. "broker confirmed
     #: a margin interest charge of $X..." or "no INT activity ... not

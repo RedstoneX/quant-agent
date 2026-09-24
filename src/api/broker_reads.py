@@ -248,7 +248,17 @@ def read_margin_interest(cash: float | None) -> dict:
     — has just fetched it via `read_account()`; this avoids a second broker
     round-trip for the same number). Returns
     `{"debit_balance", "rate_pct", "daily_usd", "annual_usd", "label",
-    "broker_check_note", "error"}`. Never raises.
+    "broker_check_note", "days_charged", "period_usd", "error"}`. Never
+    raises.
+
+    `days_charged`/`period_usd` mirror the Telegram alert's own multi-day
+    carry (`src.notifier._margin_interest_lines`): Alpaca charges for every
+    calendar day a debit is carried, so a Friday overnight is 3 days
+    (weekend), not 1. Computed the same way the Telegram path does — via
+    `src.margin_interest.days_charged_until_next_trading_day`, fed the
+    broker's own `is_trading_day` calendar check — so the dashboard cannot
+    drift from the alert. Degrades to 1 (the pre-existing flat figure) on
+    any calendar read failure, same as the Telegram path.
 
     THREE distinct shapes, and the caller must keep them apart (owner
     decision 2026-09-18 — see `margin_interest.format_daily_line`):
@@ -280,7 +290,7 @@ def read_margin_interest(cash: float | None) -> dict:
     empty = {
         "debit_balance": None, "rate_pct": None, "daily_usd": None,
         "annual_usd": None, "label": None, "broker_check_note": None,
-        "error": None,
+        "days_charged": None, "period_usd": None, "error": None,
     }
     try:
         rate_pct = get_risk_limits().margin_interest_rate_pct
@@ -289,9 +299,27 @@ def read_margin_interest(cash: float | None) -> dict:
         return {**empty, "error": str(exc)}
 
     try:
-        from src.margin_interest import build_estimate, overnight_debit_balance
+        from src.margin_interest import (
+            build_estimate,
+            days_charged_until_next_trading_day,
+            overnight_debit_balance,
+        )
         debit_balance = overnight_debit_balance(cash)
-        estimate = build_estimate(debit_balance, rate_pct)
+        # Same calendar lookahead the Telegram alert uses — a broker/calendar
+        # hiccup degrades to 1 (the flat per-day figure shown before this
+        # existed) and must never turn a readable cash balance into a fault.
+        try:
+            from src.util.time import et_today
+            days_charged = days_charged_until_next_trading_day(
+                _get_broker().is_trading_day, et_today(),
+            )
+        except Exception as exc:
+            logger.warning(
+                "broker_reads.read_margin_interest: calendar lookahead failed, "
+                "assuming 1 day charged: %s", exc,
+            )
+            days_charged = 1
+        estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:
         logger.warning("broker_reads.read_margin_interest: estimate failed: %s", exc)
         return {**empty, "error": str(exc)}
@@ -324,6 +352,8 @@ def read_margin_interest(cash: float | None) -> dict:
             "rate_pct": rate_pct,
             "daily_usd": 0.0,
             "annual_usd": 0.0,
+            "days_charged": days_charged,
+            "period_usd": 0.0,
         }
 
     broker_check_note = None
@@ -346,6 +376,8 @@ def read_margin_interest(cash: float | None) -> dict:
         "annual_usd": estimate.annual_usd,
         "label": estimate.label,
         "broker_check_note": broker_check_note,
+        "days_charged": estimate.days_charged,
+        "period_usd": estimate.period_usd,
         "error": None,
     }
 

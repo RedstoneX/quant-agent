@@ -68,6 +68,16 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
   );
 }
 
+/** Plain-words name for a multi-day carry, mirroring
+ * `src.margin_interest._closure_name` exactly so the dashboard never
+ * disagrees with the Telegram alert's own wording: 3 days -> weekend,
+ * 4 -> long weekend, anything else -> market closure (a midweek holiday). */
+function closureName(daysCharged: number): string {
+  if (daysCharged === 3) return "weekend";
+  if (daysCharged === 4) return "long weekend";
+  return "market closure";
+}
+
 export function MarginInterestStrip({
   account,
   accountError,
@@ -130,6 +140,19 @@ export function MarginInterestStrip({
             * fmtMoneyCompact would round $0.99 to "$1" — the one figure
             * here where the rounding eats the whole number. */}
           <Stat label="Per day" value={fmtMoney(mi.daily_usd)} />
+          {/* Alpaca charges for every calendar day the balance is carried,
+            * so a Friday's overnight is really three nights' worth — same
+            * multi-day carry the Telegram alert names
+            * (`src.margin_interest.format_alert_line`). Shown as its own
+            * stat, with the plain-words closure name, so the per-day
+            * figure above cannot be misread as tonight's whole bill. */}
+          {mi.days_charged !== null && mi.days_charged > 1 && mi.period_usd !== null && (
+            <Stat
+              label={`Over the ${closureName(mi.days_charged)}`}
+              value={`${mi.days_charged} days ≈ ${fmtMoney(mi.period_usd)}`}
+              note={`Carried over the ${closureName(mi.days_charged)} — ${mi.days_charged} days at ${fmtMoney(mi.daily_usd)}/day`}
+            />
+          )}
           <Stat
             label="Per year"
             value={fmtMoneyCompact(mi.annual_usd)}
