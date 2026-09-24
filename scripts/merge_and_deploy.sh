@@ -25,6 +25,83 @@ set -euo pipefail
 DEPLOY_ROOT=/home/qamc/quant-agent
 API_UNIT=quant-agent-api.service
 QAMC_UID="$(id -u qamc)"
+# Where the repo keeps its units and where systemd actually reads them from.
+# Installing a unit is a `cp`: a merged change to a .service/.timer, or a
+# brand-new timer, lands in git and is NOT seen by systemd until it is copied
+# here, `daemon-reload`ed and `enable`d (item 122). Before this the deploy
+# only restarted the API unit, so unit changes shipped in name only.
+UNIT_SRC="${DEPLOY_ROOT}/scripts/systemd"
+UNIT_DIR=/home/qamc/.config/systemd/user
+PAUSED_UNITS="${UNIT_SRC}/paused_units.yaml"
+
+qamc_systemctl() {
+  sudo -n -u qamc "XDG_RUNTIME_DIR=/run/user/${QAMC_UID}" systemctl --user "$@"
+}
+
+# True when the unit is on the declared paused list (scripts/systemd/
+# paused_units.yaml). A paused unit is installed but deliberately NOT
+# enabled; the deploy must not silently switch it back on.
+unit_is_paused() {
+  [[ -r "${PAUSED_UNITS}" ]] || return 1
+  grep -Eq "^[[:space:]]*-?[[:space:]]*unit:[[:space:]]*${1}[[:space:]]*$" \
+    "${PAUSED_UNITS}"
+}
+
+install_units() {
+  local src name changed=0
+  for src in "${UNIT_SRC}"/*.service "${UNIT_SRC}"/*.timer; do
+    [[ -e "${src}" ]] || continue
+    name="$(basename "${src}")"
+    # `cmp` exits non-zero for a missing target too, so a brand-new unit
+    # takes the same path as a changed one. Idempotent: an unchanged unit
+    # is left alone and triggers no reload.
+    if sudo -n cmp -s "${src}" "${UNIT_DIR}/${name}"; then
+      continue
+    fi
+    # Show what is being replaced BEFORE replacing it. A box copy that was
+    # hand-edited is evidence the unit-drift check would otherwise report;
+    # an unconditional overwrite would destroy it unread (docs/BOARD_NOTES.md
+    # on item 122), so the diff goes into this run's output first.
+    if sudo -n test -e "${UNIT_DIR}/${name}"; then
+      echo "==> ${name} differs from the installed copy:"
+      sudo -n diff -u "${UNIT_DIR}/${name}" "${src}" || true
+    fi
+    echo "==> installing ${name} into ${UNIT_DIR}"
+    sudo -n install -o qamc -g qamc -m 0644 "${src}" "${UNIT_DIR}/${name}"
+    changed=1
+  done
+  # daemon-reload + enable are REQUIRED for a unit change to take effect:
+  # systemd keeps running the copy it parsed at the last reload, and a unit
+  # file that is present but not enabled never fires on its own.
+  if (( changed )); then
+    echo "==> systemctl --user daemon-reload (unit files changed)"
+    qamc_systemctl daemon-reload
+  fi
+  for src in "${UNIT_SRC}"/*.service "${UNIT_SRC}"/*.timer; do
+    [[ -e "${src}" ]] || continue
+    name="$(basename "${src}")"
+    # Only units that declare an [Install] section can be enabled; the
+    # oneshot services behind the timers deliberately carry none.
+    grep -q '^\[Install\]' "${src}" || continue
+    if unit_is_paused "${name}"; then
+      echo "==> ${name} is on paused_units.yaml — leaving it disabled"
+      continue
+    fi
+    if qamc_systemctl is-enabled --quiet "${name}" 2>/dev/null; then
+      continue
+    fi
+    # Timers get --now so a newly added schedule starts ticking today
+    # rather than at the next login. Services are only enabled: the API is
+    # restarted below and the rest are timer-driven oneshots.
+    if [[ "${name}" == *.timer ]]; then
+      echo "==> enabling ${name} (--now)"
+      qamc_systemctl enable --now "${name}"
+    else
+      echo "==> enabling ${name}"
+      qamc_systemctl enable "${name}"
+    fi
+  done
+}
 
 deploy() {
   echo "==> fetching origin/main into ${DEPLOY_ROOT}"
@@ -34,9 +111,10 @@ deploy() {
   # confusing "you are not currently on a branch", which is its own small trap.
   echo "==> checking out origin/main (detached, as production always runs)"
   sudo -n git -C "${DEPLOY_ROOT}" checkout --detach origin/main
+  # Units first, so the restart below picks up an API unit change too.
+  install_units
   echo "==> restarting ${API_UNIT}"
-  sudo -n -u qamc "XDG_RUNTIME_DIR=/run/user/${QAMC_UID}" \
-    systemctl --user restart "${API_UNIT}"
+  qamc_systemctl restart "${API_UNIT}"
 
   local deployed expected
   deployed="$(sudo -n git -C "${DEPLOY_ROOT}" rev-parse HEAD)"
