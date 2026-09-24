@@ -242,17 +242,58 @@ def repair_stop_coverage(
             code="price_unusable", record=rec
         )
     if stamped is not None and not stamped.is_today_print:
-        logger.warning(
-            "coverage repair: %s has no trade print from today (price $%.2f came "
-            "from %s) — a stop placed off an unconfirmed price could fire "
-            "immediately. Leaving the gap flagged for the next sweep.",
-            symbol, price, stamped.source,
-        )
-        return _refuse(
-            outcome, "there is no trade print from today to check the "
-            "recorded stop against",
-            code="no_trade_print_today", record=rec
-        )
+        # `get_latest_price_stamped` only ever stamps `is_today_print` for a
+        # `last_trade` — never for today's still-live 1-minute or session
+        # bar, even though `src.data.live_price.resolve_live_price` treats
+        # either of those as a legitimate today print. A name with a stale
+        # last_trade (thin overnight name, feed gap) but a live minute bar
+        # was refusing here even though the tape has, in fact, printed
+        # today — an avoidable no-print refusal and a false owner alarm.
+        # Before giving up, check the same intraday snapshot the research
+        # path already trusts for "is this today's". This can ONLY resolve
+        # to a real print (last trade, minute bar, session bar) — never a
+        # quote mid, which `resolve_live_price` structurally cannot return —
+        # so the "never repair off a quote mid" rule above is untouched.
+        resolved_price = None
+        resolved_source = None
+        try:
+            snapshots_getter = getattr(broker, "get_intraday_snapshots", None)
+            if callable(snapshots_getter):
+                snapshots = snapshots_getter([symbol])
+                snapshot = snapshots.get(symbol) if isinstance(snapshots, dict) else None
+                if snapshot:
+                    from src.data.live_price import resolve_live_price
+
+                    resolved = resolve_live_price(snapshot)
+                    if resolved.price is not None:
+                        resolved_price = resolved.price
+                        resolved_source = resolved.source
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "coverage repair: intraday snapshot lookup failed for %s: %s",
+                symbol, exc,
+            )
+        if resolved_price is not None:
+            logger.info(
+                "coverage repair: %s last read ($%.2f from %s) was not a "
+                "today print, but today's %s at $%.2f satisfies the "
+                "freshness requirement — proceeding with that price.",
+                symbol, price, stamped.source, resolved_source, resolved_price,
+            )
+            price = resolved_price
+        else:
+            logger.warning(
+                "coverage repair: %s has no trade print from today (price $%.2f "
+                "came from %s, and no today minute/session bar was available "
+                "either) — a stop placed off an unconfirmed price could fire "
+                "immediately. Leaving the gap flagged for the next sweep.",
+                symbol, price, stamped.source,
+            )
+            return _refuse(
+                outcome, "there is no trade print from today to check the "
+                "recorded stop against",
+                code="no_trade_print_today", record=rec
+            )
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
     # this janitor into an immediate marketable exit.

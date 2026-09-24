@@ -415,6 +415,68 @@ def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
 
 
 # ---------------------------------------------------------------------------
+# item 132: a stale last_trade must not shadow a live minute/session bar.
+# `get_latest_price_stamped` only ever stamps `is_today_print` for a real
+# `last_trade` — never for today's still-forming minute/session bar, even
+# though `src.data.live_price.resolve_live_price` (the same freshness
+# resolver the research path trusts) treats either as a legitimate today
+# print. Before this fix, a name with a stale last_trade but a live minute
+# bar refused here regardless — an avoidable no-print refusal and a false
+# owner alarm.
+# ---------------------------------------------------------------------------
+
+def _today_snapshot(**overrides):
+    """An intraday-snapshot payload with a today session_bar_at.
+
+    `session_bar_at` is dated (not timed), so date-equality against the
+    real ET "now" is enough to make it today's regardless of what wall-clock
+    hour the test happens to run at — no need to fake the 09:30 ET bound
+    that `resolve_live_price` applies to point-in-time candidates.
+    """
+    from src.trading_calendar import et_now
+
+    payload = {
+        "last_price": None, "last_trade_at": None,
+        "minute_close": None, "minute_bar_at": None,
+        "session_open": 164.0, "session_close": None,
+        "session_bar_at": et_now(),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_stale_last_trade_is_repaired_off_a_live_today_bar():
+    """A stale last_trade alone would refuse (see test above), but a today
+    session bar sitting in the same snapshot is a real print and must let
+    the repair through."""
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, is_today=False, is_today_print=False,
+    )
+    p.broker.get_intraday_snapshots.return_value = {
+        "VST": _today_snapshot(session_open=164.0),
+    }
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    # Repaired against the recorded stop level, not the fallback price.
+    assert p.broker._submit_protective_stop_retrying.call_args.kwargs["stop_price"] == 158.75
+
+
+def test_no_last_trade_and_no_today_bar_still_refuses():
+    """No today print anywhere — genuinely unverifiable — must still refuse,
+    exactly as before this fix."""
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, is_today=False, is_today_print=False,
+    )
+    p.broker.get_intraday_snapshots.return_value = {"VST": {}}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is not True
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # a failed SESSION-HOURS re-placement has to reach the owner from the session
 # ---------------------------------------------------------------------------
 # On 2026-09-18 09:30:45 ET the fractional coverage repair refused NET
