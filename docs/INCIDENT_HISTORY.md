@@ -15543,3 +15543,12 @@ earlier in the same function for the allocation path — no new constant.
 
 Item 181 is retired; residue: none — item 120's SIZING half is now fully
 closed on both the allocation and risk-budget paths, for both directions.
+
+
+## 2026-09-24 — the definition-of-done gate could go blind on its own shallow checkout, and said nothing when it did
+
+The gate reads a pull request's adversary and trailer record from commit messages only, resolving the base commit as the parent of HEAD; on the CI runner's default depth-1 checkout that parent, and sometimes an earlier commit on a multi-commit branch, was unreadable, so a genuine trailer failed the check with no indication that the checkout — not the trailer — was the problem (item 132, filed 2026-09-18). PR #476 sat red for hours this way with a complete, genuine adversary record already in its description.
+
+Fixed: `.github/workflows/test.yml`'s checkout step now runs `fetch-depth: 0` (full history), so `scripts/definition_of_done.py::base_ref` resolves the real merge-base against `origin/main` directly instead of guessing from a truncated parent chain; the earlier on-demand deepen-to-2 fetch is kept only as a fallback for a checkout that is shallow for some other reason. Any failing check now also prints `read_scope_note`'s output: the exact commit range read, an explicit statement that the PR description is never read, and a shallow-checkout warning when one applies. The rule — full history required, do not revert the checkout to save CI time — is written into `AGENTS.md`'s "Definition of done" section so it survives the next person optimizing the workflow file.
+
+Not fixed and not needed: the gate's substantive requirements (a `Response-N: CHANGED <path>` must cite a path the diff touches) are unchanged; item 132 was about visibility into what the gate read, not about relaxing what it checks.
