@@ -1348,6 +1348,20 @@ numbers:
       this ledger is a multiple of THIS unit, and it was out of scope while
       all of its multipliers were in - the gap the scope rule in
       src/number_sources.py was written to close.
+  - id: src.data.technical.ADX_PERIOD
+    value: 14
+    status: sourced
+    site: src/data/technical.py
+    source: >-
+      Wilder's original lookback for the Average Directional Index, as
+      published in J. Welles Wilder, New Concepts in Technical Trading Systems
+      (1978), and the period every chart package means by "ADX(14)". Definition
+      site and reasoning: src/data/technical.py:11-20.
+    note: >-
+      The ADX lookback. ADX measures trend STRENGTH only; the exit guard reads
+      it (with the SMA regime for direction) to make a support/resistance break
+      confirmation trend-context-aware (item 70). Same unit family as, and
+      deliberately equal to, ATR_PERIOD above.
   - id: src.data.technical.LONGEST_INDICATOR_WINDOW
     value: 200
     status: arbitrary
@@ -2162,6 +2176,80 @@ numbers:
       widening described at src/risk/exit_guard.py:260-278. Same magnitude and
       same question as the trailing-stop noise band, which carries the open
       question.
+  - id: src.risk.exit_guard.COUNTER_TREND_BREAK_ATR_MULTIPLE
+    value: 1.5
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      High end of the accepted 1.0-1.5x ATR "decisive break beyond a level"
+      filter margin in published trend/breakout technical-analysis practice.
+      The range and the item-70 owner-ratified doctrine it implements (a break
+      AGAINST a strong trend must clear a wider margin because it is more likely
+      a shakeout) are documented at src/risk/exit_guard.py:476-539. The low end
+      of the same range is NOISE_BAND_ATR_MULTIPLE (1.0).
+    note: >-
+      Applied ONLY to a counter-trend break (a break against a strong prevailing
+      trend). The exact 1.5 within the sourced 1.0-1.5x range is a discretionary
+      choice within accepted practice, NOT read off any one instrument; the
+      range is what is sourced, not the pick. A with-trend or weak/rangebound
+      break uses the 1.0x low end unchanged.
+  - id: src.risk.exit_guard.WITH_TREND_CONFIRMING_CLOSES
+    value: 2
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      Low end of the accepted 2-3 consecutive-confirming-close range in
+      published breakout-confirmation practice (a level breaks on a decisive
+      close, confirmed over consecutive closes to reject a one-day spring).
+      Range and doctrine documented at src/risk/exit_guard.py:476-539. This is
+      the pre-item-70 two-consecutive-closes gate, unchanged.
+    note: >-
+      Standard confirming-close count, used for a with-trend or weak/rangebound
+      break: today's close plus one prior confirming close. The exact pick
+      within the sourced 2-3 range is a discretionary choice within accepted
+      practice, not read off any instrument.
+  - id: src.risk.exit_guard.COUNTER_TREND_CONFIRMING_CLOSES
+    value: 3
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      High end of the accepted 2-3 consecutive-confirming-close range in
+      published breakout-confirmation practice. Range and the item-70 doctrine
+      (a break against a strong trend must hold longer before it is trusted) are
+      documented at src/risk/exit_guard.py:476-539.
+    note: >-
+      Stricter confirming-close count, required ONLY for a counter-trend break:
+      today's close plus two prior confirming closes. The exact pick within the
+      sourced 2-3 range is a discretionary choice within accepted practice, not
+      read off any instrument.
+  - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
+    value: 25
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      Wilder's own ADX threshold for a strong trend, as published in J. Welles
+      Wilder, New Concepts in Technical Trading Systems (1978), the standard
+      convention (ADX above 25 = trend strong enough to trade with). Definition
+      and use documented at src/risk/exit_guard.py:476-539.
+    note: >-
+      At or above this ADX the prevailing trend's DIRECTION is allowed to change
+      the break confirmation (with-trend vs counter-trend). Below it the tape is
+      treated as trending too weakly and the standard settings apply. Wilder's
+      published threshold, not a discretionary pick.
+  - id: src.risk.exit_guard.ADX_WEAK_TREND_THRESHOLD
+    value: 20
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      Wilder's own ADX threshold for a weak / absent trend, as published in
+      J. Welles Wilder, New Concepts in Technical Trading Systems (1978), the
+      standard convention (ADX below 20 = no tradable trend). Definition and use
+      documented at src/risk/exit_guard.py:476-539.
+    note: >-
+      Below this ADX the tape is treated as weak / rangebound — no prevailing
+      trend to be with or against — so break confirmation defaults to the
+      standard 1.0x / two-close settings. Wilder's published threshold, not a
+      discretionary pick.
   - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
     value: 40
     status: not-trade-governing

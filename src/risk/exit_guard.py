@@ -472,6 +472,268 @@ def veto_contradicted_exit(
 #: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
 
+# ---------------------------------------------------------------------------
+# TREND-CONTEXT break confirmation (item 70, owner-ratified doctrine)
+# ---------------------------------------------------------------------------
+#
+# A support/resistance break is confirmed only by a decisive CLOSE beyond the
+# level by an ATR-scaled margin held over consecutive closes (already how the
+# confirmation gate below works). The owner's refinement: make that
+# confirmation TREND-CONTEXT-AWARE, biased toward getting OUT sooner on a
+# genuine breakdown while not being shaken out of a strong trend by noise.
+#
+#   - A break WITH the prevailing trend (price falling through support while
+#     ALREADY in a downtrend; or, for a short, rising through resistance while
+#     in an uptrend) is a real breakdown — trust it FAST, on the standard
+#     1.0x ATR margin and two consecutive closes (unchanged behaviour).
+#   - A break AGAINST a strong prevailing trend (falling through support while
+#     in a strong UPtrend; or rising through resistance in a strong DOWNtrend)
+#     is far more likely a shakeout/spring — demand MORE before lifting
+#     protection: a wider 1.5x ATR margin AND a third confirming close.
+#   - A weak / rangebound tape (ADX low) has no trend to be with or against,
+#     so it defaults to the standard settings.
+#
+# ACCEPTED-PRACTICE RANGES the discretionary picks below sit inside (published
+# TA literature; the exact value within each range is a discretionary choice,
+# not read off any one instrument — see config/number_ledger.yaml):
+#   - break margin: 1.0-1.5x ATR  (1.0 = NOISE_BAND_ATR_MULTIPLE, the low end;
+#     1.5 = COUNTER_TREND_BREAK_ATR_MULTIPLE, the high end)
+#   - confirming closes: 2-3      (2 = WITH_TREND_CONFIRMING_CLOSES;
+#     3 = COUNTER_TREND_CONFIRMING_CLOSES)
+#   - ADX strong/weak: >25 / <20  (Wilder's own thresholds)
+#
+# ONLY the counter-trend case departs from the pre-item-70 behaviour. A
+# with-trend break, a weak tape, or missing ADX/MA context all resolve to the
+# standard 1.0x / 2-close settings, so every pre-existing caller and test that
+# supplies no trend context is byte-for-byte unchanged.
+
+#: High end of the accepted 1.0-1.5x ATR break-margin range. Applied ONLY to a
+#: counter-trend break (a break against a strong prevailing trend), where a
+#: wider decisive margin is wanted before a likely shakeout is treated as a
+#: real breakdown. The exact 1.5 is a discretionary pick within the sourced
+#: range; the low end (1.0) is `NOISE_BAND_ATR_MULTIPLE`.
+COUNTER_TREND_BREAK_ATR_MULTIPLE = 1.5
+
+#: Standard confirming-close count (low end of the sourced 2-3 range): today's
+#: close plus one prior confirming close. This is the pre-item-70 two-
+#: consecutive-closes gate, unchanged, used for with-trend and weak/rangebound
+#: breaks.
+WITH_TREND_CONFIRMING_CLOSES = 2
+
+#: Stricter confirming-close count (high end of the sourced 2-3 range),
+#: required ONLY for a counter-trend break: today's close plus two prior
+#: confirming closes before protection lifts.
+COUNTER_TREND_CONFIRMING_CLOSES = 3
+
+#: Wilder's ADX reading at or above which a trend is treated as STRONG enough
+#: for its direction to change the break confirmation (New Concepts in
+#: Technical Trading Systems, 1978). Below the weak threshold there is no
+#: usable trend; between the two the tape is treated as trending only weakly
+#: and the standard settings apply.
+ADX_STRONG_TREND_THRESHOLD = 25.0
+
+#: Wilder's ADX reading below which the tape is treated as weak / rangebound —
+#: no prevailing trend to be with or against, so break confirmation defaults
+#: to the standard 1.0x / 2-close settings.
+ADX_WEAK_TREND_THRESHOLD = 20.0
+
+
+def classify_trend_context(
+    *,
+    is_short: bool,
+    current_price: float | None,
+    ma_50: float | None,
+    ma_200: float | None,
+    adx: float | None,
+) -> str:
+    """Classify an adverse structural break relative to the position's own
+    prevailing trend. Pure, side-aware, and deliberately conservative:
+    returns a directional class ONLY when both the trend STRENGTH (ADX) and
+    the trend DIRECTION (the existing SMA regime) are unambiguous.
+
+    The "adverse break" is the one that would lift protection: for a LONG,
+    price falling through support; for a SHORT, price rising through
+    resistance.
+
+    Returns one of:
+      - "with_trend"    — the adverse break runs WITH a strong prevailing
+                          trend (a long broken while already in a strong
+                          downtrend; a short broken while in a strong
+                          uptrend). A real breakdown: trust it fast.
+      - "counter_trend" — the adverse break runs AGAINST a strong prevailing
+                          trend (a long broken while in a strong UPtrend; a
+                          short broken while in a strong DOWNtrend). Likely a
+                          shakeout: demand more.
+      - "weak"          — ADX present but below the strong threshold: no trend
+                          strong enough to matter. Standard settings.
+      - "unknown"       — not enough context (no ADX, or no MA regime, or a
+                          mixed/ambiguous regime). Standard settings.
+
+    DIRECTION comes from the PREVAILING regime, which is the slow SMA
+    structure (`ma_50` vs `ma_200`), NOT from price vs `ma_200` alone. That
+    matters: at the moment of a downward break price has usually just fallen
+    below its 200-SMA too, so a price-vs-200 test would read almost every
+    breakdown as "already in a downtrend" and the counter-trend (shakeout)
+    case — a dip inside a still-intact uptrend — could never fire. The regime
+    cross is the transient-resistant read of the prevailing trend. Price vs
+    `ma_200` is then used only to CORROBORATE a with-trend read (it does not
+    flip the regime): a with-trend breakdown must have price on the trend's
+    side, otherwise the tape is treated as ambiguous and gets the standard
+    (default) settings. The counter-trend case fires on the regime alone,
+    because in a shakeout price is expected to poke to the wrong side of the
+    200-SMA briefly.
+
+    STRENGTH is ADX >= `ADX_STRONG_TREND_THRESHOLD`. Below that the tape has
+    no trend strong enough to change the confirmation, so it is "weak"
+    (ADX present) or "unknown" (no ADX) and gets the default settings.
+    """
+    a = _finite(adx)
+    if a is None or a < ADX_STRONG_TREND_THRESHOLD:
+        # No ADX at all -> unknown; ADX present but not strong -> weak.
+        return "unknown" if a is None else "weak"
+
+    m50 = _finite(ma_50)
+    m200 = _finite(ma_200)
+    if m50 is None or m200 is None or m50 == m200:
+        return "unknown"  # no usable / flat regime
+
+    price = _finite(current_price)
+    regime_up = m50 > m200
+    price_above = price is not None and price > m200
+    price_below = price is not None and price < m200
+
+    if is_short:
+        # A short's adverse break is price rising through resistance.
+        # AGAINST a strong DOWNtrend regime = shakeout (counter). WITH a
+        # strong UPtrend regime, corroborated by price above the 200-SMA,
+        # = real (with-trend). A regime that price does not corroborate ->
+        # ambiguous, default settings.
+        if not regime_up:
+            return "counter_trend"
+        return "with_trend" if price_above else "unknown"
+    # A long's adverse break is price falling through support.
+    # AGAINST a strong UPtrend regime = shakeout (counter). WITH a strong
+    # DOWNtrend regime, corroborated by price below the 200-SMA, = real.
+    if regime_up:
+        return "counter_trend"
+    return "with_trend" if price_below else "unknown"
+
+
+def _break_confirmation_settings(trend_context: str) -> tuple[float, int]:
+    """Map a `classify_trend_context` label to its (ATR break-margin multiple,
+    confirming-close count). Only the counter-trend case departs from the
+    standard 1.0x / 2-close settings."""
+    if trend_context == "counter_trend":
+        return COUNTER_TREND_BREAK_ATR_MULTIPLE, COUNTER_TREND_CONFIRMING_CLOSES
+    return NOISE_BAND_ATR_MULTIPLE, WITH_TREND_CONFIRMING_CLOSES
+
+
+def _ordinal(n: int) -> str:
+    """1 -> '1st', 2 -> '2nd', 3 -> '3rd', 4 -> '4th' …"""
+    if 10 <= (n % 100) <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _trend_clause(is_short: bool, trend_context: str) -> str:
+    """The plain-language trend-context phrase for the owner message, correct
+    for the position's side. Empty when there is no usable context."""
+    if trend_context == "with_trend":
+        # A with-trend break runs with the prevailing trend: a long broken in
+        # a downtrend, a short broken in an uptrend.
+        return (
+            "while it was already in a strong uptrend" if is_short
+            else "while it was already in a strong downtrend"
+        )
+    if trend_context == "counter_trend":
+        # A counter-trend break runs against a strong trend.
+        return (
+            "even though it's in a strong downtrend" if is_short
+            else "even though it's in a strong uptrend"
+        )
+    if trend_context == "weak":
+        return "in a weak, rangebound tape (no strong trend either way)"
+    return ""  # unknown — omit the trend clause entirely
+
+
+def _compose_owner_break_reason(
+    *,
+    is_short: bool,
+    trigger_desc: str,
+    trend_context: str,
+    needed: int,
+    seen: int,
+    confirmed: bool,
+) -> str:
+    """Assemble the plain-language, owner-facing reason clause for a decisive
+    break outcome. Pure and side-aware; states the trigger, the trend context
+    and the confirmation state in words. `render_owner_break_message` wraps a
+    symbol and lead verb around this for the Telegram/board surfaces.
+
+    The wording is deliberately non-jargon and follows the owner's examples:
+    a confirmed with-trend break reads as a "real breakdown", a counter-trend
+    break held pending confirmation reads as a "likely shakeout" that the desk
+    is waiting on.
+    """
+    trend = _trend_clause(is_short, trend_context)
+    trend_suffix = f" {trend}" if trend else ""
+    if confirmed:
+        if trend_context == "counter_trend":
+            return (
+                f"{trigger_desc} for a {_ordinal(seen)} straight close "
+                f"{trend} — the break against the trend has now held, so it "
+                f"is treated as real, not a shakeout."
+            )
+        if trend_context == "with_trend":
+            return (
+                f"{trigger_desc}{trend_suffix}, confirmed over {seen} closes, "
+                f"so this is a real breakdown, not noise."
+            )
+        return (
+            f"{trigger_desc}, confirmed over {seen} closes — the break is "
+            f"real."
+        )
+    # Pending confirmation — the desk is HOLDING through the break and waiting.
+    if trend_context == "counter_trend":
+        return (
+            f"{trigger_desc}{trend_suffix}, so this looks like a shakeout; "
+            f"holding and waiting for a {_ordinal(needed)} confirming close "
+            f"before selling ({seen} of {needed} so far)."
+        )
+    return (
+        f"{trigger_desc}{trend_suffix}, but the break isn't confirmed yet "
+        f"({seen} of {needed} closes); holding one more session to rule out a "
+        f"one-day false breakdown."
+    )
+
+
+def render_owner_break_message(
+    symbol: str, check: "StructuralProtectionCheck",
+) -> str | None:
+    """The full owner-facing sentence for a decisive structural-protection
+    outcome, or None when there is nothing decisive to voice.
+
+    Reused by the pipeline to push the SAME sentence to both owner surfaces —
+    the Telegram alert and the dashboard/board journal. Pure: no I/O.
+
+    Lead verb is truthful about what the gate actually did: a confirmed break
+    LIFTS hold-protection (the desk will now let a sell through), a pending
+    break HOLDS it (the desk is staying in and waiting). It never claims an
+    order was placed — placing the order is the execution path's to report.
+    """
+    reason = (check.owner_reason or "").strip()
+    if not reason:
+        return None
+    sym = (symbol or "").strip().upper() or "this position"
+    if not check.protected:
+        # Confirmed break — protection lifted.
+        return f"{sym}: clearing to exit — it {reason}"
+    # Break held pending confirmation.
+    return f"{sym}: holding through a possible false breakdown — it {reason}"
+
+
 #: Triggers that come from OUTSIDE the price series. These bypass the noise
 #: band entirely: an earnings miss is an earnings miss whether the stock has
 #: moved 0.2 ATR or 3 ATR, and waiting for price confirmation before acting on
@@ -1372,6 +1634,27 @@ class StructuralProtectionCheck:
     #: only state this module needs to implement confirmation, and it holds
     #: none of it itself (pure function in, pure value out).
     raw_broken: bool = False
+    #: The trend context this read used for its confirmation settings — one of
+    #: `classify_trend_context`'s labels ("with_trend"/"counter_trend"/"weak"/
+    #: "unknown"), or "" on a basis where trend context does not apply (a
+    #: non-broken level, the noise-band fallback, etc.). Recorded so the audit
+    #: trail and the owner message can say WHICH regime the desk read.
+    trend_context: str = ""
+    #: How many consecutive confirming daily closes this basis needs before it
+    #: lifts protection (2 standard, 3 for a counter-trend break), and how many
+    #: have confirmed so far (today's close plus the prior streak). 0 on a
+    #: basis where confirmation does not apply.
+    confirming_closes_needed: int = 0
+    confirming_closes_seen: int = 0
+    #: PLAIN-LANGUAGE, owner-facing reason for a DECISIVE break outcome — a
+    #: confirmed break that lifts protection ("real breakdown"), or a break
+    #: held pending confirmation ("likely shakeout, waiting"). Empty on every
+    #: non-decisive basis (intact level, thesis intact, noise-band, no data).
+    #: Carries the trigger, the trend context and the confirmation state in
+    #: words, no bare numbers standing alone. `render_owner_break_message`
+    #: composes the symbol and action verb around it for the Telegram/board
+    #: surfaces; this field is the reusable clause.
+    owner_reason: str = ""
 
 
 def _structural_level_backing_stop(
@@ -1452,13 +1735,38 @@ def check_structural_protection(
     ma_20: float | None = None,
     ma_50: float | None = None,
     ma_200: float | None = None,
+    adx: float | None = None,
     break_seen_prior_close: bool = False,
+    prior_break_streak: int | None = None,
 ) -> StructuralProtectionCheck:
     """Decide whether a position's thesis-backing level is still intact.
 
     Pure function — every input is a plain value or mapping the caller
     already has; nothing here calls an LLM, a broker, or a market-data
     endpoint. See the module note above for the three-case priority order.
+
+    TREND-CONTEXT (item 70). The break confirmation is trend-context-aware.
+    `adx` plus the existing SMA regime (`ma_50`/`ma_200` and the close) are
+    passed to `classify_trend_context`; the resulting class scales BOTH the
+    ATR break margin and the number of confirming closes via
+    `_break_confirmation_settings`. A break WITH a strong prevailing trend, a
+    weak/rangebound tape, and missing trend context all resolve to the
+    standard 1.0x-ATR / two-close settings (so every caller that passes no
+    `adx` is byte-for-byte unchanged); ONLY a break AGAINST a strong trend is
+    held to the stricter 1.5x-ATR / three-close settings, because a break
+    against a strong trend is far more likely a shakeout. The decisive
+    outcomes (a confirmed break, or a break held pending confirmation) also
+    fill `owner_reason` with a plain-language sentence for the owner surfaces.
+
+    CONFIRMATION STATE carried across days. `prior_break_streak` is the count
+    of consecutive prior TRADING-DAY closes that already came back broken for
+    this position (0 if none, or if not supplied). A break confirms and lifts
+    protection once `today's broken close + prior_break_streak` reaches the
+    confirming-close count for its trend context. `break_seen_prior_close`
+    (bool) is the pre-item-70 shorthand for a prior streak of exactly one and
+    is still honoured when `prior_break_streak` is not given — so the standard
+    two-close gate needs no caller change; only the three-close counter-trend
+    case needs the caller to supply the fuller streak.
 
     `current_price` MUST be the latest completed DAILY CLOSE for the
     thesis/level basis below — never a live/intraday quote. Real trading
@@ -1503,30 +1811,71 @@ def check_structural_protection(
     question. See docs/WORK.md item 46 for why conflating the two units
     was the defect here in the first place.
     """
+    # Trend context (item 70) — classify ONCE up front so both the thesis and
+    # the structural-level branch below use the same read. `prior_streak` is
+    # the count of consecutive prior confirming closes: the explicit
+    # `prior_break_streak` when supplied, else the pre-item-70 bool shorthand
+    # (one prior close if `break_seen_prior_close`, else none).
+    trend_context = classify_trend_context(
+        is_short=is_short, current_price=current_price,
+        ma_50=ma_50, ma_200=ma_200, adx=adx,
+    )
+    break_margin_multiple, needed_closes = _break_confirmation_settings(
+        trend_context,
+    )
+    if prior_break_streak is not None:
+        prior_streak = max(0, int(prior_break_streak))
+    else:
+        prior_streak = 1 if break_seen_prior_close else 0
+    # Today's own broken close is the first confirming close; the prior streak
+    # supplies the rest. Capped for display so "seen" never exceeds "needed".
+    closes_seen = min(prior_streak + 1, needed_closes)
+    confirmed = prior_streak + 1 >= needed_closes
+
     text = (thesis_invalid_if or "").strip()
     if text:
         check = check_thesis_invalid_if(
             text, current_price, ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
         )
         if check.status == "TRIGGERED":
-            if break_seen_prior_close:
+            if confirmed:
                 return StructuralProtectionCheck(
                     protected=False, basis="thesis_invalid_if_triggered",
                     detail=(
-                        f"thesis_invalid_if triggered on two consecutive "
-                        f"trading-day closes: {check.detail}"
+                        f"thesis_invalid_if triggered on {closes_seen} "
+                        f"confirming trading-day close(s) "
+                        f"(trend context: {trend_context}): {check.detail}"
                     ),
                     raw_broken=True,
+                    trend_context=trend_context,
+                    confirming_closes_needed=needed_closes,
+                    confirming_closes_seen=closes_seen,
+                    owner_reason=_compose_owner_break_reason(
+                        is_short=is_short, trigger_desc="its stated exit "
+                        "condition was met on the close",
+                        trend_context=trend_context, needed=needed_closes,
+                        seen=closes_seen, confirmed=True,
+                    ),
                 )
             return StructuralProtectionCheck(
                 protected=True, basis="thesis_invalid_if_pending_confirmation",
                 detail=(
-                    f"thesis_invalid_if triggered on today's close but not "
-                    f"yet confirmed on the prior trading day's close — "
-                    f"still protected pending confirmation (guards against "
-                    f"a one-day spring/false-breakdown): {check.detail}"
+                    f"thesis_invalid_if triggered on today's close "
+                    f"({closes_seen} of {needed_closes} confirming closes, "
+                    f"trend context: {trend_context}) — still protected "
+                    f"pending confirmation (guards against a one-day "
+                    f"spring/false-breakdown): {check.detail}"
                 ),
                 raw_broken=True,
+                trend_context=trend_context,
+                confirming_closes_needed=needed_closes,
+                confirming_closes_seen=closes_seen,
+                owner_reason=_compose_owner_break_reason(
+                    is_short=is_short, trigger_desc="its stated exit "
+                    "condition was met on the close",
+                    trend_context=trend_context, needed=needed_closes,
+                    seen=closes_seen, confirmed=False,
+                ),
             )
         if check.status == "NOT_TRIGGERED":
             return StructuralProtectionCheck(
@@ -1558,9 +1907,14 @@ def check_structural_protection(
             # IS a volatility question — so it uses a wider, decisive
             # ATR-based margin, `NOISE_BAND_ATR_MULTIPLE` (see this
             # function's docstring). Two questions, two units, on purpose.
-            break_margin = NOISE_BAND_ATR_MULTIPLE * atr_f
+            # Break margin is trend-context-scaled (item 70): 1.0x ATR for a
+            # with-trend/weak/unknown break, 1.5x ATR for a break against a
+            # strong trend (a likely shakeout, so demand a wider decisive
+            # move). The low end is `NOISE_BAND_ATR_MULTIPLE`, unchanged for
+            # every caller that passes no `adx`.
+            break_margin = break_margin_multiple * atr_f
             # A long's support is broken when the CLOSE has fallen to/through
-            # it by at least one noise-band's worth; a short's resistance is
+            # it by at least the trend-scaled margin; a short's resistance is
             # broken when the close has risen to/through it by the same
             # margin from below.
             if cur is None:
@@ -1583,29 +1937,60 @@ def check_structural_protection(
             else:
                 broken = cur <= level - break_margin
             if broken:
-                if break_seen_prior_close:
+                level_desc = (
+                    f"its {level:g} resistance" if is_short
+                    else f"its {level:g} support"
+                )
+                if confirmed:
                     return StructuralProtectionCheck(
                         protected=False, basis="structural_level_broken",
                         detail=(
                             f"structural level {level} backing the stop has "
-                            f"closed beyond it on two consecutive trading "
-                            f"days: close {cur} vs level {level} (break "
-                            f"margin {break_margin:.4g})"
+                            f"closed beyond it on {closes_seen} confirming "
+                            f"trading-day close(s) (trend context: "
+                            f"{trend_context}): close {cur} vs level {level} "
+                            f"(break margin {break_margin:.4g})"
                         ),
                         raw_broken=True,
+                        trend_context=trend_context,
+                        confirming_closes_needed=needed_closes,
+                        confirming_closes_seen=closes_seen,
+                        owner_reason=_compose_owner_break_reason(
+                            is_short=is_short,
+                            trigger_desc=(
+                                f"closed decisively "
+                                f"{'above' if is_short else 'below'} "
+                                f"{level_desc}"
+                            ),
+                            trend_context=trend_context, needed=needed_closes,
+                            seen=closes_seen, confirmed=True,
+                        ),
                     )
                 return StructuralProtectionCheck(
                     protected=True,
                     basis="structural_level_pending_confirmation",
                     detail=(
                         f"structural level {level} backing the stop closed "
-                        f"beyond it today but is not yet confirmed on the "
-                        f"prior trading day's close — still protected "
-                        f"pending confirmation (guards against a one-day "
-                        f"spring/false-breakdown): close {cur} vs level "
-                        f"{level} (break margin {break_margin:.4g})"
+                        f"beyond it today ({closes_seen} of {needed_closes} "
+                        f"confirming closes, trend context: {trend_context}) "
+                        f"— still protected pending confirmation (guards "
+                        f"against a one-day spring/false-breakdown): close "
+                        f"{cur} vs level {level} (break margin "
+                        f"{break_margin:.4g})"
                     ),
                     raw_broken=True,
+                    trend_context=trend_context,
+                    confirming_closes_needed=needed_closes,
+                    confirming_closes_seen=closes_seen,
+                    owner_reason=_compose_owner_break_reason(
+                        is_short=is_short,
+                        trigger_desc=(
+                            f"{'rose above' if is_short else 'dipped below'} "
+                            f"{level_desc}"
+                        ),
+                        trend_context=trend_context, needed=needed_closes,
+                        seen=closes_seen, confirmed=False,
+                    ),
                 )
             return StructuralProtectionCheck(
                 protected=True, basis="structural_level_intact",
@@ -1615,6 +2000,7 @@ def check_structural_protection(
                     f"{break_margin:.4g})"
                 ),
                 raw_broken=False,
+                trend_context=trend_context,
             )
 
     # Neither a checkable thesis_invalid_if nor a qualifying structural
@@ -1697,7 +2083,9 @@ def structural_protection_broken(
     ma_20: float | None = None,
     ma_50: float | None = None,
     ma_200: float | None = None,
+    adx: float | None = None,
     break_seen_prior_close: bool = False,
+    prior_break_streak: int | None = None,
 ) -> bool:
     """True when the position's thesis-backing level has broken and that
     break is CONFIRMED (no protection); False when it is still intact or
@@ -1722,7 +2110,8 @@ def structural_protection_broken(
         computed_level_touches=computed_level_touches,
         min_level_touches=min_level_touches,
         level_cluster_tolerance_pct=level_cluster_tolerance_pct,
-        ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
+        ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, adx=adx,
         break_seen_prior_close=break_seen_prior_close,
+        prior_break_streak=prior_break_streak,
     ).protected
 

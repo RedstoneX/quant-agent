@@ -2964,16 +2964,27 @@ class Database:
 
     def save_holding_protection_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        break_streak: int | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
-        still be broken before treating the break as confirmed."""
+        still be broken before treating the break as confirmed.
+
+        `break_streak` is the running count of consecutive confirming closes
+        this position has now reached (today plus its prior streak) — item 70's
+        counter-trend break needs THREE consecutive closes, which a single
+        prior-day boolean cannot express. When not supplied it degrades to the
+        pre-item-70 boolean meaning (1 if broken, else 0), so nothing that only
+        writes `raw_broken` changes behaviour."""
+        if break_streak is None:
+            break_streak = 1 if raw_broken else 0
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.HOLDING_PROTECTION_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
             evidence_json=json.dumps({
                 "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
+                "break_streak": int(max(0, break_streak)),
             }),
         )
 
@@ -2997,6 +3008,55 @@ class Database:
             symbols, kind=self.HOLDING_PROTECTION_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
         )
+
+    def get_prior_holding_protection_streak(
+        self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+    ) -> dict[str, int]:
+        """The running consecutive-confirming-close COUNT per symbol from the
+        most recent close dated STRICTLY BEFORE `today_bar_date` — item 70's
+        richer twin of `get_prior_holding_protection_break`, needed because a
+        counter-trend break requires THREE consecutive closes, not two.
+
+        Backward compatible: a prior row written before item 70 carries no
+        `break_streak`, so it is read as 1 when it was broken and 0 otherwise —
+        exactly the boolean the old gate used. A symbol absent from the result
+        has no qualifying prior-day read; callers must treat that as 0, never
+        as a positive streak, so a missing row can never manufacture a
+        confirmed break."""
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json FROM specialist_evidence "
+            f"WHERE agent_name='risk_manager' AND kind=? "
+            f"AND symbol IN ({placeholders})"
+        )
+        params: list = [self.HOLDING_PROTECTION_BREAK_KIND, *wanted]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        latest: dict[str, int] = {}
+        for row in rows:
+            row = dict(row)
+            sym = row["symbol"]
+            if sym in latest:
+                continue
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+                bar_date = payload.get("bar_date")
+            except (TypeError, ValueError):
+                continue
+            if not bar_date or bar_date >= today_bar_date:
+                continue
+            streak = payload.get("break_streak")
+            if streak is None:
+                streak = 1 if payload.get("raw_broken") else 0
+            latest[sym] = int(max(0, streak))
+        return latest
 
     # --- Take-profit revision record (`src.risk.target_revision`) -------
     #

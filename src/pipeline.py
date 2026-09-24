@@ -9974,7 +9974,7 @@ class TradingPipeline:
 
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
-        atr = ma_20 = ma_50 = ma_200 = close_price = bar_date = None
+        atr = ma_20 = ma_50 = ma_200 = adx = close_price = bar_date = None
         try:
             bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
             if bars:
@@ -9986,6 +9986,7 @@ class TradingPipeline:
                 indicators = compute_indicators(symbol, bars)
                 atr = indicators.atr_14
                 ma_20, ma_50, ma_200 = indicators.ma_20, indicators.ma_50, indicators.ma_200
+                adx = indicators.adx_14
                 supports, resistances = find_structural_levels(bars)
                 all_levels = (*supports, *resistances)
                 computed_levels = sorted(lv.price for lv in all_levels)
@@ -10003,12 +10004,16 @@ class TradingPipeline:
         # it's filed under.
         effective_bar_date = bar_date or str(et_today())
 
-        break_seen_prior_close = False
+        # Item 70: read the full consecutive-confirming-close STREAK, not just
+        # a prior-day boolean — a counter-trend break needs three consecutive
+        # closes. The streak reader is backward compatible with pre-item-70
+        # rows (a broken row with no streak reads as 1).
+        prior_break_streak = 0
         try:
-            prior = self.db.get_prior_holding_protection_break(
+            prior = self.db.get_prior_holding_protection_streak(
                 [symbol], today_bar_date=effective_bar_date, exclude_run_id=run_id,
             )
-            break_seen_prior_close = bool(prior.get(symbol.upper(), False))
+            prior_break_streak = int(prior.get(symbol.upper(), 0))
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: prior-close read failed for %s "
@@ -10041,15 +10046,19 @@ class TradingPipeline:
             # the zones being matched against, so the tolerance cannot be
             # anything else. docs/WORK.md item 46.
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
-            break_seen_prior_close=break_seen_prior_close,
+            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, adx=adx,
+            prior_break_streak=prior_break_streak,
         )
+
+        # Today's own streak carried forward for the NEXT trading day: the
+        # prior streak plus today when today's close is broken, else reset.
+        today_break_streak = (prior_break_streak + 1) if check.raw_broken else 0
 
         try:
             if persist:
                 self.db.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
-                    bar_date=effective_bar_date,
+                    bar_date=effective_bar_date, break_streak=today_break_streak,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -10058,7 +10067,87 @@ class TradingPipeline:
                 "start unconfirmed for it", symbol, e,
             )
 
+        # VOICE THE WHY (item 70, owner requirement). When this gate reaches a
+        # DECISIVE break outcome — a confirmed break that clears the desk to
+        # exit, or a break held through pending confirmation — push the plain-
+        # language reason to BOTH owner surfaces via the mechanisms the desk
+        # already uses for exactly this: `notifier.send_owner_alert` for the
+        # Telegram alert, and a durable `specialist_evidence` row (which the
+        # board journal / Mission Control read) for the dashboard. Only on a
+        # persisting read (a real exit-decision or rotation-eligibility read,
+        # not a purely advisory replay) and deduplicated per run+symbol so the
+        # several pipeline cycles in one session reading the same close do not
+        # re-alert. Best-effort by construction — a voicing failure never
+        # affects the protection verdict itself.
+        if persist and check.owner_reason:
+            self._voice_structural_protection_break(
+                symbol=symbol, run_id=run_id, check=check,
+            )
+
         return check
+
+    def _voice_structural_protection_break(
+        self, *, symbol: str, run_id: str, check,
+    ) -> None:
+        """Push a decisive structural-protection break's plain-language reason
+        to BOTH owner surfaces (Telegram + board journal). Never raises.
+
+        Reuses the desk's established durable-reason trail rather than adding a
+        new one: the same `notifier.send_owner_alert` standalone-alert path
+        `_alert_holding_discipline_block` uses for Telegram, and a
+        `specialist_evidence` row (the same table the board journal and
+        Mission Control forensic views read) for the dashboard. Deduplicated
+        per (run, symbol, basis) via a run-scoped set so repeat intraday
+        cycles reading the same close voice it once.
+        """
+        from src.risk.exit_guard import render_owner_break_message
+
+        message = render_owner_break_message(symbol, check)
+        if not message:
+            return
+        symbol_u = (symbol or "").strip().upper()
+        dedup_key = (run_id, symbol_u, check.basis)
+        seen = getattr(self, "_voiced_structural_breaks", None)
+        if seen is None:
+            seen = set()
+            self._voiced_structural_breaks = seen
+        if dedup_key in seen:
+            return
+        seen.add(dedup_key)
+
+        # Board / dashboard: a durable, machine-readable row carrying the SAME
+        # sentence, on the specialist_evidence table the journal reads.
+        try:
+            self.db.insert_specialist_evidence(
+                run_id=run_id, agent_name="risk_manager",
+                kind="structural_break_trend_context", scope="symbol",
+                symbol=symbol_u,
+                evidence_json=_json.dumps({
+                    "protected": bool(check.protected),
+                    "basis": check.basis,
+                    "trend_context": check.trend_context,
+                    "confirming_closes_needed": check.confirming_closes_needed,
+                    "confirming_closes_seen": check.confirming_closes_seen,
+                    "owner_reason": message,
+                }),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "structural protection: board reason write failed for %s "
+                "(%s) — Telegram send still attempted", symbol_u, e,
+            )
+
+        # Telegram: the same standalone owner-alert path the holding-discipline
+        # block uses. Its return value is information, never a reason to abort.
+        try:
+            from src import notifier as _notifier
+
+            _notifier.send_owner_alert(message, symbols=[symbol_u])
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "structural protection: owner alert send failed for %s (%s)",
+                symbol_u, e,
+            )
 
     def _substantiate_exit_triggers(self, review, *, ctx, run_id: str,
                                     review_kwargs: dict):

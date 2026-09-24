@@ -777,6 +777,16 @@ class TechnicalIndicators(BaseModel):
     bb_middle: float | None = None
     bb_lower: float | None = None
     atr_14: float | None = None
+    #: Wilder's Average Directional Index and its two directional components,
+    #: all on the same 14-session lookback (`src.data.technical.ADX_PERIOD`).
+    #: ADX measures trend STRENGTH only (never direction); +DI/-DI carry the
+    #: direction. Used by `src.risk.exit_guard.check_structural_protection` to
+    #: make a support/resistance break confirmation TREND-CONTEXT-AWARE — a
+    #: break with a strong prevailing trend is trusted faster than one against
+    #: it. None until there are enough bars to warm the recursive smoothing.
+    adx_14: float | None = None
+    di_plus_14: float | None = None
+    di_minus_14: float | None = None
     volume_change_pct: float | None = None
 
     @field_validator("symbol")
