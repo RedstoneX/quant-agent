@@ -87,9 +87,14 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
     if len(df) >= 50:
         result.ma_50 = round(float(df["close"].rolling(50).mean().iloc[-1]), 2)
     if len(df) >= LONGEST_INDICATOR_WINDOW:
-        result.ma_200 = round(
-            float(df["close"].rolling(LONGEST_INDICATOR_WINDOW).mean().iloc[-1]), 2,
-        )
+        _ma200 = df["close"].rolling(LONGEST_INDICATOR_WINDOW).mean()
+        result.ma_200 = round(float(_ma200.iloc[-1]), 2)
+        # The 200-MA one completed session earlier, so the exit guard can read
+        # the 200-MA SLOPE (rising vs falling) for its trend-scaled break
+        # regime (owner mandate 2026-09-24). Same rolling window as ma_200; None
+        # until there is one extra bar to look back on.
+        if len(df) >= LONGEST_INDICATOR_WINDOW + 1:
+            result.ma_200_prior = round(float(_ma200.iloc[-2]), 2)
 
     # RSI
     if len(df) >= 15:

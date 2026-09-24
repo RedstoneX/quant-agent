@@ -9974,18 +9974,29 @@ class TradingPipeline:
 
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
-        atr = ma_20 = ma_50 = ma_200 = adx = close_price = bar_date = None
+        atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
+        # The completed trading sessions strictly before today's close, most
+        # recent first, taken from THIS position's own daily bars — the
+        # authoritative trading calendar (weekends/holidays already removed).
+        # The exit guard uses it to enforce that only CONSECUTIVE prior sessions
+        # count toward break confirmation (a gap resets — #3).
+        prior_session_dates: list[str] = []
         try:
             bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
             if bars:
                 from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
-                last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                sorted_bars = sorted(bars, key=lambda b: b.date)
+                last_bar = sorted_bars[-1]
                 close_price = float(last_bar.close)
                 bar_date = str(last_bar.date)
+                prior_session_dates = [
+                    str(b.date) for b in reversed(sorted_bars) if str(b.date) < bar_date
+                ]
                 indicators = compute_indicators(symbol, bars)
                 atr = indicators.atr_14
                 ma_20, ma_50, ma_200 = indicators.ma_20, indicators.ma_50, indicators.ma_200
+                ma_200_prior = indicators.ma_200_prior
                 adx = indicators.adx_14
                 supports, resistances = find_structural_levels(bars)
                 all_levels = (*supports, *resistances)
@@ -10004,16 +10015,16 @@ class TradingPipeline:
         # it's filed under.
         effective_bar_date = bar_date or str(et_today())
 
-        # Item 70: read the full consecutive-confirming-close STREAK, not just
-        # a prior-day boolean — a counter-trend break needs three consecutive
-        # closes. The streak reader is backward compatible with pre-item-70
-        # rows (a broken row with no streak reads as 1).
-        prior_break_streak = 0
+        # Read the per-session break RECORDS for this position (most recent
+        # first), so the exit guard can reconstruct the CONSECUTIVE-confirming-
+        # close streak with adjacency (#3) and margin-consistency (#4). The
+        # exclude_run_id guard keeps several same-session cycles reading one
+        # close from double-counting it.
+        prior_break_records: list = []
         try:
-            prior = self.db.get_prior_holding_protection_streak(
-                [symbol], today_bar_date=effective_bar_date, exclude_run_id=run_id,
+            prior_break_records = self.db.get_recent_holding_protection_breaks(
+                symbol, before_bar_date=effective_bar_date, exclude_run_id=run_id,
             )
-            prior_break_streak = int(prior.get(symbol.upper(), 0))
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: prior-close read failed for %s "
@@ -10046,19 +10057,17 @@ class TradingPipeline:
             # the zones being matched against, so the tolerance cannot be
             # anything else. docs/WORK.md item 46.
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, adx=adx,
-            prior_break_streak=prior_break_streak,
+            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,
+            adx=adx,
+            prior_break_records=prior_break_records,
+            prior_session_dates=prior_session_dates,
         )
-
-        # Today's own streak carried forward for the NEXT trading day: the
-        # prior streak plus today when today's close is broken, else reset.
-        today_break_streak = (prior_break_streak + 1) if check.raw_broken else 0
 
         try:
             if persist:
                 self.db.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
-                    bar_date=effective_bar_date, break_streak=today_break_streak,
+                    bar_date=effective_bar_date, close=close_price,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -10067,7 +10076,7 @@ class TradingPipeline:
                 "start unconfirmed for it", symbol, e,
             )
 
-        # VOICE THE WHY (item 70, owner requirement). When this gate reaches a
+        # VOICE THE WHY (owner mandate 2026-09-24). When this gate reaches a
         # DECISIVE break outcome — a confirmed break that clears the desk to
         # exit, or a break held through pending confirmation — push the plain-
         # language reason to BOTH owner surfaces via the mechanisms the desk
@@ -10097,8 +10106,12 @@ class TradingPipeline:
         `_alert_holding_discipline_block` uses for Telegram, and a
         `specialist_evidence` row (the same table the board journal and
         Mission Control forensic views read) for the dashboard. Deduplicated
-        per (run, symbol, basis) via a run-scoped set so repeat intraday
-        cycles reading the same close voice it once.
+        per (run, symbol, basis) via a run-scoped set.
+
+        SILENT-ACTION GUARD (#5): the dedup slot is consumed only AFTER at least
+        one surface write (board OR Telegram) SUCCEEDS. If BOTH fail, the slot is
+        left free so a later cycle retries — the desk must never act on a break
+        without the why reaching at least one surface.
         """
         from src.risk.exit_guard import render_owner_break_message
 
@@ -10113,7 +10126,8 @@ class TradingPipeline:
             self._voiced_structural_breaks = seen
         if dedup_key in seen:
             return
-        seen.add(dedup_key)
+
+        any_surface_ok = False
 
         # Board / dashboard: a durable, machine-readable row carrying the SAME
         # sentence, on the specialist_evidence table the journal reads.
@@ -10131,6 +10145,7 @@ class TradingPipeline:
                     "owner_reason": message,
                 }),
             )
+            any_surface_ok = True
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: board reason write failed for %s "
@@ -10143,11 +10158,18 @@ class TradingPipeline:
             from src import notifier as _notifier
 
             _notifier.send_owner_alert(message, symbols=[symbol_u])
+            any_surface_ok = True
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "structural protection: owner alert send failed for %s (%s)",
                 symbol_u, e,
             )
+
+        # Consume the dedup slot only if the why reached at least one surface;
+        # otherwise leave it free so a later cycle retries rather than the desk
+        # acting silently.
+        if any_surface_ok:
+            seen.add(dedup_key)
 
     def _substantiate_exit_triggers(self, review, *, ctx, run_id: str,
                                     review_kwargs: dict):

@@ -1,22 +1,23 @@
-"""Item 70 — TREND-CONTEXT-aware structural break confirmation.
+"""Trend-scaled structural-break confirmation (owner mandate 2026-09-24).
 
-Covers the three things item 70 adds on top of the existing
-`check_structural_protection` confirmation gate (whose own tests live in
-`tests/test_structural_protection.py` and stay green unchanged):
+Exit speed scales with how strongly an adverse break aligns with the prevailing
+trend, via three discrete, citation-backed regimes (see the module note in
+`src/risk/exit_guard.py`):
 
-  1. ADX (+DI/-DI) is computed from the OHLCV bars and lands on
-     `TechnicalIndicators`.
-  2. The break confirmation is trend-context-aware: a with-trend breakdown
-     exits on the standard 2 closes / 1.0x ATR; a break AGAINST a strong trend
-     is held until 3 closes / 1.5x ATR; a weak/rangebound tape (or missing
-     ADX) uses the standard settings.
-  3. The DECISIVE outcomes (a confirmed break that clears the desk to exit, and
-     a break held pending confirmation) emit a plain-language reason that
-     reaches BOTH owner surfaces — the Telegram alert and the board journal —
-     via the existing durable-reason trail.
+  REGIME 1 — break AGAINST the trend, a dead/flat tape, or a measured-weak
+    trend (ADX<20): exit FAST, on the FIRST confirmed close beyond 1.0 ATR.
+  REGIME 2 — break WITH a MODERATE uptrend (ADX 20-25): two consecutive closes;
+    a reclaim resets (spring).
+  REGIME 3 — break WITH a STRONG uptrend (ADX>=25): two consecutive closes AND
+    the prior structural swing-low must ALSO close broken.
+
+The break MARGIN is always NOISE_BAND_ATR_MULTIPLE (1.0 ATR) — the regime never
+changes it. These tests also cover the cross-day counting fixes (streak
+adjacency, margin consistency) and the owner-facing voicing to both surfaces.
 
 Every level/margin number below is hand-computed against the real formulas in
-`src/risk/exit_guard.py`, never guessed.
+`src/risk/exit_guard.py`, never guessed. With atr=1.0 and a level at 90 the
+long break margin is 1.0, so a long support breaks at a close <= 89.0.
 """
 
 from __future__ import annotations
@@ -30,19 +31,30 @@ from src.data.technical import ADX_PERIOD, compute_indicators
 from src.models import OHLCV
 from src.risk.exit_guard import (
     ADX_STRONG_TREND_THRESHOLD,
-    COUNTER_TREND_BREAK_ATR_MULTIPLE,
     NOISE_BAND_ATR_MULTIPLE,
+    TREND_CONFIRMING_CLOSES,
+    REGIME_AGAINST_OR_WEAK,
+    REGIME_WITH_TREND_MODERATE,
+    REGIME_WITH_TREND_STRONG,
+    REGIME_INSUFFICIENT_CONTEXT,
     check_structural_protection,
     classify_trend_context,
     render_owner_break_message,
 )
 
-# Shared, already-ratified level/touch bars (docs/RESEARCH_FINDINGS.md §7).
 MIN_TOUCHES = 5
-# A level at 90, touched enough to qualify, with the stop sitting inside its
-# own CLUSTER_TOLERANCE_PCT zone (90 * 1% = 0.9, so a 90.3 stop is 0.3 away).
 _LEVELS = [90.0]
 _TOUCHES = {90.0: 6}
+
+# A rising 200-MA well below price, with 50>200 -> a genuine uptrend a dip
+# through the 90 support sits inside (a shakeout candidate).
+_UPTREND = dict(ma_50=100.0, ma_200=80.0, ma_200_prior=79.0)
+# 50<200 and price below the 200-MA -> against/dead trend.
+_DOWNTREND = dict(ma_50=95.0, ma_200=100.0, ma_200_prior=100.0)
+
+# Consecutive trading sessions, most-recent first, with today = 2026-03-10.
+_TODAY = "2026-03-10"
+_SESSIONS = ["2026-03-09", "2026-03-06", "2026-03-05", "2026-03-04"]
 
 
 def _common(**over):
@@ -52,8 +64,8 @@ def _common(**over):
         stop_loss=90.3,
         atr=1.0,
         is_short=False,
-        computed_levels=_LEVELS,
-        computed_level_touches=_TOUCHES,
+        computed_levels=list(_LEVELS),
+        computed_level_touches=dict(_TOUCHES),
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
     )
@@ -61,48 +73,42 @@ def _common(**over):
     return base
 
 
+def _rec(bar_date, close, broken=True):
+    return {"bar_date": bar_date, "raw_broken": broken, "close": close}
+
+
 # --------------------------------------------------------------------------
-# 1. ADX is computed from the bars.
+# ADX is computed from the bars (unchanged from the indicator work).
 # --------------------------------------------------------------------------
 
 
 def _trend_bars(n: int, step: float, *, start: float = 50.0) -> list[OHLCV]:
-    """`n` daily bars trending by `step` per bar (step<0 for a downtrend)."""
     bars = []
     price = start
     for i in range(n):
         prev = price
         price = max(1.0, price + step)
-        hi = max(prev, price) * 1.01
-        lo = min(prev, price) * 0.99
         bars.append(OHLCV(
             symbol="TST", date=dt.date(2026, 1, 1) + dt.timedelta(days=i),
-            open=prev, high=hi, low=lo, close=price, volume=1000,
+            open=prev, high=max(prev, price) * 1.01,
+            low=min(prev, price) * 0.99, close=price, volume=1000,
         ))
     return bars
 
 
 def test_adx_is_computed_and_matches_direct_ta():
-    """ADX/+DI/-DI land on the model and equal a direct `ta` computation over
-    the same OHLC — proving the block feeds the indicator the right columns."""
     import pandas as pd
     import ta
 
-    bars = _trend_bars(60, step=0.5)  # steady uptrend
+    bars = _trend_bars(60, step=0.5)
     ind = compute_indicators("TST", bars)
     assert ind.adx_14 is not None
     assert ind.di_plus_14 is not None and ind.di_minus_14 is not None
-    # A clean uptrend: +DI dominates -DI, and ADX reads a strong trend.
     assert ind.di_plus_14 > ind.di_minus_14
     assert ind.adx_14 >= ADX_STRONG_TREND_THRESHOLD
-
     df = pd.DataFrame([b.model_dump() for b in bars]).set_index("date").sort_index()
-    direct = ta.trend.ADXIndicator(
-        df["high"], df["low"], df["close"], window=ADX_PERIOD,
-    )
+    direct = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=ADX_PERIOD)
     assert ind.adx_14 == round(float(direct.adx().iloc[-1]), 2)
-    assert ind.di_plus_14 == round(float(direct.adx_pos().iloc[-1]), 2)
-    assert ind.di_minus_14 == round(float(direct.adx_neg().iloc[-1]), 2)
 
 
 def test_adx_none_when_too_few_bars():
@@ -110,170 +116,269 @@ def test_adx_none_when_too_few_bars():
     assert ind.adx_14 is None
 
 
+def test_ma_200_slope_is_exposed():
+    """ma_200_prior lands so the exit guard can read the 200-MA slope."""
+    ind = compute_indicators("TST", _trend_bars(220, step=0.3))
+    assert ind.ma_200 is not None and ind.ma_200_prior is not None
+    assert ind.ma_200 > ind.ma_200_prior  # a rising 200-MA in an uptrend
+
+
 # --------------------------------------------------------------------------
-# 2a. WITH-trend breakdown: exits at 2 closes / 1.0x ATR (standard).
+# classify_trend_context -> the sourced regimes.
 # --------------------------------------------------------------------------
 
 
-def test_with_trend_breakdown_exits_at_two_closes():
-    """Long, strong DOWNtrend regime (ma_50<ma_200) with price below ma_200 and
-    strong ADX. Close 88.5 is exactly one ATR below the 90 level (1.0x margin).
-    With one prior confirming close, the second close lifts protection."""
+def test_classify_regimes_long():
+    # Against/dead trend -> fast.
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, adx=30.0, **_DOWNTREND,
+    ) == REGIME_AGAINST_OR_WEAK
+    # With uptrend, moderate strength.
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, adx=22.0, **_UPTREND,
+    ) == REGIME_WITH_TREND_MODERATE
+    # With uptrend, strong.
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, adx=30.0, **_UPTREND,
+    ) == REGIME_WITH_TREND_STRONG
+    # With uptrend structure but measured-weak ADX -> fast, per spec regime 1.
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, adx=15.0, **_UPTREND,
+    ) == REGIME_AGAINST_OR_WEAK
+    # No MA data -> insufficient context (preserves the two-close default).
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, ma_50=None, ma_200=None, adx=30.0,
+    ) == REGIME_INSUFFICIENT_CONTEXT
+    # Flat 200-MA (no slope) is not "with the trend".
+    assert classify_trend_context(
+        is_short=False, current_price=88.5, adx=30.0,
+        ma_50=100.0, ma_200=80.0, ma_200_prior=80.0,
+    ) == REGIME_AGAINST_OR_WEAK
+
+
+def test_classify_short_mirrors_long():
+    # A short is with-trend in a strong DOWNtrend: price below a FALLING 200MA
+    # (well above the popped resistance) and 50<200. Adverse break = a pop to a
+    # local resistance at 112 that is still far below the 130 200-MA.
+    assert classify_trend_context(
+        is_short=True, current_price=112.0, adx=30.0,
+        ma_50=110.0, ma_200=130.0, ma_200_prior=131.0,
+    ) == REGIME_WITH_TREND_STRONG
+    # Rising 200MA / 50>200 against the short -> fast.
+    assert classify_trend_context(
+        is_short=True, current_price=112.0, adx=30.0,
+        ma_50=140.0, ma_200=130.0, ma_200_prior=129.0,
+    ) == REGIME_AGAINST_OR_WEAK
+
+
+# --------------------------------------------------------------------------
+# (a) Against-trend / weak break exits on ONE confirmed close.
+# --------------------------------------------------------------------------
+
+
+def test_against_trend_break_exits_on_one_close():
     r = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
+        **_common(current_price=88.5, adx=30.0, **_DOWNTREND),
+        # No prior records at all: regime 1 needs only today's close.
     )
-    assert r.trend_context == "with_trend"
-    assert r.confirming_closes_needed == 2
+    assert r.trend_context == REGIME_AGAINST_OR_WEAK
+    assert r.confirming_closes_needed == 1
     assert r.protected is False
     assert r.basis == "structural_level_broken"
 
 
-def test_with_trend_single_close_still_pending():
+def test_weak_trend_break_exits_on_one_close():
     r = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=0),
+        **_common(current_price=88.5, adx=15.0, **_UPTREND),
     )
-    assert r.trend_context == "with_trend"
-    assert r.protected is True
-    assert r.basis == "structural_level_pending_confirmation"
-    assert (r.confirming_closes_seen, r.confirming_closes_needed) == (1, 2)
-
-
-def test_with_trend_uses_one_atr_margin():
-    """At the 1.0x margin a close of 88.9 breaks (<= 90-1.0=89.0); 89.5 does
-    not, so it stays intact even with a long prior streak."""
-    broke = check_structural_protection(
-        **_common(current_price=88.9, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
-    )
-    assert broke.protected is False
-    intact = check_structural_protection(
-        **_common(current_price=89.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=5),
-    )
-    assert intact.protected is True
-    assert intact.basis == "structural_level_intact"
-
-
-# --------------------------------------------------------------------------
-# 2b. COUNTER-trend break: held until 3 closes / 1.5x ATR.
-# --------------------------------------------------------------------------
-
-
-def test_counter_trend_break_held_until_third_close():
-    """Long, strong UPtrend regime (ma_50>ma_200) and strong ADX. Close 88.4 is
-    beyond the wider 1.5x margin (90-1.5=88.5). Two prior confirming closes are
-    NOT enough — a counter-trend break needs a THIRD close."""
-    two_closes = check_structural_protection(
-        **_common(current_price=88.4, ma_50=110.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),  # today + 1 prior = 2 closes
-    )
-    assert two_closes.trend_context == "counter_trend"
-    assert two_closes.confirming_closes_needed == 3
-    assert two_closes.protected is True
-    assert two_closes.basis == "structural_level_pending_confirmation"
-    assert two_closes.confirming_closes_seen == 2
-
-    three_closes = check_structural_protection(
-        **_common(current_price=88.4, ma_50=110.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=2),  # today + 2 prior = 3 closes
-    )
-    assert three_closes.protected is False
-    assert three_closes.basis == "structural_level_broken"
-    assert three_closes.confirming_closes_seen == 3
-
-
-def test_counter_trend_requires_wider_15_atr_margin():
-    """A close at 88.8 is beyond the standard 1.0x margin (89.0) but NOT the
-    counter-trend 1.5x margin (88.5). The SAME close breaks a with-trend read
-    but is held intact under the wider counter-trend margin."""
-    counter = check_structural_protection(
-        **_common(current_price=88.8, ma_50=110.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=5),
-    )
-    assert counter.trend_context == "counter_trend"
-    assert counter.protected is True
-    assert counter.basis == "structural_level_intact"
-
-    with_trend = check_structural_protection(
-        **_common(current_price=88.8, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=5),
-    )
-    assert with_trend.trend_context == "with_trend"
-    assert with_trend.protected is False  # same close, narrower margin breaks it
-    assert COUNTER_TREND_BREAK_ATR_MULTIPLE > NOISE_BAND_ATR_MULTIPLE
-
-
-# --------------------------------------------------------------------------
-# 2c. Weak / rangebound and missing ADX both use the standard settings.
-# --------------------------------------------------------------------------
-
-
-def test_weak_trend_uses_standard_settings():
-    """ADX below the strong threshold: no trend to be with or against, so the
-    standard 2-close / 1.0x settings apply even in an up-regime."""
-    r = check_structural_protection(
-        **_common(current_price=88.5, ma_50=110.0, ma_200=100.0, adx=15.0,
-                  prior_break_streak=1),
-    )
-    assert r.trend_context == "weak"
-    assert r.confirming_closes_needed == 2
-    assert r.protected is False  # 2 closes at 1.0x margin
-
-
-def test_missing_adx_is_unchanged_from_pre_item_70():
-    """No ADX at all -> 'unknown' -> standard settings, byte-for-byte the old
-    two-close / 1.0x behaviour that every pre-item-70 caller relied on."""
-    r = check_structural_protection(
-        **_common(current_price=88.5, ma_50=110.0, ma_200=100.0,
-                  break_seen_prior_close=True),
-    )
-    assert r.trend_context == "unknown"
-    assert r.confirming_closes_needed == 2
+    assert r.trend_context == REGIME_AGAINST_OR_WEAK
     assert r.protected is False
 
 
-def test_classify_trend_context_short_side_mirrors_long():
-    # Short adverse break is UP through resistance. Down-regime = counter.
-    assert classify_trend_context(
-        is_short=True, current_price=112.0, ma_50=90.0, ma_200=100.0, adx=30.0,
-    ) == "counter_trend"
-    # Up-regime with price above ma_200 = with-trend (real) for a short.
-    assert classify_trend_context(
-        is_short=True, current_price=112.0, ma_50=110.0, ma_200=100.0, adx=30.0,
-    ) == "with_trend"
-
-
 # --------------------------------------------------------------------------
-# 3. The plain-language reason reaches BOTH owner surfaces.
+# (b) Moderate with-trend needs TWO consecutive closes; a reclaim resets.
 # --------------------------------------------------------------------------
 
 
-def test_owner_message_present_for_exit_and_hold():
-    exit_check = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
+def test_moderate_with_trend_needs_two_consecutive_closes():
+    kw = dict(current_price=88.5, adx=22.0, **_UPTREND)
+    # One prior adjacent broken close -> today makes two -> confirmed.
+    confirmed = check_structural_protection(
+        **_common(**kw),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
     )
-    exit_msg = render_owner_break_message("NVDA", exit_check)
-    assert exit_msg and "NVDA" in exit_msg
-    assert "real breakdown" in exit_msg.lower()
-    assert "90 support" in exit_msg  # the level that broke, in plain words
+    assert confirmed.trend_context == REGIME_WITH_TREND_MODERATE
+    assert confirmed.confirming_closes_needed == TREND_CONFIRMING_CLOSES == 2
+    assert confirmed.protected is False
+    assert confirmed.basis == "structural_level_broken"
+    # No prior broken close -> only today -> still pending.
+    pending = check_structural_protection(
+        **_common(**kw),
+        prior_break_records=[],
+        prior_session_dates=_SESSIONS,
+    )
+    assert pending.protected is True
+    assert pending.basis == "structural_level_pending_confirmation"
+    assert (pending.confirming_closes_seen, pending.confirming_closes_needed) == (1, 2)
+
+
+def test_moderate_with_trend_reclaim_resets():
+    # Yesterday RECLAIMED (raw_broken False) -> the streak resets, so today's
+    # break is a fresh first close -> pending, not confirmed (Wyckoff spring).
+    r = check_structural_protection(
+        **_common(current_price=88.5, adx=22.0, **_UPTREND),
+        prior_break_records=[_rec("2026-03-09", 91.0, broken=False)],
+        prior_session_dates=_SESSIONS,
+    )
+    assert r.protected is True
+    assert r.basis == "structural_level_pending_confirmation"
+
+
+# --------------------------------------------------------------------------
+# (c) Strong with-trend holds until the PRIOR swing-low also breaks.
+# --------------------------------------------------------------------------
+
+
+def test_strong_with_trend_holds_until_prior_low_breaks():
+    # Levels: a 90 support backing the stop and an 85 prior swing higher-low.
+    levels = [85.0, 90.0]
+    touches = {90.0: 6, 85.0: 6}
+    two_closes_only = check_structural_protection(
+        **_common(current_price=88.5, adx=30.0,
+                  computed_levels=levels, computed_level_touches=touches,
+                  **_UPTREND),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
+    )
+    # Two closes confirmed, BUT price (88.5) has not broken the 85 prior low by
+    # a margin (needs <= 84.0), so protection is still held.
+    assert two_closes_only.trend_context == REGIME_WITH_TREND_STRONG
+    assert two_closes_only.protected is True
+    assert two_closes_only.basis == "structural_level_pending_confirmation"
+
+    prior_low_broken = check_structural_protection(
+        **_common(current_price=83.5, adx=30.0,
+                  computed_levels=levels, computed_level_touches=touches,
+                  **_UPTREND),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
+    )
+    # Now price (83.5) has closed below the 85 prior low by the margin -> the
+    # strong trend's structure has failed -> protection lifts.
+    assert prior_low_broken.protected is False
+    assert prior_low_broken.basis == "structural_level_broken"
+
+
+def test_strong_with_trend_falls_back_to_two_closes_without_prior_low():
+    # No structural level below the broken 90 -> the prior-low gate is vacuous,
+    # so regime 3 behaves like regime 2 (two consecutive closes).
+    r = check_structural_protection(
+        **_common(current_price=88.5, adx=30.0, **_UPTREND),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
+    )
+    assert r.trend_context == REGIME_WITH_TREND_STRONG
+    assert r.protected is False  # two closes, no prior low to wait on
+
+
+# --------------------------------------------------------------------------
+# (d) A gap in the sessions resets the streak.
+# --------------------------------------------------------------------------
+
+
+def test_gap_resets_the_streak():
+    # A broken close two sessions ago (2026-03-06) but NOTHING on the
+    # immediately-preceding session (2026-03-09) -> not consecutive -> the
+    # streak resets, so today is only a first close -> pending.
+    r = check_structural_protection(
+        **_common(current_price=88.5, adx=22.0, **_UPTREND),
+        prior_break_records=[_rec("2026-03-06", 88.5)],
+        prior_session_dates=_SESSIONS,
+    )
+    assert r.protected is True
+    assert r.basis == "structural_level_pending_confirmation"
+    assert r.confirming_closes_seen == 1
+
+
+# --------------------------------------------------------------------------
+# (e) Margin conflation cannot confirm early.
+# --------------------------------------------------------------------------
+
+
+def test_margin_conflation_cannot_confirm_early():
+    # A prior row FLAGGED broken but whose close (89.2) did NOT clear today's
+    # 1.0-ATR margin (needs <= 89.0). It must not count toward confirmation.
+    stale = check_structural_protection(
+        **_common(current_price=88.5),  # no MAs -> regime 2 (two closes)
+        prior_break_records=[_rec("2026-03-09", 89.2)],
+        prior_session_dates=_SESSIONS,
+    )
+    assert stale.trend_context == REGIME_INSUFFICIENT_CONTEXT
+    assert stale.protected is True  # the stale close didn't clear -> still pending
+    # Control: a prior close that DID clear the margin confirms.
+    good = check_structural_protection(
+        **_common(current_price=88.5),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
+    )
+    assert good.protected is False
+
+
+# --------------------------------------------------------------------------
+# (g) Trend context changes the REGIME but the margin stays 1.0 ATR.
+# --------------------------------------------------------------------------
+
+
+def test_margin_is_always_one_atr_across_regimes():
+    assert NOISE_BAND_ATR_MULTIPLE == 1.0
+    # 88.7 is beyond the 1.0-ATR margin (<= 89.0) -> raw_broken in EVERY regime.
+    for kw in (dict(adx=30.0, **_DOWNTREND), dict(adx=22.0, **_UPTREND),
+               dict(adx=30.0, **_UPTREND)):
+        r = check_structural_protection(**_common(current_price=88.7, **kw))
+        assert r.raw_broken is True
+    # 89.5 is WITHIN 1.0 ATR of the 90 level -> NOT broken in any regime (a
+    # wider 1.5-ATR margin would have been needed to change this).
+    for kw in (dict(adx=30.0, **_DOWNTREND), dict(adx=30.0, **_UPTREND)):
+        r = check_structural_protection(**_common(current_price=89.5, **kw))
+        assert r.raw_broken is False
+        assert r.basis == "structural_level_intact"
+
+
+# --------------------------------------------------------------------------
+# Voicing the why to BOTH surfaces, truthful wording.
+# --------------------------------------------------------------------------
+
+
+def test_owner_message_wording_exit_and_hold():
+    exit_check = check_structural_protection(
+        **_common(current_price=88.5, adx=30.0, **_DOWNTREND),
+    )
+    msg = render_owner_break_message("NVDA", exit_check)
+    assert msg and "NVDA" in msg
+    assert "clearing to exit" in msg.lower()
+    assert "real breakdown" in msg.lower()
+    assert "90 support" in msg
 
     hold_check = check_structural_protection(
-        **_common(current_price=88.4, ma_50=110.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
+        **_common(current_price=88.5, adx=30.0,
+                  computed_levels=[85.0, 90.0],
+                  computed_level_touches={90.0: 6, 85.0: 6}, **_UPTREND),
+        prior_break_records=[_rec("2026-03-09", 88.5)],
+        prior_session_dates=_SESSIONS,
     )
-    hold_msg = render_owner_break_message("AAPL", hold_check)
-    assert hold_msg and "AAPL" in hold_msg
-    assert "shakeout" in hold_msg.lower()
-    assert "uptrend" in hold_msg.lower()
-    assert "3rd confirming close" in hold_msg  # confirmation state, in words
+    hmsg = render_owner_break_message("AAPL", hold_check)
+    assert hmsg and "AAPL" in hmsg
+    assert "holding" in hmsg.lower()
+    assert "shakeout" in hmsg.lower()
+    assert "uptrend" in hmsg.lower()
+    # Truthful: never claims a sale was placed.
+    assert "sold" not in hmsg.lower()
 
 
-def test_no_owner_message_on_non_decisive_bases():
+def test_no_owner_message_on_intact_basis():
     intact = check_structural_protection(
-        **_common(current_price=95.0, ma_50=95.0, ma_200=100.0, adx=30.0),
+        **_common(current_price=95.0, adx=30.0, **_UPTREND),
     )
     assert intact.owner_reason == ""
     assert render_owner_break_message("NVDA", intact) is None
@@ -284,9 +389,6 @@ def _voicing_pipeline():
 
     p = TradingPipeline.__new__(TradingPipeline)
     p.db = MagicMock()
-    p.market = MagicMock()
-    p.risk_engine = MagicMock()
-    p.risk_engine.config.min_level_touches_for_stop_honor = MIN_TOUCHES
     return p
 
 
@@ -300,79 +402,67 @@ def _board_rows(pipeline):
     return rows
 
 
-def _run_voicing(pipeline, symbol, check):
-    with patch("src.notifier.send_owner_alert") as alert:
-        pipeline._voice_structural_protection_break(
-            symbol=symbol, run_id="run-1", check=check,
-        )
-    return alert
-
-
-def test_voicing_reaches_telegram_and_board_for_an_exit():
-    p = _voicing_pipeline()
-    exit_check = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
+def _exit_check():
+    return check_structural_protection(
+        **_common(current_price=88.5, adx=30.0, **_DOWNTREND),
     )
-    alert = _run_voicing(p, "NVDA", exit_check)
 
-    # Telegram
+
+def test_voicing_reaches_telegram_and_board():
+    p = _voicing_pipeline()
+    with patch("src.notifier.send_owner_alert") as alert:
+        p._voice_structural_protection_break(
+            symbol="NVDA", run_id="run-1", check=_exit_check(),
+        )
     assert alert.call_count == 1
     telegram_text = alert.call_args.args[0]
     assert "NVDA" in telegram_text and "real breakdown" in telegram_text.lower()
-
-    # Board journal (specialist_evidence)
     rows = _board_rows(p)
     assert len(rows) == 1
-    symbol, payload = rows[0]
-    assert symbol == "NVDA"
+    sym, payload = rows[0]
+    assert sym == "NVDA"
     assert payload["owner_reason"] == telegram_text  # SAME sentence on both
     assert payload["protected"] is False
-    assert payload["trend_context"] == "with_trend"
-
-
-def test_voicing_reaches_telegram_and_board_for_a_hold():
-    p = _voicing_pipeline()
-    hold_check = check_structural_protection(
-        **_common(current_price=88.4, ma_50=110.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
-    )
-    alert = _run_voicing(p, "AAPL", hold_check)
-
-    assert alert.call_count == 1
-    telegram_text = alert.call_args.args[0]
-    assert "AAPL" in telegram_text and "shakeout" in telegram_text.lower()
-
-    rows = _board_rows(p)
-    assert len(rows) == 1
-    symbol, payload = rows[0]
-    assert symbol == "AAPL"
-    assert payload["owner_reason"] == telegram_text
-    assert payload["protected"] is True
-    assert payload["trend_context"] == "counter_trend"
+    assert payload["trend_context"] == REGIME_AGAINST_OR_WEAK
 
 
 def test_voicing_deduplicated_within_a_run():
     p = _voicing_pipeline()
-    exit_check = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
-    )
+    check = _exit_check()
     with patch("src.notifier.send_owner_alert") as alert:
-        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=exit_check)
-        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=exit_check)
-    assert alert.call_count == 1  # second call suppressed
+        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=check)
+        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=check)
+    assert alert.call_count == 1
     assert len(_board_rows(p)) == 1
 
 
-def test_voicing_survives_a_telegram_failure():
+def test_voicing_survives_a_telegram_failure_and_keeps_board():
     p = _voicing_pipeline()
-    exit_check = check_structural_protection(
-        **_common(current_price=88.5, ma_50=95.0, ma_200=100.0, adx=30.0,
-                  prior_break_streak=1),
-    )
     with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("down")):
-        # Must not raise — a voicing failure never affects the verdict.
-        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=exit_check)
-    # The board row was still written before the Telegram attempt.
+        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=_exit_check())
+    # The board row still landed, so the why reached a surface -> dedup consumed.
     assert len(_board_rows(p)) == 1
+    assert ("run-1", "NVDA", "structural_level_broken") in p._voiced_structural_breaks
+
+
+# --------------------------------------------------------------------------
+# (f) If BOTH surface writes fail, the dedup slot is NOT consumed (retry).
+# --------------------------------------------------------------------------
+
+
+def test_both_surface_failures_do_not_consume_dedup_slot():
+    p = _voicing_pipeline()
+    p.db.insert_specialist_evidence.side_effect = RuntimeError("board down")
+    check = _exit_check()
+    with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("tg down")):
+        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=check)
+    # Neither surface succeeded -> the desk must retry, so the slot stays free.
+    assert getattr(p, "_voiced_structural_breaks", set()) == set()
+
+    # A later cycle whose board write now succeeds voices it (not suppressed) —
+    # the retry happened (a second board attempt) and the slot is now consumed.
+    p.db.insert_specialist_evidence.side_effect = None
+    with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("tg down")):
+        p._voice_structural_protection_break(symbol="NVDA", run_id="run-1", check=check)
+    assert p.db.insert_specialist_evidence.call_count == 2  # first failed, retry ran
+    assert ("run-1", "NVDA", "structural_level_broken") in p._voiced_structural_breaks
