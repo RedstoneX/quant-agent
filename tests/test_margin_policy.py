@@ -395,8 +395,9 @@ def test_force_delever_picks_biggest_loser_first():
     first_call = pipeline.broker.submit_order.call_args_list[0].kwargs
     assert first_call["symbol"] == "LOSER"
     assert first_call["side"] == "sell"
-    # 1% below market limit
-    assert first_call["limit_price"] == round(250 * 0.99, 2)
+    # 3% below market limit (item 118: the desk's must-fill-exit buffer,
+    # AlpacaBroker.STOP_LIMIT_BUFFER_PCT, so a forced de-lever fills on a gap)
+    assert first_call["limit_price"] == round(250 * 0.97, 2)
 
 
 def test_force_delever_stops_once_deficit_covered():

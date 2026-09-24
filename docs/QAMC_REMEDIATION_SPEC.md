@@ -1685,6 +1685,34 @@ this is trusted:**
    renders `margin_interest` yet (the frontend's `AccountResponse` type in
    `frontend/src/api/client.ts` doesn't declare the field). See
    `docs/WORK.md`'s margin-interest status note for the fuller account.
+
+   **Cumulative view shipped 2026-09-24**, closing both gaps above. Owner
+   ask: replace the per-day/per-year figures and the ESTIMATE-caveat
+   paragraph with this week's running total, the current month, each of up
+   to five more recent months that had any interest (zero months skipped),
+   and an all-time total — on both the cockpit panel and the Telegram line.
+   `AlpacaBroker.get_margin_interest_activities()` was re-checked with a
+   real $6,114.51 overnight debit (up from the first $915.83 measurement)
+   and again returned zero `INT` rows — a second, larger, independent
+   confirmation that paper trading does not post real margin-interest
+   charges. `compute_cumulative_margin_interest()`
+   (`src/margin_interest.py`) therefore still prefers a broker-confirmed
+   `INT` charge per bucket (Alpaca's own permanent ledger, which would
+   cover the account's FULL history with no local storage needed) but
+   currently always falls back to summing a NEW daily-accrual persistence
+   table, `margin_interest_daily` (`src/storage/db.py`, written each
+   morning by `src/notifier.py::_persist_margin_interest_daily`).
+   **Known limit, stated rather than papered over:** `daily_pnl` never
+   stored a historical cash/debit figure, so no accurate ESTIMATE-path
+   "all-time" total is possible for any day before this table started
+   being written (2026-09-24) — `all_time_since` on every cumulative
+   result names exactly which date its own total is counted from, so
+   "all-time" can never be misread as "since the desk went on margin" when
+   the two differ. The cockpit's per-day/per-year figures and the
+   paragraph-length `ESTIMATE_LABEL` caveat are gone from both renderings;
+   a single small "est." tag next to a genuinely nonzero, unconfirmed
+   figure is the entire marker now (a certain zero never carries it, same
+   rule `format_daily_line` already applied to the per-day figure).
 2. **Forced liquidation.** Below maintenance margin the broker sells, at the
    worst moment, without asking. Nothing currently watches the distance to
    that threshold or alerts on it.

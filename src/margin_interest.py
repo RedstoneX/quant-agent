@@ -430,3 +430,215 @@ def compare_estimate_to_broker_activity(
         charge_confirmed=observed > 0,
         note=note,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cumulative view — owner ask, 2026-09-24.
+#
+# Replaces the per-day/per-year figures above (still computed, still used
+# to derive `days_charged`/the broker-check comparison, but no longer the
+# owner-facing headline) with what he actually asked to see: this week's
+# running total, the current month, each of up to five more recent months
+# that had any interest (oldest cut at `MAX_LOOKBACK_MONTHS` total, zero
+# months skipped so the list is never padded with months that cost
+# nothing), and an all-time total.
+#
+# PREFERENCE ORDER, per-bucket: a broker-CONFIRMED `INT` activity charge is
+# always the truth when one exists (`bucket_broker_activities`) — Alpaca
+# keeps that ledger for the life of the account, so "all-time" in that path
+# really can mean the whole account history, no local storage required.
+# Only when the broker has NEVER posted a real INT row (paper trading's
+# documented-empty behaviour, re-confirmed 2026-09-24 on a $6,114.51
+# overnight debit — see the module docstring's first measurement) does this
+# fall back to summing OUR OWN persisted daily ESTIMATE rows
+# (`margin_interest_daily`, `src/storage/db.py`), which can only ever cover
+# days since this tracker started writing them. `all_time_since` on the
+# result names exactly which case applies and where its own history
+# actually starts, so "all-time" can never be silently read as "since the
+# desk went on margin" when the two differ — see
+# `docs/qamc-margin-interest-cumulative-data-gap.md`-equivalent note in the
+# PR description for why a true from-inception ESTIMATE total is not
+# currently possible (no historical debit balance was ever persisted before
+# this change).
+#: Total months of history the cumulative view looks back across, current
+#: month included — the owner's own ask ("maximum of six months ago").
+MAX_LOOKBACK_MONTHS = 6
+
+
+@dataclass(frozen=True)
+class CumulativeMarginInterest:
+    """The owner-facing cumulative margin-interest view.
+
+    `prior_months` is oldest-excluded-if-zero, newest-first, each item
+    `{"label": "August 2026", "usd": 12.34}` — `label` is derived from the
+    date (`%B %Y`), never a hardcoded month name. `is_estimate` is `True`
+    unless every dollar counted is a broker-confirmed `INT` charge; the
+    cockpit/Telegram render a single small "est." marker off this flag
+    rather than the old paragraph-length caveat.
+    """
+
+    this_week_usd: float
+    current_month_usd: float
+    current_month_label: str
+    prior_months: list[dict]
+    all_time_usd: float
+    all_time_since: str
+    is_estimate: bool
+    source: str  # "broker_actual" | "estimate" | "no_data"
+
+
+def _week_start(today: date) -> date:
+    """Monday of `today`'s week."""
+    return today - timedelta(days=today.weekday())
+
+
+def _month_start(d: date) -> date:
+    return d.replace(day=1)
+
+
+def _prior_month_start(month_start: date) -> date:
+    """The 1st of the calendar month before `month_start` (itself a 1st)."""
+    last_day_of_prev_month = month_start - timedelta(days=1)
+    return last_day_of_prev_month.replace(day=1)
+
+
+def _bucket_dated_amounts(
+    dated_amounts: list[tuple[date, float]],
+    today: date,
+    is_estimate: bool,
+    source: str,
+) -> CumulativeMarginInterest:
+    """Shared bucketing over `[(date, charge_usd), ...]` — used by both the
+    broker-actual and the estimate path so the two can never drift apart on
+    what "this week" or "current month" means.
+
+    Empty input produces an honest all-zero/no-data result rather than
+    raising — the caller (broker path vs. estimate path) decides what an
+    empty list MEANS (no charge ever confirmed vs. nothing persisted yet).
+    """
+    if not dated_amounts:
+        return CumulativeMarginInterest(
+            this_week_usd=0.0, current_month_usd=0.0,
+            current_month_label=today.strftime("%B %Y"),
+            prior_months=[], all_time_usd=0.0,
+            all_time_since=today.isoformat(),
+            is_estimate=is_estimate, source="no_data",
+        )
+    week_start = _week_start(today)
+    month_start = _month_start(today)
+    this_week = sum(amt for d, amt in dated_amounts if week_start <= d <= today)
+    current_month = sum(amt for d, amt in dated_amounts if month_start <= d <= today)
+
+    prior_months: list[dict] = []
+    cursor = month_start
+    for _ in range(MAX_LOOKBACK_MONTHS - 1):
+        prev_start = _prior_month_start(cursor)
+        prev_end = cursor - timedelta(days=1)
+        total = sum(amt for d, amt in dated_amounts if prev_start <= d <= prev_end)
+        if total > 0:
+            prior_months.append({
+                "label": prev_start.strftime("%B %Y"),
+                "usd": total,
+            })
+        cursor = prev_start
+
+    all_time = sum(amt for _, amt in dated_amounts)
+    all_time_since = min(d for d, _ in dated_amounts).isoformat()
+    return CumulativeMarginInterest(
+        this_week_usd=this_week,
+        current_month_usd=current_month,
+        current_month_label=today.strftime("%B %Y"),
+        prior_months=prior_months,
+        all_time_usd=all_time,
+        all_time_since=all_time_since,
+        is_estimate=is_estimate,
+        source=source,
+    )
+
+
+def bucket_broker_activities(
+    activities: list[dict], today: date,
+) -> CumulativeMarginInterest | None:
+    """Bucket the broker's own FULL `INT` activity history (no `after`
+    filter — see `AlpacaBroker.get_margin_interest_activities`) into the
+    cumulative view. `net_amount` is Alpaca's ledger convention: negative
+    is a charge against cash, so it is flipped here the same way
+    `compare_estimate_to_broker_activity` does.
+
+    Returns `None` — not a zero-valued result — when the broker has never
+    posted a single `INT` row, which the caller must read as "no broker
+    confirmation exists yet; use the estimate instead", never as "broker
+    confirms zero interest was ever charged".
+    """
+    parsed: list[tuple[date, float]] = []
+    for a in activities:
+        raw_date = a.get("date")
+        if not raw_date:
+            continue
+        try:
+            d = date.fromisoformat(str(raw_date)[:10])
+        except ValueError:
+            continue
+        parsed.append((d, -float(a.get("net_amount", 0.0) or 0.0)))
+    if not parsed:
+        return None
+    return _bucket_dated_amounts(parsed, today, is_estimate=False, source="broker_actual")
+
+
+def bucket_estimate_rows(rows: list[dict], today: date) -> CumulativeMarginInterest:
+    """Bucket our own persisted daily-accrual ESTIMATE rows (each
+    `{"date": "YYYY-MM-DD", "period_usd": float}`, from the
+    `margin_interest_daily` table) into the cumulative view.
+
+    Unlike `bucket_broker_activities`, an empty `rows` list is a real,
+    reportable state (`source="no_data"`) rather than `None` — there is no
+    further fallback below this one.
+    """
+    parsed = [
+        (date.fromisoformat(str(r["date"])[:10]), float(r.get("period_usd", 0.0) or 0.0))
+        for r in rows
+        if r.get("date")
+    ]
+    return _bucket_dated_amounts(parsed, today, is_estimate=True, source="estimate")
+
+
+def compute_cumulative_margin_interest(
+    broker_activities: list[dict],
+    estimate_rows: list[dict],
+    today: date,
+) -> CumulativeMarginInterest:
+    """The one function callers (`broker_reads.py`, `notifier.py`) use:
+    prefer broker-confirmed `INT` history; fall back to our own persisted
+    ESTIMATE rows only when the broker has never posted a real charge.
+    """
+    broker_view = bucket_broker_activities(broker_activities, today)
+    if broker_view is not None:
+        return broker_view
+    return bucket_estimate_rows(estimate_rows, today)
+
+
+def format_cumulative_line(cumulative: CumulativeMarginInterest) -> str:
+    """One or two short owner-facing Telegram lines — no per-day figure, no
+    caveat paragraph. `(est.)` is the entire estimate marker; the broker-
+    confirmed path carries none.
+
+    `source == "no_data"` renders a single honest line saying nothing has
+    been measured yet, rather than a fabricated `$0.00`.
+    """
+    if cumulative.source == "no_data":
+        return "💳 margin interest: no data yet — tracking starts today"
+
+    def _tag(usd: float) -> str:
+        # A certain zero is not an estimate at any rate — same rule
+        # `format_daily_line` already applies to the per-day figure. Only a
+        # genuinely nonzero, unconfirmed total carries the marker.
+        return " (est.)" if cumulative.is_estimate and usd != 0 else ""
+
+    line = (
+        f"💳 margin interest — this week {_money(cumulative.this_week_usd)}, "
+        f"{cumulative.current_month_label} {_money(cumulative.current_month_usd)}"
+        f"{_tag(cumulative.current_month_usd)}, "
+        f"all-time {_money(cumulative.all_time_usd)}{_tag(cumulative.all_time_usd)} "
+        f"(since {cumulative.all_time_since})"
+    )
+    return line

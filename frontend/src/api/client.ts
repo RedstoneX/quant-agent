@@ -155,6 +155,39 @@ export interface MarginInterestEstimate {
    * just the per-day rate. */
   period_usd: number | null;
   error: string | null;
+  /** The owner-facing cumulative view (this week / current month / up to
+   * 6 months / all-time) that replaced the per-day/per-year figures and
+   * the ESTIMATE-caveat paragraph as the cockpit/Telegram headline,
+   * 2026-09-24. `null` only on a read failure. */
+  cumulative: MarginInterestCumulative | null;
+}
+
+/** Owner ask, 2026-09-24: this week's running total, the current month,
+ * each of up to five more recent months that had any interest (zero
+ * months omitted, never padded in), and an all-time total — replacing the
+ * per-day/per-year figures and the ESTIMATE-caveat paragraph.
+ *
+ * `source` is `"broker_actual"` when every dollar is a broker-confirmed
+ * `INT` charge (Alpaca's own permanent ledger — covers the account's full
+ * history), `"estimate"` when it falls back to our own persisted
+ * daily-accrual formula (only covers days since this tracker started
+ * persisting — see `all_time_since`), or `"no_data"` when neither source
+ * has anything yet. `is_estimate` is the single small "est." marker shown
+ * in place of the old caveat paragraph. */
+export interface MarginInterestCumulative {
+  this_week_usd: number;
+  current_month_usd: number;
+  current_month_label: string;
+  prior_months: { label: string; usd: number }[];
+  all_time_usd: number;
+  /** The date `all_time_usd` is actually counted from — the earliest
+   * broker-confirmed INT activity, or (estimate fallback) the earliest day
+   * THIS TRACKER persisted a row. Not necessarily the day the desk first
+   * went on margin; always shown alongside the total for exactly that
+   * reason. */
+  all_time_since: string;
+  is_estimate: boolean;
+  source: "broker_actual" | "estimate" | "no_data";
 }
 
 export interface RiskLimits {

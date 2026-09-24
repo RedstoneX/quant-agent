@@ -2944,21 +2944,106 @@ def _openrouter_balance_line() -> str | None:
     )
 
 
-def _margin_interest_lines() -> list[str]:
-    """['💳 margin interest: ...', '   broker check: ...'] — spec §11.2.
+def _persist_margin_interest_daily(
+    trading_day, debit_balance: float, rate_pct: float, daily_usd: float,
+    days_charged: int, period_usd: float, source: str = "estimate",
+) -> None:
+    """Write today's margin-interest row so the cumulative view
+    (`src.margin_interest.compute_cumulative_margin_interest`) has
+    something to sum for this-week/current-month/all-time — `daily_pnl`
+    never stored cash/debit, so THIS table is the only historical record of
+    the desk's overnight debit balance from here forward.
 
-    ALWAYS returns at least one line outside rehearsal (owner decision,
-    2026-09-18, verbatim: "Yes, every day, even if it's zero, that way I
-    know it's still working"). `margin_interest.format_daily_line` owns
-    that policy and the wording of all four states — real debit, nothing
-    borrowed, cash unreadable, no rate configured; read its docstring for
-    why the spec's original silent-on-zero rule is deliberately overridden
-    and why a missing rate must NOT render as a zero.
+    Same defensive, own-connection pattern as `_record_send_outcome`'s
+    `notifier_sends` write just above: a raw `sqlite3` connection with its
+    own `CREATE TABLE IF NOT EXISTS` (belt and suspenders — production's
+    `data/` dir and `Database()`'s own copy of this schema both exist by
+    the time a real morning run gets here, but this must not depend on
+    that). Never raises — a persistence failure here must not be able to
+    block the Telegram alert that already has its lines built.
+    """
+    try:
+        import sqlite3
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS margin_interest_daily (
+                    date TEXT PRIMARY KEY,
+                    debit_balance REAL NOT NULL,
+                    rate_pct REAL NOT NULL,
+                    daily_usd REAL NOT NULL,
+                    days_charged INTEGER NOT NULL DEFAULT 1,
+                    period_usd REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'estimate',
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO margin_interest_daily "
+                "(date, debit_balance, rate_pct, daily_usd, days_charged, "
+                "period_usd, source) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(date) DO UPDATE SET "
+                "debit_balance=excluded.debit_balance, "
+                "rate_pct=excluded.rate_pct, daily_usd=excluded.daily_usd, "
+                "days_charged=excluded.days_charged, "
+                "period_usd=excluded.period_usd, source=excluded.source",
+                (str(trading_day), debit_balance, rate_pct, daily_usd,
+                 days_charged, period_usd, source),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — persistence is a nicety, not the alert
+        logger.warning("margin interest daily persistence failed: %s", exc)
+
+
+def _read_margin_interest_daily_all() -> list[dict]:
+    """`SELECT * FROM margin_interest_daily ORDER BY date ASC` for the
+    cumulative Telegram line — same table `_persist_margin_interest_daily`
+    writes, read back with its own connection (this module never holds a
+    live `Database()` instance). Returns `[]` on any read failure,
+    including the table not existing yet, which the bucketing function
+    reads as `source="no_data"`, never a fabricated zero."""
+    try:
+        import sqlite3
+        if not _DB_PATH.exists():
+            return []
+        conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT date, debit_balance, rate_pct, daily_usd, "
+                "days_charged, period_usd, source "
+                "FROM margin_interest_daily ORDER BY date ASC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest daily read failed: %s", exc)
+        return []
+
+
+def _margin_interest_lines() -> list[str]:
+    """['💳 margin interest — this week $X, <Month> $Y (est.), all-time $Z
+    (est.) (since <date>)'] — owner ask, 2026-09-24, replacing the old
+    per-day/per-year figures and the ESTIMATE-caveat paragraph with a
+    short cumulative summary. `src.margin_interest.format_cumulative_line`
+    owns the wording; `compute_cumulative_margin_interest` owns the
+    broker-actual-preferred, estimate-fallback bucketing (this week /
+    current month / up to 6 months / all-time).
 
     Morning-only, like the balance/day-cost lines above: interest accrues
     on the OVERNIGHT debit balance, so the morning snapshot — taken before
     any new trading — is the one honest read of what was actually carried
-    across the close.
+    across the close. That reading is also PERSISTED here
+    (`_persist_margin_interest_daily`) — `daily_pnl` never stored cash/
+    debit, so this is the only historical record of the desk's overnight
+    debit balance, which is what makes "this week"/"this month"/"all-time"
+    (for the estimate-fallback path) possible at all going forward.
 
     Reads the account's actual cash regardless of `allow_margin` — that
     flag is QAMC's own risk toggle, not a broker-side guarantee that cash
@@ -2968,16 +3053,7 @@ def _margin_interest_lines() -> list[str]:
     `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
     "cash negative AND allow_margin False" as a real, live state — so a
     debit balance can exist even with margin disabled, and a short-circuit
-    on `allow_margin` alone would silently miss it. On a zero-debit day
-    this still costs one broker round-trip (spent on
-    `overnight_debit_balance()` returning `0.0`) and now renders the
-    explicit zero line it proves.
-
-    When a debit balance IS present, this also reads the broker's own
-    `INT` account activity and reports whether it confirms, denies, or has
-    not yet settled the question of whether paper trading actually charges
-    this — see `src.margin_interest` for why that is deliberately
-    left open rather than assumed either way.
+    on `allow_margin` alone would silently miss it.
 
     Never raises: a broker-read failure here must not be able to block the
     alert — it degrades to a line that SAYS the read failed, rather than to
@@ -2988,8 +3064,9 @@ def _margin_interest_lines() -> list[str]:
     """
     from src.margin_interest import (
         RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
-        compare_estimate_to_broker_activity, days_charged_until_next_trading_day,
-        format_daily_line, overnight_debit_balance,
+        compare_estimate_to_broker_activity, compute_cumulative_margin_interest,
+        days_charged_until_next_trading_day, format_cumulative_line,
+        overnight_debit_balance,
     )
 
     if _REHEARSAL_MODE:
@@ -3015,30 +3092,43 @@ def _margin_interest_lines() -> list[str]:
         # exchange calendar for how many days tonight's carry spans; the
         # helper never raises and degrades to 1 if the calendar can't be read.
         from src.util.time import et_today
-        days_charged = days_charged_until_next_trading_day(
-            broker.is_trading_day, et_today(),
-        )
+        today = et_today()
+        days_charged = days_charged_until_next_trading_day(broker.is_trading_day, today)
         estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest estimate failed: %s", exc)
         return [UNAVAILABLE_LINE]
 
-    # Always exactly one line, zero and fault states included.
-    lines = [format_daily_line(cash, rate_pct, days_charged)]
-    if estimate is None:
-        # Nothing borrowed: there is no charge to check the broker's own
-        # INT records against, so the second line would have nothing to say.
-        return lines
-
+    period_usd = estimate.period_usd if estimate is not None else 0.0
+    source = "estimate"
     try:
-        activities = broker.get_margin_interest_activities()
-        comparison = compare_estimate_to_broker_activity(estimate, activities)
-        if comparison is not None:
-            lines.append(f"   broker check: {comparison.note}")
+        full_history = broker.get_margin_interest_activities()
+        if estimate is not None:
+            comparison = compare_estimate_to_broker_activity(estimate, full_history)
+            if comparison is not None and comparison.charge_confirmed and comparison.observed_usd:
+                # The broker's own INT record for tonight beats our formula
+                # — use its real number for THIS row (source flips to
+                # broker_actual), without changing the fallback logic the
+                # cumulative view applies to every OTHER day.
+                period_usd = comparison.observed_usd
+                source = "broker_actual"
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest INT-activity check failed: %s", exc)
+        full_history = []
 
-    return lines
+    _persist_margin_interest_daily(
+        today, debit_balance, rate_pct,
+        estimate.daily_usd if estimate is not None else 0.0,
+        days_charged, period_usd, source,
+    )
+
+    try:
+        estimate_rows = _read_margin_interest_daily_all()
+        cumulative = compute_cumulative_margin_interest(full_history, estimate_rows, today)
+        return [format_cumulative_line(cumulative)]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest cumulative view failed: %s", exc)
+        return [UNAVAILABLE_LINE]
 
 
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
