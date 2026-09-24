@@ -73,7 +73,7 @@ DEFAULT_REPO_PATH = "/home/qamc/quant-agent"
 DEFAULT_UNITS_PATH = "/home/qamc/.config/systemd/user"
 # Where unit files live inside the checkout.
 REPO_UNIT_SUBDIR = "scripts/systemd"
-UNIT_SUFFIXES = (".service", ".timer")
+UNIT_SUFFIXES = (".service", ".timer", ".path")
 # The declared, reviewable list of deliberately paused units, tracked
 # alongside the units it describes.
 PAUSED_UNITS_FILENAME = "paused_units.yaml"
