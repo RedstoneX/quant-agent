@@ -55,7 +55,6 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
-    BOOK_LEVEL_VETO_CATEGORIES,
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
     parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
@@ -7490,111 +7489,70 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
-        # WHOLE-PLAN veto (`approved=False`), evaluated FIRST. Owner ruling
-        # 2026-09-24 (closing the item-162 harm): hard limits are enforced by
-        # CODE upstream (`_filter_hard_risk_decisions` ran before the seat), so
-        # `approved=False` here is a JUDGEMENT layer over a book that already
-        # cleared every hard limit. Over an advisory or SINGLE-NAME concern the
-        # seat must resize or refuse the one name — it may not nuke the batch.
+        # WHOLE-PLAN veto REMOVED. Owner ruling 2026-09-24 (final): the risk
+        # seat may NEVER cancel or reject the whole batch of new trades. Its
+        # only levers are (a) SHRINK — `scale_all_buys` (all the way to 0.0 to
+        # stop new buying) and per-trade `modifications`; and (b) DROP specific
+        # named NEW entries via `rejected_symbols`. It must never block a
+        # protective exit or touch existing holdings.
         #
-        # The decisive signal is SCOPE, not category alone (adversary 2026-09-24
-        # on PR #634: `concentration` is a single-name label, so whitelisting
-        # it would let one overweight name veto the whole batch — the 162 harm).
-        # A veto is HONORED in full when EITHER:
-        #   - the seat gave NO actionable per-symbol remedy (it named no symbol
-        #     that is actually in the plan) — this is what an aggregate/total-
-        #     exposure or whole-plan-incoherence veto looks like, AND it is the
-        #     fail-SAFE that catches a genuine correlation-cluster veto the LLM
-        #     mislabeled or left at the default category; OR
-        #   - the category is a genuinely book-wide one
-        #     (`models.BOOK_LEVEL_VETO_CATEGORIES` — a cross-book correlation
-        #     cluster, which naming individual names cannot fix), even when it
-        #     ALSO names symbols (item-164: the book reason wins).
-        # Otherwise (a non-book-wide category that DID name ≥1 droppable symbol)
-        # the veto is DOWNGRADED to per-symbol handling: we do NOT reject the
-        # whole plan; we fall through to the per-symbol path below, which drops
-        # exactly those named symbols and lets the rest of the batch proceed.
-        #
-        # Fail toward HONORING an ambiguous no-remedy veto: it can only decline
-        # to ADD new orders (it never sells the book) on a book that already
-        # passed the hard gate, and blocking a day of new entries is cheap
-        # against a correlated blow-up. A single-name concern still drops just
-        # the one name via the scope signal, so 162's harm stays fixed.
-        _veto_category = getattr(verdict, "reason_category", None)
-        _veto_rejections = verdict.rejections_by_symbol()
-        _plan_symbols = {
-            d.symbol.strip().upper() for d in portfolio_decision.decisions
-        }
-        # Names the seat flagged that are actually droppable from THIS plan.
-        _named_droppable = sorted(_veto_rejections.keys() & _plan_symbols)
-        _category_is_book_wide = _veto_category in BOOK_LEVEL_VETO_CATEGORIES
-        _honor_book_veto = (
-            not verdict.approved
-            and (_category_is_book_wide or not _named_droppable)
-        )
-        if not verdict.approved and not _honor_book_veto:
-            # Non-book-wide category that named a droppable subset — DOWNGRADE.
-            logger.warning(
-                "advisory_veto_downgraded: risk manager set approved=False on "
-                "category %r while naming a droppable subset %s; a per-symbol "
-                "concern is not a whole-plan veto, so it is downgraded to "
-                "dropping those names. Original reasoning: %s",
-                _veto_category, _named_droppable, verdict.reasoning,
+        # `approved=False` is therefore a NO-OP for batch rejection. It is
+        # recorded in the durable trail so we can see the seat was uneasy, but
+        # it never stops the plan: the run always proceeds to apply the drops +
+        # modifications + scale below, and the survivors flow through the
+        # deterministic hard gate (gross/exposure), which runs before AND after
+        # scaling and is the only thing that can block on a hard limit.
+        if not verdict.approved:
+            logger.info(
+                "Risk manager set approved=False; per owner ruling 2026-09-24 "
+                "this no longer rejects the batch — recording and proceeding to "
+                "apply rejected_symbols + modifications + scale_all_buys. "
+                "Reasoning: %s", verdict.reasoning,
             )
             _record_pipeline_event(
-                pipeline, ctx, None, "risk", "advisory_veto_downgraded",
+                pipeline, ctx, None, "risk", "batch_veto_ignored",
                 verdict.reasoning,
-                gate="risk_manager_advisory_veto_downgraded",
-                reason_category=_veto_category,
-                downgraded_rejected_symbols=_named_droppable,
+                gate="risk_manager_batch_veto_disabled",
+                reason_category=getattr(verdict, "reason_category", None),
             )
-            # Fall through: the per-symbol refusal path below drops exactly the
-            # named symbols; everything else in the batch proceeds.
-        if _honor_book_veto:
-            logger.info(
-                "Risk manager REJECTED trades (%s): %s",
-                "book-wide category" if _category_is_book_wide
-                else "no actionable per-symbol remedy",
-                verdict.reasoning,
-            )
-            # Board item 164: a book-level veto refuses every leg for the
-            # book's reason, but where the seat ALSO named this symbol with
-            # its own reason, that reason is what the symbol's record
-            # carries — the book reason rides beside it, not over it.
-            book_veto_symbol_reasons = verdict.rejections_by_symbol()
-            for decision in portfolio_decision.decisions:
-                own = book_veto_symbol_reasons.get(
-                    decision.symbol.strip().upper()
-                )
-                _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "rejected",
-                    own or verdict.reasoning,
-                    gate="risk_manager_book_veto",
-                    book_level_reason=verdict.reasoning,
-                    reason_category=getattr(verdict, "reason_category", None),
-                    honored_via=(
-                        "book_wide_category" if _category_is_book_wide
-                        else "no_per_symbol_remedy"
-                    ),
-                )
-            return {
-                "status": "rejected", "orders": [],
-                "reason": verdict.reasoning,
-            }
 
-        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone.
-        # Before this, `approved` was the only refusal the schema had, so a
-        # single sub-floor R/R took the whole plan with it — run-64290730
-        # (2026-09-01) refused the morning citing XLE alone and killed CHPX,
-        # a passing trade in a different sector, with it.
+        # PER-SYMBOL refusal (spec Phase 10.1). One failing leg dies alone —
+        # this is the seat's ONLY way to remove a trade, and it can only remove
+        # a NEW entry. Before Phase 10.1, `approved` was the only refusal the
+        # schema had, so a single sub-floor R/R took the whole plan with it —
+        # run-64290730 (2026-09-01) refused the morning citing XLE alone and
+        # killed CHPX, a passing trade in a different sector, with it.
         rejections = verdict.rejections_by_symbol()
         refused_decisions: list = []
+        protected_exit_symbols: list[str] = []
         if rejections:
             surviving: list = []
             for decision in portfolio_decision.decisions:
                 reason = rejections.get(decision.symbol.strip().upper())
                 if reason is None:
                     surviving.append(decision)
+                    continue
+                # PROTECTIVE-EXIT GUARD (owner ruling 2026-09-24): the seat may
+                # only drop a NEW entry (BUY / SHORT). A SELL or COVER is a
+                # protective exit and a HOLD touches an existing holding —
+                # none of these may EVER be dropped or blocked by the seat,
+                # under any path. Naming one in `rejected_symbols` is recorded
+                # and IGNORED; the decision stays in the plan.
+                if decision.action not in ("BUY", "SHORT"):
+                    surviving.append(decision)
+                    protected_exit_symbols.append(decision.symbol)
+                    logger.warning(
+                        "Risk manager named %s (%s) in rejected_symbols, but a "
+                        "protective exit / holding is never droppable by the "
+                        "seat — keeping it. Reason given: %s",
+                        decision.symbol, decision.action, reason,
+                    )
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "risk",
+                        "exit_refusal_ignored", reason,
+                        gate="risk_manager_exit_protected",
+                        action=decision.action,
+                    )
                     continue
                 refused_decisions.append(decision)
                 logger.info(
@@ -7604,9 +7562,11 @@ class RiskStage:
                 _record_pipeline_event(
                     pipeline, ctx, decision.symbol, "risk", "rejected", reason,
                 )
-            unmatched = sorted(
-                set(rejections) - {d.symbol.strip().upper() for d in refused_decisions}
+            matched = (
+                {d.symbol.strip().upper() for d in refused_decisions}
+                | {s.strip().upper() for s in protected_exit_symbols}
             )
+            unmatched = sorted(set(rejections) - matched)
             if unmatched:
                 logger.warning(
                     "Risk manager refused %s, which is not in the proposed "
@@ -7619,10 +7579,13 @@ class RiskStage:
             # nothing: an empty plan plus a stray symbol name is not a
             # refusal of anything and must not become one.
             if refused_decisions and not surviving:
-                # Every leg refused individually. Same terminal status as a
-                # book veto because the outcome is the same — no orders — but
-                # each symbol carries its OWN reason above, not one shared
-                # sentence about a different symbol.
+                # Every leg refused INDIVIDUALLY. This is the SUM of per-symbol
+                # drops, not a whole-batch veto: it is reachable only when every
+                # decision was a droppable NEW entry (BUY/SHORT) and each was
+                # named on its own merits. A protective exit is guarded into
+                # `surviving` above, so it can never be here — this path cannot
+                # kill a SELL/COVER. There is simply nothing left to place, and
+                # each symbol carries its OWN reason.
                 reasons = "; ".join(
                     f"{sym}: {rejections[sym]}"
                     for sym in sorted(
