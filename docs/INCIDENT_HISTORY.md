@@ -1441,15 +1441,20 @@ calls 'the only remaining automatic seller'". Before this change that was
 one of two account-wide mechanisms; it is now the only one, and its
 severity rose without its item being touched. [Read from `docs/WORK.md`
 item 118 and the cited code, 2026-09-23; the fill behaviour was not
-re-measured.] UPDATE (item 118, PR pending review): both de-lever
-paths — `_enforce_gross_ceiling` and the `allow_margin=False`
-`_force_delever` sweep — now price the trim 3% through the market (the
-desk's ratified `STOP_LIMIT_BUFFER_PCT` must-fill-exit buffer) instead of
-1%, tripling fill probability while still capping worst-case fill with a
-limit; fixing both keeps the emergency de-lever paths consistent. A >3% gap
-can still miss and (for the gross-ceiling path) is reported as an incomplete
-de-lever; whether to switch to a market order for guaranteed fill is the
-open owner-appetite question recorded on item 118.
+re-measured.] UPDATE (item 118, branch `delever-live-fill`, supersedes the fixed-3%
+approach PR #636 shipped): the owner ruled the fixed % wrong — a fixed % of
+a possibly-stale mark rests ABOVE the falling market on a gap wider than 3%
+and is oversized in normal noise. Both de-lever paths —
+`_enforce_gross_ceiling` and the `allow_margin=False` `_force_delever`
+sweep — now price the must-fill trim off the LIVE quote at submit time
+(`_live_delever_price`): a marketable limit that crosses the current quote
+(SELL at the live bid, COVER at the live ask), so it fills at ANY gap size
+because the gap is in the quote, with a MARKET order fallback when no usable
+live quote is available. Fill takes priority over a few bps of slippage per
+the owner's ruling; slippage is bounded to the live quote in the normal case
+and unbounded only in the no-quote market fallback. No new % constant is
+introduced. This resolves the former open owner-appetite question on item
+118 (market vs limit).
 
 **The ladder cancels a position's protective stop during the exact
 conditions this change says those stops are load-bearing.** Item 111
