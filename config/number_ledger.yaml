@@ -3695,6 +3695,20 @@ numbers:
       (src/execution/broker.py:4577). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
+  - id: src.execution.broker.AlpacaBroker.get_all_account_activities(page_size)
+    value: 100
+    status: sourced
+    site: src/execution/broker.py
+    source: >-
+      Alpaca's account-activities endpoint caps `page_size` at 100 per
+      request: https://docs.alpaca.markets/reference/getaccountactivities
+      (documented maximum, fetched 2026-09-24). Set to the maximum so the
+      margin-interest historical backfill
+      (`src.margin_interest.reconstruct_daily_cash_balances`,
+      src/execution/broker.py:1841-1886) pages Alpaca's full activity ledger
+      in as few round trips as possible; a smaller value would still be
+      correct, a larger one is rejected by the API, so 100 is the API's own
+      ceiling rather than a desk choice.
   - id: src.execution.broker.AlpacaBroker.get_bars(lookback_days)
     value: 120
     status: not-trade-governing
