@@ -2185,15 +2185,15 @@ numbers:
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py:519
-      and the module note at src/risk/exit_guard.py:476-533.
+      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py:517
+      and the module note at src/risk/exit_guard.py:476-509.
     note: >-
-      Consecutive confirmed closes required for a WITH-TREND break (regimes 2 and
-      3) under the owner mandate 2026-09-24 trend-scaled exit. A break against
-      the trend or in a weak/dead tape (regime 1) needs only the single first
-      close and does not use this constant; the stricter third-tier patience is a
-      STRUCTURAL condition (the prior swing-low must also break), not a larger
-      close count. The break MARGIN is always NOISE_BAND_ATR_MULTIPLE.
+      Consecutive confirmed closes required to treat ANY break as real, in BOTH
+      regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
+      ratified two-close spring floor, nothing exits faster. The strong-with-
+      trend regime adds a STRUCTURAL condition (the prior swing-low must also
+      break) on top, never a larger close count. The break MARGIN is always
+      NOISE_BAND_ATR_MULTIPLE.
   - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
@@ -2202,27 +2202,13 @@ numbers:
       Wilder's own ADX threshold for a strong trend, as published in J. Welles
       Wilder, New Concepts in Technical Trading Systems (1978), the standard
       convention (ADX above 25 = trend strong enough to trade with). Definition
-      and use: src/risk/exit_guard.py:525.
+      and use: src/risk/exit_guard.py:524.
     note: >-
-      Trade-governing: at or above this ADX a with-trend structural break takes
-      the strong-trend regime (two confirmed closes AND the prior swing-low must
-      also break) under the owner mandate 2026-09-24 trend-scaled exit. Below it,
-      a with-trend break drops to the moderate (two-close) or fast regime.
-      Wilder's published threshold, not a discretionary pick.
-  - id: src.risk.exit_guard.ADX_WEAK_TREND_THRESHOLD
-    value: 20
-    status: sourced
-    site: src/risk/exit_guard.py
-    source: >-
-      Wilder's own ADX threshold for a weak / absent trend, as published in
-      J. Welles Wilder, New Concepts in Technical Trading Systems (1978), the
-      standard convention (ADX below 20 = no tradable trend). Definition and use:
-      src/risk/exit_guard.py:531.
-    note: >-
-      Trade-governing: below this ADX the tape has no tradable trend, so even a
-      break inside an up-structure is treated as against/weak and exits FAST on
-      the first confirmed close (regime 1) under the owner mandate 2026-09-24
-      trend-scaled exit. Wilder's published threshold, not a discretionary pick.
+      Trade-governing: at or above this ADX a with-trend structural break enters
+      the patient strong-with-trend regime (two confirmed closes AND the prior
+      swing-low must also break) under the owner mandate 2026-09-24 trend-scaled
+      exit; below it, the default two-close floor. The only ADX threshold used —
+      Wilder's published value, not a discretionary pick.
   - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
     value: 40
     status: not-trade-governing

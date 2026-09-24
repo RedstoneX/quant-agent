@@ -10153,12 +10153,14 @@ class TradingPipeline:
             )
 
         # Telegram: the same standalone owner-alert path the holding-discipline
-        # block uses. Its return value is information, never a reason to abort.
+        # block uses. `send_owner_alert` does NOT raise on a failed send — it
+        # RETURNS False — so a surface only counts as reached when the return is
+        # truthy (and, as a backstop, when it does not raise).
         try:
             from src import notifier as _notifier
 
-            _notifier.send_owner_alert(message, symbols=[symbol_u])
-            any_surface_ok = True
+            ok = _notifier.send_owner_alert(message, symbols=[symbol_u])
+            any_surface_ok |= bool(ok)
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "structural protection: owner alert send failed for %s (%s)",

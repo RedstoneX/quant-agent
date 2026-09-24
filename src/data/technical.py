@@ -14,9 +14,8 @@ ATR_PERIOD = 14
 #: (1978), and the period every chart package means by "ADX(14)". Named
 #: rather than repeated (same reason as `ATR_PERIOD`) so the indicator path
 #: and the exit guard's trend-context read can never end up on different
-#: periods. The strong/weak trend thresholds read against it
-#: (`src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD` / `ADX_WEAK_TREND_
-#: THRESHOLD`) are Wilder's too.
+#: periods. The strong-trend threshold read against it
+#: (`src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD`, 25) is Wilder's too.
 ADX_PERIOD = 14
 
 
