@@ -66,6 +66,7 @@ from src.api.schemas import (
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
+    MarginInterestCumulative,
     MarginInterestEstimate,
     OrderItem,
     OrdersResponse,
@@ -386,6 +387,20 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
     except Exception as exc:
         logger.warning("routes_live._compute_margin_interest failed: %s", exc)
         return MarginInterestEstimate(error=str(exc))
+    cumulative_data = data.get("cumulative")
+    cumulative = (
+        MarginInterestCumulative(
+            this_week_usd=cumulative_data.get("this_week_usd"),
+            current_month_usd=cumulative_data.get("current_month_usd"),
+            current_month_label=cumulative_data.get("current_month_label"),
+            prior_months=cumulative_data.get("prior_months") or [],
+            all_time_usd=cumulative_data.get("all_time_usd"),
+            all_time_since=cumulative_data.get("all_time_since"),
+            is_estimate=cumulative_data.get("is_estimate"),
+            source=cumulative_data.get("source"),
+        )
+        if cumulative_data else None
+    )
     return MarginInterestEstimate(
         debit_balance=data.get("debit_balance"),
         rate_pct=data.get("rate_pct"),
@@ -396,6 +411,7 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
         days_charged=data.get("days_charged"),
         period_usd=data.get("period_usd"),
         error=data.get("error"),
+        cumulative=cumulative,
     )
 
 # NOTE (§11.2): Mission Control still does NOT compute the de-levering
