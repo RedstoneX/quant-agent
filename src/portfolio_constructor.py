@@ -483,9 +483,12 @@ class ConstructorConfig:
     # (spec §2.1) this caps `TargetPosition.risk_allocation_pct` rather than
     # driving it — conviction sets the size, this bounds it.
     risk_budget_pct: float = 5.0
-    # Below this, an idea is not worth trading: a token position pays full
-    # commission and full attention for an immaterial payoff. A request
-    # rationed under the floor is denied outright rather than shrunk.
+    # Below this, an idea is not worth trading: a token position still
+    # consumes a book slot and needs its own stop and ongoing attention for
+    # an immaterial payoff, and its spread/slippage cost is a large share of
+    # the whole position (Alpaca charges no stock commission — this is not a
+    # commission floor). A request rationed under the floor is denied
+    # outright rather than shrunk.
     min_risk_pct: float = 0.5
     # Spec §2.2. Total at-risk ceiling across the book, and the share of it any
     # one correlated cluster may take. Enforced only when the caller supplies
@@ -545,13 +548,21 @@ class ConstructorConfig:
     # 40 -> 75 and 60 -> 90.
     max_sector_pct: float = 75.0
     max_sector_hard_pct: float = 90.0
-    # Spec §10.3's floor. A position shrunk to near-nothing by sector crowding
-    # still pays commission, still consumes a slot, still needs a stop and
-    # still needs watching — it cannot pay for its own risk. Below this the
-    # honest answer is no trade, not a token trade. Deliberately the SAME
-    # $500 threshold `cash_sweep.min_order_usd` already uses rather than a
-    # second, divergent notion of "too small to bother"; pipeline.py wires it
-    # from that setting.
+    # NO LONGER used to reject a sector-crowded trade for being small (fixed
+    # 2026-09-24: a genuine ~$295 / 2.95%-of-equity MRVL trade was refused
+    # here as "under the $500 minimum order ... pays full commission" — the
+    # $500 was an arbitrary round number (config/number_ledger.yaml) with no
+    # broker minimum behind it, and Alpaca charges NO stock commission, so
+    # the refusal was a bad decision justified by a false reason.
+    # `_apply_sector_crowding_scale` now lets a sector-crowded trade through
+    # at whatever size crowding leaves, however small, rather than refusing
+    # it outright. This field is kept (not deleted) because
+    # `apply_gross_ceiling` (see `construct_orders`'s call into
+    # `src/risk/rules.py`) still reads it as the notional floor for the
+    # SEPARATE gross-exposure-ceiling entry check — that gate was left
+    # unchanged; see the fix notes for why. Mirrors
+    # `cash_sweep.min_order_usd`, which still does its original job gating
+    # the spare-cash SWEEP, unrelated to this trade path.
     min_order_usd: float = 500.0
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
@@ -3073,29 +3084,19 @@ class PortfolioConstructor:
                 f"Concentration scales size, but not without end]"
             )
 
-        # The floor. A position this small cannot pay for its own risk.
-        notional = total_value * final / 100
-        if notional < self.cfg.min_order_usd:
-            # Board item 10 (2026-09-14, second pass) — see the sibling
-            # refusal above.
-            self._note_refusal(
-                symbol, "short" if side == "short" else "long",
-                STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
-                f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
-                f"equity, so crowding leaves only {final:.2f}% "
-                f"(~${notional:,.0f}) — under the "
-                f"${self.cfg.min_order_usd:,.0f} minimum order. A position "
-                f"this small pays full commission and full attention for an "
-                f"immaterial payoff, so it is not taken at all.",
-            )
-            return -1.0, (
-                f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
-                f"at {current_pct:.1f}% of equity, so crowding leaves only "
-                f"{final:.2f}% (~${notional:,.0f}). That is under the "
-                f"${self.cfg.min_order_usd:,.0f} minimum order: a position "
-                f"this small pays full commission and full attention for an "
-                f"immaterial payoff, so it is not taken at all]"
-            )
+        # Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity
+        # MRVL trade was refused here as "under the $500 minimum order ...
+        # pays full commission"). `min_order_usd` was an arbitrary flat $500
+        # with no broker minimum behind it (config/number_ledger.yaml), and
+        # Alpaca charges NO stock commission — the refusal was a bad
+        # decision justified by a false reason. A sector-crowded trade is no
+        # longer refused for notional size; it goes through at whatever
+        # `final` leaves, however small (no commission + fractional shares
+        # mean a small trade is not actually costly to hold). This
+        # deliberately does NOT invent a new, arbitrary sliver threshold —
+        # see the board note for why. `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER`
+        # is kept defined (tests reference it) even though this path no
+        # longer raises it.
 
         logger.info(
             "Constructor: %s size scaled for sector crowding "

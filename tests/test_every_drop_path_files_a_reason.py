@@ -543,10 +543,21 @@ def test_a_stop_on_the_wrong_side_of_entry_is_named(archive):
 def test_the_sector_dial_refusals_are_named(archive):
     """§10.3's two ends. Both logged a sentence the regex happened to match,
     which is how they survived the first pass — a matched sentence lands as a
-    generic `constructor_dropped` row, not as a code the funnel can count."""
+    generic `constructor_dropped` row, not as a code the funnel can count.
+
+    Fixed 2026-09-24: `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER` is no longer
+    raised by this path (the arbitrary $500 notional floor no longer refuses
+    a sector-crowded trade — see the fix note on
+    `ConstructorConfig.min_order_usd`). At exactly the hard ceiling the scale
+    dial can still round a trade down to a genuine zero, which is refused
+    downstream as `STOP_REFUSAL_SIZED_TO_ZERO` — a real "no shares to buy"
+    refusal, not the old arbitrary-floor one — so that code is accepted here
+    too.
+    """
     from src.portfolio_constructor import (
         STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
+        STOP_REFUSAL_SIZED_TO_ZERO,
     )
     decision = next(d for d in archive["decisions"] if d["run_id"] == _REAL_ROW)
     target = TargetPosition.model_validate(
@@ -572,4 +583,5 @@ def test_the_sector_dial_refusals_are_named(archive):
     assert constructor.last_refusals["NVDA"]["refusal"] in (
         STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
+        STOP_REFUSAL_SIZED_TO_ZERO,
     )

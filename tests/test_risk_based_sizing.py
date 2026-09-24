@@ -1905,10 +1905,17 @@ def test_gross_exposure_ceiling_block_leaves_a_durable_reason():
     from src.portfolio_constructor import STOP_REFUSAL_GROSS_EXPOSURE_CEILING
 
     constructor = PortfolioConstructor()
+    # Fixed 2026-09-24: `apply_gross_ceiling` no longer refuses an entry for
+    # being under the flat $500 `min_order_usd` floor — only a genuine ZERO
+    # headroom still refuses. `ceiling_x=0.001` (a $100 ceiling on $100k
+    # equity) used to hit that removed floor; it is now GRANTED at a small
+    # size instead, so the ceiling here is shrunk further, to a literal
+    # sub-cent headroom, to still exercise the real "no headroom at all"
+    # refusal this test is actually about.
     tiny_ceiling = GrossCeiling(
-        ceiling_x=0.001, base_x=0.001, drawdown_pct=None,
+        ceiling_x=0.0000001, base_x=0.0000001, drawdown_pct=None,
         alert_owner=False, rung="test", reason="test-fixture ceiling",
-    )  # $100k equity -> $100 ceiling, under the $500 minimum order
+    )  # $100k equity -> $0.01 ceiling, rounds down to a genuine zero
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 5.0)], positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],

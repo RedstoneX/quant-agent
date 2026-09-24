@@ -1189,6 +1189,11 @@ def apply_gross_ceiling(
     ceiling: GrossCeiling,
     *,
     cash_park_symbol: str | None = None,
+    # Fixed 2026-09-24: no longer used to refuse a new entry (see step 2's
+    # comment) — kept only as an accepted, ignored parameter so existing
+    # callers/tests that pass it do not need to change. An entry the
+    # ceiling shrinks to near-nothing is granted, not refused, for being
+    # small; only a real zero (`after <= 0`) still refuses.
     min_order_usd: float = 500.0,
     # The SIZING gate (`PortfolioConstructor`) sets this False: shrinking an
     # order it is about to propose is its job, authoring a de-lever of the
@@ -1205,10 +1210,11 @@ def apply_gross_ceiling(
     1. Planned exits are counted first — a book already being reduced is
        judged on what it will hold, not on what it holds now.
     2. **New exposure is blocked or shrunk to fit the ceiling.** Every BUY
-       and SHORT is rationed against the remaining headroom; one shrunk
-       below `min_order_usd` is refused outright rather than placed as a
-       token position (§10.3's floor — a position too small to pay for its
-       own risk is not a smaller trade, it is a worse one).
+       and SHORT is rationed against the remaining headroom. Fixed
+       2026-09-24: one shrunk to a small but nonzero size is no longer
+       refused outright — it is placed at whatever headroom remains (no
+       stock commission and fractional shares make a small order fine); only
+       a genuine zero (`after <= 0`) is refused.
     3. **Only then**, and only if the HELD book ALONE still exceeds the
        ceiling, are trims emitted. Proposed new exposure is not an input to
        that test, structurally — so the engine can never sell something you
@@ -1332,35 +1338,26 @@ def apply_gross_ceiling(
                 f"({ceiling.ceiling_x:.1f}x equity)"
             )
         before = float(decision.allocation_pct)
-        # `available` is GROSS dollars; `min_order_usd` is a NOTIONAL floor —
-        # what the order actually costs, which is what pays the commission.
-        # For a leveraged ETF the two differ: $600 of gross headroom in SQQQ
-        # (3x) buys a $200 order, which is below the floor. Comparing gross
-        # against a notional threshold would let exactly that token position
-        # through on the two tickers whose multiplier exceeds 1 (SDS 2x,
-        # SQQQ 3x); for everything else the two figures are identical.
-        if (available / multiplier) < max(0.0, min_order_usd):
-            decision.allocation_pct = 0.0
-            out.blocked.append(decision.symbol)
-            detail = (
-                f"{reason}, and what the ceiling still allows is below the "
-                f"${min_order_usd:,.0f} minimum worth trading. "
-                f"{ceiling.reason}"
-            )
-            out.blocked_detail[decision.symbol] = detail
-            out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
-            continue
+        # Fixed 2026-09-24: this used to refuse outright whenever
+        # `available / multiplier` (the NOTIONAL the ceiling still allows)
+        # was under the flat `min_order_usd` floor — an arbitrary $500 with
+        # no broker minimum behind it (config/number_ledger.yaml), justified
+        # by a false "pays commission" claim (Alpaca charges none). A small
+        # entry is no longer refused for that reason; it is granted whatever
+        # headroom is left, however small. Only a genuinely empty headroom
+        # (`after <= 0` below) still refuses — that is a real "nothing to
+        # buy", not an arbitrary-floor judgement call.
+        #
         # Round DOWN to 2dp so the granted size can never land back above the
         # headroom that permitted it.
         after = math.floor(
             (available / (equity * multiplier) * 100.0) * 100.0
         ) / 100.0
-        if after <= 0 or (equity * (after / 100.0)) < min_order_usd:
+        if after <= 0:
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
             detail = (
-                f"{reason}, and what the ceiling still allows is below the "
-                f"${min_order_usd:,.0f} minimum worth trading. "
+                f"{reason}, and no headroom is left under the ceiling. "
                 f"{ceiling.reason}"
             )
             out.blocked_detail[decision.symbol] = detail

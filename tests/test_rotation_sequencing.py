@@ -374,7 +374,24 @@ def test_the_projection_is_what_the_budget_and_the_sizing_are_measured_on(
 # Each of the five downstream refusal paths withdraws BOTH legs
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("gate", REQUIRED_BUY_LEG_GATES)
+#: `below_min_notional` fixed 2026-09-24: it used to withdraw a rotation
+#: whose replacement buy re-sized under the flat $500 `min_order_usd` floor
+#: — an arbitrary number, not a broker minimum, and Alpaca charges no stock
+#: commission — so a real, small rotation was refused as "too small to
+#: bother". No code path can produce that refusal any more (see the fix
+#: note on `_prevent_rotation_naked_sale` in `src/pipeline_stages.py`), so
+#: it is no longer exercised by the generic "every gate withdraws"
+#: parametrize below; `test_below_min_notional_no_longer_withdraws_a_small_buy`
+#: covers it separately. `below_min_notional` remains a name in
+#: `REQUIRED_BUY_LEG_GATES` for coverage bookkeeping (a gate that never
+#: fires is still a gate that was checked) — whether to retire it outright,
+#: the way `daily_loss_recheck` was retired, was left as an open decision.
+_LIVE_BUY_LEG_GATES = tuple(
+    g for g in REQUIRED_BUY_LEG_GATES if g != "below_min_notional"
+)
+
+
+@pytest.mark.parametrize("gate", _LIVE_BUY_LEG_GATES)
 def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
     positions = [_pos("OLD", intraday=0.0), _pos("KEEP", intraday=0.0)]
     if gate == "no_price":
@@ -388,10 +405,6 @@ def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
     elif gate == "insufficient_cash":
         # 40 shares at $50 is $2,000 of notional; nothing is deployable.
         _stub_sizing(monkeypatch, budget=0.0)
-    elif gate == "below_min_notional":
-        # Enough deployable for 1 share, under the $500 minimum worth
-        # trading, so the re-size lands below the floor.
-        _stub_sizing(monkeypatch, budget=60.0, min_order_usd=500.0)
     pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
 
@@ -404,6 +417,24 @@ def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
     withdrawn, = [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
     assert withdrawn["reason"] == f"buy_leg_would_be_refused:{gate}"
     assert gate in {s["reason"] for s in ctx.execution_skips}
+
+
+def test_below_min_notional_no_longer_withdraws_a_small_buy(tmp_path, monkeypatch):
+    """Fixed 2026-09-24: enough deployable for 1 share used to be "under the
+    $500 minimum worth trading" and withdrew the whole rotation. That flat
+    floor no longer gates the rotation buy leg, so the same fixture that
+    used to trigger `below_min_notional` now clears normally."""
+    positions = [_pos("OLD", intraday=0.0), _pos("KEEP", intraday=0.0)]
+    _stub_sizing(monkeypatch, budget=60.0, min_order_usd=500.0)
+    pipeline, db = _pipeline(tmp_path, positions=positions)
+    ctx = _ctx(positions)
+
+    (cleared, *_rest), ordered = _gate(
+        pipeline, ctx, positions, sells=[_sell()], buys=[_buy()],
+    )
+
+    assert cleared is True, "a small, nonzero re-sized buy must clear, not withdraw"
+    assert not [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
 
 
 def test_qty_zero_from_the_risk_budget_alone_also_withdraws(
@@ -876,7 +907,14 @@ def test_a_cover_is_projected_as_a_real_close_not_a_no_op(tmp_path):
 def test_earlier_entries_drain_the_projected_budget_first(tmp_path, monkeypatch):
     """The submit loop subtracts each order's cost from the pool as it
     walks the list, so an entry ahead of the rotation's own buy has already
-    taken its share by the time the rotation's is reached."""
+    taken its share by the time the rotation's is reached — proven by
+    checking the pool is actually drained, not by the (now-retired)
+    `below_min_notional` refusal that used to be the visible symptom.
+
+    Fixed 2026-09-24: $2,100 - $2,000 leaves $100, which used to re-size the
+    order under the flat $500 minimum and withdraw the whole rotation. That
+    floor no longer gates the buy leg, so the rotation now clears with the
+    replacement re-sized down to what the drained pool leaves."""
     _stub_sizing(monkeypatch, budget=2_100.0, min_order_usd=500.0)
     positions = [_pos("OLD"), _pos("KEEP")]
     pipeline, db = _pipeline(tmp_path, positions=positions)
@@ -890,14 +928,15 @@ def test_earlier_entries_drain_the_projected_budget_first(tmp_path, monkeypatch)
     )
     assert cleared is True
 
-    # Behind the earlier entry it does not: $2,100 - $2,000 leaves $100,
-    # which re-sizes the order under the $500 minimum worth trading.
+    # Behind the earlier entry, only $100 of pool is left for it — still
+    # clears, now re-sized rather than refused.
     ctx = _ctx(positions)
     (cleared, *_rest), _ordered = _gate(
         pipeline, ctx, positions, sells=[_sell()],
         buys=[earlier, rotation_buy],
     )
-    assert cleared is False
+    assert cleared is True
+    assert not [e for e in _rotation_events(db) if e["outcome"] == "withdrawn"]
 
 
 # ---------------------------------------------------------------------------

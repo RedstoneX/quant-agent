@@ -145,11 +145,13 @@ STARTER_POSITION_RISK_PCT = 0.5
 """The smallest position this desk will hold, as % of equity at risk.
 
 Not a new number: it is `RiskConfig.min_position_risk_pct`, the floor
-`allocate_risk_budget` already denies requests under. Anything smaller pays
-full commission and full attention for an immaterial payoff, so a request
-rationed below it is refused rather than shrunk — which is exactly why it is
-also the right cap for a sub-floor catalyst trade: the smallest size the desk
-can express without the idea being denied outright.
+`allocate_risk_budget` already denies requests under. Anything smaller still
+consumes a book slot and needs its own stop and ongoing attention for an
+immaterial payoff, and its spread/slippage cost is a large share of the whole
+position (Alpaca charges no stock commission — this is not a commission
+floor), so a request rationed below it is refused rather than shrunk — which
+is exactly why it is also the right cap for a sub-floor catalyst trade: the
+smallest size the desk can express without the idea being denied outright.
 
 Consumers (must stay aligned — if you edit one, verify the others):
   - `RiskConfig.min_position_risk_pct`            (the budget floor)

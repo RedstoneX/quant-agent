@@ -107,16 +107,31 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      Minimum order value. Not a broker minimum -- the broker accepts
-      fractional notional well below it. A round $500 with nothing behind it,
-      and it compounds with min_risk_pct to drop small plans.
+      Minimum order value for the spare-cash SWEEP -- its original, still-live
+      job. Not a broker minimum -- the broker accepts fractional notional
+      well below it. A round $500 with nothing behind it.
+      Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity MRVL
+      trade was refused as "under the $500 minimum order ... pays full
+      commission" -- false, Alpaca charges no stock commission), completed
+      the same day across every trade-sizing site that read this value:
+      (1) the sector-crowding check in
+      `PortfolioConstructor._apply_sector_crowding_scale`; (2) NEW-entry
+      blocking inside `apply_gross_ceiling` (src/risk/rules.py), via
+      `ConstructorConfig.min_order_usd`; (3) the rotation buy-leg
+      `below_min_notional` gate (retired outright from
+      `REQUIRED_BUY_LEG_GATES`, src/rotation.py -- no code path can produce
+      that refusal any more); (4) the execution-time cash re-size refusal
+      in src/pipeline_stages.py. All four now let a small, nonzero trade
+      through at whatever size is left; only a genuine ZERO still refuses.
+      This value's only remaining live job is gating the spare-cash SWEEP
+      (src/execution/cash_sweep.py) -- it is fully decoupled from trade
+      sizing everywhere else.
     open_question: >-
       What is the smallest sweep order whose expected slippage and commission
       are a tolerable fraction of the interest it earns, on this account's
       actual cash balances?
     cost_while_unanswered: >-
-      Cash under $500 is never swept and earns nothing; compounded with the
-      0.50% risk floor it also silently drops small trade plans.
+      Cash under $500 is never swept and earns nothing.
   - id: src.config.CashSweepConfig.reserve_pct
     value: 1
     status: arbitrary
@@ -1866,13 +1881,21 @@ numbers:
     note: >-
       Minimum order value. Not a broker minimum -- the broker accepts
       fractional notional well below it. A round $500 with nothing behind it,
-      and it compounds with min_risk_pct to drop small plans.
+      and it compounded with min_risk_pct to drop small plans.
+      Fixed 2026-09-24 (real incident, see the `CashSweepConfig.min_order_usd`
+      entry above): `_apply_sector_crowding_scale` no longer rejects a
+      sector-crowded trade for being under this floor, and neither does
+      `apply_gross_ceiling`'s NEW-entry check (src/risk/rules.py), which
+      still reads this same field but only as a vestigial, ignored
+      parameter now -- both paths grant a small, nonzero entry instead of
+      refusing it; only a genuine zero still refuses.
     open_question: >-
-      What is the smallest order whose commission and slippage are a tolerable
-      fraction of its expected payoff?
+      None outstanding for trade sizing -- this field's blocking use is
+      fully removed. Whether to delete the now-unused parameter from
+      `apply_gross_ceiling`'s signature (currently kept for caller/test
+      compatibility) is a separate, purely mechanical cleanup.
     cost_while_unanswered: >-
-      A real plan is dropped for being small, with no measurement of what
-      'immaterial' is on this account.
+      None -- no trade-sizing path still uses this field to refuse an order.
   - id: src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening
     value: 1.5
     status: arbitrary
@@ -4456,10 +4479,16 @@ numbers:
     derived_from: src.config.CashSweepConfig.min_order_usd
     base_value: 500
     note: >-
-      Default minimum trim of the gross-ceiling trimmer
-      (src/risk/rules.py:1819). Both callers pass cash_sweep.min_order_usd
-      (src/pipeline.py:11775-11782, src/portfolio_constructor.py:1295); the
-      comment at src/pipeline.py:770-773 says it reuses that $500.
+      Fixed 2026-09-24 (completing the fix begun on the sector-crowding
+      check in ConstructorConfig.min_order_usd): `apply_gross_ceiling` no
+      longer refuses a NEW entry for being under this flat notional floor —
+      an arbitrary $500 with no broker minimum behind it, and Alpaca charges
+      no stock commission. An entry the ceiling shrinks to a small but
+      nonzero size is now granted at that size; only a genuine ZERO
+      headroom (`after <= 0`) still refuses. The parameter is still accepted
+      (both callers still pass cash_sweep.min_order_usd) but is now an
+      ignored, vestigial argument to this function -- kept only so existing
+      callers/tests do not need to change their call signature.
   - id: src.risk.rules.distance_to_forced_liquidation_pct(maintenance_margin_pct)
     value: 25
     status: derived

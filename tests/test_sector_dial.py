@@ -210,27 +210,61 @@ def test_the_absolute_ceiling_still_refuses():
     assert _build(sector_held_pct=75.0) == []
 
 
-def test_a_trade_scaled_under_the_minimum_order_is_refused_not_placed_tiny():
-    """A position shrunk to near-nothing still pays full commission, still
-    consumes a slot, still needs a stop and still needs watching. It cannot
-    pay for its own risk, so the honest answer is no trade."""
-    # 59.5% crowding leaves an allowance of ~0.0125% of equity — about $12.
+def test_a_trade_scaled_small_by_crowding_is_taken_not_refused():
+    """Fixed 2026-09-24 (real incident): a genuine ~$295 / 2.95%-of-equity
+    MRVL trade was refused as "under the $500 minimum order ... pays full
+    commission" — Alpaca charges no stock commission, and the $500 was an
+    arbitrary round number, not a broker minimum. A sector-crowded trade
+    that shrinks to a tiny sliver is now taken at that size rather than
+    refused outright."""
+    # 59.5% crowding leaves an allowance of ~0.0125% of equity — about $12,
+    # far below the old $500 floor.
     decisions = _build(sector_held_pct=59.5, target_weight_pct=8.0)
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].symbol == "NVDA"
 
 
-def test_the_minimum_order_floor_is_the_existing_threshold_not_a_new_one():
-    """§10.3 reuses `cash_sweep.min_order_usd` rather than inventing a second
-    notion of "too small to bother"; raising it must move the refusal."""
+def test_a_295_dollar_2_95_pct_of_equity_trade_is_not_dropped_as_too_small():
+    """Regression for the actual reported incident: a genuine ~$295 order on
+    a ~$10,000 book (2.95% of equity) was refused by this exact code path as
+    "under the $500 minimum order". Built at the same $10,000 scale and
+    crowding level that produces that ~2.95%-of-equity size, and asserts the
+    order still ships."""
+    equity = 10_000.0
+    with patch("src.execution.broker._get_sector", return_value="Technology"):
+        decisions = PortfolioConstructor(ConstructorConfig(
+            max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=500.0,
+        )).construct_orders(
+            targets=[TargetPosition(
+                symbol="MRVL", target_weight_pct=8.0,
+                conviction="high", thesis="best setup on the board",
+            )],
+            positions=[_held("AAPL", equity * 59.5 / 100)],
+            analyses=[_analysis("MRVL", entry=100, stop=95, target=140)],
+            total_value=equity, price_map={"MRVL": 100.0},
+        )
+    assert len(decisions) == 1, "a small, real order must not be dropped as too small"
+    d = decisions[0]
+    notional = equity * d.allocation_pct / 100
+    assert notional < 500.0, "this regression is only meaningful under the old $500 floor"
+    assert "commission" not in d.reasoning.lower()
+
+
+def test_min_order_usd_no_longer_moves_the_sector_crowding_refusal():
+    """`min_order_usd` used to gate this path (reusing `cash_sweep.min_order_usd`
+    rather than inventing a second notion of "too small to bother"); since the
+    2026-09-24 fix it no longer does — raising or lowering it must NOT change
+    whether a sector-crowded trade is taken."""
     generous = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=1.0,
     ))
     strict = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=5_000.0,
     ))
-    # 55% crowding leaves 1.25% of equity = $1,250: over $1, under $5,000.
+    # 55% crowding leaves 1.25% of equity = $1,250: over $1, and now also
+    # taken even though it is under the "strict" $5,000 config.
     assert _build(55.0, constructor=generous) != []
-    assert _build(55.0, constructor=strict) == []
+    assert _build(55.0, constructor=strict) != []
 
 
 def test_the_hard_ceiling_is_configurable():
