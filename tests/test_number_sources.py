@@ -158,7 +158,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 143, (
+    assert MAX_ARBITRARY_ENTRIES == 142, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -193,7 +193,13 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "constant -- the constructor's outright refusal of any listing under "
         "200 bars, for which no citation exists. One status per site, so the "
         "row takes the weaker use's status and the split is written into its "
-        "note. No value changed."
+        "note. No value changed. "
+        "143 -> 142 on 2026-09-24, item 118: "
+        "`src.pipeline.TradingPipeline._force_delever:factor[1]` (the forced "
+        "de-lever's must-fill SELL limit) was re-sourced from `arbitrary` to "
+        "`derived`, pointing at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the 3%-"
+        "through buffer) to match the gross-ceiling de-lever. A number sourced, "
+        "so the count is lowered in the same commit."
     )
 
 
