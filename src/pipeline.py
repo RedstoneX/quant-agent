@@ -2459,23 +2459,30 @@ class TradingPipeline:
                 ):
                     continue
 
-                # Guard 1 — an exit's allocation must never be silently
-                # zeroed through a "modification". This is checked BEFORE
-                # the candidate is even built: a valid-but-zero
-                # allocation_pct would sail straight through Pydantic.
+                # Guard 1 — the seat may NEVER shrink a protective exit.
+                # Owner ruling 2026-09-24 (final): the risk seat can never
+                # block OR reduce a protective exit (SELL/REDUCE/COVER). It
+                # used to revert only an edit that drove the exit's
+                # allocation_pct to <= 0 (a silent cancel); an edit from
+                # 100% -> 50% sailed through and cut how much the desk sold to
+                # reduce risk. Now ANY downward allocation_pct edit on an exit
+                # is reverted — the exit keeps its intended size. An UPWARD
+                # edit (selling more) is left alone; it only reduces risk. This
+                # is checked BEFORE the candidate is built: a valid smaller
+                # allocation_pct would otherwise sail straight through Pydantic.
                 if (
-                    decision.action in ("SELL", "COVER")
+                    decision.action in ("SELL", "REDUCE", "COVER")
                     and mod.field == "allocation_pct"
                     and decision.allocation_pct > 0
-                    and float(mod.new_value) <= 0
+                    and float(mod.new_value) < decision.allocation_pct
                 ):
                     reason = (
-                        f"RM modification would zero {mod.symbol}'s exit "
+                        f"RM modification would REDUCE {mod.symbol}'s exit "
                         f"allocation_pct ({decision.allocation_pct:.2f} -> "
-                        f"{mod.new_value:.2f}), silently cancelling a "
-                        f"{decision.action}. Reverted — an exit is not "
-                        f"skipped by edit; a real refusal belongs in "
-                        f"rejected_symbols. RM reason given: {mod.reason!r}"
+                        f"{mod.new_value:.2f}), shrinking a {decision.action} the "
+                        f"desk is using to reduce risk. Reverted — the seat may "
+                        f"never block or reduce a protective exit; it stays at "
+                        f"its intended size. RM reason given: {mod.reason!r}"
                     )
                     logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
                     rejected_mods.append({

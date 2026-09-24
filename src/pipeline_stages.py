@@ -7502,6 +7502,12 @@ class RiskStage:
         # modifications + scale below, and the survivors flow through the
         # deterministic hard gate (gross/exposure), which runs before AND after
         # scaling and is the only thing that can block on a hard limit.
+        #
+        # DELIBERATE: the old "veto the whole plan on an incoherent
+        # reasoning_chain / >5 mods" capability is gone WITH the batch veto —
+        # that is the ruling, not an oversight. The seat records unease and
+        # proceeds; a coherence concern is expressed by dropping/shrinking the
+        # affected names, never by stopping the batch.
         if not verdict.approved:
             logger.info(
                 "Risk manager set approved=False; per owner ruling 2026-09-24 "
