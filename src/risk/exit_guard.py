@@ -465,8 +465,9 @@ def veto_contradicted_exit(
 #: rather than trading sessions, which over-widened the band by sqrt(3) on
 #: every Friday-to-Monday hold — the opposite of the fix's own intent, since
 #: only one real session's price action had occurred. Callers MUST pass a
-#: trading-session count (see `trading_calendar.trading_sessions_held`, a
-#: weekend-aware approximation — Mon-Fri only, no market-holiday calendar),
+#: trading-session count (see `AlpacaBroker.trading_sessions_held`, item
+#: 165's holiday-aware counter — `trading_calendar.trading_sessions_held` is
+#: a Mon-Fri-only fallback for callers with no broker connection),
 #: never a raw calendar-day count. `sessions_held` is floored at 1 session so
 #: day-zero/day-one behaviour is UNCHANGED — only positions held longer than
 #: one session get a wider band than before.
@@ -533,8 +534,8 @@ def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAN
 
     Despite the parameter name (kept for call-site compatibility), this
     MUST be a TRADING-SESSION count, not a calendar-day count — see
-    `trading_calendar.trading_sessions_held` for the weekend-aware counter
-    `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
+    `AlpacaBroker.trading_sessions_held` (item 165, holiday-aware) for the
+    counter `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
     function being fed raw calendar days, which silently over-widened the
     band by sqrt(3) instead of sqrt(1) across a Friday-to-Monday hold (3
     calendar days, 1 real trading session) — the opposite of this fix's own
