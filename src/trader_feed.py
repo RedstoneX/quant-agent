@@ -393,15 +393,26 @@ def _order_end_plain(fill_status: Any) -> str:
     known = _ORDER_END_WORDS.get(token)
     if known:
         return known
+    # 2026-09-24: this used to drop the raw broker token entirely, unlike
+    # `notifier.humanize_status`'s own unmapped-status fallback, which keeps
+    # it ("its own code for it, kept for the record, is ..."). Losing it
+    # here meant an unmapped state was unrecoverable from the message.
     return (
         "the order never became a live fill, and the desk recorded an "
-        "outcome it has no plain wording for"
+        "outcome it has no plain wording for (its own code for it, kept "
+        f"for the record, is “{token or 'not recorded'}”)"
     )
 
 
 def _fill_state_plain(fill_status: Any) -> str:
     token = str(fill_status or "").strip().lower()
-    return _FILL_STATE_WORDS.get(token) or "state not recorded in plain words"
+    known = _FILL_STATE_WORDS.get(token)
+    if known:
+        return known
+    return (
+        "state not recorded in plain words (its own code for it, kept for "
+        f"the record, is “{token or 'not recorded'}”)"
+    )
 
 
 def _decision_action_for(symbol: str, snap: dict[str, Any]) -> str:
@@ -439,10 +450,21 @@ def _symbol_stop(symbol: str, snap: dict[str, Any]) -> float | None:
 
 def _trade_reached_broker(fill_status: Any) -> bool:
     """True once an order is live at the broker — filled, or still working
-    ('submitted'/'pending_submit'). False for every terminal-fail status
+    ('submitted'/'pending_submit'/'partially_filled'/'accepted'/'new'/
+    'held'/'pending_new'). False for every terminal-fail status
     (`canceled`, `expired`, `rejected`, `submit_failed`, ...): a `trades`
-    row exists, but nothing is protecting the operator's capital."""
-    return str(fill_status or "").lower() in {"filled", "submitted", "pending_submit"}
+    row exists, but nothing is protecting the operator's capital.
+
+    2026-09-24: a normally-resting/working broker state used to be missing
+    from this set, so a live, protected order (most commonly
+    `partially_filled`, still resting for its remainder) fell into the
+    "did not reach the broker" bucket and `_outcome_word` reported it as
+    FAILED — a false alarm on an order that was, in fact, working.
+    """
+    return str(fill_status or "").lower() in {
+        "filled", "submitted", "pending_submit",
+        "partially_filled", "accepted", "new", "held", "pending_new",
+    }
 
 
 def _classify_trades(snap: dict[str, Any]) -> tuple[list[dict], list[dict]]:
