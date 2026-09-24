@@ -2030,14 +2030,26 @@ class Database:
         for terminal status, and if now terminal, the persisted specs
         drive a fresh finalize attempt.
 
-        `side` (Stage 3, shorts): "buy" for a long position (its
-        protective stop is a SELL, restored below entry) or "sell" for a
-        short (its protective stop is a BUY, restored above entry) — the
-        REAL side of the position this row protects, known at write time
-        by whoever is closing it. NULL only for a row written before this
-        column existed; the drain path treats NULL exactly as the
-        long-assuming fallback it always used (see
+        `side` is the PROTECTIVE-STOP / closing-order side, which coincide:
+        "sell" (default) for a LONG (its protective stop is a SELL below
+        entry, and a long is closed by selling) and "buy" for a SHORT (its
+        protective stop is a BUY above entry, and a short is closed by
+        covering). This is the REAL side, known at write time by whoever is
+        closing the position, and is read back by
+        `TradingPipeline._resolve_wal_row_side` under exactly this
+        convention. (An earlier version of this docstring stated the
+        mapping backwards — long→"buy", short→"sell" — which never matched
+        the writers or the reader; corrected here.) NULL only for a row
+        written before this column existed; the drain path treats NULL as
+        the long-assuming fallback (see
         `TradingPipeline._derive_close_side_for_drain`).
+
+        SCALE-IN rows (sell_order_id == `scale_in.WAL_SCALE_IN_SENTINEL`)
+        follow the IDENTICAL convention, but they are dispatched to
+        `scale_in.drain_scale_in_row` by their sentinel BEFORE any generic
+        side reader runs, and that drain classifies long/short from the SIGN
+        of `position_qty_before_sell` rather than this column — so a scale-in
+        row is never interpreted with a generic reader's meaning either way.
         """
         def _do():
             cur = self.conn.execute(

@@ -24,8 +24,10 @@ from src.execution.scale_in import (
     cover_qty_for_rearm,
     drain_scale_in_row,
     most_protective_long_stop,
+    most_protective_short_stop,
     pending_protection_symbols,
     prepare_long_add,
+    prepare_short_add,
     scale_in_symbols_to_skip,
     short_add_is_blocked,
 )
@@ -96,6 +98,34 @@ def _buy_cop() -> TradeDecision:
         entry_price=100.0, stop_loss=90.0, take_profit=120.0,
         reasoning="add to winner",
     )
+
+
+def _short_cop_position(qty=-10.0) -> Position:
+    """A held SHORT in COP (negative broker-signed qty)."""
+    return Position(
+        symbol="COP", qty=qty, avg_entry=100.0, current_price=90.0,
+        market_value=qty * 90.0, unrealized_pnl=abs(qty) * 10.0, sector="Energy",
+    )
+
+
+def _short_cop() -> TradeDecision:
+    # Short stop is ABOVE entry; add's own stop 110, resting buy-stop set per-test.
+    return TradeDecision(
+        action="SHORT", symbol="COP", allocation_pct=10,
+        entry_price=100.0, stop_loss=110.0, take_profit=80.0,
+        reasoning="add to short",
+    )
+
+
+def _shortable(pipeline):
+    pipeline.broker.get_shortability.return_value = {
+        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
+    }
+    # The wash-trade guard asks (fail-closed) for foreign working BUYs;
+    # (True, []) = listing succeeded, none present.
+    pipeline.broker.list_open_entry_orders_checked.return_value = (True, [])
+    pipeline.broker.list_open_entry_order_ids.return_value = []
+    return pipeline
 
 
 # --------------------------------------------------------------------------
@@ -443,27 +473,365 @@ def test_execution_stage_does_not_submit_when_cancel_unconfirmed():
     assert ctx.execution_skips[0]["reason"] == "scale_in_cancel_unconfirmed"
 
 
-def test_short_add_is_recorded_as_blocked():
-    held = [Position(
-        symbol="TSLA", qty=-10.0, avg_entry=260.0, current_price=250.0,
-        market_value=2500.0, unrealized_pnl=100.0, sector="Consumer",
-    )]
-    pipeline = _pipeline(live_price=250.0, positions=held)
-    pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
-    }
-    ctx = _ctx(
-        [TradeDecision(
-            action="SHORT", symbol="TSLA", allocation_pct=5,
-            entry_price=250.0, stop_loss=275.0, take_profit=200.0,
-            reasoning="add to short",
-        )],
-        positions=held,
+# --------------------------------------------------------------------------
+# SHORT scale-in: mirror of the long path (owner-approved)
+# --------------------------------------------------------------------------
+
+def test_most_protective_short_stop_is_the_lowest_trigger():
+    # Lowest trigger above entry covers the short SOONEST.
+    assert most_protective_short_stop([112.0, 108.0, 110.0]) == 108.0
+    assert most_protective_short_stop([]) == 0.0
+
+
+def test_cover_qty_short_fallback_covers_full_enlarged_short_not_just_add():
+    """Adversary bug: a short's held_qty_before is NEGATIVE, so the old
+    fallback ``filled + max(0.0, held)`` covered only the ADD and left the
+    existing short leg naked. The fix covers |filled| + |held|."""
+    broker = MagicMock()
+    broker.get_positions.side_effect = RuntimeError("broker down")
+    qty = cover_qty_for_rearm(
+        broker, symbol="COP", filled_qty=5.0, held_qty_before=-10.0,
     )
+    assert qty == 15.0  # NOT 5.0 (the add alone), NOT 0.0
+
+
+def test_prepare_short_add_is_noop_when_the_name_is_not_short():
+    broker = MagicMock()
+    # Held LONG: not a short scale-in — caller opens a new short unchanged.
+    prep = prepare_short_add(
+        broker=broker, db=MagicMock(), symbol="COP",
+        positions=[_cop_position(qty=10.0)], intended_stop=110.0,
+    )
+    assert prep.is_scale_in is False
+    broker.snapshot_protective_stops.assert_not_called()
+
+
+def test_prepare_short_add_refuses_on_a_foreign_working_buy(tmp_path):
+    """Wash-trade guard: a resting BUY (cover-limit / take-profit) would
+    collide with the SELL add, so the add is refused BEFORE any buy-stop is
+    cancelled."""
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.list_open_entry_orders_checked.return_value = (True, ["foreign-buy-1"])
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position()], intended_stop=110.0,
+    )
+    assert prep.skip_reason == "short_add_foreign_buy"
+    assert prep.cancelled is False
+    broker.snapshot_protective_stops.assert_not_called()
+    broker.cancel_snapshotted_stops.assert_not_called()
+    broker.list_open_entry_orders_checked.assert_called_once_with("COP", side="buy")
+    db.close()
+
+
+def test_prepare_short_add_fails_closed_when_the_order_listing_errors(tmp_path):
+    """H4: the wash guard must NOT cancel protection when it cannot VERIFY
+    there is no colliding BUY — a listing failure (ok=False) refuses the add
+    rather than betting Alpaca bounces a self-cross."""
+    db = _db(tmp_path)
+    broker = MagicMock()
+    # Listing could not be read (API error surfaced as ok=False, not empty).
+    broker.list_open_entry_orders_checked.return_value = (False, [])
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position()], intended_stop=110.0,
+    )
+    assert prep.skip_reason == "short_add_wash_guard_unverified"
+    assert prep.cancelled is False
+    broker.snapshot_protective_stops.assert_not_called()
+    broker.cancel_snapshotted_stops.assert_not_called()
+    assert db.get_pending_protection_restores() == []
+    db.close()
+
+
+def test_prepare_short_add_aborts_when_the_buy_stop_fills(tmp_path):
+    """A BUY-stop that FIRED during the cancel means the short was COVERED.
+    The add aborts, the buy-stop is NOT restored onto a (now flat) name, and
+    the WAL row is discharged."""
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.list_open_entry_orders_checked.return_value = (True, [])
+    broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "bstop-1", "qty": 10, "stop_price": 108.0}],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    broker.wait_for_order_terminal.return_value = "filled"
+    # Position re-read confirms FLAT — the stop covered the whole short.
+    broker.get_positions.return_value = []
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position()], intended_stop=110.0,
+    )
+    assert prep.skip_reason == "scale_in_stop_filled"
+    assert prep.cancelled is False
+    broker._restore_stop_orders.assert_not_called()  # do NOT re-arm a flat name
+    assert db.get_pending_protection_restores() == []
+    db.close()
+
+
+def test_prepare_short_add_fill_but_not_flat_does_not_leave_a_sibling_naked(tmp_path):
+    """H2: with two protective buy-stops, one FIRES during the cancel and the
+    other was cancelled — the short is only PARTLY covered. The prep must NOT
+    discharge the WAL restoring nothing: it rearms a buy-stop over the
+    remaining short (and keeps the WAL if it cannot), so no lot is left naked.
+    """
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.list_open_entry_orders_checked.return_value = (True, [])
+    broker.snapshot_protective_stops.return_value = (
+        True, [
+            {"id": "bstop-lot1", "qty": 10, "stop_price": 108.0},
+            {"id": "bstop-lot2", "qty": 5, "stop_price": 112.0},
+        ],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    # First spec FILLED, sibling canceled — abort-on-fill triggers.
+    broker.wait_for_order_terminal.side_effect = (
+        lambda oid, *a, **k: "filled" if "lot1" in str(oid) else "canceled"
+    )
+    # Position re-read: still SHORT 5 (lot2 not covered).
+    broker.get_positions.return_value = [_short_cop_position(qty=-5.0)]
+    broker._submit_protective_stop_retrying.return_value = {
+        "id": "bstop-rearm", "uncovered_qty": 0.0,
+    }
+    broker.STOP_LIMIT_BUFFER_PCT = 0.03
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position(qty=-15.0)], intended_stop=110.0,
+    )
+    assert prep.skip_reason == "scale_in_stop_filled_partial"
+    assert prep.cancelled is False
+    # The remaining short (5) was rearmed on the BUY side — not left naked.
+    kwargs = broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["qty"] == 5.0
+    assert kwargs["side"] == "buy"
+    db.close()
+
+
+def test_prepare_short_add_fill_not_flat_and_no_rearm_keeps_the_wal(tmp_path):
+    """H2: if the short is not confirmed flat AND the in-session rearm cannot
+    land, the WAL row is KEPT (not discharged) so drain finishes the job."""
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.list_open_entry_orders_checked.return_value = (True, [])
+    broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "bstop-1", "qty": 15, "stop_price": 108.0}],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    broker.wait_for_order_terminal.return_value = "filled"
+    # Broker position UNREADABLE (cannot confirm flat) and rearm fails.
+    broker.get_positions.side_effect = RuntimeError("broker down")
+    broker._submit_protective_stop_retrying.return_value = None
+    broker.STOP_LIMIT_BUFFER_PCT = 0.03
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position(qty=-15.0)], intended_stop=110.0,
+    )
+    assert prep.skip_reason == "scale_in_stop_filled_partial"
+    # WAL row kept — the remaining short is not stranded without recovery.
+    assert db.get_pending_protection_restores() != []
+    db.close()
+
+
+def test_prepare_short_add_snapshots_and_wals_on_the_buy_side(tmp_path):
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.list_open_entry_orders_checked.return_value = (True, [])
+    broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "bstop-1", "qty": 10, "stop_price": 108.0}],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    broker.wait_for_order_terminal.return_value = "canceled"
+
+    prep = prepare_short_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_short_cop_position()], intended_stop=110.0,
+    )
+    assert prep.cancelled is True
+    assert prep.side == "buy"
+    assert prep.held_qty_before == -10.0
+    # Most-protective short = LOWEST of the resting 108 and the add's 110.
+    assert prep.intended_stop == 108.0
+    broker.snapshot_protective_stops.assert_called_once_with("COP", side="buy")
+    rows = db.get_pending_protection_restores()
+    assert rows[0]["side"] == "buy"
+    assert rows[0]["sell_order_id"] == WAL_SCALE_IN_SENTINEL
+    db.close()
+
+
+def test_execution_stage_cancels_buy_stop_then_submits_sell_add_and_rearms():
+    """Full short scale-in through the stage: cancel the buy-stop, confirm,
+    submit the SELL add, rearm a buy-stop over the FULL short."""
+    held = [_short_cop_position(qty=-10.0)]
+    pipeline = _shortable(_pipeline(positions=held))
+    # Resting buy-stop at 108; add's own stop 110 → most-protective = 108.
+    stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
+    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.wait_for_order_terminal.side_effect = (
+        lambda order_id, *a, **k: "canceled" if "stop" in str(order_id) else "filled"
+    )
+    pipeline.broker.submit_order.return_value = {
+        "id": "sell-cop", "status": "accepted", "symbol": "COP",
+        "pending_stop_price": 110.0,
+    }
+    pipeline.broker.place_entry_protection.return_value = {"id": "bstop-new"}
+    pipeline.db.insert_pending_protection_restore.return_value = 7
+    pipeline.db.insert_trade.return_value = 1
+
+    ctx = _ctx([_short_cop()], positions=held)
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert len(orders) == 1
+    pipeline.broker.cancel_snapshotted_stops.assert_called()
+    submit_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert submit_kwargs["symbol"] == "COP"
+    assert submit_kwargs["side"] == "sell_short"
+    protect_kwargs = pipeline.broker.place_entry_protection.call_args.kwargs
+    assert protect_kwargs["cover_full_position"] is True
+    assert protect_kwargs["held_qty_before"] == -10.0
+    assert protect_kwargs["side"] == "sell_short"
+    assert protect_kwargs["stop_price"] == 108.0  # lowest = most protective
+    # snapshot for a short reads the BUY-stop side.
+    pipeline.broker.snapshot_protective_stops.assert_any_call("COP", side="buy")
+    assert ctx.execution_skips == []
+
+
+def test_short_add_below_floor_is_dropped_before_any_buy_stop_is_cancelled():
+    """The min-order floor MUST run before the protective buy-stop comes off."""
+    held = [_short_cop_position(qty=-10.0)]
+    pipeline = _shortable(_pipeline(positions=held))
+    pipeline.broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "bstop-cop", "qty": 10, "stop_price": 108.0}],
+    )
+
+    ctx = _ctx([_short_cop()], positions=held)
+    # Force a tiny order: 3 shares * $100 = $300 < the $500 floor.
+    with patch("src.pipeline_stages._size_shares", return_value=3.0):
+        orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
-    assert ctx.execution_skips[0]["reason"] == "short_add_blocked"
+    # The protection is still standing — the floor gate ran PRE-cancel.
+    pipeline.broker.cancel_snapshotted_stops.assert_not_called()
+    assert ctx.execution_skips[0]["reason"] == "below_min_notional"
+
+
+def test_drain_scale_in_rearms_broker_full_short_qty_on_the_buy_side(tmp_path):
+    """Buy-side WAL crash recovery: rearm a buy-stop over the full short."""
+    db = _db(tmp_path)
+    row_id = db.insert_pending_protection_restore(
+        symbol="COP", sell_order_id=WAL_SCALE_IN_SENTINEL,
+        position_qty_before_sell=-10.0,
+        specs_json=json.dumps([
+            {"id": "bstop-1", "qty": 10, "stop_price": 112.0},
+            {"id": None, "qty": 0, "stop_price": 110.0, "role": "intended"},
+        ]),
+        side="buy",
+    )
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.broker = MagicMock()
+    pipeline.broker.list_open_entry_order_ids.return_value = []
+    pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-13.0)]
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [])
+    pipeline.broker._submit_protective_stop_retrying.return_value = {
+        "id": "bstop-rearm", "uncovered_qty": 0.0,
+    }
+    pipeline.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+
+    drained = pipeline._drain_pending_protection_restores()
+    assert drained == 1
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["qty"] == 13.0            # full enlarged short, not the add
+    assert kwargs["stop_price"] == 110.0    # LOWEST stored = most protective
+    assert kwargs["side"] == "buy"          # buy-stop protects a short
+    # Buy needs UP-headroom: limit ABOVE the trigger.
+    assert kwargs["limit_price"] == 110.0 * 1.03
+    assert db.get_pending_protection_restores() == []
+    db.close()
+    assert row_id
+
+
+def test_drain_classifies_short_from_qty_sign_not_the_side_column(tmp_path):
+    """H3: a scale-in row must never be read with the generic position/close
+    side meaning. Even with a MISLEADING `side` column, drain rearms on the
+    buy side because it derives long/short from the SIGN of the stored qty."""
+    db = _db(tmp_path)
+    db.insert_pending_protection_restore(
+        symbol="COP", sell_order_id=WAL_SCALE_IN_SENTINEL,
+        position_qty_before_sell=-13.0,           # NEGATIVE => short
+        specs_json=json.dumps([{"id": "b1", "qty": 13, "stop_price": 110.0}]),
+        side="sell",                               # deliberately WRONG column
+    )
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.broker = MagicMock()
+    pipeline.broker.list_open_entry_order_ids.return_value = []
+    pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-13.0)]
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [])
+    pipeline.broker._submit_protective_stop_retrying.return_value = {
+        "id": "b-rearm", "uncovered_qty": 0.0,
+    }
+    pipeline.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+
+    drained = pipeline._drain_pending_protection_restores()
+    assert drained == 1
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"          # short, despite side="sell" column
+    assert kwargs["qty"] == 13.0
+    pipeline.broker.snapshot_protective_stops.assert_called_with("COP", side="buy")
+    db.close()
+
+
+def test_emergency_cover_after_rearm_fails_covers_the_full_enlarged_short():
+    """H1: when the full-position rearm returns None on a short SCALE-IN, the
+    D7 emergency market cover must buy the ENLARGED short (broker current qty,
+    e.g. 15), NOT just the add's fill (5) — the pre-existing leg's buy-stop was
+    already cancelled and would otherwise be left naked."""
+    held = [_short_cop_position(qty=-10.0)]
+    pipeline = _shortable(_pipeline(positions=held))
+    stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
+    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.wait_for_order_terminal.side_effect = (
+        lambda oid, *a, **k: "canceled" if "stop" in str(oid) else "filled"
+    )
+
+    def _submit(*args, **kwargs):
+        if kwargs.get("side") == "buy":                 # emergency cover leg
+            return {"id": "cover-1", "status": "accepted"}
+        return {                                        # the SELL add leg
+            "id": "sell-cop", "status": "accepted", "symbol": "COP",
+            "pending_stop_price": 110.0,
+        }
+
+    pipeline.broker.submit_order.side_effect = _submit
+    # Rearm FAILS — protection could not be placed.
+    pipeline.broker.place_entry_protection.return_value = None
+    # The add filled 5; the broker now shows the ENLARGED short of 15.
+    pipeline.broker.get_order_fill_info.return_value = {"filled_qty": 5.0}
+    pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-15.0)]
+    pipeline.db.insert_pending_protection_restore.return_value = 7
+    pipeline.db.insert_trade.return_value = 1
+
+    ctx = _ctx([_short_cop()], positions=held)
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    cover_calls = [
+        c for c in pipeline.broker.submit_order.call_args_list
+        if c.kwargs.get("side") == "buy"
+    ]
+    assert len(cover_calls) == 1, "expected exactly one emergency cover"
+    assert cover_calls[0].kwargs["qty"] == 15.0, (
+        "emergency cover sized to the add alone leaves the old short leg naked"
+    )
 
 
 # --------------------------------------------------------------------------

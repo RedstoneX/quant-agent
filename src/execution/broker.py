@@ -3281,7 +3281,9 @@ class AlpacaBroker:
             logger.warning("Failed to cancel open entry orders: %s", exc)
             return 0
 
-    def list_open_entry_order_ids(self, symbol: str) -> list[str]:
+    def list_open_entry_order_ids(
+        self, symbol: str, *, side: str | None = None,
+    ) -> list[str]:
         """Ids of working non-stop BUY/SELL orders for `symbol`.
 
         The discriminator matches `cancel_open_entry_orders`: any *stop*
@@ -3290,7 +3292,37 @@ class AlpacaBroker:
         confirm leftover DAY adds are gone before it rearms a protective
         sell (a working BUY plus a new SELL stop is the wash-trade block
         the scale-in sequence exists to walk around).
+
+        `side`, when given ("buy" / "sell"), returns only that side. The
+        short scale-in wash-trade guard passes ``side="buy"`` to find any
+        FOREIGN working BUY (a resting cover-limit / take-profit) that would
+        collide with its SELL add — protective buy-stops are stop orders and
+        are already excluded here, so a returned BUY is never the protection.
+        Default None keeps every existing caller's both-sides behaviour.
+
+        Returns [] on an API failure (fail-OPEN) — the leftover-entry drain
+        check treats that the same as "none working". A caller that must
+        tell "confirmed empty" from "could not read" — the wash-trade guard,
+        which cancels protection on the answer — uses
+        `list_open_entry_orders_checked` instead.
         """
+        _ok, ids = self.list_open_entry_orders_checked(symbol, side=side)
+        return ids
+
+    def list_open_entry_orders_checked(
+        self, symbol: str, *, side: str | None = None,
+    ) -> tuple[bool, list[str]]:
+        """`(ok, ids)` for working non-stop orders — same discriminator as
+        `list_open_entry_order_ids`, but ``ok`` is FALSE when the broker's
+        order listing itself FAILED (vs a genuine empty list, ``(True, [])``).
+
+        The short scale-in wash-trade guard must FAIL CLOSED: it is about to
+        cancel a protective buy-stop and submit a SELL add, and it may not do
+        that on an unverified assumption that Alpaca will bounce a self-cross
+        (paper may not enforce it). ``ok=False`` lets it refuse rather than
+        guess "no foreign buy" from a swallowed API error.
+        """
+        want_side = str(side).lower() if side is not None else None
         try:
             from alpaca.trading.requests import GetOrdersRequest
 
@@ -3303,9 +3335,9 @@ class AlpacaBroker:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "list_open_entry_order_ids failed for %s: %s", symbol, exc,
+                "list_open_entry_orders_checked failed for %s: %s", symbol, exc,
             )
-            return []
+            return False, []
         ids: list[str] = []
         for order in orders or []:
             order_id = getattr(order, "id", None)
@@ -3317,8 +3349,10 @@ class AlpacaBroker:
                 continue
             if "stop" in order_type:
                 continue
+            if want_side is not None and order_side != want_side:
+                continue
             ids.append(str(order_id))
-        return ids
+        return True, ids
 
     def open_buy_notional(self) -> float | None:
         """Dollar notional of all OPEN BUY orders, or None when the query fails.
