@@ -1079,6 +1079,57 @@ def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
     assert "AAPL" in msg
 
 
+def test_format_evening_position_snapshot_null_entry_or_price_says_not_available(
+    tmp_path, monkeypatch,
+):
+    """`_row_line` used to compute `(curr / avg - 1) * 100` with `avg`
+    falsy meaning "treat as 0%", which rendered a fabricated "(+0.0%)"
+    on a NULL `avg_entry` instead of admitting the return isn't known.
+    Worse, a NULL `current_price` with a real `avg_entry` raised
+    TypeError on `curr / avg` — uncaught at this granularity, which
+    would drop the entire winners/losers block for every row, not just
+    the gapped one. Both must now render "not available" for that row's
+    percentage and keep the rest of the block intact."""
+    import sqlite3
+    db_path = tmp_path / "positions.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE positions ("
+        "symbol TEXT PRIMARY KEY, qty REAL, avg_entry REAL,"
+        " current_price REAL, market_value REAL,"
+        " unrealized_pnl REAL, sector TEXT)"
+    )
+    # NULL avg_entry, both winning (positive pnl).
+    conn.execute(
+        "INSERT INTO positions VALUES ('AAPL', 10, NULL, 105, 1050, 50, 'Tech')"
+    )
+    # NULL current_price with a real avg_entry — the unguarded-division case.
+    conn.execute(
+        "INSERT INTO positions VALUES ('MSFT', 5, 300, NULL, 1500, 25, 'Tech')"
+    )
+    # One clean row so the block has something normal to compare against.
+    conn.execute(
+        "INSERT INTO positions VALUES ('NVDA', 5, 200, 220, 1100, 100, 'Tech')"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    result = {
+        "status": "analyzed", "run_id": "run-null-entry",
+        "daily_pnl": 0.0, "total_value": 3650.0,
+        "analysis": {"risk_rating": "moderate"},
+    }
+    # Must not raise, and must not drop the block.
+    msg = format_session_result("evening", result, 30.0)
+    assert msg is not None
+    assert "Top winners" in msg
+    assert "AAPL" in msg and "MSFT" in msg and "NVDA" in msg
+    assert "(+0.0%)" not in msg
+    assert "(not available)" in msg
+    assert "+10.0%" in msg  # NVDA's real percentage still computes normally
+
+
 def test_format_evening_daily_return_uses_prior_equity_denominator():
     """Daily return is P&L over PRIOR-day equity, not over current.
     Using current understates losses (denominator includes today's

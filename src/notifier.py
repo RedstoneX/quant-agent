@@ -2952,9 +2952,20 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
 
     def _row_line(r: tuple) -> str:
         sym, qty, avg, curr, mv, pnl = r
-        pct = ((curr / avg - 1) * 100) if avg else 0
         sign = "+" if pnl >= 0 else "−"
-        return f"   {sym:<6} {sign}${abs(pnl):>8,.0f}  ({pct:+.1f}%)"
+        # `avg` (avg_entry) or `curr` (current_price) can be NULL (broker
+        # race / stale snapshot, same class of gap as the unrealized_pnl
+        # NULL handled below). `avg` falsy used to render a fabricated
+        # "(+0.0%)" instead of saying the return isn't known, and a NULL
+        # `curr` with a real `avg` raised TypeError on `curr / avg`
+        # uncaught here — dropping the whole winners/losers block for
+        # every row, not just the one with the gap.
+        if avg is None or curr is None:
+            pct_text = "not available"
+        else:
+            pct = (curr / avg - 1) * 100
+            pct_text = f"{pct:+.1f}%"
+        return f"   {sym:<6} {sign}${abs(pnl):>8,.0f}  ({pct_text})"
 
     # r[5] is positions.unrealized_pnl. SQLite allows NULL on that
     # column (broker race / stale snapshot can leave it unset for a
