@@ -766,7 +766,7 @@ def test_risk_mod_cannot_silently_zero_a_sell_allocation():
     assert len(rejected) == 1
     assert rejected[0]["symbol"] == "XLE"
     assert rejected[0]["field"] == "allocation_pct"
-    assert "silently cancelling" in rejected[0]["reason"]
+    assert "protective exit" in rejected[0]["reason"]
 
 
 def test_risk_mod_cannot_zero_a_cover_allocation():
@@ -791,10 +791,12 @@ def test_risk_mod_cannot_zero_a_cover_allocation():
     assert len(rejected) == 1
 
 
-def test_risk_mod_partial_sell_trim_still_applies():
-    """A SELL trim that does NOT reach zero is a legitimate size edit and
-    must still apply exactly as before — this guard only catches the
-    zero-allocation case."""
+def test_risk_mod_cannot_reduce_a_sell_below_its_intended_size():
+    """Owner ruling 2026-09-24 (final): the seat may never block OR REDUCE a
+    protective exit. A partial SELL trim (100% -> 50%) shrinks how much the
+    desk sells to reduce risk, so it is now REVERTED — the SELL stays full and
+    the refusal is visible. (Previously this trim applied; the ruling reverses
+    that.)"""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     sell = TradeDecision(
         action="SELL", symbol="NET", allocation_pct=100,
@@ -803,13 +805,36 @@ def test_risk_mod_partial_sell_trim_still_applies():
     modifications = [
         RiskModification(
             symbol="NET", field="allocation_pct",
-            original_value=100, new_value=40, reason="partial trim",
+            original_value=100, new_value=50, reason="only sell half",
         )
     ]
 
     updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
 
-    assert updated[0].allocation_pct == 40
+    assert updated[0].allocation_pct == 100, "the exit stays at its intended size"
+    assert len(rejected) == 1
+    assert rejected[0]["symbol"] == "NET"
+    assert "protective exit" in rejected[0]["reason"]
+
+
+def test_risk_mod_can_still_increase_a_sell_allocation():
+    """An UPWARD edit to an exit (selling MORE) only reduces risk, so it is
+    still allowed — the guard reverts reductions only."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    sell = TradeDecision(
+        action="SELL", symbol="NET", allocation_pct=50,
+        entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
+    )
+    modifications = [
+        RiskModification(
+            symbol="NET", field="allocation_pct",
+            original_value=50, new_value=100, reason="sell all of it",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+
+    assert updated[0].allocation_pct == 100, "selling more is allowed"
     assert rejected == []
 
 

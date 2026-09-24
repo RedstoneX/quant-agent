@@ -179,7 +179,10 @@ def test_a_rejected_edit_no_longer_reads_as_modified():
     assert "approved" in outcomes
 
 
-def test_a_book_veto_carries_the_symbols_own_reason_where_the_seat_gave_one():
+def test_approved_false_drops_named_entry_and_records_the_ignored_veto():
+    """Owner ruling 2026-09-24 (final): there is no book veto. approved=False is
+    a no-op recorded as `batch_veto_ignored`; the seat's named entry is dropped
+    with its OWN reason, and the unrelated entry proceeds."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
@@ -187,16 +190,19 @@ def test_a_book_veto_carries_the_symbols_own_reason_where_the_seat_gave_one():
         reasoning="the book is one energy cluster",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
 
-    result = RiskStage(pipeline=pipeline).run(_ctx(decisions))
+    result = RiskStage(pipeline=pipeline).run(ctx)
 
-    assert result["status"] == "rejected"
+    assert result is None, "the batch is NOT rejected"
+    assert [d.symbol for d in ctx.portfolio_decision.decisions] == ["CHPX"]
     rejected = {s: p for s, p in _events(pipeline)
                 if p["stage"] == "risk" and p["outcome"] == "rejected"}
     assert rejected["XLE"]["reason"] == "XLE-specific reason"
-    assert rejected["XLE"]["book_level_reason"] == "the book is one energy cluster"
-    assert rejected["CHPX"]["reason"] == "the book is one energy cluster"
-    assert rejected["CHPX"]["gate"] == "risk_manager_book_veto"
+    assert "CHPX" not in rejected, "the unrelated leg is never refused"
+    ignored = [p for _s, p in _events(pipeline)
+               if p["stage"] == "risk" and p["outcome"] == "batch_veto_ignored"]
+    assert len(ignored) == 1, "the approved=False flag is recorded, not enforced"
 
 
 # ---------------------------------------------------------------------------

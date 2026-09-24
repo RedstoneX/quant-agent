@@ -2687,36 +2687,39 @@ class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
 
 
 class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
-    # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
-    # always will: correlation clusters, total exposure and drawdown state are
-    # properties of the whole account, so when the BOOK is what fails, killing
-    # every leg is the correct answer. What changed in Phase 10.1 is only the
-    # GRANULARITY available for the other kind of failure — see
-    # `rejected_symbols`. No threshold moved.
+    # The morning-plan risk verdict. Owner ruling 2026-09-24 (final): the seat
+    # may NEVER cancel or reject the whole batch of new trades. `approved` is
+    # kept in the schema for the audit trail and for backward-compatible
+    # parsing, but `approved=False` is a NO-OP for batch rejection: `RiskStage`
+    # records it in the durable trail and then proceeds. Every bit of real risk
+    # reduction comes from the three levers below.
     approved: bool
     reasoning_chain: RiskReasoningChain
     modifications: list[RiskModification] = []
-    # PER-SYMBOL refusal. Each entry kills exactly one leg and leaves every
-    # other leg standing; the survivors then go through `modifications`,
-    # `scale_all_buys` and the deterministic hard-risk gate unchanged.
+    # PER-SYMBOL refusal. Each entry drops exactly one NEW entry (BUY/SHORT)
+    # and leaves every other decision standing; the survivors then go through
+    # `modifications`, `scale_all_buys` and the deterministic hard-risk gate
+    # unchanged. A SELL/COVER/HOLD named here is a protective exit / existing
+    # holding and is NEVER dropped — `RiskStage` records the attempt and keeps
+    # it (owner ruling 2026-09-24).
     #
-    # This is the third rung of a four-rung ladder, narrowest first:
+    # The seat's THREE levers, narrowest first (there is no fourth — the
+    # whole-batch veto was removed 2026-09-24):
     #   modifications    — retune one symbol's fields (size, stop, target)
-    #   rejected_symbols — refuse one symbol outright, book unaffected
-    #   scale_all_buys   — size the whole entry side down, refuse nothing
-    #   approved=False   — the book itself is unsound; nothing trades
+    #   rejected_symbols — refuse one NEW entry outright, book unaffected
+    #   scale_all_buys   — size the whole entry side down (to 0.0), refuse nothing
     #
-    # Book-level always wins: `approved=False` is evaluated first, so a
-    # verdict carrying both refuses everything regardless of what this list
-    # says. An entry naming a symbol not in the plan is a no-op, logged.
+    # An entry naming a symbol not in the plan is a no-op, logged.
     #
     # Default-empty by design — every historical verdict, and every verdict
     # from a model that never emits the field, replays with byte-identical
     # behaviour.
     rejected_symbols: list[SymbolRejection] = []
-    # Portfolio-level size control. Multiplies every BUY decision's allocation_pct after
-    # per-symbol modifications are applied. 1.0 = no change; 0.5 = half all buys; 0.0
-    # effectively kills BUY side while leaving SELL/HOLD/TRAIL intact.
+    # Portfolio-level size control. Multiplies every BUY/SHORT decision's
+    # allocation_pct after per-symbol modifications are applied. 1.0 = no change;
+    # 0.5 = half all buys; 0.0 shrinks the entire new-entry side to zero (no new
+    # buying) while leaving SELL/COVER/HOLD — every exit and existing holding —
+    # untouched. This, not a veto, is how the seat stops new buying.
     scale_all_buys: float = Field(default=1.0, ge=0.0, le=1.0)
     # Categorized reason for any modification / scaling. PM reads the recent
     # history of this field to self-calibrate in a targeted way: repeated
