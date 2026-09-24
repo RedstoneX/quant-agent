@@ -285,6 +285,83 @@ def test_broker_get_margin_interest_activities_never_raises_on_broker_error(Mock
 
 
 # ---------------------------------------------------------------------------
+# Broker method: get_all_account_activities — the full-ledger read the
+# historical margin-interest backfill replays (no activity_type filter,
+# paginated via Alpaca's page_token cursor).
+# ---------------------------------------------------------------------------
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_single_page(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {"id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+         "side": "buy", "price": "100.00", "qty": "10"},
+    ]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities()
+
+    assert len(activities) == 2
+    mock_client.get.assert_called_once()
+    args, _ = mock_client.get.call_args
+    assert args[0] == "/account/activities"
+    assert "direction" in args[1] and args[1]["direction"] == "asc"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_pages_until_short_page(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
+             for i in range(3)]
+    page2 = [{"id": "3", "activity_type": "FEE", "date": "2026-08-15", "net_amount": "-0.01"}]
+    mock_client.get.side_effect = [page1, page2]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities(page_size=3)
+
+    assert len(activities) == 4
+    assert mock_client.get.call_count == 2
+    # Second call must have used the last id of page 1 as the cursor.
+    _, kwargs_call2 = mock_client.get.call_args_list[1]
+    assert mock_client.get.call_args_list[1][0][1]["page_token"] == "2"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_empty_response(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = []
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    assert broker.get_all_account_activities() == []
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_never_raises_degrades_to_partial(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
+             for i in range(3)]
+    mock_client.get.side_effect = [page1, RuntimeError("broker down")]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities(page_size=3)
+    # First page succeeded before the failure -> degrade to what was fetched.
+    assert len(activities) == 3
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: stubbed broker response feeding the comparison, both directions
 # ---------------------------------------------------------------------------
 
@@ -609,6 +686,51 @@ def test_margin_interest_lines_persists_a_row_for_the_cumulative_view(monkeypatc
     assert len(rows) == 1
     assert rows[0][1] == pytest.approx(0.8680555, abs=1e-4)
     assert rows[0][2] == "estimate"
+
+
+def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monkeypatch, tmp_path):
+    """Consolidation pin, 2026-09-24: `notifier._persist_margin_interest_daily`
+    used to hand-roll its own `CREATE TABLE`/`INSERT ... ON CONFLICT` with a
+    raw sqlite3 connection — a duplicate of `Database.insert_margin_
+    interest_daily`'s own upsert. Now it must call THAT method and nothing
+    else, so the live daily write and the historical backfill
+    (`Database.backfill_margin_interest_daily`, which also writes through
+    `Database`) can never drift apart on what a row looks like or how
+    conflicts are resolved."""
+    import src.notifier as n
+    from src.storage.db import Database
+
+    db_path = tmp_path / "quant_agent.db"
+    monkeypatch.setattr(n, "_DB_PATH", db_path)
+
+    calls = []
+    original = Database.insert_margin_interest_daily
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Database, "insert_margin_interest_daily", spy)
+
+    n._persist_margin_interest_daily(
+        "2026-09-24", debit_balance=5000.0, rate_pct=6.25, daily_usd=0.868,
+        days_charged=1, period_usd=0.868, source="estimate",
+    )
+
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[0] == "2026-09-24"
+    assert args[1] == 5000.0
+    assert args[-1] == "estimate"
+
+    # And the row actually landed via that one path.
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT date, debit_balance, source FROM margin_interest_daily",
+    ).fetchone()
+    conn.close()
+    assert row == ("2026-09-24", 5000.0, "estimate")
 
 
 # ---------------------------------------------------------------------------
@@ -1028,3 +1150,183 @@ def test_format_cumulative_line_no_data_state():
     result = compute_cumulative_margin_interest([], [], _date(2026, 9, 24))
     line = format_cumulative_line(result)
     assert "no data yet" in line
+
+
+# ---------------------------------------------------------------------------
+# 12. Historical backfill — owner ask 2026-09-24: reconstruct an
+#     approximate daily debit balance from the broker's own activity
+#     ledger (no historical cash/positions endpoint exists), since
+#     margin_interest_daily only exists from #637 forward.
+# ---------------------------------------------------------------------------
+
+from src.margin_interest import (  # noqa: E402
+    BackfilledDayEstimate,
+    activity_cash_delta,
+    activity_effective_date,
+    backfill_daily_estimates,
+    nearest_prior_balance,
+    reconstruct_daily_cash_balances,
+)
+
+
+def test_activity_cash_delta_fill_buy_is_negative():
+    activity = {"activity_type": "FILL", "side": "buy", "price": "100.00", "qty": "10"}
+    assert activity_cash_delta(activity) == pytest.approx(-1000.0)
+
+
+def test_activity_cash_delta_fill_sell_is_positive():
+    activity = {"activity_type": "FILL", "side": "sell", "price": "50.00", "qty": "4"}
+    assert activity_cash_delta(activity) == pytest.approx(200.0)
+
+
+def test_activity_cash_delta_fill_unparsable_degrades_to_zero():
+    activity = {"activity_type": "FILL", "side": "buy", "price": "not-a-number", "qty": "10"}
+    assert activity_cash_delta(activity) == 0.0
+
+
+def test_activity_cash_delta_non_fill_uses_net_amount_verbatim():
+    assert activity_cash_delta({"activity_type": "JNLC", "net_amount": "10000"}) == pytest.approx(10000.0)
+    assert activity_cash_delta({"activity_type": "FEE", "net_amount": "-0.01"}) == pytest.approx(-0.01)
+
+
+def test_activity_cash_delta_missing_net_amount_degrades_to_zero():
+    assert activity_cash_delta({"activity_type": "CFEE"}) == 0.0
+
+
+def test_activity_effective_date_prefers_date_field():
+    activity = {"date": "2026-08-26", "transaction_time": "2026-08-27T19:33:24Z"}
+    assert activity_effective_date(activity) == _date(2026, 8, 26)
+
+
+def test_activity_effective_date_falls_back_to_transaction_time_for_fills():
+    activity = {"activity_type": "FILL", "transaction_time": "2026-08-14T18:32:41.394686Z"}
+    assert activity_effective_date(activity) == _date(2026, 8, 14)
+
+
+def test_activity_effective_date_none_when_neither_present():
+    assert activity_effective_date({"activity_type": "FILL"}) is None
+
+
+def test_reconstruct_daily_cash_balances_replays_deposit_then_trades():
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "100.00", "qty": "50",
+        },
+        {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"},
+        {
+            "id": "4", "activity_type": "FILL", "transaction_time": "2026-08-17T14:00:00Z",
+            "side": "buy", "price": "200.00", "qty": "80",
+        },
+    ]
+    by_date = reconstruct_daily_cash_balances(activities)
+    assert by_date[_date(2026, 8, 12)] == pytest.approx(10000.0)
+    assert by_date[_date(2026, 8, 14)] == pytest.approx(10000.0 - 5000.0 - 0.01)
+    # Second buy takes cash negative -> a real debit balance.
+    assert by_date[_date(2026, 8, 17)] == pytest.approx(10000.0 - 5000.0 - 0.01 - 16000.0)
+    assert by_date[_date(2026, 8, 17)] < 0
+
+
+def test_reconstruct_daily_cash_balances_skips_unparseable_dates():
+    activities = [{"activity_type": "FEE", "net_amount": "-1.0"}]  # no date anywhere
+    assert reconstruct_daily_cash_balances(activities) == {}
+
+
+def test_reconstruct_daily_cash_balances_matches_live_account_within_pennies():
+    """Regression pin for the reconstruction method's accuracy, from the
+    real paper account's own ledger checked 2026-09-24: replaying every
+    activity from $0 reproduced the broker's own reported `cash`
+    (-$6,114.51) to within four cents on a ~$6,100 balance. This test uses
+    a small synthetic ledger with the same shape (deposit, buys, a fee) to
+    pin the arithmetic, not the live figures themselves."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "150.00", "qty": "100",
+        },
+        {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.02"},
+    ]
+    by_date = reconstruct_daily_cash_balances(activities)
+    expected = 10000.0 - 15000.0 - 0.02
+    assert by_date[_date(2026, 8, 14)] == pytest.approx(expected, abs=0.01)
+
+
+def test_nearest_prior_balance_carries_forward_over_a_quiet_weekend():
+    by_date = {_date(2026, 8, 14): -500.0}
+    # Monday 8/17 had no activity of its own -> carries Friday's balance.
+    assert nearest_prior_balance(by_date, _date(2026, 8, 17)) == pytest.approx(-500.0)
+
+
+def test_nearest_prior_balance_none_before_first_activity():
+    by_date = {_date(2026, 8, 14): -500.0}
+    assert nearest_prior_balance(by_date, _date(2026, 8, 10)) is None
+
+
+def test_nearest_prior_balance_ignores_same_day_and_future_activity():
+    by_date = {_date(2026, 8, 14): -500.0, _date(2026, 8, 17): -9000.0}
+    assert nearest_prior_balance(by_date, _date(2026, 8, 17)) == pytest.approx(-500.0)
+
+
+def test_backfill_daily_estimates_one_row_per_trading_day_zero_included():
+    """Mirrors the live tracker's own always-write contract
+    (`notifier._persist_margin_interest_daily` is called unconditionally
+    every morning, zero or not) — the backfill must produce a row for
+    every trading day, not just the days with a debit balance."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+    ]
+    trading_days = [_date(2026, 8, 14), _date(2026, 8, 17)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+    )
+    assert len(rows) == 2
+    assert all(isinstance(r, BackfilledDayEstimate) for r in rows)
+    # No debit was ever carried (deposit only, no trades) -> zero, not skipped.
+    assert rows[0].debit_balance == 0.0
+    assert rows[0].period_usd == 0.0
+    assert rows[0].source == "estimate_backfill"
+
+
+def test_backfill_daily_estimates_debit_day_gets_a_real_estimate():
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "1000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "100.00", "qty": "50",  # takes cash to -4000
+        },
+    ]
+    # 8/17 (Monday) morning inherits 8/14's EOD balance of -4000.
+    trading_days = [_date(2026, 8, 17)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.debit_balance == pytest.approx(4000.0)
+    assert row.daily_usd == pytest.approx(4000.0 * 0.0625 / 360)
+    assert row.period_usd > 0
+    assert row.source == "estimate_backfill"
+
+
+def test_backfill_daily_estimates_no_prior_activity_is_a_true_zero():
+    """A trading day before the account's first deposit gets an honest
+    $0 row, not a skipped one — there was nothing to borrow against."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-20", "net_amount": "1000"},
+    ]
+    trading_days = [_date(2026, 8, 14)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: True,
+    )
+    assert rows[0].debit_balance == 0.0
+    assert rows[0].period_usd == 0.0
+
+
+def test_backfill_daily_estimates_never_raises_on_unparseable_activity():
+    activities = [{"activity_type": "FILL", "side": "buy", "price": "nope", "qty": "1"}]
+    rows = backfill_daily_estimates(
+        [_date(2026, 8, 14)], activities, rate_pct=6.25, is_trading_day=lambda d: True,
+    )
+    assert len(rows) == 1

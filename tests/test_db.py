@@ -1297,3 +1297,101 @@ def test_intraday_symbol_snapshot_streaks_are_independent_per_symbol(db):
     r = db.record_intraday_symbol_snapshot_result("BBB", ok=False)
     assert r["consecutive_misses"] == 1
     assert r["should_alert"] is False
+
+
+# ---------------------------------------------------------------------------
+# backfill_margin_interest_daily — owner ask 2026-09-24: write reconstructed
+# HISTORICAL margin-interest rows without ever clobbering a day the LIVE
+# tracker (notifier._persist_margin_interest_daily) already measured.
+# ---------------------------------------------------------------------------
+
+class _Row:
+    """Minimal stand-in for src.margin_interest.BackfilledDayEstimate —
+    only the attributes backfill_margin_interest_daily reads."""
+
+    def __init__(self, trading_day, debit_balance, rate_pct, daily_usd,
+                 days_charged, period_usd, source="estimate_backfill"):
+        self.trading_day = trading_day
+        self.debit_balance = debit_balance
+        self.rate_pct = rate_pct
+        self.daily_usd = daily_usd
+        self.days_charged = days_charged
+        self.period_usd = period_usd
+        self.source = source
+
+
+def test_backfill_margin_interest_daily_dry_run_writes_nothing(db):
+    rows = [_Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17)]
+    result = db.backfill_margin_interest_daily(rows, dry_run=True)
+    assert result == {"inserted": 1, "skipped_live_row": 0, "total": 1}
+    got = db.conn.execute("SELECT COUNT(*) FROM margin_interest_daily").fetchone()[0]
+    assert got == 0
+
+
+def test_backfill_margin_interest_daily_applies_new_rows(db):
+    rows = [_Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17)]
+    result = db.backfill_margin_interest_daily(rows, dry_run=False)
+    assert result["inserted"] == 1
+    row = db.conn.execute(
+        "SELECT date, debit_balance, source FROM margin_interest_daily WHERE date = ?",
+        ("2026-08-14",),
+    ).fetchone()
+    assert tuple(row) == ("2026-08-14", 1000.0, "estimate_backfill")
+
+
+def test_backfill_margin_interest_daily_is_idempotent_on_rerun(db):
+    rows = [_Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17)]
+    db.backfill_margin_interest_daily(rows, dry_run=False)
+    db.backfill_margin_interest_daily(rows, dry_run=False)
+    count = db.conn.execute(
+        "SELECT COUNT(*) FROM margin_interest_daily WHERE date = ?", ("2026-08-14",),
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_backfill_margin_interest_daily_never_overwrites_a_live_tracker_row(db):
+    """A day the LIVE tracker already wrote (source 'estimate' or
+    'broker_actual') must be left alone no matter how the backfill runs —
+    the reconstruction is strictly less accurate than a real morning
+    read."""
+    db.insert_margin_interest_daily(
+        "2026-08-14", debit_balance=500.0, rate_pct=6.25, daily_usd=0.09,
+        days_charged=1, period_usd=0.09, source="estimate",
+    )
+    rows = [_Row(date(2026, 8, 14), 9999.0, 6.25, 99.0, 1, 99.0)]
+    result = db.backfill_margin_interest_daily(rows, dry_run=False)
+    assert result == {"inserted": 0, "skipped_live_row": 1, "total": 1}
+    row = db.conn.execute(
+        "SELECT debit_balance, source FROM margin_interest_daily WHERE date = ?",
+        ("2026-08-14",),
+    ).fetchone()
+    assert tuple(row) == (500.0, "estimate")
+
+
+def test_backfill_margin_interest_daily_can_refine_its_own_prior_backfill(db):
+    """A re-run with improved figures for a day only a PRIOR backfill
+    touched is allowed to update it — only a live-tracker row is
+    protected."""
+    rows_v1 = [_Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17)]
+    db.backfill_margin_interest_daily(rows_v1, dry_run=False)
+    rows_v2 = [_Row(date(2026, 8, 14), 1200.0, 6.25, 0.21, 1, 0.21)]
+    result = db.backfill_margin_interest_daily(rows_v2, dry_run=False)
+    assert result["inserted"] == 1
+    row = db.conn.execute(
+        "SELECT debit_balance FROM margin_interest_daily WHERE date = ?",
+        ("2026-08-14",),
+    ).fetchone()
+    assert tuple(row) == (1200.0,)
+
+
+def test_backfill_margin_interest_daily_mixed_batch_partial_skip(db):
+    db.insert_margin_interest_daily(
+        "2026-08-15", debit_balance=10.0, rate_pct=6.25, daily_usd=0.001,
+        days_charged=1, period_usd=0.001, source="broker_actual",
+    )
+    rows = [
+        _Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17),  # new
+        _Row(date(2026, 8, 15), 9999.0, 6.25, 99.0, 1, 99.0),  # protected
+    ]
+    result = db.backfill_margin_interest_daily(rows, dry_run=False)
+    assert result == {"inserted": 1, "skipped_live_row": 1, "total": 2}

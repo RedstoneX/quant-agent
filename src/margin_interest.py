@@ -642,3 +642,191 @@ def format_cumulative_line(cumulative: CumulativeMarginInterest) -> str:
         f"(since {cumulative.all_time_since})"
     )
     return line
+
+
+# ---------------------------------------------------------------------------
+# Historical backfill — owner ask, 2026-09-24.
+#
+# `margin_interest_daily` only exists from #637 forward: no historical
+# daily debit balance was ever persisted, so "all-time" before that PR
+# merged reads as "since the tracker started", not "since the desk went on
+# margin". The owner wants that gap filled with a BEST-EFFORT ESTIMATE —
+# his own words: accuracy is not required, it's paper money, get close and
+# move on.
+#
+# There is no historical positions or cash endpoint on Alpaca — confirmed
+# 2026-09-24: `portfolio_history` (`AlpacaBroker.get_full_portfolio_history`)
+# gives only a total-equity time series (`timestamp`/`equity`/`profit_loss`
+# — no cash, no market value, no positions breakdown, per the SDK's own
+# `PortfolioHistory` model), and there is no endpoint at all for a
+# historical positions snapshot. What Alpaca DOES keep for the life of the
+# account is the account-ACTIVITIES ledger (`AlpacaBroker.
+# get_all_account_activities`) — every deposit, fill, fee and withholding,
+# each with a signed cash effect. Replaying that ledger from $0 reconstructs
+# an approximate daily cash balance, and a negative cash balance IS the
+# debit balance (`overnight_debit_balance`, unchanged). Checked against the
+# account's own live `cash` figure on 2026-09-24: replaying the FULL
+# activity history reproduces the broker's reported cash to within $0.04 on
+# a ~$6,100 balance — plenty close for a number that already carries
+# `ESTIMATE_LABEL`.
+def _fill_cash_delta(activity: dict) -> float:
+    """Cash effect of one `FILL` activity: `-price*qty` on a buy, `+price*
+    qty` on a sell. Alpaca's `FILL` activities carry no `net_amount` field
+    at all — this is the only way to get their cash effect. Any
+    unparsable price/qty degrades to `0.0` rather than raising: a single
+    bad ledger row must not break the whole reconstruction."""
+    try:
+        price = float(activity.get("price") or 0.0)
+        qty = float(activity.get("qty") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    sign = -1.0 if activity.get("side") == "buy" else 1.0
+    return sign * price * qty
+
+
+def activity_cash_delta(activity: dict) -> float:
+    """Signed cash effect of one broker account-activity record.
+
+    `FILL` rows are computed from `price`/`qty`/`side` (see
+    `_fill_cash_delta`); every other type Alpaca posts (`JNLC` deposits/
+    withdrawals, `FEE`, `WH` withholding, `CFEE`, `DIV`, `INT`, ...)
+    already carries a signed `net_amount` that IS the cash effect, used
+    verbatim. An unparsable or missing `net_amount` degrades to `0.0`.
+    """
+    if activity.get("activity_type") == "FILL":
+        return _fill_cash_delta(activity)
+    try:
+        return float(activity.get("net_amount") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def activity_effective_date(activity: dict) -> date | None:
+    """The calendar date an activity's cash effect belongs to.
+
+    Non-`FILL` activities carry Alpaca's own settlement `date` field,
+    used directly. `FILL` activities carry no top-level `date` — only
+    `transaction_time` — so the trade date is read off that instead.
+    `None` when neither is present or parseable; callers must skip such a
+    row rather than guess which day it belongs to.
+    """
+    raw = activity.get("date") or activity.get("transaction_time")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def reconstruct_daily_cash_balances(activities: list[dict]) -> dict[date, float]:
+    """Best-effort end-of-day cash balance, replayed from the broker's own
+    account-activity ledger. See the module-level note above this
+    function for why this is the reconstruction method (no historical
+    cash/positions endpoint exists) and how closely it was checked
+    against a live account.
+
+    Starts from `$0.0` (before the account's first deposit, cash is
+    definitionally zero — there is nothing to reconstruct before it) and
+    accumulates each activity's signed cash effect in date order,
+    ties broken by activity id for a stable replay order.
+
+    Returns an entry ONLY for dates something actually posted — a quiet
+    day (no fills, no deposits) has no entry here by design. Callers
+    needing "the balance as of any given day" must carry forward from the
+    nearest earlier entry themselves (`nearest_prior_balance`) rather than
+    this function inventing a flat row for every calendar day.
+    """
+    dated = [
+        (d, a) for a in activities if (d := activity_effective_date(a)) is not None
+    ]
+    dated.sort(key=lambda pair: (pair[0], pair[1].get("id", "")))
+    running = 0.0
+    by_date: dict[date, float] = {}
+    for d, a in dated:
+        running += activity_cash_delta(a)
+        by_date[d] = running
+    return by_date
+
+
+def nearest_prior_balance(by_date: dict[date, float], before: date) -> float | None:
+    """The most recent reconstructed EOD cash balance strictly before
+    `before` — carry-forward interpolation for a day the ledger posted
+    nothing on. `None` when no earlier balance exists at all (before the
+    account's first activity), which the caller must read as "nothing to
+    report" rather than fabricate a zero for.
+    """
+    candidates = [d for d in by_date if d < before]
+    if not candidates:
+        return None
+    return by_date[max(candidates)]
+
+
+@dataclass(frozen=True)
+class BackfilledDayEstimate:
+    """One historical day's reconstructed margin-interest row — the same
+    fields `margin_interest_daily` stores. `source` is always
+    `"estimate_backfill"`, distinct from the live tracker's `"estimate"`/
+    `"broker_actual"`, so a caller writing these can tell a reconstructed
+    row apart from one the live tracker actually measured and never let
+    the (less accurate) reconstruction overwrite it.
+    """
+
+    trading_day: date
+    debit_balance: float
+    rate_pct: float
+    daily_usd: float
+    days_charged: int
+    period_usd: float
+    source: str = "estimate_backfill"
+
+
+def backfill_daily_estimates(
+    trading_days: list[date],
+    activities: list[dict],
+    rate_pct: float,
+    is_trading_day: Callable[[date], bool],
+) -> list[BackfilledDayEstimate]:
+    """The full historical reconstruction: one row per trading day in
+    `trading_days`.
+
+    The debit balance attributed to day `D` is the reconstructed cash
+    balance carried INTO `D`'s open — the nearest known EOD balance
+    strictly before `D` (`nearest_prior_balance`), never `D`'s own
+    same-day activity. This matches the live tracker's own convention
+    (`notifier._margin_interest_lines`: a morning read reflects what was
+    carried across last night's close, before today's trading touches
+    cash) and is why a day's row is dated `D`, not the night before it.
+
+    A day with no earlier activity at all (before the account's first
+    deposit) gets an honest `$0` row, not a skipped one — there was
+    nothing to borrow against yet, which is the true state.
+
+    `days_charged` reuses `days_charged_until_next_trading_day` exactly
+    as the live tracker does, so a backfilled Friday/holiday row still
+    carries the same 3-4 day multiplier a live-run row would have.
+
+    Never raises on a single bad day: `is_trading_day` and the debit
+    formula are already exception-safe (see their own docstrings); this
+    function adds no new failure surface of its own.
+    """
+    by_date = reconstruct_daily_cash_balances(activities)
+    rows: list[BackfilledDayEstimate] = []
+    for d in sorted(trading_days):
+        prior_cash = nearest_prior_balance(by_date, d)
+        debit_balance = (
+            overnight_debit_balance(prior_cash) if prior_cash is not None else 0.0
+        )
+        days_charged = days_charged_until_next_trading_day(is_trading_day, d)
+        estimate = build_estimate(debit_balance, rate_pct, days_charged)
+        rows.append(
+            BackfilledDayEstimate(
+                trading_day=d,
+                debit_balance=debit_balance,
+                rate_pct=rate_pct,
+                daily_usd=estimate.daily_usd if estimate is not None else 0.0,
+                days_charged=days_charged,
+                period_usd=estimate.period_usd if estimate is not None else 0.0,
+            )
+        )
+    return rows
