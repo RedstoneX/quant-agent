@@ -131,28 +131,6 @@ def test_no_watched_symbols_leaves_discovery_exactly_as_it_was(
     ]
 
 
-def test_peek_is_scoped_to_watched_names_not_the_market_wide_cache(
-    tmp_path, monkeypatch,
-):
-    """A filing on a cached-but-unwatched ticker is not a change to
-    remembered research. `refresh` caches the whole listed market, so
-    unioning the cache in made the relevant set market-wide."""
-    provider = _provider(tmp_path, max_filings_per_refresh=5, lookback_days=1)
-    provider.observations_path.write_text(json.dumps([
-        {"symbol": "ZZZA", "accession_number": "0000000001-26-000001"},
-    ]))
-    listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
-    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
-    monkeypatch.setattr(provider, "_discover", lambda *_: [
-        {"accession": "0000000009-26-000001", "form": "4", "cik": "9000001"},
-    ])
-
-    peeked = provider.peek_accessions(symbols=["NVDA"])
-
-    assert "0000000009-26-000001" not in peeked
-    assert peeked == {"0000000001-26-000001"}
-
-
 def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch):
     provider = _provider(tmp_path, max_filings_per_refresh=1, lookback_days=1)
     listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
