@@ -230,6 +230,183 @@ def test_reconcile_fills_leaves_non_terminal_for_next_pass(tmp_path):
     assert len(pending) == 1
 
 
+# --- item 102: partial-fill accounting (danger cases) --------------------
+#
+# A `partially_filled` order is non-terminal, so before item 102 the filled
+# shares were invisible to the ledger until (if ever) a terminal status
+# arrived. These tests pin the four money-critical requirements: record the
+# partial, never double-count it across passes, and land on the correct total
+# whether the remainder later CANCELS or FILLS.
+
+
+def _partial_pipeline(tmp_path, *, action="SELL", qty=10.0, order_id="ord-p"):
+    from src.pipeline_context import RunContext
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="NVDA", action=action, qty=qty, price=100.0,
+        reasoning="partial-fill danger case", run_id="r1",
+        broker_order_id=order_id, fill_status="submitted",
+    )
+    broker = MagicMock()
+    pipeline = _mk_pipeline(db, broker)
+    ctx = RunContext.start("morning")
+    ctx.run_id = "r1"
+    return db, broker, pipeline, ctx
+
+
+def test_partial_fill_is_recorded_but_stays_reconcilable(tmp_path):
+    """Req 2: a partial records its filled qty/price yet stays 'submitted' so
+    the remainder is still picked up by the next reconciliation pass."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+    }
+
+    pipeline._reconcile_fills(ctx)
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_qty"] == 4.0
+    assert row["fill_price"] == 100.5
+    # Still 'submitted' -> next pass will re-check for the remainder.
+    assert row["fill_status"] == "submitted"
+    assert len(db.get_unreconciled_orders(run_id="r1")) == 1
+    # The executed portion is visible to the quantity ledger immediately.
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -4.0
+
+
+def test_partial_then_bigger_partial_no_double_count(tmp_path):
+    """Req 1: re-seeing a growing partial writes the broker's ABSOLUTE
+    cumulative snapshot, never the sum of deltas."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+    }
+    pipeline._reconcile_fills(ctx)
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 7.0, "filled_avg_price": 100.8,
+    }
+    pipeline._reconcile_fills(ctx)
+
+    row = db.get_trades(symbol="NVDA")[0]
+    # Absolute 7.0, NOT 4.0 + 7.0 = 11.0.
+    assert row["fill_qty"] == 7.0
+    assert row["fill_price"] == 100.8
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -7.0
+
+
+def test_partial_then_cancel_keeps_filled_portion(tmp_path):
+    """Req 3: a partial whose remainder is later CANCELED keeps the filled
+    portion; it is not zeroed."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+    }
+    pipeline._reconcile_fills(ctx)
+    # Remainder killed: broker's cumulative snapshot still shows the 4 filled.
+    broker.get_order_fill_info.return_value = {
+        "status": "canceled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+    }
+    pipeline._reconcile_fills(ctx)
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "canceled"
+    assert row["fill_qty"] == 4.0          # NOT zeroed
+    assert row["fill_price"] == 100.5
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -4.0
+    assert db.get_unreconciled_orders(run_id="r1") == []
+
+
+def test_partial_then_full_fill_lands_on_total_not_sum(tmp_path):
+    """Req 4: a partial that later FILLS fully ends at the correct total,
+    never partial + full."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+    }
+    pipeline._reconcile_fills(ctx)
+    broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": 10.0, "filled_avg_price": 100.7,
+    }
+    pipeline._reconcile_fills(ctx)
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "filled"
+    assert row["fill_qty"] == 10.0         # NOT 4.0 + 10.0
+    assert row["fill_price"] == 100.7
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -10.0
+    assert db.get_unreconciled_orders(run_id="r1") == []
+
+
+def test_zero_fill_working_order_is_untouched(tmp_path):
+    """A non-terminal order with NO fill yet must not have qty written and
+    stays 'submitted' (regression guard for the new partial branch)."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+    broker.get_order_fill_info.return_value = {
+        "status": "accepted", "filled_qty": 0.0, "filled_avg_price": 0.0,
+    }
+
+    pipeline._reconcile_fills(ctx)
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "submitted"
+    assert row["fill_qty"] is None
+    assert len(db.get_unreconciled_orders(run_id="r1")) == 1
+
+
+def test_partial_fill_missing_avg_price_records_qty_without_raising(tmp_path):
+    """A partial reporting filled_qty>0 but a missing / non-numeric
+    filled_avg_price must NOT raise (no MagicMock/None binding into the DB)
+    and must record the qty with a null price, backfilled on a later pass."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+
+    # Broker reports shares filled but no numeric average price yet.
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 5.0, "filled_avg_price": None,
+    }
+    pipeline._reconcile_fills(ctx)  # must not raise
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "submitted"
+    assert row["fill_qty"] == 5.0
+    assert row["fill_price"] is None
+    # Executed qty is visible immediately; row stays reconcilable for price.
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -5.0
+    assert len(db.get_unreconciled_orders(run_id="r1")) == 1
+
+    # Next pass supplies the numeric average price -> backfilled absolute.
+    broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": 5.0, "filled_avg_price": 100.6,
+    }
+    pipeline._reconcile_fills(ctx)
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "filled"
+    assert row["fill_qty"] == 5.0
+    assert row["fill_price"] == 100.6
+
+
+def test_non_numeric_broker_snapshot_does_not_write_partial(tmp_path):
+    """An unstubbed / garbage broker snapshot (non-numeric qty AND a status
+    that isn't the literal 'partially_filled') must be a no-op, not a spurious
+    partial write — regression guard for the CI MagicMock-bind failure."""
+    from unittest.mock import MagicMock as _MM
+
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+    # Whole snapshot is a mock: .get() returns a MagicMock for every field,
+    # which exposes __float__ (==1.0) but is not a real number.
+    broker.get_order_fill_info.return_value = _MM()
+
+    pipeline._reconcile_fills(ctx)  # must not raise
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "submitted"
+    assert row["fill_qty"] is None
+
+
 def test_compute_trade_calibration_excludes_unfilled(tmp_path):
     """Canceled orders must not enter calibration stats."""
     db = Database(str(tmp_path / "t.db"))

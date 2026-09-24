@@ -139,6 +139,22 @@ def _optional_risk_number(value) -> float | None:
     return float(value) if value > 0 else None
 
 
+def _finite_float_or_none(value) -> float | None:
+    """Coerce a broker fill field to a finite float, or None.
+
+    Rejects None, bool, non-numeric types (a MagicMock exposes ``__float__``
+    but is NOT an int/float instance — same defensive posture as
+    ``_optional_risk_number``), and NaN/inf, so a non-numeric value can never
+    reach a DB bind. ``update_trade_fill``'s ``fill_price`` column is nullable,
+    so a None price is a safe "unknown, backfill later" that the next
+    reconciliation pass replaces with the broker's numeric average.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    f = float(value)
+    return f if math.isfinite(f) else None
+
+
 def _risk_number(value, default: float) -> float:
     """`_optional_risk_number` with a documented fallback, for settings that
     always need a concrete number (§10.3's minimum order size)."""
@@ -5666,6 +5682,14 @@ class TradingPipeline:
         recent_sells) filter on fill_status so a limit order that never crossed
         doesn't pollute PM memory or calibration stats.
 
+        A `partially_filled` (or any non-terminal working) order whose broker
+        snapshot already shows shares filled has its ACTUAL filled qty/avg
+        price recorded while it stays 'submitted', so downstream position /
+        cash / calibration see the executed portion immediately instead of
+        waiting for a terminal status that may never arrive (item 102). The
+        absolute cumulative snapshot is written each pass, so a later partial
+        or terminal pass never double-counts the same shares.
+
         Scoped to a single run_id when ctx is provided — we don't want to
         retroactively flip stale submissions from previous days. Alpaca
         purges order history after a few days; unreconciled-and-unreachable
@@ -5764,8 +5788,50 @@ class TradingPipeline:
                     )
                 else:
                     logger.warning("Reconciled %s: did NOT fill (status=%s)", order_id, status)
-            # Non-terminal statuses (new, accepted, partially_filled) stay
-            # 'submitted' for the next reconciliation pass to pick up.
+            elif str(status).lower() == "partially_filled":
+                # A genuine partial: the broker reports shares filled on an
+                # order that is still working. RECORD the actually-filled
+                # qty/avg price now so position, cash and calibration see
+                # reality — but KEEP fill_status 'submitted' so
+                # get_unreconciled_orders re-picks the row and the eventual
+                # terminal transition still lands (item 102). We write the
+                # broker's ABSOLUTE cumulative snapshot (filled_qty /
+                # filled_avg_price), never a delta, so re-seeing the same
+                # partial, a growing partial, or the final terminal 'filled'
+                # can never double-count the same shares: every downstream
+                # consumer reads the row's absolute fill_qty once, and
+                # realized_pnl is recomputed from scratch on each write.
+                #
+                # Match the status string EXACTLY (not "any non-terminal")
+                # so an unstubbed / garbage broker snapshot can't be misread
+                # as a partial. Both numeric fields are coerced to a finite
+                # float or None before they touch the DB: fill_price is a
+                # nullable column, so a broker that reports filled_qty before
+                # a numeric avg price records the qty with a null price now
+                # and backfills the price on a later pass (the row stays
+                # 'submitted'). Never bind a non-numeric value.
+                partial = _finite_float_or_none(fill_qty)
+                price = _finite_float_or_none(fill_price)
+                if partial is not None and partial > 0:
+                    prev = _finite_float_or_none(row.get("fill_qty")) or 0.0
+                    self.db.update_trade_fill(
+                        broker_order_id=order_id, fill_status="submitted",
+                        fill_qty=partial,
+                        fill_price=price,
+                    )
+                    # Only emit lifecycle evidence / log on a genuine INCREASE
+                    # in filled shares, so repeated partial passes over an
+                    # unchanged fill don't spam PM memory with duplicate events.
+                    if partial > prev + 1e-9:
+                        _record_broker_event(row, status, partial, price)
+                        logger.info(
+                            "Reconciled %s: partial fill recorded "
+                            "(status=%s, qty=%s, avg=%s); order stays open "
+                            "for the remainder",
+                            order_id, status, partial, price,
+                        )
+            # Any other non-terminal status (new, accepted, pending_new, ...)
+            # has nothing filled yet: stay 'submitted' for the next pass.
 
     def _reconcile_orphan_pending_submits(self) -> int:
         """Resolve BUY write-ahead orphans (audit F4).
