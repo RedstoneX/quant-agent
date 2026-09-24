@@ -720,14 +720,15 @@ def test_pipeline_risk_rejected(
 
     # Risk Manager REJECTS
     mock_rm = MagicMock()
-    # A whole-plan veto is only honored for a genuinely BOOK-WIDE category
-    # (owner ruling 2026-09-24 — see BOOK_LEVEL_VETO_CATEGORIES). This test
-    # pins that a real book-level veto still blocks every order, so it cites a
-    # book-wide reason; an advisory-category veto would instead downgrade to
-    # per-symbol handling (tests/test_risk_verdict_per_symbol.py).
+    # A whole-plan veto is honored only for a genuinely BOOK-WIDE danger
+    # (owner ruling 2026-09-24 — see the scope-based rule in RiskStage). This
+    # test pins that a real book-level veto still blocks every order: it uses
+    # the book-wide `correlation_risk` category and names no droppable symbol.
+    # A single-name/advisory veto that named a symbol would instead downgrade
+    # to per-symbol handling (tests/test_risk_verdict_per_symbol.py).
     mock_rm.review.return_value = (RiskVerdict(
-        approved=False, modifications=[], reason_category="concentration",
-        reasoning="Book-level exposure too risky",
+        approved=False, modifications=[], reason_category="correlation_risk",
+        reasoning="Book-level correlation cluster too risky",
         reasoning_chain=_risk_rc(),
     ), _mock_agent_result())
     mock_rm_cls.return_value = mock_rm

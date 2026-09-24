@@ -26,6 +26,7 @@ No threshold moves here. This is the granularity of refusal, nothing else.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -282,25 +283,57 @@ def test_book_level_veto_wins_over_a_per_symbol_list():
 
 
 # ---------------------------------------------------------------------------
-# Owner ruling 2026-09-24 — an ADVISORY-only whole-plan veto is DOWNGRADED.
+# Owner ruling 2026-09-24, rebuilt after adversary review of PR #634 — a
+# whole-plan veto is honored only for a genuinely BOOK-WIDE danger; the
+# decisive signal is SCOPE, not category alone.
 #
-# Closing the item-162 harm: hard limits are enforced by CODE at the
-# deterministic gate that runs BEFORE the seat, so `approved=False` here is a
-# judgement layer over a book that already cleared every hard limit. A
-# whole-plan veto is honored only when `reason_category` is genuinely
-# book-wide (`BOOK_LEVEL_VETO_CATEGORIES`); otherwise it is downgraded to
-# per-symbol handling and the batch proceeds. Fail toward per-symbol on an
-# ambiguous/unknown category — a downgraded veto can only block NEW orders on
-# an already-hard-cleared book, so it can never breach a hard limit.
+# Hard limits are enforced by CODE at the deterministic gate that runs BEFORE
+# the seat, so `approved=False` here is a judgement layer over a book that
+# already cleared every hard limit. A veto is HONORED in full when the seat
+# gave NO actionable per-symbol remedy (named no droppable symbol) OR the
+# category is book-wide (`BOOK_LEVEL_VETO_CATEGORIES`, i.e. a cross-book
+# correlation cluster). A veto under any other category that DID name a
+# droppable symbol is DOWNGRADED to dropping exactly those names. `concentration`
+# is a single-name label and is deliberately NOT book-wide (whitelisting it
+# would let one overweight name nuke the batch — the item-162 harm). Fail
+# toward HONORING a no-remedy veto: it can only decline to ADD (never sells)
+# on an already-hard-cleared book, so it is cheap and it catches a genuine
+# correlation-cluster veto the LLM mislabeled.
 # ---------------------------------------------------------------------------
 
 def _downgrade_events(pipeline) -> list[tuple[str, str, str, str]]:
     return [e for e in _events(pipeline) if e[2] == "advisory_veto_downgraded"]
 
 
-def test_danger1_book_wide_category_still_refuses_every_leg():
-    """Trap 1 — approved=False on a book-wide category (correlation cluster)
-    still refuses every leg; the veto is honored, NOT downgraded."""
+def test_danger1_single_name_concentration_veto_drops_only_that_name():
+    """Trap 1 — approved=False under `concentration` (a SINGLE-NAME label) that
+    names XLE is downgraded: only XLE is dropped, CHPX proceeds. Whitelisting
+    `concentration` as book-wide would have nuked the batch = the 162 harm."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="concentration",
+        rejected_symbols=[{"symbol": "XLE", "reason": "XLE is 12% single-name too heavy"}],
+        reasoning="XLE overweight; nothing book-wide",
+    )
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None, "batch carries on to execution, not a terminal refusal"
+    assert _symbols(ctx) == ["CHPX"], "only the named single name is dropped"
+    downgrades = _downgrade_events(pipeline)
+    assert len(downgrades) == 1
+    assert downgrades[0][0] is None, "downgrade is a run-level event"
+    assert [
+        e for e in _events(pipeline)
+        if e[0] == "XLE" and e[1] == "risk" and e[2] == "rejected"
+    ], "the named leg still records its own per-symbol refusal"
+
+
+def test_danger2_correlation_cluster_veto_with_no_remedy_is_honored():
+    """Trap 2 — a correlation-cluster veto with NO per-symbol remedy (empty
+    rejected_symbols) is honored in full: every leg is refused."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
@@ -318,60 +351,17 @@ def test_danger1_book_wide_category_still_refuses_every_leg():
     assert _downgrade_events(pipeline) == [], "a book-wide veto is honored, not downgraded"
 
 
-def test_danger2_per_symbol_category_veto_drops_only_the_named_leg():
-    """Trap 2 — approved=False on a PER-SYMBOL category (rr_fail) that names
-    XLE is downgraded: XLE is dropped via the per-symbol lane, CHPX proceeds,
-    and the whole plan is NOT rejected."""
-    decisions = [_xle(), _chpx()]
-    verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="rr_fail",
-        rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
-        reasoning="XLE R/R below floor; nothing book-wide",
-    )
-    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
-    ctx = _ctx(decisions)
-
-    result = RiskStage(pipeline=pipeline).run(ctx)
-
-    assert result is None, "batch carries on to execution, not a terminal refusal"
-    assert _symbols(ctx) == ["CHPX"], "only the named leg is dropped"
-    downgrades = _downgrade_events(pipeline)
-    assert len(downgrades) == 1
-    assert downgrades[0][0] is None, "downgrade is a run-level event"
-    xle_rejected = [
-        e for e in _events(pipeline)
-        if e[0] == "XLE" and e[1] == "risk" and e[2] == "rejected"
-    ]
-    assert xle_rejected, "the named leg still records its own per-symbol refusal"
-
-
-def test_danger2b_per_symbol_category_with_no_named_symbols_lets_all_proceed():
-    """Trap 2 corollary — a per-symbol-grade veto (oversized, the old drawdown
-    stand-in the owner overruled) that names NO symbols downgrades to a no-op:
-    the whole batch proceeds. This is the case removed from the book-veto
-    parametrize above."""
-    decisions = [_xle(), _chpx()]
-    verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="oversized",
-        reasoning="system is in drawdown; no new risk is appropriate today",
-    )
-    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
-    ctx = _ctx(decisions)
-
-    result = RiskStage(pipeline=pipeline).run(ctx)
-
-    assert result is None
-    assert _symbols(ctx) == ["XLE", "CHPX"], "a soft account veto no longer nukes the batch"
-    assert len(_downgrade_events(pipeline)) == 1
-
-
-def test_danger3_missing_category_defaults_to_downgrade():
-    """Trap 3a — a veto with no category supplied (schema default 'clean')
-    is NOT book-wide, so it is downgraded and the batch proceeds."""
+def test_danger3_omitted_category_with_no_named_symbols_is_honored():
+    """Trap 3 — approved=False with an omitted/`clean` category and NO named
+    symbols is HONORED (blocks new entries), NOT downgraded. This is the
+    fail-SAFE that catches a genuine correlation-cluster veto the LLM left at
+    the default category — the one book-wide tail the desk preserves against.
+    Honoring only blocks new ADDs on an already-hard-cleared book; it never
+    sells."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(),
-        reasoning="approved=False with no category at all",
+        reasoning="the whole entry side is wrong today",
     )
     assert verdict.reason_category == "clean", "sanity: omitted category defaults to clean"
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
@@ -379,41 +369,57 @@ def test_danger3_missing_category_defaults_to_downgrade():
 
     result = RiskStage(pipeline=pipeline).run(ctx)
 
-    assert result is None
-    assert _symbols(ctx) == ["XLE", "CHPX"]
-    assert len(_downgrade_events(pipeline)) == 1
+    assert result == {
+        "status": "rejected", "orders": [],
+        "reason": "the whole entry side is wrong today",
+    }
+    assert _downgrade_events(pipeline) == [], "a no-remedy veto is honored, not downgraded"
+    # And the honored-via trail records WHY it was honored (no per-symbol remedy).
+    veto_events = [
+        c.kwargs for c in pipeline.db.insert_specialist_evidence.call_args_list
+        if c.kwargs.get("kind") == "pipeline_event"
+    ]
+    honored = [
+        json.loads(e["evidence_json"]) for e in veto_events
+        if json.loads(e["evidence_json"]).get("gate") == "risk_manager_book_veto"
+    ]
+    assert honored and all(h["honored_via"] == "no_per_symbol_remedy" for h in honored)
 
 
-def test_danger3b_none_category_fails_closed_to_downgrade():
-    """Trap 3b — an explicitly None category reaching the chokepoint (a
-    malformed/unknown verdict) fails toward per-symbol: it is downgraded, not
-    honored as a full veto, and never silently disables the veto path for a
-    book-wide reason (see danger 1)."""
+def test_danger4_engine_missed_hard_rule_named_symbol_is_dropped_rest_proceed():
+    """Trap 4 — a suspected engine-missed HARD rule the seat routes through
+    `rejected_symbols` (per the reconciled prompt) drops exactly that name
+    fail-closed and lets the rest proceed — never downgraded-and-traded."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
-        reasoning="category will be corrupted to None below",
+        approved=False, reasoning_chain=_rc(), reason_category="other",
+        rejected_symbols=[{
+            "symbol": "XLE",
+            "reason": "XLE breaches max_position_pct the engine appears to have missed",
+        }],
+        reasoning="suspected engine-missed hard rule on XLE",
     )
-    verdict.reason_category = None  # simulate an unknown/absent category at runtime
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
 
     result = RiskStage(pipeline=pipeline).run(ctx)
 
-    assert result is None, "an unknown category must NOT be honored as a full veto"
-    assert _symbols(ctx) == ["XLE", "CHPX"]
-    assert len(_downgrade_events(pipeline)) == 1
+    assert result is None, "the rest of the batch proceeds"
+    assert _symbols(ctx) == ["CHPX"], "the flagged name is dropped fail-closed"
+    assert [
+        e for e in _events(pipeline)
+        if e[0] == "XLE" and e[1] == "risk" and e[2] == "rejected"
+    ], "XLE carries its own refusal reason"
 
 
-def test_danger4_book_wide_category_with_named_symbols_still_full_veto():
-    """Trap 4 — approved=False on a book-wide category that ALSO names symbols
-    is still a full veto (book reason wins over the per-symbol list), item-164
-    behavior preserved."""
+def test_danger4b_correlation_category_wins_even_when_it_names_symbols():
+    """item-164 preserved — a book-wide category (correlation_risk) is honored
+    in full even when it ALSO names symbols; the book reason wins."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="concentration",
+        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
-        reasoning="total exposure would reach 94% against a 90% ceiling",
+        reasoning="the book is one energy cluster",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
@@ -425,20 +431,29 @@ def test_danger4_book_wide_category_with_named_symbols_still_full_veto():
     assert _downgrade_events(pipeline) == []
 
 
-def test_danger5_whitelist_membership_is_exact_not_substring():
-    """Trap 5 — the whitelist is matched by EXACT equality, never substring,
-    and every member is a real reason-category enum value (no drift)."""
-    assert BOOK_LEVEL_VETO_CATEGORIES == {"correlation_risk", "concentration"}
+def test_danger5_prompt_and_code_agree_on_book_veto_categories():
+    """Trap 5 — the prompt's machine-readable BOOK_VETO_CATEGORIES marker and
+    the code's `BOOK_LEVEL_VETO_CATEGORIES` are the SAME set, matched by exact
+    equality, and every member is a real enum value (no drift)."""
+    # Exact set the code honors as a book-wide CATEGORY.
+    assert BOOK_LEVEL_VETO_CATEGORIES == {"correlation_risk"}
     valid = set(_get_args(RiskReasonCategory))
     assert BOOK_LEVEL_VETO_CATEGORIES <= valid, "every whitelisted category must be a real enum value"
-    # Substrings of a member, and members-with-a-suffix, must NOT be counted in.
-    for near_miss in ("correlation", "concentr", "concentration_hard",
-                      "correlation_risk_soft", "risk", ""):
+
+    # The prompt carries a canonical mirror the seat and this test both read.
+    prompt = PROMPT_PATH.read_text()
+    marker = re.search(r"<!--\s*BOOK_VETO_CATEGORIES:\s*(.*?)\s*-->", prompt)
+    assert marker, "prompt must carry the machine-readable BOOK_VETO_CATEGORIES marker"
+    prompt_cats = {c.strip() for c in marker.group(1).split(",") if c.strip()}
+    assert prompt_cats == set(BOOK_LEVEL_VETO_CATEGORIES), (
+        "prompt and code disagree on which categories carry a whole-plan veto"
+    )
+    # `concentration` must NOT be treated as book-wide by either side.
+    assert "concentration" not in BOOK_LEVEL_VETO_CATEGORIES
+    assert "concentration" not in prompt_cats
+    # Exact match, never substring.
+    for near_miss in ("correlation", "correlation_risk_soft", "risk", ""):
         assert near_miss not in BOOK_LEVEL_VETO_CATEGORIES
-    # Every advisory / per-symbol category is deliberately OUT.
-    for advisory in ("oversized", "rr_fail", "event_risk", "signal_fidelity",
-                     "data_degraded", "macro_misalign", "other", "clean"):
-        assert advisory not in BOOK_LEVEL_VETO_CATEGORIES
 
 
 def test_scale_all_buys_still_applies_to_the_survivors():
@@ -736,5 +751,13 @@ def test_prompt_teaches_the_field_and_the_book_level_distinction():
 
 def test_prompt_still_reserves_the_whole_plan_veto_for_the_book():
     text = PROMPT_PATH.read_text()
-    assert "**Veto is nuclear.**" in text
+    assert "**Veto is nuclear" in text
     assert "Err on the side of capital preservation" in text
+    # Reconciled 2026-09-24: the prompt must route per-symbol / advisory
+    # concerns AWAY from a whole-plan veto and reserve `approved: false` for a
+    # book-wide danger set with an empty rejected_symbols.
+    assert "EMPTY `rejected_symbols`" in text
+    lowered = text.lower()
+    assert "engine missed" in lowered and "rejected_symbols" in text, (
+        "a suspected engine-missed hard rule must be routed through rejected_symbols"
+    )

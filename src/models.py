@@ -2574,42 +2574,39 @@ RiskReasonCategory = Literal[
 ]
 
 
-#: WHICH reason categories may carry a WHOLE-PLAN veto (`approved=False`
-#: refusing every leg). Owner ruling 2026-09-24, closing the item-162 harm:
-#: hard limits are enforced by CODE at the deterministic gate BEFORE the seat
-#: runs (`_filter_hard_risk_decisions`), so the AI seat's whole-plan veto is a
-#: judgement layer sitting on a book that already cleared every hard limit.
-#: Over a mere ADVISORY concern the seat may RESIZE (`modifications`,
-#: `scale_all_buys`) or refuse ONE name (`rejected_symbols`) — it may NOT nuke
-#: the whole batch. A whole-plan veto is therefore reserved for genuinely
-#: BOOK-WIDE failures — a correlation/factor cluster across the batch, or
-#: aggregate book concentration / total exposure — where killing every leg is
-#: the only correct answer.
+#: The reason categories that on their OWN mark a whole-plan veto
+#: (`approved=False` refusing every leg) as genuinely BOOK-WIDE. Owner ruling
+#: 2026-09-24, closing the item-162 harm: hard limits are enforced by CODE at
+#: the deterministic gate BEFORE the seat runs (`_filter_hard_risk_decisions`),
+#: so the AI seat's whole-plan veto is a judgement layer sitting on a book that
+#: already cleared every hard limit. Over a mere ADVISORY or single-name
+#: concern the seat may RESIZE (`modifications`, `scale_all_buys`) or refuse
+#: ONE name (`rejected_symbols`) — it may NOT nuke the whole batch.
+#:
+#: This set is only HALF the honor test — see `RiskStage` for the whole of it.
+#: The decisive signal is SCOPE: a veto whose seat named at least one droppable
+#: symbol IS an actionable per-symbol remedy and is downgraded to dropping
+#: exactly those names, UNLESS the category here says the danger is book-wide
+#: (a cross-book correlation cluster, which naming individual names cannot
+#: fix). A veto with NO per-symbol remedy is honored in full whatever its
+#: category, so aggregate/total-exposure and whole-plan-incoherence vetoes —
+#: which have no per-symbol remedy — are honored by scope, not by a category
+#: here.
+#:
+#: `concentration` is deliberately NOT in this set. The enum and the seat's
+#: prompt both define it as "sector / SINGLE-NAME too heavy" and apply it to
+#: one order's weight; whitelisting it would let a single overweight name veto
+#: the whole batch — the exact item-162 harm. A one-name concentration concern
+#: is a `rejected_symbols` entry; an aggregate-exposure concern is a batch veto
+#: with an EMPTY `rejected_symbols`, honored by the no-remedy scope rule.
 #:
 #: Membership is checked by EXACT equality, never substring, and lives here
 #: beside `RiskReasonCategory` so the one enum and the one whitelist cannot
-#: drift apart.
-#:
-#: Deliberately EXCLUDED:
-#:  - `oversized` — sizing too aggressive vs conviction is precisely what the
-#:    RESIZE levers exist for; a whole-plan veto on it is the 162 harm. The
-#:    old doctrine that let it veto (as a stand-in for a drawdown "no new risk
-#:    today" halt) is overruled: the owner REMOVED the account-level
-#:    drawdown/loss halt on 2026-09-20, so there is no live book-wide gate a
-#:    drawdown veto maps to.
-#:  - `rr_fail`, `event_risk`, `signal_fidelity` — all per-symbol concerns,
-#:    handled by refusing the one name.
-#:  - `data_degraded` — the seat's lever there is `scale_all_buys`, not a veto.
-#:  - `macro_misalign` — legacy, its exposure-vs-macro-target basis was
-#:    removed 2026-09-17.
-#:  - `other` / `clean` / missing / unknown — ambiguous, so FAIL toward
-#:    per-symbol handling: a downgraded veto only ever blocks NEW orders
-#:    (never sells) on a book that already passed every hard limit, so letting
-#:    the batch through while dropping any flagged names cannot breach a hard
-#:    limit — whereas a wrongful full veto is the exact harm being fixed.
+#: drift apart. `config/prompts/risk_manager.md` carries a machine-checkable
+#: mirror of this set (see `tests/test_risk_verdict_per_symbol.py`
+#: `test_prompt_and_code_agree_on_book_veto_categories`).
 BOOK_LEVEL_VETO_CATEGORIES: frozenset[str] = frozenset({
     "correlation_risk",  # theme/factor cluster across the batch — book-wide
-    "concentration",     # aggregate book concentration / total exposure
 })
 
 

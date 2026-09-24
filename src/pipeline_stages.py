@@ -7490,53 +7490,71 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
-        # BOOK-level veto, evaluated FIRST. A correlation/factor cluster or an
-        # aggregate book-concentration / total-exposure breach is a property
-        # of the WHOLE account, so when the book is what fails, every leg
-        # dying is the correct outcome — and a verdict that sets this AND
-        # names individual symbols still refuses everything.
+        # WHOLE-PLAN veto (`approved=False`), evaluated FIRST. Owner ruling
+        # 2026-09-24 (closing the item-162 harm): hard limits are enforced by
+        # CODE upstream (`_filter_hard_risk_decisions` ran before the seat), so
+        # `approved=False` here is a JUDGEMENT layer over a book that already
+        # cleared every hard limit. Over an advisory or SINGLE-NAME concern the
+        # seat must resize or refuse the one name — it may not nuke the batch.
         #
-        # Owner ruling 2026-09-24 (closing the item-162 harm): a whole-plan
-        # veto is honored ONLY when its `reason_category` is genuinely
-        # book-wide (`models.BOOK_LEVEL_VETO_CATEGORIES`). Hard limits are
-        # already enforced by CODE upstream (`_filter_hard_risk_decisions`
-        # ran before the seat), so `approved=False` here is a JUDGEMENT layer
-        # over a book that already cleared every hard limit. Over a mere
-        # advisory concern the seat may RESIZE or refuse one name, never nuke
-        # the batch. A veto whose category is advisory/ambiguous/missing is
-        # DOWNGRADED: we do NOT reject the whole plan; we fall through to the
-        # per-symbol path below, which drops only the seat's `rejected_symbols`
-        # and lets the rest of the batch proceed. Fail toward per-symbol on an
-        # unknown category — a downgraded veto only blocks NEW orders on a
-        # book that already passed the hard gate, so it can never breach a
-        # hard limit, whereas a wrongful full veto is the harm being fixed.
+        # The decisive signal is SCOPE, not category alone (adversary 2026-09-24
+        # on PR #634: `concentration` is a single-name label, so whitelisting
+        # it would let one overweight name veto the whole batch — the 162 harm).
+        # A veto is HONORED in full when EITHER:
+        #   - the seat gave NO actionable per-symbol remedy (it named no symbol
+        #     that is actually in the plan) — this is what an aggregate/total-
+        #     exposure or whole-plan-incoherence veto looks like, AND it is the
+        #     fail-SAFE that catches a genuine correlation-cluster veto the LLM
+        #     mislabeled or left at the default category; OR
+        #   - the category is a genuinely book-wide one
+        #     (`models.BOOK_LEVEL_VETO_CATEGORIES` — a cross-book correlation
+        #     cluster, which naming individual names cannot fix), even when it
+        #     ALSO names symbols (item-164: the book reason wins).
+        # Otherwise (a non-book-wide category that DID name ≥1 droppable symbol)
+        # the veto is DOWNGRADED to per-symbol handling: we do NOT reject the
+        # whole plan; we fall through to the per-symbol path below, which drops
+        # exactly those named symbols and lets the rest of the batch proceed.
+        #
+        # Fail toward HONORING an ambiguous no-remedy veto: it can only decline
+        # to ADD new orders (it never sells the book) on a book that already
+        # passed the hard gate, and blocking a day of new entries is cheap
+        # against a correlated blow-up. A single-name concern still drops just
+        # the one name via the scope signal, so 162's harm stays fixed.
         _veto_category = getattr(verdict, "reason_category", None)
+        _veto_rejections = verdict.rejections_by_symbol()
+        _plan_symbols = {
+            d.symbol.strip().upper() for d in portfolio_decision.decisions
+        }
+        # Names the seat flagged that are actually droppable from THIS plan.
+        _named_droppable = sorted(_veto_rejections.keys() & _plan_symbols)
+        _category_is_book_wide = _veto_category in BOOK_LEVEL_VETO_CATEGORIES
         _honor_book_veto = (
             not verdict.approved
-            and _veto_category in BOOK_LEVEL_VETO_CATEGORIES
+            and (_category_is_book_wide or not _named_droppable)
         )
         if not verdict.approved and not _honor_book_veto:
-            # Advisory / ambiguous / missing category — DOWNGRADE the veto.
+            # Non-book-wide category that named a droppable subset — DOWNGRADE.
             logger.warning(
                 "advisory_veto_downgraded: risk manager set approved=False on "
-                "category %r, which is not book-wide; the whole-plan veto is "
-                "downgraded to per-symbol handling. Original reasoning: %s",
-                _veto_category, verdict.reasoning,
+                "category %r while naming a droppable subset %s; a per-symbol "
+                "concern is not a whole-plan veto, so it is downgraded to "
+                "dropping those names. Original reasoning: %s",
+                _veto_category, _named_droppable, verdict.reasoning,
             )
             _record_pipeline_event(
                 pipeline, ctx, None, "risk", "advisory_veto_downgraded",
                 verdict.reasoning,
                 gate="risk_manager_advisory_veto_downgraded",
                 reason_category=_veto_category,
-                downgraded_rejected_symbols=sorted(
-                    verdict.rejections_by_symbol()
-                ),
+                downgraded_rejected_symbols=_named_droppable,
             )
-            # Fall through: the per-symbol refusal path below drops only the
+            # Fall through: the per-symbol refusal path below drops exactly the
             # named symbols; everything else in the batch proceeds.
         if _honor_book_veto:
             logger.info(
-                "Risk manager REJECTED trades: %s",
+                "Risk manager REJECTED trades (%s): %s",
+                "book-wide category" if _category_is_book_wide
+                else "no actionable per-symbol remedy",
                 verdict.reasoning,
             )
             # Board item 164: a book-level veto refuses every leg for the
@@ -7554,6 +7572,10 @@ class RiskStage:
                     gate="risk_manager_book_veto",
                     book_level_reason=verdict.reasoning,
                     reason_category=getattr(verdict, "reason_category", None),
+                    honored_via=(
+                        "book_wide_category" if _category_is_book_wide
+                        else "no_per_symbol_remedy"
+                    ),
                 )
             return {
                 "status": "rejected", "orders": [],
