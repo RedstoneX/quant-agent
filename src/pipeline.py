@@ -2581,6 +2581,47 @@ class TradingPipeline:
                         })
                         break
 
+                # Guard 3 (board item 134) — a `stop_loss` or `entry_price`
+                # edit on a BUY/SHORT must be reconciled back to the position
+                # SIZE. The constructor sized the position for the ORIGINAL
+                # stop distance: `shares = equity*risk_pct / |entry - stop|`,
+                # so `allocation_pct` and the stop distance are two halves of
+                # one granted dollar-risk budget. Guards 1b/2 and
+                # `_revert_entry_size_increases` police `allocation_pct` and
+                # the stop's noise band, but NOTHING recomputed the size after
+                # a stop/entry edit — so widening the stop (larger
+                # |entry - stop|) while `allocation_pct` stayed fixed shipped a
+                # position whose real dollar risk (shares x new stop distance)
+                # EXCEEDED the granted budget, unflagged. This reconciles the
+                # size so a wider stop shrinks the position and can never
+                # enlarge dollar risk beyond what the pre-edit ticket carried
+                # (desk doctrine: "wider stop -> smaller position, never larger
+                # dollar risk"). A TIGHTER stop is deliberately NOT allowed to
+                # auto-enlarge the position — the seat's remit is to be more
+                # protective, and every sibling guard here fails toward the
+                # smaller size — so the reconciliation takes the SMALLER of the
+                # original and the recomputed allocation.
+                if decision.action in ("BUY", "SHORT") and mod.field in (
+                    "stop_loss", "entry_price",
+                ):
+                    reconciled_alloc = self._reconcile_size_to_risk_budget(
+                        decision, updated_decision,
+                    )
+                    if (
+                        reconciled_alloc is not None
+                        and reconciled_alloc < updated_decision.allocation_pct
+                    ):
+                        logger.info(
+                            "Risk mod size reconciled for %s: %s edit widened "
+                            "risk-per-share, allocation_pct %.2f -> %.2f to hold "
+                            "dollar risk within the granted budget",
+                            mod.symbol, mod.field,
+                            updated_decision.allocation_pct, reconciled_alloc,
+                        )
+                        updated_decision = updated_decision.model_copy(
+                            update={"allocation_pct": reconciled_alloc},
+                        )
+
                 logger.info(
                     "Risk mod applied: %s.%s %.4f -> %.4f (%s)",
                     mod.symbol, mod.field, mod.original_value, mod.new_value, mod.reason,
@@ -2666,6 +2707,85 @@ class TradingPipeline:
                 f"constructor enforces. RM reason given: {mod.reason!r}"
             )
         return None
+
+    @staticmethod
+    def _reconcile_size_to_risk_budget(
+        original: TradeDecision,
+        modified: TradeDecision,
+    ) -> float | None:
+        """The `allocation_pct` that keeps `modified`'s dollar risk at or below
+        the dollar risk the pre-edit `original` ticket carried, or None when it
+        cannot be measured.
+
+        Board item 134. The constructor sizes a position so the number of
+        shares put its stop distance's worth of loss at exactly the granted
+        risk budget: `shares = equity*risk_pct / |entry - stop|`, and
+        downstream execution spends the resulting `allocation_pct` as
+        `qty = equity * allocation_pct/100 / entry`. Substituting, the fraction
+        of equity a ticket risks is
+
+            dollar_risk / equity = allocation_pct/100 * |entry - stop| / entry
+
+        — it depends only on the ticket's own fields, not on the book value.
+        So the pre-edit ticket's own risk fraction is the budget to preserve
+        (it is already the constructor's granted risk after every single-name,
+        portfolio and sector clamp, so it never over-states what was granted).
+        Solving that identity for the allocation that reproduces the SAME
+        fraction under the edited entry/stop gives the reconciled size:
+
+            reconciled = original_alloc * (|e0 - s0|/e0) / (|e1 - s1|/e1)
+
+        The short-side gap-risk haircut the constructor applies to
+        risk-per-share cancels in this ratio, so shorts need no special case.
+        Returns the reconciled allocation only; the caller takes the smaller of
+        it and the current allocation so a tighter stop can never auto-enlarge
+        the position. None when either ticket is geometrically degenerate
+        (non-finite or non-positive entry, or a zero pre/post risk-per-share),
+        in which case the caller leaves the size untouched.
+
+        Precision of the preserved budget:
+
+        - For a STOP edit the reconciliation is EXACT: the entry is unchanged,
+          so `allocation_pct` and stop distance are the only moving parts and
+          the identity holds against whatever entry execution ultimately sizes
+          off.
+        - For an ENTRY edit it is exact ONLY when execution's sizing
+          denominator equals the edited entry. Execution actually sizes off
+          `sizing_price = max(today_print, entry)` for a long / `min(...)` for
+          a short (`_place_buy_with_sizing` in `pipeline_stages.py`), so under
+          market drift the denominator differs and the preserved budget is
+          APPROXIMATE. It is bounded on the high side by the execution-time 5%
+          `_qty_by_risk_budget` ceiling and this reconciliation only ever
+          REDUCES the allocation, so the approximation can under-risk but never
+          over-risk.
+
+        Scope: this guarantee covers the RM EDIT only. An execution-time ATR
+        stop-widen applied AFTER this stage is reconciled solely against that
+        same 5% `_qty_by_risk_budget` ceiling (pre-existing behaviour, not
+        introduced here) — this method does not and cannot re-run for it.
+        """
+        e0, s0 = original.entry_price, original.stop_loss
+        e1, s1 = modified.entry_price, modified.stop_loss
+        alloc0 = original.allocation_pct
+        rps0 = abs(e0 - s0)
+        rps1 = abs(e1 - s1)
+        values = (e0, e1, rps0, rps1, alloc0)
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+            return None
+        if e0 <= 0 or e1 <= 0 or rps0 <= 0 or rps1 <= 0:
+            return None
+        original_risk_fraction = alloc0 * (rps0 / e0)
+        new_risk_per_alloc = rps1 / e1
+        reconciled = original_risk_fraction / new_risk_per_alloc
+        if reconciled >= alloc0:
+            # A tighter stop (or unchanged risk-per-share) — never auto-enlarge;
+            # keep the ticket's own already-valid size untouched.
+            return alloc0
+        # FLOOR to 2 dp rather than round: rounding could nudge the size back UP
+        # a hundredth of a percent and, with it, dollar risk a hair over the
+        # pre-edit budget. Flooring guarantees the reconciled size never exceeds
+        # the exact budget-preserving allocation.
+        return math.floor(reconciled * 100) / 100
 
     @staticmethod
     def _has_actionable_signal_fn(
