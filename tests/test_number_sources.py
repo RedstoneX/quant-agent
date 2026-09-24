@@ -315,7 +315,13 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 150, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 151, (
+        "150 -> 151 on 2026-09-23: +1 for "
+        "src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS (7), the safety "
+        "bound on the forward calendar walk behind the owner-facing "
+        "margin-interest ESTIMATE (how many calendar days a Friday debit is "
+        "carried). It bounds a Telegram/dashboard estimate and degrades to 1 "
+        "when exhausted; it never decides, sizes, prices or exits a trade. "
         "149 -> 150 on 2026-09-23: +1 for "
         "src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS, the width "
         "of the one FRED release-dates request per release. It is the fetch "
