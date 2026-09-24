@@ -70,7 +70,7 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
     expect(screen.getByText("Total P&L: —")).toBeTruthy();
   });
 
-  it("shows a real zero margin-interest day as an explicit $0.00/day, never blank", () => {
+  it("shows a real zero this-week cumulative as an explicit $0.00, never blank", () => {
     render(
       <HeroBand
         account={account({
@@ -84,6 +84,16 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
             days_charged: null,
             period_usd: null,
             error: null,
+            cumulative: {
+              this_week_usd: 0,
+              current_month_usd: 0,
+              current_month_label: "September 2026",
+              prior_months: [],
+              all_time_usd: 0,
+              all_time_since: "2026-09-24",
+              is_estimate: true,
+              source: "estimate",
+            },
           },
         })}
         accountError={null}
@@ -91,10 +101,10 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
         regime={null}
       />,
     );
-    expect(screen.getByText("Interest: $0.00/day")).toBeTruthy();
+    expect(screen.getByText("Interest this week: $0.00")).toBeTruthy();
   });
 
-  it("labels a carried debit balance's interest figure as an ESTIMATE, never a bare number", () => {
+  it("labels a nonzero cumulative this-week figure as (est.), never a bare number", () => {
     render(
       <HeroBand
         account={account({
@@ -103,11 +113,21 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
             rate_pct: 6.25,
             daily_usd: 0.99,
             annual_usd: 358,
-            label: "ESTIMATE — unconfirmed",
+            label: null,
             broker_check_note: null,
             days_charged: null,
             period_usd: null,
             error: null,
+            cumulative: {
+              this_week_usd: 2.97,
+              current_month_usd: 2.97,
+              current_month_label: "September 2026",
+              prior_months: [],
+              all_time_usd: 2.97,
+              all_time_since: "2026-09-22",
+              is_estimate: true,
+              source: "estimate",
+            },
           },
         })}
         accountError={null}
@@ -115,7 +135,7 @@ describe("HeroBand — total P&L and margin interest visibility", () => {
         regime={null}
       />,
     );
-    expect(screen.getByText("Interest: $0.99/day (ESTIMATE)")).toBeTruthy();
+    expect(screen.getByText("Interest this week: $2.97 (est.)")).toBeTruthy();
   });
 });
 
@@ -134,11 +154,21 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             rate_pct: 6.25,
             daily_usd: 0.99,
             annual_usd: 358,
-            label: "ESTIMATE — unconfirmed",
+            label: null,
             broker_check_note: null,
             days_charged: null,
             period_usd: null,
             error: null,
+            cumulative: {
+              this_week_usd: 2.97,
+              current_month_usd: 8.91,
+              current_month_label: "September 2026",
+              prior_months: [],
+              all_time_usd: 8.91,
+              all_time_since: "2026-09-01",
+              is_estimate: true,
+              source: "estimate",
+            },
           },
         })}
         accountError={null}
@@ -152,10 +182,10 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
     // Day P&L and total P&L both read $52.80 in this fixture, so both tiles
     // carry the value — assert it is present rather than unique.
     expect(screen.getAllByText("$52.80").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("$0.99/day")).toBeTruthy(); // interest/day, lifted to the top
+    expect(screen.getByText("$2.97")).toBeTruthy(); // interest this week, lifted to the top
   });
 
-  it("keeps the ESTIMATE caveat on interest VISIBLE as text, never tooltip-only", () => {
+  it("keeps the est. marker on a nonzero cumulative figure VISIBLE as text, never tooltip-only", () => {
     render(
       <HeroBand
         account={account({
@@ -164,11 +194,21 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             rate_pct: 6.25,
             daily_usd: 0.99,
             annual_usd: 358,
-            label: "ESTIMATE — unconfirmed",
+            label: null,
             broker_check_note: null,
             days_charged: null,
             period_usd: null,
             error: null,
+            cumulative: {
+              this_week_usd: 2.97,
+              current_month_usd: 8.91,
+              current_month_label: "September 2026",
+              prior_months: [],
+              all_time_usd: 8.91,
+              all_time_since: "2026-09-01",
+              is_estimate: true,
+              source: "estimate",
+            },
           },
         })}
         accountError={null}
@@ -179,10 +219,10 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
     );
     // Rendered text, which a title-attribute tooltip would not satisfy —
     // the standing desk rule the panel must not regress.
-    expect(screen.getByText("ESTIMATE")).toBeTruthy();
+    expect(screen.getByText("est.")).toBeTruthy();
   });
 
-  it("shows a real zero interest day explicitly and never as an estimate", () => {
+  it("shows a real zero interest week explicitly and never with an est. tag", () => {
     render(
       <HeroBand
         account={account({
@@ -196,6 +236,16 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             days_charged: null,
             period_usd: null,
             error: null,
+            cumulative: {
+              this_week_usd: 0,
+              current_month_usd: 0,
+              current_month_label: "September 2026",
+              prior_months: [],
+              all_time_usd: 0,
+              all_time_since: "2026-09-24",
+              is_estimate: true,
+              source: "estimate",
+            },
           },
         })}
         accountError={null}
@@ -204,8 +254,8 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
         variant="panel"
       />,
     );
-    expect(screen.getByText("$0.00/day")).toBeTruthy();
-    expect(screen.queryByText("ESTIMATE")).toBeNull();
+    expect(screen.getByText("$0.00")).toBeTruthy();
+    expect(screen.queryByText("est.")).toBeNull();
   });
 
   it("says a fault is a fault and never renders it as a zero", () => {
@@ -222,6 +272,7 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
             days_charged: null,
             period_usd: null,
             error: "no borrowing rate is configured",
+            cumulative: null,
           },
         })}
         accountError={null}
@@ -231,7 +282,7 @@ describe("HeroBand — redesigned Account dockview panel (variant='panel')", () 
       />,
     );
     expect(screen.getByText("not available")).toBeTruthy();
-    expect(screen.queryByText(/\$0\.00\/day/)).toBeNull();
+    expect(screen.queryByText(/\$0\.00/)).toBeNull();
   });
 
   it("degrades total P&L to '—' rather than a fabricated number", () => {

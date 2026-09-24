@@ -10,7 +10,7 @@ import {
 } from "@tremor/react";
 import { AccountResponse, MacroBroaderContext, PositionItem } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
-import { marginInterestDailyLabel } from "./MarginInterestPanel";
+import { marginInterestCompactLabel } from "./MarginInterestPanel";
 import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
 
@@ -246,7 +246,7 @@ export function HeroBand({
   const totalPnlLabel = account.total_pnl === null
     ? "Total P&L: —"
     : `Total ${fmtMoney(account.total_pnl)} (${fmtPct(account.total_pnl_pct)})${account.total_pnl_since ? ` since ${account.total_pnl_since}` : ""}`;
-  const marginInterest = marginInterestDailyLabel(account.margin_interest);
+  const marginInterest = marginInterestCompactLabel(account.margin_interest);
 
   if (collapsed) {
     return (
@@ -342,30 +342,33 @@ export function HeroBand({
    */
   if (isPanel) {
     const mi = account.margin_interest;
-    // Interest tile — mirrors MarginInterestStrip's own rules so the two
-    // never disagree: a null/errored estimate degrades to "not available"
-    // (never a fabricated $0.00), a real zero shows "$0.00/day", and a
-    // carried debit balance shows the figure with the ESTIMATE badge
-    // rendered as visible text, per the standing desk rule that an
-    // estimate is never dressed as a measurement.
-    const interestUnavailable = !mi || mi.error;
-    const interestZero = !interestUnavailable && mi!.daily_usd === 0;
+    const cumulative = mi && !mi.error ? mi.cumulative : null;
+    // Interest tile — owner ask 2026-09-24: replace the per-day figure
+    // with THIS WEEK's cumulative running total, mirroring
+    // MarginInterestStrip's own rules so the two never disagree. A
+    // null/errored estimate or missing cumulative degrades to "not
+    // available" (never a fabricated $0.00); "no data yet" is its own
+    // honest state, not a zero; a genuinely nonzero, unconfirmed total
+    // carries a small "est." badge — never a paragraph.
+    const interestUnavailable = !mi || mi.error || !cumulative;
     let interestValue: string;
     let interestBadge: React.ReactNode = null;
     let interestSub: React.ReactNode = null;
     if (interestUnavailable) {
       interestValue = "not available";
-    } else if (interestZero) {
-      interestValue = "$0.00/day";
-      interestSub = "Nothing borrowed overnight";
+    } else if (cumulative!.source === "no_data") {
+      interestValue = "no data yet";
+      interestSub = "Tracking starts today";
     } else {
-      interestValue = `${fmtMoney(mi!.daily_usd)}/day`;
-      interestBadge = (
-        <Badge color="amber" size="xs">
-          ESTIMATE
-        </Badge>
-      );
-      interestSub = mi!.rate_pct === null ? undefined : `${mi!.rate_pct.toFixed(2)}% annual`;
+      interestValue = fmtMoney(cumulative!.this_week_usd);
+      if (cumulative!.is_estimate && cumulative!.this_week_usd !== 0) {
+        interestBadge = (
+          <Badge color="amber" size="xs">
+            est.
+          </Badge>
+        );
+      }
+      interestSub = `${cumulative!.current_month_label}: ${fmtMoney(cumulative!.current_month_usd)}`;
     }
 
     return (
@@ -399,7 +402,7 @@ export function HeroBand({
             tooltip={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
           />
           <StatTile
-            label="Interest / day"
+            label="Interest this week"
             value={interestValue}
             valueClass={interestUnavailable ? "text-dim" : "text-ink"}
             badge={interestBadge}

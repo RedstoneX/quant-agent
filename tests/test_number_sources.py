@@ -315,7 +315,12 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 151, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 152, (
+        "151 -> 152 on 2026-09-24: +1 for "
+        "src.margin_interest.MAX_LOOKBACK_MONTHS (6), the owner's own ask "
+        "for how many months back the cumulative margin-interest view "
+        "(this week/current month/up to 6 months/all-time) looks. It bounds "
+        "a presentation window, not any trade decision. "
         "150 -> 151 on 2026-09-23: +1 for "
         "src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS (7), the safety "
         "bound on the forward calendar walk behind the owner-facing "

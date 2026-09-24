@@ -291,6 +291,7 @@ def read_margin_interest(cash: float | None) -> dict:
         "debit_balance": None, "rate_pct": None, "daily_usd": None,
         "annual_usd": None, "label": None, "broker_check_note": None,
         "days_charged": None, "period_usd": None, "error": None,
+        "cumulative": None,
     }
     try:
         rate_pct = get_risk_limits().margin_interest_rate_pct
@@ -354,9 +355,11 @@ def read_margin_interest(cash: float | None) -> dict:
             "annual_usd": 0.0,
             "days_charged": days_charged,
             "period_usd": 0.0,
+            "cumulative": _compute_cumulative(),
         }
 
     broker_check_note = None
+    activities: list[dict] = []
     try:
         from src.margin_interest import compare_estimate_to_broker_activity
         broker = _get_broker()
@@ -379,7 +382,46 @@ def read_margin_interest(cash: float | None) -> dict:
         "days_charged": estimate.days_charged,
         "period_usd": estimate.period_usd,
         "error": None,
+        "cumulative": _compute_cumulative(),
     }
+
+
+def _compute_cumulative() -> dict | None:
+    """The owner-facing cumulative view — this week / current month / up to
+    6 months / all-time (`src.margin_interest.compute_cumulative_margin_interest`).
+
+    Prefers the broker's own FULL `INT` activity history — a fresh,
+    unfiltered fetch, deliberately NOT the same `activities` list the
+    caller's own overnight broker-check may have just pulled: a bucketed
+    "all-time" needs the whole ledger, not one night's slice.
+    Falls back to our own persisted daily-accrual ESTIMATE rows
+    (`margin_interest_daily`) only when the broker has never posted a real
+    `INT` row. Returns `None` — never a fabricated result — on any read
+    failure; the cockpit/Telegram render that as "not available", same as
+    every other fault in this module.
+    """
+    try:
+        from src.api.db_reads import get_margin_interest_daily_all
+        from src.margin_interest import compute_cumulative_margin_interest
+        from src.util.time import et_today
+
+        broker = _get_broker()
+        full_history = broker.get_margin_interest_activities()
+        estimate_rows = get_margin_interest_daily_all()
+        result = compute_cumulative_margin_interest(full_history, estimate_rows, et_today())
+        return {
+            "this_week_usd": result.this_week_usd,
+            "current_month_usd": result.current_month_usd,
+            "current_month_label": result.current_month_label,
+            "prior_months": result.prior_months,
+            "all_time_usd": result.all_time_usd,
+            "all_time_since": result.all_time_since,
+            "is_estimate": result.is_estimate,
+            "source": result.source,
+        }
+    except Exception as exc:
+        logger.warning("broker_reads._compute_cumulative failed: %s", exc)
+        return None
 
 
 _STATUS_MAP_NAMES = {"open": "OPEN", "closed": "CLOSED", "all": "ALL"}
