@@ -358,6 +358,55 @@ def test_zero_fill_working_order_is_untouched(tmp_path):
     assert len(db.get_unreconciled_orders(run_id="r1")) == 1
 
 
+def test_partial_fill_missing_avg_price_records_qty_without_raising(tmp_path):
+    """A partial reporting filled_qty>0 but a missing / non-numeric
+    filled_avg_price must NOT raise (no MagicMock/None binding into the DB)
+    and must record the qty with a null price, backfilled on a later pass."""
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+
+    # Broker reports shares filled but no numeric average price yet.
+    broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 5.0, "filled_avg_price": None,
+    }
+    pipeline._reconcile_fills(ctx)  # must not raise
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "submitted"
+    assert row["fill_qty"] == 5.0
+    assert row["fill_price"] is None
+    # Executed qty is visible immediately; row stays reconcilable for price.
+    assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -5.0
+    assert len(db.get_unreconciled_orders(run_id="r1")) == 1
+
+    # Next pass supplies the numeric average price -> backfilled absolute.
+    broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": 5.0, "filled_avg_price": 100.6,
+    }
+    pipeline._reconcile_fills(ctx)
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "filled"
+    assert row["fill_qty"] == 5.0
+    assert row["fill_price"] == 100.6
+
+
+def test_non_numeric_broker_snapshot_does_not_write_partial(tmp_path):
+    """An unstubbed / garbage broker snapshot (non-numeric qty AND a status
+    that isn't the literal 'partially_filled') must be a no-op, not a spurious
+    partial write — regression guard for the CI MagicMock-bind failure."""
+    from unittest.mock import MagicMock as _MM
+
+    db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
+    # Whole snapshot is a mock: .get() returns a MagicMock for every field,
+    # which exposes __float__ (==1.0) but is not a real number.
+    broker.get_order_fill_info.return_value = _MM()
+
+    pipeline._reconcile_fills(ctx)  # must not raise
+
+    row = db.get_trades(symbol="NVDA")[0]
+    assert row["fill_status"] == "submitted"
+    assert row["fill_qty"] is None
+
+
 def test_compute_trade_calibration_excludes_unfilled(tmp_path):
     """Canceled orders must not enter calibration stats."""
     db = Database(str(tmp_path / "t.db"))
