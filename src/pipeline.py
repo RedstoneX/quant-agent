@@ -15345,32 +15345,6 @@ class TradingPipeline:
             "reason": "freshness probe returned no verdict",
         }
 
-    def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
-        """Currently visible Form 4 accessions for names we watch."""
-        provider = getattr(self, "smart_money_provider", None)
-        peek = getattr(provider, "peek_form4_accessions", None)
-        if not callable(peek):
-            peek = getattr(provider, "peek_accessions", None)
-        if not callable(peek):
-            return set()
-        if symbols is None:
-            symbols = self._watched_research_symbols(ctx=ctx)
-        try:
-            try:
-                found = peek(symbols)
-            except TypeError:
-                found = peek()
-            return {str(a).strip() for a in (found or []) if str(a).strip()}
-        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
-            # No live caller since PR #529 (the decision tick uses
-            # `_form4_freshness`). Still: a swallowed failure here returned
-            # "nothing new" with no trace at all. Say so.
-            logger.warning(
-                "Form 4 accession peek failed, returning no accessions: %s: %s",
-                type(exc).__name__, exc,
-            )
-            return set()
-
     def _form4_known_accessions(self) -> set[str]:
         """Accessions already processed or cached. No network."""
         out: set[str] = set()

@@ -680,10 +680,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
 
-## item 159
-
-**Moved from WORK.md (2026-09-24) —** Only tests still exercise it.
-
 ## item 162
 
 **Moved from WORK.md (2026-09-24) —** Per-symbol rejection (`rejected_symbols`) was used 0 of 17 times; the seat vetoes the whole plan instead.

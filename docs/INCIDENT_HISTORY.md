@@ -22,7 +22,13 @@ what would catch it next time.
 
 ---
 
-### 2026-09-23 — the desk could size a new-name buy or short off a stale or mid price, not just render one (item 120 closed)
+### 2026-09-24 — three Form 4 "peek" functions were deleted; nothing had called them since March, only their tests did (item 159 closed)
+
+**In plain words:** three functions that answered "is there a Form 4 filing I haven't downloaded yet" were still sitting in the code, but nothing in the running desk ever called them — the only thing keeping them alive was tests written to exercise them. Deleting dead code that only tests use does not change desk behavior; it removes a maintenance trap.
+
+**What was confirmed before deleting.** `peek_accessions` (`src/data/smart_money.py`), `peek_form4_accessions` (`src/data/congressional_trading.py`), and `_peek_new_form4_accessions` (`src/pipeline.py`) were grepped across the whole `src/` tree: the only hits were their own definitions, `getattr` lookups inside the dead chain itself, and historical comments. The live freshness path (`_form4_freshness` → `form4_freshness`) is a separate, unrelated code path and was not touched.
+
+**What was deleted.** The three functions, plus the three tests written specifically to exercise them (`test_peek_is_scoped_to_watched_names_not_the_market_wide_cache`, `test_peek_accessions_discovers_without_downloading_submissions`, and the `_peek_new_form4_accessions` assertion inside `test_research_reuse_peeks_exist_on_the_pipeline`). Tests that merely happened to define a same-named stub method while testing the live freshness path were left alone.
 
 **In plain words:** when the desk opens a name it does not already hold, the
 number of shares it buys is the dollars it wants to spend divided by the

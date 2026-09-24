@@ -1100,10 +1100,9 @@ class SECForm4Provider:
     #       O(watched names) plain GETs with no pagination.
     #
     # `form4_freshness` answers (b) and is what a decision tick calls.
-    # `peek_accessions` below answers (a). CORRECTED 2026-09-19: this comment
-    # said it "is kept for the producing step"; nothing in `src/` calls it
-    # since PR #529 — `refresh` runs its own discovery. It is dead code on
-    # the live path, kept only because tests still exercise it.
+    # Question (a) had its own `peek_accessions` path, deleted 2026-09-24
+    # (item 159): nothing in `src/` had called it since PR #529 — `refresh`
+    # runs its own discovery — so it was dead code kept alive only by tests.
 
     def _submissions_form4(
         self, cik: str, deadline: float,
@@ -1401,53 +1400,6 @@ class SECForm4Provider:
             if new_filings else "every watched name read through; nothing new"
         )
         return verdict
-
-    def peek_accessions(self, symbols: list[str] | None = None) -> set[str]:
-        """Known accessions plus newly listed filings for names we watch.
-
-        Discovery-only — does not download submissions. Restricted to the
-        ``symbols`` the caller names (the desk universe) and nothing else.
-        A market-wide Form 4 is not a change to remembered research, and a
-        false expiry on the midday tick cannot be healed
-        (docs/INCIDENT_HISTORY.md). The observations cache is NOT a source
-        of relevance: ``refresh`` caches rows for the whole listed market,
-        so unioning it in made the relevant set market-wide by
-        construction. Failed discover returns the already-known set.
-        """
-        known = self.known_accessions()
-        relevant = {_symbol(s) for s in (symbols or []) if str(s).strip()}
-        if not relevant:
-            return known
-        try:
-            deadline = time.monotonic() + self.refresh_deadline_s
-            listed = self._listed_map(deadline)
-            priority = self._ciks_for_symbols(listed, sorted(relevant))
-            peek_stats: dict = {}
-            for filing in self._discover(listed, deadline, known, priority, peek_stats):
-                cik = str((filing or {}).get("cik") or "")
-                tickers = listed.get(cik) if isinstance(listed, dict) else None
-                if not isinstance(tickers, dict):
-                    continue
-                if not any(_symbol(t) in relevant for t in tickers):
-                    continue
-                text = str((filing or {}).get("accession") or "").strip()
-                if text:
-                    known.add(text)
-            if peek_stats.get("deadline_hit"):
-                # `_discover` now hands back its partial, watched-first set
-                # instead of discarding it, so the deadline no longer erases
-                # every filing found. A truncated peek can still MISS a
-                # genuinely new filing and let superseded research be reused,
-                # which errs in the dangerous direction — log it loudly.
-                logger.warning(
-                    "SEC Form 4 accession peek truncated by the refresh "
-                    "deadline: a new filing may be unseen",
-                )
-        except _RefreshDeadline:
-            logger.warning("SEC Form 4 accession peek hit refresh deadline")
-        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
-            logger.warning("SEC Form 4 accession peek failed: %s", exc)
-        return known
 
     def refresh(self, symbols: list[str] | None = None) -> dict:
         """Network refresh with a JSON-safe status/result summary.
