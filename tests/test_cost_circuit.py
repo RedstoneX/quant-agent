@@ -2010,6 +2010,32 @@ def _age_latch(path: str, minutes: float) -> None:
         )
 
 
+def _freeze_et_day(monkeypatch) -> None:
+    """Pin `_et_day_and_utc_bounds` to one instant for the rest of the test.
+
+    Several self-clear tests derive "today" from the real wall clock more
+    than once in the same test -- once while building the latch, again
+    later via `status()` (which reseeds "today" and recomputes the
+    auto-reset window). Within a few minutes of the real ET midnight those
+    two real-clock reads can land on different ET days, which is exactly
+    the ~04:00 UTC flake this exists to remove. Freezing to noon ET on
+    today's real date -- safely mid-day, never a boundary -- makes every
+    later call return the identical day/bounds, mirroring the fixed-clock
+    pattern `test_day_quota_hold_recovers_once_on_next_et_day` already
+    uses. `_age_latch` still backdates `suspended_at` against SQLite's own
+    real clock on purpose: the cooldown check measures elapsed wall time
+    against that same clock, so only the ET-day bucketing needs pinning.
+    """
+    real_today = datetime.now(timezone.utc).astimezone(_ET).date()
+    safe_instant = datetime(
+        real_today.year, real_today.month, real_today.day, 12, 0, tzinfo=_ET,
+    )
+    frozen = _et_day_and_utc_bounds(safe_instant.astimezone(timezone.utc))
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: frozen,
+    )
+
+
 def _utc_stamp_on_et_day(et_day: str) -> str:
     """A SQLite-shaped UTC timestamp landing at noon ET on `et_day`.
 
@@ -2213,7 +2239,10 @@ def _latch_on_failed_call(path, notifier=None, config=None, run_id="run-latched"
     return circuit
 
 
-def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(tmp_path):
+def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(
+    tmp_path, monkeypatch,
+):
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
 
@@ -2259,7 +2288,10 @@ def test_transient_latch_does_not_clear_on_a_backwards_clock(tmp_path):
     assert circuit.status()["suspended"] is True
 
 
-def test_self_clear_erases_no_settled_spend_and_raises_no_cap(tmp_path):
+def test_self_clear_erases_no_settled_spend_and_raises_no_cap(
+    tmp_path, monkeypatch,
+):
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     notifier = _Notifier()
     config = _cooldown_config(daily_cost_limit_usd=20.0, session_cost_limit_usd=10.0)
@@ -2473,9 +2505,12 @@ def test_an_unknown_row_of_another_provenance_blocks_the_self_clear(tmp_path):
     assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
 
 
-def test_legacy_unknown_cost_from_failed_call_rows_self_clears(tmp_path):
+def test_legacy_unknown_cost_from_failed_call_rows_self_clears(
+    tmp_path, monkeypatch,
+):
     """The 2026-09-16 recurrence: the SAME defect surfaces under the
     downstream code once the day is inexact. It must expire the same way."""
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
     with sqlite3.connect(path) as conn:
@@ -2488,9 +2523,10 @@ def test_legacy_unknown_cost_from_failed_call_rows_self_clears(tmp_path):
     assert circuit.status()["suspended"] is False
 
 
-def test_the_daily_auto_clear_allowance_is_finite(tmp_path):
+def test_the_daily_auto_clear_allowance_is_finite(tmp_path, monkeypatch):
     """A fault that keeps recurring is not transient. Past the allowance the
     next occurrence latches durably and waits for a human."""
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     config = _cooldown_config(max_transient_latch_auto_clears_per_day=2)
     notifier = _Notifier()
@@ -2678,13 +2714,16 @@ def test_a_corrupt_failed_call_counter_refuses_instead_of_escalating(tmp_path):
     assert state["trigger_code"] == "failed_call_unknown_cost"
 
 
-def test_the_self_clear_leaves_the_session_row_as_the_record(tmp_path):
+def test_the_self_clear_leaves_the_session_row_as_the_record(
+    tmp_path, monkeypatch,
+):
     """Strictly weaker than the operator path, on purpose.
 
     An earlier draft flipped `call_failed` sessions back to `active` and
     marked them exact. That enforced nothing, and made the dashboard's
     per-run cost report a by-construction-unknown figure as exact.
     """
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
 
@@ -2739,7 +2778,9 @@ def test_the_cooldown_is_the_midpoint_of_one_paid_run_gap(tmp_path):
 # --- adversary round 2 (2026-09-23) ---------------------------------------
 
 
-def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
+def test_the_self_clear_leaves_another_days_failed_session_alone(
+    tmp_path, monkeypatch,
+):
     """Guards the deleted `llm_budget_sessions` write for real.
 
     The previous test for this could not: `_trip_locked` has already moved
@@ -2751,6 +2792,7 @@ def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
     `_canonical_run_cost` reports a definite dollar figure for a run once
     `costs_exact` flips to 1.
     """
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
     day, _, _ = _et_day_and_utc_bounds()
