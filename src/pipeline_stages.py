@@ -8510,20 +8510,12 @@ class ExecutionStage:
                             pipeline, ctx, decision.symbol, "borrow_gate", reason,
                         )
                         continue
-                    from src.execution.scale_in import short_add_is_blocked
-                    if short_add_is_blocked(positions, decision.symbol):
-                        logger.warning(
-                            "SHORT %s skipped: adding to an existing short is "
-                            "not built — scale-in is the long path",
-                            decision.symbol,
-                        )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol,
-                            "short_add_blocked",
-                            "adding to a short is not built — scale-in "
-                            "cancels and rearms a sell-stop, not a buy-stop",
-                        )
-                        continue
+                    # Short scale-in (adding to an existing short) is now a
+                    # real path: it is routed through `prepare_short_add` at
+                    # the same post-sizing / post-min-order-floor point the
+                    # long add uses, below. It is NOT gated here — the
+                    # min-order floor must run first so the buy-stop is never
+                    # cancelled for an add that then gets dropped.
 
                 live_price = _live_fill_price(pipeline, decision.symbol)
                 if live_price is not None:
@@ -9126,6 +9118,45 @@ class ExecutionStage:
                         symbol=decision.symbol, positions=positions,
                         intended_stop=stop_price,
                     )
+                else:
+                    # Short scale-in path (owner-approved). The buy-stop is
+                    # cancelled inside prepare_short_add, so the min-order
+                    # FLOOR must run FIRST — a below-floor add must be dropped
+                    # BEFORE any protection comes off. D11 keeps a short off
+                    # the budget-resize floor above (it never spends cash), so
+                    # this is where the floor is re-applied for a short add.
+                    from src.execution.scale_in import (
+                        held_signed_qty, prepare_short_add,
+                    )
+                    if held_signed_qty(positions, decision.symbol) < 0:
+                        floor_usd = _min_order_usd(pipeline)
+                        if estimated_cost < floor_usd:
+                            logger.warning(
+                                "Skipping SHORT add %s: order $%.2f (%s sh) is "
+                                "below the $%.0f minimum worth trading — dropped "
+                                "before any protective buy-stop is cancelled",
+                                decision.symbol, estimated_cost,
+                                _fmt_shares(qty), floor_usd,
+                            )
+                            _record_execution_skip(
+                                pipeline, ctx, decision.symbol,
+                                "below_min_notional",
+                                f"short add ${estimated_cost:.2f} is below the "
+                                f"${floor_usd:,.0f} minimum worth trading",
+                            )
+                            _record_pipeline_event(
+                                pipeline, ctx, decision.symbol, "funding",
+                                "refused", "short_add_below_min_notional",
+                                resized_notional=estimated_cost,
+                                min_order_usd=floor_usd,
+                            )
+                            continue
+                    add_prep = prepare_short_add(
+                        broker=pipeline.broker, db=pipeline.db,
+                        symbol=decision.symbol, positions=positions,
+                        intended_stop=stop_price,
+                    )
+                if add_prep is not None:
                     if add_prep.skip_reason:
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol,
@@ -9138,6 +9169,9 @@ class ExecutionStage:
                         )
                         continue
                     if add_prep.cancelled:
+                        # Persisted event code kept as-is (the refusal-
+                        # signature registry and historical rows read it); it
+                        # covers a cancelled buy-stop on a short add too.
                         _record_pipeline_event(
                             pipeline, ctx, decision.symbol, "scale_in",
                             "protective_sell_cancelled",
@@ -9189,7 +9223,14 @@ class ExecutionStage:
                 # value the constructor already classified, carried on the
                 # decision.
                 if add_prep is not None and add_prep.is_scale_in:
-                    _existing_buy = pipeline.db.get_symbol_last_buy(decision.symbol)
+                    # Carry the position's OWN pinned setup_type forward. A
+                    # short add reads the last SHORT open (item 82 mirror) —
+                    # get_symbol_last_buy defaults to BUY rows and would
+                    # otherwise miss the short's original entry.
+                    _existing_buy = pipeline.db.get_symbol_last_buy(
+                        decision.symbol,
+                        action="SHORT" if is_short else "BUY",
+                    )
                     pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
                 else:
                     pinned_setup_type = getattr(decision, "setup_type", None)
@@ -9535,10 +9576,16 @@ class ExecutionStage:
                             uncovered = float(protection.get("uncovered_qty") or 0)
                         except (TypeError, ValueError):
                             uncovered = 0.0
+                    # A short add's protection is a BUY-stop; restore and
+                    # write-back must both use the short side.
+                    _spec_is_short = str(
+                        spec.get("side", "buy")
+                    ).lower() != "buy"
                     if protection is None and filled_here <= 0:
                         if restore_cancelled_stops(
                             pipeline.broker, spec["symbol"],
                             spec.get("cancelled_specs") or [],
+                            side="buy" if _spec_is_short else "sell",
                         ):
                             discharge_scale_in_wal(
                                 pipeline.db, spec.get("wal_row_id"),
@@ -9552,7 +9599,7 @@ class ExecutionStage:
                         ):
                             write_back_stop_loss(
                                 pipeline.db, spec["symbol"], spec["stop_price"],
-                                is_short=False,
+                                is_short=_spec_is_short,
                             )
                         discharge_scale_in_wal(
                             pipeline.db, spec.get("wal_row_id"),
@@ -9581,17 +9628,39 @@ class ExecutionStage:
                             spec["symbol"], fill_exc, spec["qty"],
                         )
                         filled_qty = float(spec.get("qty") or 0)
-                    if filled_qty > 0:
+                    # H1: on a SHORT SCALE-IN the protective buy-stop that
+                    # covered the PRE-EXISTING short leg was already cancelled
+                    # in prep, so covering only the add's fill (filled_qty)
+                    # would leave that older leg naked — exactly the unbounded
+                    # exposure D7 exists to prevent. Cover the ENLARGED short:
+                    # the broker's current qty (magnitude), the same authority
+                    # cover_qty_for_rearm uses, with the |fill|+|held| fallback
+                    # when the broker cannot be read. For a NEW short this
+                    # equals filled_qty, so the non-scale-in path is unchanged.
+                    if spec.get("cover_full_position"):
+                        from src.execution.scale_in import cover_qty_for_rearm
+                        cover_qty = cover_qty_for_rearm(
+                            pipeline.broker, symbol=spec["symbol"],
+                            filled_qty=filled_qty,
+                            held_qty_before=float(spec.get("held_qty_before") or 0),
+                        )
+                        if cover_qty < filled_qty:
+                            # Never cover LESS than what we know filled.
+                            cover_qty = filled_qty
+                    else:
+                        cover_qty = filled_qty
+                    if cover_qty > 0:
                         logger.critical(
                             "SHORT %s: PROTECTIVE STOP FAILED after %.4f "
                             "share(s) filled — a naked short has UNBOUNDED "
-                            "loss. Submitting an IMMEDIATE market COVER "
-                            "instead of waiting for the next reconcile pass.",
-                            spec["symbol"], filled_qty,
+                            "loss. Submitting an IMMEDIATE market COVER of the "
+                            "full short (%.4f) instead of waiting for the next "
+                            "reconcile pass.",
+                            spec["symbol"], filled_qty, cover_qty,
                         )
                         try:
                             cover_order = pipeline.broker.submit_order(
-                                symbol=spec["symbol"], qty=filled_qty, side="buy",
+                                symbol=spec["symbol"], qty=cover_qty, side="buy",
                             )
                             cover_id = (
                                 cover_order.get("id")
@@ -9599,11 +9668,12 @@ class ExecutionStage:
                             )
                             pipeline.db.insert_trade(
                                 symbol=spec["symbol"], action="EMERGENCY_COVER",
-                                qty=filled_qty, price=0.0,
+                                qty=cover_qty, price=0.0,
                                 reasoning=(
                                     "protective stop failed to place after a "
                                     "SHORT entry filled — immediate market "
-                                    "cover to bound an otherwise naked short"
+                                    "cover of the full (enlarged) short to bound "
+                                    "an otherwise naked short"
                                 ),
                                 run_id=run_id, broker_order_id=cover_id,
                                 fill_status="submitted",
@@ -9611,7 +9681,7 @@ class ExecutionStage:
                             _record_pipeline_event(
                                 pipeline, ctx, spec["symbol"], "protection",
                                 "emergency_cover", "naked_short_protection_failed",
-                                qty=filled_qty, broker_order_id=cover_id,
+                                qty=cover_qty, broker_order_id=cover_id,
                             )
                         except Exception as cover_exc:  # noqa: BLE001
                             logger.critical(
@@ -9619,13 +9689,13 @@ class ExecutionStage:
                                 "%.4f share(s) are NAKED SHORT with NO "
                                 "protective stop and NO cover in flight. "
                                 "REQUIRES IMMEDIATE OPERATOR INTERVENTION.",
-                                spec["symbol"], cover_exc, filled_qty,
+                                spec["symbol"], cover_exc, cover_qty,
                             )
                             _record_pipeline_event(
                                 pipeline, ctx, spec["symbol"], "protection",
                                 "emergency_cover_failed",
                                 "naked_short_no_protection_no_cover",
-                                qty=filled_qty, detail=str(cover_exc),
+                                qty=cover_qty, detail=str(cover_exc),
                             )
             except Exception as e:  # noqa: BLE001 — never abort the session here
                 logger.error(
