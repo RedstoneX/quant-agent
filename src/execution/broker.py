@@ -1838,6 +1838,53 @@ class AlpacaBroker:
                 continue
         return out
 
+    def get_all_account_activities(self, page_size: int = 100) -> list[dict]:
+        """The account's FULL activity ledger — every `JNLC` deposit/
+        withdrawal, `FILL`, `FEE`, `WH` withholding, `CFEE`, `DIV`, `INT`,
+        etc., for the life of the account. Unlike
+        `get_margin_interest_activities`, no `activity_type` filter — this
+        is the raw feed the margin-interest HISTORICAL BACKFILL replays to
+        reconstruct a daily cash balance (`src.margin_interest.
+        reconstruct_daily_cash_balances`), since Alpaca has no historical
+        cash or positions endpoint at all.
+
+        Same low-level `TradingClient.get()` REST passthrough as
+        `get_margin_interest_activities` (no typed SDK wrapper for this
+        endpoint), paged forward with Alpaca's own `page_token` cursor
+        (ascending by `id`, its documented order) until a short page ends
+        the list. Returns raw dicts, unfiltered and unnormalized — the
+        caller picks whichever fields it needs per activity type, since
+        different types carry different shapes (a `FILL` has `price`/
+        `qty`/`side`; a `JNLC`/`FEE`/`WH` has `net_amount`).
+
+        Never raises — a broker read failure here must not be able to
+        break a caller; it degrades to whatever was fetched before the
+        failure (empty list, on a first-page failure).
+        """
+        activities: list[dict] = []
+        page_token: str | None = None
+        try:
+            while True:
+                params: dict = {"direction": "asc", "page_size": page_size}
+                if page_token:
+                    params["page_token"] = page_token
+                page = self.client.get("/account/activities", params)
+                if not isinstance(page, list) or not page:
+                    break
+                activities.extend(a for a in page if isinstance(a, dict))
+                if len(page) < page_size:
+                    break
+                last_id = page[-1].get("id")
+                if not last_id:
+                    break
+                page_token = last_id
+        except Exception as exc:
+            logger.warning(
+                "get_all_account_activities failed after %d rows: %s",
+                len(activities), exc,
+            )
+        return activities
+
     def get_transient_equity_eligibility(self, symbol: str) -> dict:
         """Fail-closed broker eligibility for an out-of-universe candidate.
 

@@ -3559,6 +3559,73 @@ class Database:
             )
             self.conn.commit()
 
+    def backfill_margin_interest_daily(
+        self, rows: list, dry_run: bool = True,
+    ) -> dict:
+        """Write reconstructed HISTORICAL `margin_interest_daily` rows —
+        owner ask 2026-09-24: no historical daily debit balance was ever
+        persisted before #637, so the "all-time" cumulative view can only
+        see days since that PR merged. `rows` is a list of
+        `src.margin_interest.BackfilledDayEstimate` (or anything with the
+        same attributes); see that module for how they were reconstructed
+        (replayed from the broker's own activity ledger — there is no
+        historical cash/positions endpoint to read this from directly).
+
+        SAFE TO RE-RUN: a date already holding a row from the LIVE tracker
+        (`source` `'estimate'` or `'broker_actual'`, written by
+        `notifier._persist_margin_interest_daily` every morning) is left
+        alone — a backfilled reconstruction must never overwrite a day the
+        live tracker actually measured, no matter how many times this
+        runs. A date already holding a PRIOR backfill row (`source`
+        `'estimate_backfill'`) is safely re-upserted with this run's
+        (possibly refined) figures, same idempotency contract as
+        `insert_margin_interest_daily`'s own `ON CONFLICT`. A brand-new
+        date is inserted.
+
+        `dry_run=True` (the default) computes and returns counts without
+        writing anything — same posture as `backfill_position_ids`/
+        `scripts/backfill_position_ids.py`. Returns
+        `{"inserted": n, "skipped_live_row": n, "total": n}`.
+        """
+        inserted = 0
+        skipped_live_row = 0
+        with self._lock:
+            for row in rows:
+                d = row.trading_day.isoformat() if hasattr(row.trading_day, "isoformat") else str(row.trading_day)
+                existing = self.conn.execute(
+                    "SELECT source FROM margin_interest_daily WHERE date = ?",
+                    (d,),
+                ).fetchone()
+                if existing is not None and existing[0] != "estimate_backfill":
+                    skipped_live_row += 1
+                    continue
+                inserted += 1
+                if dry_run:
+                    continue
+                self.conn.execute(
+                    """INSERT INTO margin_interest_daily
+                       (date, debit_balance, rate_pct, daily_usd, days_charged,
+                        period_usd, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(date) DO UPDATE SET
+                         debit_balance=excluded.debit_balance,
+                         rate_pct=excluded.rate_pct,
+                         daily_usd=excluded.daily_usd,
+                         days_charged=excluded.days_charged,
+                         period_usd=excluded.period_usd,
+                         source=excluded.source
+                       WHERE margin_interest_daily.source = 'estimate_backfill'""",
+                    (d, row.debit_balance, row.rate_pct, row.daily_usd,
+                     row.days_charged, row.period_usd, row.source),
+                )
+            if not dry_run:
+                self.conn.commit()
+        return {
+            "inserted": inserted,
+            "skipped_live_row": skipped_live_row,
+            "total": len(rows),
+        }
+
     def backfill_equity_close(self, date: str, equity_close: float) -> bool:
         """Fill in a still-NULL equity_close on an existing daily_pnl row.
 
