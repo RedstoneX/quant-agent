@@ -1775,17 +1775,18 @@ class TradingPipeline:
         horizon: a purchase disclosed more trading sessions ago than
         `risk.max_target_horizon_sessions` is older than the longest move
         the desk will claim a target for, so it cannot be the reason to
-        open a new name now. Sessions are counted with the same weekday
-        counter the desk's horizon arithmetic uses.
+        open a new name now. Sessions are counted with the broker's
+        holiday-aware calendar (item 165) — the plain weekday counter
+        overstates the count by one per market holiday crossed, which
+        skews this gate toward admitting names it should be rejecting.
         """
-        from src.trading_calendar import trading_sessions_held
         from src.util.time import et_today
 
         disclosed = getattr(observation, "disclosure_date", None)
         if not isinstance(disclosed, date):
             return False
         horizon = int(self.config.risk.max_target_horizon_sessions)
-        return trading_sessions_held(disclosed, et_today()) <= horizon
+        return self.broker.trading_sessions_held(disclosed, et_today()) <= horizon
 
     def _admit_screened_universe_symbols(self, positions=None) -> tuple[set[str], dict[str, dict]]:
         """This session's share of the screened universe (screen on only).
@@ -13587,23 +13588,26 @@ class TradingPipeline:
 
             # days_held — from BUY timestamp; fall back to None.
             #
-            # sessions_held is the weekend-aware companion count (Mon-Fri
-            # only, see `trading_calendar.trading_sessions_held`) — the
-            # noise-band scaling below needs TRADING SESSIONS, not calendar
-            # days, per the 2026-09-04 audit follow-up.
+            # sessions_held is the holiday-aware companion count (item 165:
+            # the broker's real market calendar via `broker.trading_sessions_held`,
+            # not the plain Mon-Fri weekday counter in
+            # `trading_calendar.trading_sessions_held`, which overstates by
+            # one session per market holiday crossed) — the noise-band
+            # scaling below needs TRADING SESSIONS, not calendar days, per
+            # the 2026-09-04 audit follow-up.
             days_held = None
             sessions_held = None
             buy_ts = (buy or {}).get("timestamp")
             if buy_ts:
                 try:
-                    from src.trading_calendar import to_et, trading_sessions_held
+                    from src.trading_calendar import to_et
                     from datetime import datetime as _dt
                     dt = _dt.fromisoformat(buy_ts.replace("Z", "+00:00")) if "T" in buy_ts \
                         else _dt.strptime(buy_ts, "%Y-%m-%d %H:%M:%S")
                     entry_date = to_et(dt).date()
                     days_held = (et_today() - entry_date).days
                     days_held = max(0, days_held)
-                    sessions_held = trading_sessions_held(entry_date, et_today())
+                    sessions_held = self.broker.trading_sessions_held(entry_date, et_today())
                 except Exception:
                     days_held = None
                     sessions_held = None

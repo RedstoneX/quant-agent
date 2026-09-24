@@ -2225,6 +2225,49 @@ class AlpacaBroker:
         self._trading_day_cache[target_date] = result
         return result
 
+    def trading_sessions_held(self, start: date, end: date) -> int:
+        """Holiday-aware companion to `trading_calendar.trading_sessions_held`.
+
+        Same semantics — trading sessions strictly AFTER `start` up to and
+        including `end` — but backed by Alpaca's real market calendar
+        instead of a Mon-Fri weekday heuristic, so a market holiday inside
+        the range (Thanksgiving, July 4, Christmas, Good Friday, etc.) is
+        correctly excluded instead of silently counted as a session.
+
+        Item 165: `trading_calendar.trading_sessions_held` documents this
+        exact gap (a holiday-crossing week overstates the count by one per
+        holiday) as an accepted CHEAP approximation for callers with no
+        broker connection. Callers that hold a broker instance — this one —
+        should prefer this method instead.
+
+        Falls back to the weekday approximation on a calendar-query failure
+        (transient API hiccup) rather than raising, matching the existing
+        `is_trading_day` failure posture of degrading, not aborting.
+
+        Returns 0 if `end` is not after `start`.
+        """
+        if end <= start:
+            return 0
+        from datetime import timedelta as _td
+
+        from alpaca.trading.requests import GetCalendarRequest
+
+        query_start = start + _td(days=1)
+        try:
+            calendar = self.client.get_calendar(
+                GetCalendarRequest(start=query_start, end=end)
+            ) or []
+            return len(calendar)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_sessions_held: calendar query failed (%s -> %s); "
+                "falling back to weekday count: %s", start, end, exc,
+            )
+            from src.trading_calendar import (
+                trading_sessions_held as _weekday_sessions_held,
+            )
+            return _weekday_sessions_held(start, end)
+
     def is_last_trading_day_of_quarter(self, on_date: date | None = None) -> bool:
         """True when `on_date` (default today-ET) is the last OPEN session
         of the current quarter — respects holidays and early closes.

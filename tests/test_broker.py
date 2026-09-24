@@ -279,6 +279,75 @@ def test_is_trading_day_uses_calendar(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_excludes_market_holiday(mock_tc_cls):
+    """Item 165: a Thanksgiving-week hold must count FEWER sessions than a
+    plain Mon-Fri weekday count, because Thursday (the holiday) never
+    trades. `AlpacaBroker.trading_sessions_held` must reflect only the days
+    the real calendar returns, not a Mon-Fri assumption.
+
+    Thanksgiving 2026 falls on Thursday 2026-11-26. Open days that week are
+    Mon/Tue/Wed/Fri (Thu closed, Fri is a 13:00 early close but still an
+    open session) = 4 sessions, one less than the 5 weekdays a Mon-Fri
+    counter would claim.
+    """
+    from datetime import date as _date
+    from src.trading_calendar import trading_sessions_held as weekday_sessions_held
+
+    start = _date(2026, 11, 22)  # Sunday before Thanksgiving week
+    end = _date(2026, 11, 27)    # Friday (early close) after the holiday
+
+    # Real calendar for that week has no entry for Thu 2026-11-26.
+    open_days = [
+        MagicMock(),  # Mon 11/23
+        MagicMock(),  # Tue 11/24
+        MagicMock(),  # Wed 11/25
+        # Thu 11/26 Thanksgiving — market closed, no entry
+        MagicMock(),  # Fri 11/27 (early close, still a session)
+    ]
+    mock_client = MagicMock()
+    mock_client.get_calendar.return_value = open_days
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    holiday_aware = broker.trading_sessions_held(start, end)
+    plain_weekday = weekday_sessions_held(start, end)
+
+    assert holiday_aware == 4
+    assert plain_weekday == 5, "sanity: the plain weekday counter should still say 5"
+    assert holiday_aware < plain_weekday, (
+        "the holiday-aware count must be strictly lower than the plain "
+        "weekday count across a week containing a market holiday"
+    )
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_zero_when_end_not_after_start(mock_tc_cls):
+    from datetime import date as _date
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    assert broker.trading_sessions_held(_date(2026, 11, 25), _date(2026, 11, 25)) == 0
+    assert broker.trading_sessions_held(_date(2026, 11, 25), _date(2026, 11, 24)) == 0
+    mock_client.get_calendar.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_falls_back_to_weekday_on_calendar_error(mock_tc_cls):
+    """A calendar outage must degrade to the weekday approximation, not
+    raise — matching `is_trading_day`'s existing failure posture."""
+    from datetime import date as _date
+    from src.trading_calendar import trading_sessions_held as weekday_sessions_held
+
+    mock_client = MagicMock()
+    mock_client.get_calendar.side_effect = RuntimeError("calendar down")
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    start, end = _date(2026, 11, 22), _date(2026, 11, 27)
+    assert broker.trading_sessions_held(start, end) == weekday_sessions_held(start, end)
+
+
+@patch("src.execution.broker.TradingClient")
 def test_get_session_close_returns_et_datetime_on_trading_day(mock_tc_cls):
     """Half-day detection path, against the REAL SDK model.
 

@@ -30,9 +30,17 @@ def _rc() -> PositionReasoningChain:
 
 
 def _mk_pipeline() -> TradingPipeline:
+    # Item 165: sessions_held now comes from `broker.trading_sessions_held`
+    # (holiday-aware), not the pure `trading_calendar` weekday function.
+    # None of these tests span a market holiday, so delegating to the real
+    # weekday counter reproduces the same numbers as before.
+    from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
+
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = MagicMock()
     pipeline.config = MagicMock()
+    pipeline.broker = MagicMock()
+    pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     return pipeline
 
 
