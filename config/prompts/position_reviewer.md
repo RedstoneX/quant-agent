@@ -390,7 +390,10 @@ are raising an OBSERVATION, not setting a price.
   per session straight into the noise band; GE was ratcheted 7× in 8 sessions
   this way), or (b) the new stop lands within 1.25×ATR14 of the current price
   (inside one day's range — routine volatility would fill it). One considered
-  trail beats daily nudges.
+  trail beats daily nudges. The ×1.02 minimum margin above is itself enforced
+  here too — a raise that clears the live stop by less than 2% is REJECTED and
+  the old stop kept — and, unlike (a) and (b), a hard trigger does NOT bypass
+  it: a sub-2% bump is fee/churn regardless of the reason.
 - **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
   exhaustion confirmed, target_breach with momentum fading. **NOT for a
   "correlation cluster rebalance"** — that phrase has not matched the

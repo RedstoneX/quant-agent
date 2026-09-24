@@ -11623,6 +11623,47 @@ class TradingPipeline:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
+                    # Minimum-ratchet floor: a raise must clear the live stop
+                    # by at least MIN_RATCHET_PCT. The position_reviewer prompt
+                    # presents `new_stop_price >= old_stop_price × 1.02` as a
+                    # hard schema rule, but until this landed nothing here
+                    # enforced it, so an under-2% bump reached the broker —
+                    # paying cancel/replace churn for negligible protection.
+                    # Single-sourced from src.risk.trailing.MIN_RATCHET_PCT (the
+                    # same ledgered constant the deterministic trail already
+                    # uses; ledger status: arbitrary). Unlike the RC1 clamps
+                    # below, this floor is NOT bypassable by a hard trigger —
+                    # the prompt states it as an unconditional minimum, and a
+                    # sub-floor raise is churn regardless of the reason.
+                    # A rejection here keeps the existing (valid, looser) stop
+                    # in place: protection is never removed, only left as-is.
+                    # Old stop is broker truth; if it is missing/unreadable the
+                    # floor cannot be computed, so this establishes protection
+                    # rather than blocking it (the RC1 clamps still apply).
+                    try:
+                        raw_old_stop = self.broker.get_current_stop_price(symbol)
+                        old_stop = (
+                            float(raw_old_stop) if raw_old_stop is not None else None
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "Midday: TRAIL_STOP %s — live stop unreadable "
+                            "(%s); min-ratchet floor not applied", symbol, e,
+                        )
+                        old_stop = None
+                    if old_stop is not None and old_stop > 0:
+                        from src.risk.trailing import MIN_RATCHET_PCT
+                        min_new_stop = old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)
+                        if new_stop < min_new_stop:
+                            logger.warning(
+                                "Midday: TRAIL_STOP %s skipped — new_stop "
+                                "$%.2f is below the %.0f%% minimum-ratchet "
+                                "floor over the live stop $%.2f (floor $%.2f); "
+                                "sub-floor raise is churn. Old stop kept.",
+                                symbol, new_stop, MIN_RATCHET_PCT, old_stop,
+                                min_new_stop,
+                            )
+                            continue
                     # RC1 exit-quality clamps (2026-07-16 forensics: 5 trail
                     # fills missed avg +30.7% post-exit; LLY was whipsawed
                     # twice identically). A hard-trigger citation in the
