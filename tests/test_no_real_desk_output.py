@@ -352,3 +352,13 @@ def test_placeholder_identifiers_are_not_flagged() -> None:
                  "deadbeef-0000-4000-8000-000000000000"):
         payload = f'{{"broker_order_id": "{fake}", "status": "filled"}}'
         assert guard.scan_text(payload, "x.json") == [], fake
+
+
+def test_the_specimen_exclusion_is_exactly_this_one_file() -> None:
+    """SPECIMEN_FILES must never grow into a general hiding place.
+
+    This test's own trip-strings above are the only reason a tracked file is
+    ever excluded from the scan. If a second path is ever added here, it needs
+    the same scrutiny this one got — not a rubber stamp.
+    """
+    assert guard.SPECIMEN_FILES == frozenset({"tests/test_no_real_desk_output.py"})

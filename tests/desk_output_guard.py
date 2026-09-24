@@ -539,11 +539,27 @@ LARGE_BLOBS: dict[str, str] = {
 }
 
 
+# `test_no_real_desk_output.py` has to hold strings shaped exactly like real
+# desk output — a real-looking ticker, cent-precision prices, a broker order
+# id, a production log line — or it cannot prove the four signals actually
+# fire. Those strings are invented for that one purpose; none of them ever
+# came off the desk. Scanning that file for desk output means scanning the
+# detector's own test specimens, which is not what this module is for.
+#
+# This is an exact single-path exclusion, not a directory or a glob:
+# `test_the_specimen_exclusion_is_exactly_this_one_file` pins the set below to
+# exactly this path, so it cannot quietly grow into a hiding place. A new file
+# dropped anywhere else, including beside this one, is scanned like any other.
+SPECIMEN_FILES = frozenset({
+    "tests/test_no_real_desk_output.py",
+})
+
+
 def tracked_files(root: Path = PROJECT_ROOT) -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
     ).stdout.decode("utf-8", "replace")
-    return [p for p in out.split("\0") if p]
+    return [p for p in out.split("\0") if p and p not in SPECIMEN_FILES]
 
 
 @dataclass(frozen=True)
