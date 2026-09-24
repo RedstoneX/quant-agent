@@ -171,6 +171,128 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
     return window.rstrip() + marker
 
 
+#: Neutral stand-in for a numeric token this guard judged structurally
+#: impossible (see `_find_malformed_numeric_tokens` below). Never a guessed
+#: value — the desk rule is "report the true state, never fabricate", and a
+#: plausible-looking replacement would itself be a fabricated number.
+_MALFORMED_NUMBER_MARKER = "[number garbled — removed]"
+
+# Scope note, so this is never confused with the REJECTED "prompt-text
+# number scanner" (docs/BOARD_NOTES.md item 99): that idea was scanning
+# ~1,825 numeric tokens inside PROMPT INPUT (config/prompts/*.md) — mostly
+# dates and list numbering, hopeless signal-to-noise, and explicitly not
+# built. This is the opposite direction: it scans the LLM's OUTPUT prose
+# right before that text ships to the owner (see `TelegramNotifier.send`),
+# looking only for a small number of STRUCTURALLY IMPOSSIBLE shapes, not
+# "suspicious" numbers in general. It is deliberately narrow to keep the
+# false-positive rate at zero on real desk language: percentages ("14.6%"),
+# multipliers ("2.0x"), day ranges ("5-15"), shorthand money ("$10M"), ISO
+# dates ("2026-09-24"), times ("12:51"), and share counts ("0.3155") must
+# never be touched.
+_NUMERIC_TOKEN_RE = re.compile(r"-?\$?\d[\d,]*(?:\.\d+)*")
+
+
+def _malformed_numeric_reason(token: str) -> str | None:
+    """Return why `token` (as matched by `_NUMERIC_TOKEN_RE`) is
+    structurally impossible as a number, or None if it's fine.
+
+    Deliberately conservative: only shapes that can NEVER be a correctly
+    written figure are flagged. Three checks, all direct restatements of
+    the bug report ("$10,21.36") and its named siblings:
+
+    1. More than one decimal point in one token ("12.34.56") — no numeric
+       convention has two, so this is never valid.
+    2. A comma-grouped integer part where a group isn't exactly 3 digits
+       ("10,21" — the second group is 2 digits, not 3) — this is the exact
+       shape of the reported defect. A LEADING group of 1-3 digits is fine
+       ("1,021"); every group after the first must be exactly 3.
+    3. A `$` amount that has a decimal point but not exactly 2 digits after
+       it ("$10.5", "$10.567") — dollars-and-cents has exactly one valid
+       decimal length; percentages, multipliers and share counts are NOT
+       constrained this way because they aren't `$` amounts.
+    """
+    body = token[1:] if token.startswith("-") else token
+    is_money = body.startswith("$")
+    if is_money:
+        body = body[1:]
+    parts = body.split(".")
+    if len(parts) > 2:
+        return "multiple decimal points"
+    integer_part = parts[0]
+    decimal_part = parts[1] if len(parts) == 2 else None
+
+    if "," in integer_part:
+        groups = integer_part.split(",")
+        if not groups[0] or not (1 <= len(groups[0]) <= 3) or not groups[0].isdigit():
+            return "malformed thousands separator"
+        for group in groups[1:]:
+            if len(group) != 3 or not group.isdigit():
+                return "malformed thousands separator"
+
+    if is_money and decimal_part is not None and len(decimal_part) != 2:
+        return "dollar amount without exactly 2 decimal places"
+
+    return None
+
+
+def _find_malformed_numeric_tokens(text: str) -> list[tuple[str, str]]:
+    """Scan `text` for numeric tokens that are structurally impossible.
+
+    Returns a list of (token, reason) pairs. Pure function, no I/O — see
+    `_redact_malformed_numbers` for the caller that acts on the result.
+    """
+    found = []
+    for match in _NUMERIC_TOKEN_RE.finditer(text):
+        reason = _malformed_numeric_reason(match.group(0))
+        if reason is not None:
+            found.append((match.group(0), reason))
+    return found
+
+
+def _redact_malformed_numbers(text: str) -> str:
+    """Replace any structurally-impossible numeric token in `text` with a
+    neutral marker, so a garbled figure (e.g. "$10,21.36") can never reach
+    the owner as if it were real.
+
+    Why redact instead of anything cleverer: the desk rule (docs, 2026-09-23)
+    is that a false or fabricated owner-facing number is a defect regardless
+    of intent, so guessing the intended value is not on the table — this
+    guard has no way to know whether "$10,21.36" meant $10.21, $1,021.36, or
+    something else. Dropping the number and saying so is the only action
+    that never ships a false figure. The underlying cause (whatever
+    produced the malformed text) is logged here so it stays visible instead
+    of silently disappearing into a redaction.
+
+    Never raises: this runs on every outgoing message, so a bug in the
+    guard itself must not be able to block a real alert. On any fault the
+    original text goes out unredacted — the guard failing open, not the
+    channel failing closed, matches every other best-effort contract in
+    this module (see `send()`'s own docstring).
+    """
+    try:
+        found = _find_malformed_numeric_tokens(text)
+        if not found:
+            return text
+
+        def _replace(match: "re.Match[str]") -> str:
+            reason = _malformed_numeric_reason(match.group(0))
+            return match.group(0) if reason is None else _MALFORMED_NUMBER_MARKER
+
+        redacted = _NUMERIC_TOKEN_RE.sub(_replace, text)
+        logger.warning(
+            "notifier: redacted %d malformed numeric token(s) before sending "
+            "(%s) — the upstream text generator produced a garbled figure; "
+            "fix that, not this guard",
+            len(found), "; ".join(f"{tok!r} ({reason})" for tok, reason in found),
+        )
+        return redacted
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "notifier: malformed-number guard itself failed; sending text unredacted"
+        )
+        return text
+
+
 def _seal_section(lines: list[str], start: int, *, may_glue: bool = False) -> None:
     """Insert one blank line before `lines[start:]` to set it apart from
     whatever precedes it — unless there is nothing to separate from yet
@@ -753,6 +875,14 @@ class TelegramNotifier:
             return False
         if not text:
             return False
+        # Single chokepoint for every owner-facing message this notifier
+        # sends, regardless of which of the ~20 upstream formatters (PM
+        # rationale, risk-manager reasoning, evening outlook, key thesis,
+        # ...) produced the free-text prose it came from — see
+        # `_redact_malformed_numbers`'s docstring for why here rather than
+        # at each of those call sites, and for the deliberate distinction
+        # from the REJECTED prompt-text scanner (board item 99).
+        text = _redact_malformed_numbers(text)
         if _REHEARSAL_MODE:
             # A rehearsal replays a real session, so it raises real alerts —
             # "PAID ANALYSIS SUSPENDED", "STOP COVERAGE REPAIRED", trade

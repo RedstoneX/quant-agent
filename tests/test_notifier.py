@@ -2637,3 +2637,112 @@ def test_congress_enabled_now_defaults_false_on_load_failure(monkeypatch):
 
     monkeypatch.setattr("yaml.safe_load", _boom)
     assert notifier._congress_enabled_now() is False
+
+
+# === malformed-number guard (garbled figures in LLM narrative prose) ===
+#
+# The bug this catches: a deterministic number is validated before it ever
+# reaches an owner message, but free-text PM/risk/analyst prose is never
+# reworded — so a garbled figure the LLM wrote inside its own reasoning
+# (the real incident: "$10,21.36") went straight through. These tests prove
+# the guard catches that shape and its close siblings, and — just as
+# importantly — never touches a real desk figure.
+
+def test_finds_the_actual_reported_defect():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("total exposure came to $10,21.36 today")
+    assert ("$10,21.36", "malformed thousands separator") in found
+
+
+def test_finds_malformed_thousands_separator_without_dollar_sign():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("that's roughly 10,21.36 shares")
+    assert any(tok == "10,21.36" for tok, _reason in found)
+
+
+def test_finds_multiple_decimal_points():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("price ticked between 12.34.56 all day")
+    assert ("12.34.56", "multiple decimal points") in found
+
+
+def test_finds_dollar_amount_with_wrong_decimal_places():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("cost basis was $10.567 per share")
+    assert ("$10.567", "dollar amount without exactly 2 decimal places") in found
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "closed the position for $1,021.36 net of fees",
+        "up 14.6% on the day, mostly momentum",
+        "sized at 2.0x the usual allocation",
+        "expects a pullback in the 5-15 day window",
+        "raised roughly $10M from the sweep account",
+        "as of 2026-09-24 the book is fully hedged",
+        "filled at 12:51 after the open",
+        "added 0.3155 shares to round out the lot",
+        "trimmed CRM, now $492.30 in realized P&L",
+        "core position is 14,600 shares, unchanged",
+    ],
+)
+def test_never_flags_a_real_desk_figure(sentence):
+    """False-positive battery: every one of these is a genuine, correctly
+    formatted figure the desk writes routinely. None may be touched."""
+    from src.notifier import _find_malformed_numeric_tokens
+
+    assert _find_malformed_numeric_tokens(sentence) == []
+
+
+def test_redact_replaces_only_the_malformed_token_and_leaves_the_rest():
+    from src.notifier import _redact_malformed_numbers
+
+    text = "PM view: sized at 2.0x, but total came to $10,21.36 net of fees."
+    redacted = _redact_malformed_numbers(text)
+    assert "$10,21.36" not in redacted
+    assert "[number garbled" in redacted
+    assert "2.0x" in redacted
+    assert "net of fees" in redacted
+
+
+def test_redact_never_touches_clean_text():
+    from src.notifier import _redact_malformed_numbers
+
+    text = "closed CRM for $1,021.36, up 14.6% on the day"
+    assert _redact_malformed_numbers(text) == text
+
+
+def test_redact_logs_the_original_garbled_token_for_diagnosis(caplog):
+    from src.notifier import _redact_malformed_numbers
+
+    with caplog.at_level("WARNING"):
+        _redact_malformed_numbers("total exposure came to $10,21.36 today")
+    assert any("10,21.36" in rec.message for rec in caplog.records)
+
+
+def test_send_redacts_malformed_number_before_it_reaches_telegram(monkeypatch):
+    """End-to-end: `send()` is the single chokepoint every owner-facing
+    message passes through (Telegram/owner reports), regardless of which
+    upstream formatter wrote the free-text prose — so the guard belongs
+    here, not duplicated across every PM/risk/thesis call site."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send("PM view: total exposure came to $10,21.36 today")
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "10,21.36" not in sent
+    assert "number garbled" in sent
