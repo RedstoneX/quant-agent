@@ -1125,8 +1125,20 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     _mock_stage_seam(pipeline, specs=[
         {"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}
     ])
+    # Board item 178: ExecutionStage now re-reads the account before the
+    # SELL loop too, so this fixture must reflect a fresh snapshot that
+    # STILL holds JPM — otherwise the SELL never fires and the "no residual
+    # to protect" assertion below would pass for the wrong reason (no SELL
+    # at all, rather than a full SELL leaving no residual).
     pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 100_500.0}, [], {},
+        {"cash": 60_000.0, "portfolio_value": 100_500.0},
+        [
+            Position(
+                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
+                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            ),
+        ],
+        {},
     )
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
@@ -2575,17 +2587,26 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
     mock_broker.get_intraday_snapshots.return_value = {"QQQ": _today_snapshot(100.0)}
-    # 2 account snapshots: (1) initial pre-research, (2) post-sell refresh.
-    # The two late-breach account reads that used to sit between them went
-    # with the account-level loss breaker on 2026-09-20 (retired item 32).
-    # ExecutionStage's pre-BUY refresh only fires when there were no sells —
-    # this test has sells, so the post-sell refresh is reused.
+    # 3 account snapshots: (1) initial pre-research, (2) board item 178's
+    # ExecutionStage pre-SELL/COVER refresh (nothing has traded yet, so the
+    # book is unchanged from (1)), (3) post-sell refresh. The two
+    # late-breach account reads that used to sit between (1) and the old
+    # (2) went with the account-level loss breaker on 2026-09-20 (retired
+    # item 32). ExecutionStage's pre-BUY refresh only fires when there were
+    # no sells — this test has sells, so the post-sell refresh is reused for
+    # BUY sizing.
     mock_broker.get_account.side_effect = [
+        {"cash": 500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
         {"cash": 500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
         {"cash": 3500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
     ]
     mock_broker.get_positions.side_effect = [
-        # First entry feeds the session-entry broker-truth coverage reconciler.
+        # First entry feeds the session-entry broker-truth coverage
+        # reconciler. Unchanged: item 178's new pre-SELL/COVER refresh
+        # lands inside this same 5-call sequence (still pre-sale, so it
+        # reads the same SPY position the run-open snapshot already
+        # returned) — the existing 5 entries already cover it exactly, one
+        # of which previously went unused.
         [spy_position], [spy_position], [spy_position], [spy_position], [],
     ]
     mock_broker.wait_for_order_terminal.return_value = "filled"

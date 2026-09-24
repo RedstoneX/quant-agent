@@ -7866,6 +7866,29 @@ class ExecutionStage:
         cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
         hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
 
+        # Board item 178 — `ctx.positions`/`.cash`/`.total_value` are the
+        # run-OPEN broker snapshot, taken before Research/Decision/Risk ran;
+        # by the time this stage submits an ordinary SELL/COVER that
+        # snapshot is ~5-10 minutes stale. A refresh already ran for the
+        # RANKED-MARGIN rotation close (`_rotation_sell_gate`, which
+        # re-reads for its own case below) and for BUYs (post-loop, further
+        # down) — this was the one exit path still sizing qty and limit
+        # price off the stale open-of-run read. Re-read ONCE, here, before
+        # either loop starts, so ordinary SELL/COVER qty and price come from
+        # a current book; a no-op when nothing moved between the two reads.
+        if sell_decisions or cover_decisions:
+            account, positions, price_map = pipeline._refresh_account_state()
+            cash = account["cash"]
+            total_value = account["portfolio_value"]
+            ctx.positions = positions
+            ctx.cash = cash
+            ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
+            ctx.total_value = total_value
+            logger.info(
+                "Pre-sell refresh: $%.2f total, $%.2f cash, %d positions",
+                total_value, cash, len(positions),
+            )
+
         # Board item 39 — the RANKED-MARGIN rotation's close goes LAST
         # among this session's exits, so that when its paired BUY is
         # checked (in `_rotation_sell_gate`, immediately before the close

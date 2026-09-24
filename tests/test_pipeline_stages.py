@@ -372,8 +372,20 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
         "id": "sell-9", "status": "accepted", "symbol": "JPM",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    # Board item 178: ExecutionStage now re-reads the account before the
+    # SELL loop too, so this fixture must reflect a fresh snapshot that
+    # STILL holds JPM (this test isn't exercising the staleness fix itself
+    # — that's pinned separately — it needs the SELL to actually reach the
+    # broker so the finalize-failure path under test can run).
     pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 60_000.0, "portfolio_value": 100_000.0},
+        [
+            Position(
+                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
+                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            ),
+        ],
+        {},
     )
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
@@ -417,6 +429,143 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
         "did not confirm stop coverage" in r.getMessage() and "ExecutionStage" in r.getMessage()
         for r in caplog.records
     ), f"expected a finalize-failure warning; got {[r.getMessage() for r in caplog.records]}"
+
+
+def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot():
+    """Board item 178. `ctx.positions` is the run-OPEN broker snapshot,
+    taken before Research/Decision/Risk ran; if the position was reduced
+    mid-run (e.g. a stop filled) that snapshot is stale by the time this
+    stage submits an ordinary SELL. Pin that the fix re-reads the account
+    before sizing: the SELL must use the FRESH (lower) qty and the FRESH
+    price for its limit, not the stale run-open ones."""
+    from src.models import PortfolioDecision, Position
+    from src.pipeline_context import RunContext
+
+    pipeline = MagicMock()
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    pipeline.broker.submit_order.return_value = {
+        "id": "sell-1", "status": "accepted", "symbol": "JPM",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    pipeline._order_accepted.return_value = True
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._full_sell_qty = lambda q: q
+    pipeline.db = MagicMock()
+
+    # Fresh broker read (mid-run): only 40 shares remain (down from the
+    # run-open 100) and the price has moved to $340.
+    fresh_position = Position(
+        symbol="JPM", qty=40.0, avg_entry=250.0, current_price=340.0,
+        market_value=13_600.0, unrealized_pnl=3_600.0, sector="Financial",
+    )
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 20_000.0, "portfolio_value": 60_000.0},
+        [fresh_position],
+        {"JPM": 340.0},
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 10_000.0
+    ctx.total_value = 50_000.0
+    ctx.last_equity = 50_000.0
+    # Stale run-open snapshot: 100 shares @ $300.
+    ctx.positions = [
+        Position(
+            symbol="JPM", qty=100.0, avg_entry=250.0, current_price=300.0,
+            market_value=30_000.0, unrealized_pnl=5_000.0, sector="Financial",
+        ),
+    ]
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=[_sell("JPM")], portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+
+    stage = ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    pipeline._refresh_account_state.assert_called()
+    pipeline.broker.submit_order.assert_called_once()
+    call_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert call_kwargs["qty"] == 40.0, (
+        f"SELL sized off the stale run-open qty (100) instead of the fresh "
+        f"read (40): got {call_kwargs['qty']}"
+    )
+    assert call_kwargs["limit_price"] == round(340.0 * 0.995, 2), (
+        f"SELL limit priced off the stale run-open price ($300) instead of "
+        f"the fresh read ($340): got {call_kwargs['limit_price']}"
+    )
+
+
+def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot():
+    """Same defect, COVER side: a short reduced mid-run (partial buy-to-cover
+    already filled elsewhere, or a stop) must be covered off the fresh qty
+    and price, not the run-open snapshot."""
+    from src.models import PortfolioDecision, Position, TradeDecision
+    from src.pipeline_context import RunContext
+
+    pipeline = MagicMock()
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    pipeline.broker.submit_order.return_value = {
+        "id": "cover-1", "status": "accepted", "symbol": "TSLA",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    pipeline._order_accepted.return_value = True
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._full_sell_qty = lambda q: q
+    pipeline.db = MagicMock()
+
+    # Fresh broker read (mid-run): the short shrank from -50 to -20 shares,
+    # and the price moved to $210.
+    fresh_position = Position(
+        symbol="TSLA", qty=-20.0, avg_entry=200.0, current_price=210.0,
+        market_value=-4_200.0, unrealized_pnl=-200.0, sector="Consumer Cyclical",
+    )
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 20_000.0, "portfolio_value": 60_000.0},
+        [fresh_position],
+        {"TSLA": 210.0},
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 10_000.0
+    ctx.total_value = 50_000.0
+    ctx.last_equity = 50_000.0
+    # Stale run-open snapshot: -50 shares @ $200.
+    ctx.positions = [
+        Position(
+            symbol="TSLA", qty=-50.0, avg_entry=200.0, current_price=200.0,
+            market_value=-10_000.0, unrealized_pnl=0.0, sector="Consumer Cyclical",
+        ),
+    ]
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(),
+        decisions=[
+            TradeDecision(
+                action="COVER", symbol="TSLA", allocation_pct=100.0,
+                entry_price=200.0, stop_loss=220.0, take_profit=180.0,
+                reasoning="cover",
+            ),
+        ],
+        portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+
+    stage = ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    pipeline._refresh_account_state.assert_called()
+    pipeline.broker.submit_order.assert_called_once()
+    call_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert call_kwargs["qty"] == 20.0, (
+        f"COVER sized off the stale run-open qty (50) instead of the fresh "
+        f"read (20): got {call_kwargs['qty']}"
+    )
+    assert call_kwargs["limit_price"] == round(210.0 * 1.005, 2), (
+        f"COVER limit priced off the stale run-open price ($200) instead of "
+        f"the fresh read ($210): got {call_kwargs['limit_price']}"
+    )
 
 
 def test_execution_stage_submits_buys_after_the_account_state_refresh():
