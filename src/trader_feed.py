@@ -1153,12 +1153,21 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
             symbol = str(row.get("symbol", "?")).upper()
             allocation = row.get("allocation_pct")
             # Board item 89 clarity defect — a percentage with no
-            # denominator. `allocation_pct` is the constructor's target
-            # for this order as a share of the account.
-            alloc_text = (
-                f" {allocation:g}% of the account"
-                if isinstance(allocation, (int, float)) else ""
-            )
+            # denominator. `allocation_pct` was labelled "% of the
+            # account" for every action, which is wrong for SELL/COVER:
+            # `_build_sell`/`_build_cover` set it to the share of the
+            # EXISTING POSITION being sold/covered, not a share of the
+            # account. For BUY/SHORT/HOLD the constructor's own weight
+            # delta is divided by a gross multiplier before this field is
+            # set, so calling it a plain account fraction is unverified
+            # there too. Label each honestly instead of asserting an
+            # account-level figure nobody actually computed.
+            if isinstance(allocation, (int, float)) and action in ("SELL", "COVER"):
+                alloc_text = f" {allocation:g}% of the position"
+            elif isinstance(allocation, (int, float)):
+                alloc_text = f" {allocation:g}% (target weight change)"
+            else:
+                alloc_text = ""
             reason = _clip(row.get("reasoning"), 420)
             text = f"   • {action} {symbol}{alloc_text}"
             if reason:
@@ -1494,7 +1503,11 @@ def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict)
         qty_text = f"{qty:g}" if qty is not None else "?"
         price_text = f"${price:,.2f}" if price is not None and price > 0 else "?"
         stop = _symbol_stop(symbol, snap)
-        stop_text = f" · stop ${stop:,.2f}" if stop is not None else ""
+        # A closing SELL/COVER carries stop_loss=0.0 (no protective stop
+        # applies to an exit) — `is not None` let that render "stop $0.00".
+        # No legitimate stop is ever exactly 0.0 (the constructor rejects
+        # stop_loss <= 0 for BUY/SHORT), so a positive check is safe here.
+        stop_text = f" · stop ${stop:,.2f}" if stop else ""
         lines.append(
             f"   • {action} {_ticker_co(symbol, profiles)} {qty_text} @ "
             f"{price_text} — {state}{stop_text}"

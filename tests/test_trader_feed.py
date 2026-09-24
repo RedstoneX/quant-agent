@@ -647,6 +647,67 @@ def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     assert msg.index("BUY CCJ (Cameco Corporation)") > msg.index("<b>✅ DONE</b>")
 
 
+def test_closing_sell_does_not_render_a_fake_zero_stop(tmp_path, monkeypatch):
+    """A closing SELL/COVER carries `stop_loss=0.0` from the constructor
+    (`_build_sell`/`_build_cover` — no protective stop applies to an
+    exit), and `_symbol_stop` returned that 0.0 unchanged. `_append_done`
+    used `is not None` to decide whether to render a stop, so a real
+    closing sell showed "stop $0.00" — a number that looks measured but
+    is not. No legitimate stop is ever exactly 0.0."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-closing-sell"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 100,
+         "stop_loss": 0.0, "reasoning": "Full close"},
+        symbol="CCJ",
+    )
+    _trade(db, run, "CCJ", "SELL", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "SELL CCJ" in msg
+    assert "stop $0.00" not in msg
+    assert "stop $" not in msg
+
+
+def test_allocation_pct_is_labelled_honestly_by_action(tmp_path, monkeypatch):
+    """Board item 89: `allocation_pct` was universally labelled "% of the
+    account", which is wrong for SELL/COVER (there `_build_sell`/
+    `_build_cover` set it to the share of the EXISTING POSITION being
+    sold/covered) and unverified for BUY/SHORT (the constructor's weight
+    delta is divided by a gross multiplier before this field is set, so
+    it isn't a plain account fraction either). The label must state what
+    the number actually is instead of asserting an account-level figure
+    nobody computed."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-alloc-label"
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "AMD", "allocation_pct": 10,
+         "reasoning": "New position"},
+        symbol="AMD",
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 50,
+         "reasoning": "Partial trim"},
+        symbol="CCJ",
+    )
+    result = {"status": "executed", "run_id": run, "orders": []}
+
+    msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "% of the account" not in msg
+    assert "10% (target weight change)" in msg
+    assert "50% of the position" in msg
+
+
 def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-midday"
