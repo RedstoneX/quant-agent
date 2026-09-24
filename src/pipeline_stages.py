@@ -8617,14 +8617,30 @@ class ExecutionStage:
                     # WIDENS it, shrinking qty_by_risk; for a SHORT
                     # (`stop - entry`) a higher entry NARROWS it and can
                     # INFLATE qty_by_risk when the analyst entry sits above
-                    # the today print — a distinct short-side risk-sizing
-                    # defect tracked as its own board item, NOT fixed here.
+                    # the today print — item 181, fixed just below via
+                    # `risk_sizing_price` (this `sizing_price` stays the
+                    # allocation-path divisor, unchanged).
                     # What this line does fix: the short no longer divides by
                     # the below-market `bid_limit` (the over-size bug of
                     # item 120). Never size off a below-market number.
                     sizing_price = max(sizing_print, float(decision.entry_price))
                 else:
                     sizing_price = sizing_print
+                # item 181 FIX: the RISK-BUDGET divisor must never be
+                # inflated. `sizing_price` above is the max(print, entry) —
+                # correctly conservative for the ALLOCATION path in both
+                # directions — but on the RISK-BUDGET path
+                # `risk_per_share = |price - stop|`, and for a SHORT a
+                # HIGHER price NARROWS that spread. When the analyst's entry
+                # sits above today's print, sizing the risk budget off the
+                # entry understates risk_per_share and inflates qty_by_risk
+                # past the ratified budget (bounded only by the allocation
+                # min() cap). The short actually fills near the print, so
+                # the risk budget must be measured against the print. A BUY
+                # is unaffected: there risk_per_share = price - stop GROWS
+                # with a higher divisor, which is already the conservative
+                # direction, so it keeps using `sizing_price` unchanged.
+                risk_sizing_price = sizing_print if is_short else sizing_price
 
                 # Liquid-equity execution policy: cross the displayed quote
                 # with a limit (never a market order). A wider spread remains
@@ -8998,7 +9014,7 @@ class ExecutionStage:
                 # from the dollars spent.
                 qty_by_risk = _qty_by_risk_budget(
                     pipeline, total_value=total_value,
-                    sizing_price=sizing_price, stop_price=stop_price,
+                    sizing_price=risk_sizing_price, stop_price=stop_price,
                     is_short=is_short, fractional=fractional,
                 )
                 if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
@@ -9008,7 +9024,7 @@ class ExecutionStage:
                         "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
                         decision.symbol, _fmt_shares(qty_by_alloc),
                         _fmt_shares(qty_by_risk),
-                        abs(sizing_price - stop_price),
+                        abs(risk_sizing_price - stop_price),
                         total_value * _risk_pct / 100, _risk_pct,
                     )
                     qty = qty_by_risk

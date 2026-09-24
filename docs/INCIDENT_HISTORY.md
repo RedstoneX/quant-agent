@@ -15487,3 +15487,59 @@ listed in `src/notifier.py` under a comment calling it one of "the four
 remaining CATEGORY_LOST states", which stopped being true when the category
 was split on 2026-09-18; the comment is stale, the wording is right, and
 `src/notifier.py` had changes in flight when this shipped.
+
+## 2026-09-24 — a SHORT's risk-budget divisor used the analyst's stale entry, not the today print (item 181)
+
+**The defect.** Item 120 set the execution-loop sizing divisor to
+`sizing_price = max(today_print, approved_entry)` — conservative on the
+ALLOCATION path in both directions, and on the RISK-BUDGET path
+(`risk_per_share = |price - stop|`) for a BUY, where a higher price WIDENS
+the spread and shrinks `qty_by_risk`. For a SHORT the same higher divisor
+NARROWS the spread (`risk_per_share = stop - price`), so when the analyst's
+`entry` sat above today's print, the risk-budget path understated
+`risk_per_share` and inflated `qty_by_risk` by roughly
+`(stop - print) / (stop - entry)` — bounded only by the allocation-path
+`min()` cap, so not unbounded, but a real overshoot of the ratified risk
+budget. It was filed out of item 120's closing adversary pass and left
+untested.
+
+**The fix.** `src/pipeline_stages.py`'s submit loop now computes a separate
+`risk_sizing_price` for the `_qty_by_risk_budget` call:
+`sizing_print if is_short else sizing_price`. The ALLOCATION-path divisor
+(`sizing_price`, still `max(print, entry)`) and the BUY risk path are
+untouched. The vol-adjusted-sizing log line was also switched to log
+`risk_sizing_price` so it reports the risk-per-share actually used, not the
+allocation figure.
+
+**Adversary pass.**
+Objection-1: this could over-tighten a legitimate short whose analyst entry
+is a genuinely better (lower risk) fill than the print, shrinking a short
+that didn't need shrinking. Response-1: the entry is the constructor's
+PRE-EXECUTION plan; the print is measured NOW, at submit time, and is what
+the order will actually cross near (the allocation path already anchors on
+it for the same reason). Sizing the risk budget to a number no longer true
+at execution is exactly the bug being fixed; the "tighter" qty is the
+correct one for the price the short will actually fill at.
+Objection-2: this could silently change BUY sizing too if `is_short` is
+computed wrong or the ternary is inverted. Response-2:
+`test_buy_risk_budget_still_sizes_off_the_max_conservative_divisor` in
+`tests/test_item_181_short_risk_budget_sizing.py` pins the BUY path to the
+unchanged `sizing_price` (>= the print), and
+`test_short_risk_budget_unaffected_when_entry_is_at_or_below_the_print`
+pins the no-regression SHORT case where entry does not exceed the print —
+both pass, and reverting the one-line fix while keeping the tests turns the
+first assertion red, confirming the tests bind to the real code path, not a
+tautology.
+
+**Verified before fixing.** A reproduction test
+(`test_short_risk_budget_sizes_off_the_print_not_a_stale_higher_entry`)
+drove the real `ExecutionStage` submit loop with a SHORT (print $100, entry
+$104, stop $120) and confirmed the risk-budget call received `sizing_price
+== 104.0` (risk_per_share 16, understating the correct 20) before the fix,
+and `== 100.0` after.
+
+**No new unsourced number.** The fix reads `sizing_print`, already resolved
+earlier in the same function for the allocation path — no new constant.
+
+Item 181 is retired; residue: none — item 120's SIZING half is now fully
+closed on both the allocation and risk-budget paths, for both directions.

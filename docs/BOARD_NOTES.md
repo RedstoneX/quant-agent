@@ -714,7 +714,9 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Three findings, none acted on: the heal sets the seat from `model_dump()`, and the nomination collector reads `.nominations` only when the value is NOT a dict, so a healed macro contributes zero nominations silently by design-comment; the heal writes nothing to the macro store, so the next tick re-reads the superseded snapshot; and the only place a macro answer IS stored swallows its own failure as a warning. Also `mechanical_heal_macro` is reachable from tests only [verified, no `src/` caller].
 
-## item 181
+## item 181 — RETIRED 2026-09-24
 
 **Moved from WORK.md (2026-09-24) —** For a SHORT the risk path uses `stop - entry`, so a higher entry NARROWS it and INFLATES `qty_by_risk`: when `entry` sits ABOVE the today `print` the short exceeds its budget by ~`(stop - print)/(stop - entry)`. Bounded by `qty = min(qty_by_alloc, qty_by_risk)` so not unbounded, but real and reachable (the 5% freshness skip measures entry against the mid, not the print), and UNTESTED (item 120's short test disables the risk path and sets `entry == print`). Fix: size a short's `risk_per_share` off the print, not `max(print, entry)`. Two adjacent out-of-scope findings recorded in `docs/INCIDENT_HISTORY.md` (2026-09-23 item-120 entry), NOT to fix here: the cash-sweep SGOV park sizes off a mid-capable price, and `resolve_live_price`'s today-session-bar acceptance now makes the unconfirmed Alpaca daily-bar-date assumption load-bearing for sizing (fails safe).
+
+**Retired 2026-09-24** — `src/pipeline_stages.py` now computes a separate `risk_sizing_price = sizing_print if is_short else sizing_price` for the `_qty_by_risk_budget` call, proven by a reproduction test in `tests/test_item_181_short_risk_budget_sizing.py` that fails pre-fix and passes post-fix; full writeup in `docs/INCIDENT_HISTORY.md` (2026-09-24 entry). The two adjacent out-of-scope findings above (cash-sweep SGOV park price, `resolve_live_price` daily-bar-date assumption) are NOT closed by this fix and remain open findings, not re-filed here.
 
