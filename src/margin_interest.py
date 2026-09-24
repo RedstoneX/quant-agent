@@ -64,9 +64,14 @@ deliberately turned on.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
+
+logger = logging.getLogger(__name__)
 
 #: Alpaca's own day-count convention for margin interest — 360, not 365.
 DAYS_PER_YEAR_ALPACA_CONVENTION = 360
@@ -97,6 +102,60 @@ class MarginInterestEstimate:
     daily_usd: float
     annual_usd: float
     label: str = ESTIMATE_LABEL
+    #: How many calendar days tonight's end-of-day debit accrues before the
+    #: next trading day. Alpaca charges for EVERY calendar day the balance
+    #: is carried, trading day or not (owner-confirmed from Alpaca's own
+    #: docs, 2026-09-23): a normal weeknight is 1, a Friday is 3
+    #: (Fri+Sat+Sun), a Friday before a Monday holiday is 4. `daily_usd`
+    #: and `annual_usd` are deliberately unchanged by this — the per-day
+    #: figure is still the per-day figure; `period_usd` is the total.
+    days_charged: int = 1
+
+    @property
+    def period_usd(self) -> float:
+        """What tonight's carry actually costs: `daily_usd x days_charged`."""
+        return self.daily_usd * self.days_charged
+
+
+#: Safety bound on the forward calendar search in
+#: `days_charged_until_next_trading_day`. The longest real gap on the NYSE
+#: calendar is a 4-day holiday weekend; anything beyond a week is a broken
+#: calendar read, not a market closure, and degrades to 1.
+MAX_CALENDAR_LOOKAHEAD_DAYS = 7
+
+
+def days_charged_until_next_trading_day(
+    is_trading_day: Callable[[date], bool],
+    today: date,
+    max_lookahead_days: int = MAX_CALENDAR_LOOKAHEAD_DAYS,
+) -> int:
+    """Calendar days tonight's debit is charged for before the next session.
+
+    `(next trading day STRICTLY after today) - today`, in days. Weeknight
+    -> 1; Friday -> 3; Friday before a Monday holiday -> 4. `is_trading_day`
+    is the broker's calendar check (`AlpacaBroker.is_trading_day`), passed
+    in so this stays pure and testable with a stub.
+
+    NEVER raises and never returns less than 1: a calendar that cannot be
+    read (an exception, or no trading day found within the lookahead bound)
+    degrades to 1 — the flat per-day figure the desk showed before this
+    existed — because a broker hiccup must not be able to break the alert.
+    """
+    try:
+        for offset in range(1, max_lookahead_days + 1):
+            candidate = today + timedelta(days=offset)
+            if is_trading_day(candidate):
+                return offset
+    except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
+        logger.warning(
+            "trading-calendar lookahead failed; assuming 1 day charged: %s", exc,
+        )
+        return 1
+    logger.warning(
+        "no trading day found within %d days of %s; assuming 1 day charged",
+        max_lookahead_days, today,
+    )
+    return 1
 
 
 def overnight_debit_balance(end_of_day_cash: float | None) -> float:
@@ -141,7 +200,7 @@ def estimate_daily_interest(debit_balance: float, rate_pct: float) -> float:
 
 
 def build_estimate(
-    debit_balance: float, rate_pct: float,
+    debit_balance: float, rate_pct: float, days_charged: int = 1,
 ) -> MarginInterestEstimate | None:
     """The full estimate, or `None` when there is nothing to report.
 
@@ -164,6 +223,7 @@ def build_estimate(
         # cycle it was derived from (debit_balance * rate_pct / 100),
         # rather than mixing a 360-day daily accrual with a 365-day year.
         annual_usd=daily * DAYS_PER_YEAR_ALPACA_CONVENTION,
+        days_charged=max(1, int(days_charged)),
     )
 
 
@@ -181,11 +241,32 @@ def format_alert_line(estimate: MarginInterestEstimate | None) -> str | None:
     """
     if estimate is None:
         return None
-    return (
+    line = (
         f"💳 margin interest: ${estimate.daily_usd:,.2f}/day "
         f"(~${estimate.annual_usd:,.0f}/yr) on ${estimate.debit_balance:,.0f} "
-        f"carried overnight at {estimate.rate_pct:.2f}% — {ESTIMATE_LABEL}"
+        f"carried overnight at {estimate.rate_pct:.2f}%"
     )
+    if estimate.days_charged > 1:
+        # Alpaca charges for every calendar day the balance is carried,
+        # so a Friday's overnight is really three nights' worth. Said in
+        # plain words, with the total, so the per-day figure above cannot
+        # be read as tonight's bill.
+        line += (
+            f" — carried over the {_closure_name(estimate.days_charged)} "
+            f"that's {estimate.days_charged} days "
+            f"≈ ${estimate.period_usd:,.2f}"
+        )
+    return f"{line} — {ESTIMATE_LABEL}"
+
+
+def _closure_name(days_charged: int) -> str:
+    """Plain-words name for a multi-day carry: 3 -> weekend, 4 -> long
+    weekend, anything else -> market closure (a midweek holiday)."""
+    if days_charged == 3:
+        return "weekend"
+    if days_charged == 4:
+        return "long weekend"
+    return "market closure"
 
 
 #: Rendered when the account's own cash figure could not be read at all.
@@ -219,6 +300,7 @@ def _money(usd: float) -> str:
 
 def format_daily_line(
     end_of_day_cash: float | None, rate_pct: float | None,
+    days_charged: int = 1,
 ) -> str:
     """ALWAYS exactly one owner-facing line. Never `None`, never silent.
 
@@ -238,6 +320,10 @@ def format_daily_line(
       * no/zero rate configured  -> `RATE_UNAVAILABLE_LINE` (a FAULT, not a zero)
       * nothing borrowed         -> the zero line below
       * a real debit balance     -> `format_alert_line`, unchanged
+
+    `days_charged` (default 1) is threaded through to the estimate so a
+    Friday's line names the 3-day weekend charge; it has no effect on the
+    zero and fault states, which are exactly as before.
 
     The zero line carries the MEASURED overnight cash figure rather than a
     bare "$0.00/day", for two reasons. First, a constant string is
@@ -259,7 +345,7 @@ def format_daily_line(
     if rate_pct is None or rate_pct <= 0:
         return RATE_UNAVAILABLE_LINE
     debit_balance = overnight_debit_balance(end_of_day_cash)
-    line = format_alert_line(build_estimate(debit_balance, rate_pct))
+    line = format_alert_line(build_estimate(debit_balance, rate_pct, days_charged))
     if line is not None:
         return line
     if end_of_day_cash < 0:

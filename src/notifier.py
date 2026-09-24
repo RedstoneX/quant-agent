@@ -2848,8 +2848,8 @@ def _margin_interest_lines() -> list[str]:
     """
     from src.margin_interest import (
         RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
-        compare_estimate_to_broker_activity, format_daily_line,
-        overnight_debit_balance,
+        compare_estimate_to_broker_activity, days_charged_until_next_trading_day,
+        format_daily_line, overnight_debit_balance,
     )
 
     if _REHEARSAL_MODE:
@@ -2870,13 +2870,21 @@ def _margin_interest_lines() -> list[str]:
         account = broker.get_account()
         cash = account.get("cash")
         debit_balance = overnight_debit_balance(cash)
-        estimate = build_estimate(debit_balance, rate_pct)
+        # Alpaca charges for every calendar day a debit is carried, so a
+        # Friday's overnight is 3 days (4 before a Monday holiday). Read the
+        # exchange calendar for how many days tonight's carry spans; the
+        # helper never raises and degrades to 1 if the calendar can't be read.
+        from src.util.time import et_today
+        days_charged = days_charged_until_next_trading_day(
+            broker.is_trading_day, et_today(),
+        )
+        estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest estimate failed: %s", exc)
         return [UNAVAILABLE_LINE]
 
     # Always exactly one line, zero and fault states included.
-    lines = [format_daily_line(cash, rate_pct)]
+    lines = [format_daily_line(cash, rate_pct, days_charged)]
     if estimate is None:
         # Nothing borrowed: there is no charge to check the broker's own
         # INT records against, so the second line would have nothing to say.

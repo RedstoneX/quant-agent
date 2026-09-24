@@ -1653,6 +1653,18 @@ this is trusted:**
    been flipped on, so no night has yet carried a real debit balance to
    check this against.
 
+   **Weekend/holiday carry, 2026-09-23.** Owner-confirmed from Alpaca's
+   own docs: interest is charged for EVERY calendar day a debit balance is
+   carried, trading day or not — a Friday's overnight is 3 days
+   (Fri+Sat+Sun), a Friday before a Monday holiday is 4. The Telegram line
+   now reads the exchange calendar (`AlpacaBroker.is_trading_day`, via
+   `days_charged_until_next_trading_day`) and, when the carry spans more
+   than one day, appends "carried over the weekend that's 3 days ≈ $X".
+   `daily_usd`/`annual_usd` are unchanged; `period_usd` is the multi-day
+   total. A calendar read failure degrades to 1 day (the old flat figure),
+   never to an error. `GET /account`'s field still reports the flat
+   per-day figure only.
+
    **Verified 2026-09-01, one defect found and fixed.** Both wrappers
    (`read_margin_interest` and the Telegram `_margin_interest_lines`)
    originally fast-exited to "nothing to report" whenever `allow_margin`
