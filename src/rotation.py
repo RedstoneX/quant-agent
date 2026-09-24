@@ -202,11 +202,15 @@ back to raw cash when the ladder is unreadable. The PM prompt is already
 handed that exact figure (`margin_headroom_usd` / `margin_ladder_backed`,
 threaded so the Margin Capacity section "never derives its own number"),
 so the rotation pre-check is handed the same object rather than a second
-opinion about it. "Cannot fund a starter position" is then the §10.3
-notional floor `cash_sweep.min_order_usd` — the smallest order this desk
-will place at all, already ledgered, already the gate that produces the
-`below_min_notional` refusal in `REQUIRED_BUY_LEG_GATES`. No number is
-introduced here.
+opinion about it. "Cannot fund a starter position" was, until 2026-09-24,
+the §10.3 notional floor `cash_sweep.min_order_usd` — an arbitrary $500 with
+no broker minimum behind it, and Alpaca charges no stock commission, so a
+real rotation was being refused on a false "too small to matter" basis. The
+`below_min_notional` gate this used to name is retired outright (see
+`REQUIRED_BUY_LEG_GATES`) — a rotation whose replacement buy re-sizes to a
+genuine ZERO is still refused, via `insufficient_cash`, but a small, nonzero
+re-sized buy is no longer rejected for being under that flat floor. No
+number is introduced here.
 
 **And every refusal now writes a durable row.** This module used to return
 `None` at seven distinct points and record nothing at any of them, while
@@ -340,20 +344,27 @@ REQUIRED_BUY_LEG_GATES = (
     # absorbs it — a gate for a refusal that cannot fire is a check that
     # always passes, which is worse than no check because it reads like
     # one. The gross-exposure half of what that halt used to police
-    # survives untouched in the §11.2 ladder, and this list still gates it
-    # through `insufficient_cash` / `below_min_notional`, both of which are
-    # measured by `_entry_deployment_budget` on its ladder-backed branch.
+    # survives untouched in the §11.2 ladder, gated through
+    # `insufficient_cash`, measured by `_entry_deployment_budget` on its
+    # ladder-backed branch.
+    #
+    # The list was FIVE long until 2026-09-24. `below_min_notional`
+    # (retired-ok) is gone the same way: the flat $500 `min_order_usd`
+    # notional floor it named was an arbitrary round number
+    # (config/number_ledger.yaml), not a broker minimum, and Alpaca charges
+    # no stock commission — a genuine ~$295 / 2.95%-of-equity trade was
+    # refused on it as "pays full commission". `_prevent_rotation_naked_sale`
+    # no longer refuses a rotation's replacement buy for re-sizing small but
+    # nonzero; only a genuine zero still refuses, via `insufficient_cash`.
     "no_price",
     "stale_entry",
     "qty_zero",
-    # Added after adversary review of attempt 3. Both are deterministic
-    # functions of the POST-SALE book, so both are knowable before the
-    # sale — and both are the refusals a rotation is most likely to hit,
-    # because a rotation only surfaces when the risk headroom is already
-    # under the floor. Leaving them out was the same class of omission as
-    # attempt 1's, one layer further down.
+    # Added after adversary review of attempt 3. Deterministic function of
+    # the POST-SALE book, knowable before the sale — and the refusal a
+    # rotation is most likely to hit, because a rotation only surfaces when
+    # the risk headroom is already under the floor. Leaving it out was the
+    # same class of omission as attempt 1's, one layer further down.
     "insufficient_cash",
-    "below_min_notional",
 )
 
 #: Relative margin the best-ranked new candidate must clear over the

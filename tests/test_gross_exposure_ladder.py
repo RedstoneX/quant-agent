@@ -256,9 +256,11 @@ def test_a_planned_exit_frees_headroom_before_entries_are_judged():
     assert outcome.trims == []
 
 
-def test_a_remnant_below_the_minimum_order_is_refused_not_placed():
-    """§10.3's floor. A position shrunk to near-nothing still pays commission
-    and still needs watching — the honest answer is no trade."""
+def test_a_remnant_below_the_old_minimum_order_is_granted_not_refused():
+    """Fixed 2026-09-24: a position shrunk to near-nothing by the ceiling
+    used to be refused outright as under the flat $500 notional floor — an
+    arbitrary number, not a broker minimum, and Alpaca charges no stock
+    commission. It is now granted at whatever headroom is left."""
     positions = [_position("NVDA", qty=199.0, current_price=100.0)]  # $19.9k
     ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)              # $20k
     decision = _buy("AMD", 20.0)
@@ -267,22 +269,26 @@ def test_a_remnant_below_the_minimum_order_is_refused_not_placed():
         [decision], positions, EQUITY, ceiling, min_order_usd=500.0,
     )
 
-    assert decision.allocation_pct == 0.0
-    assert outcome.blocked == ["AMD"]
+    # $100 of headroom left (well under the old $500 floor) — granted, not
+    # refused.
+    assert decision.allocation_pct == pytest.approx(1.0)
+    assert outcome.blocked == []
+    assert "commission" not in decision.reasoning.lower()
 
 
 # ===========================================================================
 # THE GATE, PART 3 — the ladder is applied EXACTLY ONCE.
 # ===========================================================================
 
-def test_the_minimum_order_floor_is_notional_not_gross():
-    """`min_order_usd` is what the order COSTS — the figure that has to pay a
-    commission. The headroom the ceiling grants is measured in GROSS, and for
-    a leveraged ETF the two are not the same number.
+def test_gross_headroom_still_converts_to_notional_via_the_multiplier():
+    """The headroom the ceiling grants is measured in GROSS, and for a
+    leveraged ETF that is not the same number as the order's notional cost —
+    SQQQ is 3x, so $600 of gross headroom buys a $200 order.
 
-    SQQQ is 3x, so $600 of gross headroom buys a $200 order. Comparing the
-    gross figure against a $500 notional floor would place exactly the token
-    position §10.3 exists to refuse.
+    Fixed 2026-09-24: that $200 order used to be refused outright as under
+    the flat $500 notional floor (an arbitrary number, not a broker minimum,
+    and Alpaca charges no stock commission). It is now granted at the size
+    the gross/multiplier conversion gives it, same as any other entry.
     """
     positions = [_position("NVDA", qty=194.0, current_price=100.0)]  # $19.4k
     ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)              # $20k
@@ -296,10 +302,12 @@ def test_the_minimum_order_floor_is_notional_not_gross():
         [short], positions, EQUITY, ceiling, min_order_usd=500.0,
     )
 
-    # $600 of gross headroom / 3x = a $200 order. Below the floor: refused.
-    assert short.allocation_pct == 0.0
-    assert outcome.blocked == ["SQQQ"]
-    assert "minimum worth trading" in " ".join(outcome.notes)
+    # $600 of gross headroom / 3x = a $200 order, granted despite being well
+    # under the old $500 floor.
+    assert short.allocation_pct == pytest.approx(2.0)
+    assert outcome.blocked == []
+    assert "commission" not in " ".join(outcome.notes).lower()
+    assert "commission" not in short.reasoning.lower()
 
 
 def test_the_ceiling_is_a_level_so_applying_it_twice_changes_nothing():

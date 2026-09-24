@@ -893,15 +893,20 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     stage runs later, fed projected post-sale inputs — not a second
     implementation of it.
 
-    The list below is FIVE long and so is `REQUIRED_BUY_LEG_GATES`; a
+    The list below is FOUR long and so is `REQUIRED_BUY_LEG_GATES`; a
     `gate_coverage_incomplete` refusal at the bottom of this function is
     what keeps the two from drifting, and this paragraph is the third copy
     of the count, so change all three together. It was six until
     2026-09-23, when the owner's removal of the account-level loss halt
     (PR #584) deleted the `daily_loss_recheck` refusal (retired-ok) the
-    first gate anticipated. Nothing replaced it: the gross exposure that
-    halt shared with the §11.2 ladder is still gated, by the two funding
-    gates.
+    first gate anticipated, and five until 2026-09-24, when `below_min_notional`
+    (retired-ok) was deleted the same way: the flat $500 `min_order_usd`
+    notional floor it named was arbitrary, not a broker minimum, and Alpaca
+    charges no stock commission, so `_prevent_rotation_naked_sale` no
+    longer refuses a rotation's replacement buy for re-sizing small but
+    nonzero — only a genuine zero still refuses, via `insufficient_cash`.
+    Nothing replaced either deleted gate: the gross exposure the loss halt
+    shared with the §11.2 ladder is still gated, by `insufficient_cash`.
 
       * `no_price` / `stale_entry` — `_live_fill_price` and the same 5%
         deviation test the preflight applies. Neither depends on the sale
@@ -909,13 +914,13 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
       * `qty_zero` — the preflight's own sizing helpers (`_size_shares`,
         `_qty_by_risk_budget`, `_fractional_sizing_allowed`) at the
         projected equity.
-      * `insufficient_cash` / `below_min_notional` — `_entry_deployment_budget`
-        over the projected post-sale positions, equity and settled cash,
-        drained by every entry earlier in the same session exactly as the
-        submit loop drains it. This is the pair that still carries the
-        §11.2 gross ladder: the budget's ladder-backed branch measures the
-        headroom the sale frees, so a rotation that would breach gross is
-        refused here even though the account-level alarm is gone.
+      * `insufficient_cash` — `_entry_deployment_budget` over the
+        projected post-sale positions, equity and settled cash, drained by
+        every entry earlier in the same session exactly as the submit loop
+        drains it. This is what still carries the §11.2 gross ladder: the
+        budget's ladder-backed branch measures the headroom the sale
+        frees, so a rotation that would breach gross is refused here even
+        though the account-level alarm is gone.
 
     **What this does NOT close, stated plainly.** The BUY submit loop can
     still refuse an entry for reasons no pre-check can evaluate in advance:
@@ -1057,7 +1062,6 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # an opportunity; being wrong the other way sells a position to fund an
     # order that is then refused, which costs the position.
     checked.append("insufficient_cash")
-    checked.append("below_min_notional")
     projected_cash = _projected_post_sale_cash(
         cash, positions,
         [rotation_sell] if rotation_sell is not None else [], [],
@@ -1095,14 +1099,15 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
                 f"${order_ceiling:.2f} deployable on the post-sale book "
                 f"({budget_note})"
             )
-        resized_cost = min(qty, affordable_qty) * sizing_price
-        floor_usd = _min_order_usd(pipeline)
-        if resized_cost < floor_usd:
-            return None, "below_min_notional", (
-                f"${order_ceiling:.2f} deployable on the post-sale book "
-                f"re-sizes the order to ${resized_cost:.2f}, below the "
-                f"${floor_usd:,.0f} minimum worth trading"
-            )
+        # Fixed 2026-09-24 (retired the `below_min_notional` gate outright,
+        # see `REQUIRED_BUY_LEG_GATES`): this used to refuse the rotation
+        # whenever re-sizing to the post-sale budget landed under the flat
+        # `min_order_usd` floor — an arbitrary $500 with no broker minimum
+        # behind it, and Alpaca charges no stock commission. A rotation
+        # whose replacement buy re-sizes small but nonzero
+        # (`affordable_qty > 0`, already checked above) is cleared, not
+        # refused; the real "no shares fit" case is `insufficient_cash`
+        # above.
 
     missing = [g for g in REQUIRED_BUY_LEG_GATES if g not in checked]
     if missing:
@@ -3471,14 +3476,18 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
 
 
 def _min_order_usd(pipeline) -> float:
-    """The §10.3 notional floor — the smallest order worth placing.
+    """`cash_sweep.min_order_usd`, read the same way every other caller reads
+    it.
 
-    Read from `cash_sweep.min_order_usd` exactly as `apply_gross_ceiling`'s
-    caller (`TradingPipeline._enforce_gross_ceiling`) and the constructor
-    read it, so the floor that refuses a token order in the risk engine is
-    the same number that refuses one after the execution-time cash re-size.
-    An unreadable config falls back to the shared 500.0 default rather than
-    to zero: a floor that silently becomes "no floor" is the defect.
+    Fixed 2026-09-24: this used to be a NOTIONAL floor that refused a token
+    trade outright in the risk engine, the rotation buy-leg gate and the
+    execution-time cash re-size — an arbitrary $500 with no broker minimum
+    behind it, justified by a false "pays commission" claim (Alpaca charges
+    none). None of those three still use this value to reject a small trade;
+    it is kept here only because `apply_gross_ceiling` still accepts it as an
+    ignored parameter (existing callers pass it). The value's real, live job
+    is gating the spare-cash SWEEP (`src/execution/cash_sweep.py`), not trade
+    sizing.
     """
     raw = getattr(
         getattr(getattr(pipeline, "config", None), "cash_sweep", None),
@@ -9085,38 +9094,16 @@ class ExecutionStage:
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
-                    # §10.3's floor, re-applied to the size EXECUTION chose.
-                    # `apply_gross_ceiling` and the constructor both refuse a
-                    # trimmed order below `min_order_usd` rather than place a
-                    # token position — but this clamp happens AFTER both of
-                    # them, so it was the one resize with no floor under it.
-                    # With fractional sizing on, `affordable_qty` no longer
-                    # floors to zero shares when cash is short: a $3 residue
-                    # buys 0.0281 shares and the order goes out. A position
-                    # too small to pay for its own risk is not a smaller
-                    # trade, it is a worse one.
-                    floor_usd = _min_order_usd(pipeline)
-                    if estimated_cost < floor_usd:
-                        logger.warning(
-                            "Skipping BUY %s: the budget re-size cut the order "
-                            "to $%.2f (%s sh), below the $%.0f minimum worth "
-                            "trading",
-                            decision.symbol, estimated_cost,
-                            _fmt_shares(qty), floor_usd,
-                        )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "below_min_notional",
-                            f"${order_ceiling:.2f} still deployable re-sized the "
-                            f"order to ${estimated_cost:.2f}, below the "
-                            f"${floor_usd:,.0f} minimum worth trading",
-                        )
-                        _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "funding", "refused",
-                            "resized_below_min_notional",
-                            resized_notional=estimated_cost,
-                            min_order_usd=floor_usd,
-                        )
-                        continue
+                    # Fixed 2026-09-24: this used to refuse the re-sized
+                    # order outright ("below_min_notional") whenever it fell
+                    # under the flat `min_order_usd` floor — an arbitrary
+                    # $500 with no broker minimum behind it
+                    # (config/number_ledger.yaml), and Alpaca charges no
+                    # stock commission. With fractional sizing on,
+                    # `affordable_qty` above is already guaranteed nonzero
+                    # (the `affordable_qty <= 0` branch already refused as
+                    # `insufficient_cash`), so a $3 residue now simply buys
+                    # 0.0281 shares rather than being refused for smallness.
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "funding", "resized",
                         "confirmed_cash_partially_funded_order",
