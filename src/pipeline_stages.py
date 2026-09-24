@@ -55,6 +55,7 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
+    BOOK_LEVEL_VETO_CATEGORIES,
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
     parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
@@ -7489,12 +7490,51 @@ class RiskStage:
                 "reason": "risk_manager_unparseable_output",
             }
 
-        # BOOK-level veto, evaluated FIRST and unchanged. A correlation
-        # cluster, a total-exposure breach or a drawdown state is a property
-        # of the whole account, so when the book is what fails, every leg
+        # BOOK-level veto, evaluated FIRST. A correlation/factor cluster or an
+        # aggregate book-concentration / total-exposure breach is a property
+        # of the WHOLE account, so when the book is what fails, every leg
         # dying is the correct outcome — and a verdict that sets this AND
         # names individual symbols still refuses everything.
-        if not verdict.approved:
+        #
+        # Owner ruling 2026-09-24 (closing the item-162 harm): a whole-plan
+        # veto is honored ONLY when its `reason_category` is genuinely
+        # book-wide (`models.BOOK_LEVEL_VETO_CATEGORIES`). Hard limits are
+        # already enforced by CODE upstream (`_filter_hard_risk_decisions`
+        # ran before the seat), so `approved=False` here is a JUDGEMENT layer
+        # over a book that already cleared every hard limit. Over a mere
+        # advisory concern the seat may RESIZE or refuse one name, never nuke
+        # the batch. A veto whose category is advisory/ambiguous/missing is
+        # DOWNGRADED: we do NOT reject the whole plan; we fall through to the
+        # per-symbol path below, which drops only the seat's `rejected_symbols`
+        # and lets the rest of the batch proceed. Fail toward per-symbol on an
+        # unknown category — a downgraded veto only blocks NEW orders on a
+        # book that already passed the hard gate, so it can never breach a
+        # hard limit, whereas a wrongful full veto is the harm being fixed.
+        _veto_category = getattr(verdict, "reason_category", None)
+        _honor_book_veto = (
+            not verdict.approved
+            and _veto_category in BOOK_LEVEL_VETO_CATEGORIES
+        )
+        if not verdict.approved and not _honor_book_veto:
+            # Advisory / ambiguous / missing category — DOWNGRADE the veto.
+            logger.warning(
+                "advisory_veto_downgraded: risk manager set approved=False on "
+                "category %r, which is not book-wide; the whole-plan veto is "
+                "downgraded to per-symbol handling. Original reasoning: %s",
+                _veto_category, verdict.reasoning,
+            )
+            _record_pipeline_event(
+                pipeline, ctx, None, "risk", "advisory_veto_downgraded",
+                verdict.reasoning,
+                gate="risk_manager_advisory_veto_downgraded",
+                reason_category=_veto_category,
+                downgraded_rejected_symbols=sorted(
+                    verdict.rejections_by_symbol()
+                ),
+            )
+            # Fall through: the per-symbol refusal path below drops only the
+            # named symbols; everything else in the batch proceeds.
+        if _honor_book_veto:
             logger.info(
                 "Risk manager REJECTED trades: %s",
                 verdict.reasoning,

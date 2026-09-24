@@ -2574,6 +2574,45 @@ RiskReasonCategory = Literal[
 ]
 
 
+#: WHICH reason categories may carry a WHOLE-PLAN veto (`approved=False`
+#: refusing every leg). Owner ruling 2026-09-24, closing the item-162 harm:
+#: hard limits are enforced by CODE at the deterministic gate BEFORE the seat
+#: runs (`_filter_hard_risk_decisions`), so the AI seat's whole-plan veto is a
+#: judgement layer sitting on a book that already cleared every hard limit.
+#: Over a mere ADVISORY concern the seat may RESIZE (`modifications`,
+#: `scale_all_buys`) or refuse ONE name (`rejected_symbols`) — it may NOT nuke
+#: the whole batch. A whole-plan veto is therefore reserved for genuinely
+#: BOOK-WIDE failures — a correlation/factor cluster across the batch, or
+#: aggregate book concentration / total exposure — where killing every leg is
+#: the only correct answer.
+#:
+#: Membership is checked by EXACT equality, never substring, and lives here
+#: beside `RiskReasonCategory` so the one enum and the one whitelist cannot
+#: drift apart.
+#:
+#: Deliberately EXCLUDED:
+#:  - `oversized` — sizing too aggressive vs conviction is precisely what the
+#:    RESIZE levers exist for; a whole-plan veto on it is the 162 harm. The
+#:    old doctrine that let it veto (as a stand-in for a drawdown "no new risk
+#:    today" halt) is overruled: the owner REMOVED the account-level
+#:    drawdown/loss halt on 2026-09-20, so there is no live book-wide gate a
+#:    drawdown veto maps to.
+#:  - `rr_fail`, `event_risk`, `signal_fidelity` — all per-symbol concerns,
+#:    handled by refusing the one name.
+#:  - `data_degraded` — the seat's lever there is `scale_all_buys`, not a veto.
+#:  - `macro_misalign` — legacy, its exposure-vs-macro-target basis was
+#:    removed 2026-09-17.
+#:  - `other` / `clean` / missing / unknown — ambiguous, so FAIL toward
+#:    per-symbol handling: a downgraded veto only ever blocks NEW orders
+#:    (never sells) on a book that already passed every hard limit, so letting
+#:    the batch through while dropping any flagged names cannot breach a hard
+#:    limit — whereas a wrongful full veto is the exact harm being fixed.
+BOOK_LEVEL_VETO_CATEGORIES: frozenset[str] = frozenset({
+    "correlation_risk",  # theme/factor cluster across the batch — book-wide
+    "concentration",     # aggregate book concentration / total exposure
+})
+
+
 class _PerSymbolRejections:
     """`rejections_by_symbol()` for both risk verdict shapes.
 

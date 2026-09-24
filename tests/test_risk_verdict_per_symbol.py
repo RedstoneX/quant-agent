@@ -34,9 +34,11 @@ import pytest
 from src.agents.base import AgentResult
 from src.agents.risk_manager import RiskManagerAgent
 from src.models import (
-    PortfolioDecision, ReasoningChain, RiskReasoningChain, RiskVerdict,
-    SymbolRejection, TradeDecision,
+    BOOK_LEVEL_VETO_CATEGORIES,
+    PortfolioDecision, ReasoningChain, RiskReasonCategory, RiskReasoningChain,
+    RiskVerdict, SymbolRejection, TradeDecision,
 )
+from typing import get_args as _get_args
 from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
 
@@ -235,13 +237,17 @@ def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
      "XLE, CHPX and the held XOM are one energy cluster at 61% of the book"),
     ("concentration",
      "total exposure would reach 94% against a 90% ceiling"),
-    ("oversized",
-     "system is in drawdown; no new risk is appropriate today"),
+    # `oversized` (the old drawdown "no new risk today" stand-in) was REMOVED
+    # from this parametrize on 2026-09-24: the owner removed the account-level
+    # drawdown halt (item 32) and ruled that only genuinely book-wide
+    # categories may carry a whole-plan veto. Its downgrade is now pinned by
+    # `test_downgrade_*` below.
 ))
 def test_book_level_failure_still_refuses_every_leg(category, reasoning):
-    """Correlation clusters, total exposure and drawdown state are properties
-    of the WHOLE account. When the book is the problem, killing every leg
-    remains the correct answer and this change must not soften it."""
+    """A correlation/factor cluster and aggregate book concentration / total
+    exposure are properties of the WHOLE account. When the book is the
+    problem, killing every leg remains the correct answer and this change must
+    not soften it."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), reason_category=category,
@@ -273,6 +279,166 @@ def test_book_level_veto_wins_over_a_per_symbol_list():
 
     assert result["status"] == "rejected"
     assert _symbols(ctx) == ["XLE", "CHPX"], "no leg survives a book-level veto"
+
+
+# ---------------------------------------------------------------------------
+# Owner ruling 2026-09-24 — an ADVISORY-only whole-plan veto is DOWNGRADED.
+#
+# Closing the item-162 harm: hard limits are enforced by CODE at the
+# deterministic gate that runs BEFORE the seat, so `approved=False` here is a
+# judgement layer over a book that already cleared every hard limit. A
+# whole-plan veto is honored only when `reason_category` is genuinely
+# book-wide (`BOOK_LEVEL_VETO_CATEGORIES`); otherwise it is downgraded to
+# per-symbol handling and the batch proceeds. Fail toward per-symbol on an
+# ambiguous/unknown category — a downgraded veto can only block NEW orders on
+# an already-hard-cleared book, so it can never breach a hard limit.
+# ---------------------------------------------------------------------------
+
+def _downgrade_events(pipeline) -> list[tuple[str, str, str, str]]:
+    return [e for e in _events(pipeline) if e[2] == "advisory_veto_downgraded"]
+
+
+def test_danger1_book_wide_category_still_refuses_every_leg():
+    """Trap 1 — approved=False on a book-wide category (correlation cluster)
+    still refuses every leg; the veto is honored, NOT downgraded."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
+        reasoning="XLE and CHPX are one energy cluster at 61% of the book",
+    )
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result == {
+        "status": "rejected", "orders": [],
+        "reason": "XLE and CHPX are one energy cluster at 61% of the book",
+    }
+    assert _downgrade_events(pipeline) == [], "a book-wide veto is honored, not downgraded"
+
+
+def test_danger2_per_symbol_category_veto_drops_only_the_named_leg():
+    """Trap 2 — approved=False on a PER-SYMBOL category (rr_fail) that names
+    XLE is downgraded: XLE is dropped via the per-symbol lane, CHPX proceeds,
+    and the whole plan is NOT rejected."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="rr_fail",
+        rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
+        reasoning="XLE R/R below floor; nothing book-wide",
+    )
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None, "batch carries on to execution, not a terminal refusal"
+    assert _symbols(ctx) == ["CHPX"], "only the named leg is dropped"
+    downgrades = _downgrade_events(pipeline)
+    assert len(downgrades) == 1
+    assert downgrades[0][0] is None, "downgrade is a run-level event"
+    xle_rejected = [
+        e for e in _events(pipeline)
+        if e[0] == "XLE" and e[1] == "risk" and e[2] == "rejected"
+    ]
+    assert xle_rejected, "the named leg still records its own per-symbol refusal"
+
+
+def test_danger2b_per_symbol_category_with_no_named_symbols_lets_all_proceed():
+    """Trap 2 corollary — a per-symbol-grade veto (oversized, the old drawdown
+    stand-in the owner overruled) that names NO symbols downgrades to a no-op:
+    the whole batch proceeds. This is the case removed from the book-veto
+    parametrize above."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="oversized",
+        reasoning="system is in drawdown; no new risk is appropriate today",
+    )
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None
+    assert _symbols(ctx) == ["XLE", "CHPX"], "a soft account veto no longer nukes the batch"
+    assert len(_downgrade_events(pipeline)) == 1
+
+
+def test_danger3_missing_category_defaults_to_downgrade():
+    """Trap 3a — a veto with no category supplied (schema default 'clean')
+    is NOT book-wide, so it is downgraded and the batch proceeds."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(),
+        reasoning="approved=False with no category at all",
+    )
+    assert verdict.reason_category == "clean", "sanity: omitted category defaults to clean"
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None
+    assert _symbols(ctx) == ["XLE", "CHPX"]
+    assert len(_downgrade_events(pipeline)) == 1
+
+
+def test_danger3b_none_category_fails_closed_to_downgrade():
+    """Trap 3b — an explicitly None category reaching the chokepoint (a
+    malformed/unknown verdict) fails toward per-symbol: it is downgraded, not
+    honored as a full veto, and never silently disables the veto path for a
+    book-wide reason (see danger 1)."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
+        reasoning="category will be corrupted to None below",
+    )
+    verdict.reason_category = None  # simulate an unknown/absent category at runtime
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None, "an unknown category must NOT be honored as a full veto"
+    assert _symbols(ctx) == ["XLE", "CHPX"]
+    assert len(_downgrade_events(pipeline)) == 1
+
+
+def test_danger4_book_wide_category_with_named_symbols_still_full_veto():
+    """Trap 4 — approved=False on a book-wide category that ALSO names symbols
+    is still a full veto (book reason wins over the per-symbol list), item-164
+    behavior preserved."""
+    decisions = [_xle(), _chpx()]
+    verdict = RiskVerdict(
+        approved=False, reasoning_chain=_rc(), reason_category="concentration",
+        rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
+        reasoning="total exposure would reach 94% against a 90% ceiling",
+    )
+    pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
+    ctx = _ctx(decisions)
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result["status"] == "rejected"
+    assert _symbols(ctx) == ["XLE", "CHPX"], "no leg survives a book-wide veto"
+    assert _downgrade_events(pipeline) == []
+
+
+def test_danger5_whitelist_membership_is_exact_not_substring():
+    """Trap 5 — the whitelist is matched by EXACT equality, never substring,
+    and every member is a real reason-category enum value (no drift)."""
+    assert BOOK_LEVEL_VETO_CATEGORIES == {"correlation_risk", "concentration"}
+    valid = set(_get_args(RiskReasonCategory))
+    assert BOOK_LEVEL_VETO_CATEGORIES <= valid, "every whitelisted category must be a real enum value"
+    # Substrings of a member, and members-with-a-suffix, must NOT be counted in.
+    for near_miss in ("correlation", "concentr", "concentration_hard",
+                      "correlation_risk_soft", "risk", ""):
+        assert near_miss not in BOOK_LEVEL_VETO_CATEGORIES
+    # Every advisory / per-symbol category is deliberately OUT.
+    for advisory in ("oversized", "rr_fail", "event_risk", "signal_fidelity",
+                     "data_degraded", "macro_misalign", "other", "clean"):
+        assert advisory not in BOOK_LEVEL_VETO_CATEGORIES
 
 
 def test_scale_all_buys_still_applies_to_the_survivors():
