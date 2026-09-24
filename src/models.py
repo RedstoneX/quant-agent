@@ -2077,6 +2077,47 @@ class SmartMoneySynthesis(LLMOutputModel):
     findings: list[SmartMoneyFinding]
 
 
+#: Absolute-percentage-point gap between an explicit risk claim in `thesis`
+#: prose and `TargetPosition.risk_allocation_pct` that is small enough NOT to
+#: count as a mismatch (item 163). Not an independently chosen number: it is
+#: `RiskConfig.min_position_risk_pct` (config/settings.yaml:659), the
+#: owner-ratified floor granularity the risk field is already meaningful at
+#: -- two numbers less than one risk-budget increment apart are the same
+#: risk. Duplicated as a literal here (rather than imported) because
+#: `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at
+#: validation time; see config/number_ledger.yaml for the ledger entry this
+#: constant's inclusion in `MAX_UNSCOPED_NUMERIC_SITES` records.
+RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT = 0.5
+
+#: Matches an EXPLICIT risk-allocation percentage claim in free prose:
+#: "risking 2%", "risk of 2%", "2% risk". Deliberately narrow on purpose
+#: (item 163) -- it anchors on the word "risk"/"risking"/"risks" sitting
+#: directly next to the number (only "up to" may sit between them), so it
+#: does not fire on an incidental percentage elsewhere in the thesis: a
+#: target weight, a stop distance, a price gain, a macro figure. The
+#: `(?!-)` after the third alternative's "risk" excludes a hyphenated
+#: compound right after it ("risk-adjusted", "risk-reward") so "12%
+#: risk-adjusted return" is not misread as a 12% risk claim. Where this
+#: matcher cannot tell a risk-% claim from another percentage with
+#: reasonable confidence, it is built to MISS the claim rather than
+#: false-flag one -- see tests/test_models.py for the cases this covers.
+_RISK_PCT_CLAIM_PATTERN = re.compile(
+    r"\brisk(?:ing|s)?\s+(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*%"
+    r"|\brisk\s+of\s+(\d+(?:\.\d+)?)\s*%"
+    r"|(\d+(?:\.\d+)?)\s*%\s+risk(?!-)\b",
+    re.IGNORECASE,
+)
+
+
+def _explicit_risk_pct_claims(text: str) -> list[float]:
+    """Every explicit risk-percentage claim `_RISK_PCT_CLAIM_PATTERN` finds."""
+    claims: list[float] = []
+    for m in _RISK_PCT_CLAIM_PATTERN.finditer(text or ""):
+        raw = next(g for g in m.groups() if g is not None)
+        claims.append(float(raw))
+    return claims
+
+
 class TargetPosition(LLMOutputModel):
     """PM's per-symbol intent — WHAT the book should look like, not HOW to get there.
 
@@ -2215,6 +2256,44 @@ class TargetPosition(LLMOutputModel):
     # live PM decisions are required to populate this by the deterministic
     # PM grounding validator before they may reach PortfolioConstructor.
     provenance: list[AnalystProvenance] = Field(default_factory=list)
+
+    # --- Risk-narrative cross-check (item 163) -----------------------------
+    # `risk_allocation_pct` is authoritative for anything the desk acts on;
+    # this flag NEVER changes it and prose NEVER overrides it. It only
+    # records that the PM's own words and its own structured field disagreed
+    # about how much this idea risks, so the mismatch is surfaced instead of
+    # silently trusted. Set only by `_flag_risk_narrative_mismatch` below.
+    risk_narrative_mismatch: bool = False
+    risk_narrative_mismatch_detail: str = ""
+
+    @model_validator(mode="after")
+    def _flag_risk_narrative_mismatch(self):
+        """Flag when `thesis` prose states an explicit risk % that
+        materially differs from the authoritative `risk_allocation_pct`.
+
+        Runs only when `risk_allocation_pct` is populated -- a legacy target
+        carrying only `target_weight_pct` has no authoritative risk number to
+        check prose against. Uses `object.__setattr__` rather than a plain
+        assignment because `model_config` sets `validate_assignment=True`:
+        a normal `self.x = ...` here re-enters this same validator on every
+        assignment and recurses without terminating (measured).
+        """
+        if self.risk_allocation_pct is None:
+            return self
+        claims = _explicit_risk_pct_claims(self.thesis)
+        mismatched = [
+            c for c in claims
+            if abs(c - self.risk_allocation_pct) > RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT
+        ]
+        if mismatched:
+            detail = (
+                f"{self.symbol}: thesis states risk {mismatched[0]:g}% but "
+                f"risk_allocation_pct={self.risk_allocation_pct:g}%"
+            )
+            object.__setattr__(self, "risk_narrative_mismatch", True)
+            object.__setattr__(self, "risk_narrative_mismatch_detail", detail)
+            logger.warning("risk_narrative_mismatch: %s", detail)
+        return self
 
     @field_validator("symbol")
     @classmethod
