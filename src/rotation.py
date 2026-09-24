@@ -229,6 +229,67 @@ Neither change touches `ROTATION_MARGIN_PCT` or
 `rotation_ranked_margin_enabled`. Both remain blocked by 39(a). What
 changed is whether the comparison is ever REACHED and whether its outcome
 is RECORDED.
+
+**2026-09-23 — "natural selection" mandate: what it is, and the route that
+was designed and REJECTED for it.** The owner's framing: the book runs full
+up to the 2.00x gross ceiling (kept at 2.00x — the broker permits ~2x
+overnight under Reg-T and the owner does not want forced daily trims), and
+"every stock must keep earning its right to be in the portfolio"; when a
+better candidate exists and the book is full, the weakest holding should be
+displaced for it — a SWAP that never raises gross past the ceiling (the sale
+frees the room the buy then takes, sequenced buy-behind-sell as board item
+39 already builds). The owner defined "weakest" as lowest CONVICTION, not
+worst P&L.
+
+Read literally — rank the still-eligible holdings by conviction and prune
+the lowest when a better candidate qualifies — that mandate IS the
+ranked-margin tier, and it stays blocked, for two independent reasons, not
+one:
+
+  * board item 39(a): "how much better" is `ROTATION_MARGIN_PCT`, an
+    arbitrary, UNIDENTIFIABLE constant on the ordinal score (only four
+    distinct score ratios occur across the whole band; the fraction of pairs
+    clearing any threshold from 0.05 to 0.25 is identical), and 39(a) says
+    do not promote it to an execution gate until answered; and
+  * holding discipline (retired item 25, `docs/INCIDENT_HISTORY.md`): a
+    still-eligible, thesis-intact position is protected from a plain sale
+    with no real trigger, and opportunity cost is not one of the triggers —
+    so even a ZERO margin (pure "strictly better" ordering) would not make
+    an eligible, protected holding sellable. The margin is not the only
+    thing in the way.
+
+What the desk therefore delivers, non-arbitrarily and today, is the
+CATEGORICAL tier: a holding that has fallen below the desk's own fresh-entry
+bar has, by the identical rule a new buy must clear, "stopped earning its
+place," and a candidate that clears that same bar displaces it — pass/fail,
+no score margin, no invented number. It is live and, since PR #604 pointed
+the precondition at the union of every binding limit, actually reachable on
+a full book. Its real firing rate is UNMEASURED (it had fired zero times in
+the retained logs, and the rate at which a holding's structural protection
+breaks on this book — the other conjunct — is itself unmeasured, PR #604
+"found not fixed"), so it is honestly described as "categorically reachable,
+delivery rate unmeasured," never as "the mandate is fully delivered."
+
+REJECTED, do not re-propose (adversary review, 2026-09-23): choosing WHICH
+below-the-bar holding to prune by seat-weighted CONVICTION score. The
+categorical set (`blocked`) is not in `ranked` and carries no conviction
+rank, so it would have to be scored on the full composite — the exact
+coverage-sensitive weighted SUM the 2026-09-14 fix above proved is not
+comparable term-for-term across names, and the pairwise shared-seat escape
+cannot order N of them. It also inverts intent: an R3 "not BUY-eligible"
+name keeps its high seat score and would sort SAFEST, while an R2-neutral
+name (no read, score ~0) would always sort weakest. An ordering escapes the
+LETTER of the no-arbitrary-numbers rule but not its spirit when the scale is
+one the desk's own research condemns. The incumbent tie-break (most blocking
+entry-rules failed, then alphabetical) is the better "most clearly stale"
+proxy and is kept.
+
+What this change adds is measurement, not a mechanism: `precheck_record`
+now carries `held_below_entry_bar` / `_count` (`holdings_below_entry_bar`)
+every session — the holdings that would not be bought today — so the desk
+can finally see how many of its own names have stopped earning their place,
+which is the dataset "natural selection" and 39(a) both lack and which no
+new number can substitute for.
 """
 
 from __future__ import annotations
@@ -248,6 +309,7 @@ __all__ = [
     "RotationRefusal",
     "evaluate_rotation",
     "evaluate_rotation_opportunity",
+    "holdings_below_entry_bar",
     "rotation_binding_constraints",
     "funding_view_measured",
     "rotation_constraint_clause",
@@ -519,6 +581,36 @@ def funding_view_measured(
         and isinstance(min_order_usd, (int, float))
         and not isinstance(min_order_usd, bool)
     )
+
+
+def holdings_below_entry_bar(
+    blocked: dict[str, list[str]], held_symbols: set[str],
+) -> tuple[str, ...]:
+    """Which currently-held names would NOT be bought today.
+
+    Owner mandate (2026-09-23): "every stock must keep earning its right to
+    be in the portfolio." A held name that now appears in `blocked` — i.e.
+    fails the desk's own `candidate_eligibility` entry bar (R2 rating / R3
+    BUY-eligible / R5 net evidence / R6 constructor-refused) — has, by that
+    identical rule a brand-new buy must clear, stopped earning its place. It
+    is the exact set the categorical rotation tier ("ineligible_hold") is
+    allowed to prune from.
+
+    This returns the WHOLE set, upper-cased and sorted, as a session-level
+    telemetry fact — separate from `evaluate_rotation`'s choice of the ONE
+    name to surface. It is recorded every session (see `precheck_record`) so
+    the desk can measure how often, and on how many names, a holding has
+    decayed below its own entry bar while still on the book — a number
+    nothing recorded before, and the one that says whether "natural
+    selection" has anything to act on at all. It is a COUNT of a categorical
+    membership, not a score or a threshold, so it introduces no arbitrary
+    number (board item 39(a) stays untouched).
+    """
+    held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
+    return tuple(sorted(
+        sym.upper() for sym, reasons in blocked.items()
+        if reasons and sym.upper() in held
+    ))
 
 
 def evaluate_rotation_opportunity(
@@ -862,6 +954,14 @@ class RotationPrecheck:
     entry_budget_usd: float | None = None
     min_order_usd: float | None = None
     binding: tuple[str, ...] = field(default_factory=tuple)
+    #: Owner mandate 2026-09-23 ("every stock must keep earning its place").
+    #: Every held name that would NOT be bought today because it now fails
+    #: the desk's own entry bar (`holdings_below_entry_bar`). Session-level
+    #: telemetry, recorded whether or not the book is constrained: it is the
+    #: set the categorical tier may prune from, and its size says whether
+    #: natural selection has anything to act on. A categorical membership,
+    #: never a score — no arbitrary number.
+    held_below_entry_bar: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -1268,6 +1368,17 @@ def precheck_record(
         "entry_budget_usd": _opt_float(getattr(precheck, "entry_budget_usd", None)),
         "min_order_usd": _opt_float(getattr(precheck, "min_order_usd", None)),
         "binding": ",".join(_precheck_binding(precheck)),
+        # Owner mandate 2026-09-23. How many current holdings would not be
+        # bought today, and which — the "has every stock kept earning its
+        # place" signal. Recorded every session, constrained or not, because
+        # a name that decayed below the entry bar while the book still had
+        # room is precisely the case natural selection is not yet acting on.
+        "held_below_entry_bar": ",".join(
+            getattr(precheck, "held_below_entry_bar", ()) or ()
+        ),
+        "held_below_entry_bar_count": len(
+            getattr(precheck, "held_below_entry_bar", ()) or ()
+        ),
     }
     if opportunity is not None:
         record.update({

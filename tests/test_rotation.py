@@ -787,3 +787,70 @@ def test_the_prompt_names_the_constraint_that_is_actually_binding():
     assert "$92.20 still deployable for new entries" in result
     assert "$500 minimum order" in result
     assert "real room exists" not in result
+
+
+# --- owner "natural selection" mandate 2026-09-23 ---------------------------
+# The set of holdings that would NOT be bought today. A categorical
+# membership (are you in `blocked`?), never a score — so it introduces no
+# arbitrary number and cannot re-open board item 39(a). Recorded every
+# session so the desk can see how many of its own names have stopped earning
+# their place; see `holdings_below_entry_bar` and `precheck_record`.
+
+def test_holdings_below_entry_bar_is_held_names_that_fail_the_entry_bar():
+    from src.rotation import holdings_below_entry_bar
+
+    blocked = {
+        "OLD": ["R5 net evidence -1 if long — no rung"],
+        "STALE": ["R2 neutral rating", "R5 net evidence 0 if long — no rung"],
+        "NEWIDEA": ["R3 not BUY-eligible"],  # a candidate, not held
+    }
+    held = {"OLD", "STALE", "STRONG"}  # STRONG is held and eligible (not blocked)
+    # Only the HELD names that are also blocked, upper-cased and sorted.
+    assert holdings_below_entry_bar(blocked, held) == ("OLD", "STALE")
+
+
+def test_holdings_below_entry_bar_ignores_empty_reason_rows_and_is_case_insensitive():
+    from src.rotation import holdings_below_entry_bar
+
+    # An empty reason list is not a blocking row (matches
+    # `test_empty_blocked_reasons_are_not_treated_as_a_blocking_row`), and a
+    # held-symbol set in another case still matches.
+    blocked = {"old": ["R5 net evidence -1 if long — no rung"], "FINE": []}
+    assert holdings_below_entry_bar(blocked, {"OLD", "fine"}) == ("OLD",)
+
+
+def test_precheck_records_the_holdings_below_the_entry_bar_every_session():
+    """The telemetry rides in the SAME row `precheck_record` already writes,
+    whether or not the book is constrained — a name that decayed below the
+    bar while the book still had room is exactly the case natural selection
+    is not yet acting on, so gating the record on 'constrained' would hide
+    it."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.rotation import precheck_record
+
+    # Real room on every constraint (not constrained), yet a held name is
+    # already below the entry bar.
+    precheck = PortfolioManagerAgent.rotation_precheck(
+        ranked=[_rc("NEW", 1.8), _rc("KEEP", 1.2)],
+        blocked={"OLD": ["R5 net evidence -1 if long — no rung"]},
+        held_symbols={"OLD", "KEEP"},
+        existing_risk_pct={"OLD": 2.0, "KEEP": 2.0},
+        ceiling_pct=25.0,
+    )
+    assert precheck.opportunity is None  # book had room — nothing surfaced
+    assert precheck.held_below_entry_bar == ("OLD",)
+    record = precheck_record(
+        precheck, execute_enabled=True, ranked_margin_enabled=False,
+    )
+    assert record["held_below_entry_bar"] == "OLD"
+    assert record["held_below_entry_bar_count"] == 1
+
+
+def test_the_natural_selection_telemetry_introduces_no_margin_change():
+    """Guard: this change is measurement only. The provisional margin and
+    the two switches it gates are untouched — the categorical tier is what
+    delivers the mandate, and the ranked-margin number stays blocked by
+    39(a)."""
+    from src.rotation import ROTATION_MARGIN_PCT as MARGIN
+
+    assert MARGIN == 0.25  # unchanged; still `arbitrary` in the number ledger

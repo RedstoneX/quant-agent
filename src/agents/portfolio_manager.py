@@ -37,7 +37,8 @@ from src.risk.rules import (
 )
 from src.rotation import (
     RotationOpportunity, RotationPrecheck, evaluate_rotation,
-    funding_view_measured, rotation_binding_constraints,
+    funding_view_measured, holdings_below_entry_bar,
+    rotation_binding_constraints,
 )
 from src.trading_calendar import et_today
 from src.verdicts import RankedCandidate, rank_verdicts
@@ -1892,11 +1893,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         derives either number itself, for the same reason the Margin
         Capacity section does not.
         """
+        held_below = holdings_below_entry_bar(blocked, held_symbols)
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+                held_below_entry_bar=held_below,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -1920,6 +1923,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             ),
+            held_below_entry_bar=held_below,
         )
 
     @staticmethod
