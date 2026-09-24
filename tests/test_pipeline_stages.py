@@ -1475,12 +1475,13 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
 
 
 def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
-    """The sub-floor catalyst gate must run on the SAME two numbers the
-    deterministic risk layer downstream uses — the floor the constructor will
-    actually enforce, and the size `allocate_risk_budget` will actually grant.
-    Re-defaulting them inside the agent would let a settings.yaml override
-    move one and not the other (2026-09-02)."""
+    """`rr_floor` has no settings key any more (board item 81 — the inert
+    `min_reward_risk_after_widening` key was removed) so it always threads
+    as the historical `REWARD_RISK_FLOOR` constant. `starter_risk_pct` is
+    still read off the deterministic risk layer's own config, so a
+    settings.yaml override moves it (2026-09-02)."""
     from src.pipeline import TradingPipeline
+    from src.risk.constants import REWARD_RISK_FLOOR
 
     p = TradingPipeline.__new__(TradingPipeline)
     p.db = MagicMock()
@@ -1502,8 +1503,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     p._ensure_correlation_matrix = MagicMock(return_value={})
     p.config = MagicMock()
     p.config.risk.allow_margin = False
-    # Deliberately NOT the defaults, so a hardcoded number cannot pass.
-    p.config.risk.min_reward_risk_after_widening = 1.9
+    # Deliberately NOT the default, so a hardcoded number cannot pass.
     p.config.risk.min_position_risk_pct = 0.3
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
@@ -1527,7 +1527,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     DecisionStage(pipeline=p).run(ctx)
 
     kwargs = p.portfolio_manager.decide.call_args.kwargs
-    assert kwargs["rr_floor"] == 1.9
+    assert kwargs["rr_floor"] == REWARD_RISK_FLOOR
     assert kwargs["starter_risk_pct"] == 0.3
 
 

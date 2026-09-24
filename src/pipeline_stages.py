@@ -6327,11 +6327,9 @@ class DecisionStage:
             # risk budget will actually grant. `rr_floor` is retired as a
             # size/refuse threshold (owner 2026-09-17) and is still threaded
             # so existing callers/tests do not silently re-default a number
-            # that must not decide size.
-            rr_floor=float(getattr(
-                pipeline.config.risk, "min_reward_risk_after_widening",
-                REWARD_RISK_FLOOR,
-            )),
+            # that must not decide size. No settings key backs it any more
+            # (board item 81) — it is always the historical constant.
+            rr_floor=float(REWARD_RISK_FLOOR),
             starter_risk_pct=float(getattr(
                 pipeline.config.risk, "min_position_risk_pct",
                 STARTER_POSITION_RISK_PCT,
