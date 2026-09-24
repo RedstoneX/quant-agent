@@ -688,6 +688,51 @@ def test_margin_interest_lines_persists_a_row_for_the_cumulative_view(monkeypatc
     assert rows[0][2] == "estimate"
 
 
+def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monkeypatch, tmp_path):
+    """Consolidation pin, 2026-09-24: `notifier._persist_margin_interest_daily`
+    used to hand-roll its own `CREATE TABLE`/`INSERT ... ON CONFLICT` with a
+    raw sqlite3 connection — a duplicate of `Database.insert_margin_
+    interest_daily`'s own upsert. Now it must call THAT method and nothing
+    else, so the live daily write and the historical backfill
+    (`Database.backfill_margin_interest_daily`, which also writes through
+    `Database`) can never drift apart on what a row looks like or how
+    conflicts are resolved."""
+    import src.notifier as n
+    from src.storage.db import Database
+
+    db_path = tmp_path / "quant_agent.db"
+    monkeypatch.setattr(n, "_DB_PATH", db_path)
+
+    calls = []
+    original = Database.insert_margin_interest_daily
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Database, "insert_margin_interest_daily", spy)
+
+    n._persist_margin_interest_daily(
+        "2026-09-24", debit_balance=5000.0, rate_pct=6.25, daily_usd=0.868,
+        days_charged=1, period_usd=0.868, source="estimate",
+    )
+
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[0] == "2026-09-24"
+    assert args[1] == 5000.0
+    assert args[-1] == "estimate"
+
+    # And the row actually landed via that one path.
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT date, debit_balance, source FROM margin_interest_daily",
+    ).fetchone()
+    conn.close()
+    assert row == ("2026-09-24", 5000.0, "estimate")
+
+
 # ---------------------------------------------------------------------------
 # 9. "Every day, even if it's zero" — owner decision 2026-09-18
 # ---------------------------------------------------------------------------

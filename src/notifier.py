@@ -2954,48 +2954,34 @@ def _persist_margin_interest_daily(
     never stored cash/debit, so THIS table is the only historical record of
     the desk's overnight debit balance from here forward.
 
-    Same defensive, own-connection pattern as `_record_send_outcome`'s
-    `notifier_sends` write just above: a raw `sqlite3` connection with its
-    own `CREATE TABLE IF NOT EXISTS` (belt and suspenders — production's
-    `data/` dir and `Database()`'s own copy of this schema both exist by
-    the time a real morning run gets here, but this must not depend on
-    that). Never raises — a persistence failure here must not be able to
-    block the Telegram alert that already has its lines built.
+    Delegates the actual write to `Database.insert_margin_interest_daily`
+    — that method (and its `ON CONFLICT(date) DO UPDATE` upsert) is the
+    ONE place this schema's insert logic is allowed to live, so the live
+    morning write and the historical backfill
+    (`Database.backfill_margin_interest_daily`,
+    `scripts/backfill_margin_interest_history.py`) can never drift apart
+    on what a row looks like. (Before 2026-09-24 this function duplicated
+    that INSERT/`CREATE TABLE` by hand with its own `sqlite3` connection —
+    consolidated here; `Database()` already brings up the same table via
+    `initialize()`.)
+
+    A short-lived `Database` instance is opened and closed for this one
+    write, same "never raises, never blocks the alert" contract as
+    before: a persistence failure here must not be able to stop a
+    Telegram alert that already has its lines built.
     """
     try:
-        import sqlite3
+        from src.storage.db import Database
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+        db = Database(str(_DB_PATH))
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS margin_interest_daily (
-                    date TEXT PRIMARY KEY,
-                    debit_balance REAL NOT NULL,
-                    rate_pct REAL NOT NULL,
-                    daily_usd REAL NOT NULL,
-                    days_charged INTEGER NOT NULL DEFAULT 1,
-                    period_usd REAL NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'estimate',
-                    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
-                )
-                """
+            db.initialize()
+            db.insert_margin_interest_daily(
+                str(trading_day), debit_balance, rate_pct, daily_usd,
+                days_charged, period_usd, source,
             )
-            conn.execute(
-                "INSERT INTO margin_interest_daily "
-                "(date, debit_balance, rate_pct, daily_usd, days_charged, "
-                "period_usd, source) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(date) DO UPDATE SET "
-                "debit_balance=excluded.debit_balance, "
-                "rate_pct=excluded.rate_pct, daily_usd=excluded.daily_usd, "
-                "days_charged=excluded.days_charged, "
-                "period_usd=excluded.period_usd, source=excluded.source",
-                (str(trading_day), debit_balance, rate_pct, daily_usd,
-                 days_charged, period_usd, source),
-            )
-            conn.commit()
         finally:
-            conn.close()
+            db.close()
     except Exception as exc:  # noqa: BLE001 — persistence is a nicety, not the alert
         logger.warning("margin interest daily persistence failed: %s", exc)
 
