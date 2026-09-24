@@ -37,6 +37,10 @@ def _mk_pipeline(position: Position) -> TradingPipeline:
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
     pipeline.broker.replace_stop_loss.return_value = {"id": "stop-1", "status": "accepted"}
+    # Realistic live stop below the noise-floor tests' new stops, so the
+    # min-ratchet floor (new_stop >= old_stop × 1.02) is satisfied by the
+    # existing noise/cooldown fixtures and does not shadow their assertions.
+    pipeline.broker.get_current_stop_price.return_value = 330.0
     pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline._format_qty = lambda q: str(q)
@@ -142,6 +146,94 @@ def test_trail_cooldown_counts_superseded_rows_but_not_old_ones():
          "timestamp": datetime.now(timezone.utc).isoformat()},  # superseded today
     ]
     assert pipeline._trail_tightened_recently("GE") is True
+
+
+# ---------- minimum-ratchet floor (item 108: prompt/code drift) ----------
+#
+# The position_reviewer prompt states `new_stop_price >= old_stop_price × 1.02`
+# as a hard schema rule, but the TRAIL_STOP validation block never enforced it:
+# an under-2% raise reached the broker, paying cancel/replace churn. These lock
+# the floor. It is single-sourced from src.risk.trailing.MIN_RATCHET_PCT and,
+# unlike the noise band / cooldown, is NOT bypassable by a hard trigger.
+
+from src.risk.trailing import MIN_RATCHET_PCT  # noqa: E402
+
+
+def _floor_over(old_stop: float) -> float:
+    return old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)
+
+
+def test_trail_below_min_ratchet_floor_rejected_prior_stop_kept():
+    """A raise that clears the live stop by less than 2% is rejected and the
+    existing (looser, valid) broker stop is left untouched — protection is
+    never removed, only left where it was."""
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = 340.0
+    pipeline._atr_for_symbol = lambda s: 1.0  # noise floor 358.75, irrelevant
+    new_stop = _floor_over(340.0) - 0.5  # ~$346.30, a 1.85% raise
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-1",
+        review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
+    )
+    assert orders == []
+    pipeline.broker.replace_stop_loss.assert_not_called()
+
+
+def test_trail_at_or_above_min_ratchet_floor_passes():
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = 340.0
+    pipeline._atr_for_symbol = lambda s: 1.0
+    new_stop = _floor_over(340.0) + 1.0  # comfortably above the 2% floor
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-1",
+        review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", new_stop)
+
+
+def test_trail_exactly_at_min_ratchet_floor_passes():
+    """Boundary: exactly old_stop × 1.02 is accepted (the prompt's `≥`)."""
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = 340.0
+    pipeline._atr_for_symbol = lambda s: 1.0
+    new_stop = _floor_over(340.0)  # identical float to the code's computation
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-1",
+        review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", new_stop)
+
+
+def test_trail_min_ratchet_floor_not_bypassed_by_hard_trigger():
+    """Unlike the noise band and ratchet cooldown, a cited hard trigger does
+    NOT let an under-2% raise through — a sub-floor bump is churn regardless."""
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = 340.0
+    pipeline._atr_for_symbol = lambda s: 1.0
+    new_stop = _floor_over(340.0) - 0.5
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-1",
+        review=_trail_review("GE", new_stop,
+                             "thesis_invalid_if triggered — guidance withdrawn"),
+    )
+    assert orders == []
+    pipeline.broker.replace_stop_loss.assert_not_called()
+
+
+def test_trail_missing_old_stop_establishes_protection():
+    """No readable live stop → floor cannot be computed, so a TRAIL_STOP still
+    establishes protection rather than being blocked (noise/cooldown still apply)."""
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = None
+    pipeline._atr_for_symbol = lambda s: None  # no noise clamp
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-1",
+        review=_trail_review("GE", 345.0, "TARGET_BREACH — establishing stop"),
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 345.0)
 
 
 # ---------- live stop reference in position facts ----------
