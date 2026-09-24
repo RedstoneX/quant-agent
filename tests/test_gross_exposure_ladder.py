@@ -1850,7 +1850,7 @@ def test_a_failed_shortfall_write_never_breaks_the_delever():
 # ===========================================================================
 
 
-def _gap_fill_pipeline(*, gap_price, originals):
+def _gap_fill_pipeline(*, gap_price, originals, allow_margin=True):
     """Real de-lever loop against a broker that fills or rests by limit price.
 
     A SELL fills only when its limit is at/below the tradeable print; a
@@ -1858,7 +1858,7 @@ def _gap_fill_pipeline(*, gap_price, originals):
     then reports the book that actually remains after those fills, which is
     what `_alert_owner_delever_incomplete` re-measures against the ceiling.
     """
-    pipeline, events = _stop_timeline_pipeline(allow_margin=True)
+    pipeline, events = _stop_timeline_pipeline(allow_margin=allow_margin)
     submitted: dict = {}
 
     def _submit(*, symbol, side, limit_price, qty, **_kw):
@@ -2005,3 +2005,36 @@ def test_a_gross_delever_trims_down_to_the_ceiling_and_never_below_it():
     )
     left = pipeline2.broker.get_positions()[0].qty
     assert left * ref >= 10_000.0, "the remaining book is never below the ceiling"
+
+
+def test_a_cash_only_force_delever_fills_on_a_gap_the_old_1pct_limit_would_have_missed():
+    """Item 118, the `_force_delever` sibling (allow_margin=False). A cash
+    deficit forces a SELL; on a 2% gap-down the old 1%-through limit ($99) sat
+    above the $98 print and rested — the deficit stayed uncleared. The new
+    3%-through limit ($97) is marketable and fills. Same must-fill situation,
+    same buffer, so both de-lever paths now behave identically."""
+    from src.pipeline_context import RunContext
+
+    ref = 100.0
+    gap_price = 98.0
+    originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    pipeline, _events, submitted = _gap_fill_pipeline(
+        gap_price=gap_price, originals=originals, allow_margin=False,
+    )
+    ctx = RunContext(run_id="run-force-gap", session="morning")
+    ctx.cash = -5_000.0  # a real margin deficit forces the sweep
+    ctx.positions = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
+    ctx.total_value = EQUITY
+
+    orders = pipeline._force_delever(ctx)
+
+    assert orders, "a negative-cash book must be de-levered with no PM involved"
+    order = submitted["ord-NVDA"]
+    assert order["side"] == "sell"
+    assert order["limit_price"] == pytest.approx(97.0)
+    assert order["limit_price"] <= gap_price, "the new limit must fill on the gap"
+    assert round(ref * 0.99, 2) > gap_price, (
+        "guard: under this SAME gap the OLD 1%-through limit ($99) sat above "
+        "the $98 print and would have rested, leaving the deficit uncleared"
+    )
+    assert order["fillable"] is True

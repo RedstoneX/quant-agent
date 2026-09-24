@@ -11571,12 +11571,16 @@ class TradingPipeline:
         in to `allow_margin=False` want structural enforcement, not an LLM
         nudge. Speed and safety > LLM judgment here.
 
-        Sell limit uses a 1% below-market buffer
-        (`_EMERGENCY_LIMIT_CUSHION_PCT`) because we prioritize fill over
-        price when clearing an unintended margin position. Note the contrast
-        with the deleted daily-loss liquidator (docs/WORK.md item 32): this
-        path clears a MEASURED cash deficit of known size, not a whole book
-        on a gap day, and it is reached only when `allow_margin` is false.
+        Sell limit uses a 3% below-market buffer because we prioritize fill
+        over price when clearing an unintended margin position (docs/WORK.md
+        item 118): a limit only 1% through can rest unfilled on a fast day and
+        leave the deficit uncleared. 3% is the desk's own ratified must-fill-
+        exit buffer `AlpacaBroker.STOP_LIMIT_BUFFER_PCT`, the same one the
+        protective-stop leg and the gross-ceiling de-lever use — not a fresh
+        number. Note the contrast with the deleted daily-loss liquidator
+        (docs/WORK.md item 32): this path clears a MEASURED cash deficit of
+        known size, not a whole book on a gap day, and it is reached only when
+        `allow_margin` is false.
 
         Returns the submitted orders list (empty when no de-lever is needed).
         ctx.cash / positions / total_value are refreshed from broker after
@@ -11670,7 +11674,7 @@ class TradingPipeline:
                 qty = self._full_sell_qty(p.qty)
             if qty is None or qty <= 0:
                 continue
-            sell_limit = round(p.current_price * 0.99, 2)
+            sell_limit = round(p.current_price * 0.97, 2)
             # The sweep vehicle's exit is recorded as SWEEP_SELL, not
             # FORCE_DELEVER (audit round 2): action names are the sweep's
             # ledger-isolation mechanism — a FORCE_DELEVER row on SGOV leaks
@@ -11693,8 +11697,8 @@ class TradingPipeline:
                 # position to cover a deficit the in-flight order had already
                 # covered — liquidating real holdings over a bookkeeping
                 # failure (2026-07-16 audit).
-                # Conservative estimate: market × 0.99 (matches our limit).
-                projected_proceeds += p.market_value * 0.99
+                # Conservative estimate: market × 0.97 (matches our limit).
+                projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
                     "FORCE DE-LEVER SELL %s qty=%s @ limit=$%.2f "

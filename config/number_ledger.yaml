@@ -3766,11 +3766,11 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline.py:1466 and described in three
-      docstrings/comments as the de-lever cushion, but nothing reads it: the
-      live 1% is the inline literal
-      src.pipeline.TradingPipeline._force_delever:factor[1]. Recorded so it
-      cannot come back into use without a reviewer seeing it.
+      Dead. Defined at src/pipeline.py:1466 and described in comments as the
+      de-lever cushion, but nothing reads it: the live buffer is the inline
+      literal src.pipeline.TradingPipeline._force_delever:factor[1], now 3%
+      (0.97) after item 118. Recorded so it cannot come back into use without
+      a reviewer seeing it.
   - id: src.pipeline.TradingPipeline._another_session_recently_active(within_minutes)
     value: 15
     status: not-trade-governing
@@ -4200,33 +4200,28 @@ numbers:
       too large and more of the cash park is sold, and re-parked, than the
       deficit needs.
   - id: src.pipeline.TradingPipeline._force_delever:factor[1]
-    value: 0.99
-    status: arbitrary
+    value: 0.97
+    status: derived
     site: src/pipeline.py
+    derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
+    base_value: 0.03
     note: >-
-      Board item 138. The 1%-through-the-market SELL limit on a forced de-
-      lever (src/pipeline.py:11539): price x 0.99. The comment at
-      src/pipeline.py:1454-1466 describes this cushion as the named class
-      attribute `_EMERGENCY_LIMIT_CUSHION_PCT`, but that attribute is never
-      read; the live number is this inline literal.
-    open_question: >-
-      What limit distance fills a forced de-lever sell within the session on
-      this desk's names, measured from its own de-lever fills against the
-      reference price?
-    cost_while_unanswered: >-
-      Every forced de-lever sell gives up to 1% against the reference; if it
-      is too tight on a fast day the deficit is not cleared and the next
-      session repeats it.
+      Item 118. The must-fill SELL limit on a forced de-lever: price x 0.97,
+      i.e. 3% below the market so the sale clears routine volatility on a fast
+      day. Was 0.99 (a 1% buffer), which could rest unfilled and leave the
+      cash deficit uncleared. Now the SAME "prioritize fill over price" buffer
+      the protective-stop leg and the gross-ceiling de-lever use, 1 -
+      STOP_LIMIT_BUFFER_PCT, not a fresh number.
   - id: src.pipeline.TradingPipeline._force_delever:factor[2]
-    value: 0.99
+    value: 0.97
     status: derived
     site: src/pipeline.py
     derived_from: src.pipeline.TradingPipeline._force_delever:factor[1]
-    base_value: 0.99
+    base_value: 0.97
     note: >-
-      Projected proceeds of a de-lever sell, estimated at the same 0.99 the
-      sell limit uses (src/pipeline.py:11562 says 'matches our limit'). One
-      number, two sites.
+      Projected proceeds of a de-lever sell, estimated at the same 0.97 the
+      sell limit uses (the comment says 'matches our limit'). One number, two
+      sites.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary

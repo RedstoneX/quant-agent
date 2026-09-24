@@ -1441,12 +1441,15 @@ calls 'the only remaining automatic seller'". Before this change that was
 one of two account-wide mechanisms; it is now the only one, and its
 severity rose without its item being touched. [Read from `docs/WORK.md`
 item 118 and the cited code, 2026-09-23; the fill behaviour was not
-re-measured.] UPDATE (item 118, PR pending review): the trim is now priced
-3% through the market — the desk's ratified `STOP_LIMIT_BUFFER_PCT`
-must-fill-exit buffer — instead of 1%, tripling fill probability while
-still capping worst-case fill with a limit. A >3% gap can still miss and is
-reported as an incomplete de-lever; whether to switch to a market order for
-guaranteed fill is the open owner-appetite question recorded on item 118.
+re-measured.] UPDATE (item 118, PR pending review): both de-lever
+paths — `_enforce_gross_ceiling` and the `allow_margin=False`
+`_force_delever` sweep — now price the trim 3% through the market (the
+desk's ratified `STOP_LIMIT_BUFFER_PCT` must-fill-exit buffer) instead of
+1%, tripling fill probability while still capping worst-case fill with a
+limit; fixing both keeps the emergency de-lever paths consistent. A >3% gap
+can still miss and (for the gross-ceiling path) is reported as an incomplete
+de-lever; whether to switch to a market order for guaranteed fill is the
+open owner-appetite question recorded on item 118.
 
 **The ladder cancels a position's protective stop during the exact
 conditions this change says those stops are load-bearing.** Item 111
