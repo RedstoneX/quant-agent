@@ -52,6 +52,7 @@ from src.models import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.session_clock import todays_session_stamp
 
 # A stand-in "actually answered" model — always distinct from the
 # "configured" model set on each test's mock_config so a passing assertion
@@ -237,6 +238,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -380,6 +382,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
