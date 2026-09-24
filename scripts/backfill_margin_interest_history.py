@@ -88,7 +88,7 @@ def main(argv=None) -> int:
     from datetime import date as _date
 
     from src.api.deps import get_alpaca_credentials, get_alpaca_paper
-    from src.config import get_config
+    from src.config import load_config
     from src.execution.broker import AlpacaBroker
     from src.margin_interest import backfill_daily_estimates
     from src.storage.db import Database
@@ -96,7 +96,7 @@ def main(argv=None) -> int:
 
     key, secret = get_alpaca_credentials()
     broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
-    rate_pct = get_config().risk.margin_interest_rate_pct
+    rate_pct = load_config(PROJECT_ROOT / "config/settings.yaml").risk.margin_interest_rate_pct
 
     print("Fetching the account's full activity ledger from Alpaca...")
     activities = broker.get_all_account_activities()
