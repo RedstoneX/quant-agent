@@ -43,6 +43,7 @@ import ast
 import json
 import pathlib
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,6 +51,7 @@ from src import pipeline_stages as ps
 from src.config import ExecutionConfig, RiskConfig
 from src.models import Position
 from src.pipeline_context import RunContext
+from tests.session_clock import todays_session_stamp
 from src.risk.rules import RiskRuleEngine
 from src.rotation import (
     REQUIRED_BUY_LEG_GATES,
@@ -137,6 +139,31 @@ def _pipeline(tmp_path, *, positions=None, total_value=100_000.0,
     )
     pipeline.risk_engine = RiskRuleEngine(risk_config)
     pipeline._prices = prices if prices is not None else {"NEW": 50.0}
+
+    # `_today_sizing_price` (item 120: the SIZING divisor for a rotation's
+    # replacement BUY) reads `pipeline.broker.get_intraday_snapshots`
+    # directly — a separate check from `_live_fill_price`, which the tests
+    # below stub via `_stub_sizing`. Without a broker here it falls through
+    # to `getattr(pipeline, "broker", None)` = None and every buy leg is
+    # refused `no_price` regardless of what `_stub_sizing` set up. Give it a
+    # real today print (via `tests.session_clock.todays_session_stamp`, so
+    # it resolves at any hour) for whatever symbol is asked about, priced
+    # from `pipeline._prices` when known and $50 otherwise — the tests below
+    # only need this gate to pass, not a specific number, since the price
+    # that actually drives sizing/deviation assertions is `_live_fill_price`.
+    prices_by_symbol = dict(pipeline._prices)
+
+    def _snapshots(symbols):
+        return {
+            sym: {
+                "last_price": prices_by_symbol.get(sym, 50.0),
+                "last_trade_at": todays_session_stamp(),
+            }
+            for sym in symbols
+        }
+
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_intraday_snapshots.side_effect = _snapshots
 
     #: The gate refreshes the account before projecting, because the state
     #: this stage is handed is the research snapshot from 5-10 minutes

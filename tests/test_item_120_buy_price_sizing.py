@@ -27,7 +27,7 @@ The resolver's own branch coverage (a quote mid can never become a price; a
 prior-session trade is never returned) lives in tests/test_desk_sees_today.py.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -45,6 +45,7 @@ from src.pipeline_stages import (
     ExecutionStage, _rotation_buy_leg_projected_refusal, _today_sizing_price,
 )
 from src.portfolio_constructor import PortfolioConstructor
+from tests.session_clock import todays_session_bar_stamp
 
 ET = ZoneInfo("America/New_York")
 
@@ -364,17 +365,22 @@ def test_execution_and_constructor_agree_on_a_today_session_bar():
     print is item 120's exact population. Both stages must size it off that
     bar (a real intraday price, never a mid), so a name the paid seats size
     is not silently skipped at execution."""
-    now = datetime.now(ET)
+    # A fixed, unambiguously-past stale stamp — written out explicitly per
+    # tests/session_clock.py's own rule ("a stamp meaning stale... must NOT
+    # come from here"), so this test does not itself trip the live-clock
+    # scan in tests/test_no_clock_dependent_price_stamps.py.
+    stale_last_trade_at = datetime(2020, 1, 1, tzinfo=ET)
+    session_bar_at = todays_session_bar_stamp()
     snapshot = _snap(
-        last_price=161.79, last_trade_at=now - timedelta(days=1),  # stale
-        session_bar_at=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        last_price=161.79, last_trade_at=stale_last_trade_at,  # stale
+        session_bar_at=session_bar_at,
         session_open=158.38, session_close=158.55,
     )
     constructor_price = resolve_live_price(snapshot).price  # session bar close
 
     broker = MagicMock()
     broker.get_latest_price_stamped.return_value = LivePrice(
-        price=161.79, source="last_trade", trade_at=now - timedelta(days=1),
+        price=161.79, source="last_trade", trade_at=stale_last_trade_at,
         is_today=False, is_today_print=False,  # stale print, refused for sizing
     )
     broker.get_intraday_snapshots.return_value = {"NVDA": snapshot}

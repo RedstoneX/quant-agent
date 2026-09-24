@@ -29,6 +29,7 @@ from src.conviction_ledger import (
     summarize_closed_position,
 )
 from src.storage.db import Database
+from tests.session_clock import todays_session_stamp
 
 
 @pytest.fixture
@@ -928,6 +929,15 @@ def _decision_stage_pipeline(db):
     p._last_symbol_sectors = {}
     p.broker = MagicMock()
     p.broker.get_latest_price.return_value = 100.0
+    # Item 120: the constructor's new-name sizing price now goes through
+    # `resolve_live_price` against `get_intraday_snapshots`, not the bare
+    # `get_latest_price` mock above — give NVDA a real today print (via
+    # `tests.session_clock.todays_session_stamp`, hour-independent) or the
+    # buy is refused `sizing_price_missing` and this fixture produces no
+    # order at all.
+    p.broker.get_intraday_snapshots.return_value = {
+        "NVDA": {"last_price": 100.0, "last_trade_at": todays_session_stamp()},
+    }
     p.portfolio_constructor = PortfolioConstructor()
     p.portfolio_manager = MagicMock()
     return p
