@@ -5546,6 +5546,14 @@ class TradingPipeline:
         recent_sells) filter on fill_status so a limit order that never crossed
         doesn't pollute PM memory or calibration stats.
 
+        A `partially_filled` (or any non-terminal working) order whose broker
+        snapshot already shows shares filled has its ACTUAL filled qty/avg
+        price recorded while it stays 'submitted', so downstream position /
+        cash / calibration see the executed portion immediately instead of
+        waiting for a terminal status that may never arrive (item 102). The
+        absolute cumulative snapshot is written each pass, so a later partial
+        or terminal pass never double-counts the same shares.
+
         Scoped to a single run_id when ctx is provided — we don't want to
         retroactively flip stale submissions from previous days. Alpaca
         purges order history after a few days; unreconciled-and-unreachable
@@ -5644,8 +5652,46 @@ class TradingPipeline:
                     )
                 else:
                     logger.warning("Reconciled %s: did NOT fill (status=%s)", order_id, status)
-            # Non-terminal statuses (new, accepted, partially_filled) stay
-            # 'submitted' for the next reconciliation pass to pick up.
+            else:
+                # Non-terminal status (new, accepted, partially_filled, ...).
+                # If the broker already reports shares filled on this working
+                # order, RECORD the actually-filled qty/avg price now so
+                # position, cash and calibration see reality — but KEEP
+                # fill_status 'submitted' so get_unreconciled_orders re-picks
+                # the row and the eventual terminal transition still lands
+                # (item 102). We write the broker's ABSOLUTE cumulative
+                # snapshot (filled_qty / filled_avg_price), never a delta, so
+                # re-seeing the same partial, a growing partial, or the final
+                # terminal 'filled' can never double-count the same shares:
+                # every downstream consumer reads the row's absolute fill_qty
+                # once, and realized_pnl is recomputed from scratch on each
+                # write. A zero-fill working order (new/accepted) is untouched
+                # and stays 'submitted' for the next pass exactly as before.
+                try:
+                    partial = float(fill_qty) if fill_qty is not None else 0.0
+                except (TypeError, ValueError):
+                    partial = 0.0
+                if partial > 0:
+                    try:
+                        prev = float(row.get("fill_qty") or 0)
+                    except (TypeError, ValueError):
+                        prev = 0.0
+                    self.db.update_trade_fill(
+                        broker_order_id=order_id, fill_status="submitted",
+                        fill_qty=fill_qty,
+                        fill_price=fill_price,
+                    )
+                    # Only emit lifecycle evidence / log on a genuine INCREASE
+                    # in filled shares, so repeated partial passes over an
+                    # unchanged fill don't spam PM memory with duplicate events.
+                    if partial > prev + 1e-9:
+                        _record_broker_event(row, status, fill_qty, fill_price)
+                        logger.info(
+                            "Reconciled %s: partial fill recorded "
+                            "(status=%s, qty=%s, avg=$%s); order stays open "
+                            "for the remainder",
+                            order_id, status, fill_qty, fill_price,
+                        )
 
     def _reconcile_orphan_pending_submits(self) -> int:
         """Resolve BUY write-ahead orphans (audit F4).
