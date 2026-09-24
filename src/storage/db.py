@@ -656,6 +656,32 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- One row per trading day the margin-interest tracker actually
+            -- ran (owner ask, 2026-09-24: a cumulative this-week/month/
+            -- all-time view replacing the old per-day/per-year figures).
+            -- `period_usd` is what that night's carry cost (already
+            -- multiplied by `days_charged` for a weekend/holiday carry —
+            -- see `src.margin_interest.MarginInterestEstimate.period_usd`);
+            -- `debit_balance`/`rate_pct`/`days_charged` are kept alongside
+            -- for audit, not for re-derivation. `source` is 'estimate'
+            -- (our own daily-accrual formula; paper trading has never
+            -- posted a real INT activity as of 2026-09-24) or
+            -- 'broker_actual' if that ever changes. This table is the ONLY
+            -- historical record of the desk's overnight debit balance —
+            -- `daily_pnl` never stored cash/debit — so an accurate
+            -- ESTIMATE-path "all-time" total can only ever cover days from
+            -- here forward; see `src.margin_interest.bucket_estimate_rows`.
+            CREATE TABLE IF NOT EXISTS margin_interest_daily (
+                date TEXT PRIMARY KEY,
+                debit_balance REAL NOT NULL,
+                rate_pct REAL NOT NULL,
+                daily_usd REAL NOT NULL,
+                days_charged INTEGER NOT NULL DEFAULT 1,
+                period_usd REAL NOT NULL,
+                source TEXT NOT NULL DEFAULT 'estimate',
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             -- The evening run's OWN OUTPUT — the exact result dict the
             -- evening Telegram formatter (src/trader_feed.py
             -- `_format_evening`) was handed, plus the book as the
@@ -3503,6 +3529,33 @@ class Database:
                      daily_return_pct=excluded.daily_return_pct,
                      equity_close=COALESCE(excluded.equity_close, daily_pnl.equity_close)""",
                 (date, total_value, daily_pnl, daily_return_pct, equity_close),
+            )
+            self.conn.commit()
+
+    def insert_margin_interest_daily(
+        self, date: str, debit_balance: float, rate_pct: float, daily_usd: float,
+        days_charged: int, period_usd: float, source: str = "estimate",
+    ) -> None:
+        """One row per trading day the margin-interest tracker ran — the
+        only historical record of the desk's overnight debit balance (see
+        the table's own comment in `initialize()`). A same-day re-run
+        replaces its own row (`ON CONFLICT(date) DO UPDATE`), same
+        convention as `insert_daily_pnl`."""
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO margin_interest_daily
+                   (date, debit_balance, rate_pct, daily_usd, days_charged,
+                    period_usd, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(date) DO UPDATE SET
+                     debit_balance=excluded.debit_balance,
+                     rate_pct=excluded.rate_pct,
+                     daily_usd=excluded.daily_usd,
+                     days_charged=excluded.days_charged,
+                     period_usd=excluded.period_usd,
+                     source=excluded.source""",
+                (date, debit_balance, rate_pct, daily_usd, days_charged,
+                 period_usd, source),
             )
             self.conn.commit()
 

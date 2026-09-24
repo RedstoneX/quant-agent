@@ -193,6 +193,45 @@ class MarginInterestEstimate(BaseModel):
     #: overnight at least once.
     broker_check_note: str | None = None
     error: str | None = None
+    #: The owner-facing cumulative view (this week / current month / up to
+    #: 6 months / all-time) that replaced the per-day/per-year figures
+    #: above as the cockpit/Telegram headline, 2026-09-24. `None` only on a
+    #: read failure — a genuine "nothing measured yet" state is
+    #: `MarginInterestCumulative(source="no_data", ...)`, not `None`.
+    cumulative: "MarginInterestCumulative | None" = None
+
+
+class MarginInterestCumulative(BaseModel):
+    """Owner ask, 2026-09-24: replace the per-day/per-year figures and the
+    ESTIMATE-caveat paragraph with a running cumulative total — this week,
+    the current month, each of up to five more recent months that had any
+    interest (months with none are omitted, never padded in as zero), and
+    an all-time total.
+
+    `source` is `"broker_actual"` when every dollar counted is a
+    broker-confirmed `INT` charge (Alpaca's own permanent activity ledger —
+    covers the account's full history, no local storage needed),
+    `"estimate"` when it falls back to our own persisted daily-accrual
+    ESTIMATE rows (only ever covers days since this tracker started
+    persisting — see `all_time_since`), or `"no_data"` when neither source
+    has anything yet. `is_estimate` is the single small "est." marker the
+    cockpit/Telegram show in place of the old caveat paragraph.
+    """
+    this_week_usd: float
+    current_month_usd: float
+    current_month_label: str
+    prior_months: list[dict]
+    all_time_usd: float
+    #: The date the `all_time_usd` total is actually counted from. For the
+    #: broker-actual source this is the earliest `INT` activity Alpaca has
+    #: on record. For the estimate fallback it is the earliest day THIS
+    #: TRACKER persisted a row — NOT necessarily the day the desk first
+    #: went on margin, since no historical debit balance was ever stored
+    #: before this feature existed. Always shown alongside the total so
+    #: "all-time" is never misread as more complete than it is.
+    all_time_since: str
+    is_estimate: bool
+    source: str
 
 
 class AccountResponse(BaseModel):

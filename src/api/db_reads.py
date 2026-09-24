@@ -709,6 +709,33 @@ def get_earliest_daily_pnl() -> dict | None:
             conn.close()
 
 
+def get_margin_interest_daily_all() -> list[dict]:
+    """`SELECT * FROM margin_interest_daily ORDER BY date ASC` — every
+    persisted daily-accrual ESTIMATE row, oldest first. The bucketing in
+    `src.margin_interest.bucket_estimate_rows` does its own windowing (this
+    week / current month / up to 6 months / all-time), so this returns the
+    full table rather than filtering here — the table only ever holds rows
+    from the day this tracker started persisting forward, never more than a
+    cockpit poll needs. Returns `[]` on any read failure, including the
+    table not existing yet (a fresh deploy before the tracker's first
+    morning run) — that degrades to `source="no_data"` in
+    `bucket_estimate_rows`, never a fabricated zero.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT date, debit_balance, rate_pct, daily_usd, days_charged, "
+            "period_usd, source FROM margin_interest_daily ORDER BY date ASC",
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.Error:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def session_prefixes_logged_on() -> list[str]:
     """Distinct run_id prefixes (e.g. "run", "midday") logged in agent_logs
     today (ET trading day). Mirrors `Database.session_prefixes_logged_on`'s

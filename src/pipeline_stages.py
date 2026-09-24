@@ -4579,13 +4579,36 @@ def _risk_event_for(
         return "approved", reason, details
     aliases = field_aliases if isinstance(field_aliases, dict) else {}
     seat_reasons = []
+    seat_edited_fields: set[str] = set()
     for m in (getattr(verdict, "modifications", None) or []):
         field = aliases.get(m.field, m.field)
-        if (
-            m.symbol.strip().upper() == key[0] and field in changes
-            and (m.reason or "").strip()
-        ):
-            seat_reasons.append(f"{field}: {m.reason}")
+        if m.symbol.strip().upper() == key[0] and field in changes:
+            seat_edited_fields.add(field)
+            if (m.reason or "").strip():
+                seat_reasons.append(f"{field}: {m.reason}")
+    # Board item 134. When a stop_loss/entry_price edit widened risk-per-share,
+    # `_apply_risk_modifications` reduces `allocation_pct` to keep dollar risk
+    # within the granted budget. That drop is NOT a field the seat named, so it
+    # would otherwise sit in `changes` with no reason of its own — reading as an
+    # unexplained move or bucketed under the stop edit. Attribute it explicitly
+    # (only when the seat did not itself edit allocation_pct, the size fell, and
+    # a stop/entry edit is what moved).
+    alloc_change = changes.get("allocation_pct")
+    if (
+        alloc_change is not None
+        and "allocation_pct" not in seat_edited_fields
+        and decision.action in ("BUY", "SHORT")
+        and isinstance(alloc_change[0], (int, float))
+        and isinstance(alloc_change[1], (int, float))
+        and alloc_change[1] < alloc_change[0]
+        and seat_edited_fields & {"stop_loss", "entry_price"}
+    ):
+        widened = ", ".join(sorted(seat_edited_fields & {"stop_loss", "entry_price"}))
+        seat_reasons.append(
+            f"allocation_pct: reduced to keep dollar-risk within the granted "
+            f"budget after the risk seat edited {widened} (wider stop / edited "
+            f"entry -> smaller position, never larger dollar risk)"
+        )
     if (
         scale < 1.0 and decision.action in ("BUY", "SHORT")
         and "allocation_pct" in changes
