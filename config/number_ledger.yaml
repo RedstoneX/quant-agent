@@ -1420,9 +1420,9 @@ numbers:
     site: src/execution/cash_sweep.py
     note: >-
       The fees/slippage buffer held back when funding a sweep. A round 1% with
-      a round $50 floor. Now also read as the cash-drag tolerance
-      (docs/INCIDENT_HISTORY.md 2026-09-17), which widened what it governs
-      without sourcing it.
+      a round $50 floor. Read only by `CashSweeper.fund_buys`
+      (src/execution/cash_sweep.py); the cash-drag / deployment-gap advisory
+      reads `cash_sweep.reserve_pct`, not this constant.
     open_question: >-
       How much cash must be held back for fees, partial fills and price drift
       between sizing and fill?
@@ -1435,9 +1435,9 @@ numbers:
     site: src/execution/cash_sweep.py
     note: >-
       The fees/slippage buffer held back when funding a sweep. A round 1% with
-      a round $50 floor. Now also read as the cash-drag tolerance
-      (docs/INCIDENT_HISTORY.md 2026-09-17), which widened what it governs
-      without sourcing it.
+      a round $50 floor. Read only by `CashSweeper.fund_buys`
+      (src/execution/cash_sweep.py); the cash-drag / deployment-gap advisory
+      reads `cash_sweep.reserve_pct`, not this constant.
     open_question: >-
       The absolute floor under the same buffer: what is the largest
       fee-plus-drift shortfall observed on this account?
