@@ -2353,3 +2353,124 @@ def test_a_cash_only_force_delever_reports_incomplete_when_no_long_to_sell():
 
     assert orders == []
     assert alert.called, "no long to sell leaves the account on margin — page it"
+
+
+# ===========================================================================
+# Item 112 — the incomplete-de-lever OWNER PAGE, and its state-change guard.
+#
+# `_alert_owner_delever_incomplete` was promoted from a one-line session
+# bullet to a standalone owner page (the sibling of the force-de-lever alert).
+# The page is EDGE-triggered: it fires only on the transition INTO
+# still-over-ceiling, so a book that sits over the ceiling for days does not
+# page every session. The flag, the log line and the shortfall record are
+# unchanged — they still happen every session it is over.
+# ===========================================================================
+
+def _delever_pipeline(tmp_path):
+    from unittest.mock import MagicMock
+    from src.pipeline import TradingPipeline
+    from src.storage.db import Database
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = MagicMock()
+    db = Database(str(tmp_path / "delever.db"))
+    db.initialize()
+    pipeline.db = db
+    return pipeline
+
+
+def _over_ctx(run_id, gross_x=1.5, ceiling_x=1.0):
+    from src.pipeline_context import RunContext
+    ctx = RunContext(run_id=run_id, session="close")
+    ctx.leverage = {"gross_x": gross_x, "ceiling_x": ceiling_x}
+    return ctx
+
+
+def test_incomplete_delever_pages_on_the_first_over_ceiling_session(
+    tmp_path, monkeypatch,
+):
+    """The False->True edge: first session that finishes still over the
+    ceiling pages the owner, in plain words, with the real measured numbers
+    and no internal jargon."""
+    pipeline = _delever_pipeline(tmp_path)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    ctx = _over_ctx("s1", gross_x=1.5, ceiling_x=1.0)
+    pipeline._alert_owner_delever_incomplete(ctx)
+
+    assert ctx.leverage["delever_incomplete"] is True
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "still" in msg
+    assert "1.50x" in msg and "1.00x" in msg
+    for banned in ("gross_x", "ceiling_x", "§11.2", "delever_incomplete"):
+        assert banned not in msg
+
+
+def test_incomplete_delever_does_not_page_again_while_it_stays_over(
+    tmp_path, monkeypatch,
+):
+    """A book that sits over the ceiling for consecutive sessions pages ONCE,
+    on the way in — not every session. The flag is still set each time."""
+    pipeline = _delever_pipeline(tmp_path)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    for rid in ("s1", "s2", "s3"):
+        ctx = _over_ctx(rid, gross_x=1.5, ceiling_x=1.0)
+        pipeline._alert_owner_delever_incomplete(ctx)
+        assert ctx.leverage["delever_incomplete"] is True
+
+    assert len(sent) == 1, "over-ceiling for three sessions pages only on entry"
+
+
+def test_incomplete_delever_pages_again_after_clearing_then_relapsing(
+    tmp_path, monkeypatch,
+):
+    """Clearing the ceiling resets the edge: a later relapse into still-over
+    is a NEW transition and pages again."""
+    pipeline = _delever_pipeline(tmp_path)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    pipeline._alert_owner_delever_incomplete(_over_ctx("s1", 1.5, 1.0))   # page
+    # Cleared: under the ceiling, no page, flag not set, state recorded False.
+    cleared = _over_ctx("s2", gross_x=0.9, ceiling_x=1.0)
+    pipeline._alert_owner_delever_incomplete(cleared)
+    assert "delever_incomplete" not in cleared.leverage
+    # Relapse: over again → a fresh transition → pages again.
+    pipeline._alert_owner_delever_incomplete(_over_ctx("s3", 1.6, 1.0))
+
+    assert len(sent) == 2
+
+
+def test_incomplete_delever_unmeasurable_neither_pages_nor_records_state(
+    tmp_path, monkeypatch,
+):
+    """An unmeasurable book (no gross_x/ceiling_x) must not page and must not
+    write a ceiling-state row — so it cannot reset the transition edge for the
+    next real measurement."""
+    pipeline = _delever_pipeline(tmp_path)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    from src.pipeline_context import RunContext
+    ctx = RunContext(run_id="s1", session="close")
+    ctx.leverage = {"gross_x": None, "ceiling_x": None}
+    pipeline._alert_owner_delever_incomplete(ctx)
+
+    assert sent == []
+    assert pipeline.db.get_last_delever_over_ceiling() is None

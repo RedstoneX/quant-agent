@@ -614,13 +614,15 @@ def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indica
 
 
 @patch("src.pipeline.compute_indicators")
-def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
-    """The 09:30/13:00 ticks skipped paid discovery because morning/midday
-    held the owner lock. Wait for that process to finish instead of
-    sleeping until the next 30-minute fire."""
+def test_scan_waits_then_runs_when_midday_lock_releases(mock_compute_indicators):
+    """The 13:00 tick skipped paid discovery because midday held the owner
+    lock. Wait for that process to finish instead of sleeping until the
+    next 30-minute fire. Midday is a different cadence than this fire, so
+    running paid discovery on release (rather than skipping to the next
+    tick) is correct here — unlike morning (see the item 121 test below)."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
-    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._blocking_owner_session = MagicMock(side_effect=["midday", "midday", None])
     p._intra_window_remaining_s = MagicMock(return_value=60.0)
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -635,6 +637,34 @@ def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
     # Post-wait refresh so we do not size against the pre-fill snapshot.
     p.broker.get_account.assert_called()
     p.broker.get_positions.assert_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_scan_skips_instead_of_hunting_when_morning_lock_releases(
+    mock_compute_indicators,
+):
+    """Item 121: the 09:30 intra_check fire shares SESSION_WINDOWS start
+    with morning. Waiting for morning to release then running paid
+    discovery on this SAME tick was still the 09:30 open, sold to the
+    owner a second time as INTRADAY OPPORTUNITY (measured leftover at
+    09:37). It must stay skipped; the next existing half-hour fire is the
+    first true paid INTRADAY look, with no invented offset."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._intra_window_remaining_s = MagicMock(return_value=60.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep"):
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_overlap"
+    assert result["movers"] == ["AAPL"]
+    p.tech_analyst.analyze_batch.assert_not_called()
 
 
 @patch("src.pipeline.compute_indicators")
@@ -1217,3 +1247,125 @@ def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
     words = " ".join(describe_evidence_freshness(freshness))
     assert "1 of 5 research seats read just now" in words
     assert "the market-backdrop research" in words
+
+
+# ---------- item 20 (board): a fully lost intraday tech seat is LOST, not quiet ----------
+
+@patch("src.pipeline.compute_indicators")
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
+    mock_alert, mock_compute_indicators,
+):
+    """Every submitted symbol failed to resolve even after tech_analyst's own
+    retry. This used to fall into `intraday_scan_no_opportunity` — the same
+    status a genuinely empty candidate set gets — so a real outage was
+    invisible next to an ordinary quiet tick. It must classify as the same
+    `data_status["tech"]="failed"` LOST category morning uses, route through
+    the shared evidence gate, and skip the Portfolio Manager (tech is the
+    one blocking seat, owner mandate 2026-09-18)."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    # Every candidate symbol resolves to None: tech_analyst tried and lost
+    # every one of them, not "there was nothing to submit".
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": None},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert ctx.data_status["tech"] == "failed"
+    assert result["status"] == "evidence_gate_skip"
+    assert "tech" in result["blocking_lost_seats"]
+    p.decision_stage.run.assert_not_called()
+    from src import evidence_gate
+    assert evidence_gate.counts_as_degraded(ctx.data_status["tech"]) is True
+    from src.notifier import maybe_alert_data_quality
+    assert maybe_alert_data_quality(result, mode="intra_check") is True
+
+
+@patch("src.pipeline.compute_indicators")
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_intraday_tech_batch_raising_is_also_lost_not_a_crash(
+    mock_alert, mock_compute_indicators,
+):
+    """The morning path wraps its tech_analyst call in try/except; the
+    intraday one used to have no guard at all, so a batch-level raise
+    (provider outage, unparseable response) crashed the whole tick instead
+    of being recorded as a LOST tech seat like every other failure mode
+    this scan handles."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.side_effect = RuntimeError("provider down")
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert ctx.data_status["tech"] == "failed"
+    assert result["status"] == "evidence_gate_skip"
+    assert "tech" in result["blocking_lost_seats"]
+    p.decision_stage.run.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_intraday_partial_tech_failure_still_trades(mock_compute_indicators):
+    """One symbol out of two fails to resolve. This must stay REPORTED
+    (`partial`) and keep trading on the resolved subset — item 20 must not
+    start blocking ordinary intraday activity on a single bad symbol, only
+    on a seat that is genuinely and entirely lost."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL", "MSFT"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+        "MSFT": _snapshot(last=330.0, prev=300.0),
+    }
+    analysis = _ta_result("AAPL", rating="buy")
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": analysis, "MSFT": None},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = [{"id": "o1", "action": "BUY", "symbol": "AAPL"}]
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert ctx.data_status["tech"] == "partial"
+    assert result["status"] != "evidence_gate_skip"
+    p.decision_stage.run.assert_called_once_with(ctx)
+    assert ctx.analyses == [analysis]
+
+
+@patch("src.pipeline.compute_indicators")
+def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
+    mock_compute_indicators,
+):
+    """A tick with no qualifying move never calls tech_analyst at all — that
+    stays `intraday_scan_no_opportunity`, distinct from a seat that was
+    asked and lost."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["SPY", "AAPL"], move_threshold_pct=3.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),   # 0.2% — below threshold
+        "AAPL": _snapshot(last=100.5, prev=100.0),  # 0.5% — below threshold
+    }
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+    p.tech_analyst.analyze_batch.assert_not_called()
+    assert "tech" not in (ctx.data_status or {})

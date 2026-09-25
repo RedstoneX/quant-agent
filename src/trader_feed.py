@@ -69,6 +69,10 @@ _BASE_ONLY_STATUSES = frozenset(
 _INTRADAY_SILENT_STATUSES = frozenset({
     "intraday_scan_disabled", "intraday_scan_lock_contended",
     "intraday_scan_no_opportunity",
+    # item 121: morning released the owner lock on this same 09:30-shared
+    # tick — still the open, not a real INTRADAY look, so no INTRADAY
+    # OPPORTUNITY message is sold to the owner for it.
+    "intraday_scan_open_overlap",
 })
 
 
