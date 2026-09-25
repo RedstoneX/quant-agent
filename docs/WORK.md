@@ -310,7 +310,8 @@ detail: docs/BOARD_NOTES.md (item 148)
 **149. A FAILED benchmark check prints the word "passed" in its own detail string — filed 2026-09-18.** `ops/model_policy/scenarios.py` hands `Check("parsed_and_grounded", ..., "PortfolioDecision passed live grounding validation")` a detail written as an assertion of success, so result files under `ops/model_policy/results/` carry `"passed": false` beside a detail saying it passed [verified 2026-09-18 on four result files].
 
 DONE WHEN:
-  - [ ] a check's detail states what was tested, not that it succeeded, so the detail cannot contradict the flag beside it
+  - [x] a check's detail states what was tested, not that it succeeded, so the detail cannot contradict the flag beside it
+FIXED 2026-09-25: the three `parsed_and_grounded` details in `ops/model_policy/scenarios.py` now read "checked PortfolioDecision parses and is grounded against live data" (a description of the test) instead of the old success assertion, so the detail is truthful whether the flag is true or false; a `None`-decision test pins that the detail never asserts a pass. Historical result files under `ops/model_policy/results/` still carry the old wording and were left untouched.
 detail: docs/BOARD_NOTES.md (item 149)
 
 **150. The live-capital pre-flight checklist exists NOWHERE in the repo as an actual gate — filed 2026-09-18, TIER 1.** The conditions that must hold before real money is switched on live in memory and prose, not in code or in a test, so nothing would stop or even notice a live-capital switch taken with an unmet condition.
