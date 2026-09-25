@@ -505,6 +505,8 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 ## item 154
 
+**Marked short-handed (2026-09-25) —** Verified first: an unreachable seat already sets `data_status[seat]="failed"`, which the evidence-freshness disclosure ("no answer at all: …"), the "degraded:" line and the unsilenceable data-quality alert all surface owner-facing and durably. What was still missing was the MARK: on a refusal (item 20) the owner sees "DECISION SKIPPED — NOTHING WAS TRADED", but on the proceed-anyway case the absence read as neutral freshness with nothing saying the desk went ahead short-handed. Added the mirror — a `DECIDED SHORT-HANDED` block that names the absent seat(s) in plain words and states the decision was made without them — rendered on every proceed (morning/midday/close/once/intra) and suppressed on a skip so the two banners never double up. Disclosure only, no threshold, no `data_status` key added; reuses the existing `evidence_freshness.absent_seats` already carried in the result. Reproduction proof: the pre-fix disclosure never contained "SHORT-HANDED"; `tests/test_evidence_gate.py` covers the mark, the fully-staffed no-mark case, the no-verdict rule and the proceed-vs-skip split.
+
 **Moved from WORK.md (2026-09-24) —** Distinct from item 20, which refuses a decision when a seat's answer is LOST entirely — this is the proceed-anyway case, and nothing tracks it.
 
 ## item 155
