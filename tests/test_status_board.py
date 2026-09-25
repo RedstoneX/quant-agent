@@ -1347,6 +1347,118 @@ def test_a_struck_through_title_is_not_flagged(tmp_path):
     assert sb.find_closed_items_not_marked_done(p) == []
 
 
+# ---------------------------------------------------------------------------
+# item 140 -- nothing mechanically prevents a duplicate board filing. Four
+# duplicate items were filed in one day by parallel agents, each writing up
+# the same finding in different words without reading the board first.
+# `find_near_duplicate_open_items` compares OPEN items' own tidied titles
+# (the same text `load_funnel_queue` already extracts) rather than body
+# prose, on purpose: a prose/topic match would flag legitimately distinct
+# items that happen to discuss the same area of the desk.
+# ---------------------------------------------------------------------------
+
+def test_the_real_backlog_has_no_near_duplicate_open_items():
+    """The real docs/WORK.md, not a fixture -- the guard exists to catch a
+    duplicate filing landing on the live board, so it has to run clean
+    against the live board first."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    flagged = sb.find_near_duplicate_open_items(work)
+    assert not flagged, (
+        "these open backlog items look like the same finding filed twice:\n  "
+        + "\n  ".join(flagged)
+    )
+
+
+def test_an_exact_retitled_duplicate_is_flagged(tmp_path):
+    """The literal failure mode item 140 describes: the same finding, filed
+    twice with the word-for-word same headline."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Nothing mechanically prevents a duplicate board filing — "
+        "filed 2026-09-18.**\n\n"
+        "**2. Nothing mechanically prevents a duplicate board filing — "
+        "filed later the same day.**\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+    assert "item 1" in flagged[0] and "item 2" in flagged[0]
+    assert "identical" in flagged[0]
+
+
+def test_a_near_paraphrase_duplicate_is_flagged(tmp_path):
+    """A parallel agent rewording the same finding rather than copying it
+    verbatim must still be caught -- that is the actual historical failure,
+    not just the exact-copy case. One word swapped ("margin" for
+    "financing") keeps this below an exact match (ratio ~0.917) but still
+    over the near-identical threshold."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The overnight margin interest rate is an unsourced made-up "
+        "number — 3 of 53 (6%). DEFECT.**\n\n"
+        "**2. The overnight financing interest rate is an unsourced made-up "
+        "number — 4 of 53 (8%). DEFECT.**\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+    assert "near-identical" in flagged[0]
+
+
+def test_a_done_item_is_never_compared_for_duplication(tmp_path):
+    """A retired/struck-through item sharing an old title with a live one is
+    not a duplicate filing -- it is history. Only OPEN items are compared."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**~~1. The overnight margin interest rate is unsourced — FIXED.~~**\n\n"
+        "**2. The overnight margin interest rate is unsourced — 4 of 53 "
+        "(8%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_legitimately_distinct_items_are_not_flagged(tmp_path):
+    """Two items on the same area of the desk are not the same finding, and
+    a short shared prefix or suffix must not tip the ratio over on its own.
+    These are real, live, distinct titles from docs/WORK.md (items 183/185),
+    the closest real pair the guard sees (ratio ~0.745) -- pinned here so a
+    future threshold change cannot silently start flagging them."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Five order-placement gates are made-up money numbers with no "
+        "board record — 5 of 53 (9%). DEFECT.**\n\n"
+        "**2. Trailing-stop numbers are made-up money numbers with no board "
+        "record — 4 of 53 (8%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_short_generic_titles_do_not_match_by_coincidence(tmp_path):
+    """A short, generic title (below `_DUP_TITLE_MIN_LEN`) must not be
+    flagged just because it happens to normalize to the same handful of
+    words as another short title -- the length floor exists for exactly
+    this case."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Fix it — 1 of 5 (20%). DEFECT.**\n\n"
+        "**2. Fix them — 1 of 5 (20%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_an_unparseable_board_reports_nothing_here(tmp_path):
+    """A shape change that breaks `load_funnel_queue` is that function's own
+    problem to report -- this check must not raise or invent a result on
+    top of an already-broken parse."""
+    p = tmp_path / "WORK.md"
+    p.write_text("# Work\n\nno funnel queue heading here\n")
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+
 def test_a_partial_or_pending_closure_is_not_flagged():
     """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
     review" are honest about not being finished yet — they must stay open,
