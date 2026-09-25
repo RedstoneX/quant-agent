@@ -29,6 +29,7 @@ from src.risk.rules import (
     _gross_multiplier,
     book_exposure as _book_exposure,
     own_bar_block_reason,
+    own_bar_opposition_reason,
     count_aligned_sources,
     count_opposing_sources,
     position_weight_pct,
@@ -37,7 +38,7 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.rotation import (
-    RotationOpportunity, RotationPrecheck, apply_stay_confirmation,
+    RotationOpportunity, RotationPrecheck,
     evaluate_rotation, funding_view_measured, holdings_below_entry_bar,
     rotation_binding_constraints,
 )
@@ -115,17 +116,6 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
     #: means "no ranking view this session" — the allocator then falls back
     #: to its pre-decision ordering rather than having one invented for it.
     last_candidate_ranking: list[RankedCandidate] | None = None
-
-    #: Owner mandate 2026-09-25 (STAY conviction bar). Per currently-held,
-    #: REVIEWED symbol: did THIS session's review find it below the conviction
-    #: bar (R7)? `{SYMBOL: missed_bool}`. Reset at the top of every
-    #: `build_user_message` and set by the STAY confirmation step. The pipeline
-    #: (`DecisionStage`) reads it AFTER `decide()` and persists each flag via
-    #: `db.save_conviction_bar_miss`, so the NEXT review can require two
-    #: consecutive misses before culling. Kept off the DB in here on purpose:
-    #: this method is a pure prompt builder with no run_id/db in hand, exactly
-    #: as `last_rotation_precheck` is recorded by the pipeline, not by the PM.
-    last_conviction_bar_miss: dict[str, bool] | None = None
 
     @property
     def name(self) -> str:
@@ -662,12 +652,22 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         # audit shadow (`ops/model_policy/deterministic_selection.py`) still
         # mirrors those gates exactly; R7 is a NEW governance overlay on seat
         # AGREEMENT, separate from the §9.4 net-evidence floor and from the
-        # continuous ranking score. `_apply_conviction_bar` moves any eligible
-        # name that fails the bar out of `ranked` and into `blocked`, so the
+        # continuous ranking score. `_apply_conviction_bar` moves any ENTRY
+        # candidate that fails the bar out of `ranked` and into `blocked`, so the
         # constructor's budget ordering (`last_candidate_ranking`) can never
-        # fund a name the bar refused.
+        # fund a name the bar refused. For a currently-HELD name the STAY side
+        # is OPPOSITION-ONLY (owner ruling 2026-09-25): it is culled into
+        # `blocked` only when a seat is actively opposed; a held name that fails
+        # the ENTRY bar on soft grounds (no technical read, neutral technical,
+        # support faded to neutral) is simply dropped from the ranked survivors
+        # with no cull reason — it earns its right to STAY.
+        _held_now = {
+            (p.symbol or "").strip().upper()
+            for p in positions if (p.symbol or "").strip()
+        }
         ranked, blocked = self._apply_conviction_bar(
-            ranked=ranked, blocked=blocked, all_verdicts=self._collect_seat_verdicts(
+            ranked=ranked, blocked=blocked, held_symbols=_held_now,
+            all_verdicts=self._collect_seat_verdicts(
                 analyses=analyses,
                 news_intel=news_intel,
                 macro_analysis=macro_analysis,
@@ -677,30 +677,6 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             ),
         )
         self.last_candidate_ranking = list(ranked)
-
-        # STAY confirmation (owner mandate 2026-09-25, anti-whipsaw). A HELD
-        # name that misses the R7 conviction bar is not a cull candidate on a
-        # single review: `apply_stay_confirmation` strips R7 from `blocked`
-        # until the SAME name has missed two consecutive reviews (the desk's
-        # sourced two-close persistence discipline, applied to conviction).
-        # ENTRY is untouched — R7 still blocks a brand-new buy immediately.
-        # `held_conviction_miss_prior` is the prior review's per-held miss
-        # flags, read from the durable store by the pipeline; absent (tests,
-        # first session) it defaults empty, so every miss simply starts a fresh
-        # streak. This session's flags are exposed for the pipeline to persist.
-        self.last_conviction_bar_miss = None
-        _held_now = {
-            (p.symbol or "").strip().upper()
-            for p in positions if (p.symbol or "").strip()
-        }
-        _evaluated_now = {a.symbol.upper() for a in analyses}
-        blocked, _this_miss = apply_stay_confirmation(
-            blocked,
-            held_symbols=_held_now,
-            evaluated_symbols=_evaluated_now,
-            prior_missed=dict(kwargs.get("held_conviction_miss_prior") or {}),
-        )
-        self.last_conviction_bar_miss = _this_miss
 
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -1860,6 +1836,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         *,
         ranked: list[RankedCandidate],
         blocked: dict[str, list[str]],
+        held_symbols: set[str],
         all_verdicts: list[AnalystVerdict],
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The 2026-09-25 owner conviction bar (R7), applied to the ranking.
@@ -1874,35 +1851,44 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         invalidation). Deliberately OUTSIDE
         `candidate_eligibility` so the audit shadow
         (`ops/model_policy/deterministic_selection.py`) keeps mirroring those
-        gates exactly, and so both the ENTRY prompt and the STAY cull consume
-        ONE R7 result (the returned `blocked`).
+        gates exactly.
+
+        ENTRY vs STAY — two verdicts from ONE bar (owner ruling 2026-09-25):
+
+          * ENTRY (a candidate NOT in `held_symbols`): full-strict. Any R7
+            failure — technical veto, opposition, OR a soft miss (no supported
+            directional thesis) — moves the name OUT of `ranked` and INTO
+            `blocked` under `CONVICTION_BAR_REASON_PREFIX`. Unchanged.
+          * STAY (a candidate IN `held_symbols`): OPPOSITION-ONLY. A held name
+            is culled into `blocked` (which rotation's `ineligible_hold` tier
+            reads) ONLY when a seat is ACTIVELY OPPOSED to the held direction
+            (`own_bar_opposition_reason` non-None). A held name that fails the
+            entry bar on SOFT grounds — no technical read this review, a
+            neutral/non-confirming technical read, or support that faded to
+            neutral — is dropped from the ranked survivors (it does not belong
+            in the fresh-entry budget order) but gets NO cull reason: it earns
+            its right to STAY. The price-thesis-break exit
+            (`src.risk.exit_guard`) handles genuine deterioration separately.
 
         Supportive/opposed are read from the SEAT VERDICTS
         (`AnalystVerdict`), one source of "which seat took which side" — a long
         is supported by a bullish verdict, a short by a bearish one — so this
-        never introduces a second notion of "aligned". A name with no verdict
-        at all (thinly covered) has no supportive thesis and no confirming
-        technical read, and is refused, which is the mandate's whole point.
-
-        Returns `(ranked_survivors, blocked)` with every R7-failing name moved
-        OUT of `ranked` and INTO `blocked` under `CONVICTION_BAR_REASON_PREFIX`,
-        so `last_candidate_ranking` — the constructor's budget order — can never
-        carry a name the bar refused.
+        never introduces a second notion of "aligned".
 
         SAFETY INVARIANT this relies on (not enforced by the type system): every
         symbol in `ranked` is expected to already carry a technical verdict in
         `by_symbol`, because ranking itself is derived from technical reads (see
         `_render_candidate_ranking`: "no Technical reads this session -> nothing
-        to rank"). So `own_bar_block_reason`'s "absent technical read" branch is
-        expected to never fire for a real ranked name — a ranked name with no
-        technical verdict at all would mean that upstream invariant broke. If it
-        ever does fire, this still refuses the name (safe — never a silent cull)
-        but also logs loudly below, since a ranked name missing its technical
-        read is worth surfacing, not just quietly gating.
+        to rank"). So the "absent technical read" branch is expected to never
+        fire for a real ranked name — a ranked name with no technical verdict at
+        all would mean that upstream invariant broke. It is logged loudly below
+        when it does; the name is still handled safely (an entry candidate is
+        refused, a held name drops from survivors without a spurious cull).
         """
         by_symbol: dict[str, list[AnalystVerdict]] = {}
         for v in all_verdicts:
             by_symbol.setdefault(v.symbol.upper(), []).append(v)
+        held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
         blocked = {s: list(why) for s, why in blocked.items()}
         survivors: list[RankedCandidate] = []
         for c in ranked:
@@ -1912,7 +1898,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 logger.warning(
                     "R7 conviction bar: ranked candidate %s carries no "
                     "technical verdict in by_symbol — the ranked-implies-"
-                    "technical invariant broke upstream; refusing %s per the "
+                    "technical invariant broke upstream; handling %s per the "
                     "absent-technical branch (not a silent cull, not a crash)",
                     sym, sym,
                 )
@@ -1921,7 +1907,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             )
             if reason is None:
                 survivors.append(c)
+            elif sym in held:
+                # STAY: opposition-only. A soft miss drops the name from the
+                # entry budget order but never adds a cull reason.
+                opposition = own_bar_opposition_reason(
+                    sym_verdicts, direction=c.direction,
+                )
+                if opposition is not None:
+                    blocked.setdefault(sym, []).append(opposition)
             else:
+                # ENTRY: full-strict.
                 blocked.setdefault(sym, []).append(reason)
         return survivors, blocked
 
@@ -2400,12 +2395,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # `DecisionStage` may make when this seat dropped a candidate
                # without naming a ground. Empty on every ordinary call.
                accounting_challenge: str = "",
-               # Owner mandate 2026-09-25 (STAY conviction bar): the prior
-               # review's per-held R7-miss flags, so a held name is culled only
-               # after TWO consecutive misses. Empty on every first look and on
-               # callers that do not thread it (tests) — each miss then starts a
-               # fresh streak, which never sells early.
-               held_conviction_miss_prior: dict[str, bool] | None = None,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         # One fill retry per decide() call — the agent is long-lived across
         # morning/midday/close. A morning miss must not spend the close's
@@ -2463,7 +2452,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
             accounting_challenge=accounting_challenge,
-            held_conviction_miss_prior=held_conviction_miss_prior or {},
         )
         parsed = result.parse_json()
         if parsed is None:

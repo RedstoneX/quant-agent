@@ -11,21 +11,28 @@ Mandate (verbatim intent):
     NOT a genuine specificity/falsifiability test — News and Smart-money
     always synthesise their invalidation, so it cannot distinguish a templated
     reason from an analyst-authored one.
-  * ONE definition drives ENTRY (`candidate_eligibility` R7) and STAYING (the
-    same `blocked` set, via rotation's `ineligible_hold` tier). A HELD name that
-    misses the bar is not sold on one review's noise: it must miss two
-    CONSECUTIVE reviews first (the sourced two-consecutive-close persistence
-    discipline, Edwards & Magee).
+  * ONE bar, TWO verdicts (owner ruling 2026-09-25). ENTRY
+    (`candidate_eligibility` R7) is full-strict: any failure refuses the buy.
+    The STAY side is OPPOSITION-ONLY: a currently-HELD name is culled (into the
+    same `blocked` set, via rotation's `ineligible_hold` tier) ONLY when a seat
+    turns ACTIVELY OPPOSED to the held direction. A held name that merely fails
+    the entry bar on SOFT grounds (no technical read, neutral/non-confirming
+    technical, or support faded to neutral) is dropped from the fresh-entry
+    ranking but NOT culled — it earns its right to stay. There is no
+    confirmation counter; deterioration is handled by the separate
+    price-thesis-break exit (`src.risk.exit_guard`).
 """
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import AnalystVerdict, VerdictEvidence
 from src.verdicts import RankedCandidate
-from src.risk.rules import OWN_BAR_REASON_PREFIX, own_bar_block_reason
+from src.risk.rules import (
+    OWN_BAR_REASON_PREFIX,
+    own_bar_block_reason,
+    own_bar_opposition_reason,
+)
 from src.rotation import (
     CONVICTION_BAR_REASON_PREFIX,
-    CONVICTION_STAY_CONFIRMATION_REVIEWS,
-    apply_stay_confirmation,
     holdings_below_entry_bar,
 )
 
@@ -48,9 +55,9 @@ def _rank(symbol, direction="bullish"):
     return RankedCandidate(symbol=symbol, direction=direction, score=1.0)
 
 
-def _apply(ranked, verdicts):
+def _apply(ranked, verdicts, held=frozenset()):
     return PortfolioManagerAgent._apply_conviction_bar(
-        ranked=ranked, blocked={}, all_verdicts=verdicts,
+        ranked=ranked, blocked={}, held_symbols=set(held), all_verdicts=verdicts,
     )
 
 
@@ -59,8 +66,8 @@ def _apply(ranked, verdicts):
 # ---------------------------------------------------------------------------
 
 def test_reason_prefix_matches_rotation_gate():
-    # The STAY streak and holdings_below_entry_bar recognise R7 by this prefix;
-    # if the two ever drift, the streak stops gating the right reasons.
+    # The STAY cull and holdings_below_entry_bar recognise R7 by this prefix;
+    # if the two ever drift, the cull stops recognising the right reasons.
     assert OWN_BAR_REASON_PREFIX == CONVICTION_BAR_REASON_PREFIX
 
 
@@ -252,57 +259,144 @@ def test_invariant_holds_no_warning_when_technical_verdict_present(caplog):
 
 
 # ---------------------------------------------------------------------------
-# STAY (two-consecutive-review confirmation streak, ported unchanged)
+# The OPPOSITION-only subset — the STAY cull test (owner ruling 2026-09-25)
 # ---------------------------------------------------------------------------
 
-def test_stay_window_is_two_reviews():
-    assert CONVICTION_STAY_CONFIRMATION_REVIEWS == 2
+def test_opposition_reason_none_on_soft_misses():
+    """A confirming/absent/neutral chart with no opposed seat is NOT opposition
+    — the STAY side must return None for every soft case so a held name is not
+    culled on it."""
+    # supported, clears entirely -> not opposition
+    assert own_bar_opposition_reason(
+        [_v("technical"), _v("news")], direction="bullish") is None
+    # no technical read this review (soft) -> not opposition
+    assert own_bar_opposition_reason(
+        [_v("news"), _v("macro")], direction="bullish") is None
+    # neutral/non-confirming technical (soft) -> not opposition
+    assert own_bar_opposition_reason(
+        [_v("technical", direction="neutral"), _v("news")],
+        direction="bullish") is None
+    # support faded to neutral, chart still fine (soft) -> not opposition
+    assert own_bar_opposition_reason(
+        [_v("technical"), _v("news", direction="neutral")],
+        direction="bullish") is None
 
 
-def _blocked_r7(sym):
-    return {sym: [f"{CONVICTION_BAR_REASON_PREFIX} — technical does not confirm timing"]}
+def test_opposition_reason_fires_only_on_active_opposition():
+    # technical opposed
+    r = own_bar_opposition_reason(
+        [_v("technical", direction="bearish"), _v("news")], direction="bullish")
+    assert r is not None and "technical" in r.lower() and r.startswith(OWN_BAR_REASON_PREFIX)
+    # a non-technical seat opposed (chart confirming)
+    r = own_bar_opposition_reason(
+        [_v("technical"), _v("news"), _v("macro", direction="bearish")],
+        direction="bullish")
+    assert r is not None and "opposed" in r.lower()
 
 
-def test_stay_first_miss_does_not_cull():
-    adjusted, this_missed = apply_stay_confirmation(
-        _blocked_r7("HELD"), held_symbols={"HELD"},
-        evaluated_symbols={"HELD"}, prior_missed={},
+# ---------------------------------------------------------------------------
+# STAY through _apply_conviction_bar: held names are opposition-only culls
+# ---------------------------------------------------------------------------
+
+def test_stay_soft_neutral_read_is_not_culled():
+    """(a) A HELD name whose technical read is NEUTRAL this review fails the
+    strict entry bar, but no seat is opposed — it must NOT land in `blocked`,
+    so the ineligible_hold cull never sees it. It earns its right to stay."""
+    survivors, blocked = _apply(
+        [_rank("HELD")],
+        [_v("technical", "HELD", direction="neutral"), _v("news", "HELD")],
+        held={"HELD"},
     )
-    assert holdings_below_entry_bar(adjusted, {"HELD"}) == ()
-    assert this_missed == {"HELD": True}
+    assert survivors == []  # dropped from the fresh-entry order
+    assert "HELD" not in blocked
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ()
 
 
-def test_stay_two_consecutive_misses_becomes_cull_candidate():
-    adjusted, this_missed = apply_stay_confirmation(
-        _blocked_r7("HELD"), held_symbols={"HELD"},
-        evaluated_symbols={"HELD"}, prior_missed={"HELD": True},
+def test_stay_no_technical_read_is_not_culled():
+    """A HELD name with no chart read this review (soft): not opposition, not
+    culled."""
+    survivors, blocked = _apply(
+        [_rank("HELD")], [_v("news", "HELD"), _v("macro", "HELD")], held={"HELD"},
     )
-    assert holdings_below_entry_bar(adjusted, {"HELD"}) == ("HELD",)
-    assert this_missed == {"HELD": True}
+    assert survivors == []
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ()
 
 
-def test_stay_one_review_recovery_resets_streak():
-    adjusted, this_missed = apply_stay_confirmation(
-        {}, held_symbols={"HELD"}, evaluated_symbols={"HELD"},
-        prior_missed={"HELD": True},
+def test_stay_support_faded_to_neutral_is_not_culled():
+    """A HELD name whose only fundamental support faded to NEUTRAL while the
+    chart still confirms: soft miss, no opposition -> not culled."""
+    survivors, blocked = _apply(
+        [_rank("HELD")],
+        [_v("technical", "HELD"), _v("news", "HELD", direction="neutral")],
+        held={"HELD"},
     )
-    assert holdings_below_entry_bar(adjusted, {"HELD"}) == ()
-    assert this_missed == {"HELD": False}
+    assert survivors == []
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ()
 
 
-def test_stay_confirmation_only_gates_the_r7_reason():
-    blocked = {"HELD": ["R5 net evidence +0 if long — no rung"]}
-    adjusted, _ = apply_stay_confirmation(
-        blocked, held_symbols={"HELD"}, evaluated_symbols={"HELD"},
-        prior_missed={},
+def test_stay_technical_opposed_is_culled_on_first_review():
+    """(b) A HELD name with the chart actively HOSTILE (technical opposed) IS
+    culled on the FIRST such review — no counter, no second-miss wait."""
+    survivors, blocked = _apply(
+        [_rank("HELD")],
+        [_v("technical", "HELD", direction="bearish"), _v("news", "HELD")],
+        held={"HELD"},
     )
-    assert holdings_below_entry_bar(adjusted, {"HELD"}) == ("HELD",)
+    assert survivors == []
+    assert any(r.startswith(CONVICTION_BAR_REASON_PREFIX) for r in blocked["HELD"])
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ("HELD",)
 
 
-def test_intact_thesis_held_name_is_not_a_cull_candidate():
-    """A held name that CLEARS the bar this review is absent from `blocked`, so
-    it is never offered to the ineligible_hold cull tier — an intact thesis is
-    protected from force-sell at the bar itself."""
-    survivors, blocked = _apply([_rank("KEEP")], [_v("technical", "KEEP"), _v("news", "KEEP")])
+def test_stay_nontechnical_seat_opposed_is_culled_on_first_review():
+    """A HELD name with a confirming chart but a non-technical seat actively
+    opposed IS culled on the first review."""
+    survivors, blocked = _apply(
+        [_rank("HELD")],
+        [
+            _v("technical", "HELD"), _v("news", "HELD"),
+            _v("macro", "HELD", direction="bearish"),
+        ],
+        held={"HELD"},
+    )
+    assert survivors == []
+    assert any(r.startswith(CONVICTION_BAR_REASON_PREFIX) for r in blocked["HELD"])
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ("HELD",)
+
+
+def test_stay_intact_thesis_held_name_is_kept_and_not_culled():
+    """A held name that CLEARS the bar stays in the survivors and is never
+    offered to the cull tier."""
+    survivors, blocked = _apply(
+        [_rank("KEEP")], [_v("technical", "KEEP"), _v("news", "KEEP")],
+        held={"KEEP"},
+    )
     assert [c.symbol for c in survivors] == ["KEEP"]
     assert holdings_below_entry_bar(blocked, {"KEEP"}) == ()
+
+
+def test_entry_candidate_soft_miss_is_still_blocked_strictly():
+    """(c) The SAME soft shape that spares a HELD name must still REFUSE an
+    ENTRY candidate — entry stays full-strict."""
+    survivors, blocked = _apply(
+        [_rank("NEW")],
+        [_v("technical", "NEW", direction="neutral"), _v("news", "NEW")],
+        held=frozenset(),  # not held -> entry candidate
+    )
+    assert survivors == []
+    assert any(r.startswith(CONVICTION_BAR_REASON_PREFIX) for r in blocked["NEW"])
+    assert holdings_below_entry_bar(blocked, {"NEW"}) == ("NEW",)
+
+
+def test_no_dead_references_to_removed_stay_counter():
+    """(d) The made-up two-review counter and all its plumbing are gone."""
+    import src.rotation as rotation
+    import src.storage.db as db_mod
+    from src.agents.portfolio_manager import PortfolioManagerAgent as PM
+    assert not hasattr(rotation, "CONVICTION_STAY_CONFIRMATION_REVIEWS")
+    assert not hasattr(rotation, "apply_stay_confirmation")
+    assert not hasattr(rotation, "_strip_conviction_reason")
+    assert not hasattr(db_mod.Database, "save_conviction_bar_miss")
+    assert not hasattr(db_mod.Database, "get_prior_conviction_bar_miss")
+    assert not hasattr(db_mod.Database, "CONVICTION_BAR_MISS_KIND")
+    import inspect
+    assert "held_conviction_miss_prior" not in inspect.signature(PM.decide).parameters

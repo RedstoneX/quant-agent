@@ -6317,35 +6317,9 @@ class DecisionStage:
         # prompt — with only the bookkeeping challenge added. A re-ask
         # built from different inputs would be a second decision, not a
         # re-ask.
-        # STAY conviction bar (owner mandate 2026-09-25). Read the prior
-        # review's per-held miss flags so `PortfolioManagerAgent` can require
-        # TWO consecutive misses before a held name becomes a cull candidate.
-        # Keyed on the ET trading-day so several intraday runs of one day count
-        # as one review. Fail-open: any read error -> empty, and the miss simply
-        # starts a fresh streak rather than culling early.
-        _conviction_review_date = session_date_key()
-        _held_symbols_for_bar = {
-            (getattr(pos, "symbol", "") or "").strip().upper()
-            for pos in (positions or [])
-            if (getattr(pos, "symbol", "") or "").strip()
-        }
-        try:
-            held_conviction_miss_prior = pipeline.db.get_prior_conviction_bar_miss(
-                _held_symbols_for_bar,
-                today_bar_date=_conviction_review_date,
-                exclude_run_id=run_id,
-            ) if _held_symbols_for_bar else {}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "conviction bar: prior-miss read failed (%s) — every held "
-                "name starts a fresh confirmation streak this review", exc,
-            )
-            held_conviction_miss_prior = {}
-
         pm_decide_kwargs = dict(
             analyses=analyses,
             positions=positions,
-            held_conviction_miss_prior=held_conviction_miss_prior,
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
             cash_balance=cash,
             reserve_balance=reserve_balance,
@@ -6419,27 +6393,6 @@ class DecisionStage:
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             **pm_decide_kwargs,
         )
-        # STAY conviction bar (owner mandate 2026-09-25): persist THIS review's
-        # per-held miss/clear flags so the next review can confirm a streak.
-        # Read NOW — the accounting re-ask below calls decide() again, which
-        # resets this dict. Never raises: a lost write just makes the next
-        # review start that name's streak fresh (fail-open, never sells early).
-        _conviction_miss_now = getattr(
-            pipeline.portfolio_manager, "last_conviction_bar_miss", None,
-        )
-        if isinstance(_conviction_miss_now, dict):
-            for _sym, _missed in _conviction_miss_now.items():
-                try:
-                    pipeline.db.save_conviction_bar_miss(
-                        run_id=run_id, symbol=str(_sym),
-                        missed=bool(_missed), bar_date=_conviction_review_date,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "conviction bar: failed to persist review flag for "
-                        "%s (%s) — next review starts its streak fresh",
-                        _sym, exc,
-                    )
         # Board item 164: read NOW — the candidate-accounting re-ask below
         # calls decide() again, which resets this list.
         _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)

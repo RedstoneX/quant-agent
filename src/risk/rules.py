@@ -521,15 +521,15 @@ def agreement_refuses_trade(score: int) -> bool:
 # and non-empty checks — "at least one" is existence, not a dial; "no seat
 # opposed" is zero, not a chosen floor; the technical veto is a boolean. There
 # is nothing here to ledger as `arbitrary` (contrast the discarded HIGH-count
-# gate, which would have needed two owner-appetite numbers). The only number
-# the wider change carries is the STAY confirmation window, which is `derived`
-# from the sourced two-consecutive-close rule — see
-# `src.rotation.CONVICTION_STAY_CONFIRMATION_REVIEWS`.
+# gate, which would have needed two owner-appetite numbers). The wider change
+# carries no number at all: the STAY side culls a held name ONLY when a seat is
+# ACTIVELY OPPOSED (owner ruling 2026-09-25), which is zero-versus-count, not a
+# dial — there is no confirmation window and no streak.
 
-#: Reasons this function emits all start with this tag, the SAME string
-#: `src.rotation.CONVICTION_BAR_REASON_PREFIX` matches on, so the STAY
-#: confirmation streak (`apply_stay_confirmation`) gates exactly these reasons
-#: and `holdings_below_entry_bar` counts them. A test pins the two equal.
+#: Reasons these functions emit all start with this tag, the SAME string
+#: `src.rotation.CONVICTION_BAR_REASON_PREFIX` matches on, so the STAY cull
+#: (rotation's `ineligible_hold` tier) recognises exactly these reasons and
+#: `holdings_below_entry_bar` counts them. A test pins the two equal.
 OWN_BAR_REASON_PREFIX = "R7 conviction bar"
 
 
@@ -638,6 +638,53 @@ def own_bar_block_reason(
         return (
             f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a "
             "supported directional side"
+        )
+
+    return None
+
+
+def own_bar_opposition_reason(
+    seat_verdicts: list["AnalystVerdict"],
+    *,
+    direction: str,
+) -> str | None:
+    """The OPPOSITION-only subset of the conviction bar — the STAY cull test.
+
+    `None` unless a seat is ACTIVELY OPPOSED to the held `direction`, else the
+    one-line reason it is culled. Owner ruling 2026-09-25: a currently-HELD name
+    earns its right to STAY, and it is culled ONLY when a seat turns actively
+    opposed (technical opposed OR any non-technical seat opposed) — NOT when it
+    merely fails the ENTRY bar on SOFT grounds (no technical read this review, a
+    neutral/non-confirming technical read, or support that faded to neutral).
+    Those soft cases drop a held name from the ranked survivors but never cull
+    it; only opposition does.
+
+    ENTRY still uses the full-strict `own_bar_block_reason`; this narrower test
+    exists solely for the held side. It reuses the SAME aligned/opposed
+    vocabulary and the SAME reason strings as the two opposition branches of
+    `own_bar_block_reason`, so a held name that IS culled reads identically to
+    an entry candidate refused for the same opposition.
+
+    Pure: a function of the seat `AnalystVerdict`s for one name only.
+    """
+    aligned = "bullish" if direction == "bullish" else "bearish"
+    opposed = "bearish" if direction == "bullish" else "bullish"
+
+    tech = [v for v in seat_verdicts if v.seat == "technical"]
+    if any(v.direction == opposed for v in tech):
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to "
+            "the trade (right name, wrong time)"
+        )
+
+    other_opposed = sorted({
+        v.seat for v in seat_verdicts
+        if v.direction == opposed and v.seat != "technical"
+    })
+    if other_opposed:
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed "
+            "(mandate: no seat may be opposed)"
         )
 
     return None

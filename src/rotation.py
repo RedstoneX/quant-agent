@@ -311,9 +311,7 @@ __all__ = [
     "RotationOutcome",
     "RotationPrecheck",
     "RotationRefusal",
-    "CONVICTION_STAY_CONFIRMATION_REVIEWS",
     "CONVICTION_BAR_REASON_PREFIX",
-    "apply_stay_confirmation",
     "evaluate_rotation",
     "evaluate_rotation_opportunity",
     "holdings_below_entry_bar",
@@ -377,23 +375,10 @@ REQUIRED_BUY_LEG_GATES = (
 #: measured fact.
 ROTATION_MARGIN_PCT = 0.25
 
-#: Anti-whipsaw confirmation for the STAY side of the 2026-09-25 conviction
-#: bar. A currently-HELD name that misses the bar (`candidate_eligibility` R7)
-#: must miss it for this many CONSECUTIVE position reviews before it becomes a
-#: cull candidate; a single review that clears it resets the streak. This is
-#: NOT an independently fitted number: it is the SAME persistence discipline as
-#: the desk's SOURCED two-consecutive-close break-confirmation rule
-#: (`src.risk.exit_guard.TREND_CONFIRMING_CLOSES` = 2, Edwards & Magee, a level
-#: breaks on a decisive close and is confirmed on the NEXT close, a reclaim in
-#: between resetting), applied to conviction instead of price. Ledgered
-#: `derived` from that constant in config/number_ledger.yaml, so if the sourced
-#: close count ever moves this must be reconsidered in the same breath.
-CONVICTION_STAY_CONFIRMATION_REVIEWS = 2
-
 #: Prefix that tags a `candidate_eligibility` blocking reason as the 2026-09-25
-#: conviction bar (R7). The STAY confirmation streak gates ONLY these reasons;
-#: a held name failing an OLDER gate (R2/R3/R5/R6) is culled with no streak,
-#: exactly as before this change.
+#: conviction bar (R7). The STAY cull (rotation's `ineligible_hold` tier)
+#: recognises ONLY these reasons; a held name failing an OLDER gate
+#: (R2/R3/R5/R6) is culled through its own reason, exactly as before this change.
 CONVICTION_BAR_REASON_PREFIX = "R7 conviction bar"
 
 #: `PortfolioConstructor._build_sell` truncates an order's reasoning at 500
@@ -658,78 +643,6 @@ def holdings_below_entry_bar(
         sym.upper() for sym, reasons in blocked.items()
         if reasons and sym.upper() in held
     ))
-
-
-def _strip_conviction_reason(reasons: list[str]) -> list[str]:
-    """Everything in `reasons` that is NOT the R7 conviction-bar reason."""
-    return [
-        r for r in reasons
-        if not str(r).startswith(CONVICTION_BAR_REASON_PREFIX)
-    ]
-
-
-def apply_stay_confirmation(
-    blocked: dict[str, list[str]],
-    *,
-    held_symbols: set[str],
-    evaluated_symbols: set[str],
-    prior_missed: dict[str, bool],
-) -> tuple[dict[str, list[str]], dict[str, bool]]:
-    """Gate the STAY-side conviction-bar cull behind the two-consecutive-review
-    streak (owner mandate 2026-09-25, anti-whipsaw).
-
-    Pure: it reads what the caller supplies and returns a NEW `blocked` dict
-    plus the per-held miss flags this review should persist. It does no I/O; the
-    caller reads `prior_missed` from and writes the returned flags to the durable
-    per-position store (mirrors `src.risk.exit_guard._consecutive_prior_break_
-    count`, which is likewise pure and leaves persistence to its caller).
-
-    ENTRY is untouched: R7 blocks a brand-new buy on the FIRST review it fails,
-    because a name being bought has no position to protect from whipsaw. Only a
-    HELD name gets the confirmation window.
-
-    For each held name whose ONLY-new failure is R7:
-      * record `this review missed = True`;
-      * it is a confirmed cull candidate ONLY if `prior_missed` says the
-        immediately-prior review also missed (this is the 2nd consecutive miss);
-      * otherwise the R7 reason is STRIPPED from its `blocked` entry, so the
-        `ineligible_hold` tier does not yet see it. If R7 was its only reason it
-        drops out of `blocked` entirely and is held for one more review.
-
-    A held name that was REVIEWED this session (`evaluated_symbols`) and does NOT
-    fail R7 records `missed = False`, resetting its streak. A held name NOT
-    reviewed this session (no Technical read) is left out of the returned flags
-    entirely, so a data-gap session neither confirms nor resets a streak.
-
-    OLDER gates are never gated: a held name failing R2/R3/R5/R6 is culled with
-    no streak, exactly as before this change (its non-R7 reasons survive
-    `_strip_conviction_reason`).
-    """
-    held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
-    evaluated = {str(s).strip().upper() for s in evaluated_symbols if str(s).strip()}
-    out: dict[str, list[str]] = {sym: list(reasons) for sym, reasons in blocked.items()}
-    this_missed: dict[str, bool] = {}
-
-    for sym in held:
-        reasons = out.get(sym, [])
-        fails_r7 = any(
-            str(r).startswith(CONVICTION_BAR_REASON_PREFIX) for r in reasons
-        )
-        if fails_r7:
-            this_missed[sym] = True
-            if not bool(prior_missed.get(sym, False)):
-                # First consecutive miss: hold one more review.
-                remaining = _strip_conviction_reason(reasons)
-                if remaining:
-                    out[sym] = remaining
-                else:
-                    out.pop(sym, None)
-            # else: confirmed — leave R7 in place so rotation may cull it.
-        elif sym in evaluated:
-            # Reviewed and cleared (of R7) this session -> reset the streak.
-            this_missed[sym] = False
-
-    return out, this_missed
 
 
 def evaluate_rotation_opportunity(
