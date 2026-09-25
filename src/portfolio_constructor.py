@@ -239,6 +239,12 @@ STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
 # `_widen_stop_past_noise`. Named now, for the same reason every other
 # outcome is named.
 STOP_RULE_OUTSIDE_BAND = "stop_kept_already_outside_atr_band"
+#: RETIRED as a shipping rule (board item 80, 2026-09-25). This named the one
+#: branch that honoured a typed stop with NO ATR to verify it against, letting
+#: an unverifiable distance size a position. That branch now refuses the name
+#: (`STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY`), so no shipping stop carries this
+#: rule any more. Kept defined only so the `_GEOMETRY_REFUSAL_BY_RULE` lookup
+#: and any historical record referencing the string still resolve.
 STOP_RULE_NO_VOLATILITY = "stop_kept_no_atr_reading"
 STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
 #: The unbacked-stop fallback placed the stop under the SIGNAL BAR's low
@@ -380,6 +386,19 @@ STOP_REFUSAL_ENTRY_NOT_FINITE = "entry_price_not_finite"
 #: Nothing typed a stop and there is no ATR reading to derive one from, so
 #: there is no stop at all to judge. The ONE path the regex never saw.
 STOP_REFUSAL_NO_STOP_NO_VOLATILITY = "no_stop_and_no_volatility_reading"
+#: A stop WAS typed by the PM or the analyst, but there is no ATR reading to
+#: verify it against (board item 80, 2026-09-25). Every OTHER branch widens a
+#: typed stop to the noise band or the signal bar when it cannot be trusted;
+#: this branch used to be the one exception — it HONOURED the typed number as
+#: `STOP_RULE_NO_VOLATILITY` and let it set the share count, an unverifiable
+#: distance sizing a real position. Worst during a bars-feed outage, when many
+#: names lose ATR at once and each honours a stop nothing measured. There is
+#: no heal/refetch in this stage (the constructor is a pure decision over an
+#: already-computed `TechAnalysisResult`; `atr_14` is Python-set upstream, and
+#: no bars survive into this path to recompute it), so with ATR genuinely
+#: gone this ONE name is refused rather than sized off an unverifiable stop.
+#: Per-symbol only — never a book-wide halt.
+STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY = "typed_stop_but_no_volatility_reading"
 #: `_resolve_entry_and_stop`'s terminal side check: whatever the stop rules
 #: above produced is absent, non-positive, or on the wrong side of entry.
 #: Filed only when no more specific refusal was already recorded for this
@@ -2588,11 +2607,26 @@ class PortfolioConstructor:
         # whichever branch produced it.
         # -------------------------------------------------------------
         if atr is None:
-            # No volatility reading — leave structure alone, as always. The
-            # stop is still judged on its own geometry below: whether we
-            # can measure this name's noise has nothing to do with whether
-            # the trade's payoff clears the floor. With nothing typed AND
-            # nothing to read, there is no stop: the caller rejects None.
+            # No volatility reading. Two ways in, and BOTH now refuse this one
+            # name (board item 80, 2026-09-25). This is the last branch that
+            # still let an unverifiable number size a real position: it used to
+            # honour a model-TYPED stop as `STOP_RULE_NO_VOLATILITY` and let it
+            # set the share count, even though the desk had nothing to check
+            # that distance against. Every OTHER branch, once ATR exists, WIDENS
+            # a stop it cannot back to the band or the signal bar — only here,
+            # with no ATR at all, was a bare typed number honoured tight. Worst
+            # during a bars-feed outage: many names lose ATR at once and each
+            # would honour a stop nothing measured.
+            #
+            # Heal-first, then refuse (three ratified owner rules). This stage
+            # is a pure decision over an already-computed `TechAnalysisResult`;
+            # `atr_14` is Python-set upstream from the indicators the prompt was
+            # built from, and no raw bars survive into this path, so there is no
+            # heal/refetch to reuse HERE — the bars-refetch/seat-heal machinery
+            # lives in the pipeline stages that produce the analysis, upstream
+            # of this function. With nothing to re-read, ATR is genuinely gone,
+            # so the only safe move is to REFUSE this one name — never honour
+            # the unverifiable typed stop, and never a book-wide halt.
             if stop_loss is None:
                 # Board item 10 (2026-09-14, second pass). THE ONE PATH THE
                 # REGEX NEVER SAW: this message puts "has" straight after the
@@ -2609,8 +2643,21 @@ class PortfolioConstructor:
                     "measurable was available to protect it with.",
                 )
                 return None
-            honoured, rule, level = stop_loss, STOP_RULE_NO_VOLATILITY, None
-            band_edge = multiple = None
+            # A stop WAS typed, but with no ATR there is nothing to verify it
+            # against. Refuse THIS name rather than honour an unverifiable
+            # number to size a position (item 80). Per-symbol, durable, and
+            # never a book-wide halt: a transient ATR loss drops the names it
+            # actually hit, and no more.
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY,
+                f"a stop was typed at ${stop_loss:,.2f}, but there is no ATR "
+                f"reading for this name, so the desk has nothing to verify "
+                f"that distance against and no volatility band to widen it to. "
+                f"Honouring it would let an unverifiable number set the share "
+                f"count. Refused this one name — not a view on the idea, and "
+                f"not a halt on anything else.",
+            )
+            return None
         else:
             multiple = self._stop_atr_multiple(analysis, regime)
             band_edge = (

@@ -1002,14 +1002,22 @@ def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
     assert decisions[0].reward_risk < 1.5
 
 
-def test_no_volatility_reading_leaves_the_structural_stop_untouched():
-    """Stop widening still fails toward existing behaviour rather than
-    inventing a width: with no ATR the structural stop is returned as-is."""
+def test_no_volatility_reading_refuses_a_typed_stop_rather_than_size_off_it():
+    """Board item 80 (2026-09-25). With no ATR there is nothing to verify a
+    typed stop against, so the name is REFUSED rather than sized off an
+    unverifiable distance. This used to return the typed stop (97.6) tight as
+    STOP_RULE_NO_VOLATILITY — the one branch that let an unverifiable number
+    set the share count. Every other branch widens a stop it cannot back; with
+    no ATR there is no band to widen to, so the only safe move is to refuse."""
+    from src.portfolio_constructor import STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
     constructor = PortfolioConstructor()
     analysis = _vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)
     assert constructor._widen_stop_past_noise(
         "MSFT", analysis, 100.0, 97.6, target_price=160.0,
-    ) == 97.6
+    ) is None
+    assert constructor.last_refusals["MSFT"]["refusal"] == (
+        STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    )
 
 
 def test_no_volatility_reading_refuses_the_trade_outright():

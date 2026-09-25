@@ -419,6 +419,128 @@ def test_resolve_stop_returns_none_when_genuinely_no_stop_information():
     assert stop is None
 
 
+# ---------------------------------------------------------------------------
+# Board item 80 (2026-09-25): a TYPED stop with NO ATR is refused, not
+# honoured. It was the last branch that let an unverifiable number set the
+# share count — every other branch WIDENS a stop it cannot back, but this one
+# (no ATR at all, so no band to widen to) used to ship the bare typed number
+# tight as `STOP_RULE_NO_VOLATILITY`. Worst during a bars-feed outage, when
+# many names lose ATR at once. The fix refuses the ONE name, never the book.
+# ---------------------------------------------------------------------------
+
+def test_typed_stop_with_no_atr_is_refused_not_sized():
+    """A stop was typed but there is no ATR to verify it against, so the name
+    is refused rather than sized off an unverifiable distance. On main this
+    returned the typed stop (100 - 10 = 90) as STOP_RULE_NO_VOLATILITY."""
+    from types import SimpleNamespace
+    from src.portfolio_constructor import STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    constructor = PortfolioConstructor()
+    analysis = SimpleNamespace(
+        atr_14=None, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    result = constructor._widen_stop_past_noise(
+        "ACME", analysis, 100.0, 90.0, direction="long", target_price=None,
+    )
+    assert result is None, "an unverifiable typed stop must not size a trade"
+    assert constructor.last_refusals["ACME"]["refusal"] == (
+        STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    )
+    assert "verify" in constructor.last_refusals["ACME"]["detail"]
+
+
+def test_typed_stop_with_no_atr_is_refused_on_a_short_too():
+    """The short side is mirrored: a typed stop above entry with no ATR is
+    equally unverifiable and equally refused."""
+    from types import SimpleNamespace
+    from src.portfolio_constructor import STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    constructor = PortfolioConstructor()
+    analysis = SimpleNamespace(
+        atr_14=None, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    result = constructor._widen_stop_past_noise(
+        "TSLA", analysis, 100.0, 110.0, direction="short", target_price=None,
+    )
+    assert result is None
+    assert constructor.last_refusals["TSLA"]["refusal"] == (
+        STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    )
+
+
+def test_no_atr_refusal_is_per_name_never_a_book_wide_halt():
+    """A transient ATR loss on ONE name must drop only that name. Refusing
+    the no-ATR name leaves an ATR-present name in the same call untouched and
+    sized — there is no book-wide halt path."""
+    from types import SimpleNamespace
+    from src.portfolio_constructor import STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    constructor = PortfolioConstructor()
+    no_atr = SimpleNamespace(
+        atr_14=None, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    has_atr = SimpleNamespace(
+        atr_14=8.0, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    refused = constructor._widen_stop_past_noise(
+        "OUTAGE", no_atr, 100.0, 90.0, direction="long", target_price=None,
+    )
+    # A stop already well outside the noise band ships unchanged when ATR is
+    # present — same object shape, ATR is the only difference.
+    kept = constructor._widen_stop_past_noise(
+        "HEALTHY", has_atr, 100.0, 50.0, direction="long", target_price=None,
+    )
+    assert refused is None
+    assert kept == 50.0, "the ATR-present name is unaffected by the other's refusal"
+    assert set(constructor.last_refusals) == {"OUTAGE"}
+    assert constructor.last_refusals["OUTAGE"]["refusal"] == (
+        STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    )
+
+
+def test_no_stop_and_no_atr_still_refuses_with_its_own_code():
+    """The sibling branch (nothing typed AND no ATR) is unchanged: it keeps
+    its own distinct refusal code, not the typed-stop one."""
+    from types import SimpleNamespace
+    from src.portfolio_constructor import STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    constructor = PortfolioConstructor()
+    analysis = SimpleNamespace(
+        atr_14=None, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    result = constructor._widen_stop_past_noise(
+        "BARE", analysis, 100.0, None, direction="long", target_price=None,
+    )
+    assert result is None
+    assert constructor.last_refusals["BARE"]["refusal"] == (
+        STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    )
+
+
+def test_typed_stop_with_atr_present_is_unchanged_by_item_80():
+    """Regression guard: with ATR present, a typed stop already outside the
+    noise band still ships exactly as before (STOP_RULE_OUTSIDE_BAND), with
+    no refusal recorded. Item 80 touched ONLY the no-ATR branch."""
+    from types import SimpleNamespace
+    constructor = PortfolioConstructor()
+    analysis = SimpleNamespace(
+        atr_14=8.0, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    result = constructor._widen_stop_past_noise(
+        "NVDA", analysis, 100.0, 50.0, direction="long", target_price=None,
+    )
+    assert result == 50.0
+    assert constructor.last_refusals == {}
+
+
 def test_construct_orders_rejects_buy_when_no_reference_target_supplied():
     """New coverage (2026-08-27): a structural stop is present but the
     Tech Analyst supplied no `reference_target` → the BUY is rejected.
