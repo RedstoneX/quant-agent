@@ -120,15 +120,10 @@ fi
 # === Last-run guard — don't fire more than once per window ===
 # Exception: intra_check is stateless and designed to fire on every 30-min
 # launchd tick during market hours. All of its actions (fill reconcile,
-# stop-coverage repair, force_delever, P&L read) are idempotent, so the
-# once-per-day guard is skipped and no last-run file is written for it.
-# This used to read "a stateless circuit breaker" and to list
-# `emergency_liquidate` among the actions. Neither survives: the liquidator
-# went 2026-09-14 and the whole account-level loss alarm went 2026-09-20
-# (docs/INCIDENT_HISTORY.md, retired item 32). The idempotence argument is
-# unaffected — it was always about the actions, not about the breaker — but
-# do not re-justify the exemption on a mechanism that is gone. See the
-# longer note at the session-lock exemption below, and board item 128.
+# stop-coverage repair, force_delever, P&L read) are idempotent — firing
+# multiple times per day produces identical outcomes. The once-per-day guard
+# is therefore skipped and no last-run file is written for it.
+# See the longer note at the session-lock exemption below, and board item 128.
 LAST_FILE="${LAST_RUN_DIR}/last-${MODE}"
 NOW_UNIX="${NOW_UNIX_OVERRIDE:-$(date +%s)}"
 if [[ "$MODE" != "intra_check" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
@@ -157,17 +152,11 @@ fi
 #
 # intra_check is INTENTIONALLY exempt so it fires on every 30-min tick
 # during 09:30-16:00 ET regardless of what else is running. Mirrors its
-# exemption from the last-run guard above. Without it a long morning/midday
-# holds the lock and intra goes silent for the entire window.
-#
-# READ THIS BEFORE RELYING ON THE EXEMPTION. It was originally justified by
-# a "stateless flash-crash circuit breaker" that the tick carried. That
-# breaker no longer exists — the whole account-level loss-alarm mechanism
-# was removed 2026-09-20 on the owner's instruction (docs/INCIDENT_HISTORY.md,
-# retired item 32). What the tick still does unstarvably is reconcile fills,
-# repair stop coverage found missing at the broker, and run the bounded
-# intraday scan. Board item 128 is open on whether that is enough to keep
-# the exemption; do not re-justify it on a mechanism that is gone.
+# exemption from the last-run guard above. All its actions are idempotent
+# (fill reconcile, stop-coverage repair, force_delever, P&L read, bounded
+# scan), so frequent execution is safe. Without the exemption a long
+# morning/midday run would hold the lock and starve intra_check for hours,
+# blocking these frequent safety checks.
 LOCK_ACQUIRED=0
 LOCK_OWNER_FILE="${SESSION_LOCK_DIR}/owner"
 

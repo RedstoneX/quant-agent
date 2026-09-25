@@ -313,6 +313,20 @@ OnCalendar=*-*-* 08:50 America/New_York
 WantedBy=timers.target
 """
 
+# A `.path` unit activates its paired service on a filesystem event instead
+# of a clock. It enables into `paths.target.wants`, NOT `timers.target.wants`
+# — the enable/active semantics the checker must get right for this suffix.
+PATH_BODY = """\
+[Unit]
+Description=example path watcher
+
+[Path]
+PathChanged=/home/qamc/quant-agent/docs/WORK.md
+
+[Install]
+WantedBy=paths.target
+"""
+
 
 def _make_box(tmp_path: Path, repo: dict[str, str], installed: dict[str, str],
               enabled: tuple[str, ...] = ()) -> tuple[Path, Path]:
@@ -328,7 +342,14 @@ def _make_box(tmp_path: Path, repo: dict[str, str], installed: dict[str, str],
     for name, body in installed.items():
         (units_dir / name).write_text(body)
     for name in enabled:
-        wants = units_dir / "timers.target.wants"
+        # A unit enables into `<its WantedBy target>.wants`, so a `.path`
+        # lands in `paths.target.wants` and a `.timer` in
+        # `timers.target.wants`. Read the target from the unit itself with
+        # the checker's own parser rather than assuming `timers.target`.
+        from scripts.check_unit_drift import parse_wanted_by
+
+        targets = parse_wanted_by(units_dir / name) or ["timers.target"]
+        wants = units_dir / f"{targets[0]}.wants"
         wants.mkdir(exist_ok=True)
         (wants / name).symlink_to(units_dir / name)
     return repo_root, units_dir
@@ -452,6 +473,77 @@ def test_a_dangling_wants_symlink_reads_as_not_enabled(tmp_path):
     (wants / "a.timer").symlink_to(units_dir / "gone.timer")
     report = build_report(str(repo_root), str(units_dir))
     assert report.not_enabled == [("a.timer", "timers.target")]
+
+
+# --- .path units (item 123) -------------------------------------------------
+# A tracked `.path` unit (quant-agent-status-board.path) replaces the
+# status-board timer. Before item 123 the checker's suffix set was
+# (".service", ".timer") and every bucket keyed off it, so a `.path` unit
+# could drift on the box — untracked, modified, undeployed or not-enabled —
+# and no bucket would ever catch it. These four cases prove each bucket now
+# sees it, and that its `paths.target` enablement is handled like a timer's.
+
+def test_a_tracked_path_unit_edited_in_place_is_reported_as_modified(tmp_path):
+    """Was invisible before item 123: `.path` was not in the suffix set, so
+    the modified bucket never compared its bytes."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        {"a.service": UNIT_BODY,
+         "a.path": PATH_BODY.replace("docs/WORK.md", "docs/OTHER.md")},
+    )
+    assert report.modified == ["a.path"]
+    assert report.has_drift is True
+
+
+def test_a_tracked_path_unit_never_copied_to_the_box_is_reported(tmp_path):
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        {"a.service": UNIT_BODY},
+    )
+    assert report.undeployed == ["a.path"]
+    assert report.has_drift is True
+
+
+def test_an_installed_but_unenabled_path_unit_is_reported(tmp_path):
+    """The quiet failure for a `.path` unit: present, correct, byte-identical
+    — and never firing, because nothing linked it into paths.target.wants.
+    It enables through paths.target, not timers.target."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        enabled=(),
+    )
+    assert report.not_enabled == [("a.path", "paths.target")]
+    assert report.has_drift is True
+
+
+def test_an_enabled_identical_path_unit_is_in_sync(tmp_path):
+    """The clean case, and the one that proves `enabled=` routes a `.path`
+    into paths.target.wants: an installed, byte-identical, enabled `.path`
+    unit is not drift."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY},
+        enabled=("a.path",),
+    )
+    assert report.not_enabled == []
+    assert report.modified == []
+    assert report.undeployed == []
+    assert report.has_drift is False
+
+
+def test_a_path_unit_hand_added_on_the_box_is_reported_as_untracked(tmp_path):
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY, "rogue.path": PATH_BODY},
+    )
+    assert report.untracked == ["rogue.path"]
+    assert report.has_drift is True
 
 
 def test_wants_directories_are_not_mistaken_for_units(tmp_path):

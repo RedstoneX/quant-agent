@@ -424,3 +424,14 @@ def test_adding_to_a_held_name_is_scored_as_selection():
     ))
     assert checks["opens_a_position"].passed is True
     assert "famous picks 1/1" in checks["familiarity_bias"].detail
+
+
+def test_parsed_and_grounded_detail_describes_the_check_not_a_pass():
+    """Board item 149: the detail must state WHAT was tested, so it cannot
+    read as 'passed' beside a `passed: false` flag when the decision is None.
+    A `None` decision fails this check, and its detail must not assert
+    success."""
+    check = _by_name(scenarios._pm_selection_grade(None))["parsed_and_grounded"]
+    assert check.passed is False
+    assert "passed" not in check.detail.lower()
+    assert "grounded" in check.detail.lower()

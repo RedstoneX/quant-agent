@@ -573,7 +573,9 @@ agent has widened the rule to work around it.
 
 ## item 123
 
-**Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and is therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it has a hole in it. No evidence yet that this unit has actually drifted; the gap is that nobody would know.
+**Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and was therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it had a hole in it. No evidence yet that this unit has actually drifted; the gap was that nobody would know.
+
+**Update (2026-09-25) —** The code hole is closed: `.path` is now in `UNIT_SUFFIXES` (PR #642, 2026-09-24), and the four drift buckets are now covered by tests exercising a `.path` unit directly (they fail against the pre-#642 two-suffix set, proving the guard). `.path` units enable through `paths.target` rather than `timers.target`; the checker already handles this because it reads each unit's declared `WantedBy` target. The item stays OPEN on two of its own criteria: the suffix set is still a hand-maintained tuple rather than derived from the tracked files, and no run has yet compared the installed `quant-agent-status-board.path` on the box against the checkout.
 
 ## item 125
 
@@ -678,6 +680,12 @@ agent has widened the rule to work around it.
 ## item 179
 
 **Moved from WORK.md (2026-09-24) —** Three findings, none acted on: the heal sets the seat from `model_dump()`, and the nomination collector reads `.nominations` only when the value is NOT a dict, so a healed macro contributes zero nominations silently by design-comment; the heal writes nothing to the macro store, so the next tick re-reads the superseded snapshot; and the only place a macro answer IS stored swallows its own failure as a warning. Also `mechanical_heal_macro` is reachable from tests only [verified, no `src/` caller].
+
+**Store-write half FIXED (2026-09-25).** A successful paid macro heal now persists its answer to the macro store (`_persist_healed_macro_store`, mirroring the news heal's `_cover_healed_news_wire`), the same `save_last_state(payload, series_prints=...)` the scheduled morning read uses, so the next tick's carry-forward, the evening thesis-health read and the 7-day history all see the fresher regime the desk paid for instead of the stale snapshot. Reproduction test in `tests/test_seat_heal_wiring.py` fails pre-fix.
+
+**"Zero nominations" finding CORRECTED — not a defect.** The `model_dump()` shape does NOT lose nominations in the live flow: `ctx.macro_analysis` is canonically a dict (its type comment; PM reads it with `.get()`), and macro nominations are collected exactly once inside `MorningResearchStage._collect_seat_nominations`, which completes BEFORE `_heal_lost_research_seats` runs. So the shape cannot change any nomination outcome, and changing the heal to emit a model object would fix nothing. What remains true is a deeper SEQUENCING limitation — because collection precedes the heal, a healed macro's nominations are never collected at all — which is a separate question, not the shape bug the original finding described.
+
+**Still OPEN on 179:** the `mechanical_heal_macro` dead-code call (wire or remove — OWNER decision), and the scheduled-save warning-swallow finding (pre-existing, report-only).
 
 ## item 181 — RETIRED 2026-09-24
 

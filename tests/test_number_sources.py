@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 143, (
+    assert MAX_ARBITRARY_ENTRIES == 142, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -227,7 +227,22 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "universe screen's ATR/price volatility ceiling "
         "(`STOP_SANITY_FLOOR_FRACTION`), which reaches a trade decision, so "
         "`not-trade-governing` would be false; only its note was corrected. "
-        "142 -> 143 on 2026-09-25, board item 148: "
+        "142 -> 141 on 2026-09-25, consolidated appetite-ratification campaign "
+        "(owner delegated to the adversary): "
+        "`src.config.RiskConfig.min_level_touches_for_stop_honor` (value 5) was "
+        "reclassified `arbitrary` -> `sourced` against the in-repo measured "
+        "real-vs-shuffled bounce-probability study (src/config.py:722-740): the "
+        "95% confidence intervals separate cleanly only at 5+ touches (real "
+        "0.644 [0.590, 0.696] vs shuffled 0.505 [0.470, 0.539]) while 3-4 "
+        "overlap the noise control. A number sourced, so the count is lowered "
+        "in the same commit. The campaign also RATIFIED several numbers as "
+        "owner-appetite (max_portfolio_risk_pct 25, max_cluster_risk_share_pct "
+        "40, SECTOR_HARD_CEILING_MAX 90, max_target_horizon_sessions 60, "
+        "min_stop_atr_multiple 2.5, the three stop_atr_regime_scale magnitudes, "
+        "and the six GROSS_LADDER numbers), but ratified appetite stays "
+        "`arbitrary`+note by this ledger's convention, so none of those move "
+        "the count."
+        "141 -> 142 on 2026-09-25, board item 148: "
         "`src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (value 10), a "
         "genuinely new number -- the level-strength formula's `/ 10.0` divisor "
         "was an inline literal outside rule (e)'s factor band and so invisible "
