@@ -38,6 +38,7 @@ describe("chartCandles", () => {
     const quote: LiveQuote = {
       symbol: "MRVL",
       last_price: 237.07,
+      resolved_price: 237.07,
       prev_close: 251.01,
       session_open: 246,
       session_high: 247,
@@ -54,6 +55,7 @@ describe("chartCandles", () => {
     const quote: LiveQuote = {
       symbol: "MRVL",
       last_price: 237.07,
+      resolved_price: 237.07,
       prev_close: 251.01,
       session_open: null,
       session_high: null,
@@ -70,7 +72,7 @@ describe("chartCandles", () => {
       open: 252.22, high: 252.26, low: 248, close: 249.18, volume: 1000,
     }];
     const quote: LiveQuote = {
-      symbol: "MRVL", last_price: 237.07, prev_close: 251.01,
+      symbol: "MRVL", last_price: 237.07, resolved_price: 237.07, prev_close: 251.01,
       session_open: 252.22, session_high: 252.26, session_low: 233.33,
     };
     const candles = chartCandles(intraday, quote, "2026-08-21", "5m");

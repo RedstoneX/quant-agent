@@ -133,11 +133,15 @@ export function chartCandles(
 ): CandlestickData[] {
   const candles = toCandles(bars, timeframe);
   if (timeframe !== "1d") return candles;
-  const values = [quote?.session_open, quote?.session_high, quote?.session_low, quote?.last_price];
+  // item 169: the close comes from `resolved_price` (freshness-resolved
+  // by `src.data.live_price.resolve_live_price`), never the raw
+  // `last_price`, which can be stale for a thin name and disagree with
+  // the session's own open/high/low drawn from the same snapshot.
+  const values = [quote?.session_open, quote?.session_high, quote?.session_low, quote?.resolved_price];
   if (!today || values.some((value) => value == null || !Number.isFinite(value))) return candles;
 
   const open = quote!.session_open!;
-  const close = quote!.last_price!;
+  const close = quote!.resolved_price!;
   const high = Math.max(quote!.session_high!, open, close);
   const low = Math.min(quote!.session_low!, open, close);
   const forming: CandlestickData = { time: today, open, high, low, close };
@@ -1131,9 +1135,9 @@ export function PriceChartPanel({
     // price axis (axisLabelVisible), never floating over the chart body.
     // PREV CLOSE was removed entirely (every timeframe) per the same
     // correction — the owner called it "not relevant."
-    if (quote?.last_price != null) {
+    if (quote?.resolved_price != null) {
       livePriceLineRef.current = candleSeries.createPriceLine({
-        price: quote.last_price,
+        price: quote.resolved_price,
         color: colors.textMuted,
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
@@ -1336,8 +1340,8 @@ export function PriceChartPanel({
     : "";
   const quoteLine = !symbol
     ? undefined
-    : quote?.last_price != null
-    ? `${quoteError ? "Last live" : "Live"} ${fmtMoney(quote.last_price)}${
+    : quote?.resolved_price != null
+    ? `${quoteError ? "Last live" : "Live"} ${fmtMoney(quote.resolved_price)}${
         quoteAsOf ? ` · as of ${formatEasternTime(quoteAsOf, { hour: "numeric", minute: "2-digit", second: "2-digit" })}` : ""
       }${quoteError ? ` · stale (refresh failed: ${quoteError})` : ""}${
         hasFormingCandle ? " · today’s forming candle" : " · live price line"
