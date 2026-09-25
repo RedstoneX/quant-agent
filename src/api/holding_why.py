@@ -40,9 +40,10 @@ read-only API-safety invariant in `src/api/db_reads.py` untouched.
   a person writes them ("11 September 2026").
 * A missing field SAYS it is missing. It is never omitted and never
   zeroed — "not recorded" is information, a silent gap is not.
-* The take-profit price is labelled for what it actually is. Nothing in
-  the desk executes against it (see `NOTHING_ACTS_ON_TARGET`), so
-  showing it as an instruction would be a lie.
+* The take-profit price is labelled for what it actually is — a
+  reassessment point the desk re-derives from the chart every review, not
+  a standing sell order (see `NOTHING_ACTS_ON_TARGET`), so showing it as an
+  instruction would be a lie.
 """
 
 from __future__ import annotations
@@ -53,19 +54,22 @@ from datetime import date
 from typing import Any
 
 #: Verbatim, because getting this wrong misleads the owner about whether
-#: the desk will ever sell at the number on his screen. Established from
-#: code and history on 2026-09-18: the automatic take-profit trim was
-#: deleted on 2026-09-12 (`docs/INCIDENT_HISTORY.md`, "the automatic
-#: take-profit trim is deleted; the trailing stop is the only exit rule");
-#: no caller anywhere passes `take_profit_price` to the broker; and
-#: "taking profits" / "TARGET_BREACH" are deliberately absent from the
-#: list of reasons that can justify an exit (`src/pipeline.py`).
+#: the desk will ever sell at the number on his screen. The fixed "sell 15%
+#: at +30%" trim was deleted 2026-09-12 and a bare "sell at X" rule is not
+#: coming back. But the owner ruling of 2026-09-25 made two things true that
+#: this line must now state honestly: the target is RE-DERIVED from the chart
+#: every review (no longer frozen at entry), and reaching it is a REASSESS
+#: point at which the desk WILL sell — but only when the chart independently
+#: confirms the move is over (its trend structure breaks), never on the number
+#: alone. (The constant name predates the ruling; the desk now acts on the
+#: target conditionally, which is exactly what this text spells out.)
 NOTHING_ACTS_ON_TARGET = (
-    "Nothing sells at this price. It is a reference the desk recorded at "
-    "entry, not an instruction. Since 12 September 2026 the trailing stop "
-    "is the only automatic exit, and reaching a profit target is not by "
-    "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+    "This price is a reassessment point, not a standing sell order. The desk "
+    "re-derives it from the chart every review, so it stays current rather "
+    "than frozen at entry. Reaching it is not by itself a reason to sell: the "
+    "desk sells here only if the chart also confirms the move is over — its "
+    "own trend structure breaks — and otherwise holds and lets the trailing "
+    "stop, which ratchets up every review, carry the position."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry

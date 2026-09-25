@@ -65,6 +65,12 @@ __all__ = [
     "StructuralProtectionCheck",
     "check_structural_protection",
     "structural_protection_broken",
+    "AtTargetDecision",
+    "decide_at_target",
+    "AT_TARGET_NOT_REACHED",
+    "AT_TARGET_HOLD_TREND_INTACT",
+    "AT_TARGET_SELL_TREND_ROLLED",
+    "AT_TARGET_INPUTS_UNREADABLE",
 ]
 
 
@@ -2230,3 +2236,126 @@ def structural_protection_broken(
         prior_session_dates=prior_session_dates,
     ).protected
 
+
+
+# ---------------------------------------------------------------------------
+# Decision at the take-profit target — owner ruling 2026-09-25
+# ---------------------------------------------------------------------------
+#
+# Reaching the target is a REASSESS point, NOT an automatic sell. The old fixed
+# "sell 15% at +30%" trim was deleted 2026-09-12 and is not coming back, and a
+# bare "sell at X" rule is exactly the predetermined-reward logic the owner
+# removed (the reward side of a trade cannot be fixed in advance because the
+# holding period is unknown). So at the target the desk asks ONE more question —
+# has the up-move actually ENDED? — and sells only if the CHART itself says yes:
+#
+#   SELL  only when the target is reached AND the structural trend has rolled
+#         over: `check_structural_protection` reports the thesis-backing
+#         structure broken and CONFIRMED (`protected is False`). That is the
+#         same sourced two-consecutive-close break confirmation the rest of this
+#         module already uses — a broken higher-low / swing-low for a long, the
+#         mirror for a short. No new number is introduced here.
+#   HOLD  when the target is reached but the trend is intact (protected, or the
+#         break is only pending confirmation): the desk does NOT sell into
+#         strength; the trailing stop, which ratchets up every review, carries
+#         the position and decides when the move is over.
+#
+# Below the target there is nothing to decide here — the position is still on
+# its way and the trailing stop remains its only automatic exit.
+
+#: The latest completed close has not reached the target — nothing to decide.
+AT_TARGET_NOT_REACHED = "TARGET_NOT_REACHED"
+#: Target reached, trend intact — HOLD and let the ratcheting trailing stop run.
+AT_TARGET_HOLD_TREND_INTACT = "AT_TARGET_HOLD_TREND_INTACT"
+#: Target reached AND the trend structure has broken and confirmed — SELL.
+AT_TARGET_SELL_TREND_ROLLED = "AT_TARGET_SELL_TREND_ROLLED_OVER"
+#: Close or target could not be read — cannot decide; the caller holds.
+AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
+
+
+@dataclass(frozen=True)
+class AtTargetDecision:
+    """What to do about a position that may have reached its take-profit target.
+
+    `should_sell` is the one field a caller acts on. It is True ONLY for
+    `AT_TARGET_SELL_TREND_ROLLED` — target reached AND the chart's trend
+    structure confirmed broken. Every other outcome holds. `reason` is the
+    plain-language, owner-facing sentence (why + when), empty only when there
+    is nothing to voice (not reached, or inputs unreadable).
+    """
+
+    symbol: str
+    code: str
+    reached: bool
+    should_sell: bool
+    reason: str = ""
+    target_price: float | None = None
+    close_price: float | None = None
+
+
+def decide_at_target(
+    *,
+    symbol: str,
+    is_short: bool,
+    close_price: float | None,
+    target_price: float | None,
+    protection_broken: bool | None,
+    protection_detail: str = "",
+) -> AtTargetDecision:
+    """Decide whether a position that has REACHED its take-profit target should
+    be sold now or held for the trailing stop to carry. Pure — no I/O.
+
+    `close_price` MUST be the latest COMPLETED DAILY CLOSE, never a live quote:
+    "reached the target" is judged on the same close basis as the break
+    confirmation, so a routine intrabar wick through the number is not a reach.
+
+    `protection_broken` is `not check_structural_protection(...).protected` —
+    True when the thesis-backing structure has broken and CONFIRMED (the up/
+    down-move is over), False when it is intact or only pending confirmation,
+    and None when it could not be read (no bars/levels). A None is treated as
+    "NOT confirmed rolled over", so the desk HOLDS and lets the trailing stop
+    carry rather than selling on an unreadable chart — never sell into strength
+    or into missing data on the number alone.
+    """
+    sym = str(symbol or "").strip().upper()
+    close = _finite(close_price)
+    target = _finite(target_price)
+    if close is None or target is None or target <= 0 or close <= 0:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_INPUTS_UNREADABLE, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    reached = close <= target if is_short else close >= target
+    if not reached:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_NOT_REACHED, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    move = "down-move" if is_short else "up-move"
+    if protection_broken is True:
+        extra = f" {protection_detail.strip()}" if protection_detail else ""
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_SELL_TREND_ROLLED, reached=True,
+            should_sell=True, target_price=target, close_price=close,
+            reason=(
+                f"reached its ${target:,.2f} target (close ${close:,.2f}) AND "
+                f"the {move} is over — the chart's own trend structure has "
+                f"broken and confirmed, so the desk is taking profit here "
+                f"rather than giving it back.{extra}"
+            ),
+        )
+
+    # Intact, pending confirmation, or unreadable structure — do NOT sell into
+    # strength; the trailing stop (raised every review) carries it.
+    return AtTargetDecision(
+        symbol=sym, code=AT_TARGET_HOLD_TREND_INTACT, reached=True,
+        should_sell=False, target_price=target, close_price=close,
+        reason=(
+            f"reached its ${target:,.2f} target (close ${close:,.2f}) but the "
+            f"trend is still intact — the desk is NOT selling on the number "
+            f"alone; the trailing stop, which ratchets up each review, carries "
+            f"it until the {move} actually ends."
+        ),
+    )

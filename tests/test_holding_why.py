@@ -145,7 +145,10 @@ def test_rsg_take_profit_is_shown_as_a_reference_that_nothing_acts_on(rsg):
     assert tp["price"] == pytest.approx(224.20)
     assert tp["acted_on"] is False
     assert tp["note"] == NOTHING_ACTS_ON_TARGET
-    assert "Nothing sells at this price" in tp["note"]
+    # Owner ruling 2026-09-25: the target is a reassessment point the desk
+    # re-derives every review, not a standing sell order at the number.
+    assert "reassessment point" in tp["note"]
+    assert "not a standing sell order" in tp["note"]
 
 
 def test_rsg_horizon_is_the_pinned_plan_and_says_nothing_acts_on_it(rsg):

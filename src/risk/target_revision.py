@@ -6,10 +6,18 @@ WHY THIS EXISTS
 `PortfolioConstructor._resolve_entry_and_stop` derives the take-profit ONCE,
 at entry, from `src.data.levels.derive_structural_target`: the nearest
 structural level in the trade's direction if one is reachable inside the
-pinned horizon, otherwise an ATR measured move. That number then sits frozen
+pinned horizon, otherwise an ATR measured move. That number was then frozen
 on `trades.take_profit` for the life of the position.
 
-Frozen is wrong when the measurement it was taken from no longer exists. The
+Frozen is wrong. Owner ruling 2026-09-25: the desk re-derives the target off
+today's bars on EVERY review (the `require_trigger=False` path below), so a
+two-week-old target can never sit ignored. The seat-flag path
+(`require_trigger=True`) is unchanged and kept for the case a seat wants to
+flag one with evidence; both call the SAME derivation and both hold the entry,
+horizon and setup fixed. What follows describes that shared machinery.
+
+Frozen is most obviously wrong when the measurement it was taken from no
+longer exists. The
 motivating case: a long's target sits on an overhead resistance level, the
 name gaps clean through that level on earnings, and the ceiling the target
 was measured against is simply gone. The position is then managed against a
@@ -120,6 +128,7 @@ __all__ = [
     "TRIGGER_LEVEL_BROKEN",
     "TRIGGER_TARGET_BEYOND_REACH",
     "TRIGGER_TARGET_INSIDE_NOISE",
+    "TRIGGER_EACH_REVIEW_REREAD",
     "REVISION_NO_TRIGGER",
     "REVISION_BREAK_PENDING_CONFIRMATION",
     "REVISION_NO_PINNED_HORIZON",
@@ -149,6 +158,16 @@ TRIGGER_TARGET_BEYOND_REACH = "TARGET_BEYOND_TODAYS_REACH"
 #: Today's ATR puts the stored target inside the derivation's own noise
 #: floor — it no longer clears the instrument's own daily range.
 TRIGGER_TARGET_INSIDE_NOISE = "TARGET_INSIDE_TODAYS_NOISE_FLOOR"
+
+#: The desk re-reads the structural target off TODAY's bars on EVERY review
+#: (owner ruling 2026-09-25), not only when a structural event or a seat flag
+#: legitimises asking. This is the trigger recorded when `require_trigger` is
+#: False and none of the three structural triggers above fired: the target is
+#: still re-derived from the instrument's current structure, so a two-week-old
+#: target can never sit ignored. It introduces NO new number — the re-derivation
+#: uses the same pinned entry/horizon/setup and the same derivation constants as
+#: every other path; "each review" is a schedule, not a threshold.
+TRIGGER_EACH_REVIEW_REREAD = "EACH_REVIEW_STRUCTURAL_REREAD"
 
 # --- Outcomes that are NOT a revision, each recorded by name --------------
 
@@ -400,13 +419,35 @@ def assess_target_revision(
     max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
     max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
     noise_band_atr_multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    require_trigger: bool = True,
 ) -> TargetRevisionOutcome:
-    """Decide whether one flagged symbol's target may be re-derived, and if
-    so re-derive it. Pure — no DB, no broker, no market-data, no LLM.
+    """Decide whether one symbol's target may be re-derived, and if so
+    re-derive it. Pure — no DB, no broker, no market-data, no LLM.
 
-    Trigger first, re-derivation second, deliberately in that order: the
-    re-derivation is only ever consulted once a structural event has already
-    legitimised asking. A seat's evidence is never itself a trigger.
+    `require_trigger` is the whole difference between the two ways this desk
+    reaches this function (owner ruling 2026-09-25):
+
+    * True (the SEAT-FLAG path, unchanged) — trigger first, re-derivation
+      second: the re-derivation is only consulted once a STRUCTURAL EVENT has
+      legitimised asking (a confirmed level break, or today's ATR putting the
+      stored target outside the derivation's own reach/noise bounds). A seat's
+      evidence is never itself a trigger, and an opinion with no structural
+      event behind it is refused by name (`REVISION_NO_TRIGGER`).
+
+    * False (the EVERY-REVIEW path) — the desk re-derives the structural target
+      off today's bars on EVERY review, so a stale target can never sit
+      ignored. When none of the three structural triggers fired the re-read
+      still runs, recorded under `TRIGGER_EACH_REVIEW_REREAD`. This is NOT a
+      new number or a looser rule: it is the SAME derivation, with the SAME
+      pinned entry/horizon/setup and the SAME constants; only its SCHEDULE
+      changed from "on a structural event" to "every review". Every protective
+      refusal below still applies unchanged — the two-consecutive-close spring
+      guard (`REVISION_BREAK_PENDING_CONFIRMATION`), a target the price has
+      already passed (`REVISION_BEHIND_PRICE`), a chart with no structure left
+      in the trade's direction (`REVISION_NO_CEILING_LEFT`), unmeasurable
+      inputs (`FAULT_NO_BARS_FOR_REVISION`) and no pinned horizon
+      (`REVISION_NO_PINNED_HORIZON`) all still leave the last good target
+      standing rather than blanking it.
     """
     sym = str(symbol or "").strip().upper()
     is_short = str(direction or "").strip().lower() == "short"
@@ -494,17 +535,24 @@ def assess_target_revision(
         )
 
     if not trigger:
-        return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_TRIGGER, refusal=REVISION_NO_TRIGGER,
-            prior_price=target, level_used=_finite(target_level),
-            detail=(
-                "no structural event backs this flag: the level the target "
-                "was measured against is intact on the latest close, and "
-                "today's ATR still puts the target inside the same reach and "
-                "noise bounds the derivation accepted it under. A view that "
-                "there is further upside is not a trigger"
-            ),
-        )
+        if require_trigger:
+            return TargetRevisionOutcome(
+                symbol=sym, code=REVISION_NO_TRIGGER, refusal=REVISION_NO_TRIGGER,
+                prior_price=target, level_used=_finite(target_level),
+                detail=(
+                    "no structural event backs this flag: the level the target "
+                    "was measured against is intact on the latest close, and "
+                    "today's ATR still puts the target inside the same reach and "
+                    "noise bounds the derivation accepted it under. A view that "
+                    "there is further upside is not a trigger"
+                ),
+            )
+        # EVERY-REVIEW path (owner ruling 2026-09-25): no structural event, but
+        # the desk still re-reads the target off today's bars so it cannot sit
+        # frozen. The re-derivation below runs on exactly the pinned inputs; if
+        # today's structure is unchanged it will land on the same price and be
+        # recorded as REVISION_NO_CHANGE, never as a silent no-op.
+        trigger = TRIGGER_EACH_REVIEW_REREAD
 
     # --- Re-derive. Entry, horizon and setup_type are the pinned values;
     # only levels, ATR and coverage come from today's bars.

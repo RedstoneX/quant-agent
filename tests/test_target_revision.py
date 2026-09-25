@@ -544,3 +544,91 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
     assert not out.revised
     assert out.new_price is None
     assert out.code == tr.REVISION_NO_CEILING_LEFT
+
+
+# ---------------------------------------------------------------------------
+# EVERY-REVIEW re-derivation (owner ruling 2026-09-25): the target is re-read
+# off today's bars EVERY review, not only on a seat flag or a structural event.
+# `require_trigger=False` is the every-review path; True is the unchanged
+# seat-flag path. These pin (a): re-derived each review, never frozen.
+# ---------------------------------------------------------------------------
+
+
+def test_every_review_re_derives_a_moved_structure_with_no_trigger():
+    """The owner's core case. A NEARER resistance (108) has formed between
+    entry and the old 110 target; no level broke and ATR is unchanged, so the
+    seat-flag path would see NO structural event and freeze. The every-review
+    path re-reads the structure and moves the target to the nearer level."""
+    # Seat-flag path (unchanged): frozen — no structural event.
+    frozen = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[108.0, 110.0, 95.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=True, **_COMMON,
+    )
+    assert not frozen.revised
+    assert frozen.code == tr.REVISION_NO_TRIGGER
+
+    # Every-review path: re-derives to the nearer structural level.
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[108.0, 110.0, 95.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert out.revised
+    assert out.trigger == tr.TRIGGER_EACH_REVIEW_REREAD
+    assert out.new_price == pytest.approx(108.0)
+
+
+def test_every_review_unchanged_structure_re_reads_not_freezes():
+    """Unchanged structure still RE-DERIVES every review — it lands on the same
+    price and is recorded as NO_CHANGE, never as a silent frozen no-op."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 95.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert not out.revised
+    assert out.code == tr.REVISION_NO_CHANGE
+    assert out.trigger == tr.TRIGGER_EACH_REVIEW_REREAD
+
+
+def test_every_review_still_honours_every_protective_refusal():
+    """The schedule changed, not the safety. A missing input is still a FAULT,
+    no pinned horizon is still refused, and a target the price has passed still
+    leaves the old one standing — all with require_trigger=False."""
+    fault = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0],
+        atr=None, close_price=None, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert fault.code == tr.REVISION_UNMEASURABLE_INPUTS and fault.fault
+
+    args = dict(_COMMON)
+    args["pinned_horizon_sessions"] = None
+    no_h = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **args,
+    )
+    assert no_h.code == tr.REVISION_NO_PINNED_HORIZON
+
+    behind = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 116.0],
+        atr=6.0, close_price=117.0, break_seen_prior_close=True,
+        require_trigger=False, **_COMMON,
+    )
+    assert behind.code == tr.REVISION_BEHIND_PRICE
+    assert behind.prior_price == pytest.approx(110.0)
+
+
+def test_every_review_still_waits_two_closes_for_a_break():
+    """A one-day close through the target's level is still a possible spring,
+    not a confirmed break — even on the every-review path the old target stands
+    until the second confirming close."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_BREAK_PENDING_CONFIRMATION
+    assert out.new_price is None
