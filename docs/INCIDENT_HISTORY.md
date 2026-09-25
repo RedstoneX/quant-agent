@@ -22,6 +22,18 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — two more board items found already shipped, retired on verification (items 108 and 131)
+
+**In plain words:** two open board items turned out to already be fixed by earlier, unrelated pull requests. Neither needed new code; both needed the board told the truth.
+
+**Item 108 — the position reviewer's 2% minimum stop-raise was a stated rule with nothing enforcing it.** `_midday_execute_llm_actions`'s TRAIL_STOP validation (`src/pipeline.py`) now reads the live broker stop before accepting a reviewer-proposed raise and rejects any ratchet under `MIN_RATCHET_PCT` (`src/risk/trailing.py`, single-sourced, currently 2.0), keeping the existing stop in place on a sub-floor proposal rather than removing protection. Shipped via PR #641; covered by `tests/test_exit_quality.py`. Confirmed by reading the current validation block on main, not by trusting the PR description.
+
+**Item 131 — the standalone coverage sweep left no record that it had ever run.** `record_sweep_run` (`src/coverage_watchdog.py`) now writes one `specialist_evidence` row per sweep, and `sweep_log_line` writes the one greppable log line per run; both are called from `scripts/alert_heartbeat.py` on every invocation. Shipped via PR #547. Confirmed by finding the live call site, not just the function definition.
+
+**Not touched.** No code in either area. This pass only checked that a previously-filed defect no longer reproduces in the current tree and updated the board to match.
+
+---
+
 ### 2026-09-25 — the number-ledger's scope hole over the broker order path was already closed; the board just hadn't been told (item 130 retired)
 
 **In plain words:** a board item said the ledger that tracks every trade-governing number could not see the broker order path at all — `broker.py`, `stop_repair.py` and the coverage watchdog were outside its scope. Checking the current code found that gap was already closed.
