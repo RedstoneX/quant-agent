@@ -1146,6 +1146,14 @@ numbers:
       bin, and "1.0 is not shown to be right, and it is not shown to be wrong
       either". It stays labelled rather than being moved to a foreign default,
       which would be the same unsourced act in the other direction.
+      Ratified as owner-appetite 2026-09-25 (item 55): Zapranis & Tsinaslanidis
+      (2012), Applied Financial Economics 22(19) tested band widths from 2% to
+      5% and found the bounce-behaviour result did not change across that
+      range -- the literature gives a shape (a range with no measured winner
+      inside it), not a single value, so no citation can pick this number for
+      us. The on-desk sweep named below (item 55) would still narrow it if
+      run; until then this stays labelled `arbitrary` per this ledger's
+      convention for owner-ratified appetite figures.
     open_question: >-
       At what price separation do two pivots stop being one level, measured on
       the bounce behaviour of this desk's own names? docs/WORK.md item 55
@@ -1246,6 +1254,14 @@ numbers:
       that this is 5 while the trailing-stop pivot window is 3, that nothing
       downstream compares a level from here against a pivot from there, and
       that tests/test_pivot_window_independence.py pins both facts.
+      Ratified as owner-appetite 2026-09-25 (item 55): every candidate source
+      was ruled out on its own terms rather than converging on a number --
+      TA-Lib's FRACTAL defaults to 2 with no rationale, MetaTrader 5 defines
+      five with no reason, fxssi records five as an inherited MT4 default, and
+      LuxAlgo states outright there is no universally best setting
+      (docs/INCIDENT_HISTORY.md, 2026-09-13 -- do not re-search). No source
+      hands us a value, so this stays labelled `arbitrary` rather than being
+      dressed up as sourced.
     open_question: >-
       How many bars either side make a swing point a swing point, measured on
       the bounce behaviour of the names this desk trades?
@@ -2596,6 +2612,10 @@ numbers:
       gives no reason, fxssi records five became standard because it shipped
       as an MT4 default, LuxAlgo states outright there is no universally best
       setting (docs/INCIDENT_HISTORY.md -- do not re-search these).
+      Ratified as owner-appetite 2026-09-25 (item 55): no published source
+      converges on a bar count, so this is unidentifiable to a single value
+      by the same standard as the level-scan window above, and stays labelled
+      `arbitrary` rather than being dressed up as sourced.
     open_question: >-
       How many bars either side make a swing point a swing point?
       src/risk/trailing.py:107 records that the level scan uses 5 and this
