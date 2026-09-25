@@ -20,7 +20,9 @@ import {
 import { Panel } from "./ui/Panel";
 import { isExecutedTrade, etDateKey, fmtMoney, fmtNum } from "../lib/format";
 import { usePoll } from "../lib/usePoll";
-import { findPositionStop } from "../lib/positionStop";
+import {
+  findPositionStop, positionTakeProfitLine, positionThesisBreakLine,
+} from "../lib/positionStop";
 
 // Theme vars are space-separated "R G B" (Tailwind's arbitrary-alpha
 // convention, valid modern CSS) — lightweight-charts' internal color
@@ -512,6 +514,8 @@ export function PriceChartPanel({
   const livePriceLineRef = useRef<IPriceLine | null>(null);
   const entryLineRef = useRef<IPriceLine | null>(null);
   const stopLineRef = useRef<IPriceLine | null>(null);
+  const takeProfitLineRef = useRef<IPriceLine | null>(null);
+  const thesisBreakLineRef = useRef<IPriceLine | null>(null);
   // Latest onUserInteraction, read from the mount-once chart effect and the
   // range-change subscription set up inside it — a ref so those don't need
   // symbol/timeframe-style dependency wiring just to see a fresh callback.
@@ -1121,9 +1125,13 @@ export function PriceChartPanel({
     if (livePriceLineRef.current) candleSeries.removePriceLine(livePriceLineRef.current);
     if (entryLineRef.current) candleSeries.removePriceLine(entryLineRef.current);
     if (stopLineRef.current) candleSeries.removePriceLine(stopLineRef.current);
+    if (takeProfitLineRef.current) candleSeries.removePriceLine(takeProfitLineRef.current);
+    if (thesisBreakLineRef.current) candleSeries.removePriceLine(thesisBreakLineRef.current);
     livePriceLineRef.current = null;
     entryLineRef.current = null;
     stopLineRef.current = null;
+    takeProfitLineRef.current = null;
+    thesisBreakLineRef.current = null;
 
     // Owner correction: the LIVE line is created FIRST, on purpose — every
     // price line added after it (ENTRY, STOP) stacks visually on top of
@@ -1165,6 +1173,51 @@ export function PriceChartPanel({
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: stop.title,
+      });
+    }
+
+    // TARGET (item: chart exit-levels) — the entry trade's own recorded
+    // take_profit, hard solid-ish reference like the stop line above but
+    // green (profit direction), distinct from entry/stop's accent/amber.
+    const target = positionTakeProfitLine(symbol, positions, stopLookupTrades, { green: colors.green });
+    if (target) {
+      takeProfitLineRef.current = candleSeries.createPriceLine({
+        price: target.price,
+        color: target.color,
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: target.title,
+      });
+    }
+
+    // THESIS-BREAK (item: chart exit-levels) — CONDITIONAL, not a hard
+    // line: triggers on a daily CLOSE (sometimes plus volume), never an
+    // intraday touch, so it gets its own neutral color (agent/purple —
+    // already reserved on this panel for "informational, not a live
+    // broker level", same reasoning as the dividend/earnings markers)
+    // and a sparser dash than the hard stop/target lines. Only ever
+    // plotted from real data: the recorded thesis_invalid_if text, and
+    // (for an MA-referenced condition) the chart's own daily bars — see
+    // positionThesisBreakLine's module note for why an MA-referenced
+    // condition needs the LIVE average, not the number written in the
+    // text, to match what the desk actually enforces. Daily bars are
+    // only handed over when this panel is ITSELF on the 1d timeframe —
+    // compute_indicators' ma_20/50/200 are daily-close numbers, so an
+    // intraday bar series would silently compute a different, wrong
+    // quantity rather than the one the desk checks.
+    const thesisBreak = positionThesisBreakLine(
+      symbol, positions, stopLookupTrades, timeframe === "1d" ? bars : null,
+      { agent: colors.agent }
+    );
+    if (thesisBreak) {
+      thesisBreakLineRef.current = candleSeries.createPriceLine({
+        price: thesisBreak.price,
+        color: thesisBreak.color,
+        lineWidth: 1,
+        lineStyle: LineStyle.LargeDashed,
+        axisLabelVisible: true,
+        title: thesisBreak.title,
       });
     }
   }, [bars, quote, timeframe, symbol, positions, openOrders, stopLookupTrades]);

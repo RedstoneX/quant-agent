@@ -542,6 +542,14 @@ class TradeItem(BaseModel):
     timestamp: str | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    # The analyst's stated soft-exit falsifier at entry (models.py's
+    # `TradeDecision.thesis_invalid_if`, persisted verbatim on the trades
+    # row — see storage/db.py's `_ensure_column("trades", "thesis_invalid_if", ...)`).
+    # Was already in the DB row `get_trades()` selects (`SELECT *`) but
+    # dropped silently when this model was built with `TradeItem(**row)`,
+    # since pydantic ignores unknown keys by default — added here so the
+    # cockpit's chart can draw the CONDITIONAL thesis-break reference line.
+    thesis_invalid_if: str | None = None
     # Phase 6 (§6.2a/e): links this trade to the position it belongs to, and
     # (for an exit-family row only) the deterministic category its exit was
     # classified into. Both None on rows written before this existed and

@@ -311,6 +311,14 @@ export interface TradeItem {
   timestamp: string | null;
   stop_loss: number | null;
   take_profit: number | null;
+  /** The analyst's stated soft-exit falsifier at entry, free text (e.g.
+   * "Price closes below MA20 (377.08) on above-average volume"). Was
+   * already persisted on the trades row (src/storage/db.py) but not
+   * previously exposed here — wired through in schemas.py's TradeItem so
+   * PriceChartPanel's thesis-break line has a real field to read instead
+   * of inventing one. Null on rows written before this column existed,
+   * or on any non-entry row. */
+  thesis_invalid_if?: string | null;
   position_id?: string | null;
   exit_reason_category?: string | null;
   // Conviction ledger (spec §7.2, PR #159) — pinned at ENTRY only, so
