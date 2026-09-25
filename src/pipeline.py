@@ -8350,7 +8350,9 @@ class TradingPipeline:
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
                 # beside it — today `stop_wider_than_instrument_reach`
-                # or `insufficient_history`, item 54). Kept apart from
+                # or `no_structural_stop_and_no_volatility_reading`; the
+                # young-listing bar-count refusal was dropped, item 180).
+                # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.
                 elif (data.get("stage") == "deterministic_gate"

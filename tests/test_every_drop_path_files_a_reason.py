@@ -222,7 +222,6 @@ _CANNOT_END_A_CANDIDATE = {
     "_level_backing_stop": "returns the level under the stop, or None",
     "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
-    "_require_sufficient_history": "files its own refusal before returning False",
     "_note_refusal": "the recorder itself",
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",

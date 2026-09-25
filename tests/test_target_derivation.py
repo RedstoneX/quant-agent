@@ -194,8 +194,9 @@ class TestRefusals:
         history the desk failed to obtain. So this declines as a DATA FAULT
         (`fault` set, `refusal` empty), still with no price and still
         carrying the model's guess as evidence only. (A listing merely too
-        YOUNG is a different thing — a named refusal the constructor makes
-        before this runs; see `_require_sufficient_history`.)"""
+        YOUNG is no longer refused on a bar count — board item 180 dropped
+        that gate; a young name too bar-starved to read any stop from is
+        refused later by the constructor's stop-readability rule.)"""
         bars = _bars([100.0] * 4)
         supports, resistances = find_structural_levels(bars)
         assert (supports, resistances) == ([], [])

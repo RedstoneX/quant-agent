@@ -1384,51 +1384,41 @@ numbers:
       equal to, ATR_PERIOD above.
   - id: src.data.technical.LONGEST_INDICATOR_WINDOW
     value: 200
-    status: arbitrary
+    status: sourced
     site: src/data/technical.py
+    source: >-
+      The 200-session simple moving average, the standard long-term trend
+      reference every chart package plots as the "200-day MA"; its academic
+      standing traces to Brock, Lakonishok & LeBaron (1992), "Simple Technical
+      Trading Rules and the Stochastic Properties of Stock Returns", J. Finance
+      47(5), which studied the 1-200 moving-average pair among others. Only the
+      MA WINDOW is sourced -- the desk plots it as a trend reference; it is no
+      longer a data-sufficiency test (that use was removed, board item 180).
+      Definition site and reasoning: src/data/technical.py:63-74.
     note: >-
-      CORRECTION 2026-09-23 (board item 180): this entry was `sourced`, and
-      the source it gave -- "the 200-day moving average is a standard
-      published trend reference" -- sources ONE of this constant's two uses.
-      The schema has one status per definition site and cannot say "sourced
-      for one use, arbitrary for the other", so the row takes the status its
-      WEAKER use earns and the split is stated here instead. USE ONE, still
-      sourced: the `rolling(200)` moving-average window at
-      src/data/technical.py:79-82 -- named there, not chosen there, and 200
-      is a conventional published trend reference. USE TWO, NOT sourced and
-      the reason for this correction: src/portfolio_constructor.py's
-      `_require_sufficient_history` refuses the trade outright with
-      STOP_REFUSAL_INSUFFICIENT_HISTORY when `bars_available` is under this
-      same 200 -- a trade-governing gate, with no citation anywhere for 200
-      as a data-sufficiency test. A source for a chart convention is not a
-      source for a refusal threshold. The gate has never been separately
-      ratified; it survived the 2026-09-12/13 deletion of "no floor, no
-      trade" (docs/INCIDENT_HISTORY.md, PR #331) on different grounds and
-      without a literature check. Measured: at 89 bars `ma_200` is the only
-      indicator that does not compute, and `ma_200` reaches no sizing, stop,
-      target or ranking path. Do NOT resolve this by lowering 200 -- Brock,
-      Lakonishok & LeBaron (1992) chose 1-200 for its POPULARITY, on the
-      DJIA index, not as a data-sufficiency test. Two neighbouring counts
-      disagree with it and with each other: `min_external_history_days` 20
-      and src/universe_screen.py:199's 210.
-    open_question: >-
-      What, if anything, should refuse a trade for short listing history --
-      and is a bar count the right test at all, rather than refusing on the
-      specific missing input the trade's own plan requires (its thesis or
-      exit referencing MA200)? Answerable by ruling on board item 180's
-      proposed resolution; a prerequisite is that
-      src/risk/exit_guard.py returns UNPARSEABLE for an MA200
-      `thesis_invalid_if` when `ma_200` is None, so admitting young names
-      without handling that ships a position whose exit cannot be evaluated.
-    cost_while_unanswered: >-
-      Every listing under 200 completed sessions is refused by name whatever
-      the trade's plan actually needs. Measured 2026-09-17..23 [production
-      DB agent logs, read-only]: two symbols only, CBRS and DRAM, roughly 2%
-      of the universe, and `universe_screen.enabled` is false so the desk
-      does not seek new listings anyway. One refusal fell on a day with
-      capacity (DRAM, 2026-09-17, +8.7% over the next four sessions); whether
-      it would have out-ranked what was bought, or cleared the stop-width
-      gate, was NOT checked, so that is an upper bound on the cost.
+      RE-SOURCED 2026-09-25 (board item 180, owner ruling): back to `sourced`
+      after a 2026-09-23 spell at `arbitrary`. It went `arbitrary` because the
+      constant had TWO uses and the schema carries one status per site: USE ONE
+      (the `rolling(200)` moving-average window) is sourced -- 200 is a
+      conventional published trend reference, named here not chosen here -- but
+      USE TWO, the constructor's `_require_sufficient_history` young-listing
+      refusal, read the same 200 as a data-sufficiency gate with no citation
+      anywhere, so the row took the weaker use's status. The owner has now
+      DROPPED that refusal (a young listing is judged on whether a protective
+      stop is readable from whatever bars exist, via the existing
+      `_derive_structural_stop_no_atr` / STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_
+      VOLATILITY path, not on a bar count). USE TWO is gone, so the only
+      remaining use is the sourced MA window and the row is `sourced` again.
+      Not resolved by lowering 200 -- the owner ruled that out (Brock,
+      Lakonishok & LeBaron (1992) chose 1-200 for POPULARITY on the DJIA
+      index, not as a data-sufficiency test); the count gate was removed, not
+      replaced. The exit guard already returns UNPARSEABLE for a
+      `thesis_invalid_if` referencing MA200 when `ma_200` is None
+      (src/risk/exit_guard.py), so admitting a young name whose `ma_200` is
+      None does not ship an unevaluable exit -- the board's hard prerequisite,
+      verified already present on main. The two neighbouring history counts
+      (`min_external_history_days` 20, src/universe_screen.py's ~210) are
+      SEPARATE gates in their own modules and out of this item's scope.
   - id: src.execution.cash_sweep._BUY_LIMIT_PAD
     value: 1.001
     status: arbitrary

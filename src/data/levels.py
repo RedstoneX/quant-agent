@@ -849,16 +849,16 @@ COVERAGE_NO_BARS = "no_bars"                      # the feed returned nothing
 COVERAGE_UNUSABLE_BARS = "unusable_bars"          # bars arrived; fewer clean ones than MIN_SCAN_BARS
 COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, hand-built object)
 
-#: There is deliberately NO "insufficient_history" coverage state. A
-#: listing too YOUNG to measure is a trade REFUSAL, not a data fault, and
-#: it is named by the constructor before this derivation ever runs
-#: (`src/portfolio_constructor.py::_require_sufficient_history`, docs/
-#: WORK.md item 54: fewer completed sessions than the analyst's own
-#: 200-session window, `LONGEST_INDICATOR_WINDOW`). Every history shorter
-#: than `MIN_SCAN_BARS` is shorter than that window, so a separate
-#: short-history fault here could only ever fire when the session count
-#: was not recorded at all — and then `unusable_bars` says the true thing:
-#: the bars the desk holds cannot run the scan.
+#: There is deliberately NO "insufficient_history" coverage state. A short
+#: listing history is no longer a trade refusal on a bar count (the
+#: constructor's young-listing count gate was dropped, docs/WORK.md item 180,
+#: owner ruling 2026-09-25); a young name is judged on whether a protective
+#: stop is readable, and a name too young to read ANY stop from is refused by
+#: the constructor's stop-readability rule
+#: (`STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`), not here. When the scan
+#: has fewer clean bars than `MIN_SCAN_BARS` it simply finds no levels;
+#: `unusable_bars` already says the true thing — the bars the desk holds
+#: cannot run the scan.
 #:
 #: The coverage states under which an empty level list is a DATA fault. The
 #: honest reading of `unknown` is "cannot claim the chart was measured", so
