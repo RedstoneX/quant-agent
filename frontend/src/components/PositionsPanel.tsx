@@ -65,11 +65,29 @@ export function PositionsPanel({
     () => [
       columnHelper.accessor("symbol", {
         header: "Symbol",
-        cell: (info) => (
-          <button type="button" className="font-bold text-accent hover:underline" onClick={() => onSelectSymbol?.(info.getValue())}>
-            {info.getValue()}
-          </button>
-        ),
+        cell: (info) =>
+          onSelectSymbol ? (
+            // stopPropagation mirrors OrdersPanel's symbol cell: the ticker
+            // click and the row click both currently land on the same
+            // chart-select handler here (Positions has no detail popup —
+            // see chartPositionSymbol in App.tsx, an explicit owner
+            // correction: "no popup may cover the chart on a position
+            // click"), but stopPropagation keeps the two triggers
+            // independent so a future row-level handler here can't also
+            // fire when only the ticker was clicked.
+            <button
+              type="button"
+              className="font-bold text-accent hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectSymbol(info.getValue());
+              }}
+            >
+              {info.getValue()}
+            </button>
+          ) : (
+            <span className="font-bold text-accent">{info.getValue()}</span>
+          ),
       }),
       columnHelper.accessor("direction", {
         header: "Role",
@@ -162,6 +180,12 @@ export function PositionsPanel({
             getRowId={(position) => position.symbol}
             initialSorting={[{ id: "market_value", desc: true }]}
             onRowClick={onSelectSymbol ? (position) => onSelectSymbol(position.symbol) : undefined}
+            // Same disclosure chevron + row hover-highlight OrdersPanel uses
+            // (showRowChevron doc in DataTable.tsx), for the same visual
+            // "this row is clickable" cue. It does not imply a popup here:
+            // the row click still only re-charts the symbol (see
+            // onSelectSymbol above and chartPositionSymbol in App.tsx).
+            showRowChevron
             resizable
             reorderable
             storageKey="positions-columns"
