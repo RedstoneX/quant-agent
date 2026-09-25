@@ -169,6 +169,7 @@ function PositionsPane() {
         loading={state.positionsLoading}
         updatedAt={state.positionsUpdatedAt}
         onSelectSymbol={state.onSelectPositionSymbol}
+        onInspectSymbol={state.onInspectPositionSymbol}
       />
     </Pane>
   );
@@ -183,6 +184,7 @@ function HoldingsPane() {
         error={state.positionsError}
         updatedAt={state.positionsUpdatedAt}
         onSelectSymbol={state.onSelectPositionSymbol}
+        onInspectSymbol={state.onInspectPositionSymbol}
         variant="panel"
       />
     </Pane>
