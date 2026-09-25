@@ -241,12 +241,12 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
     def _fills(symbol, after):
         if symbol == "ONDS":
             return [_stop_order(
-                "865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93,
+                "00000000-0000-4000-8000-000000000001", "ONDS", 17.0, 7.93,
                 "2026-08-28T16:16:07.476647+00:00",
             )]
         if symbol == "CCJ":
             return [_stop_order(
-                "c785ae7e-359d-49fc-9853-0930e879eae5", "CCJ", 2.0, 102.955,
+                "00000000-0000-4000-8000-000000000002", "CCJ", 2.0, 102.955,
                 "2026-08-28T14:05:17.636316+00:00",
             )]
         return []
@@ -267,8 +267,8 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
                if r["action"] == "STOP_OUT")
     assert onds["realized_pnl"] == -10.2
     assert ccj["realized_pnl"] == -9.02
-    assert onds["broker_order_id"] == "865a3187-af9d-4752-be45-f121dcb9a390"
-    assert ccj["broker_order_id"] == "c785ae7e-359d-49fc-9853-0930e879eae5"
+    assert onds["broker_order_id"] == "00000000-0000-4000-8000-000000000001"
+    assert ccj["broker_order_id"] == "00000000-0000-4000-8000-000000000002"
     # Backdated to the ACTUAL fill time, not "now" (detection time).
     assert onds["timestamp"].startswith("2026-08-28 16:16:07")
     assert ccj["timestamp"].startswith("2026-08-28 14:05:17")
