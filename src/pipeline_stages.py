@@ -6475,6 +6475,24 @@ class DecisionStage:
                 kind="target", scope="symbol", symbol=target.symbol,
                 decision_id=decision_id, evidence_json=target.model_dump_json(),
             )
+        # Board item 163: cross-check the PM's whole-book sizing NARRATIVE
+        # (`reasoning_chain.sizing_logic`) against each symbol's own emitted
+        # `risk_allocation_pct`. Detection only -- it records the mismatch to
+        # the evidence stream and NEVER changes a target, size, price or exit;
+        # `risk_allocation_pct` stays authoritative. Wrapped so a bookkeeping
+        # check can never take a live PM session down, matching the posture of
+        # `_account_for_pm_candidates` below.
+        try:
+            from src.risk_narrative_check import check_sizing_narrative
+
+            for mismatch in check_sizing_narrative(portfolio_decision):
+                _record_pipeline_event(
+                    pipeline, ctx, mismatch.symbol,
+                    "sizing_narrative_check", "mismatch", mismatch.detail,
+                    prose_pct=mismatch.prose_pct, field_pct=mismatch.field_pct,
+                )
+        except Exception:
+            logger.debug("sizing_narrative_check skipped", exc_info=True)
         _account_for_pm_candidates(
             pipeline, ctx, run_id=run_id, analyses=analyses,
             positions=positions, decision=portfolio_decision,
