@@ -538,6 +538,72 @@ def test_the_calendar_respects_its_wall_clock_ceiling():
     )
 
 
+def test_a_slow_release_does_not_starve_the_releases_behind_it_in_the_list():
+    """Board item 187. Production logs (2026-09-24/25) showed the SAME tail
+    releases — PPI, PCE, GDP, Retail Sales, Initial Jobless Claims — failing
+    `fetch_deadline_exceeded` run after run, while CPI/NFP at the front of
+    `MACRO_RELEASES` almost always got through. The cause: one shared
+    deadline let an early, slow release consume nearly the whole budget
+    (up to its full `request_timeout_s`), so every release behind it in the
+    fixed iteration order was skipped WITHOUT EVEN AN ATTEMPT.
+
+    This pins the fix: the remaining budget is split fairly across the
+    releases not yet attempted, so a slow CPI response can only consume its
+    own share, not the releases behind it. CPI genuinely times out here (its
+    fake transport takes far longer than any fair share can afford); the six
+    releases behind it must still each get a real attempt and succeed.
+    """
+    today = et_today()
+    calls = []
+
+    def _transport(url, timeout):
+        release_id = int(url.split("release_id=")[1].split("&")[0])
+        calls.append(release_id)
+        if release_id == 10:  # CPI — the always-first release in the list
+            # A response slower than any per-release share can afford.
+            # Mirrors what a real socket timeout does: block for the granted
+            # window, then raise, rather than returning instantly.
+            time.sleep(timeout)
+            raise OSError("read timed out")
+        return _dates_payload([today + timedelta(days=2)])
+
+    provider = MacroEventCalendarProvider(
+        api_key="dummy",
+        total_fetch_deadline_s=1.0,
+        request_timeout_s=1.0,
+        max_retries=0,
+        retry_backoff_base_s=0.0,
+        retry_backoff_max_s=0.0,
+        retry_backoff_jitter_s=0.0,
+        breaker_after_failed_releases=10,
+    )
+    provider._http_get_json = _transport
+
+    started = time.monotonic()
+    events = provider.get_upcoming_events(horizon_days=10)
+    elapsed = time.monotonic() - started
+    coverage = provider.last_coverage
+
+    # Every release was actually attempted — none skipped on the "deadline
+    # already exceeded, no attempt made" path that starved the tail before.
+    assert sorted(calls) == sorted(r.release_id for r in MACRO_RELEASES)
+    # CPI is the one genuine failure; the other six all succeeded, including
+    # the releases that were chronically starved in production.
+    assert coverage.succeeded == len(MACRO_RELEASES) - 1
+    failed_labels = {f.label for f in coverage.failed}
+    assert failed_labels == {"CPI"}
+    for label in (
+        "PPI", "Personal Income and Outlays (PCE)", "GDP",
+        "Retail Sales (advance)", "Initial Jobless Claims",
+    ):
+        assert any(e.label == label for e in events), (
+            f"{label} was starved even though it should have gotten its "
+            "fair share of the remaining budget"
+        )
+    # The fair-share ceiling still respects the overall wall-clock budget.
+    assert elapsed < 2.0, f"calendar overran its ceiling: {elapsed:.1f}s"
+
+
 def test_the_calendar_retries_a_transient_failure_before_degrading():
     today = et_today()
     attempts = {"n": 0}
