@@ -73,6 +73,24 @@ DEFAULT_REPO_PATH = "/home/qamc/quant-agent"
 DEFAULT_UNITS_PATH = "/home/qamc/.config/systemd/user"
 # Where unit files live inside the checkout.
 REPO_UNIT_SUBDIR = "scripts/systemd"
+# Every unit type systemd itself recognises. This is systemd's own fixed
+# enumeration (see systemd.unit(5)), not a project guess, so it does not
+# need maintaining as QAMC adds units -- it only bounds which file
+# extensions in scripts/systemd/ can ever be a unit at all (so a stray
+# non-unit file, e.g. paused_units.yaml, is never mistaken for one).
+ALL_SYSTEMD_UNIT_SUFFIXES = (
+    ".service", ".socket", ".device", ".mount", ".automount",
+    ".swap", ".target", ".path", ".timer", ".slice", ".scope",
+)
+# Sanity backstop only, item 123: the set of unit types this repo is
+# EXPECTED to have today (2026-09-24). It no longer decides what
+# `list_units` matches -- `observed_unit_suffixes()` derives that from the
+# unit files actually present in the repo and on the box, so a new unit
+# type is picked up automatically whether it appears first in the
+# checkout or first on the box. This tuple exists only so a test can
+# assert it still agrees with the derived set; a mismatch means either a
+# unit type was added without anyone noticing, or this tuple has gone
+# stale, and either is worth a human look, not a silent miss.
 UNIT_SUFFIXES = (".service", ".timer", ".path")
 # The declared, reviewable list of deliberately paused units, tracked
 # alongside the units it describes.
@@ -113,12 +131,38 @@ class UnitDriftReport:
         )
 
 
-def list_units(directory: Path) -> list[str]:
+def observed_unit_suffixes(*directories: Path) -> tuple[str, ...]:
+    """The unit-file suffixes actually present across `directories`,
+    derived at call time instead of hand-maintained.
+
+    Both the repo's `scripts/systemd/` and the box's
+    `~/.config/systemd/user/` are scanned, not the repo alone: a unit type
+    that only ever appears hand-installed on the box -- tracked nowhere --
+    is exactly the dangerous case this script exists to catch (see the
+    module docstring), and deriving from the repo only would make such a
+    unit invisible before it could ever be reported `untracked`.
+
+    Restricted to `ALL_SYSTEMD_UNIT_SUFFIXES` so a non-unit file tracked
+    alongside the units (`paused_units.yaml` lives in this same directory)
+    is never picked up as a unit type. Anything within that bound is
+    trusted: if a `.socket` file shows up in either directory tomorrow, it
+    is treated as a unit and both `list_units` calls below see it without
+    anyone touching this file.
+    """
+    found: set[str] = set()
+    for directory in directories:
+        for entry in directory.iterdir():
+            if entry.is_file() and entry.suffix in ALL_SYSTEMD_UNIT_SUFFIXES:
+                found.add(entry.suffix)
+    return tuple(sorted(found))
+
+
+def list_units(directory: Path, suffixes: tuple[str, ...]) -> list[str]:
     """Unit filenames in `directory`, sorted. Files only — `.wants`
     directories and stray symlinks are not units."""
     names = []
     for entry in directory.iterdir():
-        if entry.name.endswith(UNIT_SUFFIXES) and entry.is_file():
+        if entry.name.endswith(suffixes) and entry.is_file():
             names.append(entry.name)
     return sorted(names)
 
@@ -207,8 +251,14 @@ def build_report(
         report.error = f"systemd user directory not found: {units_dir}"
         return report
 
-    report.repo_units = list_units(repo_dir)
-    report.installed_units = list_units(units_dir)
+    # Both sides are scanned for suffixes before either is listed, so a
+    # unit type that exists only on the box (never tracked) is still
+    # caught as `untracked`, and one that exists only in the repository
+    # (never deployed) is still caught as `undeployed` -- see
+    # `observed_unit_suffixes`.
+    suffixes = observed_unit_suffixes(repo_dir, units_dir) or UNIT_SUFFIXES
+    report.repo_units = list_units(repo_dir, suffixes)
+    report.installed_units = list_units(units_dir, suffixes)
 
     repo_set = set(report.repo_units)
     installed_set = set(report.installed_units)
