@@ -13733,6 +13733,15 @@ class TradingPipeline:
             except (TypeError, ValueError):
                 pinned_horizon = None
             setup_type = (buy or {}).get("setup_type") or None
+            # Item 82: the MEASURED half of the SAME verdict, pinned at entry
+            # alongside `setup_type` (stored 0/1/NULL). Present → this path
+            # reaches construction's OWN breakout verdict, not a label-only
+            # approximation of it; NULL (legacy row, or a pre-item-82 entry)
+            # → `is_trend_trade` falls back to the label alone, exactly as
+            # this code did before the column existed. See
+            # `src.risk.constants.is_trend_trade`.
+            _sc_raw = (buy or {}).get("structural_ceiling")
+            structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
 
             # Progress: 0 at entry, 100 at target, >100 beyond target.
             #
@@ -13741,12 +13750,14 @@ class TradingPipeline:
             # is no overhead structure for price to progress TOWARD, so
             # "progress" against it measures nothing and "pace" against that
             # nothing is worse. Breakouts are managed by trailing instead
-            # (spec Phase 3.7). `setup_type` is pinned at entry alongside the
-            # horizon.
+            # (spec Phase 3.7). The breakout verdict is pinned at entry: the
+            # analyst's `setup_type` OR the constructor's measured
+            # `structural_ceiling` — either sufficient, see `is_trend_trade`.
+            from src.risk.constants import is_trend_trade
             progress_pct = None
             pace = None
             pace_status = "unavailable"
-            if setup_type == "breakout":
+            if is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
                 pace_status = "n/a_breakout"
             else:
                 if progress_target and entry and progress_target != entry:

@@ -1019,6 +1019,20 @@ class Database:
             "trades", "expected_horizon_sessions", "expected_horizon_sessions INTEGER",
         )
         _ensure_column("trades", "setup_type", "setup_type TEXT")
+        # Item 82 (2026-09-25): the MEASURED half of construction's own
+        # breakout verdict, pinned at ENTRY alongside `setup_type` above.
+        # `setup_type` is only the analyst's raw label; construction's real
+        # verdict is `reward_risk_floor_applies(setup_type,
+        # structural_ceiling=...)` — True (breakout, no ratio, no progress/
+        # pace) whenever EITHER the label says "breakout" OR this is False.
+        # `False` = the desk's own level computation found nothing overhead in
+        # the trade's direction (`derivation.level_used is None`); `True` = a
+        # ceiling was found. Stored as 0/1. NULL on every legacy row and on any
+        # non-entry / legacy caller that never pins it — readers fall back to
+        # the label alone (the conservative side), exactly as before this
+        # column existed. See `TradeDecision.structural_ceiling` in models.py
+        # and `src.risk.constants.is_trend_trade`.
+        _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1382,7 +1396,8 @@ class Database:
                      requested_risk_pct: float | None = None,
                      allocated_risk_pct: float | None = None,
                      decision_model: str | None = None,
-                     thesis_invalid_if: str | None = None) -> int:
+                     thesis_invalid_if: str | None = None,
+                     structural_ceiling: bool | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -1412,7 +1427,18 @@ class Database:
         `TradeDecision.thesis_invalid_if` in models.py. None for every
         non-entry row, every legacy caller, and any entry whose target
         stated no falsifier condition.
+
+        `structural_ceiling` (item 82) is the MEASURED half of construction's
+        breakout verdict, pinned at ENTRY (BUY/SHORT) only — see
+        `TradeDecision.structural_ceiling` in models.py. Stored as 0/1; None
+        for every non-entry row and every legacy caller, so readers fall back
+        to `setup_type` alone (the conservative side).
         """
+        # 0/1 for storage, None stays NULL — see the column's migration note.
+        structural_ceiling_stored = (
+            None if structural_ceiling is None else int(bool(structural_ceiling))
+        )
+
         def _do():
             position_id = self._resolve_new_row_position_id(
                 symbol, action, qty=qty, fill_status=fill_status, fill_qty=None,
@@ -1440,14 +1466,14 @@ class Database:
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
                 "decision_id_status, thesis_invalid_if, initial_stop_loss, "
-                "initial_take_profit) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "initial_take_profit, structural_ceiling) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
                  decision_link_status, thesis_invalid_if, initial_stop_loss,
-                 initial_take_profit),
+                 initial_take_profit, structural_ceiling_stored),
             )
             self.conn.commit()
             return cur.lastrowid

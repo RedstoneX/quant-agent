@@ -37,6 +37,27 @@ def test_insert_and_query_trade(db):
     assert trades[0]["qty"] == 10.0
 
 
+def test_structural_ceiling_is_additive_nullable_and_round_trips(db):
+    """Item 82 residue. `structural_ceiling` is the MEASURED half of the
+    breakout verdict, pinned at entry. It must be additive (a caller that never
+    passes it, and every legacy row, reads back NULL/None — the conservative
+    label-only fallback), and it must round-trip 0/1 faithfully so the
+    pace/progress read path reaches construction's OWN verdict."""
+    # Legacy-shaped caller: never passes the field → NULL/None.
+    db.insert_trade("LEG", "BUY", 1.0, 100.0, "no ceiling arg", "r-leg")
+    assert db.get_symbol_last_buy("LEG")["structural_ceiling"] is None
+
+    # Measured breakout (no overhead level) → stored 0, read back 0.
+    db.insert_trade("BRK", "BUY", 1.0, 100.0, "measured breakout", "r-brk",
+                    setup_type="range", structural_ceiling=False)
+    assert db.get_symbol_last_buy("BRK")["structural_ceiling"] == 0
+
+    # Measured ceiling present → stored 1, read back 1.
+    db.insert_trade("RNG", "BUY", 1.0, 100.0, "measured range", "r-rng",
+                    setup_type="range", structural_ceiling=True)
+    assert db.get_symbol_last_buy("RNG")["structural_ceiling"] == 1
+
+
 def test_get_trades_today_only_uses_et_trading_day(db, monkeypatch):
     import src.storage.db as db_module
 
