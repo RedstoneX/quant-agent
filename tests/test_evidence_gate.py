@@ -423,7 +423,12 @@ def test_a_lost_advisory_seat_still_reaches_the_unsilenceable_alert():
 def _pipeline(data_status: dict):
     p = TradingPipeline.__new__(TradingPipeline)
     p._is_trading_day = lambda: True
-    p._drain_pending_protection_restores = MagicMock()
+    # A clean run drains nothing and reconciles no broker stop-out (item 101):
+    # return the real "nothing to surface" values so _surface_reconcile_outcomes
+    # correctly stays silent, rather than a bare MagicMock (which coerces to a
+    # truthy int and fires a spurious re-protection alert).
+    p._drain_pending_protection_restores = MagicMock(return_value=0)
+    p._reconcile_stop_out_fills = MagicMock(return_value=[])
     p._reconcile_orphan_pending_submits = MagicMock()
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p._reconcile_fills = MagicMock()
