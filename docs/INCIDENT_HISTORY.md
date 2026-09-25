@@ -22,6 +22,14 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — a missing volatility reading used to let a name go unprotected, or get a made-up stop; now it never does
+
+**In plain words:** when the desk could not read a stock's recent choppiness (the number it normally uses to set a protective stop), the prior fix path was to REFUSE the name outright rather than invent a number. The owner overruled that: a missing reading is never a reason to skip protection. There are almost always real price levels to lean on instead — a floor the stock has bounced off before, or simply yesterday's low.
+
+**Detail.** When the volatility reading needed to size a stop is unavailable, the stop is now DERIVED from price structure already computed elsewhere: the nearest verified support/resistance level on the protective side, or failing that the signal bar or the prior bar. The position is held, not dropped. The name is skipped only in the two cases where deriving a stop this way is not honest: no structural level is readable at all, or the only readable level implies a risk distance past the desk's existing stop-distance sanity bound (a skip on risk, not on the missing reading). The buffer placed past the chosen level is owner-appetite and is recorded in the number ledger with its own open question. The published basis for the derivation is the standard swing-low, prior-bar-low and Donchian channel-low stop constructions. Board item 80 is retired with this entry.
+
+---
+
 ### 2026-09-25 — item 52 retired: the insider-trade dollar size gate is deleted, not re-sourced
 
 **In plain words:** the desk used to throw away any insider stock purchase below a flat dollar figure — $100,000 for names it already follows, $250,000 for everything else — and nobody could point to research behind either number. That question is now answered: no published study supports single-transaction dollar size as a positive signal at all, so both cutoffs are deleted rather than replaced with a better number.
@@ -15715,6 +15723,7 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **A stale note removed.** Two `GROSS_LADDER` entries' `cost_while_unanswered` claimed the ladder was "in open tension with the volatility-relative brake" per `src/risk/rules.py:566-576`. That brake — the 5-day/20-day rolling-return sizing brake — was removed in full with item 32 on 2026-09-20; grep confirms no volatility brake remains in `src/risk/rules.py`. The stale references were corrected.
 
 **Board items unchanged in scope.** Items 182, 184 and 186 were NOT retired — each still owns unresolved constants: 182 keeps the cash-deficit de-lever cushion and `GROSS_LADDER_ALERT_PCT`; 186 keeps the cluster-correlation cutoff, the short-side sizing haircut and the queued-earnings BUY clamp. Their notes record which of their constants were resolved in this pass.
+
 ### 2026-09-25 — the double-classified setup_type that let the risk reviewer cut a protected breakout is closed (item 82 retired)
 
 **In plain words:** a trade's "setup type" was decided twice, in two places that could disagree, and the risk reviewer's breakout exemption read the wrong one — so it could trim a breakout it is forbidden to trim. The scale-in path now carries the position's own pinned setup_type and structural ceiling forward instead of reclassifying.

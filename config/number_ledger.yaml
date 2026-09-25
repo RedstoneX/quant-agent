@@ -1878,6 +1878,33 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
+  - id: src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct
+    value: 0.005
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      How far BELOW a structural level (ABOVE it for a short) the protective
+      stop is placed when it must be READ from price structure because there is
+      no ATR reading -- `_derive_structural_stop_no_atr`, added for board item
+      80 (owner ruling 2026-09-25: a missing volatility reading is never a
+      reason to skip protection or to size off an unverifiable typed number, so
+      the stop is derived from the nearest verified computed level, else the
+      signal/prior bar, and the position is HELD). A fraction of the level
+      price, so a wick that just tags the level does not trigger. The published
+      methods this implements -- swing-low (IG, LuxAlgo), prior-bar low (Ticker
+      Daily), Donchian channel-low -- all agree a buffer is needed but none
+      fixes its size, so this is OWNER-APPETITE, not doctrine. 0.5% is a modest
+      default, deliberately smaller than the 1.0% level-cluster zone
+      (levels.CLUSTER_TOLERANCE_PCT) so the stop sits just past the zone the
+      level was matched within, never inside it.
+    open_question: >-
+      What buffer past a structural level does the owner want a no-ATR
+      protective stop to sit at -- a fixed percentage like this, the level's
+      own cluster half-width, or a value tied to the instrument's recent range?
+    cost_while_unanswered: >-
+      A no-ATR name's protective stop sits a flat 0.5% past its level rather
+      than a distance anyone chose; too tight risks a wick-out, too loose gives
+      up more than intended on the rare name that loses its ATR reading.
   - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived

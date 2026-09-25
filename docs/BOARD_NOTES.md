@@ -456,10 +456,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15.
 
-## item 80
-
-**Moved from WORK.md (2026-09-24) —** What is not: what the desk does when no provenance can be produced. QAMC Beta's contested principle is "produce the missing data, never drop the name", which reads on the standing missing-data principle above and against refusing. Settles with one ruling covering both, not two mechanisms.
-
 ## item 81 — RETIRED 2026-09-24
 
 **Moved from WORK.md (2026-09-24) —** `SUBFLOOR_SIZE_CAPPED_STATUS` (`src/agents/portfolio_manager.py:59`) is assigned nowhere and asserted only by `tests/test_subfloor_catalyst_gate.py:841`. Keeping a key so a silent rename cannot resurrect a threshold is a real argument, so decide once and record it — keep with a ledger note, or delete. NO LIVE NUMBER'S VALUE CHANGES either way.
