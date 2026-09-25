@@ -1201,6 +1201,16 @@ def apply_gross_ceiling(
     # (`TradingPipeline._enforce_gross_ceiling`), which runs before any agent
     # and therefore cannot be disabled by a blank model response.
     emit_trims: bool = True,
+    # Item 112 — optional per-symbol CONVICTION rank for the step-3 trim
+    # order. When supplied it maps each held symbol to its signed source
+    # score `S` (aligned minus opposed seats: `signed_source_score`), and the
+    # WEAKEST conviction (lowest `S`) is trimmed FIRST — a conviction-dead
+    # winner is sold before an intact-thesis loser. When None (the default,
+    # and every lane with no fresh per-seat read — midday, close, intraday,
+    # PM-less morning) the order is byte-identical to before: biggest loser
+    # first. It changes only the ORDER trims are taken, never which book is
+    # over its ceiling, how much is shed, or the never-full-liquidation clamp.
+    conviction_rank: dict[str, int] | None = None,
 ) -> GrossCeilingOutcome:
     """Enforce the §11.2 gross-exposure ceiling, blocking BEFORE trimming.
 
@@ -1423,13 +1433,31 @@ def apply_gross_ceiling(
     # deterministic order across runs. The SAME ordering `_force_delever`
     # already uses for the cash-only safety net — a second, divergent notion
     # of "which position goes first" is exactly the sprawl §12.2 cleaned up.
-    candidates.sort(
-        key=lambda item: (
-            float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
-            -item[2],
-            item[1],
+    #
+    # Item 112 — when a CONVICTION rank is supplied (the morning post-decision
+    # de-lever, which has THIS session's fresh per-seat read), it is the
+    # PRIMARY key: the weakest conviction (lowest signed source score) goes
+    # first, so a conviction-dead winner is sold before an intact-thesis
+    # loser. A symbol with no fresh read defaults to 0 (net-neutral), sorting
+    # among the neutral names. The biggest-loser trio stays as the tie-break,
+    # so with no conviction_rank the order is exactly as before.
+    if conviction_rank is not None:
+        candidates.sort(
+            key=lambda item: (
+                int(conviction_rank.get(item[1], 0)),
+                float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
+                -item[2],
+                item[1],
+            )
         )
-    )
+    else:
+        candidates.sort(
+            key=lambda item: (
+                float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
+                -item[2],
+                item[1],
+            )
+        )
     for position, symbol, position_gross in candidates:
         if over <= 1e-6:
             break

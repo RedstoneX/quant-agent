@@ -46,8 +46,10 @@ from src.risk.rules import (
     distance_to_forced_liquidation_pct,
     gross_exposure,
     peak_to_trough_pct,
+    position_side,
     position_weight_pct,
     resolve_gross_ceiling,
+    signed_source_score,
 )
 from src.execution.broker import (
     AlpacaBroker,
@@ -12625,7 +12627,9 @@ class TradingPipeline:
         }
         return ceiling
 
-    def _enforce_gross_ceiling(self, ctx: RunContext) -> list[dict]:
+    def _enforce_gross_ceiling(
+        self, ctx: RunContext, *, floor_only: bool = False,
+    ) -> list[dict]:
         """De-lever the HELD book when it is over the §11.2 gross ceiling.
 
         Runs in the session preamble, beside `_force_delever`, and therefore
@@ -12643,6 +12647,23 @@ class TradingPipeline:
         execution gate (`max_gross_exposure`), never by selling something the
         desk already owns to make room.
 
+        `floor_only` (item 112) scopes this to a live-price MARGIN FLOOR: it
+        fires only when the book has eroded the margin buffer the ratified
+        BASE leverage cap is engineered to preserve — i.e. it is levered
+        beyond the base cap, dangerously close to a broker forced
+        liquidation. The morning lane passes `floor_only=True` because its
+        ordinary §11.2 ceiling breach is de-levered LATER, after the PM has
+        run, by `_enforce_gross_ceiling_by_conviction` — which cuts the
+        WEAKEST-by-conviction names first using this session's fresh per-seat
+        read, instead of the stale-stance biggest-loser cut. The margin floor
+        remains the sole enforcer on every PM-less morning lane (early return,
+        resume, paid-suspended), which is correct: only a genuine liquidation
+        proximity cannot wait for research, and the soft-ceiling breach is
+        still caught by the next same-day midday/close preamble. Midday, close
+        and intraday keep `floor_only=False` (default): they have no fresh
+        read, so they de-lever the full §11.2 ceiling with the unchanged
+        biggest-loser ordering.
+
         Returns the submitted orders (empty when the book is under its
         ceiling, which is the ordinary case). `ctx` is refreshed from the
         broker after fills so downstream stages see truth.
@@ -12652,6 +12673,11 @@ class TradingPipeline:
             # Tests that bypass __init__ via TradingPipeline.__new__.
             return []
         ceiling = self._resolve_gross_ceiling(ctx)
+        if floor_only and not self._is_margin_floor_breach(ctx):
+            # No genuine liquidation-proximity breach: leave an ordinary
+            # §11.2 ceiling breach to the post-decision conviction pass (or,
+            # on a PM-less lane, to the next same-day midday/close preamble).
+            return []
         min_order_usd = _risk_number(
             getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
             500.0,
@@ -12661,6 +12687,107 @@ class TradingPipeline:
             cash_park_symbol=self._sweep_symbol(),
             min_order_usd=min_order_usd,
         )
+        return self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
+
+    def _is_margin_floor_breach(self, ctx: RunContext) -> bool:
+        """Is the book levered beyond the margin buffer the BASE cap preserves?
+
+        The ratified base leverage cap (`RiskConfig.max_gross_exposure_x`) is
+        chosen to keep a fixed distance to a broker forced liquidation
+        (`distance_to_forced_liquidation_pct`: 33.3% at the 2.0x/25% default).
+        The floor fires when the book's ACTUAL distance is worse than that
+        engineered distance — a true margin-proximity breach, defined off two
+        already-ratified numbers (the base cap and the maintenance margin), so
+        no new threshold is introduced. Returns False whenever either figure
+        is unmeasurable, so an unreadable snapshot never provokes an emergency
+        trim on the morning lane (the midday/close full-ceiling pass, which is
+        not floor-scoped, still fails closed on its own terms).
+        """
+        leverage = ctx.leverage or {}
+        distance = leverage.get("distance_to_forced_liquidation_pct")
+        base_x = leverage.get("base_ceiling_x")
+        equity = ctx.total_value if ctx.total_value else 0.0
+        if not isinstance(distance, (int, float)) or not isinstance(base_x, (int, float)):
+            return False
+        if equity <= 0:
+            return False
+        maintenance_pct = _risk_number(
+            getattr(getattr(self, "config", None), "risk", None)
+            and getattr(self.config.risk, "maintenance_margin_pct", None),
+            25.0,
+        )
+        base_distance = distance_to_forced_liquidation_pct(
+            base_x * equity, equity, maintenance_margin_pct=maintenance_pct,
+        )
+        if not isinstance(base_distance, (int, float)):
+            return False
+        return distance < base_distance
+
+    def _enforce_gross_ceiling_by_conviction(self, ctx: RunContext) -> list[dict]:
+        """Morning post-decision §11.2 de-lever, WEAKEST-conviction cut first.
+
+        Runs after the risk stage and before execution, on the morning lane
+        only. It reads THIS session's fresh per-seat evidence registry
+        (`ctx.evidence_registry`, stashed by DecisionStage) and ranks every
+        held name by its signed source score `S` — aligned minus opposed
+        seats for the side the position actually carries — so the book is
+        trimmed weakest-conviction first: a conviction-dead winner is sold
+        before an intact-thesis loser. A name with no fresh read this session
+        scores 0 (net-neutral) and sorts among the neutral names.
+
+        Absent registry (every PM-less lane) means the preamble margin floor
+        was the sole enforcer — nothing to do here, so it returns []. It
+        RE-MEASURES gross first, so if the floor already trimmed a genuine
+        margin breach this pass only ever acts on a RESIDUAL §11.2 breach —
+        no double-cut. Same `apply_gross_ceiling`, same submit/finalize/alert/
+        shortfall body as the floor, so the amount shed and the
+        never-full-liquidation clamp are identical; only the trim ORDER
+        differs.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        if risk_cfg is None:
+            return []
+        evidence_registry = getattr(ctx, "evidence_registry", None)
+        if not evidence_registry:
+            return []
+        # Re-measure so this only trims what is STILL over after the preamble
+        # floor and after any exits the plan already carried (mirrors the
+        # post-trim refresh at the end of `_submit_gross_ceiling_trims`).
+        ceiling = self._resolve_gross_ceiling(ctx)
+        conviction_rank: dict[str, int] = {}
+        for position in ctx.positions or []:
+            symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+            if not symbol:
+                continue
+            sources = evidence_registry.get(symbol) or {}
+            conviction_rank[symbol] = signed_source_score(
+                symbol, sources, position_side(position),
+            )
+        min_order_usd = _risk_number(
+            getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
+            500.0,
+        )
+        outcome = apply_gross_ceiling(
+            [], ctx.positions, ctx.total_value, ceiling,
+            cash_park_symbol=self._sweep_symbol(),
+            min_order_usd=min_order_usd,
+            conviction_rank=conviction_rank,
+        )
+        return self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
+
+    def _submit_gross_ceiling_trims(
+        self, ctx: RunContext, ceiling, outcome,
+    ) -> list[dict]:
+        """Submit, protect, refresh and record a resolved gross-ceiling trim.
+
+        The shared body of both §11.2 de-lever paths — the preamble margin
+        floor (`_enforce_gross_ceiling`) and the morning post-decision
+        conviction pass (`_enforce_gross_ceiling_by_conviction`). ONE
+        implementation of the live-price submit, per-symbol stop re-coverage,
+        broker refresh, incomplete-de-lever alert and durable shortfall
+        record, so the two paths can never diverge on how a trim is placed —
+        only on which names `apply_gross_ceiling` chose and in what order.
+        """
         if not outcome.trims:
             return []
         logger.warning(
@@ -13592,14 +13719,21 @@ class TradingPipeline:
             # every stage below runs on clean truth.
             forced_orders = self._force_delever(ctx)
 
-            # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
-            # ladder. Deliberately here, before ANY agent runs: the ceiling is
-            # computed from account state alone, so a Portfolio Manager that
-            # returns nothing (a measured failure mode — one candidate model
-            # truncated mid-JSON on 1 run in 10) cannot leave the desk levered
-            # during a drawdown. Also populates ctx.leverage for the alert and
+            # 1b. Spec §11.2 — the gross-exposure MARGIN FLOOR. Deliberately
+            # here, before ANY agent runs: it is computed from account state
+            # alone, so a Portfolio Manager that returns nothing (a measured
+            # failure mode — one candidate model truncated mid-JSON on 1 run
+            # in 10) still cannot leave the desk in a liquidation-proximity
+            # breach. Item 112: the morning lane scopes this to `floor_only`
+            # — a genuine margin breach is de-levered NOW on the live price;
+            # an ordinary §11.2 ceiling breach is de-levered after the PM has
+            # run, by `_enforce_gross_ceiling_by_conviction`, so the WEAKEST-
+            # by-conviction names are cut first using this session's fresh
+            # per-seat read. Always populates ctx.leverage for the alert and
             # the dashboard, including distance-to-forced-liquidation.
-            forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
+            forced_orders = list(forced_orders) + self._enforce_gross_ceiling(
+                ctx, floor_only=True,
+            )
             positions = ctx.positions
             cash = ctx.cash
             total_value = ctx.total_value
@@ -13783,8 +13917,21 @@ class TradingPipeline:
                         pass
                 return early_exit
 
+            # Item 112 — the ordinary §11.2 gross-ceiling de-lever, run HERE
+            # (morning only) so it cuts the WEAKEST-by-conviction names first
+            # using THIS session's fresh per-seat read, not the stale-stance
+            # biggest-loser cut the preamble would have used. After the risk
+            # stage (so an RM-driven early exit is honoured first) and before
+            # execution (so its SELLs land with the session's other orders).
+            # A no-op on any book already under its ceiling — the ordinary
+            # case — and re-measures gross first, so if the preamble margin
+            # floor already fired it only trims a residual breach.
+            conviction_delever = self._enforce_gross_ceiling_by_conviction(ctx)
+
             # Phase 4 #1: execution stage — HOLDs logged, SELLs then BUYs submitted.
             orders = self._execution_stage(ctx)
+            if conviction_delever:
+                orders = list(conviction_delever) + list(orders)
 
             # Bookend: park idle cash above the reserve into the sweep vehicle.
             # After the BUY phase so open BUY limits are subtracted from the

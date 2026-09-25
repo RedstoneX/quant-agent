@@ -6635,6 +6635,12 @@ class DecisionStage:
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
+        # Item 112 — keep THIS session's fresh per-seat read on the context so
+        # the post-decision gross de-lever can rank held names by live
+        # conviction (`_enforce_gross_ceiling_by_conviction`). The registry is
+        # otherwise a DecisionStage local, discarded when the stage returns —
+        # exactly the stale-stance trap the prior attempt was rejected for.
+        ctx.evidence_registry = evidence_registry
         # §9.4 freshness — same pure function, same inputs, so the stances
         # the constructor refuses to pay for are exactly the ones the PM's
         # prompt marked stale. An earnings view older than

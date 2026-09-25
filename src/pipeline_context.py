@@ -199,6 +199,15 @@ class RunContext:
     #    distance_to_forced_liquidation_pct, alert_owner, reason}
     leverage: dict = field(default_factory=dict)
 
+    # Spec §11.2 (item 112) — THIS session's fresh per-seat read, the canonical
+    # {symbol: {seat: stance}} evidence registry the Portfolio Manager was
+    # actually shown, stashed by DecisionStage so the post-decision
+    # conviction de-lever can cut the WEAKEST-by-conviction names first
+    # instead of a stale persisted stance. Absent on every PM-less lane
+    # (early return, resume, paid-suspended) — there the preamble margin
+    # floor is the sole enforcer, which is correct.
+    evidence_registry: dict[str, dict[str, str]] = field(default_factory=dict)
+
     portfolio_decision: "PortfolioDecision | None" = None
     # Transport-successful model output can still fail deterministic parsing,
     # schema, or grounding. Preserve the exact subtype for session status and

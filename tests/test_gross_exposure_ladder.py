@@ -875,11 +875,14 @@ def test_trimming_the_held_book_has_exactly_one_owner():
             disabled = isinstance(emit, ast.Constant) and emit.value is False
             (sizing_callers if disabled else trim_owners).append(path.name)
 
-    assert trim_owners == ["pipeline.py"], (
-        f"exactly one caller may author de-lever orders; found {trim_owners}"
+    # Item 112: pipeline.py now authors de-lever orders from two call sites in
+    # the SAME module — the preamble margin floor and the morning post-decision
+    # conviction pass — so the invariant is one owner MODULE, not one call.
+    assert sorted(set(trim_owners)) == ["pipeline.py"], (
+        f"exactly one module may author de-lever orders; found {sorted(set(trim_owners))}"
     )
-    assert sizing_callers == ["portfolio_constructor.py"], (
-        f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
+    assert sorted(set(sizing_callers)) == ["portfolio_constructor.py"], (
+        f"the sizing gate must pass emit_trims=False; found {sorted(set(sizing_callers))}"
     )
 
 
@@ -2474,3 +2477,199 @@ def test_incomplete_delever_unmeasurable_neither_pages_nor_records_state(
 
     assert sent == []
     assert pipeline.db.get_last_delever_over_ceiling() is None
+
+
+# ===========================================================================
+# ITEM 112 — the morning de-lever cuts WEAKEST-BY-CONVICTION first, using
+# THIS session's fresh per-seat read, while a live-price margin FLOOR still
+# guards every PM-less path. Midday/close keep biggest-loser ordering.
+# ===========================================================================
+
+
+def _win_and_loser():
+    """A conviction-dead WINNER and an intact-thesis LOSER, same gross.
+
+    Biggest-loser ordering sells the LOSER first; conviction ordering sells
+    the WINNER first — so which name goes first is a clean discriminator.
+    """
+    winner = _position("WIN", qty=100.0, avg_entry=80.0, current_price=100.0)  # +$2k
+    loser = _position("LOS", qty=100.0, avg_entry=130.0, current_price=100.0)  # -$3k
+    return winner, loser
+
+
+def test_conviction_rank_trims_the_weakest_thesis_before_the_biggest_loser():
+    """(a) With a conviction rank supplied, the conviction-dead WINNER is cut
+    before the intact-thesis LOSER — the exact inversion of the default
+    biggest-loser order, proven on the same book and ceiling."""
+    winner, loser = _win_and_loser()
+    positions = [winner, loser]
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)  # 1.5x -> $15k, over $5k
+    assert ceiling.ceiling_x == 1.5
+
+    baseline = apply_gross_ceiling([], list(positions), EQUITY, ceiling)
+    assert baseline.trims[0].symbol == "LOS", "default order is biggest loser first"
+
+    convicted = apply_gross_ceiling(
+        [], list(positions), EQUITY, ceiling,
+        conviction_rank={"WIN": -2, "LOS": 3},
+    )
+    assert convicted.trims[0].symbol == "WIN", (
+        "the conviction-dead winner (score -2) must be trimmed before the "
+        "intact-thesis loser (score +3)"
+    )
+
+
+def _total_shed(outcome):
+    """Notional gross shed by an outcome's trims (each name is $10k gross)."""
+    return sum(10_000.0 * t.allocation_pct / 100.0 for t in outcome.trims)
+
+
+def test_conviction_order_sheds_the_same_amount_and_never_empties_the_book():
+    """(d) The conviction rank changes ONLY the order. A breach big enough to
+    touch both names sheds the identical total whichever order is used, and
+    the ladder floor (0.5x, never 0) leaves the book standing in both."""
+    winner, loser = _win_and_loser()
+    positions = [winner, loser]
+    ceiling = resolve_gross_ceiling(-25.0, base_x=BASE_X)  # 0.5x -> $5k, over $15k
+    assert ceiling.ceiling_x == 0.5
+
+    baseline = apply_gross_ceiling([], list(positions), EQUITY, ceiling)
+    convicted = apply_gross_ceiling(
+        [], list(positions), EQUITY, ceiling,
+        conviction_rank={"WIN": -2, "LOS": 3},
+    )
+
+    assert _total_shed(baseline) == pytest.approx(_total_shed(convicted)), (
+        "reordering the trims must not change the amount shed"
+    )
+    assert _total_shed(convicted) == pytest.approx(15_000.0)
+    # 0.5x ceiling = $5k retained: the book is de-levered, never liquidated.
+    for outcome in (baseline, convicted):
+        assert sum(t.allocation_pct for t in outcome.trims) < 200.0, (
+            "at least part of the $20k book survives the 0.5x floor"
+        )
+    # And the ORDER did invert, so the equality above is a real invariance.
+    assert baseline.trims[0].symbol == "LOS"
+    assert convicted.trims[0].symbol == "WIN"
+
+
+def test_conviction_rank_does_not_provoke_a_trim_from_new_buys():
+    """(e) A conviction rank is inert on step 3's gating: a book UNDER its
+    ceiling is not trimmed no matter how weak a held name's conviction is,
+    and a proposed BUY still cannot cause a held-book sale."""
+    winner, loser = _win_and_loser()  # $20k book
+    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)  # 2.0x -> $20k, book fits
+    outcome = apply_gross_ceiling(
+        [_buy("TSLA", 10.0)], [winner, loser], EQUITY, ceiling,
+        conviction_rank={"WIN": -2, "LOS": 3},
+    )
+    assert outcome.trims == [], (
+        "a book at its ceiling must not be trimmed to make room for a BUY, "
+        "and a weak conviction score is not itself a reason to sell"
+    )
+
+
+def _morning_delever_pipeline(drawdown_frac):
+    """A __new__'d pipeline wired for the morning conviction/floor de-lever,
+    with `drawdown_frac` the fraction the book sits below its high."""
+    from unittest.mock import MagicMock
+    from src.config import CashSweepConfig
+    from src.pipeline import TradingPipeline
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = MagicMock()
+    pipeline.config.risk = _risk_config()
+    pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
+    pipeline.db = MagicMock()
+    pipeline.db.get_daily_pnl.return_value = [
+        {"total_value": EQUITY / (1.0 - drawdown_frac)},
+    ]
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_account.return_value = {
+        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+    }
+    pipeline.broker.get_positions.return_value = []
+    pipeline.cash_sweeper = None
+    pipeline._compute_deployable_cash = MagicMock(return_value=0.0)
+    pipeline._finalize_pending_protections = MagicMock()
+
+    def _sell(**kw):
+        return ({"id": f"o-{kw['symbol']}", "symbol": kw["symbol"]}, {})
+
+    pipeline._submit_protected_sell = MagicMock(side_effect=_sell)
+    return pipeline
+
+
+def test_the_morning_conviction_delever_sells_the_weakest_first():
+    """(a) end-to-end: the pipeline method reads THIS session's fresh
+    evidence registry off ctx and sells the conviction-dead winner, leaving
+    the intact-thesis loser alone — the opposite of what biggest-loser would
+    do on this book."""
+    from src.pipeline_context import RunContext
+
+    pipeline = _morning_delever_pipeline(drawdown_frac=0.10)  # -> 1.5x ceiling
+    winner, loser = _win_and_loser()
+    ctx = RunContext(run_id="m1", session="morning")
+    ctx.positions = [winner, loser]
+    ctx.total_value = EQUITY
+    ctx.evidence_registry = {
+        "WIN": {"technical": "bearish", "news": "bearish"},   # score -2
+        "LOS": {"technical": "bullish", "news": "bullish", "macro": "bullish"},  # +3
+    }
+
+    orders = pipeline._enforce_gross_ceiling_by_conviction(ctx)
+
+    assert orders, "an over-ceiling morning book must de-lever"
+    sold = [c.kwargs["symbol"] for c in pipeline._submit_protected_sell.call_args_list]
+    assert sold == ["WIN"], (
+        "the conviction-dead winner is sold; the intact-thesis loser is not"
+    )
+
+
+def test_the_conviction_delever_is_a_noop_without_a_fresh_read():
+    """Every PM-less lane leaves ctx.evidence_registry empty — the conviction
+    pass must do nothing there (the preamble margin floor was the enforcer)."""
+    from src.pipeline_context import RunContext
+
+    pipeline = _morning_delever_pipeline(drawdown_frac=0.10)
+    ctx = RunContext(run_id="m2", session="morning")
+    ctx.positions = [_position("NVDA", qty=200.0, current_price=100.0)]  # 2.0x
+    ctx.total_value = EQUITY
+    # evidence_registry left at its empty default.
+
+    assert pipeline._enforce_gross_ceiling_by_conviction(ctx) == []
+    assert not pipeline._submit_protected_sell.called
+
+
+def test_the_margin_floor_fires_only_on_a_liquidation_proximity_breach():
+    """(b) The morning preamble floor de-levers on a genuine margin breach
+    (book levered past the base cap) using the live price, but DEFERS an
+    ordinary drawdown-ladder breach to the post-decision conviction pass."""
+    from src.pipeline_context import RunContext
+
+    # Case A — 2.5x book, no drawdown (ceiling stays 2.0x). Distance to a
+    # margin call (20%) is worse than the base cap preserves (33.3%): FIRE.
+    breach = _morning_delever_pipeline(drawdown_frac=0.0)
+    ctx_a = RunContext(run_id="f1", session="morning")
+    ctx_a.positions = [_position("NVDA", qty=250.0, current_price=100.0)]  # $25k = 2.5x
+    ctx_a.total_value = EQUITY
+    orders_a = breach._enforce_gross_ceiling(ctx_a, floor_only=True)
+    assert orders_a, "a book levered past the base cap is a margin breach"
+    assert breach._submit_protected_sell.called
+    # The 2.5x book's distance to a margin call (20%) is worse than the base
+    # cap preserves (33.3%) — the floor's own gate. (ctx.leverage post-call
+    # reflects the cleared book, so the pre-trim figure is checked directly.)
+    assert distance_to_forced_liquidation_pct(25_000.0, EQUITY) < 33.3
+
+    # Case B — 1.8x book, -16% drawdown (ceiling drops to 1.0x). Over the
+    # soft ceiling, but the distance (40.7%) is still safer than the base cap:
+    # the floor must NOT fire — the conviction pass owns this breach.
+    soft = _morning_delever_pipeline(drawdown_frac=0.16)
+    ctx_b = RunContext(run_id="f2", session="morning")
+    ctx_b.positions = [_position("NVDA", qty=180.0, current_price=100.0)]  # $18k = 1.8x
+    ctx_b.total_value = EQUITY
+    orders_b = soft._enforce_gross_ceiling(ctx_b, floor_only=True)
+    assert orders_b == [], "an ordinary ladder breach is deferred, not floored"
+    assert not soft._submit_protected_sell.called
+    assert ctx_b.leverage["ceiling_x"] == 1.0  # the ladder still stepped
+    assert ctx_b.leverage["distance_to_forced_liquidation_pct"] > 33.3
