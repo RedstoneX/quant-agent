@@ -353,10 +353,12 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The definition site is explicit that this is NOT in the ratified §12.3
-      text: "90 was chosen when §12.3 was built and is open for the owner to
-      move". It is the terminal bound on the sector ceiling, so it decides
-      when a sector stops accepting new risk.
+      The terminal bound on the sector ceiling, deciding when a sector stops
+      accepting new risk. The definition site records that this was NOT in the
+      ratified §12.3 text ("90 was chosen when §12.3 was built and is open for
+      the owner to move"); as of 2026-09-25 it IS owner-ratified appetite
+      (delegated to the adversary), value unchanged. Ratified, not sourced: no
+      measurement picks 90 over any other terminal cap.
     open_question: >-
       What terminal sector concentration does the owner accept, given the spec
       left the bound unstated?
@@ -438,9 +440,11 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The share of total risk one correlation cluster may hold. A round 40%
-      with nothing behind it; it depends on a cluster definition whose own
-      threshold (CLUSTER_CORRELATION_THRESHOLD) is also unsourced.
+      The share of total risk one correlation cluster may hold, owner-ratified
+      appetite 2026-09-25 (delegated to the adversary). Ratified, not sourced:
+      40% is the crowding the owner accepts in one correlated cluster, but it
+      still depends on a cluster definition whose own threshold
+      (CLUSTER_CORRELATION_THRESHOLD) is unsourced and NOT ratified here.
     open_question: >-
       What share of the total risk budget can one correlated cluster take
       before the book stops being several bets and becomes one?
@@ -467,7 +471,11 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      Total portfolio risk ceiling. A round 25% with no measurement behind it.
+      Total portfolio risk ceiling, owner-ratified appetite 2026-09-25
+      (delegated to the adversary). Ratified, not sourced: the 25% total
+      capital-at-risk ceiling is the loss across the whole book the owner
+      accepts in one correlated event, but no measurement of this account's
+      correlated-gap behaviour stands behind the magnitude.
     open_question: >-
       What total at-risk figure across the book corresponds to a loss the
       owner would accept in a single correlated event?
@@ -510,8 +518,11 @@ numbers:
     site: src/config.py
     note: >-
       The longest horizon a target may claim before the desk stops believing
-      it. A round 60 sessions with no source. Interacts with board item 91,
-      the calendar-vs-trading-day defect.
+      it, owner-ratified appetite 2026-09-25 (delegated to the adversary).
+      Ratified, not sourced: 60 sessions is the longest hold the owner will
+      credit a target over, but no measurement of this desk's own closed
+      trades picks the magnitude. Interacts with board item 91, the
+      calendar-vs-trading-day defect.
     open_question: >-
       What is the longest hold over which this desk's own closed trades show a
       target being reached?
@@ -534,22 +545,27 @@ numbers:
       relevant at all - scales off this one number.
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
     value: 5
-    status: arbitrary
+    status: sourced
     site: src/config.py
+    source: >-
+      In-repo measured study at src/config.py:722-740 (Phase 12.1, 2026-09-03,
+      docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
+      table over 101 symbols, 5 years of daily bars, separates with
+      non-overlapping 95% confidence intervals only at 5+ touches -- real 0.644
+      [0.590, 0.696] against shuffled 0.505 [0.470, 0.539]. At 2 touches the
+      intervals meet (real floor 0.510 vs shuffled ceiling 0.510) and at 3-4
+      they overlap outright, so any bar below 5 would honour a tight stop on a
+      separation that could be noise. Osler (2000) established the
+      bounce-frequency TEST but evaluates dealer-published levels and never
+      defines a touch count -- searched and ruled out, docs/INCIDENT_HISTORY.md.
     note: >-
       How many touches make a price level real enough to honour a tight stop
-      against. Osler (2000) established the bounce-frequency TEST but
-      evaluates levels published by dealing firms and never defines a touch
-      count -- searched and ruled out, docs/INCIDENT_HISTORY.md. Unsourced.
+      against. The 5 is read from the measured separation table above, not
+      chosen: below it a stop is not treated as level-backed and falls back to
+      the unbacked-stop floor exactly as any unbacked stop does.
     open_question: >-
-      The 5 comes from a measured real-vs-shuffled separation table
-      (src/config.py:850-867) whose intervals only separate cleanly at 5+
-      touches. The open question is whether that table, 101 symbols over 5
-      years of daily bars, transfers to the holding periods and names this
-      desk trades.
-    cost_while_unanswered: >-
-      A level-backed tight stop is either honoured on a separation that could
-      be noise, or refused on genuine structure.
+      Whether that table -- 101 symbols over 5 years of daily bars -- transfers
+      to the holding periods and names this desk actually trades.
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
@@ -567,15 +583,20 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      Minimum stop distance in ATRs where no real level backs the stop. The
-      definition site (src/config.py:779-796) carries a real derivation -
-      measured 2026-08-27 stop/ATR geometry, and a published 2.5-3.0x
-      entry-stop consensus for swing holds - but the published figure is a
-      RANGE and this is a point inside it, which by this desk's own rule is
-      not a source for the point. CORRECTION 2026-09-18: the first version of
-      this entry attributed the phrase "a doctrine-grounded placeholder, not a
-      permanent constant" to this site. That phrase is at
-      src/portfolio_constructor.py, not here.
+      Minimum stop distance in ATRs where no real level backs the stop, a
+      risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
+      than), owner-ratified appetite 2026-09-25 (delegated to the adversary) as
+      a point WITHIN the published band. The definition site
+      (src/config.py:779-796) carries a real derivation - measured 2026-08-27
+      stop/ATR geometry, and a published 2.5-3.0x entry-stop consensus for
+      swing holds; the 2-3x band IS sourced, and the effective floor already
+      varies live within it because the setup and regime scalers multiply into
+      it (stop_atr_setup_scale, stop_atr_regime_scale). Ratified, not sourced:
+      the published figure is a RANGE and 2.5 is a point inside it, which by
+      this desk's own rule is not a source for the point. CORRECTION
+      2026-09-18: the first version of this entry attributed the phrase "a
+      doctrine-grounded placeholder, not a permanent constant" to this site.
+      That phrase is at src/portfolio_constructor.py, not here.
     open_question: >-
       The published 2.5-3.0x swing-stop consensus is a source for the RANGE.
       What in this desk's own maximum-adverse-excursion record picks the point
@@ -1999,10 +2020,13 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor.py
     note: >-
-      Macro-regime stop-width scalers. Same shape as the setup scalers: the
-      direction (a risk-off tape widens ordinary swings for the same ATR
-      reading) is doctrine, the magnitudes are picked. No measured regime/MAE
-      breakdown exists in this repo. These multiply into every stop distance.
+      Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
+      (delegated to the adversary): the DIRECTION (a risk-off tape widens
+      ordinary swings for the same ATR reading) is doctrine, and the
+      MAGNITUDES (1.2 / 1.1 / 0.95) are ratified as appetite, kept as-is - not
+      removed, because removing them would narrow risk-off stops. Ratified, not
+      sourced: no measured regime/MAE breakdown exists in this repo. These
+      multiply into every stop distance.
     open_question: >-
       By how much should stop width scale with volatility regime, measured on
       this desk's own maximum adverse excursion by regime?
@@ -2015,10 +2039,13 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor.py
     note: >-
-      Macro-regime stop-width scalers. Same shape as the setup scalers: the
-      direction (a risk-off tape widens ordinary swings for the same ATR
-      reading) is doctrine, the magnitudes are picked. No measured regime/MAE
-      breakdown exists in this repo. These multiply into every stop distance.
+      Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
+      (delegated to the adversary): the DIRECTION (a risk-off tape widens
+      ordinary swings for the same ATR reading) is doctrine, and the
+      MAGNITUDES (1.2 / 1.1 / 0.95) are ratified as appetite, kept as-is - not
+      removed, because removing them would narrow risk-off stops. Ratified, not
+      sourced: no measured regime/MAE breakdown exists in this repo. These
+      multiply into every stop distance.
     open_question: >-
       Same question, the elevated-regime rung.
     cost_while_unanswered: >-
@@ -2028,10 +2055,13 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor.py
     note: >-
-      Macro-regime stop-width scalers. Same shape as the setup scalers: the
-      direction (a risk-off tape widens ordinary swings for the same ATR
-      reading) is doctrine, the magnitudes are picked. No measured regime/MAE
-      breakdown exists in this repo. These multiply into every stop distance.
+      Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
+      (delegated to the adversary): the DIRECTION (a risk-off tape widens
+      ordinary swings for the same ATR reading) is doctrine, and the
+      MAGNITUDES (1.2 / 1.1 / 0.95) are ratified as appetite, kept as-is - not
+      removed, because removing them would narrow risk-off stops. Ratified, not
+      sourced: no measured regime/MAE breakdown exists in this repo. These
+      multiply into every stop distance.
     open_question: >-
       Same question, the calm-regime rung - and whether tightening in calm
       regimes is right at all.
@@ -2312,26 +2342,38 @@ numbers:
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The de-levering ladder's rungs and per-rung gross multiples,
+      owner-ratified appetite 2026-09-25 (delegated to the adversary) as the
+      DELIBERATE never-liquidate loss defense: it trims gross exposure
+      gradually at -8% / -15% / -20% peak-to-trough, floors at 0.5x, never
+      sells a position to cash, and honours item 32 (the owner removed every
+      account-level halt; this ladder was deliberately left because it only
+      trims, never liquidates). Kept as-is: two reformulations were
+      adversary-REJECTED - a Grossman-Zhou hard-zero rung for reintroducing
+      full liquidation, and a gap-survival re-derivation for importing an
+      unmeasurable gap assumption. Ratified, not sourced: the rung percentages
+      and multiples are round numbers, not read off the account.
     open_question: >-
       What peak-to-trough drawdown marks the first rung at which gross
       exposure should come down?
     cost_while_unanswered: >-
-      A ratified owner table of fixed percentages that
-      src/risk/rules.py:566-576 says is in open tension with the
-      volatility-relative brake.
+      A ratified owner table of fixed percentages; the desk carries this as
+      accepted appetite pending a measurement of the account's own recovery
+      behaviour.
   - id: src.risk.rules.GROSS_LADDER[0][1]
     value: 1.5
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The de-levering ladder's rungs and per-rung gross multiples,
+      owner-ratified appetite 2026-09-25 (delegated to the adversary) as the
+      DELIBERATE never-liquidate loss defense: it trims gross exposure
+      gradually at -8% / -15% / -20% peak-to-trough, floors at 0.5x, never
+      sells a position to cash, and honours item 32. Kept as-is: two
+      reformulations were adversary-REJECTED - a Grossman-Zhou hard-zero rung
+      for reintroducing full liquidation, and a gap-survival re-derivation for
+      importing an unmeasurable gap assumption. Ratified, not sourced: the rung
+      percentages and multiples are round numbers, not read off the account.
     open_question: >-
       And what gross multiple is right at that rung?
     cost_while_unanswered: >-
@@ -2341,10 +2383,15 @@ numbers:
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The de-levering ladder's rungs and per-rung gross multiples,
+      owner-ratified appetite 2026-09-25 (delegated to the adversary) as the
+      DELIBERATE never-liquidate loss defense: it trims gross exposure
+      gradually at -8% / -15% / -20% peak-to-trough, floors at 0.5x, never
+      sells a position to cash, and honours item 32. Kept as-is: two
+      reformulations were adversary-REJECTED - a Grossman-Zhou hard-zero rung
+      for reintroducing full liquidation, and a gap-survival re-derivation for
+      importing an unmeasurable gap assumption. Ratified, not sourced: the rung
+      percentages and multiples are round numbers, not read off the account.
     open_question: >-
       The second rung's drawdown trigger.
     cost_while_unanswered: >-
@@ -2357,23 +2404,30 @@ numbers:
       The middle rung's gross multiple: at -15% peak-to-trough, exposure is
       capped at 1.0x. That is not an identity - it is the rung at which the
       desk is forbidden to use margin at all, and it was hidden from the first
-      version of this gate by the blanket 1.0 exclusion.
+      version of this gate by the blanket 1.0 exclusion. Owner-ratified
+      appetite 2026-09-25 (delegated to the adversary) as part of the deliberate
+      never-liquidate ladder; kept as-is (the Grossman-Zhou hard-zero and
+      gap-survival reformulations were both adversary-REJECTED).
     open_question: >-
       At what peak-to-trough drawdown should leverage go to zero, on this
       book's own recovery record?
     cost_while_unanswered: >-
-      Part of a ratified owner table of fixed percentages that
-      src/risk/rules.py:566-576 records as in open tension with the
-      volatility-relative brake.
+      Part of a ratified owner table of fixed percentages; carried as accepted
+      appetite pending a measurement of this book's own recovery record.
   - id: src.risk.rules.GROSS_LADDER[2][0]
     value: -20
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The de-levering ladder's rungs and per-rung gross multiples,
+      owner-ratified appetite 2026-09-25 (delegated to the adversary) as the
+      DELIBERATE never-liquidate loss defense: it trims gross exposure
+      gradually at -8% / -15% / -20% peak-to-trough, floors at 0.5x, never
+      sells a position to cash, and honours item 32. Kept as-is: two
+      reformulations were adversary-REJECTED - a Grossman-Zhou hard-zero rung
+      for reintroducing full liquidation, and a gap-survival re-derivation for
+      importing an unmeasurable gap assumption. Ratified, not sourced: the rung
+      percentages and multiples are round numbers, not read off the account.
     open_question: >-
       The third rung's drawdown trigger.
     cost_while_unanswered: >-
@@ -2383,10 +2437,15 @@ numbers:
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The de-levering ladder's rungs and per-rung gross multiples,
+      owner-ratified appetite 2026-09-25 (delegated to the adversary) as the
+      DELIBERATE never-liquidate loss defense: this is the 0.5x FLOOR rung - at
+      -20% peak-to-trough the book is halved but never sold to cash. It honours
+      item 32. Kept as-is: two reformulations were adversary-REJECTED - a
+      Grossman-Zhou hard-zero rung for reintroducing full liquidation, and a
+      gap-survival re-derivation for importing an unmeasurable gap assumption.
+      Ratified, not sourced: the rung percentages and multiples are round
+      numbers, not read off the account.
     open_question: >-
       And the gross multiple at the floor rung.
     cost_while_unanswered: >-
