@@ -179,7 +179,11 @@ flags:
     effective_value: true
     code_default: null
     intentional: false
-    reason: "reason not recorded"
+    reason: >-
+      Per-stock protective stops are the sole loss-protection mechanism after
+      the account-level loss-halt was deleted (board item 32, owner ruling
+      2026-09-20). Requiring a stop on every position prevents the desk from
+      holding unprotected downside.
     decided: null
     source: null
 
