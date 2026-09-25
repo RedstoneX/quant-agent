@@ -614,13 +614,15 @@ def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indica
 
 
 @patch("src.pipeline.compute_indicators")
-def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
-    """The 09:30/13:00 ticks skipped paid discovery because morning/midday
-    held the owner lock. Wait for that process to finish instead of
-    sleeping until the next 30-minute fire."""
+def test_scan_waits_then_runs_when_midday_lock_releases(mock_compute_indicators):
+    """The 13:00 tick skipped paid discovery because midday held the owner
+    lock. Wait for that process to finish instead of sleeping until the
+    next 30-minute fire. Midday is a different cadence than this fire, so
+    running paid discovery on release (rather than skipping to the next
+    tick) is correct here — unlike morning (see the item 121 test below)."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
-    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._blocking_owner_session = MagicMock(side_effect=["midday", "midday", None])
     p._intra_window_remaining_s = MagicMock(return_value=60.0)
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -635,6 +637,34 @@ def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
     # Post-wait refresh so we do not size against the pre-fill snapshot.
     p.broker.get_account.assert_called()
     p.broker.get_positions.assert_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_scan_skips_instead_of_hunting_when_morning_lock_releases(
+    mock_compute_indicators,
+):
+    """Item 121: the 09:30 intra_check fire shares SESSION_WINDOWS start
+    with morning. Waiting for morning to release then running paid
+    discovery on this SAME tick was still the 09:30 open, sold to the
+    owner a second time as INTRADAY OPPORTUNITY (measured leftover at
+    09:37). It must stay skipped; the next existing half-hour fire is the
+    first true paid INTRADAY look, with no invented offset."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._intra_window_remaining_s = MagicMock(return_value=60.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep"):
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_overlap"
+    assert result["movers"] == ["AAPL"]
+    p.tech_analyst.analyze_batch.assert_not_called()
 
 
 @patch("src.pipeline.compute_indicators")
