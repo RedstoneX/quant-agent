@@ -3343,6 +3343,66 @@ class AlpacaBroker:
             return False, []
         return True, specs
 
+    def cancel_stray_protective_stops(
+        self, symbol: str, *, side: str = "sell",
+    ) -> int:
+        """Cancel every protective stop still resting on a symbol that is
+        now FLAT. Returns the count cancelled.
+
+        Board item 127(b), owner ruling 2026-09-25: a forced/emergency exit
+        fires IMMEDIATELY and never waits on stop-work, so a concurrent
+        stop-repair can re-add a protective stop inside the cancel-then-sell
+        window. Once the exit takes the position to zero shares that stop is
+        a stray — it protects nothing, the reprotect path never sees it (it
+        was placed AFTER the pre-sell snapshot, so it is not in the sell's
+        ``cancelled_specs``), and ``_reconcile_stop_coverage`` skips flat
+        symbols outright — so nothing else would ever clear it, and a stop
+        left resting on zero shares can later elect into an unintended
+        short. This is the cheap cleanup the ruling assumes in place of the
+        rejected lock-wait.
+
+        Unlike ``cancel_snapshotted_stops`` there is NO rollback: the
+        position is flat, so there is nothing to protect and a "restore"
+        would only re-place the very stray order being removed. Best-effort
+        and side-correct (``side="buy"`` finds the buy-stops that had
+        protected a short); a cancel that raises is logged and never blocks
+        the others, and the whole thing degrades to a no-op — the exit has
+        already succeeded and must not be undone by a housekeeping error.
+        """
+        try:
+            ok, specs = self.snapshot_protective_stops(symbol, side=side)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cancel_stray_protective_stops: could not list %s-stops for "
+                "now-flat %s: %s — a stray stop may still rest; the operator "
+                "should confirm it is gone", side, symbol, exc,
+            )
+            return 0
+        if not ok or not specs:
+            return 0
+        cancelled = 0
+        for spec in specs:
+            sid = spec.get("id")
+            if not sid:
+                continue
+            try:
+                self.client.cancel_order_by_id(sid)
+                cancelled += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "cancel_stray_protective_stops: cancel of stray %s-stop "
+                    "%s on now-flat %s failed: %s — a stop may still rest on "
+                    "a flat position; the operator should clear it by hand",
+                    side, sid, symbol, exc,
+                )
+        if cancelled:
+            logger.info(
+                "Cancelled %d stray protective %s-stop(s) on now-flat %s "
+                "(item 127(b): a repair re-added protection inside the "
+                "cancel-then-sell window)", cancelled, side, symbol,
+            )
+        return cancelled
+
     def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
         """Cancel open entry orders on EITHER side — BUY-to-open-long and
         SELL-to-open-short — while preserving protective stop legs on
