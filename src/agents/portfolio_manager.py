@@ -1868,8 +1868,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         pre-decision gates: the ROLE-BASED conviction bar
         (`own_bar_block_reason`). A name is admitted only if the technical seat
         confirms timing (a timing VETO, no positive weight), NO seat is opposed,
-        and at least one NON-technical supportive seat carries a specific,
-        falsifiable thesis. Deliberately OUTSIDE
+        and at least one NON-technical seat took a supported directional side
+        (`_has_supported_directional_thesis` — not a genuine specificity or
+        falsifiability test; News and Smart-money always synthesise their
+        invalidation). Deliberately OUTSIDE
         `candidate_eligibility` so the audit shadow
         (`ops/model_policy/deterministic_selection.py`) keeps mirroring those
         gates exactly, and so both the ENTRY prompt and the STAY cull consume
@@ -1886,6 +1888,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         OUT of `ranked` and INTO `blocked` under `CONVICTION_BAR_REASON_PREFIX`,
         so `last_candidate_ranking` — the constructor's budget order — can never
         carry a name the bar refused.
+
+        SAFETY INVARIANT this relies on (not enforced by the type system): every
+        symbol in `ranked` is expected to already carry a technical verdict in
+        `by_symbol`, because ranking itself is derived from technical reads (see
+        `_render_candidate_ranking`: "no Technical reads this session -> nothing
+        to rank"). So `own_bar_block_reason`'s "absent technical read" branch is
+        expected to never fire for a real ranked name — a ranked name with no
+        technical verdict at all would mean that upstream invariant broke. If it
+        ever does fire, this still refuses the name (safe — never a silent cull)
+        but also logs loudly below, since a ranked name missing its technical
+        read is worth surfacing, not just quietly gating.
         """
         by_symbol: dict[str, list[AnalystVerdict]] = {}
         for v in all_verdicts:
@@ -1894,8 +1907,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         survivors: list[RankedCandidate] = []
         for c in ranked:
             sym = c.symbol.upper()
+            sym_verdicts = by_symbol.get(sym, [])
+            if not any(v.seat == "technical" for v in sym_verdicts):
+                logger.warning(
+                    "R7 conviction bar: ranked candidate %s carries no "
+                    "technical verdict in by_symbol — the ranked-implies-"
+                    "technical invariant broke upstream; refusing %s per the "
+                    "absent-technical branch (not a silent cull, not a crash)",
+                    sym, sym,
+                )
             reason = own_bar_block_reason(
-                by_symbol.get(sym, []), direction=c.direction,
+                sym_verdicts, direction=c.direction,
             )
             if reason is None:
                 survivors.append(c)

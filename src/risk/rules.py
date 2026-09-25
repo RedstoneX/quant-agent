@@ -533,26 +533,29 @@ def agreement_refuses_trade(score: int) -> bool:
 OWN_BAR_REASON_PREFIX = "R7 conviction bar"
 
 
-def _seat_has_specific_falsifiable_thesis(v: "AnalystVerdict", aligned: str) -> bool:
-    """A NON-technical seat carrying a real, falsifiable reason FOR the trade.
+def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool:
+    """A NON-technical seat that took a SUPPORTED DIRECTIONAL side.
 
     MECHANICAL DEFINITION, honest about what the seats actually emit
-    (2026-09-25). Only Technical carries a machine-readable named invalidation
-    LEVEL (a stop price); Earnings carries a genuine analyst-authored falsifier
+    (2026-09-25, renamed 2026-09-25 to match what this actually enforces).
+    Only Technical carries a machine-readable named invalidation LEVEL (a stop
+    price); Earnings carries a genuine analyst-authored falsifier
     (`bear_case`/`bull_case`) or its verdict refuses to build; Macro carries a
     real trigger when the analyst stated one, else a generic fallback; News and
     Smart-money ALWAYS synthesise a templated/constructed invalidation. So there
     is no distinct "has a named falsifier" boolean to read downstream — that
-    distinction is lost when `to_verdict()` runs. Requiring a NON-generic
-    invalidation string would couple this gate to those exact template
-    sentences, which rot.
+    distinction is lost when `to_verdict()` runs, and News/Smart-money can
+    NEVER fail this check on specificity grounds since their invalidation is
+    always synthesised. This is NOT a test for a genuinely specific or
+    falsifiable thesis — it cannot tell a templated invalidation from an
+    analyst-authored one. Requiring a NON-generic invalidation string would
+    couple this gate to those exact template sentences, which rot.
 
-    What IS reliably present, and is what "specific, falsifiable thesis" means
-    here: a supportive seat that took a DIRECTIONAL side (not a lukewarm
-    neutral shrug), which `AnalystVerdict`'s own validator then FORCES to carry
-    a non-empty invalidation condition AND at least one checkable evidence item.
-    Technical is excluded — it adds no positive weight, it only gates
-    (below).
+    What this actually checks, and all it checks: a supportive seat that took
+    a DIRECTIONAL side (not a lukewarm neutral shrug), which
+    `AnalystVerdict`'s own validator then FORCES to carry a non-empty
+    invalidation condition AND at least one checkable evidence item. Technical
+    is excluded — it adds no positive weight, it only gates (below).
     """
     return (
         v.seat != "technical"
@@ -586,10 +589,14 @@ def own_bar_block_reason(
          the benefit of the doubt on timing.
       2. NO seat opposed. A single seat pointing the other way fails the name
          outright — the mandate is "no seat opposed".
-      3. At least one NON-technical SUPPORTIVE seat carries a specific,
-         falsifiable thesis (see `_seat_has_specific_falsifiable_thesis`).
-         Technical confirming is necessary but NOT sufficient and is never
-         counted here — it carries no positive weight.
+      3. At least one NON-technical seat took a SUPPORTED DIRECTIONAL side
+         (see `_has_supported_directional_thesis`) — a real directional call
+         backed by evidence and an invalidation, not a bare neutral shrug.
+         This is not a genuine specificity/falsifiability test (News and
+         Smart-money always synthesise their invalidation); it is "a
+         supported directional non-technical seat exists". Technical
+         confirming is necessary but NOT sufficient and is never counted
+         here — it carries no positive weight.
 
     Supportive/opposed are read from `AnalystVerdict.direction` (a long is
     supported by a bullish verdict, a short by a bearish one), the one
@@ -626,11 +633,11 @@ def own_bar_block_reason(
         )
 
     if not any(
-        _seat_has_specific_falsifiable_thesis(v, aligned) for v in seat_verdicts
+        _has_supported_directional_thesis(v, aligned) for v in seat_verdicts
     ):
         return (
-            f"{OWN_BAR_REASON_PREFIX} — no supportive non-technical seat "
-            "carries a specific, falsifiable thesis"
+            f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a "
+            "supported directional side"
         )
 
     return None

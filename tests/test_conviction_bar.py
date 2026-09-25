@@ -5,9 +5,12 @@ Mandate (verbatim intent):
     broken/hostile chart blocks ENTRY even when the fundamental thesis is
     strong ("right name, wrong time"). Technical adds no positive weight; it
     only GATES.
-  * The own-bar clears only when at least one SUPPORTIVE seat carries a
-    SPECIFIC, FALSIFIABLE thesis (a real, backed directional call, not a bare
-    neutral shrug) AND no seat is opposed.
+  * The own-bar clears only when at least one NON-technical seat took a
+    SUPPORTED DIRECTIONAL side (a real directional call backed by evidence and
+    an invalidation, not a bare neutral shrug) AND no seat is opposed. This is
+    NOT a genuine specificity/falsifiability test — News and Smart-money
+    always synthesise their invalidation, so it cannot distinguish a templated
+    reason from an analyst-authored one.
   * ONE definition drives ENTRY (`candidate_eligibility` R7) and STAYING (the
     same `blocked` set, via rotation's `ineligible_hold` tier). A HELD name that
     misses the bar is not sold on one review's noise: it must miss two
@@ -171,6 +174,81 @@ def test_entry_thinly_covered_single_seat_refused():
     verdicts = [_v("technical", "SOLO")]  # confirming chart, no fundamental thesis
     survivors, blocked = _apply(ranked, verdicts)
     assert survivors == []
+
+
+# ---------------------------------------------------------------------------
+# Safety invariant: every ranked name already carries a technical verdict, so
+# own_bar_block_reason's "absent technical read" branch is never the reason a
+# REAL ranked name gets blocked. Nothing enforced this before; these two tests
+# pin it so a future refactor that breaks the invariant is caught, not
+# silently shipped as a mass-cull.
+# ---------------------------------------------------------------------------
+
+def test_ranked_names_with_technical_verdicts_never_hit_absent_technical_branch():
+    """Every symbol here HAS a technical verdict (mixed outcomes: one clears,
+    one is opposed, one has no supportive thesis). None of the blocked
+    reasons may be the "no technical read this review" text — that text only
+    comes from the absent-technical branch, and it must never fire when a
+    technical verdict is actually present in by_symbol."""
+    ranked = [_rank("CLEAR"), _rank("OPPOSED"), _rank("NOTHESIS")]
+    verdicts = [
+        _v("technical", "CLEAR"), _v("news", "CLEAR"),
+        _v("technical", "OPPOSED"), _v("news", "OPPOSED"),
+        _v("macro", "OPPOSED", direction="bearish"),
+        _v("technical", "NOTHESIS"),
+    ]
+    survivors, blocked = _apply(ranked, verdicts)
+    assert [c.symbol for c in survivors] == ["CLEAR"]
+    absent_technical_text = "no technical read this review"
+    for reasons in blocked.values():
+        for r in reasons:
+            assert absent_technical_text not in r
+
+
+def test_ranked_name_missing_a_technical_verdict_is_blocked_not_silently_culled():
+    """Documents the intended behavior of the invariant break itself: a
+    ranked name that (contrary to the invariant) has NO technical verdict at
+    all is REFUSED via the absent-technical reason and shows up in `blocked`
+    -- it is never dropped from both `survivors` and `blocked` at once, which
+    would be a silent cull a future change could introduce unnoticed."""
+    ranked = [_rank("GHOST")]
+    verdicts = [_v("news", "GHOST"), _v("macro", "GHOST")]  # no technical seat
+    survivors, blocked = _apply(ranked, verdicts)
+    assert survivors == []
+    assert "GHOST" in blocked
+    assert any(
+        r.startswith(CONVICTION_BAR_REASON_PREFIX) and "technical" in r.lower()
+        for r in blocked["GHOST"]
+    )
+
+
+def test_invariant_break_logs_a_warning_not_a_crash(caplog):
+    """The runtime guard: a ranked name with no technical verdict at all is
+    the upstream invariant breaking, which must be surfaced loudly (a
+    warning) -- never raised, never silent."""
+    import logging
+    ranked = [_rank("GHOST")]
+    verdicts = [_v("news", "GHOST")]  # no technical seat -> invariant broken
+    with caplog.at_level(logging.WARNING, logger="src.agents.portfolio_manager"):
+        survivors, blocked = _apply(ranked, verdicts)
+    assert survivors == []
+    assert any(
+        "GHOST" in rec.message and "technical" in rec.message.lower()
+        for rec in caplog.records
+    )
+
+
+def test_invariant_holds_no_warning_when_technical_verdict_present(caplog):
+    """The counterpart: when the invariant holds (every ranked name has a
+    technical verdict), the guard must stay silent -- it only fires on the
+    break, never as noise on the normal path."""
+    import logging
+    ranked = [_rank("KEEP2")]
+    verdicts = [_v("technical", "KEEP2"), _v("news", "KEEP2")]
+    with caplog.at_level(logging.WARNING, logger="src.agents.portfolio_manager"):
+        survivors, blocked = _apply(ranked, verdicts)
+    assert [c.symbol for c in survivors] == ["KEEP2"]
+    assert not any("ranked-implies-technical" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
