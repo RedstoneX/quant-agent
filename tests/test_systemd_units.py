@@ -546,6 +546,118 @@ def test_a_path_unit_hand_added_on_the_box_is_reported_as_untracked(tmp_path):
     assert report.has_drift is True
 
 
+# --- suffix derivation, not a hand-maintained tuple (item 123) -------------
+# Before item 123's second half, the four buckets above only ever saw
+# `.service`/`.timer`/`.path` because `UNIT_SUFFIXES` was a hardcoded tuple
+# `list_units` filtered by. A newly-tracked unit type (a `.socket`, say)
+# would have been silently invisible to every bucket until someone
+# remembered to edit that tuple by hand. These prove the suffix set is now
+# DERIVED from the files actually tracked in scripts/systemd/, so a new
+# unit type is picked up with no code change.
+
+SOCKET_BODY = """\
+[Unit]
+Description=example socket
+
+[Socket]
+ListenStream=/run/example.sock
+
+[Install]
+WantedBy=sockets.target
+"""
+
+
+def test_a_newly_tracked_unit_type_is_picked_up_without_touching_the_tuple(
+    tmp_path,
+):
+    """`.socket` is not in `UNIT_SUFFIXES` and this test never edits it --
+    if the suffix set were still hand-maintained, a.socket would be
+    invisible to every bucket. It is not: tracking it makes the box's
+    missing copy an `undeployed` finding automatically."""
+    from scripts.check_unit_drift import UNIT_SUFFIXES
+
+    assert ".socket" not in UNIT_SUFFIXES
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.socket": SOCKET_BODY},
+        {"a.service": UNIT_BODY},
+    )
+    assert report.undeployed == ["a.socket"]
+    assert report.has_drift is True
+
+
+def test_an_installed_but_untracked_new_suffix_type_is_reported_as_untracked(
+    tmp_path,
+):
+    """The mirror case: a `.socket` hand-added on the box, with no `.socket`
+    ever tracked in the repository, must still be caught -- the derivation
+    is bounded by real systemd unit types, not just by what happens to be
+    on disk already."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY, "rogue.socket": SOCKET_BODY},
+    )
+    assert report.untracked == ["rogue.socket"]
+    assert report.has_drift is True
+
+
+def test_a_non_unit_file_in_the_repo_directory_is_never_treated_as_a_unit(
+    tmp_path,
+):
+    """`paused_units.yaml` lives in the same directory as the units it
+    describes. Deriving suffixes from "whatever is in this directory"
+    without bounding to real systemd unit types would make `.yaml` a
+    tracked "unit type" and misreport every install that lacks one."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "paused_units.yaml": "paused_units: []\n"},
+        {"a.service": UNIT_BODY},
+    )
+    assert report.repo_units == ["a.service"]
+    assert report.has_drift is False
+
+
+def test_suffixes_are_derived_not_read_from_the_hand_tuple(tmp_path):
+    """Direct proof at the function level: `observed_unit_suffixes` reads
+    the directories, not `UNIT_SUFFIXES`."""
+    from scripts.check_unit_drift import observed_unit_suffixes
+
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.socket": SOCKET_BODY},
+        {},
+    )
+    suffixes = observed_unit_suffixes(repo_root / "scripts" / "systemd", units_dir)
+    assert suffixes == (".service", ".socket")
+
+
+def test_observed_suffixes_include_a_type_seen_only_on_the_box(tmp_path):
+    """The union, not just the repo side: a unit type that exists only
+    installed on the box (never tracked) must still be observed, or it
+    could never be reported `untracked`."""
+    from scripts.check_unit_drift import observed_unit_suffixes
+
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY, "rogue.socket": SOCKET_BODY},
+    )
+    suffixes = observed_unit_suffixes(repo_root / "scripts" / "systemd", units_dir)
+    assert suffixes == (".service", ".socket")
+
+
+def test_the_hand_maintained_tuple_still_agrees_with_the_real_repository():
+    """`UNIT_SUFFIXES` is now only a sanity backstop, not the source of
+    truth -- but it must still describe reality. This runs against the
+    real, live scripts/systemd/, not a fixture: if it ever drifts from what
+    is actually tracked, that is worth a human noticing, not a silent
+    behaviour change hidden behind the derived set."""
+    from scripts.check_unit_drift import UNIT_SUFFIXES, observed_unit_suffixes
+
+    assert set(observed_unit_suffixes(SYSTEMD_DIR)) == set(UNIT_SUFFIXES)
+
+
 def test_wants_directories_are_not_mistaken_for_units(tmp_path):
     """`timers.target.wants` and the symlinks inside it live in the same
     directory as the units. Counting a symlink as an installed unit would

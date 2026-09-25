@@ -121,6 +121,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import html
 import json
 import os
@@ -1503,6 +1504,83 @@ def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
         actually_open = any(w in upper for w in _CLOSURE_EXEMPT_WORDS)
         if claims_closed and not actually_open:
             flagged.append(f"item {rank}: {rest[:100]}")
+    return flagged
+
+
+#: BOARD-HYGIENE CHECK ONLY (`find_near_duplicate_open_items`, item 140).
+#:
+#: Four duplicate items were filed on the same day by parallel agents, each
+#: writing up the same finding in different words without reading the board
+#: first. Nothing mechanically compared a new filing against what was
+#: already open. This check is deliberately narrow: it compares the
+#: TIDIED TITLE `load_funnel_queue` already extracts for each OPEN item
+#: (`QueueItem.title` -- the text before the first em dash, classification
+#: words and markdown already stripped), not the body prose. A title match
+#: is a high-precision signal that the same headline was filed twice; a
+#: prose/topic match is not -- two items can legitimately discuss the same
+#: area of the desk (the same file, the same seat) without being the same
+#: finding, and flagging that would be noise the owner would learn to
+#: ignore. Two thresholds, both conservative on purpose:
+#:
+#:   * IDENTICAL titles once normalized (lowercased, punctuation and
+#:     whitespace collapsed) -- the same words, filed twice.
+#:   * NEAR-identical titles above a tight similarity ratio, and only once
+#:     both titles are long enough that a short generic title cannot match
+#:     by coincidence (`_DUP_TITLE_MIN_LEN`).
+#:
+#: This does not catch a genuine paraphrase that changes enough of the
+#: wording -- the same limitation `find_closed_items_not_marked_done` notes
+#: for its own vocabulary match. That is the deliberate trade: a check that
+#: never flags a legitimate pair of distinct items, at the cost of missing
+#: a rarer, better-disguised duplicate.
+_DUP_TITLE_RATIO = 0.90
+_DUP_TITLE_MIN_LEN = 12
+
+
+def _normalize_title_for_dup_check(title: str) -> str:
+    """Lowercase, punctuation and whitespace collapsed out, for comparing
+    two backlog titles as the same words rather than the same characters."""
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def find_near_duplicate_open_items(work_md: Path) -> list[str]:
+    """OPEN funnel-queue items whose own tidied title is the same finding
+    filed twice. See the module note above `_DUP_TITLE_RATIO` for why this
+    reads only the title, not the body, and why the two thresholds are set
+    where they are. Returns plain-English descriptions for CI to fail on,
+    empty when nothing looks duplicated. A file that cannot be parsed at all
+    is a job for the existing `load_funnel_queue` problem-reporting path,
+    not this check, so an unparseable file reports nothing here rather than
+    raising.
+    """
+    items, problem = load_funnel_queue(work_md)
+    if problem:
+        return []
+    open_items = [item for item in items if item.state == "open"]
+    normalized = [
+        (item, _normalize_title_for_dup_check(item.title))
+        for item in open_items
+    ]
+    flagged: list[str] = []
+    for idx, (item_a, norm_a) in enumerate(normalized):
+        if not norm_a:
+            continue
+        for item_b, norm_b in normalized[idx + 1:]:
+            if not norm_b:
+                continue
+            if norm_a == norm_b:
+                kind = "identical"
+            elif (min(len(norm_a), len(norm_b)) >= _DUP_TITLE_MIN_LEN
+                  and difflib.SequenceMatcher(None, norm_a, norm_b).ratio()
+                  >= _DUP_TITLE_RATIO):
+                kind = "near-identical"
+            else:
+                continue
+            flagged.append(
+                f"item {item_a.rank} and item {item_b.rank} look like the "
+                f"same finding filed twice ({kind} title): "
+                f"{item_a.title!r} / {item_b.title!r}"
+            )
     return flagged
 
 

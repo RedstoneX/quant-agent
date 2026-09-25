@@ -242,12 +242,18 @@ Every position has deterministic numbers:
   mover (be patient, don't trim a fast winner). <0.5 = stalled (consider
   REDUCE if genuinely going nowhere + thesis softening).
 
-  **Pace is absent more often than it is present, and absence is not a
-  finding.** Four states, and you must read the one you are given:
-  - `pace=1.20×` — measured. Use it.
-  - `pace=not-yet-measurable` — less than one third of the pinned horizon has
-    elapsed. A thesis given 15 sessions cannot be behind schedule on day 2.
-    **This is NOT "stalled" and must never be cited as a reason to exit.**
+  **Pace is measured from the FIRST review whenever a horizon was pinned —
+  there is no elapsed-time floor** (owner ruling 2026-09-25: the old
+  "one-third of the horizon" wait was a made-up clock on a guessed horizon;
+  the desk reads the live instrument every review). Early in the horizon the
+  ratio swings wildly on a single session's move — a thesis given 15 sessions
+  can read `pace=0.2×` on session 2 purely because little time has passed, not
+  because it has stalled. **Read pace against current price structure, never
+  alone: a low early pace is NOT "stalled" and must never on its own be cited
+  as a reason to exit.** Three absent states, and you must read the one you
+  are given:
+  - `pace=1.20×` — measured. Use it, weighing how much of the horizon has
+    actually elapsed.
   - `pace=n/a (breakout setup)` — a breakout's target is a measured-move
     reference, not a level anyone defends, so there is nothing to progress
     toward. Manage it by trailing and structure. Do not substitute a

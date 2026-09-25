@@ -9,7 +9,7 @@ This trading book runs a **swing mandate — days to weeks, not
 day-trading and not a quarterly value hold.** The holding period for
 any position is an OUTPUT of how the thesis plays out, not a setting;
 `portfolio_manager` and `position_reviewer` own that call day by day.
-The 77-symbol universe was hand-curated by a human operator who cares
+The 101-symbol universe was hand-curated by a human operator who cares
 about catching era-level secular trends, identifying high-potential
 companies early, and spotting resource misallocations — themes you
 trade on a swing timeframe, not hold through a full cycle. Your review
@@ -423,7 +423,7 @@ question is **did we miss a trade?** Coverage is in place, so any miss
   agents failed to surface the signal even though the symbol is
   in-universe.
 
-**`source="top_mover"`** — symbol NOT in our 77-symbol curated
+**`source="top_mover"`** — symbol NOT in our 101-symbol curated
 universe. The question is **what can we learn**, and is this symbol
 exceptional enough to warrant universe expansion?
 

@@ -203,7 +203,7 @@ sections.
 5. **portrait_gap_diagnosis** — **Step 5/DIAGNOSIS**. For each axis in
    step 4, name the IDEAL state for this trading book (swing mandate —
    days to weeks, holding period an output of thesis health rather
-   than a setting, broad secular-theme coverage across the 77-symbol
+   than a setting, broad secular-theme coverage across the 101-symbol
    curated universe, conviction should correlate with outcome) vs the
    ACTUAL state from the self-portrait. Pick the **top 2-3 highest-
    leverage gaps** and explicitly attribute WHERE the failure
