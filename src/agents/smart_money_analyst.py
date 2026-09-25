@@ -253,6 +253,15 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 min(row.lag_days for row in observations),
                 max(row.lag_days for row in observations),
             ],
+            # Board item 170: `lag_days` alone cannot tell the seat whether a
+            # disclosure date was actually filed or only guessed at the
+            # 45-day statutory ceiling (congresswatch.us carries no real
+            # filing date). Surfaced here so the seat never reads a lag
+            # figure as a measured, on-time disclosure when it is really an
+            # estimate the eligibility gate already refuses to credit.
+            "disclosure_date_estimated_count": sum(
+                row.disclosure_date_estimated for row in observations
+            ),
             "disclosure_age_days_range": [
                 min(row.disclosure_age_days for row in observations),
                 max(row.disclosure_age_days for row in observations),
@@ -313,6 +322,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
                     (row.accepted_at or row.known_at).isoformat()
                     if row.accepted_at or row.known_at else None
                 ),
+                # Board item 170: whether `accepted_at`/the lag this row
+                # contributes is a real filing date or congresswatch.us's
+                # trade+45d guess (never a measurement of timeliness).
+                "disclosure_date_estimated": row.disclosure_date_estimated,
                 "transaction_value_usd": row.transaction_value_usd,
                 "post_transaction_shares": row.post_transaction_shares,
                 # Size relative to the insider's own holding. Reported, not

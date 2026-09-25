@@ -153,9 +153,9 @@ DONE WHEN:
 **170. `congresswatch.us` rows have no filing date, so the desk estimates one at trade+45d — filed 2026-09-20 from item 126's review.** That estimate feeds `SmartMoneyFinding`'s `lag_days <= 45` test, which then cannot fail on an estimated row by construction. **Measured:** real-date rows show median 60-day lag [2026-09-19]; estimated rows read as best-behaved instead.
 
 DONE WHEN:
-  - [ ] a cluster with no real filing date can FAIL the lateness test (test fails today)
-  - [ ] no new unsourced constant; `config/number_ledger.yaml` records the choice
-  - [ ] estimated-vs-real is visible wherever lag reaches a seat or owner
+  - [x] a cluster with no real filing date can FAIL the lateness test (test fails today) — RESOLVED 2026-09-24 (#657, already on main): `SmartMoneyFinding.deterministic_eligibility`'s congressional branch now requires `not disclosure_date_estimated` alongside `lag_days <= 45`, so an all-estimated cluster (lag==45 by construction) fails; a same-lag REAL cluster still passes. `tests/test_congressional_trading.py::test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate`.
+  - [x] no new unsourced constant; `config/number_ledger.yaml` records the choice — no threshold changed, only which observations may satisfy the existing sourced 45-day ceiling; ledger entry for `congress_assumed_max_disclosure_lag_days` unchanged and still accurate.
+  - [x] estimated-vs-real is visible wherever lag reaches a seat or owner — RESOLVED 2026-09-25: `#657` carried the flag onto `SmartMoneyObservation` and the eligibility gate, but the seat-facing summary (`SmartMoneyAnalystAgent._compact_symbol`) still dropped it; now `disclosure_date_estimated_count` is reported alongside `lag_days_range`, and each `representative_transactions` row carries its own `disclosure_date_estimated` flag. `tests/test_smart_money.py::test_compact_symbol_surfaces_estimated_disclosure_dates_to_the_seat`.
 detail: docs/BOARD_NOTES.md (item 170)
 
 **173. Residue of the ledger share-count fix — filed 2026-09-23.** Defect and fix: `docs/INCIDENT_HISTORY.md`. **(a) HAS A DEADLINE.** The bad count hid a real gap: EQNR left the book 2026-09-21 16:19-16:45 UTC with no trades row for 8.5962 sh [measured, production DB, read-only, 2026-09-23].
