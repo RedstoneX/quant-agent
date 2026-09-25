@@ -52,12 +52,20 @@ export function PositionsPanel({
   loading,
   updatedAt,
   onSelectSymbol,
+  onInspectSymbol,
 }: {
   positions: PositionItem[];
   error: string | null;
   loading: boolean;
   updatedAt?: Date | null;
+  /** Ticker-cell-only: charts the symbol, never opens a popup. */
   onSelectSymbol?: (symbol: string) => void;
+  /** Row-body handler (everything except the ticker cell): opens the
+   * same candidate/trade detail modal Orders opens, resolved by symbol
+   * (see inspectPositionSymbol in App.tsx). Owner-reversed 2026-09-25 —
+   * a row click used to only re-chart, matching onSelectSymbol above;
+   * now it matches OrdersPanel's onInspect instead. */
+  onInspectSymbol?: (symbol: string) => void;
 }) {
   const everLoaded = Boolean(updatedAt);
   const status = error ? (everLoaded ? "stale" : "error") : loading ? "loading" : "ok";
@@ -67,14 +75,9 @@ export function PositionsPanel({
         header: "Symbol",
         cell: (info) =>
           onSelectSymbol ? (
-            // stopPropagation mirrors OrdersPanel's symbol cell: the ticker
-            // click and the row click both currently land on the same
-            // chart-select handler here (Positions has no detail popup —
-            // see chartPositionSymbol in App.tsx, an explicit owner
-            // correction: "no popup may cover the chart on a position
-            // click"), but stopPropagation keeps the two triggers
-            // independent so a future row-level handler here can't also
-            // fire when only the ticker was clicked.
+            // stopPropagation mirrors OrdersPanel's symbol cell exactly:
+            // the ticker must always chart-only, even though the row
+            // itself now opens the detail popup below (onInspectSymbol).
             <button
               type="button"
               className="font-bold text-accent hover:underline"
@@ -179,12 +182,10 @@ export function PositionsPanel({
             columns={columns}
             getRowId={(position) => position.symbol}
             initialSorting={[{ id: "market_value", desc: true }]}
-            onRowClick={onSelectSymbol ? (position) => onSelectSymbol(position.symbol) : undefined}
+            onRowClick={onInspectSymbol ? (position) => onInspectSymbol(position.symbol) : undefined}
             // Same disclosure chevron + row hover-highlight OrdersPanel uses
-            // (showRowChevron doc in DataTable.tsx), for the same visual
-            // "this row is clickable" cue. It does not imply a popup here:
-            // the row click still only re-charts the symbol (see
-            // onSelectSymbol above and chartPositionSymbol in App.tsx).
+            // (showRowChevron doc in DataTable.tsx): the row (as opposed to
+            // the ticker cell) now opens the detail popup, same as Orders.
             showRowChevron
             resizable
             reorderable

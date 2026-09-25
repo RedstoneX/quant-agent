@@ -43,6 +43,19 @@ export interface SupportWorkspaceState {
    * was the cause of Missed Opportunities' unpredictable click, and it
    * was removed rather than fixed in place once nothing needed it. */
   onSelectPositionSymbol?: (symbol: string) => void;
+  /** Owner-reversed 2026-09-25: Positions/Holdings now match Orders —
+   * the ticker (wired to onSelectPositionSymbol above, unchanged) charts
+   * only, and everything else on the row/pill opens the same
+   * candidate/trade detail modal Orders' onInspectOrder opens, resolved
+   * by symbol via App.tsx's inspectPositionSymbol. Kept as its OWN field
+   * rather than folded back into onSelectPositionSymbol: that field is
+   * still shared by every ticker-only cell in this workspace (Trades/
+   * Orders symbol column, Missed Opportunities, Search), and the comment
+   * above documents that a conditionally-popup-opening variant of THAT
+   * field was already tried once and removed for making Missed
+   * Opportunities' click unpredictable. A separate field keeps the two
+   * behaviors from ever being merged back into one by accident. */
+  onInspectPositionSymbol?: (symbol: string) => void;
   onInspectOrder?: (order: OrderItem) => void;
   onInspectTrade?: (trade: TradeItem) => void;
 }
