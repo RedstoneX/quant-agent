@@ -437,7 +437,20 @@ Analyze all the above and produce your intelligence report as JSON."""
                 previous_narrative: dict | None = None,
                 session: str = "morning",
                 prior_session_report: dict | None = None,
-                news_coverage=None) -> tuple[NewsIntelligenceReport | None, AgentResult]:
+                news_coverage=None,
+                _retry_used: bool = False,
+                ) -> tuple[NewsIntelligenceReport | None, AgentResult]:
+        """`_retry_used` is a per-CALL flag, not instance state (item 152,
+        2026-09-25): the earlier version set `self._heal_retry_used = True`
+        on the agent instance and never cleared it. `self.news_analyst` is a
+        single long-lived instance reused across every session in the
+        scheduler's `while True` loop (src/pipeline.py), so the FIRST
+        validation-failure-then-retry of the whole run permanently disabled
+        the one paid heal retry for every later, unrelated failure on any
+        later session — silently reducing the seat's own recovery rate over
+        time. Threading it as a recursion argument scopes it to this one
+        answer, matching every other retry in this file.
+        """
         result = self.run(
             news_text=news_text,
             universe=universe or [],
@@ -449,12 +462,32 @@ Analyze all the above and produce your intelligence report as JSON."""
         )
         parsed = result.parse_json()
         if parsed is None:
-            logger.error("News analyst returned non-JSON response")
-            _persist_parse_failure(
-                agent_name=self.name, session=session, raw_text=result.raw_text,
-                parsed=None, error="non-JSON response (parse_json() returned None)",
+            # `parse_json()` already scans every `{`/`[` in the raw text for
+            # ANY complete, well-formed JSON fragment (AgentResult.parse_json,
+            # src/agents/base.py) before giving up — so None here means the
+            # answer contained no parseable JSON substring at all (a genuine
+            # non-answer, e.g. "I need more context...", confirmed against
+            # the three retained `data/parse_failures/news_analyst_*.json`
+            # forensic dumps, all identical). There is nothing left to
+            # salvage per-entry in that case; unlike the validation-failure
+            # branch below, this path previously never retried at all before
+            # giving up, so a transient non-answer (rate limit page, a
+            # truncated stream) was never given the SAME one paid heal
+            # retry the schema-failure branch already gets. Give it parity.
+            if _retry_used:
+                logger.error("News analyst returned non-JSON response after one heal retry")
+                _persist_parse_failure(
+                    agent_name=self.name, session=session, raw_text=result.raw_text,
+                    parsed=None, error="non-JSON response (parse_json() returned None)",
+                )
+                return None, result
+            logger.warning("News analyst returned non-JSON response; one paid heal retry")
+            return self.analyze(
+                news_text, universe=universe, stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative, session=session,
+                prior_session_report=prior_session_report,
+                news_coverage=news_coverage, _retry_used=True,
             )
-            return None, result
         # Per-entry isolation: a single malformed StockNewsItem (e.g. empty
         # headline) or StateChange (e.g. bad conviction enum) must not drop
         # the WHOLE news report — that report carries macro_narrative,
@@ -467,20 +500,24 @@ Analyze all the above and produce your intelligence report as JSON."""
         try:
             report = NewsIntelligenceReport(**parsed)
         except Exception as e:
-            if getattr(self, "_heal_retry_used", False):
-                logger.error("News analysis failed parse after one heal retry: %s", e)
+            if _retry_used:
+                # "failed to parse" (not "failed parse") so this final,
+                # exhausted-retry failure is classified by log_health's
+                # `seat_answer_unreadable` family instead of silently
+                # falling into the unrecognised bucket — the same gap #538
+                # closed for the technical seat's own final-failure line.
+                logger.error("News analysis failed to parse after one heal retry: %s", e)
                 _persist_parse_failure(
                     agent_name=self.name, session=session, raw_text=result.raw_text,
                     parsed=parsed, error=str(e),
                 )
                 return None, result
-            self._heal_retry_used = True
-            logger.warning("News analysis failed parse (%s); one paid heal retry", e)
+            logger.warning("News analysis failed to parse (%s); one paid heal retry", e)
             return self.analyze(
                 news_text, universe=universe, stock_mentions=stock_mentions,
                 previous_narrative=previous_narrative, session=session,
                 prior_session_report=prior_session_report,
-                news_coverage=news_coverage,
+                news_coverage=news_coverage, _retry_used=True,
             )
         report = self._filter_hallucinated_state_changes(
             report, news_text, prior_session_report=prior_session_report,
