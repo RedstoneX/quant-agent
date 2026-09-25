@@ -492,3 +492,55 @@ def test_every_outcome_carries_a_machine_code():
                                         **kwargs, **_COMMON)
         assert out.code, f"blank outcome for {kwargs}"
         assert out.detail, f"blank detail for {kwargs}"
+
+
+# ---------------------------------------------------------------------------
+# Item 82 — target revision is ALREADY measurement-only; the analyst's
+# setup_type label does not route it.
+#
+# An adversary flagged `assess_target_revision` as a second label-only
+# money-path reader alongside the trailing reader (both persist the same row).
+# It is NOT: the label reaches only `derive_structural_target`, and the funnel
+# item-6 fix (2026-09-11) already made that function decide breakout-vs-range
+# from the MEASURED chart (`nearest is None` on today's levels), not the word
+# "breakout" — see `src/data/levels.py` ~line 1144. So a measured breakout the
+# analyst mislabelled "range" ALREADY gets breakout treatment here, and no
+# `structural_ceiling` needs threading through this path. These pin that: all
+# three setup_type values produce a BYTE-IDENTICAL outcome, in both a revising
+# and a refusing scenario. If a future change makes this path key off the
+# label again, one of these fails and the drift is caught.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("setup_type", ["range", "breakout", None])
+def test_item82_revision_outcome_is_independent_of_the_setup_type_label(setup_type):
+    """A confirmed level break re-derives to the next level (128) regardless of
+    whether the analyst typed range, breakout, or nothing — the label never
+    routes the re-derivation."""
+    args = dict(_COMMON)
+    args["setup_type"] = setup_type
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0,
+        levels=[110.0, 128.0, 95.0], atr=6.0, close_price=118.0,
+        break_seen_prior_close=True, **args,
+    )
+    assert out.revised
+    assert out.trigger == tr.TRIGGER_LEVEL_BROKEN
+    assert out.new_price == pytest.approx(128.0)
+    assert out.basis == "structural_level"
+
+
+@pytest.mark.parametrize("setup_type", ["range", "breakout", None])
+def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
+    """With the chart's structure all closed decisively through, the flag is
+    refused under one machine code for every label — the mislabelled-range case
+    is not routed to some different, softer refusal."""
+    args = dict(_COMMON)
+    args["setup_type"] = setup_type
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0,
+        levels=[95.0, 90.0], atr=6.0, close_price=118.0,
+        break_seen_prior_close=True, **args,
+    )
+    assert not out.revised
+    assert out.new_price is None
+    assert out.code == tr.REVISION_NO_CEILING_LEFT

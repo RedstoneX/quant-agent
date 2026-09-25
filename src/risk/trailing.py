@@ -377,6 +377,7 @@ def compute_trailing_stop(
     min_ratchet_pct: float = MIN_RATCHET_PCT,
     qty: float = 1.0,
     initial_stop: float | None = None,
+    structural_ceiling: bool | None = None,
 ) -> TrailProposal | None:
     """Propose a tightened stop, or None when no move is warranted.
 
@@ -395,12 +396,20 @@ def compute_trailing_stop(
     to measure the risk actually taken. Optional and additive: omitting it
     (every pre-fix call site, until updated) simply means that ratchet never
     fires, reproducing the exact old behaviour.
+
+    `structural_ceiling` is the constructor's MEASURED breakout verdict,
+    pinned at entry (item 82, #649/#652). Passing it routes a measured
+    breakout the analyst mislabelled "range" to Type B trailing instead of
+    Type A — see `src.risk.constants.is_trend_trade`. `None` (the default,
+    and every legacy row) falls back to the analyst's label alone, which is
+    the exact behaviour this argument replaces.
     """
     return evaluate_trailing_stop(
         symbol=symbol, setup_type=setup_type, entry=entry,
         current_price=current_price, current_stop=current_stop,
         reference_target=reference_target, bars=bars, atr=atr,
         min_ratchet_pct=min_ratchet_pct, qty=qty, initial_stop=initial_stop,
+        structural_ceiling=structural_ceiling,
     ).proposal
 
 
@@ -417,6 +426,7 @@ def evaluate_trailing_stop(
     min_ratchet_pct: float = MIN_RATCHET_PCT,
     qty: float | None = None,  # None reads as a long — see `is_short` below
     initial_stop: float | None = None,
+    structural_ceiling: bool | None = None,
 ) -> TrailEvaluation:
     """`compute_trailing_stop`, plus the code naming why it ended where it
     did. Same arguments, same arithmetic, same proposal — this IS the body;
@@ -438,8 +448,18 @@ def evaluate_trailing_stop(
 
     is_short = (_finite(qty) or 1.0) < 0
 
+    # Type A vs Type B is the SAME breakout verdict every other money-path
+    # reader now uses: the analyst's label OR the constructor's MEASURED
+    # `structural_ceiling` — either sufficient (item 82, #649/#652). A
+    # measured breakout the analyst mislabelled "range" (setup_type="range"
+    # with structural_ceiling=False → is_trend_trade True) is trailed as
+    # Type B, not left in Type A. `structural_ceiling=None` (legacy row, or
+    # a caller that cannot measure it) falls back to the label alone —
+    # identical to the pre-item-82 `!= "breakout"` compare this replaces.
+    from src.risk.constants import is_trend_trade
+
     # --- Type A: no STRUCTURAL trailing until the target is exceeded -------
-    if setup_type != "breakout":
+    if not is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
         target = _finite(reference_target) if reference_target is not None else None
         exceeded = False
         if target is not None:
