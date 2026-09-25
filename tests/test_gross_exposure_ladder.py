@@ -910,6 +910,39 @@ def test_the_session_alert_reports_the_rung_in_force():
     assert "DE-LEVERED" in line
 
 
+def test_the_margin_call_distance_label_never_reads_as_a_stop_or_gap_metric():
+    """`distance_to_forced_liquidation_pct` is the BROKER'S margin-call
+    distance and nothing else — it must never be worded as if it were a
+    per-position stop or a gap-survival cushion, and it must never be a
+    sizing/gating input (that is enforced elsewhere by the ladder using
+    `drawdown_pct`, not this field). This is a mirror guard: if the wording
+    in `_append_leverage_line` ever drifts, this test catches it before an
+    owner-facing message does.
+    """
+    from src.notifier import _append_leverage_line
+
+    lines: list[str] = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 1.8, "ceiling_x": 1.5, "base_ceiling_x": 2.0,
+        "drawdown_pct": -12.0, "distance_to_forced_liquidation_pct": 55.6,
+        "alert_owner": False,
+    }})
+
+    assert len(lines) == 1
+    line = lines[0]
+    # The correct wording: the broker's margin-call distance.
+    assert "fall to a margin call" in line
+    # Banned mislabels this exact number must never carry.
+    for banned in (
+        "gap survival", "gap-survival",
+        "distance to stop", "distance-to-stop", "stop-out", "stop out",
+    ):
+        assert banned not in line.lower(), (
+            f"{banned!r} mislabels the broker margin-call distance in: {line!r}"
+        )
+    assert "DE-LEVERED" in line
+
+
 def test_the_alert_stays_silent_when_nothing_was_measured():
     """An omitted line is honest; an invented '1.0x' is not."""
     from src.notifier import _append_leverage_line
