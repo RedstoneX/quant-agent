@@ -249,11 +249,12 @@ def rearm_full_position_stop(
             symbol, qty, stop_price,
         )
         return None
-    buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", 0.03)
+    from src.execution.broker import AlpacaBroker
+    buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", AlpacaBroker.STOP_LIMIT_BUFFER_PCT)
     try:
         buffer = float(buffer)
     except (TypeError, ValueError):
-        buffer = 0.03
+        buffer = AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     result = broker._submit_protective_stop_retrying(
         symbol=symbol, qty=qty, stop_price=stop_price,
         limit_price=stop_price * (1 - buffer), side="sell",
@@ -287,11 +288,12 @@ def rearm_full_position_short_stop(
             symbol, qty, stop_price,
         )
         return None
-    buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", 0.03)
+    from src.execution.broker import AlpacaBroker
+    buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", AlpacaBroker.STOP_LIMIT_BUFFER_PCT)
     try:
         buffer = float(buffer)
     except (TypeError, ValueError):
-        buffer = 0.03
+        buffer = AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     result = broker._submit_protective_stop_retrying(
         symbol=symbol, qty=qty, stop_price=stop_price,
         limit_price=stop_price * (1 + buffer), side="buy",
