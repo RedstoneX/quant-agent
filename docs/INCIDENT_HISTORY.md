@@ -22,6 +22,14 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — a missing volatility reading used to let a name go unprotected, or get a made-up stop; now it never does
+
+**In plain words:** when the desk could not read a stock's recent choppiness (the number it normally uses to set a protective stop), the prior fix path was to REFUSE the name outright rather than invent a number. The owner overruled that: a missing reading is never a reason to skip protection. There are almost always real price levels to lean on instead — a floor the stock has bounced off before, or simply yesterday's low.
+
+**Detail.** When the volatility reading needed to size a stop is unavailable, the stop is now DERIVED from price structure already computed elsewhere: the nearest verified support/resistance level on the protective side, or failing that the signal bar or the prior bar. The position is held, not dropped. The name is skipped only in the two cases where deriving a stop this way is not honest: no structural level is readable at all, or the only readable level implies a risk distance past the desk's existing stop-distance sanity bound (a skip on risk, not on the missing reading). The buffer placed past the chosen level is owner-appetite and is recorded in the number ledger with its own open question. The published basis for the derivation is the standard swing-low, prior-bar-low and Donchian channel-low stop constructions. Board item 80 is retired with this entry.
+
+---
+
 ### 2026-09-25 — the desk was told to buy for "balance"; the prompt now forbids it
 
 **In plain words:** the owner ruled that conviction outranks balance — the desk must never buy or size a position UP to diversify, to balance the sectors, to improve "the shape of the book", or just to use up spare borrowing room. A purchase now has to stand on its own multi-seat conviction and nothing else. Leaving borrowing room unused is a perfectly acceptable outcome when nothing is good enough to buy; it is not a problem to be solved by reaching for the least-bad name. On 2026-09-24 a real decision had done exactly the barred thing, calling a name "the cleanest non-Technology candidate for closing the deployment gap" — that is the reasoning this ruling outlaws.
