@@ -181,7 +181,7 @@ DONE WHEN:
 **138. Five unsourced order-price buffer sites carrying three values — filed 2026-09-18, TIER 1.** A 1% ladder offset, a 0.5% midday offset and a 3% stop-limit buffer decide whether an order fills, and none of the five sites is in `config/number_ledger.yaml` (they sit in the broker/execution path item 130 shows the ledger's scope rule excludes). **Item 118 is a NEAR-NEIGHBOUR and does NOT cover this** — it asks whether the ladder's 1% limit fills on a gap day; this is the whole family of unsourced price buffers.
 
 DONE WHEN:
-  - [ ] all five sites carry a ledger entry with a source, or the open question and what the desk pays meanwhile, with no value changed in the same pass
+  - [x] all five sites carry a ledger entry with a source, or the open question and what the desk pays meanwhile, with no value changed in the same pass
 
 **139. Roughly 74 of the repo's 90 registered git worktrees are session scratch under `/tmp` — filed 2026-09-18, housekeeping, pre-existing, nobody's current task.** CORRECTION to the filing brief: none of them is stale in git's sense — every registered path still exists, so `git worktree prune` removes nothing [verified 2026-09-18].
 
