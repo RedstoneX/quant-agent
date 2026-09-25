@@ -22,6 +22,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — the number-ledger's scope hole over the broker order path was already closed; the board just hadn't been told (item 130 retired)
+
+**In plain words:** a board item said the ledger that tracks every trade-governing number could not see the broker order path at all — `broker.py`, `stop_repair.py` and the coverage watchdog were outside its scope. Checking the current code found that gap was already closed.
+
+**What was checked.** `src/number_sources.py`'s `SCOPED_PATHS` list was read directly: it already contains `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py`. A comment on that list dates the change to 2026-09-19, board item 130, and the same file's `MAX_UNSCOPED_NUMERIC_SITES` history line records the count drop that scoping those modules produced (192 -> 145) — shipped via PR #544.
+
+**What this means for the board.** Item 130 was never re-broken; it shipped and the retirement was simply never written up. No code was touched in this pass — this is a paperwork fix, not a repair. Item 130 is removed from `docs/WORK.md`'s open list and TIER-1 list and added to the retired-item-numbers line; its section is deleted from `docs/BOARD_NOTES.md`.
+
+---
+
 ### 2026-09-23 — the desk could size a new-name buy or short off a stale or mid price, not just render one (item 120 closed)
 
 **In plain words:** when the desk opens a name it does not already hold, the
@@ -3813,7 +3823,7 @@ to be. The `0.0` sentinel.
 
 ---
 
-## The de-levering ladder was reading a shallower drawdown than the account really had, and an erased equity curve read as a book at record highs (2026-09-18)
+### The de-levering ladder was reading a shallower drawdown than the account really had, and an erased equity curve read as a book at record highs (2026-09-18)
 
 **In plain language.** The desk automatically reduces how much it owns once it
 falls far enough below its best-ever value. To do that it has to know what its
@@ -13781,7 +13791,7 @@ the README):**
    four-container dependency for the same data would be a straight
    downgrade in operational risk for no gain.
 
-## 2026-09-10 — stop-floor base re-derived again: 1.5 -> 2.5 ATR, doctrine not our own data
+### 2026-09-10 — stop-floor base re-derived again: 1.5 -> 2.5 ATR, doctrine not our own data
 
 The 1.5x ATR floor (item 33, above) was measured via Sweeney MAE analysis on
 this desk's own ~2-week trade signal history. That same window was later
@@ -13831,7 +13841,7 @@ values to prove the level-backed-vs-unbacked distinction were re-derived
 by hand against the new base (not relabelled from actual output) —
 worked arithmetic is in each fixture's own comment.
 
-## 2026-09-10 — a persistently broken ticker in the intraday scan could fail silently forever
+### 2026-09-10 — a persistently broken ticker in the intraday scan could fail silently forever
 
 **In plain words:** the every-30-minute scan that watches for stocks making a
 big move could not tell "this stock is broken and Alpaca won't give us data
@@ -13889,7 +13899,7 @@ three consecutive misses for the same symbol pages exactly once, and a
 recovered symbol's streak resets rather than carrying into a later,
 unrelated outage.
 
-## 2026-09-10 — the order-fill timeout was the wrong question; watch for the fill instead
+### 2026-09-10 — the order-fill timeout was the wrong question; watch for the fill instead
 
 **In plain words:** when the desk buys a stock, it places an order and then
 gives up on it if the order doesn't fill within a fixed number of seconds —
@@ -14198,7 +14208,7 @@ the sizing arithmetic itself (`risk_pct x entry / |entry - stop|`,
 by `tests/test_risk_based_sizing.py`, `tests/test_portfolio_constructor.py`
 and `tests/test_risk_budget.py`.
 
-## 2026-09-11 — smart-money evidence was judged as an island on a calendar; it now has to correlate with something real
+### 2026-09-11 — smart-money evidence was judged as an island on a calendar; it now has to correlate with something real
 
 **In plain words:** the desk watches insider and congressional stock trades
 as one piece of evidence toward a trade decision. Until now, if too many
@@ -14780,7 +14790,7 @@ shown to the reviewer as a reference (progress-to-target, distance-to-target)
 and, for range setups only, to the execution-time reward:risk belt. Purely
 informational; unchanged by this work.
 
-## 2026-09-14 — the UNSOURCED token, written into a list field, discarded a whole earnings analysis
+### 2026-09-14 — the UNSOURCED token, written into a list field, discarded a whole earnings analysis
 
 **In plain words:** the earnings prompt tells the model to write a
 placeholder word when a number is missing from a filing. One of the places
@@ -14816,7 +14826,7 @@ token coerces to `[]`, and
 `test_every_unsourced_prompt_is_mapped_here` fails if a new prompt starts
 using the token without being added to the audited set.
 
-## 2026-09-17 — trimming a held stock to pay for a new one was read as buying more of it, and the whole plan was thrown out
+### 2026-09-17 — trimming a held stock to pay for a new one was read as buying more of it, and the whole plan was thrown out
 
 **In plain words:** on an intraday check the portfolio manager chose to open
 NET and pay for it by trimming AAPL. The safety check read the AAPL trim as a
@@ -14882,7 +14892,7 @@ the movers. Dropping the ungrounded name is not the product. Write-up at
 the top of this file, 2026-09-17, "the midday scan charted only the stocks
 that jumped".
 
-## 2026-09-17 — shorts carry the same limits as longs (owner decision)
+### 2026-09-17 — shorts carry the same limits as longs (owner decision)
 
 Owner decision: "Shorts can have the same [limits] as longs." The desk is to
 be fully invested long or short, and the two short-only caps were unsourced
@@ -14902,7 +14912,7 @@ either way stays bounded by `max_gross_exposure_x` and
 the mandatory stop above entry, COVER never blocked, the kill switch and the
 drawdown ladder.
 
-## 2026-09-17 — six timers on one tick; two stop-coverage repairs raced
+### 2026-09-17 — six timers on one tick; two stop-coverage repairs raced
 
 All six session timers (`quant-agent-{morning,midday,close,intra_check,
 evening,earnings_preprocess}.timer`) carried `OnCalendar=*:0/30`, so every
@@ -15281,7 +15291,7 @@ principle.
 
 ---
 
-## 2026-09-23 — strict structured output turned six desk-owned fields into required model output
+### 2026-09-23 — strict structured output turned six desk-owned fields into required model output
 
 **What was wrong.** `BaseAgent._response_format_for` renders a seat's
 `result_model.model_json_schema()` into the OpenRouter / OpenAI
@@ -15363,7 +15373,7 @@ left alone: the smart-money user payload sends `in_core_universe`,
 token-budget justification still derives its ceiling from a schema that no
 longer exists, so that number's stated basis is stale.
 
-## 2026-09-23 — the market-wide Form 4 pass read nothing for five sessions, and every health signal stayed green
+### 2026-09-23 — the market-wide Form 4 pass read nothing for five sessions, and every health signal stayed green
 
 **The regression.** The 2026-09-18 backlog fix (PR #513) gave `_discover`
 in `src/data/smart_money.py` a second exit condition: with watched names
@@ -15420,7 +15430,7 @@ reading. And nothing persists per-day read-through for the market-wide pass,
 so every morning re-walks the whole 86-day window from the freshest slice.
 Both are real and both are wider than this fix.
 
-## 2026-09-23 — a red page fired eighteen times to repeat a line the owner already had in the same second
+### 2026-09-23 — a red page fired eighteen times to repeat a line the owner already had in the same second
 
 **What he received.** A standalone DATA QUALITY ALERT: "the intra_check
 session at 10:18 AM ET ran on incomplete research … the Portfolio Manager
@@ -15501,7 +15511,7 @@ remaining CATEGORY_LOST states", which stopped being true when the category
 was split on 2026-09-18; the comment is stale, the wording is right, and
 `src/notifier.py` had changes in flight when this shipped.
 
-## 2026-09-24 — a SHORT's risk-budget divisor used the analyst's stale entry, not the today print (item 181)
+### 2026-09-24 — a SHORT's risk-budget divisor used the analyst's stale entry, not the today print (item 181)
 
 **The defect.** Item 120 set the execution-loop sizing divisor to
 `sizing_price = max(today_print, approved_entry)` — conservative on the
@@ -15558,7 +15568,7 @@ Item 181 is retired; residue: none — item 120's SIZING half is now fully
 closed on both the allocation and risk-budget paths, for both directions.
 
 
-## 2026-09-24 — the definition-of-done gate could go blind on its own shallow checkout, and said nothing when it did
+### 2026-09-24 — the definition-of-done gate could go blind on its own shallow checkout, and said nothing when it did
 
 The gate reads a pull request's adversary and trailer record from commit messages only, resolving the base commit as the parent of HEAD; on the CI runner's default depth-1 checkout that parent, and sometimes an earlier commit on a multi-commit branch, was unreadable, so a genuine trailer failed the check with no indication that the checkout — not the trailer — was the problem (item 132, filed 2026-09-18). PR #476 sat red for hours this way with a complete, genuine adversary record already in its description.
 

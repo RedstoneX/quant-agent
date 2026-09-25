@@ -614,10 +614,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** 2026-09-16 (item 127) is the counter-example: a transient concurrency conflict survived all three attempts and was not a rejection. `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` (`:739`) and `_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`:740`) both rest on that reasoning and neither has a derivation — a number that outlived its own justification. Neither value may be moved by feel; the standing no-arbitrary-numbers principle at the top of this file applies, and item 130 is why the ledger does not currently see either of them.
 
-## item 130
-
-**Moved from WORK.md (2026-09-24) —** `broker.py` IS the broker order. So every constant on the desk's most consequential path escapes the only mechanical enforcement of the no-arbitrary-numbers rule, and a claim that a change "adds no constants" there is unverifiable by anything but reading. Admitting those modules will move the ratchet: `MAX_ARBITRARY_ENTRIES` is an EQUALITY, so the new entries get written rather than the count bent. **Same hole in `src/pipeline.py`/`src/agents/`, confirmed 2026-09-19:** the queued-earnings cap is hand-typed `5.0` in both, outside the ledger; it fired 3x on a real RSG decision and the stored order row still shows the pre-cap 20.44%.
-
 ## item 131
 
 **Moved from WORK.md (2026-09-24) —** `quant-agent-coverage-sweep.timer` is installed on the host (`OnCalendar=*:0/30`), but the sweep writes nothing identifiable into `quant_agent.log` and `~/quant-agent/logs/` is empty, so it cannot be confirmed to have ever placed a stop. This matters twice over: it is the process that holds `should_alert_repair_failure` (`src/coverage_watchdog.py:219`), the owner-facing alarm for a failed stop repair; and it is the strongest remaining trigger for item 127's collision. Same class as the fill notification path that five changes optimised before anyone checked it had ever worked once — prove it runs before improving it.
