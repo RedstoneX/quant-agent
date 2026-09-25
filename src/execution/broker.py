@@ -1335,12 +1335,21 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 #
 # THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
 #
-#   * Three, because every failure worth retrying is transient — a 429 rate
+#   * Three, because a failure worth retrying is transient — a 429 rate
 #     limit, a 5xx, a dropped connection, an eventual-consistency blip
-#     between the fill and the order being placeable. Those clear in under a
-#     second. A failure that survives three attempts is a REJECTION (a bad
-#     price, an unsupported qty, a closed venue), and retrying a rejection
-#     forever just delays the owner alert that is the real remedy.
+#     between the fill and the order being placeable — and those clear in
+#     under a second. A REJECTION (a bad price, an unsupported qty, a
+#     closed venue) is not worth retrying at all: the broker's answer is
+#     Alpaca's own `APIError.status_code` 400/404/422, it will not change
+#     between attempt 1 and attempt 3, and burning the burst on a doomed
+#     resubmit just delays the owner alert that is the real remedy.
+#     Board item 129: this ceiling used to be a blind `except Exception`
+#     that retried a 422 exactly like a 429, so a genuine rejection paid
+#     the full three-attempt, ~2-second cost anyway before anyone was
+#     told. `_is_terminal_broker_rejection` now reads the status code that
+#     was always on the exception and short-circuits on it, so only a
+#     failure with no such code (or a 429/5xx) spends the retry burst; a
+#     genuine rejection is reported after its FIRST attempt.
 #   * ~2 seconds, because the owner's own standard for this feature is that
 #     "the gap is brief upon entry". A retry loop long enough to matter
 #     would itself become the exposure it was added to close. Escalating to
@@ -1384,6 +1393,23 @@ def _is_held_for_orders_error(exc: BaseException) -> bool:
     """
     text = str(exc).lower()
     return "held_for_orders" in text or "insufficient qty" in text
+
+
+def _is_terminal_broker_rejection(exc: BaseException) -> bool:
+    """True when the broker's OWN answer says retrying is pointless.
+
+    Board item 129: the retry burst below used to catch every exception
+    identically, so a deterministic rejection (bad price, unsupported qty,
+    a closed/unknown symbol — Alpaca's `APIError.status_code` 400/404/422,
+    same classification `get_asset_record` and `get_intraday_snapshots`
+    already use for exactly these codes) burned the full attempt budget
+    and backoff before alerting, exactly the "delays the owner alert"
+    outcome the retry ceiling was written to avoid. A 429/5xx/timeout/
+    dropped-connection failure has no such status (or a 429/5xx one) and
+    is genuinely worth another try, so only these codes short-circuit.
+    """
+    status_code = getattr(exc, "status_code", None)
+    return status_code in (400, 404, 422)
 
 
 def _split_protective_qty(qty) -> tuple[float, float]:
@@ -5245,6 +5271,21 @@ class AlpacaBroker:
                     "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
                     symbol, qty, stop_price, exc,
                 )
+                if _is_terminal_broker_rejection(exc):
+                    # Board item 129: a 400/404/422 will fail identically on
+                    # every retry — it is not a blip, it is the broker's
+                    # answer. Burning the rest of the burst on a doomed
+                    # resubmit only delays the alert this ceiling exists to
+                    # deliver promptly; stop now instead.
+                    logger.error(
+                        "protective stop [%s] for %s got a terminal broker "
+                        "rejection (status %s) on attempt %d/%d — this will "
+                        "not change on retry, escalating now instead of "
+                        "spending the rest of the budget.",
+                        leg, symbol, getattr(exc, "status_code", None),
+                        attempt, attempts,
+                    )
+                    break
                 if attempt < attempts:
                     delay = _STOP_PLACEMENT_BACKOFF_S[
                         min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
