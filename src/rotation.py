@@ -311,6 +311,7 @@ __all__ = [
     "RotationOutcome",
     "RotationPrecheck",
     "RotationRefusal",
+    "CONVICTION_BAR_REASON_PREFIX",
     "evaluate_rotation",
     "evaluate_rotation_opportunity",
     "holdings_below_entry_bar",
@@ -373,6 +374,12 @@ REQUIRED_BUY_LEG_GATES = (
 #: this is the conservative end of a real but unpinned range, not a
 #: measured fact.
 ROTATION_MARGIN_PCT = 0.25
+
+#: Prefix that tags a `candidate_eligibility` blocking reason as the 2026-09-25
+#: conviction bar (R7). The STAY cull (rotation's `ineligible_hold` tier)
+#: recognises ONLY these reasons; a held name failing an OLDER gate
+#: (R2/R3/R5/R6) is culled through its own reason, exactly as before this change.
+CONVICTION_BAR_REASON_PREFIX = "R7 conviction bar"
 
 #: `PortfolioConstructor._build_sell` truncates an order's reasoning at 500
 #: characters after appending the thesis condition. A rotation reason that

@@ -1043,22 +1043,33 @@ def test_the_ranking_is_rendered_into_the_pm_prompt(monkeypatch):
         _tech("AAA", "strong_buy", "high"),
         _tech("ZZZ", "neutral", invalid_if=""),
     ]
+    # 2026-09-25 conviction bar: a lone-technical name no longer ENTERS, so
+    # each rankable name here carries a second, HIGH-conviction bullish seat
+    # (news) to clear the bar. That is what makes the rendered scores and seat
+    # counts below higher than the pre-mandate single-seat rendering.
+    news_intel = _news_intel({
+        sym: [StockNewsItem(
+            headline="guidance raised", sentiment="bullish", conviction="high",
+            impact_summary="raised full-year guide",
+        )]
+        for sym in ("AAA", "CCC")
+    })
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     msg = agent.build_user_message(
         analyses=analyses, positions=[], macro_analysis=None, cash_balance=10_000,
-        total_value=100_000, news_intel=None, earnings_analyses=[],
+        total_value=100_000, news_intel=news_intel, earnings_analyses=[],
         smart_money_findings=[], allowed_buy_symbols={"AAA", "CCC"},
         active_state_changes="", rr_floor=REWARD_RISK_FLOOR,
     )
     section = msg.split("## Candidate Ranking")[1].split("\n## ")[0]
     lines = [ln for ln in section.splitlines() if ln[:2] in ("1.", "2.", "3.")]
-    assert lines[0].startswith("1. AAA — bullish | score 2.40")
-    assert lines[1].startswith("2. CCC — bullish | score 1.20")
-    # The prompt must say the aggregation is a SUM and that only technical
-    # states a strength, or the PM reads the number as a 0-2 fraction.
-    assert "summed over 1 seat(s)" in lines[0]
+    assert lines[0].startswith("1. AAA — bullish | score 3.40")
+    assert lines[1].startswith("2. CCC — bullish | score 2.20")
+    # The prompt must say the aggregation is a SUM, or the PM reads the number
+    # as a 0-2 fraction. Both survivors now carry two seats.
+    assert "summed over 2 seat(s)" in lines[0]
     assert "an agreeing seat can never pull a name down" in section
-    assert "invalid if — technical: closes below MA50 on volume" in lines[0]
+    assert "technical: closes below MA50 on volume" in lines[0]
     assert "- ZZZ: R2 neutral rating" in section
     # The ranking sits AFTER the reports it orders.
     assert msg.index("## Technical Analysis Reports") < msg.index("## Candidate Ranking")
