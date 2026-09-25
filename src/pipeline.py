@@ -7426,9 +7426,15 @@ class TradingPipeline:
     # most likely to be uncomfortable.
     # TAKE_PROFIT stays for HISTORICAL rows: the auto trim that wrote it was
     # deleted 2026-09-12 and nothing writes the label any more.
+    # RECONCILED_EXIT (item 173(a)): a recovered broker exit whose order_type
+    # could not be proven a protective stop. Before 173(a) every recovered
+    # exit was labelled STOP_OUT and thus audited here; keeping it out would
+    # drop real closed exits from decision-quality auditing — exactly the
+    # "did the market force us out before a bounce" question this audit
+    # exists to answer.
     _EXIT_AUDIT_ACTIONS = (
         "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
-        "STOP_OUT",
+        "STOP_OUT", "RECONCILED_EXIT",
     )
 
     def _build_post_exit_reality(
