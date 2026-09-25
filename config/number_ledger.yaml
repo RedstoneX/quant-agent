@@ -2666,6 +2666,23 @@ numbers:
     cost_while_unanswered: >-
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.
+  - id: src.rotation.CONVICTION_STAY_CONFIRMATION_REVIEWS
+    value: 2
+    status: derived
+    site: src/rotation.py
+    derived_from: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
+    base_value: 2
+    note: >-
+      Owner mandate 2026-09-25, anti-whipsaw. Consecutive position reviews a
+      HELD name must miss the conviction bar before it becomes a cull candidate;
+      a single review that clears it resets the streak (`apply_stay_confirmation`
+      + the durable per-position flag `DB.CONVICTION_BAR_MISS_KIND`). NOT an
+      independently fitted number: it is the SAME persistence discipline as the
+      desk's sourced two-consecutive-close break-confirmation rule
+      (`TREND_CONFIRMING_CLOSES`, Edwards & Magee -- a break confirms on the
+      NEXT close, a reclaim between resetting), applied to conviction instead of
+      price. If that sourced close count ever moves, this build FAILS and the
+      analogy must be re-argued rather than silently drifting.
   - id: src.rotation.ROTATION_MARGIN_PCT
     value: 0.25
     status: arbitrary
