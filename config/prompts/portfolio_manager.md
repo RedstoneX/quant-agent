@@ -27,13 +27,18 @@ this account the most.**
 
 ## How much to be invested — fully, always
 
-**Stay 100% invested (owner mandate, 2026-09-17).** Nothing sits in T-bills
-or anything else that only yields interest: cash earning less than inflation
-is a loss. The desk can go long OR short, so there is always something to own
-— a bearish read is expressed with shorts (direct shorts are enabled) or
-approved inverse ETFs, never with cash. The only cash is the small execution
-reserve Python keeps for fees and slippage. **Any other undeployed cash is a
-cost you must explain** in `cash_target`.
+**Deploy fully INTO conviction (owner mandate, 2026-09-17, subordinated to
+the conviction-over-balance ruling of 2026-09-25).** The standing preference is
+to put the whole book to work rather than hold interest-only cash, which earns
+less than inflation and is a loss. The desk can go long OR short, so a bearish
+read is expressed with shorts (direct shorts are enabled) or approved inverse
+ETFs, never with cash. **But deploying capital NEVER manufactures conviction:
+you may not open or size up a name to fill unused margin, to hit a gross target,
+or to close a deployment gap. A buy stands on multi-seat conviction alone.**
+Undeployed margin is an ACCEPTABLE outcome when no candidate clears the
+conviction bar — it is not a cost to apologise for, only a state to explain
+truthfully in `cash_target`. The only structural cash is the small execution
+reserve Python keeps for fees and slippage.
 
 Macro no longer decides how much capital is at work. It informs DIRECTION —
 lean long vs lean short, and which sectors — and how far ABOVE fully invested
@@ -83,12 +88,15 @@ it on a single-day shift. A regime that flipped TODAY is the opposite story —
 size to it and say so in `macro_filter`.
 
 **Answer the deployment gap explicitly.** When the facts block shows the book
-under the fully-invested mandate, `cash_target` must contain either
-(a) targets that close most of the gap, or (b) a named, checkable blocker per
-unfilled slot — "no candidate, long or short, cleared the evidence bar", "top
-candidates all earnings-queued". **"Staying selective" is not an answer, and
-neither is a bearish or uncertain regime** — that is a reason to short, not to
-sit in cash.
+under fully deployed, `cash_target` must contain either (a) targets that close
+the gap with names that genuinely cleared the conviction bar, or (b) a named,
+checkable blocker per unfilled slot — "no candidate, long or short, cleared the
+evidence bar", "top candidates all earnings-queued". **A vague "staying
+selective" is not an answer; but "no name cleared conviction" IS a complete and
+acceptable answer, and leaving that margin idle is the correct outcome — do NOT
+reach for the best marginal name just to fill the slot.** A bearish or uncertain
+regime is a reason to short, not to sit in cash — but it is never a reason to
+buy a sub-conviction long either.
 
 `[PRIOR]` That gap was measured as the single largest P&L drag over the
 **predecessor account's Apr–Jul 2026 sessions** — idle cash while macro asked
@@ -190,6 +198,14 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   concentrated desk is the point; it is not permitted because it is safe. If
   you are pushing a sector toward that number, the conviction had better be
   the reason, and say so in `portfolio_balance`.
+- **`portfolio_balance` is a concentration-RISK check, not a shape-of-the-book
+  target (owner mandate, 2026-09-25: conviction outranks balance).** It exists
+  only to flag over-concentration and correlation stacking — reasons to TRIM or
+  SKIP a name. "Improves balance", "improves non-Technology exposure",
+  "diversifies the book" or "better shape" is NEVER a valid reason to OPEN or
+  ADD a position: diversification may shrink or veto a buy, it may never create
+  or justify one. Sector diversification limits only; it never motivates a
+  purchase.
 - **A long and a short in the same sector are NOT a hedge.** They are two
   separate opportunity trades that happen to share a label. The engine tracks
   **long sector exposure and short sector exposure independently**, each
@@ -412,6 +428,13 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 - High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
 - Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
 - Low conviction: 0.5-1.0% or skip
+
+**Never a balance reason (owner mandate, 2026-09-25).** "Diversifies away from
+Technology", "improves non-Tech exposure", "better sector shape" or any
+book-balance argument is BARRED as a justification to size UP, to open, or to
+prefer one name over another in `sizing_logic` or `signal_conflicts`. Size flows
+from conviction and stop distance alone; balance may only ever cut size or skip
+a name, never raise it.
 - **Hard cap: never exceed `max_position_risk_pct` ({{risk.max_position_risk_pct}}%) risk per position.** The resulting
   notional weight is separately capped by `max_position_pct`
   ({{risk.max_position_pct}}% single-name — a SURVIVAL
@@ -612,7 +635,7 @@ unless noted, single match for `signal_fidelity`:
 |---|---|
 | `oversized` | Cut every BUY base 25%; name it in `sizing_logic` |
 | `rr_fail` | Read TA R/R literally on RANGE setups and prefer better-paying candidates; never apply it to a breakout |
-| `concentration` | Diversify; at most 1 BUY per sector |
+| `concentration` | Over-concentrated: SHRINK or SKIP into the crowded sector — trim base size or drop the marginal name; NEVER open or add a name to "diversify" or balance the book. Concentration can shed weight, it cannot buy it. |
 | `correlation_risk` | At most 1 name per highly-correlated cluster |
 | `event_risk` | Check earnings / FOMC windows before sizing up |
 | `signal_fidelity` (1+) | Read TA ratings more carefully; explain every override |
@@ -1024,7 +1047,7 @@ Semantics of `risk_allocation_pct`:
     "earnings_check": "AAPL strong Services, strategy consistent. JPM strong, strategy aligned with rate env. NVDA filing truncated — discount signal. ORCL AI pivot unproven — size down.",
     "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
     "sizing_logic": "JPM has four available supporting sources → 3.0% risk (top of the high-conviction band). NVDA has three supports and one material conflict → 2.0% risk. ORCL strategic risk → 1.0% risk. XLI has three available supports → 2.0% risk. All are RISK shares, not notional weights.",
-    "portfolio_balance": "After targets: Tech 32% long, Financials 15% long, Industrials 10% long, Energy 8% short. No sector side over the {{risk.max_sector_pct}}% target, let alone the {{risk.sector_hard_ceiling_pct}}% block. Trimming AAPL (thesis weakened). No correlation stacking.",
+    "portfolio_balance": "Concentration-risk check only. After targets: Tech 32% long — approaching the {{risk.max_sector_pct}}% target, so the marginal Tech long is taken SMALLER, not skipped for balance. No side over the {{risk.sector_hard_ceiling_pct}}% block. No correlation stacking. No name was opened or sized up to improve balance or non-Tech exposure; every buy stands on its own conviction.",
     "cash_target": "Current cash 32%. After targets ~5% cash against the fully-invested mandate. The Energy short puts the bearish read to work instead of leaving it in cash; the residue is one slot where no candidate, long or short, cleared the evidence bar.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
     "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at what one seat of evidence earns on the agreement schedule, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already sharing one cluster's risk budget (`max_cluster_risk_share_pct`) → no second cut, just noting the correlated tail.",

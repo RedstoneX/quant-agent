@@ -925,43 +925,6 @@ def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
     _rest_the_stops(db, clear_order_id=True)
 
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
-
-
-def test_short_side_cover_sign_is_a_known_defect_item_173c(tmp_path):
-    """KNOWN DEFECT, pinned so it cannot be mistaken for correct — item
-    173(c). The signing rule still reads the action name, so anything that
-    RETIRES a short subtracts from it instead: a full cover of a 36-share
-    short reads -72, not 0, whether it comes as a COVER or as a
-    buy-to-cover TRAIL_STOP the broker filled. Unchanged by this fix (the
-    old code produced -72 too) and silent today, because the reconciler
-    treats any negative as a short and skips it.
-
-    Both halves are asserted together on purpose. Fixing only one of the
-    two routes reds only that line, and the cheapest way out of that red
-    is to edit the expected number — so the failure messages name item
-    173(c) and say to delete this test rather than adjust it."""
-    _WRONG = ("item 173(c): the short-side sign is knowingly wrong here. If "
-              "you have FIXED the signing rule, delete this whole test — do "
-              "not edit the expected number, and do not fix one route only.")
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
-                    broker_order_id="flnc-short", fill_status="filled")
-    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
-                    broker_order_id="flnc-stop", fill_status="submitted")
-    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
-
-    db.insert_trade("UPS", "SHORT", 7, 94.75, "short entry", "r1",
-                    broker_order_id="ups-short", fill_status="filled")
-    db.insert_trade("UPS", "COVER", 7, 92.0, "cover", "r2",
-                    broker_order_id="ups-cover", fill_status="filled")
-    _set_fill(db, "ups-cover", status="filled", qty=7.0)
-
-    net = db.get_symbols_with_open_ledger_qty()
-    assert net["FLNC"] == -72.0, f"filled buy-to-cover TRAIL_STOP route — {_WRONG}"
-    assert net["UPS"] == -14.0, f"COVER route — {_WRONG}"
-
-
 def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
     """Guard the rest of the signing rule against collateral damage:
     BUY/SWEEP_BUY add, SWEEP_SELL/STOP_OUT/REDUCE subtract, and HOLD plus a
@@ -1186,3 +1149,252 @@ def test_surface_reconcile_outcomes_silent_when_nothing_happened(
     )
 
     assert sent == []
+
+
+# ===========================================================================
+# Item 173(2) — session ORDERING of the two reconcilers.
+#
+# At the intra_check and evening sites the fill reconcile now runs BEFORE the
+# stop-out reconcile. These two tests pin WHY: a SELL this pipeline submitted
+# but has not yet reconciled makes the stop-out check page a FALSE "records
+# disagree" CRITICAL, and reconciling that fill first makes the false page
+# impossible. They exercise the reconciler primitives directly (fast, no
+# session body) — the ordering itself lives in `run_intra_check` /
+# `run_evening`.
+# ===========================================================================
+
+def test_a_submitted_but_unreconciled_sell_fakes_a_records_disagree_gap(
+    tmp_path, monkeypatch,
+):
+    """The bug the reorder fixes. A SELL this pipeline submitted is still
+    'submitted' (fill not yet reconciled). `get_symbols_with_open_ledger_qty`
+    ignores 'submitted' rows, so the ledger reports the whole position still
+    open while the broker has already reduced it — a positive gap. The broker's
+    filled-SELL history DOES contain that sale, but its broker_order_id is
+    already known (the submitted row carries it), so it is filtered out of
+    new_fills and the reconciler pages a FALSE 'records disagree' CRITICAL for
+    a sale that is fully explained. Also proves the no-double-record property:
+    the known id keeps a duplicate exit out of the ledger."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
+    # A SELL this pipeline submitted: broker id known, fill NOT yet reconciled.
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
+                    broker_order_id="amd-sell", fill_status="submitted")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # broker already flat (the SELL filled)
+    broker.list_filled_sell_orders.return_value = [{
+        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
+        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
+    }]
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == [{
+        "symbol": "AMD", "ledger_qty": 10.0, "broker_qty": 0.0,
+        "matched": False, "recorded": 0,
+    }]
+    assert any("RECORDS DISAGREE" in t for t in sent), (
+        "the unreconciled SELL provokes the false records-disagree page"
+    )
+    # No double-record: the known broker id kept any duplicate exit row out.
+    exits = [r for r in db.get_trades(symbol="AMD", executed_only=True)
+             if r["action"] in ("STOP_OUT", "SELL", "RECONCILED_EXIT")]
+    assert exits == []
+
+
+def test_reconciling_the_sell_first_prevents_the_false_records_disagree_page(
+    tmp_path, monkeypatch,
+):
+    """The fix (item 173(2)). Reconciling submitted fills BEFORE the stop-out
+    check — the intra/evening ordering — flips that SELL to 'filled', so the
+    ledger's open-qty view matches the broker, the gap closes, and no false
+    page fires. The broker's fill history is never even queried for a symbol
+    with no gap."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
+                    broker_order_id="amd-sell", fill_status="submitted")
+    # This is exactly what `_reconcile_fills` does when it runs first.
+    db.update_trade_fill(broker_order_id="amd-sell", fill_status="filled",
+                         fill_qty=10.0, fill_price=520.0)
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+    broker.list_filled_sell_orders.return_value = [{
+        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
+        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
+    }]
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == []            # no gap, nothing to reconcile
+    assert sent == []               # and therefore no false page
+    broker.list_filled_sell_orders.assert_not_called()
+
+
+# ===========================================================================
+# Item 173(4) — the LATENT short-cover reconcile case.
+#
+# Short-cover reconciliation is deliberately NOT built (see the reconciler's
+# docstring: a short's protective stop is a BUY-to-cover, staged out). This
+# pins the INTENDED behaviour for now: the reconciler skips a covered short
+# entirely — it writes no exit and does not even query the broker's fill
+# history for it — rather than attempting a write-back it cannot yet get right
+# (item 173(c) shows the short-side sign is knowingly wrong). Do NOT "fix" this
+# by building short-cover reconciliation here.
+# ===========================================================================
+
+def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
+    tmp_path, monkeypatch,
+):
+    """A SHORT the broker covered unilaterally (buy-to-cover stop fired). The
+    ledger still believes the short is open (a negative net qty); the broker is
+    flat. The reconciler must skip it: the negative ledger qty trips the
+    'ledger already believes it's flat / not a long gap' guard before any broker
+    query, so no exit row is written and the owner is not paged. This documents
+    the deferred short-cover path — not a bug to close in this change."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+
+    # Sanity: the ledger's own count is a negative (short) number.
+    assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # broker covered the short → flat
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == [], "short-cover reconciliation is deferred — nothing acted on"
+    broker.list_filled_sell_orders.assert_not_called()
+    assert sent == []
+    # No exit row invented for the short.
+    exits = [r for r in db.get_trades(symbol="FLNC", executed_only=True)
+             if r["action"] in ("STOP_OUT", "COVER", "RECONCILED_EXIT")]
+    assert exits == []
+
+
+# ---------------------------------------------------------------------------
+# Item 173(c): a COVER-family action is a BUY-to-cover. It RETIRES a short
+# toward zero and must ADD shares to the ledger's belief, not subtract them.
+# Before the fix every non-BUY/SWEEP_BUY executed row was signed -1, so a
+# SHORT 36 fully covered read -72 instead of 0 [measured 2026-09-23].
+# ---------------------------------------------------------------------------
+
+def test_full_cover_retires_a_short_to_zero(tmp_path):
+    """SHORT 36 opened, COVER 36 filled — the ledger must read flat (0),
+    not -72 (the pre-fix double-subtract)."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    # Sanity: the short alone reads negative.
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -36.0
+    db.insert_trade("GME", "COVER", 36, 18.0, "cover short", "r2",
+                    broker_order_id="gme-cover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
+
+
+def test_partial_cover_reduces_the_short_toward_zero(tmp_path):
+    """A COVER of 10 against a SHORT 36 leaves -26, not -46."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "COVER", 10, 19.0, "trim short", "r2",
+                    broker_order_id="gme-cover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -26.0
+
+
+def test_partial_cover_pct_label_is_normalised_and_adds(tmp_path):
+    """PARTIAL_COVER(50%) must normalise to PARTIAL_COVER and add, exactly
+    as _symbols_already_trimmed_today normalises the label."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "PARTIAL_COVER(50%)", 18, 19.0, "cover half", "r2",
+                    broker_order_id="gme-pcover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -18.0
+
+
+def test_emergency_cover_retires_a_short(tmp_path):
+    """EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL and must add."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 12, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "EMERGENCY_COVER", 12, 25.0, "panic cover", "r2",
+                    broker_order_id="gme-ecover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
+
+
+def test_long_exits_still_subtract_after_cover_fix(tmp_path):
+    """Regression: SELL / REDUCE / STOP_OUT on a long must still subtract —
+    the COVER fix must not turn every buy-ish word into an add."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("AAPL", "BUY", 20, 100.0, "entry", "r1",
+                    broker_order_id="a-buy", fill_status="filled")
+    db.insert_trade("AAPL", "SELL", 4, 110.0, "trim", "r2",
+                    broker_order_id="a-sell", fill_status="filled")
+    db.insert_trade("AAPL", "REDUCE", 3, 108.0, "trim", "r3",
+                    broker_order_id="a-red", fill_status="filled")
+    db.insert_trade("AAPL", "STOP_OUT", 2, 95.0, "stopped", "r4",
+                    broker_order_id="a-stop", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["AAPL"] == 11.0
+
+
+def test_filled_buy_to_cover_trail_stop_retires_a_short(tmp_path):
+    """Item 173(c), second route: a SHORT protected by a TRAIL_STOP that the
+    broker FILLED (a buy-to-cover) must retire the short toward zero. Its side
+    is not in the action name, so it is read from the running net — a stop
+    resting on a negative position is a buy-to-cover, so it adds. Full cover
+    of a 36-share short reads 0, not -72 (the pre-fix double-subtract)."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
+                    broker_order_id="flnc-stop", fill_status="submitted")
+    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
+    assert db.get_symbols_with_open_ledger_qty()["FLNC"] == 0.0
+
+
+def test_long_fired_trail_stop_still_subtracts_after_cover_fix(tmp_path):
+    """The mirror guard: a fired TRAIL_STOP on a LONG is a protective SELL
+    and must still subtract. The running net is positive there, so the
+    side-read signs it -1."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("LLY", "BUY", 8, 900.0, "entry", "r1",
+                    broker_order_id="lly-buy", fill_status="filled")
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1",
+                    broker_order_id="lly-stop", fill_status="submitted")
+    _set_fill(db, "lly-stop", status="filled", qty=8.0)
+    assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
