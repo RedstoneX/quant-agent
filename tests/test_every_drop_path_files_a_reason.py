@@ -220,6 +220,7 @@ _CANNOT_END_A_CANDIDATE = {
     "_resolve_stop": "None means 'read it from the instrument', not 'no trade'",
     "_stop_atr_multiple": "returns a multiple",
     "_level_backing_stop": "returns the level under the stop, or None",
+    "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
     "_require_sufficient_history": "files its own refusal before returning False",
     "_note_refusal": "the recorder itself",
@@ -493,15 +494,26 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
     by the instrument's own band. That is pinned below, so the day a change
     opens one of these up, the record already says what it will say.
     """
-    from src.portfolio_constructor import STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    from src.portfolio_constructor import (
+        STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+    )
     _, analysis = _one_real_analysis(archive)
     constructor = PortfolioConstructor()
+    # Reworked for board item 80 (owner 2026-09-25): with no ATR the branch
+    # now DERIVES a stop from price structure and HOLDS; only the genuine
+    # no-structure state refuses. Strip the computed levels and the signal bar
+    # so this exercises that refusal -- which must still file a code, not the
+    # regex-missed bare "has no stop" log line the first pass reported gone.
+    stripped = analysis.model_copy(update={
+        "atr_14": None, "computed_levels": [], "computed_level_touches": {},
+        "signal_bar_low": None, "signal_bar_high": None,
+    })
     assert constructor._widen_stop_past_noise(
-        analysis.symbol, analysis.model_copy(update={"atr_14": None}),
+        analysis.symbol, stripped,
         float(analysis.entry_price), None, direction="long",
     ) is None
     record = constructor.last_refusals[analysis.symbol.upper()]
-    assert record["refusal"] == STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    assert record["refusal"] == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
     assert record["detail"].strip()
 
     # ... and the reachability half, through the real entry point.
