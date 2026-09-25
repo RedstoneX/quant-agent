@@ -573,7 +573,9 @@ agent has widened the rule to work around it.
 
 ## item 123
 
-**Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and is therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it has a hole in it. No evidence yet that this unit has actually drifted; the gap is that nobody would know.
+**Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and was therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it had a hole in it. No evidence yet that this unit has actually drifted; the gap was that nobody would know.
+
+**Update (2026-09-25) —** The code hole is closed: `.path` is now in `UNIT_SUFFIXES` (PR #642, 2026-09-24), and the four drift buckets are now covered by tests exercising a `.path` unit directly (they fail against the pre-#642 two-suffix set, proving the guard). `.path` units enable through `paths.target` rather than `timers.target`; the checker already handles this because it reads each unit's declared `WantedBy` target. The item stays OPEN on two of its own criteria: the suffix set is still a hand-maintained tuple rather than derived from the tracked files, and no run has yet compared the installed `quant-agent-status-board.path` on the box against the checkout.
 
 ## item 125
 

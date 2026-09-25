@@ -219,11 +219,11 @@ DONE WHEN:
   - [ ] an installed unit that differs from the checkout is surfaced to a human before it is overwritten
 detail: docs/BOARD_NOTES.md (item 122)
 
-**123. The unit-drift checker never looks at `.path` units, and one is tracked — OPEN, filed 2026-09-18. Pre-existing gap found while reviewing PR #435; NOT caused by it.** `scripts/check_unit_drift.py` sets `UNIT_SUFFIXES = (".service", ".timer")`.
+**123. The unit-drift checker never looks at `.path` units, and one is tracked — OPEN, filed 2026-09-18. Pre-existing gap found while reviewing PR #435; NOT caused by it.** `scripts/check_unit_drift.py` now sets `UNIT_SUFFIXES = (".service", ".timer", ".path")` (was `(".service", ".timer")`): PR #642 (2026-09-24) added `.path` to the hand-maintained suffix tuple, so all four buckets — untracked, modified, undeployed, not-enabled — now see a `.path` unit, and a `.path` unit's `paths.target` enablement is handled the same as a `.timer`'s `timers.target` because `parse_wanted_by` reads the target from the unit. Test coverage for the four buckets on a `.path` unit was added afterwards (was missing when #642 shipped). STILL OPEN on the item's own DONE WHEN: the suffix set is still a hand-maintained tuple, not derived from the tracked files, and no run has yet compared the real `quant-agent-status-board.path` on the box against the checkout.
 
 DONE WHEN:
-  - [ ] the checker inspects every unit suffix the repo actually tracks, derived from the tracked files rather than from a hand-maintained list
-  - [ ] the tracked `.path` unit's installed state is compared against the checkout at least once, so the gap closes with an observation and not only with code
+  - [ ] the checker inspects every unit suffix the repo actually tracks, derived from the tracked files rather than from a hand-maintained list — NOT met: `.path` was added to the hardcoded tuple, not derived
+  - [ ] the tracked `.path` unit's installed state is compared against the checkout at least once, so the gap closes with an observation and not only with code — NOT met: no real-box observation recorded
 detail: docs/BOARD_NOTES.md (item 123)
 
 **125. The desk's sentiment verdicts are unvalidated and nothing measures them — filed 2026-09-18. A finance word list was investigated and REJECTED; do not re-propose it.** Sentiment is an LLM-emitted enum constrained by a hand-authored 4-axis table (`config/prompts/earnings_analyst.md`) whose own rule is that the verdict "must be derivable from these 5 fields — show the arithmetic".
