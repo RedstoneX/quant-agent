@@ -438,13 +438,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** It already implements the ratified shape — **a provably false (b)/(c) claim BLOCKS and fires a standalone owner alert; anything merely unverifiable is logged and recorded as a pipeline event and is never blocked and never alerted on**, because absence of proof stays absence of proof. `thesis_invalid_if` (claim (a)) is deliberately never evaluated, so a SELL resting only on it is untouched. What is actually open is measurement, not design: **the veto has fired ZERO times.** Counts to quote precisely [live `agent_logs`, 2026-09-18] — 20 recorded `position_reviewer` runs and 35 `risk_manager` runs; the "20 recorded reviews" figure in circulation is the position-reviewer count, not the risk-manager one. A veto that has never fired is unproven in both directions: it may be that no exit has ever stated a provably false reason, or that the match conditions are too narrow to catch one. Establish which before treating the guard as protection, and do not widen the match conditions to make it fire.
 
-## item 97
-
-**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is being decided, not left with you.
-**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
-
-**Moved from WORK.md (2026-09-24) —** No longer waiting on the owner: decide after an adversary run, and record the decision and its reason before anything is built on it.
-
 ## item 99
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
@@ -502,14 +495,6 @@ agent has widened the rule to work around it.
 **Recommendation —** Same fix as item 106: put the raw evidence behind a labelled toggle in this view too, rather than dumping it as text.
 
 **Moved from WORK.md (2026-09-24) —** The "Why" tab shipped 2026-09-18 (item 106) put `raw_evidence` behind a labelled-rows toggle, but the run-detail modal is a separate surface: `LifecycleTimeline` (`frontend/src/components/LifecycleTimeline.tsx`) has a generic `detailsText()` renderer that `JSON.stringify`s any object-valued field in `event.details`, with no exclusion for `specialist_evidence` — a real column (`src/api/db_reads.py`, `get_specialist_evidence`) that can land in there. Untouched by the Why-tab work; still reachable from `RunDetailModal.tsx`. See item 106 for the surface that WAS fixed.
-
-## item 116
-
-**Plain language —** The evening report used to compute real numbers from the broker every night and then throw them away, so a night's report could never be checked again later. That is now fixed. Nobody has checked whether the same thing happens at the other five points in the day: morning, midday, close, the half-hourly check, and the pre-earnings pass.
-**Why it matters —** if a decision that night rested on a price or a model's judgement that was never saved, there is no way to go back and check whether the decision was reasonable at the time.
-**Recommendation —** Apply the same fix used for the evening report to each of the other five checkpoints, one at a time.
-
-**Moved from WORK.md (2026-09-24) —** Two categories are unrecoverable if lost: model judgements, and the broker state at the instant a decision was made (prices, positions, buying power) — a decision resting on a number nobody kept cannot be reviewed later. Doctrine for this is now written down: `docs/OUTCOME.md`, "Anything that costs money to produce gets kept" (owner ruling 2026-09-18). Fix pattern, copied from item 113: persist the run's result dict verbatim as JSON, one row per trading day keyed with the producing run id, written fail-soft so a storage problem never costs the push; plus a read-only replay path through the same formatter the live push uses. A missing or partial row renders as explicitly unavailable in plain words — never a default, zero, estimate or placeholder. Scope each of the five remaining checkpoints as its own change; do not do all five in one PR.
 
 ## item 118
 
@@ -574,10 +559,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Once price has run well past the broken level, the only levels the derivation will accept are ones still within that distance OF ENTRY; if none survive the break filter, the measured-move fallback also projects from entry and can land behind the current price. Both cases are refused by name (`REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION`, `REFUSAL_DERIVED_TARGET_BEHIND_PRICE`) and the stored target stands — never a target behind the price. In practice the structural break that legitimises a revision arrives with an ATR expansion, which widens the reach enough to pick up the next level, so this is expected to be the uncommon path; nobody has measured how often it actually fires. The obvious alternative — anchor the reach on the current close over the REMAINING horizon — was deliberately not built, because it needs the horizon, and item 97 plus the unresolved evening-seat-versus-technical-seat horizon contradiction are both open. Decide the horizon questions first, then revisit this. Do not patch it by re-anchoring on the current price alone: that would make the target a function of the price move, which is the one thing a revision must not be legitimised by.
 
-## item 133
-
-**Moved from WORK.md (2026-09-24) —** NO GATE, THRESHOLD, SIZE OR TRADE-GOVERNING NUMBER CHANGED. **Why it is not retired, half-closed 2026-09-23:** `held_unchanged` is a second signature key for any held name not re-targeted; a full book's monomorphic test could stay unsatisfiable — until measured at 1.99x of 2.0x, satisfiable for the wrong reason. Held names are now dropped from its evidence: a full book reports nothing, a stuck gate underneath still fires. `docs/INCIDENT_HISTORY.md`.
-
 ## item 119
 
 **Moved from WORK.md (2026-09-24) —** On 2026-09-17 the morning open brought back 8 of the 15 required FRED series; the other 7 were never requested at all and the log said the deadline was exceeded. That is not a St. Louis outage: the observation calls and the due-date metadata calls share the same worker slots under the existing 90s ceiling, so a healthy batch spends nearly the whole clock and one slow series starves the rest. PR #435 built an observations-first fix (one attempt per series, then one bounded re-ask of the misses inside whatever budget remains, metadata on leftover budget, unknown freshness named rather than invented, ceiling NOT lengthened). **That code was never merged and the item does not inherit its verdict.** Its measurements — isolated series 1.5-6.7s, a clean full batch 15/15 in ~85s — were taken MID-MORNING, when FRED was already healthy. The defect is at the open. Mid-morning numbers are a starting point, not merge-readiness. Do not lengthen the timeout and do not invent a missing value; an incomplete set is a lost economics seat.
@@ -593,10 +574,6 @@ agent has widened the rule to work around it.
 ## item 123
 
 **Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and is therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it has a hole in it. No evidence yet that this unit has actually drifted; the gap is that nobody would know.
-
-## item 124
-
-**Moved from WORK.md (2026-09-24) —** Both tests are synthetic.
 
 ## item 125
 
