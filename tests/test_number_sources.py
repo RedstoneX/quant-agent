@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 141, (
+    assert MAX_ARBITRARY_ENTRIES == 140, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -270,6 +270,17 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "the owner ruling. No published method fixes a buffer size, so it is "
         "recorded honestly as `arbitrary`, ratified as owner-appetite with its "
         "open question and cost stated."
+        "141 -> 140 on 2026-09-25, board item 180 (owner ruling): "
+        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was reclassified "
+        "`arbitrary` -> `sourced`. Its WEAKER, unsourced use -- the "
+        "constructor's `_require_sufficient_history` young-listing refusal that "
+        "read the same 200 as a bar-count data-sufficiency gate -- was removed "
+        "on the owner's ruling (a young listing is now judged on whether a "
+        "protective stop is readable, via the existing stop-readability rule, "
+        "not on a bar count). With that use gone the constant's only remaining "
+        "use is the sourced 200-day MA window, so the row is `sourced` again. A "
+        "use was removed, not a value changed, so the count is lowered in the "
+        "same commit."
     )
 
 

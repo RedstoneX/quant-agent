@@ -328,69 +328,6 @@ def describe_macro_parse_failure(payload, error: BaseException) -> str:
     return f"macro_parse_failed: {err}"
 
 
-def mechanical_heal_macro(payload) -> HealResult:
-    """Try to make a macro payload usable without a paid call.
-
-    Coerce dict ``sector_guidance`` / stored rows toward MacroAnalysis's
-    list shape. Do not fill reasoning_chain from summary (that would
-    invent macro text). After coerce, the payload must still validate as
-    MacroAnalysis to be ``usable`` for PM. A same-day regime snapshot
-    without a chain is still a regime for holding-discipline carry
-    (`_carry_forward_macro`); it is not silently passed into PM.
-    """
-    if payload is None:
-        return HealResult(
-            seat="macro", outcome=HEAL_FAILED,
-            reason="no macro payload to heal",
-        )
-    if not isinstance(payload, dict):
-        # Already a MacroAnalysis (or similar) — present is usable.
-        return HealResult(
-            seat="macro", outcome=HEAL_SKIPPED_GOOD,
-            reason="macro payload is already an object, not a broken dict",
-            payload=payload, usable=True,
-        )
-    if not str(payload.get("regime") or "").strip():
-        return HealResult(
-            seat="macro", outcome=HEAL_FAILED,
-            reason="macro dict has no regime — refusing to treat a failed parse as regime ok",
-            payload=payload,
-        )
-    coerced, fixes = coerce_macro_shape(payload)
-    from src.models import MacroAnalysis
-    try:
-        MacroAnalysis.model_validate(coerced)
-    except Exception as exc:
-        # Coerce is not a loosen: a trim still missing reasoning_chain is
-        # a durable fail, not a remembered regime smuggled into PM.
-        return HealResult(
-            seat="macro",
-            outcome=HEAL_FAILED,
-            reason=describe_macro_parse_failure(coerced, exc),
-            payload=coerced,
-            mechanical=bool(fixes),
-            usable=False,
-            details={
-                "fixes": fixes,
-                "has_reasoning_chain": isinstance(
-                    coerced.get("reasoning_chain"), dict,
-                ),
-            },
-        )
-    return HealResult(
-        seat="macro",
-        outcome=HEAL_MECHANICAL if fixes else HEAL_SKIPPED_GOOD,
-        reason=(
-            "coerced stored/live macro shape: " + ", ".join(fixes)
-            if fixes else "macro dict already in usable shape"
-        ),
-        payload=coerced,
-        mechanical=bool(fixes),
-        usable=True,
-        details={"fixes": fixes, "has_reasoning_chain": isinstance(coerced.get("reasoning_chain"), dict)},
-    )
-
-
 def merge_carried_stock_news(fresher: dict, carried: dict | None) -> dict:
     """Keep per-symbol news the FRESHER read was never asked about.
 

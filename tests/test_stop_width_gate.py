@@ -49,7 +49,7 @@ from src.data.technical import LONGEST_INDICATOR_WINDOW, atr_series
 from src.models import OHLCV, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import (
     CONSTRUCTOR_REFUSED_EVENT_REASON,
-    STOP_REFUSAL_INSUFFICIENT_HISTORY,
+    STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
     STOP_REFUSAL_WIDER_THAN_REACH,
     PortfolioConstructor,
 )
@@ -379,35 +379,69 @@ class TestTheWidthGate:
 
 
 # ---------------------------------------------------------------------------
-# 5. Insufficient history — the one narrow refusal on different grounds
+# 5. Young listings — judged on stop readability, never on a bar count
+#    (board item 180, owner ruling 2026-09-25: the count gate was DROPPED)
 # ---------------------------------------------------------------------------
 
-class TestInsufficientHistory:
-    def test_a_young_listing_is_refused_by_its_own_code_first(self):
-        """Too few sessions usually means no levels either; the honest name
-        is `insufficient_history`, not the derivation's data fault."""
+class TestYoungListingJudgedOnStopReadability:
+    def test_a_short_history_name_with_a_readable_stop_is_admitted(self):
+        """The owner's load-bearing requirement: a young listing is TRADEABLE
+        when a defensible protective stop is readable from whatever bars
+        exist. Thirty sessions, an ATR reading and levels — nothing the count
+        gate would once have refused stops it now."""
         constructor = PortfolioConstructor()
-        a = _analysis("DRAM", entry=59.0, stop=55.0, levels=[], bars=112)
-        assert _orders(constructor, a) == []
-        recorded = constructor.last_refusals["DRAM"]
-        assert recorded["refusal"] == STOP_REFUSAL_INSUFFICIENT_HISTORY
-        assert "112" in recorded["detail"] and str(LONGEST_INDICATOR_WINDOW) in recorded["detail"]
-
-    def test_the_threshold_is_the_longest_indicator_window(self):
-        constructor = PortfolioConstructor()
-        ok = _analysis("OK", entry=100.0, stop=95.0, levels=[95.0, 110.0],
-                       bars=LONGEST_INDICATOR_WINDOW)
-        assert [d.action for d in _orders(constructor, ok)] == ["BUY"]
-        short = _analysis("SHORTHIST", entry=100.0, stop=95.0, levels=[95.0, 110.0],
-                          bars=LONGEST_INDICATOR_WINDOW - 1)
-        assert _orders(constructor, short) == []
-        assert constructor.last_refusals["SHORTHIST"]["refusal"] == STOP_REFUSAL_INSUFFICIENT_HISTORY
-
-    def test_an_unknown_count_is_not_judged(self):
-        constructor = PortfolioConstructor()
-        a = _analysis("OLDROW", entry=100.0, stop=95.0, levels=[95.0, 110.0], bars=None)
+        a = _analysis("DRAM", entry=59.0, stop=55.0, levels=[55.0, 65.0], bars=30)
         assert [d.action for d in _orders(constructor, a)] == ["BUY"]
         assert constructor.last_refusals == {}
+
+    def test_a_single_bar_name_with_a_readable_stop_is_still_admitted(self):
+        """The bar COUNT no longer gates at all: one completed session with a
+        readable ATR-band stop and a target still ships."""
+        constructor = PortfolioConstructor()
+        a = _analysis("NEWCO", entry=100.0, stop=95.0, levels=[95.0, 110.0], bars=1)
+        assert [d.action for d in _orders(constructor, a)] == ["BUY"]
+        assert constructor.last_refusals == {}
+
+    def test_a_bar_starved_name_is_refused_on_measurement_not_a_count(self):
+        """The genuine skip case: a same-day IPO / near-zero bars yields no ATR
+        reading, so the instrument cannot be measured. It is refused as a
+        measurement DATA FAULT (`volatility_reading_missing`), NOT on a bar
+        count -- nothing here counts sessions against a 200-bar floor."""
+        constructor = PortfolioConstructor()
+        a = _analysis("IPOD", entry=100.0, stop=95.0, levels=[110.0],
+                      atr=None, bars=0, bar_low=None)
+        assert _orders(constructor, a) == []
+        assert "IPOD" not in constructor.last_refusals
+        fault = constructor.last_data_faults["IPOD"]
+        assert fault["fault"] == "volatility_reading_missing"
+        assert "session" not in fault["detail"] and "200" not in fault["detail"]
+
+    def test_the_stop_readability_rule_refuses_when_no_stop_can_be_read(self):
+        """The item-80 stop-readability gate in isolation: with no ATR and no
+        structural level or signal-bar edge on the protective side of entry,
+        the widener reads no stop from the instrument and refuses under
+        `no_structural_stop_and_no_volatility_reading` -- on what the trade
+        needs, never on a bar count."""
+        constructor = PortfolioConstructor()
+        a = _analysis("NOSTOP", entry=100.0, stop=95.0, levels=[110.0],
+                      atr=None, bars=0, bar_low=None)
+        # `computed_levels` here holds only an overhead level (110), none on the
+        # protective side of a long, and no signal-bar low.
+        result = constructor._widen_stop_past_noise(
+            "NOSTOP", a, 100.0, 95.0, direction="long", target_price=110.0,
+        )
+        assert result is None
+        assert (
+            constructor.last_refusals["NOSTOP"]["refusal"]
+            == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
+        )
+
+    def test_the_count_gate_is_gone(self):
+        """The removed refusal code and its method no longer exist."""
+        import src.portfolio_constructor as pc
+
+        assert not hasattr(pc, "STOP_REFUSAL_INSUFFICIENT_HISTORY")
+        assert not hasattr(PortfolioConstructor, "_require_sufficient_history")
 
     def test_the_fields_default_to_not_recorded(self):
         """An older persisted row or a hand-built object carries None on
@@ -434,7 +468,7 @@ class TestRecordedAsData:
         monkeypatch.setattr(pipeline_stages, "_record_pipeline_event", _capture)
         constructor = PortfolioConstructor()
         constructor._note_refusal("WIDE", "long", STOP_REFUSAL_WIDER_THAN_REACH, "too wide")
-        constructor._note_refusal("DRAM", "long", STOP_REFUSAL_INSUFFICIENT_HISTORY, "young")
+        constructor._note_refusal("DRAM", "long", STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY, "no stop")
         refusals = constructor.drain_refusals()
         dropped = ["WIDE"]
         for sym in dropped:
@@ -454,7 +488,7 @@ class TestRecordedAsData:
         by_symbol = {e["symbol"]: e for e in events}
         assert by_symbol["WIDE"]["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
         assert by_symbol["WIDE"]["targeted"] is True
-        assert by_symbol["DRAM"]["refusal"] == STOP_REFUSAL_INSUFFICIENT_HISTORY
+        assert by_symbol["DRAM"]["refusal"] == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
         assert by_symbol["DRAM"]["targeted"] is False
         assert constructor.last_refusals == {}
 

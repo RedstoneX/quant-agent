@@ -3,15 +3,12 @@ import pytest
 from src.seat_heal import (
     HEAL_CAP_BLOCKED,
     HEAL_FAILED,
-    HEAL_MECHANICAL,
-    HEAL_SKIPPED_GOOD,
     HealResult,
     can_paid_retry,
     coerce_macro_shape,
     coerce_sector_guidance,
     describe_macro_parse_failure,
     heal_failure_alert_text,
-    mechanical_heal_macro,
     record_paid_retry,
     restore_stated_soft_exits,
 )
@@ -147,35 +144,6 @@ def test_macro_dict_shape_coerces_then_validates_when_chain_present():
     assert analysis.sector_guidance[0].sector == "Technology"
 
 
-def test_macro_trim_without_reasoning_chain_fails_closed_not_invented_chain():
-    """The on-disk MacroStore trim drops reasoning_chain. Coerce the shape;
-    do not fill the chain from summary (that would invent macro text);
-    do not treat the broken trim as usable macro for PM."""
-    trim = {
-        "date": "2026-09-16",
-        "regime": "risk-on",
-        "confidence": "medium",
-        "equity_outlook": "bullish",
-        "summary": "stay long",
-        "position_guidance": {"target_invested_pct": 70},
-        "sector_guidance": {"Technology": "bullish"},
-    }
-    heal = mechanical_heal_macro(trim)
-    assert heal.usable is False
-    assert heal.outcome == HEAL_FAILED
-    assert "reasoning_chain" in heal.reason
-    assert heal.payload["regime"] == "risk-on"
-    from pydantic import ValidationError
-    with pytest.raises(ValidationError):
-        MacroAnalysis.model_validate(heal.payload)
-
-
-def test_macro_without_regime_is_not_healed_into_ok():
-    heal = mechanical_heal_macro({"summary": "garbled"})
-    assert heal.usable is False
-    assert heal.outcome == HEAL_FAILED
-
-
 def test_one_paid_retry_max_per_seat():
     used = {}
     assert can_paid_retry(used, "macro") is True
@@ -201,15 +169,6 @@ def test_heal_failure_alert_is_own_message_and_names_the_seat():
 def test_unknown_sector_stance_is_dropped_not_invented_neutral():
     rows = coerce_sector_guidance({"Technology": "sideways"})
     assert rows == []
-    heal = mechanical_heal_macro({
-        "regime": "risk-on",
-        "equity_outlook": "bullish",
-        "sector_guidance": {"Technology": "bullish"},
-    })
-    assert heal.usable is False
-    assert heal.outcome == HEAL_FAILED
-    assert heal.paid_retry is False
-    assert "reasoning_chain" in heal.reason
 
 
 def test_pipeline_does_not_repay_remembered_good_or_empty_store():
@@ -287,27 +246,6 @@ def test_pipeline_paid_retry_is_one_shot_and_requires_inputs():
     assert p.macro_analyst.analyze.call_count == 1
     # News without wire text must not invent a paid call.
     p.news_analyst.analyze.assert_not_called()
-
-
-def test_remembered_good_is_not_a_heal_target():
-    """A validating snapshot is usable without a paid call. A chain-less
-    trim is not 'remembered good' — that is the fail-closed test above."""
-    payload = {
-        "reasoning_chain": _chain().model_dump(),
-        "regime": "risk-on",
-        "confidence": "medium",
-        "equity_outlook": "bullish",
-        "position_guidance": {
-            "target_invested_pct": 70, "cash_recommendation_pct": 30,
-            "reasoning": "stay invested",
-        },
-        "summary": "risk on",
-        "sector_guidance": {"Technology": "bullish"},
-    }
-    heal = mechanical_heal_macro(payload)
-    assert heal.usable
-    assert heal.paid_retry is False
-    assert heal.outcome in (HEAL_MECHANICAL, HEAL_SKIPPED_GOOD)
 
 
 def test_broken_macro_dict_is_not_passed_to_pm():
