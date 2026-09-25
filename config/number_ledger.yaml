@@ -2448,18 +2448,19 @@ numbers:
       change nothing. Not a magnitude that reaches a trade.
   - id: src.risk.trailing.CHANDELIER_ATR_MULTIPLE
     value: 3
-    status: arbitrary
+    status: sourced
     site: src/risk/trailing.py
-    note: >-
-      Called "the conventional setting" at the definition site with no
-      citation (2026-09-14 verification). It decides how much of a run-up the
-      desk gives back -- measured against ORCL the same day.
-    open_question: >-
-      What trailing distance below the highest high keeps a trend trade alive
-      through ordinary pullbacks, measured on this desk's own holds?
-    cost_while_unanswered: >-
-      The fallback trail where structure is unclear: too tight strangles the
-      trade, too loose gives back the move.
+    source: >-
+      The Chandelier Exit's published default multiple is 3.0 -- Chuck LeBeau,
+      the indicator's originator -- documented by StockCharts ChartSchool
+      (https://school.stockcharts.com/doku.php?id=technical_indicators:chandelier_exit)
+      and Corporate Finance Institute
+      (https://corporatefinanceinstitute.com/resources/wealth-management/chandelier-exit/).
+      NUANCE: only the MULTIPLE (3.0) is sourced, not the whole formula. The
+      desk's fallback trail multiplies this by a PASSED-IN ATR off the
+      highest-high / lowest-low since entry (src/risk/trailing.py:624,634),
+      NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
+      3.0 multiple carries this citation, the surrounding geometry does not.
   - id: src.risk.trailing.MIN_RATCHET_PCT
     value: 2
     status: arbitrary
@@ -4291,8 +4292,16 @@ numbers:
     status: arbitrary
     site: src/pipeline.py
     note: >-
-      Midday refuses a TRAIL_STOP whose new stop is below 50% of the current
-      price, as a likely model typo (src/pipeline.py:11290-11293).
+      A non-binding sanity GUARD in the midday path: it refuses a TRAIL_STOP
+      whose proposed stop sits below 50% of current price as a likely model
+      typo, and a real trail never approaches this floor (the noise-band and
+      ratchet clamps in the same routine bind first). It is kept `arbitrary`
+      rather than reclassified `not-trade-governing`, because the same 0.5 IS
+      reused as a genuine trade-governing gate: STOP_SANITY_FLOOR_FRACTION in
+      src/universe_screen.py derives from this entry to set the screen's
+      ATR/price volatility ceiling (0.5 / min_stop_atr_multiple), which screens
+      real names out. So the number can reach a trade decision and the debt
+      stands.
     open_question: >-
       What is the widest stop, as a fraction of price, the desk's own stop
       rules could ever legitimately produce, so the sanity floor can be read
