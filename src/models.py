@@ -202,6 +202,14 @@ class AnalysisParseTelemetry:
         self._lock = threading.Lock()
         self._counts: Counter = Counter()
         self._drops: Counter = Counter()
+        # WHY a row was dropped, keyed the same as `_drops` (model, symbol).
+        # Board item 158: the reason used to live only in a log line and the
+        # count above, so a later reader could not tell why a name was absent
+        # without the log. Kept here so the risk stage can persist it beside
+        # the stock it was dropped for (`specialist_evidence`, kind
+        # `analysis_drop`). First concrete reason per key wins — a retry's
+        # second drop of the same symbol never overwrites the original why.
+        self._drop_reasons: dict[tuple[str, str], str] = {}
         self._local = threading.local()
 
     @property
@@ -237,8 +245,17 @@ class AnalysisParseTelemetry:
         with self._lock:
             self._counts[(model_name, field_name)] += 1
 
-    def record_dropped_item(self, model_name: str, key: str) -> None:
+    def record_dropped_item(
+        self, model_name: str, key: str, reason: str | None = None,
+    ) -> None:
         """A whole parsed item was discarded — `key` is the symbol where known.
+
+        `reason` is the human-readable WHY (e.g. "malformed: ..." or "failed
+        validation on ..."). Passed by the technical seat's two drop sites so
+        board item 158's requirement — the reason stored alongside the stock,
+        not only in the log — can be met downstream. Optional so the other
+        seats' drop sites (news, PM, evening) need no change; they record a
+        count with no reason, exactly as before.
 
         This is the loss the null-tolerance rule above is designed to prevent,
         counted separately so "we kept it but blanked a field" is never
@@ -257,6 +274,11 @@ class AnalysisParseTelemetry:
             return
         with self._lock:
             self._drops[(model_name, key)] += 1
+            if reason:
+                # First concrete reason per key wins; a later retry's drop of
+                # the same symbol keeps the original why rather than clobbering
+                # it. `setdefault` is inside the same lock as the count.
+                self._drop_reasons.setdefault((model_name, str(key)), str(reason))
 
     def snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
@@ -265,6 +287,11 @@ class AnalysisParseTelemetry:
     def dropped_snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
             return dict(self._drops)
+
+    def dropped_reasons_snapshot(self) -> dict[tuple[str, str], str]:
+        """WHY each dropped item was dropped, keyed (model, symbol)."""
+        with self._lock:
+            return dict(self._drop_reasons)
 
     def total_null_coercions(self) -> int:
         with self._lock:
@@ -278,6 +305,7 @@ class AnalysisParseTelemetry:
         with self._lock:
             self._counts.clear()
             self._drops.clear()
+            self._drop_reasons.clear()
 
     def describe_null_coercions(self) -> str:
         """One-line, grep-able summary for the operator log / RM advisory."""

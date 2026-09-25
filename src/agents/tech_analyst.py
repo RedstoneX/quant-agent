@@ -946,10 +946,13 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         malformed: dict[str, str] = {}
         for row in malformed_rows:
             sym = row.key if row.key in submitted else "?"
+            reason = f"malformed: {row.reason}"
             if sym != "?":
                 malformed[sym] = row.reason
-                _malformed_sink[sym] = f"malformed: {row.reason}"
-            parse_telemetry.record_dropped_item("TechAnalysisResult", sym)
+                _malformed_sink[sym] = reason
+            parse_telemetry.record_dropped_item(
+                "TechAnalysisResult", sym, reason=reason,
+            )
         if malformed_rows:
             logger.warning(
                 "Tech answer carried %d malformed row(s) — dropped individually, "
@@ -1017,16 +1020,19 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # entry recorded here is never erased either way; the risk
                     # stage decides which of the two it is, because it is the
                     # only place that holds the book.
-                    parse_telemetry.record_dropped_item("TechAnalysisResult", bad_symbol)
-                    if bad_symbol in submitted:
-                        fields = (
-                            ", ".join(
-                                ".".join(str(part) for part in err.get("loc", ()))
-                                for err in e.errors()
-                            )
-                            if hasattr(e, "errors") else type(e).__name__
+                    fields = (
+                        ", ".join(
+                            ".".join(str(part) for part in err.get("loc", ()))
+                            for err in e.errors()
                         )
-                        _malformed_sink[bad_symbol] = f"failed validation on {fields}"
+                        if hasattr(e, "errors") else type(e).__name__
+                    )
+                    reason = f"failed validation on {fields}"
+                    parse_telemetry.record_dropped_item(
+                        "TechAnalysisResult", bad_symbol, reason=reason,
+                    )
+                    if bad_symbol in submitted:
+                        _malformed_sink[bad_symbol] = reason
                     logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
             if unsubmitted_symbols:
                 logger.warning(
