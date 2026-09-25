@@ -4665,6 +4665,7 @@ class TradingPipeline:
                     "— concurrent path fully exited; skipping restore",
                     order_word, symbol,
                 )
+                self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
                 return True, []
             if current_qty is not None:
                 total_spec_qty = sum(float(s.get("qty", 0) or 0) for s in cancelled_specs)
@@ -4751,6 +4752,7 @@ class TradingPipeline:
                 "position=0 — concurrent path fully exited; skipping reprotect",
                 symbol, computed_residual,
             )
+            self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
             return True, []
         if current_qty is not None and current_qty + 1e-6 < computed_residual:
             logger.warning(
@@ -4762,6 +4764,10 @@ class TradingPipeline:
         else:
             actual_residual = computed_residual
         if actual_residual <= 0:
+            # Full exit — no residual to re-protect. A stop-repair may have
+            # re-added protection inside the cancel-then-sell window (item
+            # 127(b)); clear any that is now resting on the flat position.
+            self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
             return True, []  # full exit — no residual to re-protect
 
         if not self._reprotect_residual_after_partial_sell(
@@ -4791,6 +4797,30 @@ class TradingPipeline:
                 )
             return False, list(cancelled_specs)
         return True, []
+
+    def _cancel_stray_stops_on_flat(self, symbol: str, *, side: str = "sell") -> None:
+        """Clear any protective stop left resting on a symbol this SELL/COVER
+        just took FLAT.
+
+        Board item 127(b), owner ruling 2026-09-25: a forced/emergency exit
+        must fire immediately and never wait on stop-work, so a concurrent
+        stop-repair can re-add a protective stop inside the cancel-then-sell
+        window. That stop is not in this finalize's ``cancelled_specs`` (it
+        was placed after the pre-sell snapshot), the reprotect path skips it
+        on a full exit, and ``_reconcile_stop_coverage`` never inspects a
+        flat symbol — so it would rest forever and could later elect into an
+        unintended short. This is the cheap cleanup that replaces the
+        rejected lock-wait: no lock, no timeout, no new number, best-effort,
+        and never fatal to the exit that already succeeded.
+        """
+        try:
+            self.broker.cancel_stray_protective_stops(symbol, side=side)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "stray-stop cleanup after full exit of %s failed: %s — a "
+                "protective stop may still rest on the flat position; the "
+                "operator should confirm it is gone", symbol, exc,
+            )
 
     def _write_ahead_protection_restore(
         self,
@@ -12022,14 +12052,23 @@ class TradingPipeline:
         return limit, mid
 
     def _force_delever(self, ctx: RunContext) -> list[dict]:
-        """Safety net for `allow_margin=False` accounts.
+        """Safety net for `allow_margin=False` accounts: clear the measured
+        cash deficit deterministically, without waiting on an LLM.
 
         When cash is meaningfully negative at session start we do NOT trust
-        the LLM to pick which positions to cut — we force-sell biggest-loser
-        first (most negative unrealized P&L, largest size as tiebreaker)
-        until projected cash is ≥ 0. This runs BEFORE any decision / review
-        stage, so the rest of the session operates on a clean, cash-only
-        snapshot.
+        the LLM to pick which positions to cut — we force-sell worst-
+        performing first (most negative unrealized P&L, largest size as
+        tiebreaker), hedges last, until projected cash is ≥ 0. This runs
+        BEFORE any decision / review stage, so the rest of the session
+        operates on a clean, cash-only snapshot.
+
+        The ordering is a biggest-loser-first P&L rule (owner-ratified), NOT
+        a risk measure: the goal is to CLEAR THE MEASURED CASH DEFICIT, and
+        cutting the worst performers first is simply how the desk chooses
+        what to give up to do it. The only risk-shaped rule in the sort is
+        keeping inverse-ETF hedges in the last tier (see the ordering block
+        below), so raising the cash does not strip directional protection off
+        the longs that remain.
 
         Rationale: the DE-LEVER MANDATE in the PM / midday prompts is
         advisory — if the LLM emits only HOLDs, margin sits. Users who opt
@@ -12097,10 +12136,12 @@ class TradingPipeline:
         # ignores direction can pick a hedge in any market where the long
         # book is profitable (the hedge tends to lose precisely when the
         # rest is winning). Selling the hedge first leaves the remaining
-        # longs naked, AMPLIFYING directional exposure — the opposite of
-        # what cash-only de-lever is trying to do (which is "shrink risk
-        # to fit cash"). Cash-flow-wise both raise cash equally, but
-        # risk-wise they're opposite.
+        # longs naked, AMPLIFYING directional exposure. This sweep's job is
+        # to clear the measured cash deficit, and a hedge raises that cash
+        # just as well as a long does — so the ONLY reason to order the two
+        # is to avoid stripping directional protection off the book while
+        # doing it. Cash-flow-wise both raise cash equally; hedges sort last
+        # so the deficit is cleared without gratuitously un-hedging the book.
         #
         # Tier key (lower = sells earlier):
         #  -1 → cash-sweep vehicle (parked T-bills ARE cash — always the
