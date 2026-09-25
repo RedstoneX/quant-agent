@@ -199,6 +199,34 @@ def test_progress_and_pace_are_disabled_for_breakout_setups():
     assert facts["setup_type"] == "breakout"
 
 
+def test_measured_breakout_labelled_range_still_disables_progress_and_pace():
+    """Item 82 residue. Construction keys the breakout verdict off the analyst
+    label OR the MEASURED `structural_ceiling` (either sufficient). A trade the
+    analyst labelled "range" while the desk's own level computation found
+    nothing overhead (`structural_ceiling=False`, stored 0) IS a breakout by
+    construction's verdict, and the pace/progress read path — flagged as the
+    single largest P&L defect — must reach that SAME verdict from the pinned
+    row, not the label alone."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range")
+    row["structural_ceiling"] = 0  # measured: no overhead level
+    facts = _facts(_pipeline(), _position(current_price=120.0), row)
+    assert facts["thesis_progress_pct"] is None
+    assert facts["pace"] is None
+    assert facts["pace_status"] == "n/a_breakout"
+
+
+def test_measured_ceiling_range_row_keeps_progress_and_pace():
+    """The mirror: a "range" label whose measurement DID find a ceiling
+    (`structural_ceiling=True`, stored 1) is a genuine range trade — progress
+    and pace still apply, exactly as a NULL/legacy row falls back to the label
+    and does."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range")
+    row["structural_ceiling"] = 1  # measured: a ceiling exists
+    facts = _facts(_pipeline(), _position(current_price=120.0), row)
+    assert facts["pace_status"] == "measured"
+    assert facts["thesis_progress_pct"] == pytest.approx(50.0)
+
+
 def test_legacy_position_without_a_pinned_horizon_gets_no_pace_at_all():
     """The fix is not 'use a different average' — it is that a trade's horizon
     must never be derived from the system's own past behaviour. With nothing

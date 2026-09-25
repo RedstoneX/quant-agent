@@ -9307,8 +9307,22 @@ class ExecutionStage:
                         action="SHORT" if is_short else "BUY",
                     )
                     pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
+                    # Item 82: carry the position's OWN pinned MEASURED verdict
+                    # forward too (stored 0/1/NULL), for the same reason as
+                    # setup_type above — an add is the same position, not a
+                    # fresh classification. See TradeDecision.structural_ceiling.
+                    _pinned_sc = (_existing_buy or {}).get("structural_ceiling")
+                    pinned_structural_ceiling = (
+                        None if _pinned_sc is None else bool(_pinned_sc)
+                    )
                 else:
                     pinned_setup_type = getattr(decision, "setup_type", None)
+                    # Item 82: the MEASURED half of the verdict, pinned from the
+                    # constructor's TradeDecision (see _build_buy/_build_short),
+                    # alongside setup_type. None for a legacy notional target.
+                    pinned_structural_ceiling = getattr(
+                        decision, "structural_ceiling", None,
+                    )
                 entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
                     symbol=decision.symbol, action=decision.action, qty=qty,
@@ -9321,6 +9335,11 @@ class ExecutionStage:
                         entry_analysis, "expected_horizon_sessions", None,
                     ),
                     setup_type=pinned_setup_type,
+                    # Item 82: the MEASURED half of the same verdict, pinned at
+                    # entry so a row read back (pace/progress) reaches the SAME
+                    # breakout verdict construction reached, not a label-only
+                    # approximation. See TradeDecision.structural_ceiling.
+                    structural_ceiling=pinned_structural_ceiling,
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this
