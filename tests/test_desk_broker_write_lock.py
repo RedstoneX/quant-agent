@@ -239,3 +239,107 @@ def test_the_sweep_and_intra_check_share_one_lock_file(tmp_path):
         assert held
         with intra._intraday_scan_process_lock() as acquired:
             assert acquired is False
+
+
+# ---------------------------------------------------------------------------
+# criterion (b): the seller's cancel-stops-then-sell window vs a repair pass
+# ---------------------------------------------------------------------------
+
+def test_repair_cannot_add_a_stop_during_the_cancel_then_sell_window(
+    tmp_path, monkeypatch,
+):
+    """Item 127 (b): a session has cancelled NVDA's protective stop and is
+    submitting the SELL; in that naked window a repair pass reading a coverage
+    gap must place NOTHING. `_submit_protected_sell` now holds the shared flock
+    across cancel -> submit, so the repair's own non-blocking acquire is
+    refused — the worst pairing (a stop reappearing on shares un-protected in
+    order to sell) can no longer happen."""
+    from src.execution import scale_in
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "quant_agent.db"))
+    db.initialize()
+    db_path = Path(db.db_path)
+    monkeypatch.setattr(coverage_watchdog, "DB_PATH", db_path)
+    monkeypatch.setattr(alert_watchdog, "DB_PATH", db_path)
+    monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", tmp_path / "no-session")
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = db
+    p.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
+    p.broker = MagicMock()
+    p.broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "stop-nvda", "qty": 100, "stop_price": 95.0}],
+    )
+    p.broker.cancel_snapshotted_stops.return_value = True
+
+    gap_broker = _gap_broker()
+    probe: dict = {}
+
+    def _submit_probing_a_repair(**_kwargs):
+        # We are in the naked window: NVDA's stop is cancelled and the SELL is
+        # not yet resting. A repair pass firing right now must defer.
+        probe["status"] = coverage_watchdog.check_coverage(
+            gap_broker, now=_FRI_1005, db_path=db_path,
+            state_path=tmp_path / "state.json",
+            last_buy=lambda _s, action="BUY": {"stop_loss": 137.53},
+        )
+        return {"id": "sell-nvda", "status": "accepted"}
+
+    p.broker.submit_order.side_effect = _submit_probing_a_repair
+
+    result = p._submit_protected_sell(
+        symbol="NVDA", qty=100.0, limit_price=None, reference_price=100.0,
+        position_qty_before_sell=100.0, label="REDUCE",
+    )
+
+    assert result is not None, "the deliberate exit itself must still go through"
+    status = probe["status"]
+    assert status.repairs == [], "a repair placed a stop during the sell window"
+    assert "lock" in status.repair_deferred
+    assert not gap_broker._submit_protective_stop_retrying.called
+    # The gap is still SEEN and reported — deferral is not blindness.
+    assert [g.symbol for g in status.gaps] == ["ORCL"]
+    db.close()
+
+
+def test_sell_inside_a_held_scan_lock_does_not_deadlock(tmp_path):
+    """A sell reached from inside a path that ALREADY holds the scan lock
+    (e.g. a de-lever inside `intra_check`) must not block on itself. The
+    blocking acquire in `_submit_protected_sell` would deadlock against our own
+    outer flock fd (man flock: independent fds) without the reentrancy guard;
+    with it, the nested acquire is a no-op and the sell proceeds promptly."""
+    import threading
+
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "quant_agent.db"))
+    db.initialize()
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = db
+    p.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
+    p.broker = MagicMock()
+    p.broker.snapshot_protective_stops.return_value = (True, [])
+    p.broker.submit_order.return_value = {"id": "sell-1", "status": "accepted"}
+
+    box: dict = {}
+    done = threading.Event()
+
+    def _run():
+        with p._intraday_scan_process_lock() as outer:
+            box["outer"] = outer
+            box["result"] = p._submit_protected_sell(
+                symbol="NVDA", qty=10.0, limit_price=None, reference_price=100.0,
+                position_qty_before_sell=10.0, label="REDUCE",
+            )
+        done.set()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    assert done.wait(timeout=10), (
+        "a sell inside a held scan lock deadlocked on the flock"
+    )
+    assert box["outer"] is True
+    assert box["result"] is not None
+    db.close()

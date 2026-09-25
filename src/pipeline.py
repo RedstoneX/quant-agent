@@ -4213,9 +4213,63 @@ class TradingPipeline:
         side: str = "sell",
         escalate_to_market_on_reject: bool = False,
     ) -> tuple[dict, dict] | None:
+        """Board item 127 criterion (b): make the cancel-stops → submit
+        critical section mutually exclusive with any repair pass.
+
+        The impl below cancels this symbol's protective stops and only THEN
+        submits the closing order; between those two broker calls the position
+        is naked. A repair pass (intra_check's preamble or the standalone
+        coverage sweep) that adds a protective stop in exactly that window is
+        the worst pairing item 127 names — a stop reappears on shares the desk
+        deliberately un-protected in order to sell. Both repair paths already
+        gate on the advisory flock `_intraday_scan_process_lock`; acquiring the
+        SAME lock here (blocking, so a deliberate exit is never dropped) closes
+        the window in both directions: while this sell holds it no repair can
+        add a stop, and while a repair holds it this sell waits.
+
+        If the lock cannot be ESTABLISHED at all (a filesystem error, not
+        contention), we proceed anyway — that degrades to the pre-item-127
+        behaviour where this path held no lock, and stranding a risk-reducing
+        exit on a lock-file error would be its own, worse, live-risk failure.
+        Reentrant: safe even if a future caller reaches this from inside a
+        path that already holds the lock (see the lock's docstring).
+        """
+        with self._intraday_scan_process_lock(blocking=True) as lock_ok:
+            if not lock_ok:
+                logger.warning(
+                    "%s: could not establish the intraday broker-write lock for "
+                    "%s — proceeding WITHOUT it (best-effort, matches "
+                    "pre-item-127 behaviour)", label, symbol,
+                )
+            return self._submit_protected_sell_locked(
+                symbol=symbol,
+                qty=qty,
+                limit_price=limit_price,
+                reference_price=reference_price,
+                position_qty_before_sell=position_qty_before_sell,
+                label=label,
+                side=side,
+                escalate_to_market_on_reject=escalate_to_market_on_reject,
+            )
+
+    def _submit_protected_sell_locked(
+        self,
+        *,
+        symbol: str,
+        qty: float,
+        limit_price: float | None,
+        reference_price: float,
+        position_qty_before_sell: float,
+        label: str,
+        side: str = "sell",
+        escalate_to_market_on_reject: bool = False,
+    ) -> tuple[dict, dict] | None:
         """Head half of the SELL/COVER discipline: clear protective stops
         (write-ahead) → submit the order → guarantee stops are restored if
         the order never reaches the broker.
+
+        Runs inside `_submit_protected_sell`'s broker-write lock (item 127);
+        never call this directly — call `_submit_protected_sell`.
 
         Returns ``(order, pending_protection)`` on broker acceptance, or
         ``None`` when the symbol must be skipped — stop-clear failed, the
@@ -15323,10 +15377,29 @@ class TradingPipeline:
         return blocking is not None
 
     @contextlib.contextmanager
-    def _intraday_scan_process_lock(self):
-        """Non-blocking process-level mutex for the intraday scan.
+    def _intraday_scan_process_lock(self, *, blocking: bool = False):
+        """Process-level mutex for the intraday scan and every desk broker-write.
 
         Yields True when this process holds the lock, False otherwise.
+
+        ``blocking`` (board item 127 criterion b, 2026-09-25): the default
+        acquire is non-blocking — a repair pass / scan that cannot prove it is
+        alone SKIPS this tick and retries next tick. The cancel-stops-then-sell
+        window cannot skip (a deliberate risk-reducing exit must not be dropped
+        because a 30-min repair happened to hold the lock), so it acquires with
+        ``blocking=True`` and WAITS for the repair pass to finish. While it
+        waits, the repair pass's own non-blocking acquire keeps returning False,
+        so the two can never both mutate the broker at once, in EITHER order.
+
+        Reentrancy: `flock` associates a lock with the open file DESCRIPTION,
+        so a second `open()`+`flock` on the same file from the SAME process is
+        treated as a different holder — a blocking acquire would then DEADLOCK
+        against ourselves (man flock: independent fds). We therefore track the
+        hold on the instance: a nested acquire while this process already holds
+        the lock is a no-op that reports the outer acquisition and neither
+        re-locks nor releases early. This makes a sell that runs inside a
+        lock-holding path (e.g. a de-lever reached from inside `intra_check`)
+        safe rather than a self-deadlock.
 
         Why (independent review finding, 2026-08-19): the owner-lock
         `_another_session_recently_active` guard sees a concurrent
@@ -15355,6 +15428,17 @@ class TradingPipeline:
         """
         import fcntl
 
+        # Already held by this process: report the outer acquisition and do
+        # nothing else (see "Reentrancy" above). Only the outermost `with`
+        # opens/flocks and closes/releases.
+        if getattr(self, "_intraday_scan_lock_depth", 0) > 0:
+            self._intraday_scan_lock_depth += 1
+            try:
+                yield bool(getattr(self, "_intraday_scan_lock_acquired", False))
+            finally:
+                self._intraday_scan_lock_depth -= 1
+            return
+
         fh = None
         acquired = False
         try:
@@ -15362,9 +15446,12 @@ class TradingPipeline:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
             try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fh.fileno(), flags)
                 acquired = True
             except BlockingIOError:
+                # Only reachable in the non-blocking mode; a blocking acquire
+                # waits here instead of returning.
                 logger.info(
                     "Intraday scan: another process already holds the scan "
                     "lock — skipping this tick (no concurrent position sizing)",
@@ -15374,6 +15461,8 @@ class TradingPipeline:
                 "Intraday scan: could not establish the process lock (%s) — "
                 "skipping this tick (fail-closed)", e,
             )
+        self._intraday_scan_lock_depth = 1
+        self._intraday_scan_lock_acquired = acquired
         try:
             # Keep the yield outside the acquisition exception handler.  An
             # exception raised by the protected scan body is injected here by
@@ -15382,6 +15471,8 @@ class TradingPipeline:
             # throw()").
             yield acquired
         finally:
+            self._intraday_scan_lock_depth = 0
+            self._intraday_scan_lock_acquired = False
             if fh is not None:
                 try:
                     fh.close()   # releases the flock

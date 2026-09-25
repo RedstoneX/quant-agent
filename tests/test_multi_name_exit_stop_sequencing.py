@@ -188,7 +188,8 @@ def _execution_stage_pipeline(events, positions):
     pipeline._write_ahead_protection_restore.return_value = 1
     pipeline._finalize_protection_after_sell = _recording_finalize(events)
     for name in (
-        "_submit_protected_sell", "_cancel_stops_with_write_ahead",
+        "_submit_protected_sell", "_submit_protected_sell_locked",
+        "_cancel_stops_with_write_ahead",
         "_finalize_pending_protections",
     ):
         setattr(pipeline, name, getattr(TradingPipeline, name).__get__(pipeline))
