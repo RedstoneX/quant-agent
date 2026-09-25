@@ -499,6 +499,8 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** Separately, the correlation-cluster window silently moved from 120 days to 5 years with no recorded reason; the 0.7 threshold itself is already in the ledger as arbitrary and is not re-filed here.
 
+**RESOLVED 2026-09-25.** Two level-ranking literals: already closed on main — the `/ 10.0` strength divisor is the named, ledgered `LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (PR #684) and the flat 40% max-distance cap was removed 2026-09-12 (ATR `horizon_reach`, already ledgered). Correlation window: cannot carry a ledger row — it rides `trading.lookback_days`, which has no numeric default and so is not a definition site the scanner can attach an entry to. Took the DONE-WHEN "recorded reason" branch instead: the reason is now written at `_ensure_correlation_matrix` and cross-referenced beside `CLUSTER_CORRELATION_THRESHOLD`. The honest reason is that the 5y window is INHERITED from the structural-level fetch (settings.yaml records the 320→1800 raise as "purely for structure"), never chosen for clustering, which needs only 20 overlapping returns. No number-ledger count change; no value or behaviour changed.
+
 ## item 152
 
 **Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19) — the news seat still uses the whole-answer parser and is unmeasured against this fix.
@@ -523,7 +525,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Alert shipped 2026-09-25 —** the auto-expiry now sends the owner the same-surface Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; delivery is durable/retryable with the same claim state machine the quota-recovery alert uses. Still open: the two unledgered constants below remain unmeasured.
 
-**Moved from WORK.md (2026-09-24) —** Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
+**Moved from WORK.md (2026-09-24) —** Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check.
+
+**Ledger gap is STRUCTURAL, not an oversight (verified 2026-09-25).** Both constants live in `LLMCostCircuitConfig`, which is DELIBERATELY outside the ledger's `SCOPED_CONFIG_CLASSES` (the scanner's own comment names "LLM cost circuits" as settings with "nothing to do with a trade"). Closing the gap would mean scoping the whole cost-circuit class and ledgering every numeric field in it — a scope-policy change, not bookkeeping — and even then `max_transient_latch_auto_clears_per_day` uses a `default_factory` (`_paid_run_count()`), which the scanner structurally cannot see (its own docstring lists this as uncatchable). So there is no clean two-row ledger add here; left for the owner/scope call, not fixed in the item-148 pass. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
 
 ## item 187
 

@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 # cutoff for "economically meaningful" correlation.
 CLUSTER_CORRELATION_THRESHOLD = 0.7
 
+# The WINDOW — how many bars feed the matrix — is not set here; this module
+# receives already-fetched bars. It rides the caller's `trading.lookback_days`
+# (see `TradingPipeline._ensure_correlation_matrix` for the recorded reason,
+# board item 148): inherited from the structural-level / indicator fetch, not
+# chosen for correlation, and not a number the ledger scanner can see.
+
 
 def _returns_from_bars(bars: list[OHLCV]) -> pd.Series | None:
     # 21 bars → 20 returns, matching df.corr(min_periods=20) below —
