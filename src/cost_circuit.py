@@ -619,9 +619,18 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             "WHERE event_type='auto_reset'"
         )
     if "recovery_alert_updated_at" not in event_columns:
+        # SQLite forbids a non-constant default (e.g. datetime('now')) on
+        # ALTER TABLE ADD COLUMN -- it raises "Cannot add a column with
+        # non-constant default", which would abort the whole schema init and
+        # fail paid analysis closed. The CREATE TABLE path keeps the
+        # datetime('now') default; on the migration path a constant '' default
+        # is safe because this column is only ever read while a row is in the
+        # in-flight retry state (recovery_alert_state=-1), and the code always
+        # writes recovery_alert_updated_at=datetime('now') at the 0 -> -1
+        # transition before any comparison against it can run.
         conn.execute(
             "ALTER TABLE llm_circuit_events ADD COLUMN recovery_alert_updated_at "
-            "TEXT NOT NULL DEFAULT (datetime('now'))"
+            "TEXT NOT NULL DEFAULT ''"
         )
 
     # Migrate a latch created by the original one-state implementation.  Known
