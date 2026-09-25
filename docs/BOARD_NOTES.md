@@ -358,13 +358,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Full account of what was built and the gate's own honest limit (it proves a justification was WRITTEN, never that it is TRUE): `docs/INCIDENT_HISTORY.md` (2026-09-18). The counts quoted there are a snapshot, already known stale by the next day — read `config/number_ledger.yaml` directly rather than trusting a number here. **Half two, STILL OPEN:** read each arbitrary entry off its instrument. Each states in the ledger the question that would settle it and what the desk pays meanwhile, which is what makes half two prioritisable rather than a list. `MAX_ARBITRARY_ENTRIES` is an EQUALITY, not a ceiling: as a ceiling it rewarded deleting a row.
 
-## item 93
-
-**Plain language —** The file that records what has gone wrong and been fixed is merged automatically when two sessions edit it at once. Eleven entries written since 2 September use the wrong heading style, so the merge tool cannot see them, and branches collide over nothing.
-**Recommendation —** Fix it with the tool's own machinery and add a check. Never by hand — hand-editing that file is how live items were once deleted.
-
-**Moved from WORK.md (2026-09-24) —** Three further `## ` headings are legitimate section containers, not entries, and must stay. `parse_history` (`scripts/resolve_doc_conflict.py`) keys on `^###\s+(\d{4}-\d{2}-\d{2})`, so a three-hash heading with no leading ISO date is equally invisible; **169** entries now match (recounted on main 2026-09-18: 15 `## ` headings less 3 legitimate section containers = the twelve defective ones, unchanged). PRs #512, #515 and #516 all appended entries the same day in the correct form and did NOT add to the twelve. Fix with the driver's own tooling; never by hand.
-
 ## item 95
 
 **Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.

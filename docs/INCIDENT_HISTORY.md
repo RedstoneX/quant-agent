@@ -22,6 +22,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
+
+**In plain words:** the file that records what has gone wrong and been fixed can be edited by two sessions at once, and a tool merges their edits automatically. Twelve entries in it were written with the wrong heading style, so that merge tool could not see them and could quietly overwrite one with another. The code fix for this landed on 2026-09-24, but the board (`docs/WORK.md`, `docs/BOARD_NOTES.md`) was never told, so it kept reporting the defect as open.
+
+**What was actually wrong, and what fixed it.** All twelve headings in `docs/INCIDENT_HISTORY.md` used `##` (two hashes) instead of the `###` (three hashes) the merge tool's own entry-boundary pattern requires (`_ENTRY_HEADING_RE` in `scripts/resolve_doc_conflict.py`). PR #665 (2026-09-24) promoted every mis-leveled dated heading to `###` and added `tests/test_incident_history_headings.py`, a lint that fails the build if a dated entry ever sits at `##` again.
+
+**What was missed, and how it was found.** That same PR's own commit message claimed it also retired board item 93, but the diff only removed items 108/130/131 from `docs/WORK.md` and `docs/BOARD_NOTES.md` — item 93's open block, its `docs/BOARD_NOTES.md` section and its slot in the retired-item-numbers line were never touched. Re-verified 2026-09-25: `grep`-ing the file for the two-hash malformed pattern (`^(#{1,2}|#{4,6})\s+\d{4}-\d{2}-\d{2}`) now returns zero matches, and `tests/test_incident_history_headings.py` passes — the code fix is real and already on `main`. Item 93's board write-up is what was missing, not a code fix.
+
+**What would catch it next time.** A "retire item N" commit message is not itself evidence the board was updated — the definition-of-done check for a retirement should confirm the item's block is actually gone from `docs/WORK.md`, not just that the commit message says so.
+
 ### 2026-09-25 — a missing volatility reading used to let a name go unprotected, or get a made-up stop; now it never does
 
 **In plain words:** when the desk could not read a stock's recent choppiness (the number it normally uses to set a protective stop), the prior fix path was to REFUSE the name outright rather than invent a number. The owner overruled that: a missing reading is never a reason to skip protection. There are almost always real price levels to lean on instead — a floor the stock has bounced off before, or simply yesterday's low.
@@ -15723,7 +15733,6 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **A stale note removed.** Two `GROSS_LADDER` entries' `cost_while_unanswered` claimed the ladder was "in open tension with the volatility-relative brake" per `src/risk/rules.py:566-576`. That brake — the 5-day/20-day rolling-return sizing brake — was removed in full with item 32 on 2026-09-20; grep confirms no volatility brake remains in `src/risk/rules.py`. The stale references were corrected.
 
 **Board items unchanged in scope.** Items 182, 184 and 186 were NOT retired — each still owns unresolved constants: 182 keeps the cash-deficit de-lever cushion and `GROSS_LADDER_ALERT_PCT`; 186 keeps the cluster-correlation cutoff, the short-side sizing haircut and the queued-earnings BUY clamp. Their notes record which of their constants were resolved in this pass.
-
 ### 2026-09-25 — the double-classified setup_type that let the risk reviewer cut a protected breakout is closed (item 82 retired)
 
 **In plain words:** a trade's "setup type" was decided twice, in two places that could disagree, and the risk reviewer's breakout exemption read the wrong one — so it could trim a breakout it is forbidden to trim. The scale-in path now carries the position's own pinned setup_type and structural ceiling forward instead of reclassifying.
