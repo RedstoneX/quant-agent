@@ -217,7 +217,7 @@ detail: docs/BOARD_NOTES.md (item 152)
 **154. A research seat being unreachable, with the work going ahead short-handed, has no board item — filed 2026-09-18, from the log-health report.** `Morning research degraded` fired 14 times across the retained logs.
 
 DONE WHEN:
-  - [ ] a decision made short-handed this way is marked as such wherever the desk records it, or the missing seat is shown not to change the decision
+  - [x] a decision made short-handed this way is marked as such wherever the desk records it, or the missing seat is shown not to change the decision
 detail: docs/BOARD_NOTES.md (item 154)
 
 **155. The item-135 short-side guard is a deliberate duplicate sitting one layer out from where it belongs — filed 2026-09-18, from PR #528's own objection record.** `_revert_entry_size_increases` in `src/pipeline_stages.py` re-does, for BUY and SHORT together, what `_apply_risk_modifications` guard 1b in `src/pipeline.py` already does for BUY alone; it was placed there only because `src/pipeline.py` was locked by another workstream at the time, not because two enforcement points are the right shape.
