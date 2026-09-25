@@ -1143,3 +1143,117 @@ def test_the_day_cap_still_binds_after_the_write_back():
     assert obj.news_store.load_raw_headlines() == [{"title": "Apple beats"}], (
         "a refused heal recorded wire coverage it never paid to read"
     )
+
+
+# ── macro heal: KEEP WHAT COSTS MONEY reaches the macro store ─────────────
+#
+# THE MACRO HALF OF THE SAME DEFECT. The news heal persists its paid answer
+# (`_persist_heal_call`) AND stops the seat re-expiring next tick
+# (`_cover_healed_news_wire`). The macro heal wrote neither back to the macro
+# store: it set `ctx.macro_analysis` for this tick's PM and dropped the paid
+# read on the floor. `_carry_forward_macro` re-reads `macro_store` every tick,
+# so the fresher regime the desk PAID for never became the desk's macro state
+# — the next tick, the evening thesis-health read and the 7-day history all
+# saw the stale morning snapshot, and the paid read was invisible to them.
+
+
+class _MacroStore:
+    """Stands in for MacroStore. Records every save; serves a stale snapshot."""
+
+    def __init__(self, last_state=None):
+        self._last = last_state
+        #: Every `save_last_state(payload, series_prints=...)` this saw.
+        self.saved: list[tuple] = []
+
+    def load_last_state(self):
+        return self._last
+
+    def save_last_state(self, analysis, series_prints=None):
+        self.saved.append((analysis, series_prints))
+        self._last = analysis
+
+
+def _macro_pipeline(*, analyst=None, db=None, macro_store=None, require=None):
+    obj = SimpleNamespace(
+        macro_analyst=analyst if analyst is not None else _Analyst(),
+        macro_store=macro_store if macro_store is not None else _MacroStore(
+            {"date": "2026-09-24", "regime": "risk-off"},
+        ),
+        db=db if db is not None else _DayLedger(),
+        _require_paid_analysis=require if require is not None else (lambda name: None),
+    )
+    log: list = []
+    obj._record_heal = lambda ctx, result, alert=False: log.append((result, alert))
+    obj.recorded = log
+    for name in (
+        "_try_one_paid_research_retry",
+        "_persist_heal_call",
+        "_persist_healed_macro_store",
+    ):
+        fn = getattr(TradingPipeline, name, None)
+        if fn is not None:
+            setattr(obj, name, fn.__get__(obj))
+    return obj
+
+
+def _macro_ctx() -> RunContext:
+    ctx = _ctx()
+    ctx.macro_summary = {"rates": {"fed_funds": 5.25}}
+    ctx.data_status = {"macro": "remembered"}
+    return ctx
+
+
+def test_a_paid_macro_heal_is_persisted_to_the_macro_store():
+    """THE regression test. Fails on origin/main: the paid macro read is
+    written to `ctx` for this tick and then dropped, never reaching the store
+    the next tick, the evening thesis-health read and the history all read."""
+    analyst = _Analyst()
+    obj = _macro_pipeline(analyst=analyst)
+    ctx = _macro_ctx()
+
+    healed = obj._try_one_paid_research_retry(ctx, "macro")
+
+    assert healed is True, "the macro seat did not heal"
+    assert analyst.calls == 1
+    assert ctx.data_status["macro"] == "ok"
+    # The paid answer must reach the store, not just this tick's context.
+    assert len(obj.macro_store.saved) == 1, (
+        "the paid macro read was never persisted to the macro store — the "
+        "next tick re-reads the stale snapshot (KEEP WHAT COSTS MONEY)"
+    )
+    saved_payload, _prints = obj.macro_store.saved[0]
+    assert saved_payload == {"pm_briefing": "re-asked"}
+    # And the freshly-paid read is now what the next carry-forward would see.
+    assert obj.macro_store.load_last_state() == {"pm_briefing": "re-asked"}
+
+
+def test_a_macro_store_write_failure_never_undoes_a_paid_heal():
+    """A forensic/persistence hiccup must not fail a heal that succeeded —
+    the same rule `_persist_heal_call` and `_cover_healed_news_wire` follow."""
+
+    class _BrokenStore(_MacroStore):
+        def save_last_state(self, analysis, series_prints=None):
+            raise RuntimeError("disk full")
+
+    analyst = _Analyst()
+    obj = _macro_pipeline(analyst=analyst, macro_store=_BrokenStore(
+        {"date": "2026-09-24", "regime": "risk-off"},
+    ))
+    ctx = _macro_ctx()
+
+    healed = obj._try_one_paid_research_retry(ctx, "macro")
+
+    assert healed is True, "a store-write failure wrongly undid the heal"
+    assert ctx.data_status["macro"] == "ok"
+
+
+def test_the_news_heal_does_not_touch_the_macro_store():
+    """The macro persist must not fire on a news heal — no cross-seat write."""
+    analyst = _Analyst()
+    obj, ctx = _expired_news_tick(analyst=analyst)
+    obj.macro_store = _MacroStore({"date": "2026-09-24", "regime": "risk-off"})
+
+    obj._heal_lost_research_seats(ctx)
+
+    assert analyst.calls == 1
+    assert obj.macro_store.saved == [], "a news heal wrote to the macro store"

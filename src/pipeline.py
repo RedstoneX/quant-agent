@@ -16534,6 +16534,49 @@ class TradingPipeline:
             kind="analysis", scope="run", evidence_json=evidence_json,
         )
 
+    def _persist_healed_macro_store(self, ctx: RunContext, payload: dict) -> None:
+        """Write a paid macro heal's answer back to the macro store.
+
+        THE MACRO HALF OF THE SAME DEFECT the news heal already fixed.
+        `_persist_heal_call` keeps the forensic rows (`agent_logs`,
+        `specialist_evidence`); this keeps the WORKING macro state. Without it
+        the paid read only ever reached `ctx.macro_analysis` for this one
+        tick's PM, then vanished: `_carry_forward_macro` re-reads
+        `macro_store.load_last_state()` every tick, and the evening
+        thesis-health read and the 7-day regime history read the same store,
+        so the stale morning snapshot — not the fresher regime the desk PAID
+        for — was what every later reader saw. That is the KEEP WHAT COSTS
+        MONEY class of defect, on the macro seat instead of the news seat.
+
+        Persisted the SAME way the scheduled morning read persists
+        (`MorningResearchStage`): `save_last_state(payload, series_prints)`,
+        with the FRED fingerprint the heal call actually saw so a later tick's
+        expiry compares against real prints rather than re-expiring blind. A
+        summary with no prints simply stores none — `_macro_series_prints_
+        changed` treats an absent fingerprint as "no change", never as churn.
+
+        Never raises — a store-write failure must not undo a paid heal that
+        succeeded, the same rule `_persist_heal_call` and
+        `_cover_healed_news_wire` already follow.
+        """
+        store = getattr(self, "macro_store", None)
+        save = getattr(store, "save_last_state", None)
+        if not callable(save) or not isinstance(payload, dict):
+            return
+        try:
+            from src.data.macro_store import series_prints_from_summary
+            prints = series_prints_from_summary(
+                getattr(ctx, "macro_summary", None) or {},
+                freshness=getattr(getattr(self, "macro", None), "_run_freshness", None),
+            )
+            save(payload, series_prints=prints)
+            logger.info(
+                "seat heal: persisted the paid macro read to the macro store "
+                "(regime=%s)", payload.get("regime"),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: macro store-write failed: %s", e)
+
     def _cover_healed_news_wire(self, ctx: RunContext) -> None:
         """Record the wire a paid news heal just read, so it stops expiring.
 
@@ -16781,6 +16824,8 @@ class TradingPipeline:
         self._persist_heal_call(ctx, seat, agent_name, analysis, call_result)
         if seat == "news":
             self._cover_healed_news_wire(ctx)
+        elif seat == "macro":
+            self._persist_healed_macro_store(ctx, payload)
         status = dict(ctx.data_status or {})
         status[seat] = "ok"
         ctx.data_status = status

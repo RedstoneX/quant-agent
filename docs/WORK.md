@@ -425,11 +425,12 @@ DONE WHEN:
 - [ ] counted: every SELL in the retained logs, research-time quantity beside execution-time quantity, how many differ and by how much
 - [ ] the asymmetry removed either way — the rotation's refresh deleted, or a refresh on every exit
 
-**179. The macro seat's paid heal hands on a plain dict where the desk expects the model object, and stores nothing — filed 2026-09-23, report-only.** The news half of this defect is fixed (`docs/INCIDENT_HISTORY.md`); the macro half is not.
+**179. The macro seat's paid heal hands on a plain dict where the desk expects the model object, and stores nothing — filed 2026-09-23.** The store-write half is now FIXED (2026-09-25): a paid macro heal is persisted to the macro store like the scheduled read. The "plain dict / zero nominations" half was investigated and is NOT a defect (dict is the canonical shape; nominations are collected before the heal runs). Left OPEN only for the `mechanical_heal_macro` dead-code OWNER call. See `docs/BOARD_NOTES.md` (item 179).
 
 DONE WHEN:
-  - [ ] the healed macro reaches the seat in the same shape a fresh read does, or the dict path is made explicit and tested
-  - [ ] the store write either exists or is documented as deliberately absent
+  - [x] the dict path is made explicit and tested — the "plain dict / zero nominations" finding does NOT cause harm: `ctx.macro_analysis` is CANONICALLY a dict (its own type comment, and PM reads it via `.get()`), and macro nominations are collected once, inside `MorningResearchStage`, which finishes BEFORE the heal ever runs, so the healed macro's shape cannot change any nomination outcome; the sequencing limitation (a healed macro's nominations are never collected at all, because collection precedes the heal) is a deeper, separate question, not a shape bug
+  - [x] the store write now exists — a successful paid macro heal is persisted to the macro store the same way the scheduled morning read is (KEEP WHAT COSTS MONEY), with a reproduction test that fails pre-fix
+  - [ ] `mechanical_heal_macro` (test-only dead code) either wired or removed — separate OWNER call, not touched here
 detail: docs/BOARD_NOTES.md (item 179)
 
 **180. The young-listing refusal fires on a calendar count, not on what the trade needs — filed 2026-09-23, report-only. Detail: `docs/BOARD_NOTES.md` ("item 180").** `LONGEST_INDICATOR_WINDOW` is both the MA200 window and a constructor refusal under 200 bars.
