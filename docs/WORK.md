@@ -250,7 +250,7 @@ detail: docs/BOARD_NOTES.md (item 157)
 **158. The technical seat's per-stock drop reasons live only in the log and as a count, not per stock in the database — filed 2026-09-19.** #538 logs each dropped stock with symbol and reason and counts it, but writes nothing against the stock's own database row, so a later reader cannot tell why a name is absent without the log.
 
 DONE WHEN:
-  - [ ] the per-stock drop reason is stored alongside the stock it was dropped for, not only in the log
+  - [x] the per-stock drop reason is stored alongside the stock it was dropped for, not only in the log — `parse_telemetry` now carries the WHY keyed by symbol (first concrete reason per key wins), the technical seat's two drop sites pass it, and the risk stage files one `specialist_evidence` row per dropped symbol (kind `analysis_drop`, scope `symbol`, tied to `run_id`) whose payload holds the reason plus whether a retry recovered it into the book; the `analysis_parse_loss` advisory now names each lost row with its reason too. Observability only — a write failure never touches the risk decision. Reuses the existing evidence table, no new store.
 
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
 
