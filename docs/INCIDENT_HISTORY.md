@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — rotation gave up the whole swap when the worst stale holding was one it was not allowed to sell (item 39 retired)
+
+**In plain words:** when the book is full and the desk wants to make room by selling something it would no longer buy today, it looks at every holding that has fallen below its own entry bar and picks the worst one to sell. If that single worst name turned out to be one the desk is forbidden to sell — because the original reason for holding it is still standing — the desk abandoned the entire swap, even when the second-worst stale holding was free to sell and would have made exactly the same room. It now moves on to the next-worst stale name and only gives up when every stale holding is one it may not touch. This was the last thing keeping board item 39 open.
+
+**The real cause.** The categorical rotation tier surfaced exactly ONE holding to cull (the one failing the most entry rules, ties broken alphabetically). The execution stage then ran the sell guards against that single name only, and the holding-discipline guard — a position whose thesis level is still intact is never sold on opportunity cost, retired item 25 — returned "abandon" for the whole rotation rather than "try the next candidate". The two facts are independent axes: a name can be below today's entry bar (fails R2/R3/R5/R6) yet still have an intact thesis level, so the worst-ranked stale name being protected while a lesser stale name is freely sellable is an ordinary book state, not a corner case. It bit whenever two or more holdings were below the bar at once; the change #614 telemetry (`held_below_entry_bar`) was already measuring how often that happens.
+
+**The fix.** The categorical opportunity now carries the WHOLE below-bar cull set, ordered worst-first (`RotationOpportunity.ineligible_candidates`, built in `src/rotation.py`). The execution stage (`_apply_rotation_execution`, `src/pipeline_stages.py`) walks that set and closes the first name that clears every per-holding guard — not a long, in flight, bought today, already targeted by the PM, or structurally protected — recording each passed-over name under its own reason, and abandons the rotation only when the whole set is unsellable. The buy-leg precondition (the PM must itself have targeted the replacement) is invariant across held names, so it is still checked once, outside the walk. Holding discipline is untouched: a protected name is walked OVER, never sold — a thesis-intact position remains unsellable on opportunity cost at any margin.
+
+**Ruled out / not done.** No new number was introduced — the walk reuses the tier's existing worst-first ordering and the same structural-protection call `RiskStage` makes. The ranked-margin (tier-2) rotation stays OFF by owner mandate (2026-09-24); this fix is the categorical tier only. Removing the now-dead `ROTATION_MARGIN_PCT` / `rotation_ranked_margin_enabled` config remains a separate safe follow-up, not part of item 39.
+
+**What would catch it again.** `tests/test_rotation_execute.py` pins that with two below-bar holdings where the worst is structurally protected the next-worst is culled, and that the rotation is abandoned only when every below-bar holding is protected; `tests/test_rotation.py` pins that the cull set is carried worst-first.
+
+---
+
 ### 2026-09-25 — the desk was told to buy for "balance"; the prompt now forbids it
 
 **In plain words:** the owner ruled that conviction outranks balance — the desk must never buy or size a position UP to diversify, to balance the sectors, to improve "the shape of the book", or just to use up spare borrowing room. A purchase now has to stand on its own multi-seat conviction and nothing else. Leaving borrowing room unused is a perfectly acceptable outcome when nothing is good enough to buy; it is not a problem to be solved by reaching for the least-bad name. On 2026-09-24 a real decision had done exactly the barred thing, calling a name "the cleanest non-Technology candidate for closing the deployment gap" — that is the reasoning this ruling outlaws.
