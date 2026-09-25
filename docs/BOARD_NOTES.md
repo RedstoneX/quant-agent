@@ -501,7 +501,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 ## item 152
 
-**Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19) — the news seat still uses the whole-answer parser and is unmeasured against this fix.
+**Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19).
+
+**News-seat half closed (2026-09-25, #695).** The news answer is a single nested report, not a list of rows, so its per-entry salvage is `_drop_invalid_state_changes` / `_drop_invalid_stock_news` (a bad state-change or stock-news bullet is dropped alone, the rest of the report survives), and its whole-answer failures are the two the retained forensic dumps actually showed — genuine non-answers ("I need more context…") with nothing to salvage. #695 gave the whole-answer non-JSON path the same one paid heal retry the schema-validation path already had, removed the retry-flag leak on the long-lived instance that had disabled that retry for every later failure of the run, and reworded the final exhausted-retry lines so `log_health` classifies them under `seat_answer_unreadable`; every exhausted failure persists its raw payload rather than being paid-and-discarded. Recovery-on-retry, no cross-call flag leak, and payload persistence are each pinned by tests in `tests/test_news.py`.
 
 ## item 154
 

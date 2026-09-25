@@ -211,7 +211,7 @@ detail: docs/BOARD_NOTES.md (item 148)
 **152. A research seat's answer coming back unreadable has no board item — filed 2026-09-18, from the log-health report; the technical-seat half is SETTLED by #538 (2026-09-19), news seat still open.** A parse failure means the call was paid for and thrown away with nothing to show for it; measured on the retained logs: 11 on the news seat, 79 on the technical seat [measured 2026-09-18 against `quant_agent.log` and its five rotations].
 
 DONE WHEN:
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry
+  - [x] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — shipped by #695 (2026-09-25): the whole-answer non-JSON path now gets the same one paid heal retry the schema path had, the retry flag no longer leaks across the long-lived instance (which had silently disabled the retry for every later failure in the run), and any final exhausted failure persists its raw payload and logs in log_health's `seat_answer_unreadable` family instead of being paid-and-discarded
 detail: docs/BOARD_NOTES.md (item 152)
 
 **154. A research seat being unreachable, with the work going ahead short-handed, has no board item — filed 2026-09-18, from the log-health report.** `Morning research degraded` fired 14 times across the retained logs.
