@@ -7717,7 +7717,9 @@ class TradingPipeline:
         thesis_health_review step.
 
         For each held symbol, gather:
-          - Entry context (date, price, days_held, original thesis text)
+          - Entry context (date, price, days_held, sessions_held,
+            original thesis text) — `sessions_held` is the weekend/holiday-aware
+            trading-session count the reviewer reads for pace (item 165)
           - Tech rating trajectory (last 4 ratings as a list)
           - News mentions count + 2 latest headlines (8-week window)
           - Most recent earnings sentiment + key_thesis
@@ -7752,6 +7754,16 @@ class TradingPipeline:
             entry_date: str | None = None
             entry_reasoning = ""
             days_held: int | None = None
+            # Item 165: the reviewer judges PACE ("too slow" → exit early) off
+            # holding time, so holding time here must be in TRADING SESSIONS,
+            # not calendar days. A weekend or market holiday adds calendar days
+            # and zero sessions, so a calendar-day count made a good position
+            # look slower than it is and could trigger a real-money early exit.
+            # `sessions_held` is the weekend/holiday-aware count the reviewer
+            # prompt reads for pace, computed with the SAME helper the
+            # morning/midday facts path uses (`broker.trading_sessions_held`,
+            # backed by Alpaca's real market calendar) — no parallel method.
+            sessions_held: int | None = None
             try:
                 buy_row = self.db.get_symbol_last_buy(sym)
             except Exception:
@@ -7764,8 +7776,17 @@ class TradingPipeline:
                         from datetime import date as _d
                         entry_d = _d.fromisoformat(ts)
                         days_held = max(0, (et_today() - entry_d).days)
+                        sessions_held = self.broker.trading_sessions_held(
+                            entry_d, et_today(),
+                        )
                     except (ValueError, TypeError):
                         days_held = None
+                        sessions_held = None
+                    except Exception:
+                        # Calendar/broker hiccup: degrade this one field to
+                        # None rather than dropping the whole thesis-health
+                        # row, matching the graceful-degradation contract above.
+                        sessions_held = None
                 entry_reasoning = (buy_row.get("reasoning") or "")[:300]
 
             # P&L% — the one definition (`src.risk.metrics.unrealized_pnl_pct`),
@@ -7826,6 +7847,7 @@ class TradingPipeline:
                 "entry_date": entry_date,
                 "entry_reasoning": entry_reasoning,
                 "days_held": days_held,
+                "sessions_held": sessions_held,
                 "entry_price": p.avg_entry,
                 "current_price": p.current_price,
                 "pnl_pct": pnl_pct,
