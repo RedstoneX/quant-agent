@@ -10867,7 +10867,9 @@ class TradingPipeline:
 
     def _trail_tightened_recently(self, symbol: str, calendar_days: int = 4) -> bool:
         """True when a non-canceled TRAIL_STOP for `symbol` landed within the
-        last `calendar_days` days (~2 trading days across a weekend).
+        last `calendar_days` days (a 4-calendar-day window is ~2-4 trading
+        sessions depending on weekday: ~2 late in the week, ~4 from a
+        Monday).
 
         RC1 forensics (2026-07-16): the reviewer's ≥1.02×old_stop min-bump
         rule means every ACCEPTED trail tightens ≥2%; per-session trailing
@@ -12022,13 +12024,15 @@ class TradingPipeline:
                     # reason bypasses both — mirroring the SELL/REDUCE gate.
                     if not _reason_cites_hard_trigger(action_item.get("reason", "")):
                         # (a) Ratchet cooldown: at most one accepted tighten
-                        # per ~2 trading days per symbol.
+                        # per 4-calendar-day window per symbol (~2-4 trading
+                        # sessions depending on weekday).
                         if self._trail_tightened_recently(symbol):
                             logger.warning(
                                 "Midday: TRAIL_STOP %s skipped — a trail was "
-                                "already tightened within the last 2 trading "
-                                "days (ratchet cooldown; cite a hard trigger "
-                                "to bypass)", symbol,
+                                "already tightened within the last 4 calendar "
+                                "days (~2-4 trading sessions depending on "
+                                "weekday; ratchet cooldown; cite a hard "
+                                "trigger to bypass)", symbol,
                             )
                             continue
                         # (b) Noise-band clamp: a stop inside 1.25×ATR14 of
