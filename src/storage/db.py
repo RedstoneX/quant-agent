@@ -3129,6 +3129,58 @@ class Database:
                 break
         return out
 
+    # --- Gross-exposure de-lever ceiling state (docs/WORK.md item 112) ---
+    #
+    # One boolean per de-lever session: did the book finish STILL over its
+    # ceiling? Persisted so the owner page fires only on the transition INTO
+    # that state, not every session a chronically-over book runs the ladder.
+    # On `specialist_evidence` like every other cross-session flag here — no
+    # new table.
+    DELEVER_CEILING_STATE_KIND = "delever_ceiling_state"
+
+    def save_delever_ceiling_state(
+        self, *, run_id: str, over_ceiling: bool,
+    ) -> int:
+        """Record whether this session's gross-exposure de-lever finished with
+        the book still over its ceiling.
+
+        Written on EVERY session that runs the ceiling enforcement, for both
+        outcomes, so the next session can tell a fresh transition into
+        still-over apart from a book that has sat over the ceiling for days.
+        Observability/state only — no order, sizing or sequencing reads it."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="pipeline",
+            kind=self.DELEVER_CEILING_STATE_KIND, scope="run",
+            evidence_json=json.dumps({"over_ceiling": bool(over_ceiling)}),
+        )
+
+    def get_last_delever_over_ceiling(
+        self, *, exclude_run_id: str | None = None,
+    ) -> bool | None:
+        """The most recent recorded de-lever ceiling state — True (still over),
+        False (cleared), or None when there is no prior record.
+
+        None and False both mean 'not currently in the still-over state', so a
+        transition into still-over pages in either case. `exclude_run_id` drops
+        rows from the current run, so a read-before-write in the same session
+        sees only PRIOR sessions."""
+        sql = "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
+        params: list = [self.DELEVER_CEILING_STATE_KIND]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 1"
+        with self._lock:
+            row = self.conn.execute(sql, tuple(params)).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(dict(row).get("evidence_json") or "{}")
+        except (TypeError, ValueError):
+            return None
+        val = payload.get("over_ceiling")
+        return val if isinstance(val, bool) else None
+
     # --- Take-profit revision record (`src.risk.target_revision`) -------
     #
     # Two kinds, both on `specialist_evidence` rather than a new table: it

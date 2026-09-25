@@ -1186,3 +1186,151 @@ def test_surface_reconcile_outcomes_silent_when_nothing_happened(
     )
 
     assert sent == []
+
+
+# ===========================================================================
+# Item 173(2) — session ORDERING of the two reconcilers.
+#
+# At the intra_check and evening sites the fill reconcile now runs BEFORE the
+# stop-out reconcile. These two tests pin WHY: a SELL this pipeline submitted
+# but has not yet reconciled makes the stop-out check page a FALSE "records
+# disagree" CRITICAL, and reconciling that fill first makes the false page
+# impossible. They exercise the reconciler primitives directly (fast, no
+# session body) — the ordering itself lives in `run_intra_check` /
+# `run_evening`.
+# ===========================================================================
+
+def test_a_submitted_but_unreconciled_sell_fakes_a_records_disagree_gap(
+    tmp_path, monkeypatch,
+):
+    """The bug the reorder fixes. A SELL this pipeline submitted is still
+    'submitted' (fill not yet reconciled). `get_symbols_with_open_ledger_qty`
+    ignores 'submitted' rows, so the ledger reports the whole position still
+    open while the broker has already reduced it — a positive gap. The broker's
+    filled-SELL history DOES contain that sale, but its broker_order_id is
+    already known (the submitted row carries it), so it is filtered out of
+    new_fills and the reconciler pages a FALSE 'records disagree' CRITICAL for
+    a sale that is fully explained. Also proves the no-double-record property:
+    the known id keeps a duplicate exit out of the ledger."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
+    # A SELL this pipeline submitted: broker id known, fill NOT yet reconciled.
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
+                    broker_order_id="amd-sell", fill_status="submitted")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # broker already flat (the SELL filled)
+    broker.list_filled_sell_orders.return_value = [{
+        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
+        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
+    }]
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == [{
+        "symbol": "AMD", "ledger_qty": 10.0, "broker_qty": 0.0,
+        "matched": False, "recorded": 0,
+    }]
+    assert any("RECORDS DISAGREE" in t for t in sent), (
+        "the unreconciled SELL provokes the false records-disagree page"
+    )
+    # No double-record: the known broker id kept any duplicate exit row out.
+    exits = [r for r in db.get_trades(symbol="AMD", executed_only=True)
+             if r["action"] in ("STOP_OUT", "SELL", "RECONCILED_EXIT")]
+    assert exits == []
+
+
+def test_reconciling_the_sell_first_prevents_the_false_records_disagree_page(
+    tmp_path, monkeypatch,
+):
+    """The fix (item 173(2)). Reconciling submitted fills BEFORE the stop-out
+    check — the intra/evening ordering — flips that SELL to 'filled', so the
+    ledger's open-qty view matches the broker, the gap closes, and no false
+    page fires. The broker's fill history is never even queried for a symbol
+    with no gap."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
+                    broker_order_id="amd-sell", fill_status="submitted")
+    # This is exactly what `_reconcile_fills` does when it runs first.
+    db.update_trade_fill(broker_order_id="amd-sell", fill_status="filled",
+                         fill_qty=10.0, fill_price=520.0)
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+    broker.list_filled_sell_orders.return_value = [{
+        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
+        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
+    }]
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == []            # no gap, nothing to reconcile
+    assert sent == []               # and therefore no false page
+    broker.list_filled_sell_orders.assert_not_called()
+
+
+# ===========================================================================
+# Item 173(4) — the LATENT short-cover reconcile case.
+#
+# Short-cover reconciliation is deliberately NOT built (see the reconciler's
+# docstring: a short's protective stop is a BUY-to-cover, staged out). This
+# pins the INTENDED behaviour for now: the reconciler skips a covered short
+# entirely — it writes no exit and does not even query the broker's fill
+# history for it — rather than attempting a write-back it cannot yet get right
+# (item 173(c) shows the short-side sign is knowingly wrong). Do NOT "fix" this
+# by building short-cover reconciliation here.
+# ===========================================================================
+
+def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
+    tmp_path, monkeypatch,
+):
+    """A SHORT the broker covered unilaterally (buy-to-cover stop fired). The
+    ledger still believes the short is open (a negative net qty); the broker is
+    flat. The reconciler must skip it: the negative ledger qty trips the
+    'ledger already believes it's flat / not a long gap' guard before any broker
+    query, so no exit row is written and the owner is not paged. This documents
+    the deferred short-cover path — not a bug to close in this change."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+
+    # Sanity: the ledger's own count is a negative (short) number.
+    assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # broker covered the short → flat
+
+    pipeline = _mk_pipeline(db, broker)
+    import src.notifier as notifier
+    sent: list[str] = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+    )
+
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+
+    assert results == [], "short-cover reconciliation is deferred — nothing acted on"
+    broker.list_filled_sell_orders.assert_not_called()
+    assert sent == []
+    # No exit row invented for the short.
+    exits = [r for r in db.get_trades(symbol="FLNC", executed_only=True)
+             if r["action"] in ("STOP_OUT", "COVER", "RECONCILED_EXIT")]
+    assert exits == []

@@ -12867,7 +12867,7 @@ class TradingPipeline:
             )
 
     def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
-        """Flag it when the gross-exposure de-lever did not work.
+        """Flag AND page the owner when the gross-exposure de-lever did not work.
 
         `_enforce_gross_ceiling` already logs a warning the moment it
         *decides* to trim. What nothing checked before this is the OUTCOME:
@@ -12888,20 +12888,75 @@ class TradingPipeline:
         numbers come from the same post-refresh `_resolve_gross_ceiling`
         call used for the ordinary leverage line, and the check is skipped
         (not defaulted to False) when either is unmeasurable.
+
+        Item 112: promoted from a one-line session bullet to a STANDALONE
+        `send_owner_alert`, mirroring the sibling
+        `_alert_owner_force_delever_incomplete` — a book left over its
+        ceiling after the ladder ran is the same class of unattended
+        margin risk. The page is guarded by a STATE CHANGE: it fires only on
+        the transition INTO still-over (prior recorded state was cleared or
+        absent), so a book that sits over the ceiling for days does not page
+        every session. The flag, the log line and the shortfall evidence
+        record are unchanged — they still happen every session it is over;
+        only the owner PAGE is edge-triggered. No "keep selling" behaviour is
+        added here (owner-escalated, out of scope), and no global throttle is
+        added to `send_owner_alert`.
         """
         leverage = ctx.leverage or {}
         gross_x = leverage.get("gross_x")
         ceiling_x = leverage.get("ceiling_x")
         if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+            # Unmeasurable this session — record no state, so it neither pages
+            # nor resets the transition edge for the next real measurement.
             return
-        if gross_x <= ceiling_x:
+        still_over = gross_x > ceiling_x
+
+        # Read the prior session's recorded state BEFORE writing this one, so
+        # the read sees only earlier sessions (transition detection). Both the
+        # read and the write are best-effort: a persistence hiccup must not
+        # break the de-lever path, and on a failed read we fall back to paging
+        # (fail loud, never silence a real over-ceiling book).
+        run_id = getattr(ctx, "run_id", None)
+        was_over: bool | None
+        try:
+            was_over = self.db.get_last_delever_over_ceiling(exclude_run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state read failed: %s", exc)
+            was_over = None
+        try:
+            self.db.save_delever_ceiling_state(
+                run_id=run_id or "", over_ceiling=still_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state write failed: %s", exc)
+
+        if not still_over:
             return
+
         leverage["delever_incomplete"] = True
         logger.warning(
             "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
             "— gross exposure %.2fx equity vs a %.2fx ceiling.",
             gross_x, ceiling_x,
         )
+
+        if was_over:
+            # Already paged when the book first crossed into still-over; do not
+            # repeat every session while it stays there.
+            return
+
+        try:
+            from src import notifier as _notifier
+
+            msg = (
+                f"GROSS-EXPOSURE DE-LEVER INCOMPLETE: after de-levering, gross "
+                f"exposure is still {gross_x:.2f}x equity against a "
+                f"{ceiling_x:.2f}x ceiling. The book remains over its ceiling "
+                f"until this is resolved."
+            )
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("de-lever incomplete owner alert failed: %s", exc)
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
@@ -13482,6 +13537,14 @@ class TradingPipeline:
             # first — the position has been closed for hours by the time
             # this runs, and every other session entry point runs this same
             # check again in case morning's own attempt failed.
+            #
+            # Item 173(2): unlike intra/evening, this site is NOT reordered to
+            # run `_reconcile_fills` first. Morning's `_reconcile_fills` lives
+            # in the method-end `finally:` block, reconciling THIS session's
+            # own just-submitted orders after execution — there are no stale
+            # 'submitted' SELLs from earlier today for it to resolve here, so
+            # the false-gap page the reorder prevents cannot arise at morning,
+            # and moving it ahead would strand this session's fills.
             reco = None
             try:
                 reco = self._reconcile_stop_out_fills(run_id)
@@ -14356,6 +14419,15 @@ class TradingPipeline:
         # every trading day, so this is the most frequent chance to catch a
         # stop that fired since the last pass and write it back before the
         # reviewer builds its "what happened today" picture.
+        #
+        # Item 173(2): unlike intra/evening, this site is NOT reordered to run
+        # `_reconcile_fills` first. This session's only `_reconcile_fills` is
+        # conditional and runs later — after `_force_delever` /
+        # `_enforce_gross_ceiling` — SOLELY to flip THIS session's own
+        # FORCE_DELEVER rows so the reviewer can see them; it is not the
+        # unscoped stale-'submitted' sweep intra/evening run. Moving it ahead
+        # of the ceiling logic would reconcile rows that don't exist yet, so
+        # the reorder does not apply here.
         reco = None
         try:
             reco = self._reconcile_stop_out_fills(run_id)
@@ -15309,6 +15381,38 @@ class TradingPipeline:
                 # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
                 self._release_retired_cash_park(run_id)
                 self._reconcile_orphan_pending_submits()  # audit F4
+                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
+                # table still read 'submitted' half an hour later. The stop-coverage
+                # and stop-out reconcilers below only watch protective/broker-
+                # initiated exits — neither one asks the broker about the fate of an
+                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
+                # 'submitted' in the trades table). `run_morning` and the midday/
+                # close review both call `_reconcile_fills` for exactly that reason;
+                # this tick — the one that runs every ~30 minutes and is therefore
+                # the tightest window available to close that gap between sessions
+                # — never did. The live fill-notification websocket never
+                # authenticates on this host (placeholder credential, frozen pending
+                # an owner decision — see broker.py), so in production this always
+                # resolves through `_reconcile_fills`'s own bounded REST lookup
+                # (`broker.get_order_fill_info`), never the socket. Unscoped
+                # (no run_id) so a still-'submitted' row from ANY earlier session
+                # today is picked up, not just ones this tick itself created.
+                #
+                # Item 173(2): this runs BEFORE the stop-out reconcile below,
+                # not after. A SELL this pipeline submitted but hasn't yet
+                # reconciled leaves the ledger believing the position is still
+                # open (get_symbols_with_open_ledger_qty ignores 'submitted'
+                # rows) while the broker has already reduced it — a positive
+                # gap. The stop-out reconciler can't explain that gap either,
+                # because the submitted SELL's broker_order_id is already in
+                # get_known_broker_order_ids, so its fill is filtered out of
+                # new_fills — and it pages a false CRITICAL "records disagree
+                # with broker". Reconciling fills first flips that SELL to
+                # executed, the gap closes, and the stop-out check stays quiet.
+                try:
+                    self._reconcile_fills()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
                 # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
                 # every ~30 min, so this is the tightest window this reconciler
                 # runs on — a stop that fires mid-session is written back within
@@ -15323,27 +15427,6 @@ class TradingPipeline:
                 # owner — intra is the tightest cadence, so this is where a
                 # mid-session stop-out reaches him fastest.
                 self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
-
-                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
-                # table still read 'submitted' half an hour later. The stop-coverage
-                # and stop-out reconcilers just above only watch protective/broker-
-                # initiated exits — neither one asks the broker about the fate of an
-                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
-                # 'submitted' in the trades table). `run_morning` and the midday/
-                # close review both call `_reconcile_fills` for exactly that reason;
-                # this tick — the one that runs every ~30 minutes and is therefore
-                # the tightest window available to close that gap between sessions
-                # — never did. The live fill-notification websocket never
-                # authenticates on this host (placeholder credential, frozen pending
-                # an owner decision — see broker.py), so in production this always
-                # resolves through `_reconcile_fills`'s own bounded REST lookup
-                # (`broker.get_order_fill_info`), never the socket. Unscoped
-                # (no run_id) so a still-'submitted' row from ANY earlier session
-                # today is picked up, not just ones this tick itself created.
-                try:
-                    self._reconcile_fills()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
 
         self._intra_preamble_deferred = preamble_deferred
 
@@ -17552,6 +17635,21 @@ class TradingPipeline:
         # Broker-truth coverage audit — last check before carrying positions
         # overnight (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Sweep submitted orders so canceled/expired orders do not get
+        # narrated as real trades, and partial terminal fills are reflected
+        # in the trade list before the evening prompt is built.
+        #
+        # Item 173(2): this runs BEFORE the stop-out reconcile below, not
+        # after. A SELL this session submitted but hasn't yet reconciled
+        # leaves the ledger believing the position is still open
+        # (get_symbols_with_open_ledger_qty ignores 'submitted' rows) while
+        # the broker has already reduced it — a positive gap the stop-out
+        # reconciler can't explain, because the submitted SELL's
+        # broker_order_id is already in get_known_broker_order_ids so its
+        # fill is filtered out of new_fills, and it pages a false CRITICAL
+        # "records disagree with broker". Reconciling fills first flips that
+        # SELL to executed, the gap closes, and the stop-out check stays quiet.
+        self._reconcile_fills()
         # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — last chance before
         # the daily P&L snapshot below is computed, so a same-day stop-out
         # is reflected in tonight's report rather than showing up as an
@@ -17611,10 +17709,6 @@ class TradingPipeline:
             logger.warning("evening: risk-capital heat build failed: %s", e)
             risk_capital_dollars = None
 
-        # Sweep submitted orders before building the evening prompt so
-        # canceled/expired orders do not get narrated as real trades, and
-        # partial terminal fills are reflected in the trade list.
-        self._reconcile_fills()
 
         # Phase 4 #5: daily_pnl write is deferred to the atomic
         # save_evening_snapshot() below, along with insights. Doing both in
