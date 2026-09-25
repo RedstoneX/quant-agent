@@ -419,6 +419,159 @@ def test_resolve_stop_returns_none_when_genuinely_no_stop_information():
     assert stop is None
 
 
+# ---------------------------------------------------------------------------
+# Board item 80 (2026-09-25, REWORKED per owner ruling). A missing ATR is
+# NEVER a reason to skip protection or to size off an unverifiable typed
+# number. When there is no volatility reading the constructor DERIVES the
+# protective stop from price structure that survives on the analysis object
+# (computed levels, else the signal/prior bar) and HOLDS the position; it
+# refuses the ONE name only when no structural level is readable at all, or
+# the only readable level sits past the desk's stop-distance sanity bound
+# (skip on RISK). The earlier item-80 pass, which refused a typed stop
+# outright, was overruled: "there are always levels, even from a few days
+# ago, and there are other ways of setting a stop."
+# ---------------------------------------------------------------------------
+
+def _no_atr_analysis(**overrides):
+    """A no-ATR analysis shell for the structural-fallback tests."""
+    from types import SimpleNamespace
+    base = dict(
+        atr_14=None, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], computed_level_touches={},
+        expected_horizon_sessions=20, reference_target=None,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_no_atr_derives_structural_stop_from_computed_level_and_holds():
+    """A verified computed level below entry with no ATR yields a stop placed
+    one buffer below the level, and the position is HELD (not refused). On the
+    first item-80 pass this same input was refused outright."""
+    constructor = PortfolioConstructor()
+    analysis = _no_atr_analysis(
+        computed_levels=[95.0], computed_level_touches={95.0: 5},
+    )
+    buffer = constructor.cfg.structural_stop_buffer_pct
+    result = constructor._widen_stop_past_noise(
+        "ACME", analysis, 100.0, 96.0, direction="long", target_price=None,
+    )
+    assert result is not None, "a missing ATR must not skip protection"
+    assert abs(result - 95.0 * (1.0 - buffer)) < 1e-9
+    assert constructor.last_refusals == {}
+    # The derived structural read, never the unverifiable typed 96.0.
+    assert abs(result - 96.0) > 0.5
+
+
+def test_no_atr_falls_back_to_prior_bar_low_when_no_verified_level():
+    """With no computed level trusted enough (under the touch bar) but a
+    signal-bar low present, the stop is read from the prior bar and held."""
+    constructor = PortfolioConstructor()
+    analysis = _no_atr_analysis(
+        computed_levels=[95.0], computed_level_touches={95.0: 2},
+        signal_bar_low=97.0,
+    )
+    buffer = constructor.cfg.structural_stop_buffer_pct
+    result = constructor._widen_stop_past_noise(
+        "ACME", analysis, 100.0, None, direction="long", target_price=None,
+    )
+    assert result is not None
+    assert abs(result - 97.0 * (1.0 - buffer)) < 1e-9
+    assert constructor.last_refusals == {}
+
+
+def test_no_atr_short_derives_from_resistance_and_holds():
+    """The short side is mirrored: resistance above entry with no ATR places
+    the stop one buffer above the level, and holds."""
+    constructor = PortfolioConstructor()
+    analysis = _no_atr_analysis(
+        computed_levels=[105.0], computed_level_touches={105.0: 6},
+    )
+    buffer = constructor.cfg.structural_stop_buffer_pct
+    result = constructor._widen_stop_past_noise(
+        "TSLA", analysis, 100.0, 104.0, direction="short", target_price=None,
+    )
+    assert result is not None
+    assert abs(result - 105.0 * (1.0 + buffer)) < 1e-9
+    assert constructor.last_refusals == {}
+
+
+def test_no_atr_no_readable_structure_refuses_per_name():
+    """No ATR AND no structural level (no computed level, no signal bar): the
+    genuine skip-correct case. Refuses THIS one name with its own code, and an
+    ATR-present name in the same batch is untouched — never a book-wide halt."""
+    from src.portfolio_constructor import (
+        STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+    )
+    constructor = PortfolioConstructor()
+    bare = _no_atr_analysis()  # no levels, no bar
+    has_atr = _no_atr_analysis(atr_14=8.0)
+    refused = constructor._widen_stop_past_noise(
+        "OUTAGE", bare, 100.0, 90.0, direction="long", target_price=None,
+    )
+    kept = constructor._widen_stop_past_noise(
+        "HEALTHY", has_atr, 100.0, 50.0, direction="long", target_price=None,
+    )
+    assert refused is None
+    assert kept == 50.0, "the ATR-present name is unaffected by the other's refusal"
+    assert set(constructor.last_refusals) == {"OUTAGE"}
+    assert constructor.last_refusals["OUTAGE"]["refusal"] == (
+        STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
+    )
+
+
+def test_no_atr_structural_stop_too_far_is_skipped_on_risk():
+    """A readable level so far below entry that the implied risk exceeds the
+    desk's stop-distance sanity bound is skipped ON RISK, with its own code —
+    not on the missing volatility reading."""
+    from src.portfolio_constructor import STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+    constructor = PortfolioConstructor()
+    # 40.0 below a 100 entry -> ~60% away, past the 50% sanity bound.
+    analysis = _no_atr_analysis(
+        computed_levels=[40.0], computed_level_touches={40.0: 6},
+    )
+    result = constructor._widen_stop_past_noise(
+        "FAR", analysis, 100.0, 41.0, direction="long", target_price=None,
+    )
+    assert result is None
+    assert constructor.last_refusals["FAR"]["refusal"] == (
+        STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+    )
+
+
+def test_no_atr_nothing_typed_derives_and_holds():
+    """Nothing typed AND no ATR is no longer an automatic refusal: with a
+    readable level the stop is derived from structure and the position held.
+    (Superseded the old `no_stop_and_no_volatility` refusal for this input.)"""
+    constructor = PortfolioConstructor()
+    analysis = _no_atr_analysis(
+        computed_levels=[95.0], computed_level_touches={95.0: 5},
+    )
+    result = constructor._widen_stop_past_noise(
+        "BARE", analysis, 100.0, None, direction="long", target_price=None,
+    )
+    assert result is not None
+    assert constructor.last_refusals == {}
+
+
+def test_typed_stop_with_atr_present_is_unchanged_by_item_80():
+    """Regression guard: with ATR present, a typed stop already outside the
+    noise band still ships exactly as before (STOP_RULE_OUTSIDE_BAND), with
+    no refusal recorded. Item 80 touched ONLY the no-ATR branch."""
+    from types import SimpleNamespace
+    constructor = PortfolioConstructor()
+    analysis = SimpleNamespace(
+        atr_14=8.0, setup_type="breakout", signal_bar_low=None,
+        signal_bar_high=None, computed_levels=[], expected_horizon_sessions=20,
+        reference_target=None,
+    )
+    result = constructor._widen_stop_past_noise(
+        "NVDA", analysis, 100.0, 50.0, direction="long", target_price=None,
+    )
+    assert result == 50.0
+    assert constructor.last_refusals == {}
+
+
 def test_construct_orders_rejects_buy_when_no_reference_target_supplied():
     """New coverage (2026-08-27): a structural stop is present but the
     Tech Analyst supplied no `reference_target` → the BUY is rejected.

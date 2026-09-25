@@ -40,6 +40,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from src import evidence_gate
@@ -433,110 +434,165 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         )
         return
 
-    held = next(
-        (p for p in (positions or []) if (p.symbol or "").upper() == held_symbol),
-        None,
-    )
-    if held is None or held.qty <= 0:
-        _rotation_skip(
-            pipeline, ctx, opportunity, "held_symbol_is_not_a_long_position",
-            qty=getattr(held, "qty", None),
-        )
-        return
-
     targets = list(getattr(portfolio_decision, "targets", None) or [])
     new_targeted = any(
         t.symbol.upper() == new_symbol and not t.is_close for t in targets
     )
     if not new_targeted:
+        # The buy leg is invariant across held candidates: with no new name
+        # targeted there is nothing to make room FOR, so this abandons the
+        # whole rotation, not merely the current candidate.
         _rotation_skip(
             pipeline, ctx, opportunity, "pm_did_not_target_new_candidate",
         )
         return
-    if any(t.symbol.upper() == held_symbol for t in targets):
-        _rotation_skip(
-            pipeline, ctx, opportunity, "pm_already_targets_held_symbol",
-        )
-        return
 
-    # 6. In flight? Read from the desk's own durable state machine. Any
-    # failure to answer is a refusal to act, never an assumption of "clear".
-    try:
-        today_rows = pipeline.db.get_trades(
-            symbol=held_symbol, limit=50, today_only=True,
-        )
-        bought_today = any(
-            str(r.get("action") or "").upper() == "BUY" for r in today_rows
-        )
-        in_flight_rows = [
-            r for r in today_rows
-            if str(r.get("fill_status") or "").lower() in _IN_FLIGHT_FILL_STATUSES
-            and str(r.get("action") or "").upper() != "HOLD"
-        ]
-        pending_restores = [
-            r for r in pipeline.db.get_pending_protection_restores()
-            if str(r.get("symbol") or "").upper() == held_symbol
-        ]
-        pending_repegs = [
-            r for r in pipeline.db.get_pending_repegs()
-            if str(r.get("symbol") or "").upper() == held_symbol
-        ]
-    except Exception as exc:  # noqa: BLE001
-        _rotation_skip(
-            pipeline, ctx, opportunity, "in_flight_check_failed", detail=str(exc),
-        )
-        return
-    if bought_today:
-        _rotation_skip(pipeline, ctx, opportunity, "held_symbol_bought_today")
-        return
-    if in_flight_rows:
-        _rotation_skip(
-            pipeline, ctx, opportunity, "order_in_flight_on_held_symbol",
-            detail="; ".join(
-                f"{r.get('action')}:{r.get('fill_status')}:{r.get('broker_order_id')}"
-                for r in in_flight_rows
-            )[:400],
-        )
-        return
-    if pending_restores:
-        _rotation_skip(
-            pipeline, ctx, opportunity, "sell_already_in_flight_wal_row",
-            detail=str(pending_restores[0].get("sell_order_id")),
-        )
-        return
-    if pending_repegs:
-        _rotation_skip(
-            pipeline, ctx, opportunity, "entry_repeg_in_flight",
-            detail=str(pending_repegs[0].get("old_order_id")),
-        )
-        return
+    def _sellable_this_run(cand_symbol: str, cand_reasons):
+        """Every per-holding sell guard for ONE below-bar candidate.
 
-    # 7. Item-25 holding discipline: is the position still structurally
-    # protected? Same method, same inputs `RiskStage` uses.
-    hist = (position_history or {}).get(held_symbol) or (
-        position_history or {}
-    ).get(held.symbol) or {}
-    try:
-        protection = pipeline._structural_protection_for_holding(
-            symbol=held_symbol,
-            thesis_invalid_if=hist.get("thesis_invalid_if"),
-            entry_price=hist.get("entry_price"),
-            stop_loss=hist.get("stop_loss"),
-            is_short=False,
-            run_id=ctx.run_id,
+        Returns `(held_position, protection, history, cand_opportunity)` when
+        this name may be closed this run, or `None` after recording exactly
+        why it may not — so the caller advances to the next-worst below-bar
+        holding instead of abandoning the rotation (board item 39). Every
+        guard here is a fact about THIS name only; the buy-leg precondition
+        is checked once, above, because it does not depend on which held name
+        makes the room.
+        """
+        cand_opp = replace(
+            opportunity, held_symbol=cand_symbol, reasons=tuple(cand_reasons),
         )
-    except Exception as exc:  # noqa: BLE001
-        _rotation_skip(
-            pipeline, ctx, opportunity, "protection_check_failed", detail=str(exc),
+        held_pos = next(
+            (p for p in (positions or [])
+             if (p.symbol or "").upper() == cand_symbol),
+            None,
         )
+        if held_pos is None or held_pos.qty <= 0:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "held_symbol_is_not_a_long_position",
+                qty=getattr(held_pos, "qty", None),
+            )
+            return None
+        if any(t.symbol.upper() == cand_symbol for t in targets):
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "pm_already_targets_held_symbol",
+            )
+            return None
+
+        # In flight? Read from the desk's own durable state machine. Any
+        # failure to answer is a refusal to act on THIS name, never an
+        # assumption of "clear".
+        try:
+            today_rows = pipeline.db.get_trades(
+                symbol=cand_symbol, limit=50, today_only=True,
+            )
+            bought_today = any(
+                str(r.get("action") or "").upper() == "BUY" for r in today_rows
+            )
+            in_flight_rows = [
+                r for r in today_rows
+                if str(r.get("fill_status") or "").lower()
+                in _IN_FLIGHT_FILL_STATUSES
+                and str(r.get("action") or "").upper() != "HOLD"
+            ]
+            pending_restores = [
+                r for r in pipeline.db.get_pending_protection_restores()
+                if str(r.get("symbol") or "").upper() == cand_symbol
+            ]
+            pending_repegs = [
+                r for r in pipeline.db.get_pending_repegs()
+                if str(r.get("symbol") or "").upper() == cand_symbol
+            ]
+        except Exception as exc:  # noqa: BLE001
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "in_flight_check_failed",
+                detail=str(exc),
+            )
+            return None
+        if bought_today:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "held_symbol_bought_today",
+            )
+            return None
+        if in_flight_rows:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "order_in_flight_on_held_symbol",
+                detail="; ".join(
+                    f"{r.get('action')}:{r.get('fill_status')}:"
+                    f"{r.get('broker_order_id')}"
+                    for r in in_flight_rows
+                )[:400],
+            )
+            return None
+        if pending_restores:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "sell_already_in_flight_wal_row",
+                detail=str(pending_restores[0].get("sell_order_id")),
+            )
+            return None
+        if pending_repegs:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "entry_repeg_in_flight",
+                detail=str(pending_repegs[0].get("old_order_id")),
+            )
+            return None
+
+        # Item-25 holding discipline: is the position still structurally
+        # protected? Same method, same inputs `RiskStage` uses. A protected
+        # (thesis-intact) name is NEVER sold — the walk passes OVER it to the
+        # next below-bar name; it never overrides the discipline.
+        cand_hist = (position_history or {}).get(cand_symbol) or (
+            position_history or {}
+        ).get(getattr(held_pos, "symbol", cand_symbol)) or {}
+        try:
+            cand_protection = pipeline._structural_protection_for_holding(
+                symbol=cand_symbol,
+                thesis_invalid_if=cand_hist.get("thesis_invalid_if"),
+                entry_price=cand_hist.get("entry_price"),
+                stop_loss=cand_hist.get("stop_loss"),
+                is_short=False,
+                run_id=ctx.run_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "protection_check_failed",
+                detail=str(exc),
+            )
+            return None
+        if cand_protection.protected:
+            _rotation_skip(
+                pipeline, ctx, cand_opp, "held_symbol_structurally_protected",
+                protection_basis=cand_protection.basis,
+                protection_detail=str(cand_protection.detail)[:400],
+            )
+            return None
+        return held_pos, cand_protection, cand_hist, cand_opp
+
+    # Board item 39. Walk the below-bar cull set worst-first and close the
+    # FIRST name that clears every per-holding guard. The rotation is
+    # abandoned only when EVERY below-bar holding is unsellable this run —
+    # not, as before, when the single worst name happened to be structurally
+    # protected. `ineligible_candidates` is empty on the ranked-margin tier
+    # and on a directly-constructed opportunity, so both fall back to the one
+    # `held_symbol` and behave exactly as before.
+    cull_set = (
+        opportunity.ineligible_candidates
+        if (opportunity.tier == "ineligible_hold"
+            and opportunity.ineligible_candidates)
+        else ((held_symbol, opportunity.reasons),)
+    )
+    chosen = None
+    for cand_symbol, cand_reasons in cull_set:
+        chosen = _sellable_this_run(
+            str(cand_symbol).strip().upper(), cand_reasons,
+        )
+        if chosen is not None:
+            break
+    if chosen is None:
+        # Every below-bar holding was unsellable this run; each was recorded
+        # under its own reason above.
         return
-    if protection.protected:
-        _rotation_skip(
-            pipeline, ctx, opportunity, "held_symbol_structurally_protected",
-            protection_basis=protection.basis,
-            protection_detail=str(protection.detail)[:400],
-        )
-        return
+    _held_pos, protection, hist, opportunity = chosen
+    held_symbol = opportunity.held_symbol
 
     # A PROPOSAL, not an authorisation — see `rotation_proposal_reason`.
     # For the categorical tier this is byte-for-byte the string

@@ -219,6 +219,12 @@ def test_multiple_ineligible_holdings_pick_the_worse_one_deterministically():
     )
     assert opp is not None
     assert opp.held_symbol == "BBB"
+    # Board item 39: the WHOLE below-bar cull set is carried, worst-first, so
+    # the execution stage can advance to the next-worst if BBB cannot be sold.
+    assert opp.ineligible_candidates == (
+        ("BBB", ("R4 one reason", "R5 net evidence -1 if long — no rung")),
+        ("AAA", ("R4 one reason",)),
+    )
 
 
 def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_against_itself():

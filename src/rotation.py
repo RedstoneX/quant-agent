@@ -402,6 +402,20 @@ class RotationOpportunity:
     #: The held symbol's own blocking reasons, "ineligible_hold" tier only.
     reasons: tuple[str, ...] = field(default_factory=tuple)
     margin_pct: float = ROTATION_MARGIN_PCT
+    #: Board item 39, "ineligible_hold" tier only. The WHOLE below-bar cull
+    #: set this session, ordered worst-first (most blocking reasons first,
+    #: then alphabetical) as `(symbol, reasons)` pairs — every held name that
+    #: fails the desk's own entry bar today, not just the one surfaced in
+    #: `held_symbol`/`reasons` (which are this tuple's first entry). The
+    #: execution stage walks it so that when the worst name cannot be sold
+    #: this run (structurally protected, in flight, already being closed by
+    #: the PM) it advances to the next-worst rather than abandoning the whole
+    #: rotation. Empty for the ranked-margin tier, which compares one weakest
+    #: holding, and empty on a directly-constructed opportunity, where the
+    #: execution stage falls back to the single `held_symbol`.
+    ineligible_candidates: tuple[tuple[str, tuple[str, ...]], ...] = field(
+        default_factory=tuple,
+    )
     #: "ranked_margin" tier only — the seats that scored BOTH names, and
     #: each side's weighted sum over exactly those seats. This is the
     #: like-for-like comparison the margin was actually cleared on
@@ -742,9 +756,18 @@ def evaluate_rotation(
         if sym in held and reasons
     }
     if ineligible_held:
-        held_symbol = min(
+        # Worst-first: MOST blocking reasons (more clearly stale), then
+        # alphabetically, so the order is reproducible. The whole set is
+        # carried on the opportunity (board item 39) — `_apply_rotation_
+        # execution` walks it and closes the first name that can actually be
+        # sold this run, rather than abandoning the rotation when only the
+        # single worst name is structurally protected. `held_symbol`/`reasons`
+        # stay the worst name so every existing reader and the audit row are
+        # byte-for-byte unchanged when nothing displaces it.
+        ordered = sorted(
             ineligible_held, key=lambda s: (-len(ineligible_held[s]), s),
         )
+        held_symbol = ordered[0]
         return RotationOutcome(opportunity=RotationOpportunity(
             new_symbol=best_new.symbol,
             new_score=best_new.score,
@@ -753,6 +776,9 @@ def evaluate_rotation(
             tier="ineligible_hold",
             reasons=ineligible_held[held_symbol],
             margin_pct=margin_pct,
+            ineligible_candidates=tuple(
+                (sym, ineligible_held[sym]) for sym in ordered
+            ),
         ))
 
     # Tier 2 — ranked margin. Both sides eligible; the weakest held name is

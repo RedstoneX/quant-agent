@@ -361,8 +361,6 @@ class SECForm4Provider:
         request_timeout_s: float = 15.0,
         requests_per_second: float = 8.0,
         lookback_days: int = 14,
-        min_transaction_value_usd: float = 100_000,
-        external_min_transaction_value_usd: float = 250_000,
         # ROW-RETENTION window for `cluster_survivors`, NOT the research cluster
         # (corrected 2026-09-19, board item 124). Alldredge & Blank's abstract
         # (J. Financial Research, 2019) measures SAME-DAY purchases; "within two
@@ -414,11 +412,6 @@ class SECForm4Provider:
         self.timeout_s = max(1.0, float(effective_timeout))
         self.request_interval_s = 1.0 / min(8.0, max(0.5, float(requests_per_second)))
         self.lookback_days = max(1, int(lookback_days))
-        self.min_transaction_value_usd = max(0.0, float(min_transaction_value_usd))
-        self.external_min_transaction_value_usd = max(
-            self.min_transaction_value_usd,
-            float(external_min_transaction_value_usd),
-        )
         self.cluster_window_days = max(1, int(cluster_window_days))
         self.min_cluster_owners = max(2, int(min_cluster_owners))
         self.max_observations = max(1, int(max_observations))
@@ -1839,10 +1832,13 @@ class SECForm4Provider:
             )
             if age_days > self.lookback_days:
                 continue
-            threshold = (
-                self.min_transaction_value_usd
-                if item.symbol in core else self.external_min_transaction_value_usd
-            )
+            # Board item 52: no published study supports single-transaction
+            # dollar SIZE as an insider-buy predictor (the closest, Cziraki &
+            # Gider 2019, finds size inversely related), so size gates
+            # nothing here. The two flat cutoffs (`min_transaction_value_usd`,
+            # `external_min_transaction_value_usd`) that used to sit in this
+            # admission test and in the `cluster_survivors` call below were
+            # deleted rather than re-derived.
             admission = (
                 item.symbol not in core
                 and not item.amendment
@@ -1853,7 +1849,6 @@ class SECForm4Provider:
                 # trading surface. Strictly narrows the existing gate.
                 and verdict.label != "routine"
                 and item.transaction_value_usd is not None
-                and item.transaction_value_usd >= threshold
                 and item.freshness != "stale"
             )
             parsed.append(item.model_copy(update={
@@ -1884,10 +1879,12 @@ class SECForm4Provider:
 
         survivors = cluster_survivors(
             parsed,
-            threshold_fn=lambda symbol: (
-                self.min_transaction_value_usd
-                if symbol in core else self.external_min_transaction_value_usd
-            ),
+            # Board item 52: no dollar floor gates row retention any more —
+            # `cluster_survivors` still keeps its generic materiality
+            # parameter (shared with `CongressionalTradingProvider`, which
+            # keeps its own separate, unaffected floor), but this caller
+            # passes zero so every parsed row clears it on size alone.
+            threshold_fn=lambda symbol: 0.0,
             cluster_window_days=self.cluster_window_days,
             min_cluster_owners=self.min_cluster_owners,
         )

@@ -722,23 +722,6 @@ numbers:
       how long the desk waits or how much it fetches, never whether or how
       much to trade. A wrong value degrades data availability, which is a
       separate failure the seats already see as missing evidence.
-  - id: src.config.SmartMoneyConfig.external_min_transaction_value_usd
-    value: 250000
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
-    open_question: >-
-      What transaction size distinguishes a conviction purchase from routine
-      compensation activity, as a fraction of the filer's own holdings?
-    cost_while_unanswered: >-
-      A flat dollar bar reads differently for a small-cap director than for a
-      mega-cap officer.
   - id: src.config.SmartMoneyConfig.insider_cadence_max_gap_dispersion
     value: 0.25
     status: arbitrary
@@ -978,12 +961,13 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
+      The insider-signal admission screen: 2 owners, a $5 minimum price,
+      $10M average daily dollar volume, 20 days of history. The $100k/$250k
+      dollar floors that used to sit here were deleted (board item 52,
+      resolved 2026-09-25: no study supports single-transaction dollar size
+      as an insider-buy predictor). The $10M and 20-day floors were recorded
+      on 2026-09-01 as screening the WRONG THING, under a redesign that was
+      agreed and never built. All round numbers, none measured.
     open_question: >-
       How many distinct owners must buy before it is a cluster rather than a
       coincidence?
@@ -994,12 +978,13 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
+      The insider-signal admission screen: 2 owners, a $5 minimum price,
+      $10M average daily dollar volume, 20 days of history. The $100k/$250k
+      dollar floors that used to sit here were deleted (board item 52,
+      resolved 2026-09-25: no study supports single-transaction dollar size
+      as an insider-buy predictor). The $10M and 20-day floors were recorded
+      on 2026-09-01 as screening the WRONG THING, under a redesign that was
+      agreed and never built. All round numbers, none measured.
     open_question: >-
       What dollar volume does this account need to enter and exit a position
       without its own order moving the price?
@@ -1011,12 +996,13 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
+      The insider-signal admission screen: 2 owners, a $5 minimum price,
+      $10M average daily dollar volume, 20 days of history. The $100k/$250k
+      dollar floors that used to sit here were deleted (board item 52,
+      resolved 2026-09-25: no study supports single-transaction dollar size
+      as an insider-buy predictor). The $10M and 20-day floors were recorded
+      on 2026-09-01 as screening the WRONG THING, under a redesign that was
+      agreed and never built. All round numbers, none measured.
     open_question: >-
       How much price history does the technical read need before its
       indicators mean anything?
@@ -1028,35 +1014,19 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
+      The insider-signal admission screen: 2 owners, a $5 minimum price,
+      $10M average daily dollar volume, 20 days of history. The $100k/$250k
+      dollar floors that used to sit here were deleted (board item 52,
+      resolved 2026-09-25: no study supports single-transaction dollar size
+      as an insider-buy predictor). The $10M and 20-day floors were recorded
+      on 2026-09-01 as screening the WRONG THING, under a redesign that was
+      agreed and never built. All round numbers, none measured.
     open_question: >-
       Below what price does tick granularity and spread make this desk's stop
       placement unreliable?
     cost_while_unanswered: >-
       A price floor standing in for a spread-and-tick constraint nobody
       measured.
-  - id: src.config.SmartMoneyConfig.min_transaction_value_usd
-    value: 100000
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The insider-signal admission screen: 2 owners, $100k/$250k dollar
-      floors, a $5 minimum price, $10M average daily dollar volume, 20 days of
-      history. The dollar floors are board item 52. The $10M and 20-day floors
-      were recorded on 2026-09-01 as screening the WRONG THING, under a
-      redesign that was agreed and never built. All round numbers, none
-      measured.
-    open_question: >-
-      Same as the external bar, for the internal screen: what size is a
-      conviction purchase?
-    cost_while_unanswered: >-
-      As above, and the two bars differ by 2.5x with nothing explaining the
-      gap.
   - id: src.config.SmartMoneyConfig.refresh_deadline_s
     value: 180
     status: arbitrary
@@ -1908,6 +1878,33 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
+  - id: src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct
+    value: 0.005
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      How far BELOW a structural level (ABOVE it for a short) the protective
+      stop is placed when it must be READ from price structure because there is
+      no ATR reading -- `_derive_structural_stop_no_atr`, added for board item
+      80 (owner ruling 2026-09-25: a missing volatility reading is never a
+      reason to skip protection or to size off an unverifiable typed number, so
+      the stop is derived from the nearest verified computed level, else the
+      signal/prior bar, and the position is HELD). A fraction of the level
+      price, so a wick that just tags the level does not trigger. The published
+      methods this implements -- swing-low (IG, LuxAlgo), prior-bar low (Ticker
+      Daily), Donchian channel-low -- all agree a buffer is needed but none
+      fixes its size, so this is OWNER-APPETITE, not doctrine. 0.5% is a modest
+      default, deliberately smaller than the 1.0% level-cluster zone
+      (levels.CLUSTER_TOLERANCE_PCT) so the stop sits just past the zone the
+      level was matched within, never inside it.
+    open_question: >-
+      What buffer past a structural level does the owner want a no-ATR
+      protective stop to sit at -- a fixed percentage like this, the level's
+      own cluster half-width, or a value tied to the instrument's recent range?
+    cost_while_unanswered: >-
+      A no-ATR name's protective stop sits a flat 0.5% past its level rather
+      than a distance anyone chose; too tight risks a wick-out, too loose gives
+      up more than intended on the rare name that loses its ATR reading.
   - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived

@@ -407,7 +407,7 @@ def _provider(tmp_path, **kwargs):
 
 def test_routine_purchase_never_becomes_admission_eligible(tmp_path):
     today = date.today()
-    provider = _provider(tmp_path, external_min_transaction_value_usd=10_000)
+    provider = _provider(tmp_path)
     routine = _row(
         symbol="ABCD", shares=5_000.0, price=100.0, transaction_date=today,
         is_10b5_1=True,
@@ -431,7 +431,7 @@ def test_routine_purchase_never_becomes_admission_eligible(tmp_path):
 
 
 def test_opportunistic_purchase_still_gets_admission(tmp_path):
-    provider = _provider(tmp_path, external_min_transaction_value_usd=10_000)
+    provider = _provider(tmp_path)
     _cached(provider, [_row(symbol="ABCD", transaction_date=date.today())])
 
     observations, _ = provider.fetch(["NVDA"])
@@ -466,7 +466,7 @@ def test_routine_rows_sort_behind_opportunistic_ones(tmp_path):
     having the row deleted from its ranking. Weight-based ordering itself is
     unchanged, which is what this test exists to pin."""
     today = date.today()
-    provider = _provider(tmp_path, min_transaction_value_usd=10_000)
+    provider = _provider(tmp_path)
     provider._record_history([
         {"actor_cik": "1", "symbol": "NVDA", "direction": "sell",
          "transaction_date": today.replace(year=today.year - n).isoformat()}
@@ -546,7 +546,7 @@ def test_indeterminate_filing_is_kept_by_fetch_not_dropped(tmp_path):
     returns ``indeterminate`` rather than guessing. Fail-closed means this
     row must still reach the operator — it is materially large enough to
     matter and nothing else about it is invalid."""
-    provider = _provider(tmp_path, min_transaction_value_usd=100_000)
+    provider = _provider(tmp_path)
     unclassifiable = _row(
         symbol="NVDA", direction="sell", shares=2_000.0, price=100.0,
         post_shares=None, transaction_date=date.today(),
@@ -631,7 +631,7 @@ def test_a_proportionally_tiny_sale_survives_the_provider_end_to_end(tmp_path):
     """End-to-end through the provider that ``src/pipeline.py`` builds: a 3%
     disposition used to come out of ``fetch`` labelled routine at weight 0.0.
     It now arrives with its ratio and band attached and nothing suppressed."""
-    provider = _provider(tmp_path, min_transaction_value_usd=10_000)
+    provider = _provider(tmp_path)
     row = _row(
         symbol="NVDA", direction="sell", shares=3_000.0, price=100.0,
         post_shares=97_000.0, transaction_date=date.today(),
@@ -766,7 +766,7 @@ def test_the_ratio_never_admits_or_rejects_a_row(tmp_path):
                 shares=1_000.0, price=100.0, post_shares=1_500.0,
                 accession="0000000001-26-000102", row=1)
 
-    provider = _provider(tmp_path / "ratio", min_transaction_value_usd=50_000)
+    provider = _provider(tmp_path / "ratio")
     _cached(provider, [tiny, huge])
     observations, _ = provider.fetch(["AAPL"])
 
