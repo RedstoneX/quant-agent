@@ -68,8 +68,8 @@ __all__ = [
     "AtTargetDecision",
     "decide_at_target",
     "AT_TARGET_NOT_REACHED",
-    "AT_TARGET_HOLD_TREND_INTACT",
-    "AT_TARGET_SELL_TREND_ROLLED",
+    "AT_TARGET_HOLD_STILL_TRENDING",
+    "AT_TARGET_SELL_STALLED",
     "AT_TARGET_INPUTS_UNREADABLE",
 ]
 
@@ -2242,33 +2242,36 @@ def structural_protection_broken(
 # Decision at the take-profit target — owner ruling 2026-09-25
 # ---------------------------------------------------------------------------
 #
-# Reaching the target is a REASSESS point, NOT an automatic sell. The old fixed
-# "sell 15% at +30%" trim was deleted 2026-09-12 and is not coming back, and a
-# bare "sell at X" rule is exactly the predetermined-reward logic the owner
-# removed (the reward side of a trade cannot be fixed in advance because the
-# holding period is unknown). So at the target the desk asks ONE more question —
-# has the up-move actually ENDED? — and sells only if the CHART itself says yes:
+# The owner's lean, in his words: "lean towards selling if it hits target; if
+# the chart is showing higher highs and higher lows you could move up the stop
+# and reassess." So reaching a real target is a REASSESS point whose DEFAULT is
+# to SELL and bank the win; the EXCEPTION is a name that is CLEARLY still
+# running — fresh higher-highs-and-higher-lows structure — which is held and let
+# run under a raised trailing stop.
 #
-#   SELL  only when the target is reached AND the structural trend has rolled
-#         over: `check_structural_protection` reports the thesis-backing
-#         structure broken and CONFIRMED (`protected is False`). That is the
-#         same sourced two-consecutive-close break confirmation the rest of this
-#         module already uses — a broken higher-low / swing-low for a long, the
-#         mirror for a short. No new number is introduced here.
-#   HOLD  when the target is reached but the trend is intact (protected, or the
-#         break is only pending confirmation): the desk does NOT sell into
-#         strength; the trailing stop, which ratchets up every review, carries
-#         the position and decides when the move is over.
+#   SELL  when the target is reached AND the chart is NOT clearly still trending
+#         in the position's favour (no fresh higher-high / higher-low structure,
+#         or too little structure to prove one). Bank the win.
+#   HOLD  when the target is reached AND the instrument is clearly still making
+#         higher-highs-and-higher-lows (the short mirror: lower-highs-and-lower-
+#         lows): raise the stop and let the trail carry it.
 #
-# Below the target there is nothing to decide here — the position is still on
-# its way and the trailing stop remains its only automatic exit.
+# This is NOT a bare "sell at X": the sell is conditional on the LIVE trend read
+# off the instrument, never the price alone. It is NOT the deleted fixed-gain
+# auto-trim either: that sold a fixed fraction at a fixed % GAIN regardless of
+# the chart; this sells at a STRUCTURAL target only when momentum is not
+# continuing, and reads the continuation from the instrument's own swing
+# structure (`src.data.levels.making_higher_highs_and_lows`, the ratified pivot
+# window — no new number). "Reached" is judged against the pinned/only-extended-
+# upward take-profit, so the target can never step DOWN to trip an early sell.
 
 #: The latest completed close has not reached the target — nothing to decide.
 AT_TARGET_NOT_REACHED = "TARGET_NOT_REACHED"
-#: Target reached, trend intact — HOLD and let the ratcheting trailing stop run.
-AT_TARGET_HOLD_TREND_INTACT = "AT_TARGET_HOLD_TREND_INTACT"
-#: Target reached AND the trend structure has broken and confirmed — SELL.
-AT_TARGET_SELL_TREND_ROLLED = "AT_TARGET_SELL_TREND_ROLLED_OVER"
+#: Target reached AND the chart is clearly still trending in the position's
+#: favour (higher-highs-and-higher-lows) — HOLD, raise the stop, let it run.
+AT_TARGET_HOLD_STILL_TRENDING = "AT_TARGET_HOLD_STILL_TRENDING"
+#: Target reached AND the chart is NOT clearly still trending — SELL, bank it.
+AT_TARGET_SELL_STALLED = "AT_TARGET_SELL_MOMENTUM_NOT_CONTINUING"
 #: Close or target could not be read — cannot decide; the caller holds.
 AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
 
@@ -2277,11 +2280,13 @@ AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
 class AtTargetDecision:
     """What to do about a position that may have reached its take-profit target.
 
-    `should_sell` is the one field a caller acts on. It is True ONLY for
-    `AT_TARGET_SELL_TREND_ROLLED` — target reached AND the chart's trend
-    structure confirmed broken. Every other outcome holds. `reason` is the
-    plain-language, owner-facing sentence (why + when), empty only when there
-    is nothing to voice (not reached, or inputs unreadable).
+    `should_sell` is the one field a caller acts on. Per the owner's lean it is
+    True whenever the target is reached and the chart is NOT clearly still
+    trending in the position's favour; it is False (HOLD, raise the stop, let it
+    run) only when the instrument is clearly still making higher-highs-and-
+    higher-lows. `reason` is the plain-language, owner-facing sentence (why +
+    when), empty only when there is nothing to voice (not reached, or inputs
+    unreadable).
     """
 
     symbol: str
@@ -2299,23 +2304,25 @@ def decide_at_target(
     is_short: bool,
     close_price: float | None,
     target_price: float | None,
-    protection_broken: bool | None,
-    protection_detail: str = "",
+    still_making_new_highs: bool | None,
 ) -> AtTargetDecision:
     """Decide whether a position that has REACHED its take-profit target should
-    be sold now or held for the trailing stop to carry. Pure — no I/O.
+    be sold now (bank the win) or held for a clear runner. Pure — no I/O.
 
     `close_price` MUST be the latest COMPLETED DAILY CLOSE, never a live quote:
-    "reached the target" is judged on the same close basis as the break
-    confirmation, so a routine intrabar wick through the number is not a reach.
+    "reached the target" is judged on the same close basis as the swing read,
+    so a routine intrabar wick through the number is not a reach.
 
-    `protection_broken` is `not check_structural_protection(...).protected` —
-    True when the thesis-backing structure has broken and CONFIRMED (the up/
-    down-move is over), False when it is intact or only pending confirmation,
-    and None when it could not be read (no bars/levels). A None is treated as
-    "NOT confirmed rolled over", so the desk HOLDS and lets the trailing stop
-    carry rather than selling on an unreadable chart — never sell into strength
-    or into missing data on the number alone.
+    `target_price` MUST be the pinned / only-extended-upward take-profit (a
+    re-derivation may only push it further from entry, never back toward it), so
+    the reach test can never be tripped by a target that stepped down.
+
+    `still_making_new_highs` is `src.data.levels.making_higher_highs_and_lows`:
+    True when the instrument is CLEARLY still trending in the position's favour
+    (higher-highs-and-higher-lows for a long, the mirror for a short), False
+    when it is not, and None when there is too little swing structure to tell.
+    Per the owner's lean BOTH False and None sell — the desk banks a win at a
+    real target unless the chart is CLEARLY still running.
     """
     sym = str(symbol or "").strip().upper()
     close = _finite(close_price)
@@ -2333,29 +2340,32 @@ def decide_at_target(
             should_sell=False, target_price=target, close_price=close,
         )
 
-    move = "down-move" if is_short else "up-move"
-    if protection_broken is True:
-        extra = f" {protection_detail.strip()}" if protection_detail else ""
+    move = "lower-highs and lower-lows" if is_short else "higher-highs and higher-lows"
+    if still_making_new_highs is True:
         return AtTargetDecision(
-            symbol=sym, code=AT_TARGET_SELL_TREND_ROLLED, reached=True,
-            should_sell=True, target_price=target, close_price=close,
+            symbol=sym, code=AT_TARGET_HOLD_STILL_TRENDING, reached=True,
+            should_sell=False, target_price=target, close_price=close,
             reason=(
-                f"reached its ${target:,.2f} target (close ${close:,.2f}) AND "
-                f"the {move} is over — the chart's own trend structure has "
-                f"broken and confirmed, so the desk is taking profit here "
-                f"rather than giving it back.{extra}"
+                f"reached its ${target:,.2f} target (close ${close:,.2f}) and "
+                f"is clearly still trending — the chart is still making {move} "
+                f"— so the desk is NOT banking it here; it raises the stop and "
+                f"lets the trailing stop carry the runner."
             ),
         )
 
-    # Intact, pending confirmation, or unreadable structure — do NOT sell into
-    # strength; the trailing stop (raised every review) carries it.
+    # Default lean: reached a real target and NOT clearly still running (or too
+    # little structure to prove a runner) — bank the win.
+    unclear = (
+        " (too little swing structure to confirm a runner)"
+        if still_making_new_highs is None else ""
+    )
     return AtTargetDecision(
-        symbol=sym, code=AT_TARGET_HOLD_TREND_INTACT, reached=True,
-        should_sell=False, target_price=target, close_price=close,
+        symbol=sym, code=AT_TARGET_SELL_STALLED, reached=True,
+        should_sell=True, target_price=target, close_price=close,
         reason=(
-            f"reached its ${target:,.2f} target (close ${close:,.2f}) but the "
-            f"trend is still intact — the desk is NOT selling on the number "
-            f"alone; the trailing stop, which ratchets up each review, carries "
-            f"it until the {move} actually ends."
+            f"reached its ${target:,.2f} target (close ${close:,.2f}) and is "
+            f"NOT clearly still trending{unclear} — the desk is banking the win "
+            f"at the target rather than giving it back, since the {move} that "
+            f"would justify holding for more are not there."
         ),
     )

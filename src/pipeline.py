@@ -9929,6 +9929,11 @@ class TradingPipeline:
             flag_evidence.setdefault(
                 fsym, str(getattr(flag, "evidence", "") or ""))
 
+        # One bars fetch per held symbol per review, shared with the at-target
+        # decision below via this cache — the re-derivation now runs on EVERY
+        # held name every review, so it must not fetch the same series twice.
+        self._review_bars_cache = {}
+
         outcomes: list[dict] = []
         for sym in order:
             evidence = flag_evidence.get(sym) or (
@@ -9945,11 +9950,23 @@ class TradingPipeline:
                     require_trigger=False,
                 ))
             except Exception as exc:  # noqa: BLE001
+                # A per-symbol raise must still leave a DURABLE machine-readable
+                # reason — the desk rule is that nothing holds a candidate on a
+                # silent log line. The stored target stands; no order is placed.
                 logger.error(
                     "target revision: per-symbol assessment raised for %s "
                     "(%s) — the stored target stands, no order placed",
                     sym, exc,
                 )
+                outcomes.append(self._file_target_revision(
+                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                    code="FAULT_ASSESSMENT_RAISED", applied=False,
+                    detail=(
+                        f"the take-profit re-derivation raised for this symbol "
+                        f"({exc}); the stored target stands unchanged and no "
+                        f"order was placed"
+                    ),
+                ))
 
         # Flags naming a symbol the broker does not hold: filed, not dropped.
         for fsym, evidence in flag_evidence.items():
@@ -9964,6 +9981,34 @@ class TradingPipeline:
                 ),
             ))
         return outcomes
+
+    def _review_ohlcv(self, sym: str) -> list:
+        """Daily bars for one symbol, fetched at most ONCE per review.
+
+        The every-review target re-derivation and the at-target decision both
+        read the same series for every held name; without this cache each held
+        name would trigger two or three identical downloads a review. Reset at
+        the top of `_adjudicate_target_revision_flags`. A fetch failure caches
+        an empty list so a dead feed is not retried per consumer within the
+        review; callers already treat an empty series as a data fault.
+        """
+        cache = getattr(self, "_review_bars_cache", None)
+        if cache is None:
+            cache = {}
+            self._review_bars_cache = cache
+        key = str(sym).upper()
+        if key not in cache:
+            try:
+                cache[key] = self.market.get_ohlcv(
+                    key, self.config.trading.lookback_days,
+                ) or []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "review bars: fetch failed for %s (%s) — cached empty for "
+                    "this review", key, exc,
+                )
+                cache[key] = []
+        return cache[key]
 
     def _assess_one_target_revision(
         self, *, sym: str, position, seat: str, evidence: str,
@@ -10020,9 +10065,7 @@ class TradingPipeline:
         atr = close_price = bar_date = None
         coverage = None
         try:
-            bars = self.market.get_ohlcv(
-                sym, self.config.trading.lookback_days,
-            ) or []
+            bars = self._review_ohlcv(sym)
             coverage = structure_coverage(bars)
             if bars:
                 last_bar = sorted(bars, key=lambda b: b.date)[-1]
@@ -10454,17 +10497,20 @@ class TradingPipeline:
     ) -> list[dict]:
         """Decision-at-target for every held position (owner ruling 2026-09-25).
 
-        Reaching the (re-derived) take-profit target is a REASSESS point, NOT an
-        automatic sell. For each held position this checks whether the latest
-        completed close has reached the target and, if so, whether the chart's
-        own trend structure has broken and confirmed — SELLING only when BOTH
-        hold, and HOLDING (letting the ratcheting trailing stop carry it) when
-        the trend is intact. Voices the why/when either way to the owner
-        surfaces. Runs AFTER the target re-derivation so it tests the fresh
-        target, and skips any symbol already exited this session.
+        Reaching the take-profit target is a REASSESS point, NOT an automatic
+        sell on the number. The owner's lean is to BANK the win at a real target
+        UNLESS the chart is clearly still making higher-highs-and-higher-lows
+        (mirror for a short): for each held position this checks whether the
+        latest completed close has reached the (only-extended-upward) target
+        and, if so, SELLS unless the instrument's own swing structure is clearly
+        still trending, in which case it HOLDS and lets the raised trailing stop
+        carry the runner. Voices the why/when either way. Runs AFTER the target
+        re-derivation so it tests the fresh target, reuses the same bars fetched
+        for that re-derivation, and skips any symbol already exited this session.
 
         Returns the SELL/COVER orders it placed. Never raises: a per-symbol
-        failure is logged and skipped, and nothing here can strand the review.
+        failure files a durable reason and is skipped, and nothing here can
+        strand the review.
         """
         orders: list[dict] = []
         sold = {str(s).upper() for s in (sold_symbols or set())}
@@ -10477,10 +10523,32 @@ class TradingPipeline:
                     position, sym, run_id=run_id, seat=seat,
                 )
             except Exception as exc:  # noqa: BLE001
+                # A per-symbol raise leaves a DURABLE machine-readable reason,
+                # not a bare log line — the desk holds nothing silently. No
+                # order is placed; the trailing stop still protects the position.
                 logger.error(
                     "at-target decision raised for %s (%s) — no order placed, "
                     "the trailing stop still protects the position", sym, exc,
                 )
+                try:
+                    self.db.insert_specialist_evidence(
+                        run_id=run_id, agent_name="risk_manager",
+                        kind="at_target_decision", scope="symbol", symbol=sym,
+                        evidence_json=_json.dumps({
+                            "code": "FAULT_AT_TARGET_RAISED",
+                            "should_sell": False,
+                            "owner_reason": (
+                                f"{sym}: the at-target reassessment raised "
+                                f"({exc}); no order was placed and the trailing "
+                                f"stop still protects the position"
+                            ),
+                        }),
+                    )
+                except Exception as exc2:  # noqa: BLE001
+                    logger.error(
+                        "at-target: durable-reason write also failed for %s "
+                        "(%s)", sym, exc2,
+                    )
                 continue
             if order is not None:
                 orders.append(order)
@@ -10490,9 +10558,10 @@ class TradingPipeline:
     def _decide_one_at_target(
         self, position, sym: str, *, run_id: str, seat: str,
     ) -> dict | None:
-        """Assess ONE held position at its target and, if the trend has rolled
-        over, submit the full close. Returns the order or None. Voices either
-        way. See `_decide_at_target_exits` for the rule.
+        """Assess ONE held position at its target and, if the chart is NOT
+        clearly still trending in its favour, submit the full close to bank the
+        win. Returns the order or None. Voices either way. See
+        `_decide_at_target_exits` for the rule.
         """
         from src.risk.exit_guard import decide_at_target
 
@@ -10517,22 +10586,23 @@ class TradingPipeline:
         if target_price is None:
             return None
 
-        # Latest COMPLETED DAILY CLOSE — the same close basis the break
-        # confirmation uses, so an intrabar wick through the target is not a
-        # reach.
+        # Latest COMPLETED DAILY CLOSE and the swing structure, off ONE shared
+        # bars fetch — the same close basis the swing read uses, so an intrabar
+        # wick through the target is not a reach.
+        from src.data.levels import making_higher_highs_and_lows
+
+        bars = self._review_ohlcv(sym)
         close_price = None
-        try:
-            bars = self.market.get_ohlcv(
-                sym, self.config.trading.lookback_days,
-            ) or []
-            if bars:
+        if bars:
+            try:
                 close_price = float(sorted(bars, key=lambda b: b.date)[-1].close)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "at-target: bars fetch failed for %s (%s) — cannot test reach, "
-                "the trailing stop still protects the position", sym, exc,
-            )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "at-target: close read failed for %s (%s)", sym, exc,
+                )
         if close_price is None:
+            # No completed close -> cannot test reach. The trailing stop still
+            # protects the position; nothing is banked on missing price data.
             return None
 
         reached = (
@@ -10541,42 +10611,26 @@ class TradingPipeline:
         if not reached:
             return None
 
-        try:
-            stop_loss = float(buy.get("stop_loss") or 0) or None
-        except (TypeError, ValueError):
-            stop_loss = None
-
-        # Reached — reassess against the chart's trend structure. READ-ONLY
-        # (persist=False): this consult must never advance the cross-day break
-        # confirmation streak or lift protection a session early.
-        protection = self._structural_protection_for_holding(
-            symbol=sym,
-            thesis_invalid_if=buy.get("thesis_invalid_if"),
-            entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
-            stop_loss=stop_loss,
-            is_short=is_short,
-            run_id=run_id,
-            persist=False,
-        )
+        # Reached — reassess against the instrument's OWN swing structure. The
+        # owner's lean (2026-09-25) is to BANK the win at a real target UNLESS
+        # the chart is clearly still making higher-highs-and-higher-lows (the
+        # mirror for a short). Read from the ratified pivot structure, no number.
+        still_trending = making_higher_highs_and_lows(bars, is_short=is_short)
 
         decision = decide_at_target(
             symbol=sym, is_short=is_short, close_price=close_price,
-            target_price=target_price,
-            protection_broken=(not protection.protected),
-            protection_detail=protection.detail or "",
+            target_price=target_price, still_making_new_highs=still_trending,
         )
 
         # Voice why/when either way, before acting.
-        self._voice_at_target_decision(
-            sym=sym, run_id=run_id, decision=decision, protection=protection,
-        )
+        self._voice_at_target_decision(sym=sym, run_id=run_id, decision=decision)
 
         if not decision.should_sell:
             return None
 
-        # SELL/COVER: target reached AND the trend structure has broken and
-        # confirmed. Full close on the SAME protected path the reviewer's own
-        # full sells use.
+        # SELL/COVER: target reached and the chart is NOT clearly still trending
+        # — bank the win. Full close on the SAME protected path the reviewer's
+        # own full sells use.
         current_price = float(getattr(position, "current_price", 0) or 0)
         ref = current_price if current_price > 0 else close_price
         if is_short:
@@ -10620,7 +10674,7 @@ class TradingPipeline:
         return order
 
     def _voice_at_target_decision(
-        self, *, sym: str, run_id: str, decision, protection,
+        self, *, sym: str, run_id: str, decision,
     ) -> None:
         """Push an at-target decision's plain-language reason to BOTH owner
         surfaces (Telegram + board journal), deduped per (run, symbol, code).
@@ -10648,8 +10702,6 @@ class TradingPipeline:
                     "reached": bool(decision.reached),
                     "target_price": decision.target_price,
                     "close_price": decision.close_price,
-                    "protected": bool(getattr(protection, "protected", True)),
-                    "protection_basis": getattr(protection, "basis", ""),
                     "owner_reason": message,
                 }),
             )
@@ -15185,12 +15237,13 @@ class TradingPipeline:
                 target_revisions = []
 
             # DECISION AT TARGET (owner ruling 2026-09-25), run AFTER the
-            # re-derivation so it tests the fresh target. Reaching the target is
-            # a REASSESS point, not an automatic sell: the desk sells ONLY when
-            # the target is reached AND the chart's trend structure has broken
-            # and confirmed, and otherwise HOLDS and lets the ratcheting
-            # trailing stop carry it. Skips any name already exited this
-            # session. Voices the why/when either way. Non-fatal.
+            # re-derivation so it tests the fresh target and reuses its bars.
+            # Reaching the target is a REASSESS point, not an automatic sell on
+            # the number: the owner's lean is to BANK the win at a real target
+            # UNLESS the chart is clearly still making higher-highs-and-higher-
+            # lows, in which case the desk HOLDS and lets the raised trailing
+            # stop carry the runner. Skips any name already exited this session.
+            # Voices the why/when either way. Non-fatal.
             try:
                 sold_symbols = {
                     str(o.get("symbol", "")).upper()

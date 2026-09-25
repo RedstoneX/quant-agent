@@ -136,6 +136,7 @@ __all__ = [
     "REVISION_UNMEASURABLE_INPUTS",
     "REVISION_NO_CEILING_LEFT",
     "REVISION_BEHIND_PRICE",
+    "REVISION_WOULD_WEAKEN",
     "REVISION_NO_CHANGE",
     "TargetRevisionOutcome",
     "level_backing_target",
@@ -200,6 +201,13 @@ REVISION_NO_CEILING_LEFT = "REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION"
 #: A trigger fired and today's bars yield a target the price has already
 #: passed. The old target stands — see the note at the check itself.
 REVISION_BEHIND_PRICE = "REFUSAL_DERIVED_TARGET_BEHIND_PRICE"
+
+#: A re-derivation landed on a target CLOSER to entry than the one already
+#: stored — it would step the take-profit DOWN and weaken it. Owner ruling
+#: 2026-09-25: a re-derivation may only EXTEND the target further from entry
+#: (upward for a long, downward for a short), for a clear runner; it may never
+#: pull the take-profit back toward entry. The stored target stands.
+REVISION_WOULD_WEAKEN = "REFUSAL_WOULD_STEP_TARGET_TOWARD_ENTRY"
 
 #: A trigger fired and the re-derivation succeeded, but it landed on the
 #: same price. Recorded so the flag is never a blank.
@@ -655,6 +663,28 @@ def assess_target_revision(
             detail=(
                 f"{trigger} fired and the re-derivation ran, but it landed on "
                 f"the same ${target:,.2f} ({derivation.basis})"
+            ),
+        )
+
+    # MONOTONIC EXTENSION ONLY (owner ruling 2026-09-25). A re-derivation may
+    # only push the target FURTHER from entry — up for a long, down for a short
+    # — for a clear runner. A closer target would weaken the take-profit and
+    # would let the "reached the target" test fire early on a lower number, so
+    # it is refused by name and the stored target stands. The take-profit is a
+    # floor that only ratchets away from entry, never a number that drifts back.
+    further = new_price < target if is_short else new_price > target
+    if not further:
+        return TargetRevisionOutcome(
+            symbol=sym, code=REVISION_WOULD_WEAKEN,
+            refusal=REVISION_WOULD_WEAKEN, trigger=trigger,
+            prior_price=target, basis=derivation.basis,
+            level_used=derivation.level_used,
+            detail=(
+                f"{trigger} fired and today's bars derive ${new_price:,.2f}, "
+                f"which sits CLOSER to the ${entry:,.2f} entry than the stored "
+                f"${target:,.2f} — a re-derivation may only extend the target "
+                f"further out, never step it back toward entry, so the stored "
+                f"${target:,.2f} stands"
             ),
         )
 

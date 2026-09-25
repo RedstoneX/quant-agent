@@ -554,29 +554,40 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
 # ---------------------------------------------------------------------------
 
 
-def test_every_review_re_derives_a_moved_structure_with_no_trigger():
-    """The owner's core case. A NEARER resistance (108) has formed between
-    entry and the old 110 target; no level broke and ATR is unchanged, so the
-    seat-flag path would see NO structural event and freeze. The every-review
-    path re-reads the structure and moves the target to the nearer level."""
-    # Seat-flag path (unchanged): frozen — no structural event.
-    frozen = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[108.0, 110.0, 95.0],
-        atr=2.5, close_price=104.0, break_seen_prior_close=False,
-        require_trigger=True, **_COMMON,
-    )
-    assert not frozen.revised
-    assert frozen.code == tr.REVISION_NO_TRIGGER
-
-    # Every-review path: re-derives to the nearer structural level.
+def test_every_review_never_steps_the_target_down():
+    """Owner ruling 2026-09-25: a re-derivation may only EXTEND the target
+    further from entry, never pull it back. A NEARER resistance (108) has
+    formed inside the old 110 target; the every-review re-read runs but REFUSES
+    to weaken the take-profit to it, and the stored 110 stands."""
     out = tr.assess_target_revision(
         stored_target=110.0, target_level=110.0, levels=[108.0, 110.0, 95.0],
         atr=2.5, close_price=104.0, break_seen_prior_close=False,
         require_trigger=False, **_COMMON,
     )
+    assert not out.revised
+    assert out.code == tr.REVISION_WOULD_WEAKEN
+    assert out.prior_price == pytest.approx(110.0)
+
+
+def test_every_review_extends_the_target_up_without_a_seat_flag():
+    """The every-review path catches a structural extension with NO seat flag:
+    the 110 ceiling gaps through and confirms, and the target ratchets UP to the
+    next level (128) — the whole point of re-deriving every review."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=True,
+        require_trigger=False, **_COMMON,
+    )
     assert out.revised
-    assert out.trigger == tr.TRIGGER_EACH_REVIEW_REREAD
-    assert out.new_price == pytest.approx(108.0)
+    assert out.new_price == pytest.approx(128.0)
+    # And on the SAME inputs the seat-flag path also extends up — the direction
+    # is the same; only the SCHEDULE (every review vs on a flag) differs.
+    flagged = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=True,
+        require_trigger=True, **_COMMON,
+    )
+    assert flagged.new_price == pytest.approx(128.0)
 
 
 def test_every_review_unchanged_structure_re_reads_not_freezes():

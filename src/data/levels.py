@@ -452,6 +452,41 @@ def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str]]
     return pivots
 
 
+def making_higher_highs_and_lows(
+    bars: list, *, is_short: bool = False, window: int = PIVOT_WINDOW,
+) -> bool | None:
+    """Is the instrument CLEARLY still trending in the position's favour, read
+    from its OWN swing structure? Pure.
+
+    Reads the last two CONFIRMED swing highs and the last two confirmed swing
+    lows off the daily bars, using the same symmetric-window pivots
+    `find_structural_levels` uses (`PIVOT_WINDOW` — no new number is introduced
+    here). This is the Dow definition of an intact trend:
+
+      LONG  — True when the latest swing high is above the prior swing high AND
+              the latest swing low is above the prior swing low (higher-highs
+              and higher-lows).
+      SHORT — the mirror: lower-highs and lower-lows.
+
+    Returns None when there are not yet two confirmed swings of each kind to
+    compare (too few bars, or a young position). For the at-target decision a
+    None reads as "not CLEARLY still trending" — the owner's lean is to bank a
+    win at a real target unless the chart is clearly still running.
+
+    A confirmed pivot needs `window` bars on BOTH sides, so the most recent
+    swing is up to `window` sessions old: this is a confirmed-swing read, not an
+    intrabar high, by construction.
+    """
+    pivots = _find_pivots(list(bars or []), window)
+    highs = [price for (_i, price, kind) in pivots if kind == "R"]
+    lows = [price for (_i, price, kind) in pivots if kind == "S"]
+    if len(highs) < 2 or len(lows) < 2:
+        return None
+    if is_short:
+        return highs[-1] < highs[-2] and lows[-1] < lows[-2]
+    return highs[-1] > highs[-2] and lows[-1] > lows[-2]
+
+
 def _cluster(
     pivots: list[tuple[int, float, str]], tolerance_pct: float
 ) -> list[list[tuple[int, float, str]]]:
