@@ -294,6 +294,8 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Scott & Xu (FAJ 2004): an insider sale under 10% of the holding earns +0.68% adjusted quarterly excess return yet gets weight 1.0, identical to dumping 80% (-0.81%). Ratio and band are already reported so the seat can read the sign; the question is whether the deterministic ranking should too. **Ruled out, with sources: `docs/INCIDENT_HISTORY.md`, 2026-09-13.** Settles with a published signed scoring scheme, or enough own outcome data to read a separation.
 
+**Structure fix shipped (2026-09-25) —** The deterministic ranking now HAS a sign. `SmartMoneyObservation.signal_direction` (derived from `direction`, never stored) returns +1 for a buy, 0 for a sale/exchange/unknown; both ranking keys in `src/agents/smart_money_analyst.py` (`_symbol_rank`, `_transaction_rank`) multiply the `value * signal_weight` term by it. So a bearish sale can no longer tie or outrank a bullish buy of the same dollar value — the exact identity this item names — and a buy's contribution is unchanged (existing behaviour preserved; covered by `tests/test_smart_money.py`). The desk is long-only on smart-money admission (admission requires `direction == "buy"`), so a sale is NEUTRALISED (0), not counted as bullish; the row still reaches the analyst as evidence, so the LLM can still read it bearish. **What stays open:** signing a sale -1 by magnitude (the sourced >50%-of-holdings band is the hook) is the SIGNED SCORING SCHEME still ruled out above — owner appetite or a published source, not a number to guess.
+
 ## item 64
 
 **Plain language —** The desk's practice runs against historical data still ask for the same risk on every trade they consider. When the risk ceiling runs out on a busy day, the tie is still broken by ticker spelling. That has not been fixed. What changed is the printout: every practice-run result now says how many of its days the ceiling ran out, and that the tie-break is alphabetical, so nobody reads those numbers as evidence about how the live desk picks among trades. The live desk still spends its budget on the best-ranked ideas first. The practice run still has no ranking, and making up a score to stand in for one is still refused.
@@ -359,37 +361,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Cause: the process holds a 29-character placeholder credential, the credential-injecting gateway rewrites HTTP headers only, and this socket authenticates with an in-band MESSAGE; the installed client has no proxy support either. `execution.fill_stream_enabled` is true on main and NO attempt has been logged since. Trading is not harmed — REST placement works and fill detection falls back to polling. Options, the corrected episode count (~45, not 147) and the credential research: `docs/BOARD_NOTES.md` ("item 86"); do not re-derive it. If a future fix is itself a credential redesign, that stays a standing escalation to the owner.
 
-## item 89
-
-**Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
-**The six that can mislead you —**
-  1. You are told you hold a name that was sold that same morning.
-  2. A message asserts every thesis is intact, and then lists three that are missing.
-  3. "Thesis unavailable" is shown for any position held overnight. The reason IS in the records; the lookup only searches today.
-  4. A rule is cited to you by number, and the rule at that number says the opposite of what it is cited for.
-  5. Raw internal error text is passed through to you word for word.
-  6. A whole trade plan was discarded over two tenths of a percentage point, and no message was sent at all.
-**The thirteen clarity defects —** bare ticker symbols with no company name after the twelfth name in a list; blocked trades explained in jargon and prices rather than in words; a missing broker reason on a rejection; internal status codes shown as-is; percentages with no denominator, so you cannot tell percent of what; a reward-to-risk figure with no unit; detail truncated mid-sentence; a "TRADED" header on a run that only sold; a "data degraded" warning that names internal components; run identifiers; and an unscaled risk rating.
-**Recommendation —** Fix the six first; they are the ones that can cost money. The thirteen are worth doing but nothing turns on them.
-**Progress on the six, 18 September — four fixed, one could not be found, one left alone.** Nothing about what the desk trades, or when, or how much, was touched; this is about what you are told.
-  - **Fixed — a whole trade plan discarded with no message (the dangerous one).** The desk had already written down, for every plan it dropped, which name it was and why, in plain words. Nothing ever read those notes, so a session could end reading "orders: 0" with no explanation and you had no way to know a decision had been made. Your messages now carry them. The reason you will see in the case that was found reads: "the desk decided to open this but the position it asked for was 0.20% of the account, and the desk does not place a new trade smaller than 0.50% of the account. The whole plan for this name was dropped on size alone — nothing was judged wrong with the idea. Nothing already held was touched." **The 0.50% is not a sourced number** — it is written down in one place in the code, appears in no settings file and no document, was never ratified, and the note beside it justifies a different figure entirely. It has NOT been changed: what size is too small to trade is your call, and it belongs with the other thirty unsourced numbers.
-  - **Fixed — "thesis unavailable" on anything held overnight.** The reason was always on file. The lookup that fetched it only searched the current day, so everything bought before today came back empty and the seat that reviews your positions wrote "unavailable" into its notes, which is what reached you. It now reads the entry record whatever its date, using the same lookup the evening review and the cockpit's Why tab already use. Deliberately limited to the REASON: the same record also holds the stop and the target as they stood on the day of purchase, and those must keep coming from live figures, not from history.
-  - **Fixed — a message asserting one thing and then listing another.** The position-review message stated a number of holdings taken before that session's own selling, above a list of holdings taken after it. On any day something was sold the two disagreed and you could not tell which was your book. The number is now counted off the list printed beneath it, so they cannot differ; when the book changed during the session, it says so.
-  - **Fixed — a rule cited by number that said the opposite.** When a trade was refused because the evidence did not net out in favour of it, you were pointed at a numbered section of the design document. That section is about agreement earning a LARGER position, says nothing about refusing anything, and the part it does say was retired on 14 September. The rule is now written out in the message instead of pointed at. That is the real fix: a section number is a promise that another document still says a particular thing, and nothing checked that promise, so it could go stale again silently.
-  - **Fixed — raw internal error text.** Internal code-words and broker status tokens no longer reach you; the plain-English wording for them already existed and one line was skipping it. Where a fault message is genuinely the only record of what broke it is kept, but labelled as machine text with a note that there is nothing in it for you to do — inventing a friendly paraphrase of a fault would be inventing a fact. A token nobody has plain wording for is reported as exactly that, never guessed at.
-  - **Could not be found — being told you hold a name sold that morning.** Every message that names your holdings reads one table, and that table is refreshed from the broker at the start of every session, after every order, and on every half-hourly check, so it is never more than half an hour behind. We could not produce the message from the code and have not fixed a defect we cannot reproduce. The board's own note on the discarded stop-out reconciliation (item 101) points at the likeliest mechanism and is still open. If you have the message, it would settle this in one look.
-**Progress, 18 September —** The evening message was redesigned against the owner's own review of the live 17 September copy. Three of the thirteen are now fixed THERE (run identifiers, internal status codes, the unscaled risk rating) and remain open in the other messages. Also removed from the evening message: the provider-request count, and the nightly "overnight fractional unprotected by design" line, which now speaks only when a holding of under one whole share has nothing protecting it overnight. The near-zero cost was verified truthful, not broken — every seat the evening session runs is on a free model and the one expensive seat does not run in the evening — and now renders as a sentence. Two things the desk knew and never said were added: which holdings sit within one ordinary day's move of their stop, and which report earnings inside the three-session window.
-**Progress, 18 September, later — the other messages.** Nine of the eleven clarity defects named above are now fixed in every other message (morning, midday, close, the intraday alert, the hourly desk check, the pre-market earnings note, the data-quality alert). Nothing about what the desk trades, or when, or how much, was touched.
-  - **The pre-market earnings note names the company.** It used to say "analyzed: 1 confirmed: 1 failed: 0". It now says which company, which report (quarterly or annual), when it was filed, what the reader concluded and in what words, and what that changes for you — which is that the Portfolio Manager reads that verdict from the next session on, and nothing was bought or sold on it. A filing the reader could not make sense of is listed by name with what happens next. An older run that never wrote down the names says so rather than guessing.
-  - **The hourly check names what it counts.** "1 order(s) this hour" now lists the order — company, quantity, price, whether it filled. "Positions held: 4" now lists the four, with each one's open profit or loss.
-  - **A name the desk looked at and passed on now says why**, in the Portfolio Manager's own recorded words, or says "no reason recorded" when it wrote none.
-  - **A stop-coverage warning names the company**, says how many shares are held and how many the stop covers, the dollars unprotected, why the automatic repair refused (when it said), and what you can do.
-  - **Words instead of codes and bare numbers:** a rating's reward is now "reward 1.8× the risk", a size is "19.8% of the account", a risk verdict's category is a phrase, the research seats are named in words ("the chart research returned only part of an answer") with any unrecognised state described and its raw text labelled, a run that only sold reads SOLD not TRADED, and a rejection carries the broker's own words when it gave any.
-  - **Not fixed:** the reasons written at the moment a trade is skipped are still in market shorthand (basis points, feed names) at eighteen places in the code — the plain "who stopped it" label sits in front of them, but the detail after the colon is still jargon. Run identifiers are being removed by a separate change.
-  - **Things the desk did not write down, found in passing:** which filings the earnings pass handled (now recorded); the broker's own reason on a plain rejection (now recorded); how many times it has already tried an unreadable filing (still not recorded); a reason for a name the Portfolio Manager never mentioned at all (there is none to record).
-
-**Moved from WORK.md (2026-09-24) —** Defect 1 (a name sold that morning shown as held): NOT REPRODUCIBLE, item 101's mechanism is the suspect; keep open until a real message reproduces it. Defects 10/11 (run IDs, unscaled risk rating): fixed in the evening message and position review only, still market shorthand at eighteen other sites. ACCEPTANCE after one live session: pre-earnings message names ticker+company, top-of-hour check lists holdings by name, a quiet :45 tick sends nothing.
-
 ## item 90
 
 **Plain language —** About thirty numbers that govern real trades were never read off anything — they were chosen because they sounded sensible. They were catalogued on 11 September and then filed as "an inventory, not a job", with a note saying never to re-audit. Nothing was assigned, nothing had a date, and a week later all thirty were still live. There is no mechanical check of any kind that would catch the next one.
@@ -439,22 +410,28 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Do NOT build a prompt-text number scanner. **(g) Folded in from item 171 (retired 2026-09-23):** (d)'s deletion-site grep alone does not catch 98 or 168, both value-drift, not deletion. DONE WHEN, added to (d)'s: every prompt sentence stating a code/config-controlled fact is either rendered from that value or pinned by a drift test, per item 168's own DONE WHEN pattern — not a blanket prose/number scanner, still rejected per (d).
 
+**Mandate/horizon drift fixed 2026-09-25 (item stays open for the rest of the audit) —** The evening-vs-technical mandate question from `docs/WORK.md`'s DECIDE BY line is resolved: SWING (days to weeks), decided by the orchestrator after an adversary run, per `docs/OUTCOME.md:75` and `config/prompts/tech_analyst.md:3`'s own existing treatment of hold length as PM/position_reviewer's call, not the analyst's. Holding period is an OUTPUT of thesis health, not a setting.
+
+Changed, `config/prompts/evening_analyst.md`:
+- Lines 8-14 (was): `This trading book is a **medium-long-term value + mispricing capture** mandate. The 77-symbol universe was hand-curated by a human operator who cares about catching era-level secular trends, identifying high-potential companies early, and spotting resource misallocations. **It is not a day-trading book.** Your review should reflect that lens: weekly → quarterly horizons for thesis work, with daily P&L only as accountability noise.` → (now): swing mandate — days to weeks, not day-trading and not a quarterly value hold; holding period is an OUTPUT owned by `portfolio_manager`/`position_reviewer`; the same curation criteria (secular trends, high-potential names, resource misallocations) are kept as why the universe was picked, not as the holding horizon; daily P&L is now framed as a real signal, not noise to wave off.
+- Line 135 (was): "THE most important step for a medium-long-term book." → (now): "THE most important step: holding period is an output of this call, not a calendar setting."
+- Line 429 (was): "no micro-caps in a medium-long book" → (now): "no micro-caps in this book" (the liquidity criterion itself is unchanged; only the false horizon label was removed).
+
+Changed, `config/prompts/meta_reflector.md`:
+- Line 192 (was): "Realized timeframe vs intended medium-long-term mandate?" → (now): "Realized timeframe vs the swing mandate (days to weeks, held only as long as the thesis stays intact — hold length is an output, not a target)?"
+- Lines 202-204 (was): IDEAL state named as "medium-long-term value + mispricing capture across broad themes, 77-symbol curated universe" → (now): "swing mandate — days to weeks, holding period an output of thesis health rather than a setting, broad secular-theme coverage across the 77-symbol curated universe."
+- Worked example block (lines ~335-341, marked "reference only — DO NOT copy" but still teaches the mandate by example): the sample self-portrait previously scored a 7.2-day average hold as a violation of "the medium-long-term mandate." Under the corrected swing mandate that hold length isn't a gap, so the example's third "top gap" was swapped from execution_style to loss_discipline (using data already present in the same example: 3 wrongs ridden ~8 days past their own thesis-break trigger), and `style_self_portrait` / `persistent_blindspots` were brought in line with the same correction.
+
+Kept untouched (real machinery, not drift): the enum literals `trend_timing_miss` / `fundamentals_mispricing` / `value_entry_missed` / `theme_blindspot` and the `⚠ VALUE_ENTRY_CANDIDATE` marker in `evening_analyst.md` — these are read by `src/models.py` and `src/pipeline.py`, not free prose; the meta_reflector's own "quarterly" audit CADENCE (it runs once a quarter — `quarterly_digest`, `quarterly system-level audit`) — that is the review's own schedule, not the trading horizon, and was never part of the drift; the 77-symbol universe-size figure itself, which is a separate, narrower staleness question (production settings put the real universe at ~101 symbols) not in scope for this fix and not touched here.
+
+Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market claims, and the PM/RM/position_reviewer dead-weight prose this item's audit also found — those remain open under this same item number.
+
 ## item 112
 
 **Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
 **Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
 
 **Moved from WORK.md (2026-09-24) —** Full account: `docs/INCIDENT_HISTORY.md`, 2026-09-19 entry.
-
-## item 101
-
-**Plain language —** Twice a session the desk works out something important and then throws the answer away. One check finds exits the broker made on its own that the desk's books never recorded; the other counts positions it has just put protection back onto. Both compute the answer and then discard it at every one of the five places they are called. The answers do reach the log file, so this is not invisible — but they can never reach a Telegram message, a session summary, or anything that would actually tell you.
-**How we know it is wrong rather than deliberate —** The sister check sitting on the very next line does the opposite: it keeps its answer and carries it through to the session summary, which is how a missing stop reaches you today.
-**Recommendation —** Carry both answers through the same way the stop-coverage check already does. Do this alongside the Telegram work in item 89 — the "you were told you hold a name you sold that morning" defect is the same information going missing.
-
-**Moved from WORK.md (2026-09-24) —** Their sibling `_reconcile_stop_coverage` does the opposite: its return is captured and carried into the session result as `stop_coverage_gaps` at every exit, which is how a coverage gap reaches the owner. Both discarded values DO reach the log, so this is not invisible; what it means is that a broker-initiated stop-out and a protection restore can never appear in a session result, a Telegram message, or any test that reads one. Fix: carry both into the session result the way the coverage audit already is. Check item 89's work first — the "name sold that morning reported as held" defect is the same information going missing.
-
-**Surfacing shipped 2026-09-25 (item stays open) —** All five call sites now capture both return values and route them through a single helper, `_surface_reconcile_outcomes`. A broker-made stop-out pages the owner as its own standalone Telegram message carrying the WHY — which name, how many shares, at what price, and the realized loss — through the same `send_owner_alert` path the unexplained-gap branch already used; a re-protection count pages a separate notice that a naked position was covered again. The routing was chosen over bundling into the session result because the desk's alert-design rule requires a forced exit to get its own message, and because the pre-earnings pass and the intraday tick send no session summary a bundled line could ride on. The reconciliation logic is unchanged — this only reads what already happened. What it does NOT do: resolve item 89's "name sold that morning reported as held" defect, which remains not reproducible; this closes the information-loss mechanism the board flagged as its likeliest suspect, but a real message is still needed to confirm.
 
 ## item 109
 
@@ -474,15 +451,6 @@ agent has widened the rule to work around it.
 **Recommendation —** Same fix as item 106: put the raw evidence behind a labelled toggle in this view too, rather than dumping it as text.
 
 **Moved from WORK.md (2026-09-24) —** The "Why" tab shipped 2026-09-18 (item 106) put `raw_evidence` behind a labelled-rows toggle, but the run-detail modal is a separate surface: `LifecycleTimeline` (`frontend/src/components/LifecycleTimeline.tsx`) has a generic `detailsText()` renderer that `JSON.stringify`s any object-valued field in `event.details`, with no exclusion for `specialist_evidence` — a real column (`src/api/db_reads.py`, `get_specialist_evidence`) that can land in there. Untouched by the Why-tab work; still reachable from `RunDetailModal.tsx`. See item 106 for the surface that WAS fixed.
-
-## item 118
-
-**Plain language —** When the desk gets far enough below its high-water mark, it is supposed to automatically sell some of what it owns. The sell order it places says "sell, but only at 1% below today's price or better". On a calm day that sells fine. On the kind of day that would actually trigger it — everything falling at once — prices are already well past that, so the order just sits there unsold. After 15 seconds the desk gives up, cancels its own order and puts the original safety nets back.
-**Why it matters —** the desk deleted an almost identical mechanism in September for precisely this reason, and this one is described on the board as the last automatic seller left. If it cannot sell on the only day it would ever be asked to, that description is wrong and the desk is less protected than the board says.
-**What was NOT found —** the desk is not silent about it: a separate alert already tells the owner when a de-lever ran and the book is still over its limit. So this is a "the tool may not work" problem, not a "nobody would know" problem.
-**Recommendation —** measure it before touching it. Find out from real fill data whether a limit 1% through the market fills on a gap day. Changing the order type is an owner decision after an adversary run, not a code tidy-up — the deleted predecessor is the proof that guessing here is expensive.
-
-**Moved from WORK.md (2026-09-24) —** The daily-loss liquidation was DELETED 2026-09-14 for exactly this: a limit 1% away fills on an ordinary day and not on a correlated gap — which is the only kind of day a whole-book dump could be argued for. The ladder's first rung fires at **-8% peak-to-trough**, that same day. `wait_for_order_terminal` ceilings the wait at 15 seconds and the finalizer then cancels the lingering sell and restores the stops, so the no-fill path is: cancel stops, fail to sell, cancel own order, restore stops — the deleted breaker's exact failure mode, in the component the board elsewhere calls "the only remaining automatic seller". Two corrections to the filing brief, both verified: the outcome IS reported (`_alert_owner_delever_incomplete`), and `_force_delever`'s use of the same buffer is a different case and out of scope here. **DO NOT change the order type as a fix** — that is a live-money decision, owner-level, after an adversary run. Evidence: `docs/BOARD_NOTES.md` ("item 118").
 
 ## item 180
 
@@ -518,10 +486,6 @@ agent has widened the rule to work around it.
 
 **Retired 2026-09-24** — decided: delete. `SUBFLOOR_SIZE_CAPPED_STATUS`, `RiskConfig.min_reward_risk_after_widening` and `ConstructorConfig.min_reward_risk_after_widening` were removed as zero-reader dead code, each re-verified against the current tree first. `REWARD_RISK_FLOOR` itself was NOT deleted — `ops/model_policy/deterministic_selection.py` still reads it in a real comparison for the model-selection benchmark. Full writeup in `docs/INCIDENT_HISTORY.md` (2026-09-24 entry).
 
-## item 82
-
-**Moved from WORK.md (2026-09-24) —** Fix: classify once and carry it.
-
 ## item 170
 
 **Moved from WORK.md (2026-09-24) —** Live now, a real risk. Separate from item 126 (reporting vs. evidence quality). Don't just widen 45 (the only sourced number here). Decide: UNKNOWN lag for estimates, or source a real date elsewhere.
@@ -531,6 +495,8 @@ agent has widened the rule to work around it.
 ## item 173
 
 **Moved from WORK.md (2026-09-24) —** Inside the 7-day lookback the next pass writes it back; past ~2026-09-28 it turns unexplained, and `send_owner_alert` has NO dedup or throttle, so it pages CRITICAL at all five session entries, daily. Nothing shows the exit was a stop, so writing it back as one stamps an unevidenced cause onto owner P&L. **(b)** `_reconcile_stop_out_fills` runs BEFORE `_reconcile_fills` at every session entry, so the desk's own unreconciled sale pages a false CRITICAL (NUE 2026-09-21). **(c)** Signed from the action name, so a COVER — and a filled buy-to-cover TRAIL_STOP — subtracts from a short instead of retiring it (36 short, fully covered, reads -72). Silent today; pinned by a test saying it is wrong.
+
+**Update (2026-09-25) — (c) FIXED, (b) verified as already-handled, (a) still open.** (c): `get_symbols_with_open_ledger_qty` now signs a share-moving row by the SIDE of the position it acts on. A COVER-family action (COVER / EMERGENCY_COVER / PARTIAL_COVER, `(pct)` label normalised) is a buy-to-cover and adds; a FILLED TRAIL_STOP has no side in its name so its side is read from the running net, and one resting on a short adds too. A 36-share short covered in full now reads 0, not -72; both routes fixed together and the pinning known-defect test was deleted per its own instruction. Long-side signs are unchanged (SELL/REDUCE/STOP_OUT/SWEEP_SELL and a long's fired TRAIL_STOP still subtract). No live behaviour changed: the caller is LONG-only and skips negatives — this only makes the ledger's own belief correct for the day shorts are enabled. (b): all four call sites were re-checked against origin/main. Intraday and evening already run `_reconcile_fills` first (PR #697), which closes the false-CRITICAL gap. Morning and the midday/close position review deliberately keep the old order — their `_reconcile_fills` runs later and only over THIS session's own just-submitted / FORCE_DELEVER rows, so no stale 'submitted' SELL exists to raise a false page there (both sites carry the Item 173(2) rationale in-code). No false-alarm site remains in the old order, so NOTHING was changed for (b). (a): the EQNR share-count data gap is a live-data issue and stays open — item NOT retired.
 
 ## item 107
 
@@ -544,10 +510,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** On 2026-09-17 the morning open brought back 8 of the 15 required FRED series; the other 7 were never requested at all and the log said the deadline was exceeded. That is not a St. Louis outage: the observation calls and the due-date metadata calls share the same worker slots under the existing 90s ceiling, so a healthy batch spends nearly the whole clock and one slow series starves the rest. PR #435 built an observations-first fix (one attempt per series, then one bounded re-ask of the misses inside whatever budget remains, metadata on leftover budget, unknown freshness named rather than invented, ceiling NOT lengthened). **That code was never merged and the item does not inherit its verdict.** Its measurements — isolated series 1.5-6.7s, a clean full batch 15/15 in ~85s — were taken MID-MORNING, when FRED was already healthy. The defect is at the open. Mid-morning numbers are a starting point, not merge-readiness. Do not lengthen the timeout and do not invent a missing value; an incomplete set is a lost economics seat.
 
-## item 121
-
-**Moved from WORK.md (2026-09-24) —** On 2026-09-17 the 09:30 risk tick and the morning session both start at 09:30; the risk tick waited for morning to finish and then ran a second paid look at 09:37, labelled INTRADAY OPPORTUNITY. That was still the open. The first true paid intraday look is the next EXISTING half-hour fire after morning released — no pad after 09:30 may be invented. Deterministic risk and coverage still run on the open tick; Telegram stays silent on it. PR #435 carried a version of this plus four new rehearsal-rig statuses; the statuses are NOT part of this item — adding to the rig's not-a-failure set weakens a verdict already known to be weak evidence and must be argued on its own, not ridden in on a schedule change.
-
 ## item 123
 
 **Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and was therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it had a hole in it. No evidence yet that this unit has actually drifted; the gap was that nobody would know.
@@ -558,14 +520,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** That auditability is a real strength and must not be traded away. The gap is that nothing checks whether the emitted enum is any good, while the desk's own cited literature flags exactly this (`src/verdicts.py:54-59`, Benhenda 2026 — cited in-repo, unverified). **REJECTED, with the evidence:** Loughran-McDonald or a similar lexicon. Kirtac & Germano (arXiv 2412.19245; 965,375 articles 2010-2023) measure LM at 0.501 accuracy against 0.744 for an LLM, and find LM adds nothing incrementally (t = 1.871). Its licence is academic-only; it would need at least three unsourceable constants; it could only REPLACE the shown-arithmetic derivation; and no instance of an accounting word misread as negative is recorded anywhere — it fixes an error class this desk does not produce. That evidence is one study, on news rather than filings.
 
-## item 128
-
-**Moved from WORK.md (2026-09-24) —** The liquidation half of that breaker was deleted 2026-09-14, and on 2026-09-20 the owner removed the ENTIRE account-level loss-alarm mechanism (retired item 32, `docs/INCIDENT_HISTORY.md`) — so the tick now carries no loss breaker of any kind. The justification comment has been rewritten to say that rather than to keep citing a dead mechanism. The exemption may still be right on what the tick actually does now: reconcile fills, repair stop coverage found missing at the broker, run the bounded intraday scan. That is what it has to be re-argued on. Item 127 is the exposure that this exemption creates.
-
-## item 134
-
-**Moved from WORK.md (2026-09-24) —** The fault is the briefing: it asks for judgement and is executed as arithmetic. This is the standing no-arbitrary-numbers principle applied to a model's output rather than to a constant.
-
 ## item 139
 
 **Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
@@ -574,17 +528,9 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** A rule telling agents to grep first is what already failed.
 
-## item 142
-
-**Moved from WORK.md (2026-09-24) —** Distinct from item 75, which asks how tight a trail should be; this asks why one setup type has no trail at all until the target is passed.
-
 ## item 143
 
 **Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
-
-## item 145
-
-**Moved from WORK.md (2026-09-24) —** Measured on one real run, the sets they pass do not intersect at all. Distinct from item 81, which disposes of the three INERT 1.5 keys — these two gates are live and both bind.
 
 ## item 147
 
@@ -596,17 +542,9 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Separately, the correlation-cluster window silently moved from 120 days to 5 years with no recorded reason; the 0.7 threshold itself is already in the ledger as arbitrary and is not re-filed here.
 
-## item 149
-
-**Moved from WORK.md (2026-09-24) —** Anything reading those files by eye reads the opposite of the result.
-
 ## item 152
 
 **Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19) — the news seat still uses the whole-answer parser and is unmeasured against this fix.
-
-## item 153
-
-**Moved from WORK.md (2026-09-24) —** Measured on the retained logs: twice, the technical seat gave up on 3 symbols each time [measured 2026-09-18].
 
 ## item 154
 
@@ -624,21 +562,13 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Three related gaps remain, found reviewing that closure, not reopening it: (1) the evening thesis-health reviewer renders an unlabelled calendar `"{days}d held"` (`src/agents/evening_analyst.py:89`) to a model being asked to judge trade progress against a prompt otherwise written in sessions — #493 called this figure "purely informational," but a progress judgement is not an informational use; (2) the `sessions_held < max(1, pinned_horizon / 3)` floor's `1/3` constant was derived back when the base was calendar days and was never re-examined after the base changed to sessions, so in sessions it now fires strictly more often than intended, suppressing pace warnings; (3) the session/holiday calendar used throughout is Mon-Fri only and does not account for market holidays, so holiday weeks still overstate sessions held, despite a broker calendar existing elsewhere in the codebase.
 
-## item 166
-
-**Moved from WORK.md (2026-09-24) —** `docs/architecture/AUTO_FIX_LOOP.md` carries the mechanism, the permission envelope and an honest gap list. What is unproven: the deny rules in `config/auto_fix_permissions.json` have never been tested against a session trying to get past them, no test asserts any of the loop's guarantees, there is no cost cap (twenty minutes of Opus twice a day, unmeasured), and a permanently broken run is indistinguishable from a quiet desk because a failed run is deliberately silent.
-
-## item 167
-
-**Moved from WORK.md (2026-09-24) —** Zero live exposure — nothing from #560 was ever installed or started anywhere.
-
 ## item 174
 
 **Alert shipped 2026-09-25 —** the auto-expiry now sends the owner the same-surface Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; delivery is durable/retryable with the same claim state machine the quota-recovery alert uses. Still open: the two unledgered constants below remain unmeasured.
 
 **Moved from WORK.md (2026-09-24) —** Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
 
-## item 175
+## item 187
 
 **Moved from WORK.md (2026-09-24) —** Also: every FRED failure in the log is `fetch_deadline_exceeded`, 4 of 12 runs full coverage, worst 5/15 [measured 09-17..23] — owned by the approved fetch redesign.
 

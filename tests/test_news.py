@@ -1156,6 +1156,106 @@ def test_news_analyst_non_json_failure_persists_raw_text_only(mock_cls, tmp_path
     payload = json.loads(files[0].read_text())
     assert payload["raw_text"] == "I need more context..."
     assert payload["parsed"] is None
+    # Item 152 (2026-09-25): the non-JSON path now gets the same one paid
+    # heal retry the schema-failure path already had, so both attempts must
+    # have actually been made before giving up.
+    assert mock_client.messages.create.call_count == 2
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_non_json_response_recovers_on_heal_retry(mock_cls, tmp_path, monkeypatch):
+    """Item 152: a totally non-JSON first answer ('returned non-JSON
+    response') must not be given up on immediately — the seat gets one
+    more paid attempt, exactly like a well-formed-but-wrong-shape answer
+    already does. A clean second answer must be used, and NO failure file
+    written, since the seat recovered."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    failure_dir = tmp_path / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
+
+    good_json = json.dumps({
+        "macro_narrative": {
+            "last_updated": "2026-04-15",
+            "era_themes": ["AI supercycle"],
+            "current_regime": "Risk-on",
+            "key_state_tracker": {},
+        },
+        "state_changes": [],
+        "stock_news": {},
+        "pm_briefing": "Recovered on retry.",
+        "market_sentiment": "neutral",
+        "confidence": "low",
+    })
+
+    bad_response = MagicMock()
+    bad_response.content = [MagicMock(text="I need more context...")]
+    bad_response.usage.input_tokens = 100
+    bad_response.usage.output_tokens = 10
+    good_response = MagicMock()
+    good_response.content = [MagicMock(text=good_json)]
+    good_response.usage.input_tokens = 100
+    good_response.usage.output_tokens = 50
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = [bad_response, good_response]
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, agent_result = agent.analyze(news_text="Some headlines", session="morning")
+
+    assert report is not None
+    assert report.pm_briefing == "Recovered on retry."
+    assert mock_client.messages.create.call_count == 2
+    assert not list(failure_dir.glob("news_analyst_morning_*.json"))
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_heal_retry_flag_does_not_leak_across_calls(mock_cls, tmp_path, monkeypatch):
+    """Item 152: the heal-retry flag used to live on `self` (`_heal_retry_used`),
+    and `self.news_analyst` is one long-lived instance reused across every
+    session in the scheduler's run loop. Once ANY call used its retry, the
+    flag stayed True forever, so every LATER, unrelated failure on the same
+    instance silently lost its own one paid retry. Two independent
+    `analyze()` calls on the SAME agent instance must each get their own
+    retry."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", tmp_path / "parse_failures")
+
+    good_json = json.dumps({
+        "macro_narrative": {
+            "last_updated": "2026-04-15", "era_themes": ["AI supercycle"],
+            "current_regime": "Risk-on", "key_state_tracker": {},
+        },
+        "state_changes": [], "stock_news": {},
+        "pm_briefing": "ok", "market_sentiment": "neutral", "confidence": "low",
+    })
+    bad_response = MagicMock()
+    bad_response.content = [MagicMock(text="I need more context...")]
+    bad_response.usage.input_tokens = 100
+    bad_response.usage.output_tokens = 10
+    good_response = MagicMock()
+    good_response.content = [MagicMock(text=good_json)]
+    good_response.usage.input_tokens = 100
+    good_response.usage.output_tokens = 50
+
+    mock_client = MagicMock()
+    # Call 1: bad then good (first analyze() call recovers on its retry).
+    # Call 2 (a separate session, same agent instance): bad then good again
+    # — this only recovers if the SECOND call also gets its own retry.
+    mock_client.messages.create.side_effect = [
+        bad_response, good_response, bad_response, good_response,
+    ]
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report1, _ = agent.analyze(news_text="Some headlines", session="morning")
+    report2, _ = agent.analyze(news_text="More headlines", session="midday")
+
+    assert report1 is not None
+    assert report2 is not None
+    assert mock_client.messages.create.call_count == 4
 
 
 def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monkeypatch, caplog):

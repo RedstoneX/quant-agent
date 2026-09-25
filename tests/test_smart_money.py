@@ -696,3 +696,44 @@ def test_compact_symbol_surfaces_estimated_disclosure_dates_to_the_seat():
         for row in compact["representative_transactions"]
     }
     assert flags == {True, False}
+
+
+# --- Board item 63: signal_weight now carries a DIRECTION channel so a
+# --- bearish/contra smart-money row cannot rank or size as a bullish buy. ---
+
+def test_signal_direction_channel_signs_by_direction():
+    """A buy is bullish (+1); a sale and non-directional codes carry no sign (0)."""
+    assert _insider(direction="buy").signal_direction == 1
+    assert _insider(direction="sell").signal_direction == 0
+    exchange = _insider(direction="buy").model_copy(update={"direction": "exchange"})
+    unknown = _insider(direction="buy").model_copy(update={"direction": "unknown"})
+    assert exchange.signal_direction == 0
+    assert unknown.signal_direction == 0
+
+
+def test_large_sale_does_not_rank_as_a_bullish_buy_of_equal_size():
+    """The item-63 bug: an equal-dollar sell used to tie/outrank a buy on the
+    value*weight term. Now the buy (bullish) ranks strictly first even when its
+    ticker sorts last, so direction — not spelling or magnitude — decides."""
+    buy = _insider(symbol="ZZZZ", direction="buy", value=1_000_000, accession="0000000001-26-000009")
+    sell = _insider(symbol="AAAA", direction="sell", value=1_000_000, accession="0000000001-26-000008")
+    buy_rank = SmartMoneyAnalystAgent._symbol_rank("ZZZZ", [buy])
+    sell_rank = SmartMoneyAnalystAgent._symbol_rank("AAAA", [sell])
+    assert buy_rank < sell_rank
+    # And at transaction granularity, on identical magnitude.
+    assert (
+        SmartMoneyAnalystAgent._transaction_rank(buy)
+        < SmartMoneyAnalystAgent._transaction_rank(sell)
+    )
+
+
+def test_bullish_buy_value_term_is_unchanged_by_the_direction_channel():
+    """Existing unambiguous signals (buys, +1) keep the exact ranking
+    contribution they had before the sign channel existed: -(value*weight)."""
+    buy = _insider(direction="buy", value=750_000)
+    assert buy.signal_weight == 1.0
+    # index 5 is the value-weighted term in _transaction_rank's tuple.
+    assert SmartMoneyAnalystAgent._transaction_rank(buy)[5] == -(750_000 * 1.0)
+    # The sale's contribution to that same term is neutralised to 0.
+    sell = _insider(direction="sell", value=750_000)
+    assert SmartMoneyAnalystAgent._transaction_rank(sell)[5] == 0

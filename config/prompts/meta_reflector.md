@@ -189,7 +189,9 @@ sections.
      counts; read corrigibility_trend for whether a known loss
      pattern is improving or recurring)
    - **execution_style** — Average hold days? Realized timeframe vs
-     intended medium-long-term mandate? (calibration.avg_hold_days)
+     the swing mandate (days to weeks, held only as long as the
+     thesis stays intact — hold length is an output, not a target)?
+     (calibration.avg_hold_days)
    - **agent_balance** — Any agent gone silent (n_sessions far below
      peers)? Any agent flooding with low-quality signals (PM issuing
      many decisions that RM keeps scaling down)?
@@ -199,8 +201,9 @@ sections.
    **structured diagnostic panel**, not a personality essay.
 
 5. **portrait_gap_diagnosis** — **Step 5/DIAGNOSIS**. For each axis in
-   step 4, name the IDEAL state for this trading book (medium-long-
-   term value + mispricing capture across broad themes, 77-symbol
+   step 4, name the IDEAL state for this trading book (swing mandate —
+   days to weeks, holding period an output of thesis health rather
+   than a setting, broad secular-theme coverage across the 77-symbol
    curated universe, conviction should correlate with outcome) vs the
    ACTUAL state from the self-portrait. Pick the **top 2-3 highest-
    leverage gaps** and explicitly attribute WHERE the failure
@@ -332,13 +335,13 @@ what's worked or hasn't.
     "performance_vs_benchmark": "Q1 return +1.2%, SPY +4.8%, alpha -3.6%. Max DD -5.2% in February on concentrated tech.",
     "secular_theme_audit": "Q1 real themes: AI-capex (+18%), nuclear/power (+42%), rare-earth (+28%). We held AI-capex throughout (caught_early). Held zero nuclear/power (missed_entirely — 4 occurrences in missed_themes). Held zero rare-earth (missed_entirely — 3 occurrences).",
     "loss_autopsy_audit": "5 wrong BUYs with alpha_destruction -22%: greed_top_chasing ×3 (MU -15%, NVDA -12%, AVGO -9% — all entered near 20-day highs); macro_warning_ignored ×2 (MU, STX — credit-spread widening HIGH state_change dismissed).",
-    "self_portrait_synthesis": "conviction_calibration: HIGH-conviction bucket win rate 38% vs LOW 62% — inverted, overconfident on BUYs. theme_breadth: covered tech (8 themes) and monetary (3), zero in energy/materials/nuclear. loss_discipline: ride_loser count 0 but 3 wrongs rode an average 8 days past a thesis-break trigger. execution_style: avg hold 7.2 days — this is a momentum-timeframe book, not the medium-long-term mandate. agent_balance: macro_analyst emitted 48 sessions with 6 regime shifts (healthy); news_analyst 0 HIGH state_changes on energy/nuclear across 46 sessions (structural coverage gap).",
-    "portrait_gap_diagnosis": "Top 3 gaps. (1) theme_breadth — news_analyst is blind to energy/nuclear/materials (0 HIGH state_changes for 46 sessions), owning 4 of 6 missed themes; highest leverage. (2) conviction_calibration — HIGH bucket UNDERperforms LOW by 24 pp; PM is overweighting own convictions; second-highest leverage. (3) execution_style — 7-day avg hold on a medium-long mandate means we're exiting too early; owner is position_reviewer (protected) → not edit-able here; log as persistent_blindspot for operator.",
+    "self_portrait_synthesis": "conviction_calibration: HIGH-conviction bucket win rate 38% vs LOW 62% — inverted, overconfident on BUYs. theme_breadth: covered tech (8 themes) and monetary (3), zero in energy/materials/nuclear. loss_discipline: ride_loser count 0 but 3 wrongs rode an average 8 days past a thesis-break trigger. execution_style: avg hold 7.2 days — inside the swing mandate (days to weeks), no gap here. agent_balance: macro_analyst emitted 48 sessions with 6 regime shifts (healthy); news_analyst 0 HIGH state_changes on energy/nuclear across 46 sessions (structural coverage gap).",
+    "portrait_gap_diagnosis": "Top 3 gaps. (1) theme_breadth — news_analyst is blind to energy/nuclear/materials (0 HIGH state_changes for 46 sessions), owning 4 of 6 missed themes; highest leverage. (2) conviction_calibration — HIGH bucket UNDERperforms LOW by 24 pp; PM is overweighting own convictions; second-highest leverage. (3) loss_discipline — 3 wrongs rode an average 8 days past a thesis-break trigger before exit; the swing mandate allows a multi-week hold, but not past the point the thesis itself has broken; owner is position_reviewer (protected) → not edit-able here; log as persistent_blindspot for operator.",
     "existing_prompt_audit": "Gap 1 (theme_breadth / news_analyst): snapshot shows news_analyst.md has no rule naming energy/nuclear/materials coverage; Learnings section is empty. → room for append. Gap 2 (conviction_calibration / PM): portfolio_manager.md > Step 5 Position Sizing has a sizing scale but no rule linking prior HIGH-conviction calibration to current sizing; Learnings section shows 1 prior auto-entry on risk_reward scaling, different axis. → room for a distinct append on calibration feedback. Gap 3 (execution_style): position_reviewer is protected — NO edit proposed; added to persistent_blindspots.",
     "prompt_edit_reasoning": "Proposing 2 learnings, not 3. (1) news_analyst gets explicit energy/nuclear/materials coverage directive — gap = blindspot, existing state = rule absent, digest = 6 themes missed including 4 in these sectors, first-quarter (no corrigibility → confidence low). (2) PM gets conviction-feedback sizing rule — gap = HIGH 38% vs LOW 62% (24 pp inversion), existing state = sizing rule exists but no calibration feedback loop, digest = calibration_by_size.by_size.large.win_rate_pct=38. Skipping position_reviewer (protected) and tech_analyst (greed_top_chasing belongs to PM sizing in this read)."
   },
-  "style_self_portrait": "A tech-concentrated trend-follower on a medium-long mandate that's being executed at momentum timeframe. Conviction signal is currently inverted (large bets underperform). Coverage hole in energy/materials. Discipline on thesis breaks weak.",
-  "persistent_blindspots": ["7-day avg hold vs medium-long mandate (position_reviewer protected)", "thesis-break adherence: 3 wrongs rode 8 days past trigger"],
+  "style_self_portrait": "A tech-concentrated swing trader, hold length in line with the mandate. Conviction signal is currently inverted (large bets underperform). Coverage hole in energy/materials. Discipline on thesis breaks weak (wrongs ridden ~8 days past the break trigger).",
+  "persistent_blindspots": ["thesis-break adherence: 3 wrongs rode 8 days past trigger before exit (position_reviewer protected)"],
   "root_cause_hypotheses": ["news_analyst prompt anchors on tech / monetary themes only", "PM sizing logic doesn't see prior-quarter calibration feedback"],
   "theme_coverage_report": {
     "themes_caught_early": ["AI-capex"],

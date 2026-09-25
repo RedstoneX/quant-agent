@@ -12865,7 +12865,7 @@ class TradingPipeline:
             )
 
     def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
-        """Flag it when the gross-exposure de-lever did not work.
+        """Flag AND page the owner when the gross-exposure de-lever did not work.
 
         `_enforce_gross_ceiling` already logs a warning the moment it
         *decides* to trim. What nothing checked before this is the OUTCOME:
@@ -12886,20 +12886,75 @@ class TradingPipeline:
         numbers come from the same post-refresh `_resolve_gross_ceiling`
         call used for the ordinary leverage line, and the check is skipped
         (not defaulted to False) when either is unmeasurable.
+
+        Item 112: promoted from a one-line session bullet to a STANDALONE
+        `send_owner_alert`, mirroring the sibling
+        `_alert_owner_force_delever_incomplete` — a book left over its
+        ceiling after the ladder ran is the same class of unattended
+        margin risk. The page is guarded by a STATE CHANGE: it fires only on
+        the transition INTO still-over (prior recorded state was cleared or
+        absent), so a book that sits over the ceiling for days does not page
+        every session. The flag, the log line and the shortfall evidence
+        record are unchanged — they still happen every session it is over;
+        only the owner PAGE is edge-triggered. No "keep selling" behaviour is
+        added here (owner-escalated, out of scope), and no global throttle is
+        added to `send_owner_alert`.
         """
         leverage = ctx.leverage or {}
         gross_x = leverage.get("gross_x")
         ceiling_x = leverage.get("ceiling_x")
         if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+            # Unmeasurable this session — record no state, so it neither pages
+            # nor resets the transition edge for the next real measurement.
             return
-        if gross_x <= ceiling_x:
+        still_over = gross_x > ceiling_x
+
+        # Read the prior session's recorded state BEFORE writing this one, so
+        # the read sees only earlier sessions (transition detection). Both the
+        # read and the write are best-effort: a persistence hiccup must not
+        # break the de-lever path, and on a failed read we fall back to paging
+        # (fail loud, never silence a real over-ceiling book).
+        run_id = getattr(ctx, "run_id", None)
+        was_over: bool | None
+        try:
+            was_over = self.db.get_last_delever_over_ceiling(exclude_run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state read failed: %s", exc)
+            was_over = None
+        try:
+            self.db.save_delever_ceiling_state(
+                run_id=run_id or "", over_ceiling=still_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state write failed: %s", exc)
+
+        if not still_over:
             return
+
         leverage["delever_incomplete"] = True
         logger.warning(
             "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
             "— gross exposure %.2fx equity vs a %.2fx ceiling.",
             gross_x, ceiling_x,
         )
+
+        if was_over:
+            # Already paged when the book first crossed into still-over; do not
+            # repeat every session while it stays there.
+            return
+
+        try:
+            from src import notifier as _notifier
+
+            msg = (
+                f"GROSS-EXPOSURE DE-LEVER INCOMPLETE: after de-levering, gross "
+                f"exposure is still {gross_x:.2f}x equity against a "
+                f"{ceiling_x:.2f}x ceiling. The book remains over its ceiling "
+                f"until this is resolved."
+            )
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("de-lever incomplete owner alert failed: %s", exc)
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
@@ -13480,6 +13535,14 @@ class TradingPipeline:
             # first — the position has been closed for hours by the time
             # this runs, and every other session entry point runs this same
             # check again in case morning's own attempt failed.
+            #
+            # Item 173(2): unlike intra/evening, this site is NOT reordered to
+            # run `_reconcile_fills` first. Morning's `_reconcile_fills` lives
+            # in the method-end `finally:` block, reconciling THIS session's
+            # own just-submitted orders after execution — there are no stale
+            # 'submitted' SELLs from earlier today for it to resolve here, so
+            # the false-gap page the reorder prevents cannot arise at morning,
+            # and moving it ahead would strand this session's fills.
             reco = None
             try:
                 reco = self._reconcile_stop_out_fills(run_id)
@@ -14354,6 +14417,15 @@ class TradingPipeline:
         # every trading day, so this is the most frequent chance to catch a
         # stop that fired since the last pass and write it back before the
         # reviewer builds its "what happened today" picture.
+        #
+        # Item 173(2): unlike intra/evening, this site is NOT reordered to run
+        # `_reconcile_fills` first. This session's only `_reconcile_fills` is
+        # conditional and runs later — after `_force_delever` /
+        # `_enforce_gross_ceiling` — SOLELY to flip THIS session's own
+        # FORCE_DELEVER rows so the reviewer can see them; it is not the
+        # unscoped stale-'submitted' sweep intra/evening run. Moving it ahead
+        # of the ceiling logic would reconcile rows that don't exist yet, so
+        # the reorder does not apply here.
         reco = None
         try:
             reco = self._reconcile_stop_out_fills(run_id)
@@ -15307,6 +15379,38 @@ class TradingPipeline:
                 # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
                 self._release_retired_cash_park(run_id)
                 self._reconcile_orphan_pending_submits()  # audit F4
+                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
+                # table still read 'submitted' half an hour later. The stop-coverage
+                # and stop-out reconcilers below only watch protective/broker-
+                # initiated exits — neither one asks the broker about the fate of an
+                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
+                # 'submitted' in the trades table). `run_morning` and the midday/
+                # close review both call `_reconcile_fills` for exactly that reason;
+                # this tick — the one that runs every ~30 minutes and is therefore
+                # the tightest window available to close that gap between sessions
+                # — never did. The live fill-notification websocket never
+                # authenticates on this host (placeholder credential, frozen pending
+                # an owner decision — see broker.py), so in production this always
+                # resolves through `_reconcile_fills`'s own bounded REST lookup
+                # (`broker.get_order_fill_info`), never the socket. Unscoped
+                # (no run_id) so a still-'submitted' row from ANY earlier session
+                # today is picked up, not just ones this tick itself created.
+                #
+                # Item 173(2): this runs BEFORE the stop-out reconcile below,
+                # not after. A SELL this pipeline submitted but hasn't yet
+                # reconciled leaves the ledger believing the position is still
+                # open (get_symbols_with_open_ledger_qty ignores 'submitted'
+                # rows) while the broker has already reduced it — a positive
+                # gap. The stop-out reconciler can't explain that gap either,
+                # because the submitted SELL's broker_order_id is already in
+                # get_known_broker_order_ids, so its fill is filtered out of
+                # new_fills — and it pages a false CRITICAL "records disagree
+                # with broker". Reconciling fills first flips that SELL to
+                # executed, the gap closes, and the stop-out check stays quiet.
+                try:
+                    self._reconcile_fills()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
                 # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
                 # every ~30 min, so this is the tightest window this reconciler
                 # runs on — a stop that fires mid-session is written back within
@@ -15321,27 +15425,6 @@ class TradingPipeline:
                 # owner — intra is the tightest cadence, so this is where a
                 # mid-session stop-out reaches him fastest.
                 self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
-
-                # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
-                # table still read 'submitted' half an hour later. The stop-coverage
-                # and stop-out reconcilers just above only watch protective/broker-
-                # initiated exits — neither one asks the broker about the fate of an
-                # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
-                # 'submitted' in the trades table). `run_morning` and the midday/
-                # close review both call `_reconcile_fills` for exactly that reason;
-                # this tick — the one that runs every ~30 minutes and is therefore
-                # the tightest window available to close that gap between sessions
-                # — never did. The live fill-notification websocket never
-                # authenticates on this host (placeholder credential, frozen pending
-                # an owner decision — see broker.py), so in production this always
-                # resolves through `_reconcile_fills`'s own bounded REST lookup
-                # (`broker.get_order_fill_info`), never the socket. Unscoped
-                # (no run_id) so a still-'submitted' row from ANY earlier session
-                # today is picked up, not just ones this tick itself created.
-                try:
-                    self._reconcile_fills()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
 
         self._intra_preamble_deferred = preamble_deferred
 
@@ -15514,17 +15597,41 @@ class TradingPipeline:
         """Wait for morning/midday/close to finish rather than skip the tick.
 
         Returns True when paid discovery must still be skipped (lock still
-        held at window end, or owner file unreadable). Returns False when
-        the slot is free.
+        held at window end, morning was the session waited on — see below —
+        or the owner file unreadable). Returns False when the slot is free.
+
+        Morning shares the 09:30 ``SESSION_WINDOWS`` start with this
+        ``intra_check`` fire, so waiting for morning then running paid
+        discovery on the SAME tick is still the 09:30 open, not a real
+        INTRADAY look (item 121 — measured leftover at 09:37). Sets
+        ``self._paid_scan_waited_for = "morning"`` in that case so the
+        caller skips this tick instead of scanning; the first true paid
+        INTRADAY look is the next existing half-hour fire, which sees
+        morning's lock already released and runs immediately with no
+        invented offset. Midday/close are a different cadence than this
+        fire, so waiting for either and then scanning on release is still
+        correct.
         """
         import time as _time
 
         first = True
         self._paid_scan_waited = False
+        self._paid_scan_waited_for = None
+        last_blocking = None
         while True:
             blocking = self._blocking_owner_session()
             if blocking is None:
                 if not first:
+                    if last_blocking == "morning":
+                        self._paid_scan_waited_for = "morning"
+                        logger.info(
+                            "Intraday scan: morning released the owner lock; "
+                            "this fire shares the 09:30 open with morning, "
+                            "so paid discovery stays skipped this tick — "
+                            "the next existing half-hour fire is the first "
+                            "true INTRADAY look",
+                        )
+                        return True
                     self._paid_scan_waited = True
                     logger.info(
                         "Intraday scan: other session released the owner lock; "
@@ -15532,6 +15639,7 @@ class TradingPipeline:
                         "waiting for the next 30-minute fire",
                     )
                 return False
+            last_blocking = blocking
             if blocking == "unreadable":
                 logger.warning(
                     "Intraday scan: could not validate active-session owner — "
@@ -15694,6 +15802,9 @@ class TradingPipeline:
             `_intraday_scan_process_lock`) or a morning/midday/close
             wrapper that still holds the owner lock at the end of this
             tick's wait (`_await_paid_scan_slot`).
+          - "intraday_scan_open_overlap": morning released the owner lock
+            on this same 09:30-shared tick — still the open, not a real
+            INTRADAY look (item 121; see `_intraday_open_overlap_skip`).
           - "intraday_scan_no_opportunity": the scan ran and found nothing
             worth escalating (see `_intraday_opportunity_scan_body`'s
             early-return points).
@@ -17137,6 +17248,39 @@ class TradingPipeline:
             "movers": list(movers),
         }
 
+    def _intraday_open_overlap_skip(self, ctx: RunContext, movers: list[str]) -> dict:
+        """Morning released the lock on this same 09:30-shared tick.
+
+        Not a lock contention (morning is no longer holding it) and not a
+        real INTRADAY opportunity — running paid discovery here would be
+        the measured 09:37 leftover (item 121): the SAME open, sold to the
+        owner a second time under a different label. Skip; the next
+        existing half-hour fire, which sees no lock at all, runs normally.
+        """
+        named = ",".join(movers) if movers else "none"
+        reason = (
+            "paid discovery skipped: this fire shares the 09:30 open with "
+            f"morning; movers={named}"
+        )
+        logger.info("Intraday scan: %s", reason)
+        for symbol in movers:
+            try:
+                _record_pipeline_event(
+                    self, ctx, symbol, "opportunity", "skipped",
+                    "intraday_scan_open_overlap", detail=reason,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Intraday scan: could not persist skip reason for %s",
+                    symbol, exc_info=True,
+                )
+        return {
+            "status": "intraday_scan_open_overlap",
+            "run_id": ctx.run_id,
+            "reason": reason,
+            "movers": list(movers),
+        }
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -17159,12 +17303,18 @@ class TradingPipeline:
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
-        for the full rationale).         "intraday_scan_lock_contended" when
+        for the full rationale). "intraday_scan_open_overlap" when morning
+        released the owner lock on this same 09:30-shared tick (item 121 —
+        still the open, not INTRADAY); "intraday_scan_lock_contended" when
         `_await_paid_scan_slot` cannot free the owner lock before this
         tick's calendar window ends; "intraday_scan_no_opportunity" for
         every other early return (no
         snapshots, no qualifying moves, no ledgerable symbols, no usable
-        bars, no usable tech analysis). Past that point, a real result dict
+        bars). A tech seat that is fully LOST (every submitted symbol
+        failed, or the batch call raised) is NOT folded into that status —
+        item 20 (board) — it is classified `data_status["tech"]="failed"`
+        and routed through the same evidence-gate skip + unsuppressible
+        alert morning uses. Past that point, a real result dict
         mirroring the shape callers of run_morning already expect
         (status/orders/run_id). Best-effort: any failure degrades to a
         status dict, never raises (the caller also wraps this
@@ -17184,6 +17334,8 @@ class TradingPipeline:
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
         mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         if self._await_paid_scan_slot(ctx.run_id):
+            if getattr(self, "_paid_scan_waited_for", None) == "morning":
+                return self._intraday_open_overlap_skip(ctx, mover_names)
             return self._intraday_paid_scan_skip(ctx, mover_names)
         # The 09:30/13:00 wait must not size against the pre-fill snapshot
         # taken before morning finished. Refresh after the lock releases.
@@ -17326,14 +17478,28 @@ class TradingPipeline:
                 len(_missing) + len(_stale), _missing[:10], _stale[:10],
             )
         self._require_paid_analysis("intraday_tech_analyst")
-        analyses_map, ta_result = self.tech_analyst.analyze_batch(
-            symbols_data,
-            prior_ratings=prior_ratings,
-            valuations={},
-            intraday_context=intraday_context,
-            prior_macro_regime=prior_macro_state.get("regime"),
-            prior_macro_outlook=prior_macro_state.get("equity_outlook"),
-        )
+        try:
+            analyses_map, ta_result = self.tech_analyst.analyze_batch(
+                symbols_data,
+                prior_ratings=prior_ratings,
+                valuations={},
+                intraday_context=intraday_context,
+                prior_macro_regime=prior_macro_state.get("regime"),
+                prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+            )
+        except PaidAnalysisSuspended:
+            raise
+        except Exception as e:  # noqa: BLE001 — mirrors morning's tech
+            # try/except (pipeline_stages.py): a bare call here had no
+            # guard at all, so a batch-level raise (provider outage,
+            # unparseable response) crashed the whole intraday tick
+            # instead of being recorded as a LOST tech seat like every
+            # other failure mode this scan already handles.
+            logger.error(
+                "Intraday scan: tech_analyst.analyze_batch raised: %s. "
+                "Tech seat LOST this tick.", e,
+            )
+            analyses_map, ta_result = {}, None
         # analyses_map carries every candidate symbol as a key (2026-08-19
         # Tech batch-response symbol-loss fix) — None marks a symbol
         # tech_analyst could not resolve even after its own bounded retry.
@@ -17394,9 +17560,13 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("Intraday scan: tech store update failed: %s", e)
 
-        if not analyses:
-            logger.info("Intraday scan: tech_analyst returned no usable analyses this tick")
-            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+        # Item 20 (board): deliberately no early "no analyses" return here.
+        # `symbols_data` was already confirmed non-empty above, so zero
+        # usable analyses at this point is a LOST tech seat, not a quiet
+        # tick — it must fall through to the shared `data_status`/gate path
+        # below (classification just before `ctx.data_status`), not return
+        # "intraday_scan_no_opportunity" indistinguishably from a real
+        # empty candidate set.
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
         #
@@ -17420,8 +17590,23 @@ class TradingPipeline:
         carried_news = self._carry_forward_news(ctx)
         carried_earnings = self._carry_forward_earnings(ctx)
         carried_insider = self._carry_forward_insider(ctx)
+        # Item 20 (board): three-way, matching morning's classification.
+        # `symbols_data` was non-empty going in, so `analyses` empty here
+        # means every submitted symbol failed (or the batch call raised,
+        # caught above) — a LOST seat, not an ordinary quiet tick. A
+        # partial batch (some resolved) stays REPORTED, exactly as before —
+        # this must not start blocking intraday trading on one bad symbol.
+        if analyses:
+            tech_status = "partial" if failed_count else "ok"
+        else:
+            tech_status = "failed"
+            logger.error(
+                "Intraday scan: tech seat LOST — %d/%d submitted symbol(s) "
+                "resolved to a usable analysis this tick",
+                len(analyses), len(analyses_map),
+            )
         ctx.data_status = {
-            "tech": "partial" if failed_count else "ok",
+            "tech": tech_status,
             # Status comes from the kind+event helpers, not from payload
             # truthiness. Same-session GOOD reuse is `carried_from_morning`
             # (PR #430). Cross-day GOOD macro is `remembered`. Empty/failed
@@ -17550,6 +17735,21 @@ class TradingPipeline:
         # Broker-truth coverage audit — last check before carrying positions
         # overnight (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Sweep submitted orders so canceled/expired orders do not get
+        # narrated as real trades, and partial terminal fills are reflected
+        # in the trade list before the evening prompt is built.
+        #
+        # Item 173(2): this runs BEFORE the stop-out reconcile below, not
+        # after. A SELL this session submitted but hasn't yet reconciled
+        # leaves the ledger believing the position is still open
+        # (get_symbols_with_open_ledger_qty ignores 'submitted' rows) while
+        # the broker has already reduced it — a positive gap the stop-out
+        # reconciler can't explain, because the submitted SELL's
+        # broker_order_id is already in get_known_broker_order_ids so its
+        # fill is filtered out of new_fills, and it pages a false CRITICAL
+        # "records disagree with broker". Reconciling fills first flips that
+        # SELL to executed, the gap closes, and the stop-out check stays quiet.
+        self._reconcile_fills()
         # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — last chance before
         # the daily P&L snapshot below is computed, so a same-day stop-out
         # is reflected in tonight's report rather than showing up as an
@@ -17609,10 +17809,6 @@ class TradingPipeline:
             logger.warning("evening: risk-capital heat build failed: %s", e)
             risk_capital_dollars = None
 
-        # Sweep submitted orders before building the evening prompt so
-        # canceled/expired orders do not get narrated as real trades, and
-        # partial terminal fills are reflected in the trade list.
-        self._reconcile_fills()
 
         # Phase 4 #5: daily_pnl write is deferred to the atomic
         # save_evening_snapshot() below, along with insights. Doing both in

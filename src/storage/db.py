@@ -1847,12 +1847,17 @@ class Database:
         can price, yet its shares really did leave the book. See
         `_trail_stop_reduced_position` for why that is not drift.
 
-        STILL SIGNED FROM THE ACTION NAME, and wrong on the short side:
-        a COVER family action, and a FILLED buy-to-cover TRAIL_STOP,
-        subtract from a short instead of retiring it (a SHORT 36 covered
-        in full reads -72, not 0) [measured 2026-09-23]. Pre-existing and
-        unchanged here; the caller reads any negative as a short and skips
-        it, so nothing acts on the number today. Carried as item 173(c).
+        SIGNED BY POSITION SIDE, corrected on the short side (item 173(c),
+        2026-09-25). Both short-retiring routes now sign +1: a COVER-family
+        action (COVER / EMERGENCY_COVER / PARTIAL_COVER) is a buy-to-cover by
+        name, and a FILLED TRAIL_STOP resting on a short is a buy-to-cover
+        read from the running net (its side is not in its name). Before this,
+        every non-BUY row signed -1, so a SHORT 36 covered in full read -72,
+        not 0 whether it came as a COVER or as a filled buy-to-cover
+        TRAIL_STOP [measured 2026-09-23]. The caller
+        `_reconcile_stop_out_fills` is LONG-only and skips any negative, so
+        no live behaviour changed today; the ledger's own belief is simply
+        now correct for the day shorts are enabled.
         """
         with self._lock:
             rows = self.conn.execute(
@@ -1871,9 +1876,32 @@ class Database:
             qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
             if qty <= 0:
                 continue
-            sign = 1.0 if action in ("BUY", "SWEEP_BUY") else -1.0
             symbol = row["symbol"]
-            net[symbol] = net.get(symbol, 0.0) + sign * qty
+            running = net.get(symbol, 0.0)
+            # Item 173(c): sign a share-moving row by the SIDE of the
+            # position it acts on, not by a hard-coded BUY-vs-everything-else
+            # split. A COVER-family action is a BUY-to-cover: it RETIRES a
+            # short toward zero, so it ADDS shares (+1). The old rule signed
+            # every non-BUY row -1, so a SHORT 36 covered in full read -72,
+            # not 0 [measured 2026-09-23]. Normalise PARTIAL_COVER(50%) ->
+            # PARTIAL_COVER first, exactly as `_symbols_already_trimmed_today`
+            # does. A FILLED TRAIL_STOP carries no side in its name — it is a
+            # long's protective SELL or a short's protective BUY-to-cover
+            # depending on the position it guards — so read that side from the
+            # running net for this symbol (rows are id-ordered, so the entry
+            # always precedes its stop): a stop resting on a short is a
+            # buy-to-cover and ADDS. Everything else — SELL / REDUCE /
+            # STOP_OUT / SWEEP_SELL / a long's fired TRAIL_STOP, and SHORT
+            # (a sell-to-open) — subtracts.
+            base_action = action.split("(", 1)[0].strip()
+            if base_action in ("BUY", "SWEEP_BUY",
+                               "COVER", "EMERGENCY_COVER", "PARTIAL_COVER"):
+                sign = 1.0
+            elif base_action == "TRAIL_STOP" and running < -1e-9:
+                sign = 1.0  # fired protective stop on a SHORT = buy-to-cover
+            else:
+                sign = -1.0
+            net[symbol] = running + sign * qty
         return net
 
     def get_known_broker_order_ids(self, symbol: str) -> set[str]:
@@ -3128,6 +3156,58 @@ class Database:
             if len(out) >= max(1, int(limit)):
                 break
         return out
+
+    # --- Gross-exposure de-lever ceiling state (docs/WORK.md item 112) ---
+    #
+    # One boolean per de-lever session: did the book finish STILL over its
+    # ceiling? Persisted so the owner page fires only on the transition INTO
+    # that state, not every session a chronically-over book runs the ladder.
+    # On `specialist_evidence` like every other cross-session flag here — no
+    # new table.
+    DELEVER_CEILING_STATE_KIND = "delever_ceiling_state"
+
+    def save_delever_ceiling_state(
+        self, *, run_id: str, over_ceiling: bool,
+    ) -> int:
+        """Record whether this session's gross-exposure de-lever finished with
+        the book still over its ceiling.
+
+        Written on EVERY session that runs the ceiling enforcement, for both
+        outcomes, so the next session can tell a fresh transition into
+        still-over apart from a book that has sat over the ceiling for days.
+        Observability/state only — no order, sizing or sequencing reads it."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="pipeline",
+            kind=self.DELEVER_CEILING_STATE_KIND, scope="run",
+            evidence_json=json.dumps({"over_ceiling": bool(over_ceiling)}),
+        )
+
+    def get_last_delever_over_ceiling(
+        self, *, exclude_run_id: str | None = None,
+    ) -> bool | None:
+        """The most recent recorded de-lever ceiling state — True (still over),
+        False (cleared), or None when there is no prior record.
+
+        None and False both mean 'not currently in the still-over state', so a
+        transition into still-over pages in either case. `exclude_run_id` drops
+        rows from the current run, so a read-before-write in the same session
+        sees only PRIOR sessions."""
+        sql = "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
+        params: list = [self.DELEVER_CEILING_STATE_KIND]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 1"
+        with self._lock:
+            row = self.conn.execute(sql, tuple(params)).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(dict(row).get("evidence_json") or "{}")
+        except (TypeError, ValueError):
+            return None
+        val = payload.get("over_ceiling")
+        return val if isinstance(val, bool) else None
 
     # --- Take-profit revision record (`src.risk.target_revision`) -------
     #
