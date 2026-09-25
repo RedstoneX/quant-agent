@@ -553,7 +553,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **"Zero nominations" finding CORRECTED — not a defect.** The `model_dump()` shape does NOT lose nominations in the live flow: `ctx.macro_analysis` is canonically a dict (its type comment; PM reads it with `.get()`), and macro nominations are collected exactly once inside `MorningResearchStage._collect_seat_nominations`, which completes BEFORE `_heal_lost_research_seats` runs. So the shape cannot change any nomination outcome, and changing the heal to emit a model object would fix nothing. What remains true is a deeper SEQUENCING limitation — because collection precedes the heal, a healed macro's nominations are never collected at all — which is a separate question, not the shape bug the original finding described.
 
-**Still OPEN on 179:** the `mechanical_heal_macro` dead-code call (wire or remove — OWNER decision), and the scheduled-save warning-swallow finding (pre-existing, report-only).
+**`mechanical_heal_macro` dead code REMOVED (2026-09-25).** Verified no `src/` caller: the coercion it wrapped (`coerce_macro_shape`) is already wired into every live macro consumption point (`macro_analyst`, `portfolio_manager`, `pipeline_stages`, `pipeline`), and the live heal orchestration (`_heal_lost_research_seats`) uses paid retries, not this unpaid HealResult wrapper — there was no intended fallback for it to be wired into. The function and its four test-only cases were deleted; the still-live helpers and their tests were kept.
+
+**Still OPEN on 179:** the scheduled-save warning-swallow finding (pre-existing, report-only).
 
 ## item 181 — RETIRED 2026-09-24
 
