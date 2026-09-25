@@ -86,7 +86,6 @@ def test_a_default_bound_to_a_name_is_still_a_site() -> None:
     """
     sites = {s.site_id: s.value for s in collect_sites()}
     assert sites["src.config.RiskConfig.max_position_risk_pct"] == 5.0
-    assert sites["src.config.RiskConfig.min_reward_risk_after_widening"] == 1.5
     assert sites["src.config.SmartMoneyConfig.insider_history_retention_days"] == 5 * 366
 
 
@@ -158,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 142, (
+    assert MAX_ARBITRARY_ENTRIES == 141, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -199,6 +198,11 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "de-lever's must-fill SELL limit) was re-sourced from `arbitrary` to "
         "`derived`, pointing at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the 3%-"
         "through buffer) to match the gross-ceiling de-lever. A number sourced, "
+        "so the count is lowered in the same commit. "
+        "142 -> 141 on 2026-09-24, board item 81: "
+        "`src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening` "
+        "was deleted as dead code -- no code in `PortfolioConstructor` ever "
+        "read it, confirmed by grep before deleting. A row left the ledger, "
         "so the count is lowered in the same commit."
     )
 

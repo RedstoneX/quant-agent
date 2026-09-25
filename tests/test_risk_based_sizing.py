@@ -1656,7 +1656,6 @@ def test_both_reward_risk_computations_agree_on_one_trade():
     assert d.reward_risk == round(gate, 2)
     assert d.reward_risk == round(reward_to_risk(
         d.entry_price, d.stop_loss, d.take_profit, is_short=False), 2)
-    assert gate >= constructor.cfg.min_reward_risk_after_widening
 
 
 def test_the_shipped_order_records_the_rule_that_placed_its_stop():

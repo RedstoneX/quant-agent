@@ -541,9 +541,11 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** What is not: what the desk does when no provenance can be produced. QAMC Beta's contested principle is "produce the missing data, never drop the name", which reads on the standing missing-data principle above and against refusing. Settles with one ruling covering both, not two mechanisms.
 
-## item 81
+## item 81 — RETIRED 2026-09-24
 
 **Moved from WORK.md (2026-09-24) —** `SUBFLOOR_SIZE_CAPPED_STATUS` (`src/agents/portfolio_manager.py:59`) is assigned nowhere and asserted only by `tests/test_subfloor_catalyst_gate.py:841`. Keeping a key so a silent rename cannot resurrect a threshold is a real argument, so decide once and record it — keep with a ledger note, or delete. NO LIVE NUMBER'S VALUE CHANGES either way.
+
+**Retired 2026-09-24** — decided: delete. `SUBFLOOR_SIZE_CAPPED_STATUS`, `RiskConfig.min_reward_risk_after_widening` and `ConstructorConfig.min_reward_risk_after_widening` were removed as zero-reader dead code, each re-verified against the current tree first. `REWARD_RISK_FLOOR` itself was NOT deleted — `ops/model_policy/deterministic_selection.py` still reads it in a real comparison for the model-selection benchmark. Full writeup in `docs/INCIDENT_HISTORY.md` (2026-09-24 entry).
 
 ## item 82
 
@@ -604,10 +606,6 @@ agent has widened the rule to work around it.
 ## item 129
 
 **Moved from WORK.md (2026-09-24) —** 2026-09-16 (item 127) is the counter-example: a transient concurrency conflict survived all three attempts and was not a rejection. `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` (`:739`) and `_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`:740`) both rest on that reasoning and neither has a derivation — a number that outlived its own justification. Neither value may be moved by feel; the standing no-arbitrary-numbers principle at the top of this file applies, and item 130 is why the ledger does not currently see either of them.
-
-## item 130
-
-**Moved from WORK.md (2026-09-24) —** `broker.py` IS the broker order. So every constant on the desk's most consequential path escapes the only mechanical enforcement of the no-arbitrary-numbers rule, and a claim that a change "adds no constants" there is unverifiable by anything but reading. Admitting those modules will move the ratchet: `MAX_ARBITRARY_ENTRIES` is an EQUALITY, so the new entries get written rather than the count bent. **Same hole in `src/pipeline.py`/`src/agents/`, confirmed 2026-09-19:** the queued-earnings cap is hand-typed `5.0` in both, outside the ledger; it fired 3x on a real RSG decision and the stored order row still shows the pre-cap 20.44%.
 
 ## item 131
 

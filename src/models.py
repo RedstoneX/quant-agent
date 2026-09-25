@@ -769,6 +769,12 @@ class TechnicalIndicators(BaseModel):
     ma_20: float | None = None
     ma_50: float | None = None
     ma_200: float | None = None
+    #: The 200-session SMA one completed session earlier, so the exit guard can
+    #: read the 200-MA SLOPE (rising vs falling) — not just the level — when it
+    #: classifies a structural break's trend regime (owner mandate 2026-09-24,
+    #: trend-scaled exit). None until there is one extra bar beyond the 200-MA
+    #: warm-up.
+    ma_200_prior: float | None = None
     rsi_14: float | None = None
     macd: float | None = None
     macd_signal: float | None = None
@@ -777,6 +783,17 @@ class TechnicalIndicators(BaseModel):
     bb_middle: float | None = None
     bb_lower: float | None = None
     atr_14: float | None = None
+    #: Wilder's Average Directional Index and its two directional components,
+    #: all on the same 14-session lookback (`src.data.technical.ADX_PERIOD`).
+    #: ADX measures trend STRENGTH only (never direction); +DI/-DI carry the
+    #: direction. Used by `src.risk.exit_guard.check_structural_protection` to
+    #: select a support/resistance break's trend-scaled confirmation regime
+    #: (owner mandate 2026-09-24): a break against the trend or in a weak tape
+    #: exits fast, while a break WITH a strong trend (a likely shakeout) is held
+    #: longer. None until there are enough bars to warm the recursive smoothing.
+    adx_14: float | None = None
+    di_plus_14: float | None = None
+    di_minus_14: float | None = None
     volume_change_pct: float | None = None
 
     @field_validator("symbol")
@@ -1437,6 +1454,24 @@ class TradeDecision(LLMOutputModel):
     #     not show a Risk Manager an "R/R x:1" figure for a trade whose
     #     approval never depended on one.
     setup_type: str | None = None
+    # --- The MEASURED half of the same verdict (item 82, 2026-09-25) ------
+    # `structural_ceiling=(derivation.level_used is not None)` — the SAME
+    # value the constructor itself fed into `is_trend_trade`/
+    # `reward_risk_floor_applies` when it decided whether this trade's stop
+    # got a reward:risk check at all. `setup_type` above is only the
+    # analyst's raw label; construction's actual verdict is
+    # `reward_risk_floor_applies(setup_type, structural_ceiling=...)`, which
+    # is True (breakout, no ratio) whenever EITHER the label says
+    # "breakout" OR this field is False.
+    #
+    # Without this, a downstream consumer that re-derives the verdict from
+    # `setup_type` alone (no structural_ceiling) sees only the label half —
+    # so a measured breakout the analyst still labelled "range" is shown a
+    # real R/R ratio and can be refused/resized, which construction's own
+    # exemption forbids. `src/agents/risk_manager.py`'s rendering of the
+    # order must reach the SAME verdict construction reached, not a
+    # label-only approximation of it.
+    structural_ceiling: bool | None = None
     # --- Thesis invalidation, as a real field (2026-09-03) ----------------
     # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
     # SHORT) only, default None so every pre-existing construction site

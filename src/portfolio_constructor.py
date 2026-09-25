@@ -672,14 +672,6 @@ class ConstructorConfig:
         ("transitional", 1.10),
         ("risk-on", 0.95),
     )
-    # Widening a stop lowers reward:risk, because the target does not move.
-    # **Retired as a gate (owner 2026-09-17): rejects nothing and caps
-    # nothing.** No code in this class reads
-    # `self.min_reward_risk_after_widening` — grep confirms it. Kept only
-    # as the default of a historical settings key so a silent rename
-    # cannot drop a deployed threshold; see `src/risk/constants.py`
-    # (`REWARD_RISK_FLOOR`) for the full history. Do not re-arm it.
-    min_reward_risk_after_widening: float = 1.5
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
     # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
@@ -3503,6 +3495,12 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling. Same expression the reward:
+            # risk gate above (inside `_widen_stop_past_noise`, via
+            # `_resolve_entry_and_stop`) used against THIS `derivation`, so
+            # the Risk Manager sees the identical verdict construction saw.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
@@ -3705,6 +3703,10 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling and the identical comment in
+            # `_build_buy`.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,

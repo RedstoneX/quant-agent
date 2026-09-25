@@ -720,9 +720,13 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     # 15 -> 13 on 2026-09-20: `drawdown_5d_risk_multiple` and
     # `drawdown_20d_risk_multiple` were deleted from settings.yaml with the
     # rest of the account-level loss alarms (retired item 32).
-    assert len(omitted) == 13, (
+    # 13 -> 12 on 2026-09-24, board item 81: `min_reward_risk_after_widening`
+    # was deleted from settings.yaml AND from `RiskConfig` (zero-reader dead
+    # code — it refused nothing and capped nothing), so it can no longer
+    # appear in this "present in settings.yaml but not threaded" list at all.
+    assert len(omitted) == 12, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 13 — if that grew, thread "
+        f"settings present in settings.yaml, not 12 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 

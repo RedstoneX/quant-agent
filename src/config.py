@@ -12,10 +12,7 @@ from src.agents.base import (
     resolve_provider,
 )
 from src.trading_calendar import SESSION_WINDOWS
-from src.risk.constants import (
-    REWARD_RISK_FLOOR,
-    STARTER_POSITION_RISK_PCT,
-)
+from src.risk.constants import STARTER_POSITION_RISK_PCT
 
 
 class ApiKeysConfig(BaseModel):
@@ -674,21 +671,17 @@ class RiskConfig(BaseModel):
     # `config/settings.yaml` (this key) and docs/INCIDENT_HISTORY.md
     # 2026-09-10. Keep the three in sync.
     min_stop_atr_multiple: float = Field(default=2.5, gt=0, le=10)
-    # Widening a stop lowers reward:risk, because the target does not move.
-    # Under this the setup only ever qualified on a stop too tight to survive.
-    #
-    # **The name is now historical.** Since 2026-09-02 this applied to EVERY
-    # entry, not only ones this code widened (spec §12.1b). Owner 2026-09-17:
-    # the key is inert. It refuses nothing and caps nothing. Kept so a
-    # silent rename cannot drop a deployed threshold. Do not re-arm it.
-    min_reward_risk_after_widening: float = Field(
-        default=REWARD_RISK_FLOOR, ge=0, le=10,
-    )
+    # NO `min_reward_risk_after_widening` HERE ANY MORE — removed 2026-09-24
+    # (board item 81). It refused nothing and capped nothing: no code in
+    # `PortfolioConstructor` ever read `self.min_reward_risk_after_widening`,
+    # and the one place the value was threaded to
+    # (`PortfolioManagerAgent._apply_subfloor_catalyst_rule`) explicitly
+    # discards it. Removed keys are rejected loudly by
+    # `_reject_deleted_reward_risk_floor_key` below.
     # --- Level-backed stops (spec §12.1, 2026-09-01) ---------------------
     # `min_stop_atr_multiple` above used to OVERWRITE the structural stop
     # whenever the level sat closer than the band, after which the stop was
-    # at nothing real and `min_reward_risk_after_widening` was judged against
-    # that fabricated number. On 2026-09-01 the desk reviewed 38 qualified
+    # at nothing real. On 2026-09-01 the desk reviewed 38 qualified
     # signals and placed zero trades. A stop that sits at a level
     # `src/data/levels.py::find_structural_levels` actually computed is now
     # honoured whatever its ATR distance; the band only applies when nothing
@@ -1031,6 +1024,25 @@ class RiskConfig(BaseModel):
                 "src.data.levels.CLUSTER_TOLERANCE_PCT and is not "
                 "configurable. Delete the key from the settings file; there "
                 "is no replacement key."
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_reward_risk_floor_key(cls, data):
+        # Board item 81 (2026-09-24). Same pattern and same reason as the
+        # validators above: `extra="ignore"` would let a settings.yaml still
+        # carrying this key load silently, and an operator would believe a
+        # reward:risk floor was in force when nothing read it. It refused
+        # nothing and capped nothing since 2026-09-17 (owner: residual
+        # invented R/R is a defect) — see `src.risk.constants.REWARD_RISK_FLOOR`
+        # for the full history. There is no replacement key.
+        if isinstance(data, dict) and "min_reward_risk_after_widening" in data:
+            raise ValueError(
+                "risk.min_reward_risk_after_widening was removed 2026-09-24 "
+                "(board item 81): it refused nothing and capped nothing. "
+                "Delete the key from the settings file; there is no "
+                "replacement key."
             )
         return data
 

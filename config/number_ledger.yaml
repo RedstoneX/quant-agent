@@ -562,16 +562,6 @@ numbers:
       default bound to a NAME, which the first version of this scanner could
       not see at all, so the LIVE 0.50% floor was invisible to the gate that
       was built around it. config/settings.yaml:751 sets the same 0.5.
-  - id: src.config.RiskConfig.min_reward_risk_after_widening
-    value: 1.5
-    status: derived
-    site: src/config.py
-    derived_from: src.risk.constants.REWARD_RISK_FLOOR
-    base_value: 1.5
-    note: >-
-      Import alias of the (inert) reward:risk floor, src/config.py:804.
-      src/risk/constants.py:120 records that nothing in the live entry path
-      compares a ticket against it.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
     status: arbitrary
@@ -1348,6 +1338,21 @@ numbers:
       this ledger is a multiple of THIS unit, and it was out of scope while
       all of its multipliers were in - the gap the scope rule in
       src/number_sources.py was written to close.
+  - id: src.data.technical.ADX_PERIOD
+    value: 14
+    status: sourced
+    site: src/data/technical.py
+    source: >-
+      Wilder's original lookback for the Average Directional Index, as
+      published in J. Welles Wilder, New Concepts in Technical Trading Systems
+      (1978), and the period every chart package means by "ADX(14)". Definition
+      site and reasoning: src/data/technical.py:11-20.
+    note: >-
+      The ADX lookback. ADX measures trend STRENGTH only; the exit guard reads
+      it (with the 50/200-MA regime and 200-MA slope for direction) to select a
+      structural break's trend-scaled confirmation regime (owner mandate
+      2026-09-24 + named TA authorities). Same unit family as, and deliberately
+      equal to, ATR_PERIOD above.
   - id: src.data.technical.LONGEST_INDICATOR_WINDOW
     value: 200
     status: arbitrary
@@ -1896,25 +1901,6 @@ numbers:
       compatibility) is a separate, purely mechanical cleanup.
     cost_while_unanswered: >-
       None -- no trade-sizing path still uses this field to refuse an order.
-  - id: src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening
-    value: 1.5
-    status: arbitrary
-    site: src/portfolio_constructor.py
-    note: >-
-      Recorded as having no derivation in the 2026-09-14 verification
-      (docs/INCIDENT_HISTORY.md). Retired as a gate (owner 2026-09-17):
-      no code in `PortfolioConstructor` reads
-      `self.cfg.min_reward_risk_after_widening` to reject or shrink a
-      trade — confirmed by grep, 2026-09-18. The definition site still
-      discloses the tension the number would create with
-      min_stop_atr_multiple, unsourced, in case it is ever re-armed.
-    open_question: >-
-      Should a reward:risk floor exist at all on this desk, and if so what hit
-      rate justifies which value? src/risk/constants.py:120-137 records that
-      nothing in the live entry path still compares against this number.
-    cost_while_unanswered: >-
-      Kept only as the default of a historical settings key; if anything
-      re-wires it, an unsourced refusal comes back.
   - id: src.portfolio_constructor.ConstructorConfig.min_risk_pct
     value: 0.5
     status: sourced
@@ -2120,8 +2106,12 @@ numbers:
       point itself has no source. See board item 110 for the document that
       still describes it as a size cap.
     open_question: >-
-      Same as min_reward_risk_after_widening: should the floor exist, and at
-      what measured hit rate?
+      Should the floor exist, and at what measured hit rate? The inert
+      `RiskConfig.min_reward_risk_after_widening` /
+      `ConstructorConfig.min_reward_risk_after_widening` keys that shared
+      this open question were removed as dead code, board item 81
+      (2026-09-24) — this constant is the only survivor, kept as an
+      exported name tests/docs still import.
     cost_while_unanswered: >-
       Inert in the live entry path but still exported as a name tests, docs
       and prompts import.
@@ -2162,6 +2152,38 @@ numbers:
       widening described at src/risk/exit_guard.py:260-278. Same magnitude and
       same question as the trailing-stop noise band, which carries the open
       question.
+  - id: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
+    value: 2
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      The two-consecutive-day close filter for a level break in Edwards & Magee,
+      Technical Analysis of Stock Trends: a level breaks on a decisive close and
+      is confirmed on the NEXT day's close, with a reclaim in between resetting
+      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py:517
+      and the module note at src/risk/exit_guard.py:476-509.
+    note: >-
+      Consecutive confirmed closes required to treat ANY break as real, in BOTH
+      regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
+      ratified two-close spring floor, nothing exits faster. The strong-with-
+      trend regime adds a STRUCTURAL condition (the prior swing-low must also
+      break) on top, never a larger close count. The break MARGIN is always
+      NOISE_BAND_ATR_MULTIPLE.
+  - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
+    value: 25
+    status: sourced
+    site: src/risk/exit_guard.py
+    source: >-
+      Wilder's own ADX threshold for a strong trend, as published in J. Welles
+      Wilder, New Concepts in Technical Trading Systems (1978), the standard
+      convention (ADX above 25 = trend strong enough to trade with). Definition
+      and use: src/risk/exit_guard.py:524.
+    note: >-
+      Trade-governing: at or above this ADX a with-trend structural break enters
+      the patient strong-with-trend regime (two confirmed closes AND the prior
+      swing-low must also break) under the owner mandate 2026-09-24 trend-scaled
+      exit; below it, the default two-close floor. The only ADX threshold used —
+      Wilder's published value, not a discretionary pick.
   - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
     value: 40
     status: not-trade-governing

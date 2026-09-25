@@ -2746,3 +2746,105 @@ def test_send_redacts_malformed_number_before_it_reaches_telegram(monkeypatch):
     sent = mock_post.call_args.kwargs["json"]["text"]
     assert "10,21.36" not in sent
     assert "number garbled" in sent
+
+
+def test_redact_raw_exception_text_replaces_only_the_exception_token():
+    """Board item 89 defect 5: a `reason=f"... raised: {exc}"` style string
+    built upstream (e.g. `src/coverage_watchdog.py`) must not reach the
+    owner with the raw exception text intact."""
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "  AAPL: holding 10.0000 — snapshot_protective_stops raised: "
+        "ConnectionError('Connection timed out after 5s')"
+    )
+    redacted = _redact_raw_exception_text(text)
+    assert "ConnectionError" not in redacted
+    assert "Connection timed out" not in redacted
+    assert "internal error" in redacted
+    assert "AAPL: holding 10.0000" in redacted
+
+
+def test_redact_raw_exception_text_strips_a_traceback():
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "risk manager raised:\n"
+        "Traceback (most recent call last):\n"
+        '  File "src/pipeline.py", line 1234, in _run\n'
+        "    raise ValueError('bad state')\n"
+        "ValueError: bad state"
+    )
+    redacted = _redact_raw_exception_text(text)
+    assert "Traceback" not in redacted
+    assert "bad state" not in redacted
+    assert "src/pipeline.py" not in redacted
+    assert "internal error" in redacted
+
+
+def test_redact_raw_exception_text_never_touches_clean_owner_text():
+    """False-positive guard: ordinary owner prose — prices, symbols, plain-
+    English reasons — must pass through unchanged."""
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "closed CRM for $1,021.36, up 14.6% on the day — the risk check "
+        "turned the plan down because the position was already at its cap."
+    )
+    assert _redact_raw_exception_text(text) == text
+
+
+def test_redact_raw_exception_text_logs_the_original_for_diagnosis(caplog):
+    from src.notifier import _redact_raw_exception_text
+
+    with caplog.at_level("WARNING"):
+        _redact_raw_exception_text("placement raised (sqlite3.OperationalError: no such table: agent_logs)")
+    assert any("OperationalError" in rec.message for rec in caplog.records)
+
+
+def test_send_redacts_raw_exception_text_before_it_reaches_telegram(monkeypatch):
+    """End-to-end: `send()` is the single chokepoint every owner-facing
+    message passes through — a raw exception string must be sanitized here
+    regardless of which upstream reason-string builder produced it."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send(
+            "PROTECTIVE STOP UNREADABLE\n"
+            "  AAPL: holding 10.0000 — snapshot_protective_stops raised: "
+            "ConnectionError('timed out')"
+        )
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "ConnectionError" not in sent
+    assert "timed out" not in sent
+    assert "internal error" in sent
+
+
+def test_send_does_not_alter_a_normal_owner_message(monkeypatch):
+    """Sanity check for the same chokepoint: a normal message with no
+    malformed numbers and no raw exception text passes through unchanged."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    plain = "Closing review: bought CRM at $271.36, up 1.2% on the day."
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send(plain)
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert plain in sent
