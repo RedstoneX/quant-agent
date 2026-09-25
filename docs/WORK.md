@@ -369,8 +369,8 @@ detail: docs/BOARD_NOTES.md (item 162)
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
 
 DONE WHEN:
-  - [ ] a check flags a mismatch between the PM's reasoning and its own emitted number
-  - [ ] the RSG case is re-examined to see which value the seat meant
+  - [x] a check flags a mismatch between the PM's reasoning and its own emitted number — a standalone validator (`src/risk_narrative_check.py`, wired once in `DecisionStage`) reads the stored PM decision and flags a symbol whose `sizing_logic` prose names an explicit risk % that materially differs from that symbol's emitted `risk_allocation_pct`, recording each mismatch to the pipeline evidence stream as `sizing_narrative_check / mismatch`. DETECTION ONLY: it never changes a target, size, price or exit; `risk_allocation_pct` stays authoritative. It reuses the tolerance and the narrow risk-% matcher the existing per-symbol `TargetPosition.thesis` check uses, and stays silent on any prose it cannot pair to a symbol with confidence (no false positives). NOTE: the pre-existing `TargetPosition._flag_risk_narrative_mismatch` checked each position's own `thesis`, NOT the whole-book `sizing_logic` this item was filed against — so this closes the actual filed surface.
+  - [ ] the RSG case is re-examined to see which value the seat meant — STILL OPEN: this needs the stored run `601011e0` (09-16) rows read back to judge whether the seat meant 2.5% or 0.5% for RSG; the detector above surfaces the disagreement but does not decide which side was right.
 
 **165. Item 91's calendar-days bug has siblings the fix didn't touch — filed 2026-09-20, adversary pass on item 91's retirement.** PR #493 correctly fixed the position reviewer's own `too_early`/`time_fraction` pace calculation to read session-based `sessions_held` instead of calendar-day `days_held` — that specific mechanism is genuinely closed and item 91 is retired for it.
 
