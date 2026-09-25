@@ -330,10 +330,16 @@ def test_fetch_is_broad_and_only_large_external_purchase_gets_admission(tmp_path
     assert by_symbol["NVDA"].in_core_universe is True
 
 
-def test_quiet_immaterial_cache_returns_no_observations(tmp_path):
+def test_small_dollar_buy_now_survives_no_size_floor(tmp_path):
+    """Board item 52, resolved 2026-09-25: no published study supports
+    single-transaction dollar size as an insider-buy predictor, so the old
+    $100k/$250k floors were deleted rather than sourced. A $99,999 buy that
+    used to be silently dropped now survives like any other row."""
     provider = SECForm4Provider(data_dir=str(tmp_path))
     _write_rows(provider, [_insider(value=99_999)])
-    assert provider.fetch(["NVDA"]) == ([], None)
+    rows, error = provider.fetch(["NVDA"])
+    assert error is None
+    assert len(rows) == 1
 
 
 def test_independent_owner_cluster_survives_but_repeat_owner_does_not(tmp_path):
@@ -365,7 +371,15 @@ def test_two_owners_two_days_apart_form_a_cluster(tmp_path):
 
 
 def test_two_owners_three_days_apart_do_not_cluster(tmp_path):
-    """Boundary case: one day past the corrected 2-day window."""
+    """Boundary case: one day past the corrected 2-day window.
+
+    Both rows are $60,000, below the old $100k core floor, which used to be
+    the only way this pair could be dropped once clustering failed. Board
+    item 52 (resolved 2026-09-25) deleted that floor, so both rows now
+    survive on their own -- the boundary is no longer observable through row
+    count, only through the clustering that `cluster_survivors`'s row-
+    retention window still governs for a caller with a real floor (see
+    `CongressionalTradingProvider`, out of this item's scope)."""
     provider = SECForm4Provider(data_dir=str(tmp_path))
     three_days_apart = [
         _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
@@ -373,14 +387,25 @@ def test_two_owners_three_days_apart_do_not_cluster(tmp_path):
     ]
     _write_rows(provider, three_days_apart)
     rows, _ = provider.fetch(["NVDA"])
-    assert rows == []
+    assert len(rows) == 2
 
 
 def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
     """Same transactions as the boundary case above, with the old 14-day
     window restored explicitly. Demonstrates the bug: it incorrectly
     clustered trades 3 days apart, which the corrected 2-day window (and
-    the cited research) does not support."""
+    the cited research) does not support.
+
+    Both parts below now survive on row count alone regardless of window or
+    owner, because board item 52 (resolved 2026-09-25) deleted the $100k/
+    $250k dollar floors that used to be the only thing distinguishing a
+    correctly-excluded cluster from a materiality drop. The independent-vs-
+    repeat-owner cluster distinction itself is a `cluster_survivors`
+    property, unaffected by that deletion, but is no longer observable
+    through this provider's row count now that every row clears materiality
+    on its own; a caller that still carries a real floor (see
+    `CongressionalTradingProvider`) is where that distinction remains
+    testable end-to-end."""
     provider = SECForm4Provider(data_dir=str(tmp_path), cluster_window_days=14)
     three_days_apart = [
         _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
@@ -396,7 +421,7 @@ def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
     ]
     _write_rows(provider, repeated)
     rows, _ = provider.fetch(["NVDA"])
-    assert rows == []
+    assert len(rows) == 2
 
 
 def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, monkeypatch):

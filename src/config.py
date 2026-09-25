@@ -1230,8 +1230,6 @@ class SmartMoneyConfig(BaseModel):
     lookback_days: int = Field(default=365, ge=1, le=365)
     max_filings_per_refresh: int = Field(default=1000, ge=1, le=5000)
     max_observations: int = Field(default=40, ge=1, le=200)
-    min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
-    external_min_transaction_value_usd: float = Field(default=250_000, ge=1_000)
     # ROW-RETENTION window for `cluster_survivors`, NOT the research cluster
     # (corrected 2026-09-19, board item 124). Alldredge & Blank's abstract
     # (J. Financial Research, 2019) measures SAME-DAY purchases; "within two
