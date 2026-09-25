@@ -560,7 +560,8 @@ def _pm_production_invoke(agent):
 
 def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks = [Check("parsed_and_grounded", 0.55, decision is not None,
-                    "PortfolioDecision passed live grounding validation")]
+                    "checked PortfolioDecision parses and is grounded "
+                    "against live data")]
     if decision is None:
         return checks
     held = {p.symbol for p in _PM_PRODUCTION_POSITIONS}
@@ -942,7 +943,7 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks: list[Check] = []
     checks.append(Check(
         "parsed_and_grounded", 0.10, decision is not None,
-        "PortfolioDecision passed live grounding validation",
+        "checked PortfolioDecision parses and is grounded against live data",
     ))
     if decision is None:
         return checks
@@ -2169,10 +2170,10 @@ def _pm_public_day_invoke(agent):
 def _pm_public_day_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks: list[Check] = [Check(
         "parsed_and_grounded", 0.35, decision is not None,
-        "PortfolioDecision passed live grounding validation "
+        "checked PortfolioDecision parses and is grounded against live data "
         "(PortfolioManagerAgent.validate_grounding, "
         "src/agents/portfolio_manager.py:2328) — every cited symbol, source "
-        "and claim exists in the evidence this session actually built.",
+        "and claim must exist in the evidence this session actually built.",
     )]
     if decision is None:
         return checks
