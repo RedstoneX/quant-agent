@@ -925,43 +925,6 @@ def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
     _rest_the_stops(db, clear_order_id=True)
 
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
-
-
-def test_short_side_cover_sign_is_a_known_defect_item_173c(tmp_path):
-    """KNOWN DEFECT, pinned so it cannot be mistaken for correct — item
-    173(c). The signing rule still reads the action name, so anything that
-    RETIRES a short subtracts from it instead: a full cover of a 36-share
-    short reads -72, not 0, whether it comes as a COVER or as a
-    buy-to-cover TRAIL_STOP the broker filled. Unchanged by this fix (the
-    old code produced -72 too) and silent today, because the reconciler
-    treats any negative as a short and skips it.
-
-    Both halves are asserted together on purpose. Fixing only one of the
-    two routes reds only that line, and the cheapest way out of that red
-    is to edit the expected number — so the failure messages name item
-    173(c) and say to delete this test rather than adjust it."""
-    _WRONG = ("item 173(c): the short-side sign is knowingly wrong here. If "
-              "you have FIXED the signing rule, delete this whole test — do "
-              "not edit the expected number, and do not fix one route only.")
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
-                    broker_order_id="flnc-short", fill_status="filled")
-    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
-                    broker_order_id="flnc-stop", fill_status="submitted")
-    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
-
-    db.insert_trade("UPS", "SHORT", 7, 94.75, "short entry", "r1",
-                    broker_order_id="ups-short", fill_status="filled")
-    db.insert_trade("UPS", "COVER", 7, 92.0, "cover", "r2",
-                    broker_order_id="ups-cover", fill_status="filled")
-    _set_fill(db, "ups-cover", status="filled", qty=7.0)
-
-    net = db.get_symbols_with_open_ledger_qty()
-    assert net["FLNC"] == -72.0, f"filled buy-to-cover TRAIL_STOP route — {_WRONG}"
-    assert net["UPS"] == -14.0, f"COVER route — {_WRONG}"
-
-
 def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
     """Guard the rest of the signing rule against collateral damage:
     BUY/SWEEP_BUY add, SWEEP_SELL/STOP_OUT/REDUCE subtract, and HOLD plus a
@@ -1334,3 +1297,104 @@ def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
     exits = [r for r in db.get_trades(symbol="FLNC", executed_only=True)
              if r["action"] in ("STOP_OUT", "COVER", "RECONCILED_EXIT")]
     assert exits == []
+
+
+# ---------------------------------------------------------------------------
+# Item 173(c): a COVER-family action is a BUY-to-cover. It RETIRES a short
+# toward zero and must ADD shares to the ledger's belief, not subtract them.
+# Before the fix every non-BUY/SWEEP_BUY executed row was signed -1, so a
+# SHORT 36 fully covered read -72 instead of 0 [measured 2026-09-23].
+# ---------------------------------------------------------------------------
+
+def test_full_cover_retires_a_short_to_zero(tmp_path):
+    """SHORT 36 opened, COVER 36 filled — the ledger must read flat (0),
+    not -72 (the pre-fix double-subtract)."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    # Sanity: the short alone reads negative.
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -36.0
+    db.insert_trade("GME", "COVER", 36, 18.0, "cover short", "r2",
+                    broker_order_id="gme-cover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
+
+
+def test_partial_cover_reduces_the_short_toward_zero(tmp_path):
+    """A COVER of 10 against a SHORT 36 leaves -26, not -46."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "COVER", 10, 19.0, "trim short", "r2",
+                    broker_order_id="gme-cover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -26.0
+
+
+def test_partial_cover_pct_label_is_normalised_and_adds(tmp_path):
+    """PARTIAL_COVER(50%) must normalise to PARTIAL_COVER and add, exactly
+    as _symbols_already_trimmed_today normalises the label."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "PARTIAL_COVER(50%)", 18, 19.0, "cover half", "r2",
+                    broker_order_id="gme-pcover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == -18.0
+
+
+def test_emergency_cover_retires_a_short(tmp_path):
+    """EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL and must add."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("GME", "SHORT", 12, 20.0, "open short", "r1",
+                    broker_order_id="gme-short", fill_status="filled")
+    db.insert_trade("GME", "EMERGENCY_COVER", 12, 25.0, "panic cover", "r2",
+                    broker_order_id="gme-ecover", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
+
+
+def test_long_exits_still_subtract_after_cover_fix(tmp_path):
+    """Regression: SELL / REDUCE / STOP_OUT on a long must still subtract —
+    the COVER fix must not turn every buy-ish word into an add."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("AAPL", "BUY", 20, 100.0, "entry", "r1",
+                    broker_order_id="a-buy", fill_status="filled")
+    db.insert_trade("AAPL", "SELL", 4, 110.0, "trim", "r2",
+                    broker_order_id="a-sell", fill_status="filled")
+    db.insert_trade("AAPL", "REDUCE", 3, 108.0, "trim", "r3",
+                    broker_order_id="a-red", fill_status="filled")
+    db.insert_trade("AAPL", "STOP_OUT", 2, 95.0, "stopped", "r4",
+                    broker_order_id="a-stop", fill_status="filled")
+    assert db.get_symbols_with_open_ledger_qty()["AAPL"] == 11.0
+
+
+def test_filled_buy_to_cover_trail_stop_retires_a_short(tmp_path):
+    """Item 173(c), second route: a SHORT protected by a TRAIL_STOP that the
+    broker FILLED (a buy-to-cover) must retire the short toward zero. Its side
+    is not in the action name, so it is read from the running net — a stop
+    resting on a negative position is a buy-to-cover, so it adds. Full cover
+    of a 36-share short reads 0, not -72 (the pre-fix double-subtract)."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
+                    broker_order_id="flnc-short", fill_status="filled")
+    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
+                    broker_order_id="flnc-stop", fill_status="submitted")
+    _set_fill(db, "flnc-stop", status="filled", qty=36.0)
+    assert db.get_symbols_with_open_ledger_qty()["FLNC"] == 0.0
+
+
+def test_long_fired_trail_stop_still_subtracts_after_cover_fix(tmp_path):
+    """The mirror guard: a fired TRAIL_STOP on a LONG is a protective SELL
+    and must still subtract. The running net is positive there, so the
+    side-read signs it -1."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade("LLY", "BUY", 8, 900.0, "entry", "r1",
+                    broker_order_id="lly-buy", fill_status="filled")
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1",
+                    broker_order_id="lly-stop", fill_status="submitted")
+    _set_fill(db, "lly-stop", status="filled", qty=8.0)
+    assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
