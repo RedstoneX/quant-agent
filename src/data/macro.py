@@ -163,8 +163,12 @@ class SeriesFreshness:
          * publication lag = FRED's own metadata pair, `last_updated`
            minus `observation_end` — how far behind its own reference date
            this series' current print actually published.
-       `expected_next_by = last_valued_observation + cadence + lag`. Past
-       that date with no newer print, a print is genuinely missing.
+       `expected_next_by = roll_to_publication_day(last_valued_observation
+       + cadence + lag)`. The bare calendar sum is rolled FORWARD off any
+       weekend or federal holiday (`src/data/fred_publication_days.py`,
+       board item 119): nothing publishes on those days, so a due date that
+       lands on one is not a date by which anything was owed. Past the
+       rolled date with no newer print, a print is genuinely missing.
 
     The approximation, stated rather than hidden: `last_updated` is the
     last time FRED touched the series, which is normally the publication of

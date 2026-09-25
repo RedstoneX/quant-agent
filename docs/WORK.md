@@ -407,7 +407,8 @@ detail: docs/BOARD_NOTES.md (item 174)
 **175. FRED overdue dates can land on a Saturday; fetch timeouts are chronic — filed 2026-09-23, report-only.** `expected_next_by` is a plain calendar date, so DFF (cadence 1d, lag 1d) came due Sat 09-19 and read OVERDUE Mon 09-21 before an agency business day passed [measured, 1 firing].
 
 DONE WHEN:
-  - [ ] `expected_next_by` rolls to a business day, or the artefact is accepted in writing
+  - [x] `expected_next_by` rolls to a business day — already shipped under item 119 (#585, 2026-09-23): the weekend + federal-holiday roll lives in `src/data/fred_publication_days.py` and is applied at the overdue comparison in `src/data/macro.py`, covered by `tests/test_macro_prefetch.py`; verified on current main 2026-09-25 (the DFF Sat-09-19 firing no longer reproduces). Holidays covered in full (statutory rule set, no table to rot); the only residual is the lag approximation, which can flag a genuinely-late release a day or two early — the safe direction, and unrelated to weekends.
+  - [ ] the chronic `fetch_deadline_exceeded` half stays OPEN — owned by the approved fetch redesign (see `docs/BOARD_NOTES.md` item 175)
 detail: docs/BOARD_NOTES.md (item 175)
 
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
