@@ -431,13 +431,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Of three prerequisites: paper trading was found NOT to charge the interest [not proof], the de-levering ladder's equity series was found INCOMPLETE, and whether any ladder rung has ever been exercised is NOT ANSWERED.
 
-## item 96
-
-**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
-**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
-
-**Moved from WORK.md (2026-09-24) —** It already implements the ratified shape — **a provably false (b)/(c) claim BLOCKS and fires a standalone owner alert; anything merely unverifiable is logged and recorded as a pipeline event and is never blocked and never alerted on**, because absence of proof stays absence of proof. `thesis_invalid_if` (claim (a)) is deliberately never evaluated, so a SELL resting only on it is untouched. What is actually open is measurement, not design: **the veto has fired ZERO times.** Counts to quote precisely [live `agent_logs`, 2026-09-18] — 20 recorded `position_reviewer` runs and 35 `risk_manager` runs; the "20 recorded reviews" figure in circulation is the position-reviewer count, not the risk-manager one. A veto that has never fired is unproven in both directions: it may be that no exit has ever stated a provably false reason, or that the match conditions are too narrow to catch one. Establish which before treating the guard as protection, and do not widen the match conditions to make it fire.
-
 ## item 99
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
@@ -470,14 +463,6 @@ agent has widened the rule to work around it.
 **Moved from WORK.md (2026-09-24) —** Their sibling `_reconcile_stop_coverage` does the opposite: its return is captured and carried into the session result as `stop_coverage_gaps` at every exit, which is how a coverage gap reaches the owner. Both discarded values DO reach the log, so this is not invisible; what it means is that a broker-initiated stop-out and a protection restore can never appear in a session result, a Telegram message, or any test that reads one. Fix: carry both into the session result the way the coverage audit already is. Check item 89's work first — the "name sold that morning reported as held" defect is the same information going missing.
 
 **Surfacing shipped 2026-09-25 (item stays open) —** All five call sites now capture both return values and route them through a single helper, `_surface_reconcile_outcomes`. A broker-made stop-out pages the owner as its own standalone Telegram message carrying the WHY — which name, how many shares, at what price, and the realized loss — through the same `send_owner_alert` path the unexplained-gap branch already used; a re-protection count pages a separate notice that a naked position was covered again. The routing was chosen over bundling into the session result because the desk's alert-design rule requires a forced exit to get its own message, and because the pre-earnings pass and the intraday tick send no session summary a bundled line could ride on. The reconciliation logic is unchanged — this only reads what already happened. What it does NOT do: resolve item 89's "name sold that morning reported as held" defect, which remains not reproducible; this closes the information-loss mechanism the board flagged as its likeliest suspect, but a real message is still needed to confirm.
-
-## item 102
-
-**Plain language —** If an order fills only part-way and stays open, the desk never writes down how much of it filled. That is fine while the order eventually finishes, because the next pass picks it up. It stops being fine in a case the code itself already warns about: the broker deletes its order history after a few days, and after that an unrecorded order gets treated as having filled completely. So a half-filled order can end up counted as a whole one, with the cash and position figures wrong behind it.
-**Age —** This is not new and not from tonight's changes; it has been true at every one of these checks since they were written.
-**Recommendation —** Decide what a part-fill should record, then make that branch write it instead of skipping.
-
-**Moved from WORK.md (2026-09-24) —** The code documents this as deferral — "for the next reconciliation pass to pick up" — and that is fine while the order later goes terminal. It is not fine in the case the same function already documents: Alpaca purges order history after a few days, after which an unreconciled row "stays at 'submitted' and is effectively treated as filled by the legacy-compat NULL-or-filled filter". So a half-filled order can end up counted as a full fill, with position and cash drift behind it. Decide what a partial fill should record, then make the non-terminal branch write it rather than skip.
 
 ## item 109
 
@@ -569,10 +554,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** On 2026-09-17 the 09:30 risk tick and the morning session both start at 09:30; the risk tick waited for morning to finish and then ran a second paid look at 09:37, labelled INTRADAY OPPORTUNITY. That was still the open. The first true paid intraday look is the next EXISTING half-hour fire after morning released — no pad after 09:30 may be invented. Deterministic risk and coverage still run on the open tick; Telegram stays silent on it. PR #435 carried a version of this plus four new rehearsal-rig statuses; the statuses are NOT part of this item — adding to the rig's not-a-failure set weakens a verdict already known to be weak evidence and must be argued on its own, not ridden in on a schedule change.
 
-## item 122
-
-**Moved from WORK.md (2026-09-24) —** `scripts/merge_and_deploy.sh` checks out origin/main and restarts the API unit only; the systemd user units are copied by hand, so timer and service changes sit in the checkout unapplied. Three established facts shape the fix. **(a) Automating the copy does NOT fight the drift alarm** — `scripts/check_unit_drift.py` deliberately compares the installed units against the DEPLOYED CHECKOUT, so automation makes its normal state green. **(b) PR #435's version is unsafe and must not be copied:** it does `cp` then `daemon-reload` with **no `systemctl --user enable`**, so a newly added timer lands and never fires, and its unconditional `cp` silently overwrites the checker's "modified" bucket, destroying the evidence of a hand-edited box copy before any human reads the alarm. **(c)** the copy is the recipe the checker already tells the operator to run, so this is mechanising an instruction, not inventing one.
-
 ## item 123
 
 **Moved from WORK.md (2026-09-24) —** `scripts/systemd/quant-agent-status-board.path` is tracked in the repo [verified on main, 2026-09-18] and was therefore invisible to every one of the checker's buckets — untracked, modified, undeployed and not-enabled alike. The checker is the mechanical guard against the exact class of failure item 122 describes, and it had a hole in it. No evidence yet that this unit has actually drifted; the gap was that nobody would know.
@@ -586,10 +567,6 @@ agent has widened the rule to work around it.
 ## item 128
 
 **Moved from WORK.md (2026-09-24) —** The liquidation half of that breaker was deleted 2026-09-14, and on 2026-09-20 the owner removed the ENTIRE account-level loss-alarm mechanism (retired item 32, `docs/INCIDENT_HISTORY.md`) — so the tick now carries no loss breaker of any kind. The justification comment has been rewritten to say that rather than to keep citing a dead mechanism. The exemption may still be right on what the tick actually does now: reconcile fills, repair stop coverage found missing at the broker, run the bounded intraday scan. That is what it has to be re-argued on. Item 127 is the exposure that this exemption creates.
-
-## item 129
-
-**Moved from WORK.md (2026-09-24) —** 2026-09-16 (item 127) is the counter-example: a transient concurrency conflict survived all three attempts and was not a rejection. `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` (`:739`) and `_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`:740`) both rest on that reasoning and neither has a derivation — a number that outlived its own justification. Neither value may be moved by feel; the standing no-arbitrary-numbers principle at the top of this file applies, and item 130 is why the ledger does not currently see either of them.
 
 ## item 134
 
@@ -648,10 +625,6 @@ agent has widened the rule to work around it.
 ## item 157
 
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
-
-## item 162
-
-**Moved from WORK.md (2026-09-24) —** Per-symbol rejection (`rejected_symbols`) was used 0 of 17 times; the seat vetoes the whole plan instead.
 
 ## item 165
 

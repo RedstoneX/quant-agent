@@ -22,6 +22,24 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — five more board items found already shipped or moot on verification, retired (items 96, 102, 122, 129, 162)
+
+**In plain words:** five open board items no longer describe anything wrong with the desk. One was already fixed by earlier, unrelated work and had gone stale; four describe fixes that had already shipped. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on `origin/main`, not against the note that filed it.
+
+**Item 96 — the risk manager could once approve a sell whose stated reason was provably false against the desk's own data (stale).** `veto_contradicted_exit` (`src/risk/exit_guard.py`) tests an exit's stated reason against the record and is wired into the live decision path from both `src/pipeline.py` and `holding_discipline_claim_check` in `src/pipeline_stages.py`. The item's own text already called this stale; verification confirmed the guard is live, not just written.
+
+**Item 102 — a partly-filled order never had its filled quantity written down (shipped).** `src/pipeline.py`'s reconcile path now carries a `partially_filled` branch that records the cumulative filled quantity and price for a non-terminal broker status, instead of leaving the row at `submitted` until the broker purges the order history.
+
+**Item 122 — a deploy did not install the timetable, so a merged schedule fix could still not run (shipped).** `scripts/merge_and_deploy.sh` now copies every changed or new unit into the qamc user's systemd directory, runs `daemon-reload`, and enables what is not on the paused list — closing both halves the item asked for: a newly added timer now fires, and a unit that differs from the checkout has its diff printed before being overwritten, so a hand-edited box copy is not silently destroyed.
+
+**Item 129 — the stop-placement retry ceiling's own reasoning was falsified and left in the code (shipped).** `_is_terminal_broker_rejection` (`src/execution/broker.py`) now classifies a failure by Alpaca's own `status_code`, so a genuine rejection (400/404/422) is reported after one attempt instead of burning the full three-attempt retry burst, while a failure with no such code (or a 429/5xx) still gets the existing three attempts. The comment at the constant's definition states this plainly and no longer implies every failure surviving three attempts must be a rejection. Both retry constants (`_STOP_PLACEMENT_MAX_ATTEMPTS`, `_STOP_PLACEMENT_BACKOFF_S`) are recorded in `config/number_ledger.yaml` as arbitrary, each carrying the open question that would settle it and the cost of leaving it unanswered.
+
+**Item 162 — the risk seat could veto a whole plan citing its own advisory limits as hard rules (shipped).** Both halves the item's own DONE WHEN required are done: the briefing now renders a hard-limit breach above an advisory one, classified by rule membership rather than by prose; and a real breach uses per-symbol rejection or resizing, not a whole-plan veto, since the portfolio-wide `scale_all_buys` lever was made advisory-only on entries (item 134, same day).
+
+**Not touched.** No trading code changed in this pass. This is a board-truth pass: each item was checked to no longer reproduce or to already be fixed, then removed from `docs/WORK.md`'s open list, deleted from `docs/BOARD_NOTES.md`, and added to the retired-numbers line.
+
+---
+
 ### 2026-09-25 — the risk seat's portfolio-wide BUY/SHORT multiplier no longer sizes trades; it is now advisory on entries (items 134 + 162)
 
 **In plain words:** the AI risk officer had a single knob that could shrink every new trade in the plan at once — cut them all to 70%, half them, or zero the whole new-entry side. The number it wrote there was never derived from anything measurable; across the whole decision record it only ever held 1.0 or 0.7, and 0.7 was literally the example in its own instructions. The owner ruled that a made-up, uncheckable number may not decide how much real money goes into a trade. So on new trades the knob is now ADVISORY: the seat still expresses the concern and its reason, and that reaches the owner, but it no longer changes any trade size and drops nothing. What actually limits total exposure are the hard limits already enforced in code — the gross-exposure ceiling, the per-trade risk budget, and the correlation / at-risk budget — which run before the seat is even consulted.
