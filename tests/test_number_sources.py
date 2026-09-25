@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 142, (
+    assert MAX_ARBITRARY_ENTRIES == 143, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -252,7 +252,16 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "board item's other literal, a flat 40% max-distance cap, was found "
         "already gone from the code -- replaced 2026-09-12 by the ATR-based "
         "`horizon_reach` window, which is already ledgered -- so nothing new "
-        "was added for it."
+        "was added for it. "
+        "142 -> 143 on 2026-09-25, board item 80 (reworked): a genuinely new "
+        "number, `src.portfolio_constructor.ConstructorConfig."
+        "structural_stop_buffer_pct` (0.005) -- the buffer a no-ATR protective "
+        "stop sits past the structural level it is read from "
+        "(`_derive_structural_stop_no_atr`), added when the item-80 branch was "
+        "reworked from an outright refusal into a structural-stop fallback per "
+        "the owner ruling. No published method fixes a buffer size, so it is "
+        "recorded honestly as `arbitrary`, ratified as owner-appetite with its "
+        "open question and cost stated."
     )
 
 

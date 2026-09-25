@@ -1987,7 +1987,9 @@ outcomes instead of one, each logged by name:
 | at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
 | at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
 | not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
-| no ATR reading at all | left alone | the kept stop |
+| no ATR reading at all | **stop READ from price structure and the position HELD** (board item 80, owner 2026-09-25) — nearest verified computed level on the protective side, else the signal/prior bar, placed one appetite buffer past it; refused only when no level is readable or it fails the desk's stop-distance sanity bound | the structural stop |
+
+**Item 80 rework (owner ruling 2026-09-25).** The last row above changed twice. It originally *honoured* a model-typed stop with no ATR (an unverifiable number setting position size — the item-80 defect). A first pass then made it *refuse* the name. The owner overruled that: "there are always levels, even from a few days ago, and there are other ways of setting a stop." So with no ATR the stop is now derived from price structure that survives on the analysis object (`computed_levels` with enough touches, else `signal_bar_low`/`signal_bar_high`) and the position is HELD; the name is skipped only when no structural level is readable at all, or the only readable one sits past the desk's existing stop-distance sanity bound (skip on risk, not on the missing reading). Published basis: swing-low / prior-bar low / Donchian channel-low stops. The buffer past the level is owner-appetite (`ConstructorConfig.structural_stop_buffer_pct`, ledgered).
 
 **Neither threshold moved AT THE TIME THIS SPEC SECTION WAS WRITTEN.**
 `min_stop_atr_multiple` has since moved twice — 3.0 (as written here) -> 1.5

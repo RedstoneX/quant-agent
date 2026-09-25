@@ -1002,22 +1002,26 @@ def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
     assert decisions[0].reward_risk < 1.5
 
 
-def test_no_volatility_reading_refuses_a_typed_stop_rather_than_size_off_it():
-    """Board item 80 (2026-09-25). With no ATR there is nothing to verify a
-    typed stop against, so the name is REFUSED rather than sized off an
-    unverifiable distance. This used to return the typed stop (97.6) tight as
-    STOP_RULE_NO_VOLATILITY — the one branch that let an unverifiable number
-    set the share count. Every other branch widens a stop it cannot back; with
-    no ATR there is no band to widen to, so the only safe move is to refuse."""
-    from src.portfolio_constructor import STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+def test_no_volatility_reading_derives_structural_stop_and_holds():
+    """Board item 80 (2026-09-25, REWORKED per owner ruling). With no ATR the
+    stop is READ from price structure and the position HELD, not refused: a
+    missing volatility reading is never a reason to skip protection. The first
+    item-80 pass refused this input; the ruling overruled it ("there are always
+    levels"). The unverifiable typed 97.6 does NOT set the stop — the nearest
+    VERIFIED computed level below entry does, one buffer below it."""
     constructor = PortfolioConstructor()
-    analysis = _vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)
-    assert constructor._widen_stop_past_noise(
-        "MSFT", analysis, 100.0, 97.6, target_price=160.0,
-    ) is None
-    assert constructor.last_refusals["MSFT"]["refusal"] == (
-        STOP_REFUSAL_TYPED_STOP_NO_VOLATILITY
+    # A close, verified structural level below entry (the fixture leaves the
+    # typed stop unbacked; `computed` supplies the level the fallback reads).
+    analysis = _vol_analysis(
+        "MSFT", 100.0, 97.6, 160.0, atr=None, computed=[97.0],
     )
+    buffer = constructor.cfg.structural_stop_buffer_pct
+    stop = constructor._widen_stop_past_noise(
+        "MSFT", analysis, 100.0, 97.6, target_price=160.0,
+    )
+    assert stop is not None, "a missing ATR must not skip protection"
+    assert abs(stop - 97.0 * (1.0 - buffer)) < 1e-9
+    assert constructor.last_refusals == {}
 
 
 def test_no_volatility_reading_refuses_the_trade_outright():
