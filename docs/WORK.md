@@ -400,7 +400,7 @@ detail: docs/BOARD_NOTES.md (item 167)
 **174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
 DONE WHEN:
-  - [ ] a self-clear reaches the owner on the same surface the suspension did
+  - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, stating the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; durable/retryable like the quota-recovery alert
   - [ ] cooldown and allowance re-read against a real occurrence
 detail: docs/BOARD_NOTES.md (item 174)
 
