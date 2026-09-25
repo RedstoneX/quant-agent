@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 142, (
+    assert MAX_ARBITRARY_ENTRIES == 140, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -252,7 +252,15 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "board item's other literal, a flat 40% max-distance cap, was found "
         "already gone from the code -- replaced 2026-09-12 by the ATR-based "
         "`horizon_reach` window, which is already ledgered -- so nothing new "
-        "was added for it."
+        "was added for it. "
+        "142 -> 140 on 2026-09-25, board item 52: "
+        "`src.config.SmartMoneyConfig.min_transaction_value_usd` (100,000) and "
+        "`external_min_transaction_value_usd` (250,000) were deleted, not "
+        "sourced -- no published study supports single-transaction dollar "
+        "size as a positive insider-buy predictor (the closest, Cziraki & "
+        "Gider 2019, finds size inversely related), so the Form 4 insider-buy "
+        "admission screen no longer gates on size at all. Two rows left the "
+        "ledger, so the count is lowered by exactly two in the same commit."
     )
 
 
