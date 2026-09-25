@@ -4764,10 +4764,16 @@ class TradingPipeline:
         else:
             actual_residual = computed_residual
         if actual_residual <= 0:
-            # Full exit — no residual to re-protect. A stop-repair may have
-            # re-added protection inside the cancel-then-sell window (item
-            # 127(b)); clear any that is now resting on the flat position.
-            self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
+            # Full exit — no residual to re-protect. NO stray-stop cleanup
+            # here, deliberately (item 127(b) must fail CLOSED): the only
+            # broker-CONFIRMED flat (`current_qty == 0`) already returned
+            # above and did the cleanup there. Reaching this line means
+            # `current_qty` is either None — the position read FAILED, so we
+            # cannot confirm flat — or > 0 — the broker still reports shares
+            # (a concurrent re-entry / scale-in) while cached math says
+            # residual<=0. Cancelling a stop in either case would strip
+            # protection off live-or-unconfirmed shares. Leave the stop
+            # standing, exactly as main did.
             return True, []  # full exit — no residual to re-protect
 
         if not self._reprotect_residual_after_partial_sell(

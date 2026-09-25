@@ -75,6 +75,50 @@ def test_full_exit_cancels_stray_stop_short_uses_buy_side():
     p.broker.cancel_stray_protective_stops.assert_called_once_with("TSLA", side="buy")
 
 
+def test_no_cancel_when_broker_read_failed_even_if_cached_residual_zero():
+    """Site-3 fail-closed (hole 1): the SELL filled its full cached qty
+    (computed_residual == 0) but the broker position read FAILED (None). We
+    could NOT confirm flat, so the stray-stop sweep must NOT fire — cancelling
+    a stop we cannot prove is stray would strip protection off shares whose
+    live qty is unknown."""
+    p = _mk_pipeline()
+    p.broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+    }
+    p._current_position_qty_for_finalize = MagicMock(return_value=None)
+
+    cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
+    ok, retry = p._finalize_protection_after_sell_core(
+        "sell-order-readfail", "NVDA", 10.0, cancelled,
+    )
+
+    assert ok is True and retry == []
+    p.broker.cancel_stray_protective_stops.assert_not_called()
+
+
+def test_no_cancel_when_broker_still_reports_shares_even_if_cached_residual_zero():
+    """Site-3 fail-closed (hole 2): cached math says residual<=0, but the
+    broker still reports shares held (a concurrent re-entry / scale-in landed
+    after the SELL). The stop is protecting LIVE shares; the sweep must NOT
+    cancel it. On main this branch simply returned and left the stop intact —
+    the sweep must not regress that."""
+    p = _mk_pipeline()
+    p.broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+    }
+    # Full cached exit (10-10=0) but broker reports 5 shares back on the book.
+    p._current_position_qty_for_finalize = MagicMock(return_value=5.0)
+    p._reprotect_residual_after_partial_sell = MagicMock(return_value=True)
+
+    cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
+    ok, retry = p._finalize_protection_after_sell_core(
+        "sell-order-reentry", "NVDA", 10.0, cancelled,
+    )
+
+    assert ok is True and retry == []
+    p.broker.cancel_stray_protective_stops.assert_not_called()
+
+
 def test_partial_exit_does_not_sweep_stray_stops():
     """A partial SELL leaves a live residual — the resting stop is legitimate
     coverage, not a stray. The sweep must NOT run."""
