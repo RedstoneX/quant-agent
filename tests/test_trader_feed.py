@@ -1037,7 +1037,11 @@ def test_length_pressure_protects_risk_and_execution_reasoning(tmp_path, monkeyp
     # But the Risk verdict's own one-sentence reasoning DOES survive —
     # this is the regression this test pins.
     assert risk_reasoning in msg
-    assert "every buy cut to 50% of the size asked for" in msg
+    # Board items 134 + 162 (owner ruling 2026-09-25): scale_all_buys is
+    # ADVISORY on entries — the concern is surfaced, but the feed must NOT
+    # claim buys were cut, because they no longer are.
+    assert "advisory only, entries were NOT resized" in msg
+    assert "cut to 50%" not in msg
 
     notifier = TelegramNotifier(token="t", chat_id="c")
     symbols = trader_feed.extract_alert_symbols(run, result)
