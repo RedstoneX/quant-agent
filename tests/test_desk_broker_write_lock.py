@@ -343,3 +343,75 @@ def test_sell_inside_a_held_scan_lock_does_not_deadlock(tmp_path):
     assert box["outer"] is True
     assert box["result"] is not None
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# criterion (b), adversary fixes: the wait is BOUNDED, and proceeding
+# unlocked leaves a durable record AND pages the owner
+# ---------------------------------------------------------------------------
+
+def test_sell_gives_up_a_stuck_lock_and_records_and_alerts(tmp_path, monkeypatch):
+    """FIX 1 + FIX 2: a must-fill exit must not stall forever on a stuck lock
+    holder. With the shared flock held by someone else, `_submit_protected_sell`
+    waits only the bounded engineering timeout, then PROCEEDS unlocked — and
+    because the item-127 naked-window serialization was dropped for this
+    symbol, it leaves a DURABLE record and pages the owner."""
+    import fcntl
+
+    from src import notifier
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "quant_agent.db"))
+    db.initialize()
+
+    # Someone else (a stuck repair pass) holds the shared flock and never lets
+    # go for the duration of this test — a separate fd, so it genuinely blocks
+    # this process's non-blocking acquire.
+    lock_path = Path(db.db_path).parent / ".intraday_scan.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = open(lock_path, "w")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+
+    # A tiny bounded wait so the test is fast; the real value is 120s.
+    monkeypatch.setattr("src.pipeline._DESK_LOCK_BLOCKING_TIMEOUT_S", 0.4)
+    monkeypatch.setattr("src.pipeline._DESK_LOCK_POLL_INTERVAL_S", 0.05)
+
+    alerts: list = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        lambda text, symbols=None: alerts.append((text, symbols)) or True,
+    )
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = db
+    p.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
+    p.broker = MagicMock()
+    p.broker.snapshot_protective_stops.return_value = (True, [])
+    p.broker.submit_order.return_value = {"id": "sell-1", "status": "accepted"}
+
+    started = time.monotonic()
+    result = p._submit_protected_sell(
+        symbol="NVDA", qty=10.0, limit_price=None, reference_price=100.0,
+        position_qty_before_sell=10.0, label="FORCE_DELEVER",
+    )
+    waited = time.monotonic() - started
+
+    # The exit itself went through, and it did so promptly — bounded, not stuck.
+    assert result is not None, "the must-fill exit must proceed unlocked"
+    assert waited < 5.0, "the wait was not bounded by the engineering timeout"
+
+    # Durable record: one stop_serialization_dropped row for NVDA.
+    rows = db.get_latest_symbol_evidence("stop_serialization_dropped", ["NVDA"])
+    assert "NVDA" in rows, "no durable serialization-dropped record was written"
+    payload = json.loads(rows["NVDA"]["evidence_json"])
+    assert payload["label"] == "FORCE_DELEVER"
+
+    # Owner alert: paged, and scoped to the symbol.
+    assert len(alerts) == 1, "the owner was not paged that serialization dropped"
+    text, symbols = alerts[0]
+    assert "SERIALIZATION DROPPED" in text
+    assert symbols == ["NVDA"]
+
+    fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+    holder.close()
+    db.close()

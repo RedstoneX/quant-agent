@@ -40,6 +40,11 @@ TRAIL_STATE_KIND = "trail_state"
 STOP_REPAIR_REFUSAL_KIND = "stop_repair_refusal"
 #: One row per protective stop the desk's own kill switch refused to send.
 PROTECTIVE_STOP_BLOCKED_KIND = "protective_stop_blocked"
+#: One row per exit that ran its cancel-stops→submit window WITHOUT the desk
+#: broker-write lock (board item 127 criterion b): the lock timed out or could
+#: not be established, so the naked-window serialization against a repair pass
+#: was dropped for that symbol.
+STOP_SERIALIZATION_DROPPED_KIND = "stop_serialization_dropped"
 
 #: `agent_name` on every row here. The deterministic desk, not a model seat.
 RECORD_AGENT = "pipeline"
@@ -196,4 +201,32 @@ def record_protective_stop_blocked(
         "kill_switch_path": str(kill_switch_path or ""),
     }
     return _insert(db, run_id=run_id, kind=PROTECTIVE_STOP_BLOCKED_KIND,
+                   symbol=symbol, payload=payload)
+
+
+# ---------------------------------------------------------------------------
+# 4. an exit that ran WITHOUT the desk broker-write lock (item 127 b)
+# ---------------------------------------------------------------------------
+
+def record_stop_serialization_dropped(
+    db: Any, *, symbol: str, label: str, reason: str = "",
+    run_id: str | None = None,
+) -> bool:
+    """One row per exit that ran its cancel-stops→submit window without the
+    desk broker-write lock, so the item-127 serialization against a repair
+    pass was dropped for that symbol. Observability only — like the rest of
+    this module, it never changes whether the exit proceeds."""
+    payload = {
+        "code": "serialization_dropped",
+        "detail": (
+            f"{str(label or '').strip() or 'exit'} for "
+            f"{str(symbol or '').strip().upper()} ran WITHOUT the desk "
+            f"broker-write lock; stop-protection serialization against a "
+            f"repair pass was dropped for this symbol (item 127 naked-window "
+            f"race briefly reopened)"
+        ),
+        "label": str(label or ""),
+        "reason": str(reason or ""),
+    }
+    return _insert(db, run_id=run_id, kind=STOP_SERIALIZATION_DROPPED_KIND,
                    symbol=symbol, payload=payload)

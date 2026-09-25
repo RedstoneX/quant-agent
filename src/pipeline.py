@@ -124,6 +124,25 @@ _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 #: identity block into the longest step of the morning session.
 _PM_PROFILE_SYMBOL_CAP = 40
 
+#: Bound on how long the cancel-stops-then-sell window (board item 127
+#: criterion b) will WAIT for a repair pass to release the desk broker-write
+#: lock before it gives up waiting and proceeds unlocked. This is a pure
+#: ENGINEERING timeout, not a trade-governing number — it neither sizes, times
+#: nor prices any trade, so it is deliberately NOT in the number ledger. Its
+#: job is only to stop a *stuck* lock holder (a repair pass makes broker HTTP
+#: calls while holding the lock, each capped at `_BROKER_HTTP_TIMEOUT` = 30s)
+#: from stalling a must-fill emergency de-lever indefinitely — the adversary's
+#: finding that an unbounded wait is plausibly worse than the naked-stop window
+#: it closes. 120s = 4× that per-call broker cap: generous headroom for a
+#: HEALTHY repair holding the lock across a few broker writes to finish and
+#: release (so ordinary contention still serialises correctly and no alert
+#: fires), while bounding a WEDGED holder's stall of a de-lever to two minutes.
+_DESK_LOCK_BLOCKING_TIMEOUT_S = 120.0
+#: Re-try cadence while waiting for the blocking acquire above. Small enough
+#: that the wait ends promptly once the holder releases; large enough not to
+#: spin. Engineering-only, not trade-governing.
+_DESK_LOCK_POLL_INTERVAL_S = 0.25
+
 def _optional_risk_number(value) -> float | None:
     """Read an OPTIONAL numeric risk setting, or None.
 
@@ -4153,6 +4172,56 @@ class TradingPipeline:
                 "kill-switch-block owner alert failed for %s: %s", symbol, exc,
             )
 
+    def _record_serialization_dropped(self, *, symbol: str, label: str) -> None:
+        """An exit ran its cancel-stops→submit window WITHOUT the desk
+        broker-write lock (item 127 b) — the lock timed out or could not be
+        established. Leave a DURABLE record and page the owner that
+        stop-protection serialization was dropped for this symbol. Never
+        raises: this is called from inside the SELL path and the exit is the
+        priority — bookkeeping must never be able to strand it.
+
+        Reuses the existing durable channel (`specialist_evidence` via
+        `exit_path_records`) and the existing owner-alert path
+        (`notifier.send_owner_alert`); it invents neither. Not deduped per day
+        — each dropped-serialization exit is a distinct degraded-safety event
+        worth its own notice, and the count is bounded by the number of exits
+        that proceed unlocked (not a per-tick loop)."""
+        try:
+            from src.execution.exit_path_records import (
+                record_stop_serialization_dropped,
+            )
+
+            record_stop_serialization_dropped(
+                self.db, symbol=symbol, label=label,
+                reason="broker-write lock timed out or unavailable",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "serialization-dropped record failed for %s: %s", symbol, exc,
+            )
+        try:
+            from src import notifier as _notifier
+
+            name = str(symbol or "").strip().upper()
+            _notifier.send_owner_alert(
+                "🛑🛑 STOP-PROTECTION SERIALIZATION DROPPED\n"
+                f"{str(label or 'exit').strip()} for {name} had to run its "
+                "cancel-stops-then-sell window WITHOUT the desk broker-write "
+                "lock (it timed out or could not be established). The exit "
+                "itself went ahead — a deliberate risk-reducing exit is never "
+                "dropped — but for a brief moment a repair pass could have "
+                "re-added a protective stop on shares the desk had "
+                "un-protected in order to sell (the item-127 race). Check "
+                f"{name} at the broker: confirm the position closed as "
+                "intended and that no stray protective stop was left resting.",
+                symbols=[name] if name else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "serialization-dropped owner alert failed for %s: %s",
+                symbol, exc,
+            )
+
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
         outcome: dict | None = None, resting_stops: list | None = None,
@@ -4231,16 +4300,31 @@ class TradingPipeline:
         contention), we proceed anyway — that degrades to the pre-item-127
         behaviour where this path held no lock, and stranding a risk-reducing
         exit on a lock-file error would be its own, worse, live-risk failure.
+        The wait is BOUNDED (`_DESK_LOCK_BLOCKING_TIMEOUT_S`, adversary
+        finding): a stuck repair holding the lock must not stall a must-fill
+        de-lever forever, so on timeout we also proceed unlocked.
+
+        Whenever we proceed UNLOCKED — timeout OR lock-file error — the
+        cancel→submit window is no longer serialised against a repair pass, so
+        the item-127 naked-window race is briefly reopened for THIS symbol. That
+        is a degraded-safety event, not a log line: it leaves a DURABLE record
+        and pages the owner (`_record_serialization_dropped`). We never let that
+        bookkeeping block the exit itself — the sell is the priority.
         Reentrant: safe even if a future caller reaches this from inside a
         path that already holds the lock (see the lock's docstring).
         """
-        with self._intraday_scan_process_lock(blocking=True) as lock_ok:
+        with self._intraday_scan_process_lock(
+            blocking=True, timeout=_DESK_LOCK_BLOCKING_TIMEOUT_S,
+        ) as lock_ok:
             if not lock_ok:
                 logger.warning(
-                    "%s: could not establish the intraday broker-write lock for "
-                    "%s — proceeding WITHOUT it (best-effort, matches "
-                    "pre-item-127 behaviour)", label, symbol,
+                    "%s: proceeding WITHOUT the intraday broker-write lock for "
+                    "%s — stop-protection serialization DROPPED for this exit "
+                    "(lock timed out or could not be established); the item-127 "
+                    "naked-window race is briefly reopened for this symbol",
+                    label, symbol,
                 )
+                self._record_serialization_dropped(symbol=symbol, label=label)
             return self._submit_protected_sell_locked(
                 symbol=symbol,
                 qty=qty,
@@ -15377,7 +15461,8 @@ class TradingPipeline:
         return blocking is not None
 
     @contextlib.contextmanager
-    def _intraday_scan_process_lock(self, *, blocking: bool = False):
+    def _intraday_scan_process_lock(self, *, blocking: bool = False,
+                                    timeout: float | None = None):
         """Process-level mutex for the intraday scan and every desk broker-write.
 
         Yields True when this process holds the lock, False otherwise.
@@ -15390,6 +15475,32 @@ class TradingPipeline:
         ``blocking=True`` and WAITS for the repair pass to finish. While it
         waits, the repair pass's own non-blocking acquire keeps returning False,
         so the two can never both mutate the broker at once, in EITHER order.
+
+        ``timeout`` (adversary finding, 2026-09-25): a blocking acquire is
+        BOUNDED, never indefinite. A repair pass holds the lock across broker
+        HTTP calls; a *stuck* one would otherwise stall a must-fill emergency
+        de-lever forever, which is plausibly worse than the naked-stop window
+        this closes. When ``timeout`` seconds elapse without the lock, the
+        acquire GIVES UP and yields False, and the caller proceeds unlocked
+        (and must record + alert that serialization was dropped — see
+        `_submit_protected_sell`). Implemented by polling a non-blocking acquire
+        rather than `LOCK_EX`, so the wait is both bounded and thread-safe (no
+        `signal.alarm`). ``timeout=None`` with ``blocking=True`` keeps the old
+        wait-indefinitely behaviour and has no current callers.
+
+        Thread-safety of the reentrancy bookkeeping below
+        (`_intraday_scan_lock_depth` / `_intraday_scan_lock_acquired`): these
+        plain instance attributes are NOT protected by a mutex, and that is
+        deliberate. The desk runs ONE intraday scan per OS process; reentrancy
+        here is a nested `with` inside a single call stack (a de-lever reached
+        from inside `intra_check`), always on the same thread, so the read and
+        the increment never race. The branch's own reentrancy test spawns a
+        thread, but only as a deadlock watchdog — every lock operation in it
+        happens on that one worker thread, not concurrently with the main
+        thread — so the single-thread invariant holds there too. Should the
+        desk ever drive this from two threads at once, replace the counter with
+        a `threading.local` depth or a lock; until then a mutex would be dead
+        weight on the hot path.
 
         Reentrancy: `flock` associates a lock with the open file DESCRIPTION,
         so a second `open()`+`flock` on the same file from the SAME process is
@@ -15427,6 +15538,7 @@ class TradingPipeline:
         are SIGKILLed, so a killed run cannot wedge it.
         """
         import fcntl
+        import time
 
         # Already held by this process: report the outer acquisition and do
         # nothing else (see "Reentrancy" above). Only the outermost `with`
@@ -15445,17 +15557,46 @@ class TradingPipeline:
             lock_path = Path(self.config.storage.db_path).parent / ".intraday_scan.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(lock_path, "w")
-            try:
-                flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(fh.fileno(), flags)
-                acquired = True
-            except BlockingIOError:
-                # Only reachable in the non-blocking mode; a blocking acquire
-                # waits here instead of returning.
-                logger.info(
-                    "Intraday scan: another process already holds the scan "
-                    "lock — skipping this tick (no concurrent position sizing)",
-                )
+            if blocking and timeout is not None:
+                # BOUNDED blocking acquire (adversary finding): poll a
+                # non-blocking flock until we get it or `timeout` elapses.
+                # Polling, not `LOCK_EX`, so the wait is bounded AND thread-safe
+                # (no signal.alarm). A stuck holder can no longer stall a
+                # must-fill de-lever forever; on expiry we fall through with
+                # acquired=False and the caller proceeds unlocked (with a
+                # durable record + owner alert).
+                deadline = time.monotonic() + max(0.0, float(timeout))
+                while True:
+                    try:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        acquired = True
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            logger.warning(
+                                "Intraday scan: waited %.0fs for the desk "
+                                "broker-write lock and it is still held — "
+                                "GIVING UP the wait and proceeding unlocked "
+                                "(bounded emergency fall-through)", timeout,
+                            )
+                            break
+                        time.sleep(_DESK_LOCK_POLL_INTERVAL_S)
+            else:
+                try:
+                    flags = (
+                        fcntl.LOCK_EX if blocking
+                        else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    )
+                    fcntl.flock(fh.fileno(), flags)
+                    acquired = True
+                except BlockingIOError:
+                    # Only reachable in the non-blocking mode; an unbounded
+                    # blocking acquire waits here instead of returning.
+                    logger.info(
+                        "Intraday scan: another process already holds the scan "
+                        "lock — skipping this tick (no concurrent position "
+                        "sizing)",
+                    )
         except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
             logger.warning(
                 "Intraday scan: could not establish the process lock (%s) — "
