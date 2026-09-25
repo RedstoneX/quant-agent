@@ -182,6 +182,16 @@ def level_zone_halfwidth(
 # geometry and confirmed against published measurement — do not "tighten" it.
 MIN_TOUCHES = 2
 
+#: Board item 148 (2026-09-25): this was an inline `/ 10.0` in the strength
+#: formula below, invisible to `src/number_sources.py`'s scanner (outside
+#: rule (e)'s [0.5, 2.0) factor band, per that module's own docstring). Named
+#: here so the ledger scanner sees it; value and behaviour are unchanged.
+#: Nothing measured 10.0 against any alternative — it sets how fast strength
+#: falls off with distance (at `distance_pct` == this value, distance has
+#: halved the raw touch count), and no source for that particular fall-off
+#: rate has been found.
+LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT = 10.0
+
 # No MAX_DISTANCE_PCT here. Until 2026-09-12 a level only counted if it sat
 # within a flat 40% of the current price — a number with no derivation that
 # did not scale: 40% on a utility that moves 1.2% a day is thirty-plus days
@@ -595,7 +605,9 @@ def find_structural_levels(
         # it is not a free upgrade sitting next to the simpler option — it is
         # a different and less defensible ranking. Distance is untouched:
         # nothing here measured it, so nothing here changes it.
-        strength = float(len(cluster)) / (1.0 + distance_pct / 10.0)
+        strength = float(len(cluster)) / (
+            1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
+        )
 
         level = Level(
             price=round(price, 2),

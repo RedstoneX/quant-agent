@@ -1183,6 +1183,28 @@ numbers:
     cost_while_unanswered: >-
       Level clustering decides where structure is, and structure places stops
       - so this sets the granularity of every level-backed stop.
+  - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
+    value: 10
+    status: arbitrary
+    site: src/data/levels.py
+    note: >-
+      Board item 148 (2026-09-25): named out of an inline `/ 10.0` in the
+      level-strength formula (`len(cluster) / (1.0 + distance_pct /
+      LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT)`, src/data/levels.py ~608), which
+      was outside src/number_sources.py rule (e)'s [0.5, 2.0) factor band and
+      so invisible to the scanner (see that module's own docstring, which
+      names this exact literal). No value or behaviour changed in this pass.
+      It sets how fast a level's strength falls off with its distance from
+      price: at distance_pct == 10 (10% away) the raw touch count is halved,
+      at 20% it is a third, and so on.
+    open_question: >-
+      What decay rate, if any, does the desk's own bounce data support for
+      strength-by-distance, as opposed to the touch-count effect that
+      src/data/level_quality.py already measured separately?
+    cost_while_unanswered: >-
+      This ranks the six levels shown to the Tech Analyst and feeds into
+      which level a stop or target is read from, on a fall-off rate nothing
+      has measured.
   - id: src.data.levels.MAX_HORIZON_SESSIONS
     value: 60
     status: derived

@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 141, (
+    assert MAX_ARBITRARY_ENTRIES == 142, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -242,6 +242,17 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "and the six GROSS_LADDER numbers), but ratified appetite stays "
         "`arbitrary`+note by this ledger's convention, so none of those move "
         "the count."
+        "141 -> 142 on 2026-09-25, board item 148: "
+        "`src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (value 10), a "
+        "genuinely new number -- the level-strength formula's `/ 10.0` divisor "
+        "was an inline literal outside rule (e)'s factor band and so invisible "
+        "to the scanner (named in this module's own docstring); it is now a "
+        "named module constant with the same value and the same behaviour, "
+        "recorded honestly as `arbitrary` with its open question stated. The "
+        "board item's other literal, a flat 40% max-distance cap, was found "
+        "already gone from the code -- replaced 2026-09-12 by the ATR-based "
+        "`horizon_reach` window, which is already ledgered -- so nothing new "
+        "was added for it."
     )
 
 
