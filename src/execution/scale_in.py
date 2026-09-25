@@ -48,9 +48,11 @@ stops are repaired separately (item 73, closed).
 
 No new magic percentages. The stop trigger is the live protective level
 already at the broker (or the add's reviewed stop if that is tighter).
-The 3% stop-limit buffer is `AlpacaBroker.STOP_LIMIT_BUFFER_PCT`, the
-same one every other protective-stop path uses. `execution.repeg_enabled`
-is not consulted and is not changed.
+The re-armed protective stop is a stop-MARKET (guaranteed exit, owner
+ratified 2026-09-25); the 3% `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` limit is
+passed through only so the broker's unsupported-combo stop-limit FALLBACK
+has a valid limit — the same buffer every other protective-stop path uses.
+`execution.repeg_enabled` is not consulted and is not changed.
 """
 from __future__ import annotations
 

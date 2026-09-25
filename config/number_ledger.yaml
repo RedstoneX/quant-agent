@@ -3807,21 +3807,29 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Board item 138. How far past the trigger a protective stop-limit's limit
-      sits (3%), on every protective stop the desk places
-      (src/execution/broker.py:4375-4396) and re-used by stop repair
-      (src/execution/stop_repair.py:243). A class attribute, so rules (a)/(b)
-      never saw it; PR #544's description said it was ledgered and it was not.
-      src/execution/scale_in.py:213 carries a second 0.03 as a getattr
-      fallback, in a file outside scope.
+      sits (3%). As of the 2026-09-25 owner ruling, PRIMARY protective stops
+      are stop-MARKET (guaranteed exit), so this NO LONGER governs the stop
+      the desk normally places. It now governs only (a) the stop-limit
+      FALLBACK taken when the broker refuses a stop-market for an unsupported
+      order-type/tif combo (src/execution/broker.py `_submit_stop_limit_order`)
+      and (b) the force-de-lever must-fill SELL / its proceeds haircut
+      (the derived 0.97 below). Still re-used, on the fallback path, by stop
+      repair (src/execution/stop_repair.py) and the scale-in rearm. A class
+      attribute, so rules (a)/(b) never saw it; PR #544's description said it
+      was ledgered and it was not. src/execution/scale_in.py carries a second
+      0.03 as a getattr fallback, in a file outside scope.
     open_question: >-
-      On this desk's names, how far past a stop trigger does the fill actually
-      land on the gap/fast-market days the stop exists for -- measured from
-      the broker's own stop fills -- and what limit distance keeps the fill
-      probability acceptable?
+      On this desk's names, how far past a stop trigger does a stop-LIMIT
+      fill actually land on the gap/fast-market days the stop exists for --
+      measured from the broker's own stop fills -- and what limit distance
+      keeps the fill probability acceptable on the fallback / de-lever legs?
+      (The primary protective stop no longer depends on this: a stop-market
+      fills when elected.)
     cost_while_unanswered: >-
-      Too tight and a gapping stop does not fill, so the position stays open
-      unprotected until a session acts; too wide and every stopped exit can
-      give back up to 3% beyond the stop.
+      On the fallback / de-lever legs only: too tight and a gapping stop-limit
+      does not fill, so the position stays open unprotected until a session
+      acts; too wide and every such exit can give back up to 3% beyond the
+      stop. The primary stop-market path is not exposed to this trade-off.
   - id: src.execution.broker.AlpacaBroker._MAX_REPLACEMENT_HOPS
     value: 8
     status: not-trade-governing

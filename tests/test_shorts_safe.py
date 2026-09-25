@@ -260,74 +260,114 @@ def test_trailing_short_with_no_live_stop_yields_no_proposal():
 # The single most dangerous line in this task: a short's protective order is
 # a BUY stop, and its limit must sit ABOVE the trigger (a BUY needs headroom
 # to fill on the way up). Getting this backwards submits an order that looks
-# accepted but can never fill, so the position runs unprotected.
+# accepted but can never fill, so the position runs unprotected. The primary
+# protective stop is now a stop-MARKET (owner ratified 2026-09-25), so the
+# side-of-trigger limit only matters on the stop-limit FALLBACK — these tests
+# drive that fallback so the dangerous line still has coverage.
+
+class _FakeComboReject(Exception):
+    """Stand-in for alpaca's APIError: the classifier reads only
+    `status_code` and `str(exc)`."""
+    def __init__(self, message="order type not supported", status_code=422):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 @patch("src.execution.broker.TradingClient")
 def test_place_entry_protection_long_side_unchanged(mock_tc_cls):
-    """No-op proof, literal-for-literal: a BUY entry (the only side any
-    order path submits today) is protected by a SELL stop 3% BELOW."""
+    """A BUY entry is protected by a SELL stop-MARKET (no limit). On the
+    unsupported-combo fallback the stop-LIMIT sits 3% BELOW the trigger."""
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
     broker, client = _broker(mock_tc_cls)
     broker.wait_for_order_terminal = MagicMock(return_value="filled")
     broker.get_order_fill_info = MagicMock(return_value={"filled_qty": 10.0})
-    stop_order = MagicMock(id="s1", status="new")
-    client.submit_order.return_value = stop_order
+    client.submit_order.side_effect = [
+        _FakeComboReject(),                     # primary stop-MARKET refused
+        MagicMock(id="s1", status="new"),       # fallback stop-LIMIT accepted
+    ]
 
     out = broker.place_entry_protection("AAA", "e1", stop_price=100.0, requested_qty=10)
 
     assert out is not None
-    req = client.submit_order.call_args[0][0]
-    assert req.side == OrderSide.SELL
-    assert float(req.stop_price) == 100.0
-    assert float(req.limit_price) == 97.0          # 3% BELOW the trigger
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert isinstance(reqs[0], StopOrderRequest)           # primary: stop-MARKET
+    assert reqs[0].side == OrderSide.SELL
+    assert float(reqs[0].stop_price) == 100.0
+    assert getattr(reqs[0], "limit_price", None) is None
+    assert isinstance(reqs[1], StopLimitOrderRequest)      # fallback: stop-LIMIT
+    assert reqs[1].side == OrderSide.SELL
+    assert float(reqs[1].limit_price) == 97.0              # 3% BELOW the trigger
 
 
 @patch("src.execution.broker.TradingClient")
 def test_place_entry_protection_short_side_submits_buy_stop_limit_above_trigger(mock_tc_cls):
-    """THE pin. A short entry (side='sell') must be protected by a BUY stop
-    with its limit 3% ABOVE the trigger — backwards, and the stop fires into
-    an unmarketable limit that can never fill, and the short runs
-    unprotected with unbounded upside loss."""
+    """THE pin. A short entry (side='sell') is protected by a BUY stop. The
+    primary is a stop-MARKET; on the fallback the stop-LIMIT must sit 3%
+    ABOVE the trigger — backwards, and the fallback fires into an
+    unmarketable limit that can never fill and the short runs unprotected."""
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
     broker, client = _broker(mock_tc_cls)
     broker.wait_for_order_terminal = MagicMock(return_value="filled")
     broker.get_order_fill_info = MagicMock(return_value={"filled_qty": 10.0})
-    stop_order = MagicMock(id="s1", status="new")
-    client.submit_order.return_value = stop_order
+    client.submit_order.side_effect = [
+        _FakeComboReject(),                     # primary stop-MARKET refused
+        MagicMock(id="s1", status="new"),       # fallback stop-LIMIT accepted
+    ]
 
     out = broker.place_entry_protection(
         "SSS", "e1", stop_price=100.0, requested_qty=10, side="sell",
     )
 
     assert out is not None
-    req = client.submit_order.call_args[0][0]
-    assert req.side == OrderSide.BUY
-    assert float(req.stop_price) == 100.0
-    assert float(req.limit_price) == 103.0          # 3% ABOVE the trigger
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert isinstance(reqs[0], StopOrderRequest)           # primary: stop-MARKET
+    assert reqs[0].side == OrderSide.BUY
+    assert float(reqs[0].stop_price) == 100.0
+    assert getattr(reqs[0], "limit_price", None) is None
+    assert isinstance(reqs[1], StopLimitOrderRequest)      # fallback: stop-LIMIT
+    assert reqs[1].side == OrderSide.BUY
+    assert float(reqs[1].limit_price) == 103.0            # 3% ABOVE the trigger
 
 
 @patch("src.execution.broker.TradingClient")
 def test_submit_stop_limit_order_sell_default_fallback_unchanged(mock_tc_cls):
-    """No-op proof for the raw primitive: no explicit limit_price, side
-    defaults to 'sell' → fallback is 3% below, exactly as before shorts."""
+    """The raw primitive: primary is a SELL stop-MARKET; the stop-limit
+    fallback (no explicit limit_price, default side) sits 3% below."""
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
     broker, client = _broker(mock_tc_cls)
-    client.submit_order.return_value = MagicMock(id="o1", status="new")
+    client.submit_order.side_effect = [
+        _FakeComboReject(),
+        MagicMock(id="o1", status="new"),
+    ]
 
     broker._submit_stop_limit_order(symbol="AAA", qty=10, stop_price=200.0)
 
-    req = client.submit_order.call_args[0][0]
-    assert req.side == OrderSide.SELL
-    assert float(req.limit_price) == 194.0
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert isinstance(reqs[0], StopOrderRequest)
+    assert reqs[0].side == OrderSide.SELL
+    assert getattr(reqs[0], "limit_price", None) is None
+    assert isinstance(reqs[1], StopLimitOrderRequest)
+    assert reqs[1].side == OrderSide.SELL
+    assert float(reqs[1].limit_price) == 194.0
 
 
 @patch("src.execution.broker.TradingClient")
 def test_submit_stop_limit_order_buy_side_fallback_is_the_mirror(mock_tc_cls):
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
     broker, client = _broker(mock_tc_cls)
-    client.submit_order.return_value = MagicMock(id="o1", status="new")
+    client.submit_order.side_effect = [
+        _FakeComboReject(),
+        MagicMock(id="o1", status="new"),
+    ]
 
     broker._submit_stop_limit_order(symbol="SSS", qty=10, stop_price=200.0, side="buy")
 
-    req = client.submit_order.call_args[0][0]
-    assert req.side == OrderSide.BUY
-    assert float(req.limit_price) == 206.0
+    reqs = [c.args[0] for c in client.submit_order.call_args_list]
+    assert isinstance(reqs[0], StopOrderRequest)
+    assert reqs[0].side == OrderSide.BUY
+    assert isinstance(reqs[1], StopLimitOrderRequest)
+    assert reqs[1].side == OrderSide.BUY
+    assert float(reqs[1].limit_price) == 206.0
 
 
 # ==========================================================================
