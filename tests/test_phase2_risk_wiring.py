@@ -313,12 +313,13 @@ def test_reviewer_prompt_documents_r_before_thesis_progress():
 # ===========================================================================
 
 def _decision(action="BUY", entry=221.14, stop=207.90, target=242.96,
-              setup_type=None):
+              setup_type=None, structural_ceiling=None):
     from src.models import TradeDecision
     return TradeDecision(
         action=action, symbol="RSG", allocation_pct=5.0,
         entry_price=entry, stop_loss=stop, take_profit=target,
         reasoning="constructed order under test", setup_type=setup_type,
+        structural_ceiling=structural_ceiling,
     )
 
 
@@ -416,6 +417,31 @@ def test_rm_prompt_shows_no_ratio_for_a_breakout_and_says_why():
     # A range order on the identical geometry still shows its real ratio.
     decision.decisions = [_decision(setup_type="range")]
     assert "R/R 1.65:1" in _rm_message(portfolio_decision=decision)
+
+
+def test_rm_reads_the_constructor_measured_breakout_not_just_the_label():
+    """Item 82. `setup_type` is classified TWICE: construction's real verdict
+    is `is_trend_trade(setup_type, structural_ceiling=...)` — label OR
+    measurement, either sufficient — but the analyst's raw label alone used
+    to be all that reached the RM. A trade the analyst still labelled "range"
+    while construction's own level computation found nothing overhead
+    (`structural_ceiling=False`) IS a breakout by construction's own verdict,
+    and must be shown to the RM as one — not as a real, cuttable ratio."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision(setup_type="range", structural_ceiling=False)],
+        portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R 1.65:1" not in msg
+    assert "R/R n/a — BREAKOUT setup" in msg
+    assert "do NOT refuse or resize it on a reward:risk figure" in msg
 
 
 # ===========================================================================

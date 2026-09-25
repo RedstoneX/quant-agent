@@ -360,7 +360,17 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             # pipeline consults for this setup type any more. Silence would
             # be worse than a bad number here: the RM would simply assume
             # the field was missing.
-            if not reward_risk_floor_applies(getattr(d, "setup_type", None)):
+            # item 82: pass the MEASURED half too (`TradeDecision.
+            # structural_ceiling`, populated at construction from the same
+            # `derivation.level_used` the constructor's own reward:risk gate
+            # used), not just the raw analyst label — otherwise a measured
+            # breakout the analyst still labelled "range" is shown a real
+            # R/R ratio here and this seat can refuse/resize a trade
+            # construction's own exemption forbids cutting.
+            if not reward_risk_floor_applies(
+                getattr(d, "setup_type", None),
+                structural_ceiling=getattr(d, "structural_ceiling", None),
+            ):
                 rr = (
                     " | R/R n/a — BREAKOUT setup: no overhead level to "
                     "measure a reward against, managed by trailing stop with "
