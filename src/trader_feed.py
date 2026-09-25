@@ -716,7 +716,11 @@ _DETAILS_SAFETY_RESERVE_CHARS = 250
 
 
 def _wrap_details(
-    lines: list[str], detail_lines: list[str], extra_reserve: int = 0,
+    lines: list[str],
+    detail_lines: list[str],
+    extra_reserve: int = 0,
+    *,
+    protected_lines: list[str] | None = None,
 ) -> int:
     """Append the full, unabridged per-stock reasoning as a collapsed
     `<b>DETAILS</b>` / `<blockquote expandable>` block — NEW LAYOUT item 7.
@@ -730,8 +734,26 @@ def _wrap_details(
     so this block gets its share of the budget first. Returns the budget
     this block did not use, which is what the caller then spends on
     rendering that list at a richer tier.
+
+    `protected_lines` — the Risk verdict + execution/gate record
+    (`_append_risk` + `_append_gate_and_execution`). Reasoning-visibility
+    gap (2026-09-25): `detail_lines` used to be one flat blob clipped from
+    the tail by `_clip_text`, in append order PM -> Risk -> Execution ->
+    Signals. That protected Risk/Execution from the (huge, per-candidate)
+    Signals listing, but NOT from PM: a heavy PM narrative (several
+    actionable orders at up to 420 chars of reasoning each, board item 89)
+    could alone exceed a tight budget and push the clip boundary back
+    into Risk/Execution — the one place besides the DONE line itself that
+    names a real decision the desk made, appearing nowhere else in the
+    message. This reserves `protected_lines`' own budget FIRST, renders it
+    in full whenever it fits, and clips only the PM/Signals prose (in
+    `detail_lines`, PM prioritised over Signals as before) with whatever
+    is left over.
     """
-    text = "\n".join(line for line in detail_lines if line is not None).strip("\n")
+    protected_text = "\n".join(
+        line for line in (protected_lines or []) if line is not None
+    ).strip("\n")
+    free_text = "\n".join(line for line in detail_lines if line is not None).strip("\n")
     wrapper_overhead = len("<b>DETAILS</b>\n<blockquote expandable></blockquote>")
     used = len("\n".join(lines))
     budget = (
@@ -739,10 +761,27 @@ def _wrap_details(
         - _DETAILS_SAFETY_RESERVE_CHARS - max(0, extra_reserve)
     )
     budget = max(0, budget)
-    if not text:
+    marker = "\n[details truncated — see Mission Control]"
+
+    if not protected_text and not free_text:
         return budget
-    if len(text) > budget:
-        text = _clip_text(text, budget, marker="\n[details truncated — see Mission Control]")
+
+    # Reserve the protected block's own room first — bounded already by the
+    # per-field `_clip` calls inside `_append_risk`/`_append_gate_and_
+    # execution`, so this is never the unbounded side. Only a pathological
+    # budget (extremely tight, or an unexpectedly huge protected block)
+    # clips it at all, and even then it's clipped LAST, after free content
+    # has already given up everything it can.
+    join_cost = 1 if protected_text and free_text else 0
+    protected_budget = min(len(protected_text), max(0, budget))
+    free_budget = max(0, budget - protected_budget - join_cost)
+    if len(free_text) > free_budget:
+        free_text = _clip_text(free_text, free_budget, marker=marker)
+    if len(protected_text) > protected_budget:
+        protected_text = _clip_text(protected_text, protected_budget, marker=marker)
+
+    parts = [part for part in (free_text, protected_text) if part]
+    text = "\n".join(parts)
     start = len(lines)
     lines.append(_b("DETAILS"))
     lines.append(f"<blockquote expandable>{text}</blockquote>")
@@ -753,6 +792,7 @@ def _wrap_details(
 def _budgeted_sections(
     lines: list[str], slot: int, looked_at_rows: list[dict], profiles: dict,
     snap: dict[str, Any] | None, detail_lines: list[str],
+    protected_lines: list[str] | None = None,
 ) -> None:
     """Fit BOTH the candidate list and the reasoning block into one
     message, in the owner's order of need — and the reason the candidate
@@ -787,7 +827,9 @@ def _budgeted_sections(
     floor = _looked_at_block(looked_at_rows, profiles, snap, budget=0)
     # +1 for the blank separator line `_seal_section` would insert.
     reserve = (len("\n".join(floor)) + 1) if floor else 0
-    spare = _wrap_details(lines, detail_lines, extra_reserve=reserve)
+    spare = _wrap_details(
+        lines, detail_lines, extra_reserve=reserve, protected_lines=protected_lines,
+    )
     if not floor:
         return
     block = _looked_at_block(
@@ -1216,6 +1258,17 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
     elif pm_summary and str(pm_summary).lower() != "no trades":
         lines.append(f"   PM view (this check): {_clip(pm_summary, 550)}")
 
+    # Reasoning-visibility gap (2026-09-25): "why THIS size" already reaches
+    # the dashboard (`ReasoningChain.sizing_logic`, rendered generically off
+    # `pm_reasoning.reasoning_chain` — see frontend `PM_CHAIN_LABELS`) but
+    # never Telegram. It's a session-level sentence (one PM call sizes every
+    # order this check), not per-symbol, so it's only worth a line when the
+    # PM actually changed something. Surfaced verbatim, not recomputed.
+    chain = reasoning.get("reasoning_chain") if isinstance(reasoning, dict) else None
+    sizing_logic = chain.get("sizing_logic") if isinstance(chain, dict) else None
+    if actionable and sizing_logic:
+        lines.append(f"   Sizing: {_clip(sizing_logic, 300)}")
+
 
 # `models.RiskReasonCategory`, each value in the words a person would use
 # (board item 89: internal status codes shown as-is). An unmapped value is
@@ -1511,7 +1564,15 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
 def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict) -> None:
     """NEW LAYOUT item 3 — orders that actually reached the broker, one
     line each, the true fill state (never implying a fill that hasn't
-    happened — `trades.fill_status` stays 'submitted' until it has)."""
+    happened — `trades.fill_status` stays 'submitted' until it has).
+
+    Reasoning-visibility gap (2026-09-25): this line used to carry only
+    the mechanics (action/qty/price/stop) — the WHY sat exclusively in the
+    collapsed DETAILS block below (`_append_pm`), which a phone reader has
+    to tap open. `trades.reasoning` is the same PM one-sentence rationale
+    already attached to this row by `_read_run`'s `SELECT ... reasoning
+    ... FROM trades`; nothing is recomputed here, just surfaced inline so
+    the reason for the trade is visible without opening DETAILS."""
     if not rows:
         return
     lines.append(_b("✅ DONE"))
@@ -1530,9 +1591,11 @@ def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict)
         # No legitimate stop is ever exactly 0.0 (the constructor rejects
         # stop_loss <= 0 for BUY/SHORT), so a positive check is safe here.
         stop_text = f" · stop ${stop:,.2f}" if stop else ""
+        reason = _clip(row.get("reasoning"), 140)
+        reason_text = f" — {reason}" if reason else ""
         lines.append(
             f"   • {action} {_ticker_co(symbol, profiles)} {qty_text} @ "
-            f"{price_text} — {state}{stop_text}"
+            f"{price_text} — {state}{stop_text}{reason_text}"
         )
 
 
@@ -1925,13 +1988,20 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     # appear nowhere else in the message. Measured on run-fccb2026: the
     # signals listing is 9,379 of the block's 9,799 characters; the PM
     # reasoning is 303, the risk verdict 0 and the execution record 114.
+    #
+    # Risk/Execution ("protected_lines") are split out and passed to
+    # `_wrap_details` separately (2026-09-25 reasoning-visibility fix):
+    # they get their own reserved budget so a heavy PM narrative can no
+    # longer push the clip boundary back into them — see `_wrap_details`.
     detail_lines: list[str] = []
     _new_block(detail_lines, _append_pm, snap)
-    _new_block(detail_lines, _append_risk, snap)
-    _new_block(detail_lines, _append_gate_and_execution, result, snap)
     _new_block(detail_lines, _append_signals, snap)
+    protected_lines: list[str] = []
+    _new_block(protected_lines, _append_risk, snap)
+    _new_block(protected_lines, _append_gate_and_execution, result, snap)
     _budgeted_sections(
         lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+        protected_lines,
     )
 
     _new_block(lines, _append_footer, snap, elapsed)
@@ -2935,15 +3005,20 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
         detail_lines, _append_intraday_evidence_freshness, outer, nested,
     )
     # Reasoning first, the per-candidate enumeration last — same ordering
-    # and same reason as `_format_decision_session`.
+    # and same reason as `_format_decision_session`. Risk/Execution are
+    # split into `protected_lines` and given their own reserved budget in
+    # `_wrap_details` (2026-09-25 reasoning-visibility fix) so they survive
+    # even when the PM narrative alone is long enough to eat the budget.
     _new_block(detail_lines, _append_pm, snap, may_glue=True)
-    _new_block(detail_lines, _append_risk, snap)
+    _new_block(detail_lines, _append_signals, snap, candidates=candidates)
+    protected_lines: list[str] = []
+    _new_block(protected_lines, _append_risk, snap)
     # `nested`, not `outer`: on the intraday path the traded-order evidence
     # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict.
-    _new_block(detail_lines, _append_gate_and_execution, nested, snap)
-    _new_block(detail_lines, _append_signals, snap, candidates=candidates)
+    _new_block(protected_lines, _append_gate_and_execution, nested, snap)
     _budgeted_sections(
         lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+        protected_lines,
     )
 
     _new_block(lines, _append_footer, snap, elapsed)

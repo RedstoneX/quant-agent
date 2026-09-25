@@ -123,13 +123,13 @@ def _evidence(db, run_id, agent, kind, data, symbol=None):
     conn.close()
 
 
-def _trade(db, run_id, symbol, action, qty=1, price=100, status="filled"):
+def _trade(db, run_id, symbol, action, qty=1, price=100, status="filled", reasoning="test"):
     conn = sqlite3.connect(db)
     conn.execute(
         "INSERT INTO trades "
         "(symbol, action, qty, price, reasoning, run_id, fill_status, fill_qty, fill_price) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (symbol, action, qty, price, "test", run_id, status, qty, price),
+        (symbol, action, qty, price, reasoning, run_id, status, qty, price),
     )
     conn.commit()
     conn.close()
@@ -924,6 +924,128 @@ def test_length_pressure_drops_details_before_scan_first_content(tmp_path, monke
     assert len(final_text) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
     assert "DONE" in final_text
     assert "Cameco Corporation" in final_text
+
+
+def test_done_line_carries_trade_reasoning_inline(tmp_path, monkeypatch):
+    """Reasoning-visibility gap (2026-09-25): the ✅ DONE line used to show
+    only action/qty/price/stop — the WHY sat exclusively in the collapsed
+    DETAILS block, which a phone reader has to tap open. `_append_done`
+    must surface the same `trades.reasoning` value (the PM's one-sentence
+    rationale, already attached to the row) inline on the trade's own
+    line, without recomputing anything."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-done-reasoning"
+    trade_reason = "Breakout above the 50-day with volume confirmation."
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10, reasoning=trade_reason)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "<b>✅ DONE</b>" in msg
+    done_line = next(line for line in msg.splitlines() if "BUY" in line and "CCJ" in line)
+    assert trade_reason in done_line
+
+
+def test_pm_line_surfaces_sizing_logic(tmp_path, monkeypatch):
+    """Reasoning-visibility gap (2026-09-25): "why THIS size" (`ReasoningChain.
+    sizing_logic`) reached the dashboard's PM reasoning chain but never
+    Telegram. `_append_pm` must surface it verbatim as a "Sizing:" line
+    whenever the PM actually changed the book."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-sizing-logic"
+    sizing_text = "Half size given the name's earnings print next week."
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {
+            "portfolio_view": "One clean setup",
+            "reasoning_chain": {
+                "macro_filter": "clear", "news_check": "clean",
+                "earnings_check": "watched", "signal_conflicts": "none",
+                "sizing_logic": sizing_text,
+                "portfolio_balance": "fine", "cash_target": "met",
+            },
+        },
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 4, "reasoning": "clean breakout"},
+        symbol="CCJ",
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert f"Sizing: {sizing_text}" in msg
+
+
+def test_length_pressure_protects_risk_and_execution_reasoning(tmp_path, monkeypatch):
+    """Reasoning-visibility gap (2026-09-25): DETAILS used to be one flat
+    blob clipped from the tail (PM -> Risk -> Execution -> Signals), so a
+    long PM narrative alone could exceed a tight budget and push the clip
+    boundary back into the Risk verdict / execution record — the one place
+    besides DONE that names a real decision the desk made, and which
+    appears nowhere else in the message. `_wrap_details` now reserves the
+    Risk/Execution block ("protected_lines") its own budget before the PM
+    narrative is measured, so it must survive even when the PM text alone
+    would have eaten the whole budget."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-protect-risk-exec"
+    long_reasoning = "Uranium demand tailwind, clean breakout thesis. " * 60  # ~2500 chars
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {"portfolio_view": "Only one clean setup survives the morning screen"},
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
+         "reasoning": long_reasoning},
+        symbol="CCJ",
+    )
+    risk_reasoning = "Sized to half conviction pending the next inventory print."
+    _evidence(
+        db, run, "risk_manager", "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 0.5,
+         "reasoning": risk_reasoning},
+    )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
+    result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    # Tight enough that the PM's long reasoning alone would consume the
+    # whole DETAILS budget under the old flat-clip behaviour.
+    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 900)
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
+    ):
+        msg = trader_feed.format_session_result("morning", result, 12.0)
+
+    assert "<b>DETAILS</b>" in msg
+    assert "[details truncated" in msg
+    # The long PM narrative does not survive in full — it is the clippable
+    # side of the budget.
+    assert long_reasoning.strip() not in msg
+    # But the Risk verdict's own one-sentence reasoning DOES survive —
+    # this is the regression this test pins.
+    assert risk_reasoning in msg
+    assert "every buy cut to 50% of the size asked for" in msg
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    symbols = trader_feed.extract_alert_symbols(run, result)
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
+    final_text = payload["text"]
+
+    assert len(final_text) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
+    assert risk_reasoning in final_text
 
 
 # === Review-only symbols (2026-09-01 gap fix) ===
