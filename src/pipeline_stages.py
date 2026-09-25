@@ -7658,7 +7658,10 @@ class RiskStage:
         # not an automatic unprotect — when neither a stated condition nor
         # a qualifying level exists.
         if portfolio_decision.decisions:
-            from src.risk.exit_guard import holding_discipline_claim_check
+            from src.risk.exit_guard import (
+                holding_discipline_claim_check,
+                veto_contradicted_exit,
+            )
             hd_surviving: list = []
             hd_blocked: list[tuple[str, str]] = []
             macro_regime_today = _macro_regime(macro_analysis)
@@ -7672,6 +7675,38 @@ class RiskStage:
                     e,
                 )
                 hd_active_state_changes = ""
+            # Item 96 — bring the live exit gate `veto_contradicted_exit` onto
+            # the MORNING review path. Until this, that gate ran only on the
+            # midday/close reader (src/pipeline.py::run_position_review), so a
+            # morning SELL/REDUCE/COVER whose stated reason is a provably-false
+            # deterioration claim ("stalling", "not progressing") while the
+            # position's own recorded metrics net-IMPROVED since the previous
+            # review reached the broker unchecked. Same gate, same doctrine
+            # (Phase 3.2): it vetoes ONLY a deterioration claim contradicted
+            # by the numbers; a SELL on news/earnings/regime/invalidation, or
+            # a genuinely-deteriorating position, is never touched, and with no
+            # prior snapshot there is no comparison and no veto. The per-symbol
+            # `MetricDeltas` are built here from the SAME two pipeline methods
+            # the reader uses; morning_trades is [] (a cache only — the empty
+            # list forces the DB fallback that runs anyway, no behaviour
+            # change). Fail OPEN: if the delta build raises we let exits
+            # through (the owner's hard rule is never to block a real
+            # protective exit), matching the reader's fail-open exit posture.
+            metric_deltas: dict = {}
+            try:
+                position_facts = pipeline._build_position_facts(
+                    rm_positions, [], total_value,
+                )
+                metric_deltas = pipeline._build_review_metric_deltas(
+                    position_facts, run_id=run_id,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "RiskStage: metric-delta build for the exit-contradiction "
+                    "gate failed (%s) — morning exits pass this gate unchecked "
+                    "this run (fail open, never block a real exit)", e,
+                )
+                metric_deltas = {}
             for decision in portfolio_decision.decisions:
                 if decision.action not in ("SELL", "REDUCE", "COVER"):
                     hd_surviving.append(decision)
@@ -7736,6 +7771,44 @@ class RiskStage:
                         pipeline, ctx, decision.symbol, "risk",
                         "holding_discipline_claim_unverified", check.finding,
                     )
+                # Item 96 — deterioration-claim-vs-own-numbers veto, morning
+                # path. `veto_contradicted_exit` returns None unless the reason
+                # IS a deterioration claim AND the position net-improved since
+                # the previous review AND a prior snapshot exists; everything
+                # else (news/earnings/regime/invalidation exits, genuinely
+                # deteriorating positions, no prior snapshot) passes untouched.
+                # On a veto, drop the leg through the EXACT hd_blocked machinery
+                # the holding-discipline block above uses (append to hd_blocked,
+                # record a "rejected" pipeline event, and — via the shared tail
+                # below — swap in hd_surviving and terminally reject if nothing
+                # is left), plus the same durable exit-refusal row the
+                # midday/close reader writes for this code.
+                deltas = metric_deltas.get(symbol_u)
+                if deltas is not None:
+                    veto = veto_contradicted_exit(
+                        decision.action, decision.reasoning, deltas,
+                    )
+                    if veto:
+                        logger.warning("Exit guard (morning): %s", veto)
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "risk",
+                            "rejected", veto,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "risk",
+                            "exit_vetoed_contradicts_own_metrics", veto,
+                        )
+                        from src.risk.exit_refusal import (
+                            CODE_CONTRADICTS_METRICS,
+                        )
+                        pipeline._record_exit_refusal(
+                            symbol=symbol_u, run_id=run_id,
+                            action=decision.action,
+                            code=CODE_CONTRADICTS_METRICS, dropped=True,
+                            detail=veto[:400], layer="metric_contradiction",
+                        )
+                        hd_blocked.append((symbol_u, veto))
+                        continue
                 hd_surviving.append(decision)
 
             if hd_blocked:
