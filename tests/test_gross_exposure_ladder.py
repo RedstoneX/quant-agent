@@ -757,6 +757,111 @@ def test_the_de_lever_order_explains_itself_to_the_operator():
 
 
 # ===========================================================================
+# Item 112 — de-lever the WEAKEST BY CONVICTION first, not the biggest loser.
+# ===========================================================================
+
+def _conviction_ceiling(ceiling_usd: float) -> "GrossCeiling":
+    """A ceiling that resolves to exactly `ceiling_usd` against `EQUITY`, so a
+    test can size the excess precisely and leave only one name to trim."""
+    from src.risk.rules import GrossCeiling
+    return GrossCeiling(
+        ceiling_x=ceiling_usd / EQUITY, base_x=BASE_X, drawdown_pct=-16.0,
+        alert_owner=True, rung="test", reason="test ceiling.",
+    )
+
+
+def test_the_conviction_dead_winner_is_sold_before_the_intact_thesis_loser():
+    """**THE load-bearing claim of item 112.** Two held longs, same gross:
+    NVDA is UP on paper but a seat now OPPOSES it (conviction dead); AMD is
+    DOWN on paper but every seat is still aligned (thesis intact). The excess
+    is small enough that only ONE name is trimmed, so the trim order alone
+    decides who is sold.
+
+    Biggest-loser-first would sell AMD (the paper loser). The owner ruling is
+    the opposite: cut the conviction-dead NVDA first and leave the intact AMD
+    to earn its right to stay.
+    """
+    positions = [
+        # Winner, but conviction dead: bought at 90, now 100 (+$1k).
+        _position("NVDA", qty=80.0, avg_entry=90.0, current_price=100.0),  # $8k
+        # Loser, but thesis intact: bought at 150, now 100 (-$4k).
+        _position("AMD", qty=80.0, avg_entry=150.0, current_price=100.0),  # $8k
+    ]
+    # Held gross $16k; ceiling $13k → $3k excess, under one name's $8k, so a
+    # single trim clears it and trims[0] IS the name the order chose first.
+    ceiling = _conviction_ceiling(13_000.0)
+
+    seat_stances = {
+        # A seat actively bearish on a long → opposed → negative signed score.
+        "NVDA": {"technical": "bearish", "news": "bearish", "macro": "neutral"},
+        # Every seat bullish on a long → all aligned → positive signed score.
+        "AMD": {"technical": "buy", "news": "bullish", "macro": "risk_on"},
+    }
+
+    with_conviction = apply_gross_ceiling(
+        [], positions, EQUITY, ceiling, seat_stances=seat_stances,
+    )
+    assert len(with_conviction.trims) == 1, "only one name should need trimming"
+    assert with_conviction.trims[0].symbol == "NVDA", (
+        "the conviction-dead WINNER must be sold before the intact-thesis LOSER"
+    )
+
+    # Prove the ordering flipped BECAUSE of conviction: the same book with no
+    # stance data falls back to biggest-loser and cuts AMD instead.
+    biggest_loser = apply_gross_ceiling([], positions, EQUITY, ceiling)
+    assert biggest_loser.trims[0].symbol == "AMD", (
+        "without conviction data the legacy biggest-loser order must be intact"
+    )
+
+
+def test_conviction_ordering_changes_the_order_not_whether_or_roughly_how_much():
+    """The safety invariant: reordering by conviction changes WHICH names absorb
+    the trim, never WHETHER the book de-levers, and never turns the trim into a
+    full-book liquidation. Both orderings bring the held book under the ceiling,
+    and both free only the excess (bar the pre-existing min-1%-of-a-name clamp),
+    so the conviction signal cannot make the desk shed materially more."""
+    positions = [
+        _position("NVDA", qty=120.0, avg_entry=90.0, current_price=100.0),   # $12k
+        _position("AMD", qty=80.0, avg_entry=150.0, current_price=100.0),    # $8k
+    ]
+    ceiling = resolve_gross_ceiling(-16.0, base_x=BASE_X)  # 1.0x → $10k
+    excess = 20_000.0 - 10_000.0
+    # The min-trim clamp can round the last name up to 1% of its gross, so the
+    # freed total may exceed the excess by at most one such clamp — the same
+    # slack the legacy order already carries, not new to the conviction path.
+    clamp_slack = 0.01 * 12_000.0
+    seat_stances = {
+        "NVDA": {"technical": "bearish", "news": "negative"},
+        "AMD": {"technical": "buy", "news": "bullish"},
+    }
+
+    def freed(outcome):
+        return sum(
+            abs(p.market_value) * (t.allocation_pct / 100.0)
+            for t in outcome.trims
+            for p in positions if p.symbol == t.symbol
+        )
+
+    conviction = apply_gross_ceiling(
+        [], positions, EQUITY, ceiling, seat_stances=seat_stances,
+    )
+    legacy = apply_gross_ceiling([], positions, EQUITY, ceiling)
+
+    for outcome in (conviction, legacy):
+        f = freed(outcome)
+        # WHETHER: the book is brought under the ceiling either way.
+        assert outcome.held_gross - f <= outcome.ceiling_usd + 1e-6
+        # HOW MUCH: only the excess is shed (plus at most one clamp), never
+        # the whole book — the ladder floor stands.
+        assert excess - 1e-6 <= f <= excess + clamp_slack + 1e-6
+        assert f < outcome.held_gross, "must never liquidate the entire book"
+    # And the order genuinely differs: conviction cuts the bearish NVDA first,
+    # the legacy biggest-loser order cuts the down-on-paper AMD first.
+    assert conviction.trims[0].symbol == "NVDA"
+    assert legacy.trims[0].symbol == "AMD"
+
+
+# ===========================================================================
 # Fail-closed on a broken broker snapshot
 # ===========================================================================
 

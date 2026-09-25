@@ -139,6 +139,8 @@ detail: docs/BOARD_NOTES.md (item 173)
 
 **112. A de-lever that leaves the book over its ceiling now writes a durable record — TIER 1, filed 2026-09-18 out of the item 87 audit, RECORD SHIPPED 2026-09-19; the alert decision stays open.** `_enforce_gross_ceiling` used to only log a warning; a run-scoped `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) is now written whenever a de-lever finishes over ceiling, carrying gross/equity before and after and each order's outcome.
 
+CONVICTION ORDERING SHIPPED 2026-09-25 (owner ruling): the gross-ceiling de-lever now sells the WEAKEST BY CONVICTION first, not the biggest paper loser. `apply_gross_ceiling` orders trims by the desk's own signed source score (`S = aligned seats − opposed seats`, the §9.4 measure that sizes entries), computed for each held name from the seat stances the desk LAST recorded on it; the preamble reads those persisted stances (before this session's analysts run) via `Database.latest_seat_stances_for_symbol`, and a name never decided on falls back to the existing biggest-loser tie-break. Only the ORDER changes — never whether the book de-levers or by how much. A conviction-dead winner is now cut before an intact-thesis loser.
+
 NO CRITERIA: whether a failed de-lever should also alert or act is, by this audit's own framing, a live-selling-path decision for the owner, not a self-authorised patch.
 detail: docs/BOARD_NOTES.md (item 112)
 

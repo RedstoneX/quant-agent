@@ -2782,6 +2782,41 @@ class Database:
                 logger.warning("Skipping malformed seat_stance row: %s", e)
         return out
 
+    def latest_seat_stances_for_symbol(self, symbol: str) -> dict:
+        """Each seat's MOST RECENT recorded stance on `symbol`, as {seat: stance}.
+
+        Reads back the persisted `seat_stance` evidence — it never re-derives a
+        stance — taking the stances from the LATEST decision that recorded any
+        for this symbol. Item 112 (owner, 2026-09-25): the gross-ceiling
+        de-lever runs in the session PREAMBLE, before this session's analysts,
+        so it cannot see a fresh verdict; this is how it reaches the conviction
+        the desk LAST reached on each held name, to sell the weakest-by-
+        conviction first rather than the biggest paper loser. Empty dict when
+        the symbol was never in a decided target set (no stance was ever
+        recorded) — the caller then falls back to the biggest-loser order for
+        that name rather than inventing a signal.
+        """
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            return {}
+        with self._lock:
+            latest = self.conn.execute(
+                "SELECT decision_id FROM specialist_evidence "
+                "WHERE kind = ? AND symbol = ? AND decision_id IS NOT NULL "
+                "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                (self.SEAT_STANCE_KIND, sym),
+            ).fetchone()
+        if not latest or not latest["decision_id"]:
+            return {}
+        stances = self.get_seat_stances(
+            decision_id=latest["decision_id"], symbol=sym,
+        )
+        out: dict = {}
+        for st in stances:
+            if st.seat and st.stance:
+                out[st.seat] = st.stance
+        return out
+
     def get_conviction_credits(
         self, *, seat: str | None = None, limit: int | None = None,
     ) -> list:

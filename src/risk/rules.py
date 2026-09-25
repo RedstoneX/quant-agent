@@ -1201,6 +1201,16 @@ def apply_gross_ceiling(
     # (`TradingPipeline._enforce_gross_ceiling`), which runs before any agent
     # and therefore cannot be disabled by a blank model response.
     emit_trims: bool = True,
+    # Item 112 (owner, 2026-09-25): choose WHICH held names to trim by
+    # weakest CONVICTION first, not by biggest paper loss. `{SYMBOL: {seat:
+    # stance}}` — each held name's most recent persisted seat stances (the
+    # preamble reads them from the conviction ledger; the sizing gate, which
+    # never trims, leaves this None). A name a seat actively OPPOSES nets a
+    # lower signed source score and goes first; an intact-thesis name goes
+    # last. Only the ORDER changes — never whether the book de-levers, nor by
+    # how much. Absent for a name (never in a decided target set) → that name
+    # falls back to the biggest-loser tie-break rather than a fabricated score.
+    seat_stances: dict | None = None,
 ) -> GrossCeilingOutcome:
     """Enforce the §11.2 gross-exposure ceiling, blocking BEFORE trimming.
 
@@ -1419,12 +1429,38 @@ def apply_gross_ceiling(
         if position_gross <= 0:
             continue
         candidates.append((p, symbol, position_gross))
-    # Biggest-loser-first, largest position as tie-break, then symbol for a
-    # deterministic order across runs. The SAME ordering `_force_delever`
-    # already uses for the cash-only safety net — a second, divergent notion
-    # of "which position goes first" is exactly the sprawl §12.2 cleaned up.
+    # Weakest-by-CONVICTION first (item 112, owner 2026-09-25), then the
+    # biggest-loser rule as the tie-break. The primary key is the desk's OWN
+    # signed source score `S = aligned seats - opposed seats` (the same §9.4
+    # measure that sizes entries), computed for each held name from its most
+    # recent persisted seat stances against the direction it is actually held.
+    # A name a seat OPPOSES scores lower (negative) and is sold first; a name
+    # whose thesis is intact scores higher and is sold last — a name can be
+    # down on paper yet still have every seat behind it, while another is up
+    # yet conviction-dead, and the owner wants the conviction-dead one cut
+    # first. No new score is invented: `signed_source_score` is reused as-is,
+    # so the ledger and the trim order share one definition of "weak".
+    #
+    # When no stance was ever recorded for a name (never in a decided target
+    # set), its conviction key is a neutral 0 and the biggest-loser tie-break
+    # alone orders it — the honest fallback, not a fabricated signal.
+    #
+    # This DELIBERATELY diverges from `_force_delever`'s biggest-loser sort:
+    # that path clears a measured CASH DEFICIT (a different, owner-ratified
+    # mandate) and is not item 112. One notion of "which goes first" PER
+    # MANDATE, not one across mandates.
+    def _conviction_key(position, symbol: str) -> int:
+        sources = (seat_stances or {}).get(symbol) or {}
+        if not sources:
+            return 0
+        direction = (
+            "short" if position_side(position) == SECTOR_SIDE_SHORT else "long"
+        )
+        return signed_source_score(symbol, dict(sources), direction)
+
     candidates.sort(
         key=lambda item: (
+            _conviction_key(item[0], item[1]),
             float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
             -item[2],
             item[1],

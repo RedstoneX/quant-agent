@@ -12654,10 +12654,33 @@ class TradingPipeline:
             getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
             500.0,
         )
+        # Item 112 (owner, 2026-09-25): de-lever the WEAKEST BY CONVICTION
+        # first, not the biggest paper loser. This preamble runs before this
+        # session's analysts, so the only conviction available is what the
+        # desk LAST reached — the persisted seat stances from the prior
+        # decision on each held name. Read them here and hand them to the
+        # trim ordering; a name never decided on has none, and that name
+        # falls back to the biggest-loser tie-break rather than a fake score.
+        seat_stances: dict = {}
+        try:
+            for p in ctx.positions:
+                sym = str(getattr(p, "symbol", "") or "").strip().upper()
+                if not sym:
+                    continue
+                stance_map = self.db.latest_seat_stances_for_symbol(sym)
+                if stance_map:
+                    seat_stances[sym] = stance_map
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "gross-exposure de-lever: conviction read failed, ordering "
+                "trims by biggest-loser fallback: %s", exc,
+            )
+            seat_stances = {}
         outcome = apply_gross_ceiling(
             [], ctx.positions, ctx.total_value, ceiling,
             cash_park_symbol=self._sweep_symbol(),
             min_order_usd=min_order_usd,
+            seat_stances=seat_stances or None,
         )
         if not outcome.trims:
             return []
