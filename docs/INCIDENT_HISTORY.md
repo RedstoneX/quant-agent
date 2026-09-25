@@ -22,6 +22,17 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — item 52 retired: the insider-trade dollar size gate is deleted, not re-sourced
+
+**In plain words:** the desk used to throw away any insider stock purchase below a flat dollar figure — $100,000 for names it already follows, $250,000 for everything else — and nobody could point to research behind either number. That question is now answered: no published study supports single-transaction dollar size as a positive signal at all, so both cutoffs are deleted rather than replaced with a better number.
+
+**What was found.** The closest published research (Cziraki & Gider 2019) measures a filer's whole-quarter total in one stock, not one purchase at a time, and finds size inversely related to being a good signal where it says anything at all — the opposite of what a "bigger purchase = stronger signal" gate would assume. No study was found that supports gating admission on a single transaction's dollar size, in either direction.
+
+**What changed.** `min_transaction_value_usd` and `external_min_transaction_value_usd` are removed from `src/config.py::SmartMoneyConfig` and from `SECForm4Provider`'s constructor (`src/data/smart_money.py`) — a purchase is no longer discarded for being under $100,000 or $250,000. Relative size (the ratio of a transaction to the filer's own holdings) is unaffected: it has been computed and reported on every observation since 2026-09-13 and remains the only size measure in use. A related per-transaction holdings-ratio cutoff was also considered and rejected — it was built and then removed rather than shipped, for lack of a per-transaction source.
+
+**Not touched.** The routine-vs-opportunistic classifier, the clustering logic, and every other Form 4 admission rule are unchanged; this was a size-only gate. Item 63 (the ranking scalar's own inability to express "this matters, but the sign is reversed") is separate open residue from this same original item and stays open.
+
+
 ### 2026-09-25 — five more board items found already shipped or moot on verification, retired (items 96, 102, 122, 129, 162)
 
 **In plain words:** five open board items no longer describe anything wrong with the desk. One was already fixed by earlier, unrelated work and had gone stale; four describe fixes that had already shipped. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on `origin/main`, not against the note that filed it.
