@@ -532,7 +532,7 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
     submit a fractional GTC that is refused while the code believes a stop
     was placed. This asserts against the actual request objects."""
     from alpaca.trading.enums import TimeInForce
-    from alpaca.trading.requests import StopLimitOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
 
     with patch("src.execution.broker.TradingClient") as tc_cls:
         client = MagicMock()
@@ -550,7 +550,7 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
 
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
     assert len(reqs) == 2
-    assert all(isinstance(r, StopLimitOrderRequest) for r in reqs)
+    assert all(isinstance(r, StopOrderRequest) for r in reqs)   # primary = stop-MARKET
     frac, whole = reqs
     assert float(frac.qty) == pytest.approx(0.3456)
     assert frac.time_in_force == TimeInForce.DAY    # the only tif the broker takes

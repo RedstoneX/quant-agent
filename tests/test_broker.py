@@ -161,7 +161,7 @@ def test_submit_market_order(mock_tc_cls):
 def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(mock_tc_cls):
     """BRK-B stays canonical inside QAMC while both Alpaca orders use BRK.B."""
     from types import SimpleNamespace
-    from alpaca.trading.requests import LimitOrderRequest, StopLimitOrderRequest
+    from alpaca.trading.requests import LimitOrderRequest, StopOrderRequest
 
     mock_client = MagicMock()
     mock_client.submit_order.side_effect = [
@@ -189,7 +189,7 @@ def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(
         "BRK-B", entry["id"], entry["pending_stop_price"], requested_qty=2,
     )
     stop_req = mock_client.submit_order.call_args_list[1].args[0]
-    assert isinstance(stop_req, StopLimitOrderRequest)
+    assert isinstance(stop_req, StopOrderRequest)   # primary protective = stop-MARKET
     assert stop_req.symbol == "BRK.B"
     assert protection["symbol"] == "BRK-B"
 
@@ -2097,6 +2097,64 @@ def test_submit_stop_limit_order_unwraps_orderstatus_enum_value(mock_tc_cls):
     assert out["status"] == "new"
 
 
+class _FakeAPIError(Exception):
+    """Stand-in for alpaca's APIError: the classifiers only read
+    `status_code` and `str(exc)`, exactly what this carries."""
+    def __init__(self, message, status_code):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@patch("src.execution.broker.TradingClient")
+def test_protective_stop_is_market_and_falls_back_to_stop_limit_on_unsupported_combo(
+    mock_tc_cls,
+):
+    """PRIMARY protective stop is a stop-MARKET (owner ratified 2026-09-25).
+    If the broker refuses that market stop for an unsupported order-type/tif
+    combo, the leg DEGRADES to the original stop-LIMIT so the position is
+    never left unprotected — a market-stop refusal becomes a stop-limit,
+    never no stop."""
+    from types import SimpleNamespace
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
+
+    mock_client = MagicMock()
+    mock_client.submit_order.side_effect = [
+        _FakeAPIError("order type stop is not supported for this account", 422),
+        SimpleNamespace(id="sl-1", status="new", symbol="AAPL"),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    out = broker._submit_stop_limit_order(symbol="AAPL", qty=5, stop_price=150.0)
+
+    reqs = [c.args[0] for c in mock_client.submit_order.call_args_list]
+    assert len(reqs) == 2
+    assert isinstance(reqs[0], StopOrderRequest)         # primary: stop-MARKET
+    assert getattr(reqs[0], "limit_price", None) is None
+    assert isinstance(reqs[1], StopLimitOrderRequest)    # fallback: stop-LIMIT
+    assert float(reqs[1].stop_price) == 150.0
+    assert float(reqs[1].limit_price) == 145.5           # 3% below the trigger
+    assert out["id"] == "sl-1"                            # the fallback's order
+
+
+@patch("src.execution.broker.TradingClient")
+def test_protective_stop_does_not_swallow_a_non_combo_rejection(mock_tc_cls):
+    """The fallback must NOT catch unrelated failures. A held_for_orders /
+    buying-power / rate-limit error must propagate so the retry / existing-
+    stop / escalation paths see the real cause — only ONE submit is made and
+    the exception surfaces, never a silent stop-limit."""
+    mock_client = MagicMock()
+    mock_client.submit_order.side_effect = _FakeAPIError(
+        "insufficient qty available (held_for_orders)", 403,
+    )
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    with pytest.raises(Exception):
+        broker._submit_stop_limit_order(symbol="AAPL", qty=5, stop_price=150.0)
+    assert mock_client.submit_order.call_count == 1      # no fallback attempted
+
+
 @patch("src.execution.broker.TradingClient")
 def test_list_recent_orders_returns_none_on_api_failure(mock_tc_cls):
     """audit F4 review #2: a failed Alpaca query must be distinguishable
@@ -2186,7 +2244,7 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     """The protective stop is GTC (survives the close) and is sized to the
     ACTUAL fill — the old OTO leg was sized to the REQUESTED qty, so a partial
     entry fill left a stop covering shares we never owned."""
-    from alpaca.trading.requests import StopLimitOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
 
     mock_client = MagicMock()
     stop_order = MagicMock(id="s1", status="new", symbol="NVDA")
@@ -2205,11 +2263,12 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
 
     assert out is not None
     req = mock_client.submit_order.call_args[0][0]
-    assert isinstance(req, StopLimitOrderRequest)
+    assert isinstance(req, StopOrderRequest)        # primary protective = stop-MARKET
     assert req.time_in_force == TimeInForce.GTC     # THE fix — survives 16:00 ET
     assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
-    assert float(req.limit_price) == 87.3           # 3% buffer below the stop
+    # A stop-MARKET has no limit — the buffer governs only the stop-limit fallback.
+    assert getattr(req, "limit_price", None) is None
     # 30.0 -> 90.0 (2026-09-10): the fallback-only ceiling now that
     # `wait_for_order_terminal` watches the real-time fill stream first —
     # see tests/test_order_fill_stream.py.

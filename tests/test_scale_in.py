@@ -840,7 +840,7 @@ def test_emergency_cover_after_rearm_fails_covers_the_full_enlarged_short():
 
 @patch("src.execution.broker.TradingClient")
 def test_place_entry_protection_scale_in_sizes_stop_to_broker_full_qty(mock_tc_cls):
-    from alpaca.trading.requests import StopLimitOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
     from src.execution.broker import AlpacaBroker
 
     mock_client = MagicMock()
@@ -861,7 +861,7 @@ def test_place_entry_protection_scale_in_sizes_stop_to_broker_full_qty(mock_tc_c
     )
     assert out is not None
     req = mock_client.submit_order.call_args[0][0]
-    assert isinstance(req, StopLimitOrderRequest)
+    assert isinstance(req, StopOrderRequest)   # primary protective = stop-MARKET
     assert float(req.qty) == 13.0
     mock_client.submit_order.reset_mock()
     broker.get_order_fill_info = MagicMock(return_value={
