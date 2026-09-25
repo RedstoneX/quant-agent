@@ -2911,3 +2911,36 @@ def test_the_tick_spacing_this_module_pins_matches_the_scheduler(tmp_path):
     lo_min, hi_min = SESSION_WINDOWS["intra_check"]
     expected = len(range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES))
     assert len(trigger.triggers) == expected == 14
+
+
+def test_schema_migration_adds_recovery_alert_timestamp_on_an_old_db(tmp_path):
+    """An older DB missing recovery_alert_updated_at must migrate, not crash.
+
+    SQLite forbids a non-constant default on ALTER TABLE ADD COLUMN, so an
+    ADD COLUMN ... DEFAULT (datetime('now')) raised OperationalError on every
+    pre-existing DB, aborted ensure_cost_circuit_schema, and failed paid
+    analysis closed (which then fired a stray owner alert that broke unrelated
+    tests). This reproduces the migration path and asserts it succeeds. See
+    src/cost_circuit.py ensure_cost_circuit_schema for the constant-default fix.
+    """
+    from src.cost_circuit import ensure_cost_circuit_schema
+
+    conn = sqlite3.connect(str(tmp_path / "old.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_cost_circuit_schema(conn)
+    conn.commit()
+    # Simulate a DB created before the column existed.
+    conn.execute(
+        "ALTER TABLE llm_circuit_events DROP COLUMN recovery_alert_updated_at"
+    )
+    conn.commit()
+    cols_before = {r[1] for r in conn.execute("PRAGMA table_info(llm_circuit_events)")}
+    assert "recovery_alert_updated_at" not in cols_before
+
+    # The migration must re-add the column without raising.
+    ensure_cost_circuit_schema(conn)
+    conn.commit()
+
+    cols_after = {r[1] for r in conn.execute("PRAGMA table_info(llm_circuit_events)")}
+    assert "recovery_alert_updated_at" in cols_after
+    conn.close()
