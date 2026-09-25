@@ -172,11 +172,11 @@ DONE WHEN:
   - [ ] a series still missing after the bounded re-ask is named, the economist is not paid on the holes, and a later repair pays only once the set is complete
 detail: docs/BOARD_NOTES.md (item 119)
 
-**121. Schedule law: morning owns the 09:30 open, and a leftover tick on the same cadence must not be sold to the owner as an intraday opportunity — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
+**121. Schedule law: morning owns the 09:30 open, and a leftover tick on the same cadence must not be sold to the owner as an intraday opportunity — FIXED 2026-09-25.** Re-filed out of PR #435 (closed unmerged).
 
 DONE WHEN:
-  - [ ] the 09:30 open tick and any leftover still on that same half-hour cadence buy no second paid look and send no INTRADAY message
-  - [ ] the first paid intraday look lands on the next existing half-hour fire after morning released, with the boundary derived from morning's own finish or lock release rather than an invented offset
+  - [x] the 09:30 open tick and any leftover still on that same half-hour cadence buy no second paid look and send no INTRADAY message
+  - [x] the first paid intraday look lands on the next existing half-hour fire after morning released, with the boundary derived from morning's own finish or lock release rather than an invented offset
 detail: docs/BOARD_NOTES.md (item 121)
 
 **123. The unit-drift checker never looks at `.path` units, and one is tracked — OPEN, filed 2026-09-18. Pre-existing gap found while reviewing PR #435; NOT caused by it.** `scripts/check_unit_drift.py` now sets `UNIT_SUFFIXES = (".service", ".timer", ".path")` (was `(".service", ".timer")`): PR #642 (2026-09-24) added `.path` to the hand-maintained suffix tuple, so all four buckets — untracked, modified, undeployed, not-enabled — now see a `.path` unit, and a `.path` unit's `paths.target` enablement is handled the same as a `.timer`'s `timers.target` because `parse_wanted_by` reads the target from the unit. Test coverage for the four buckets on a `.path` unit was added afterwards (was missing when #642 shipped). STILL OPEN on the item's own DONE WHEN: the suffix set is still a hand-maintained tuple, not derived from the tracked files, and no run has yet compared the real `quant-agent-status-board.path` on the box against the checkout.
