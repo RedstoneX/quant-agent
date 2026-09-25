@@ -1,0 +1,83 @@
+# Live-capital pre-flight attestations (board item 150).
+#
+# The live-capital pre-flight gate (src/live_capital_preflight.py, run via
+# scripts/live_capital_preflight.py) checks each named condition that must hold
+# before real money is switched on. Conditions that a machine cannot verify are
+# human judgments — they are listed here and BLOCK go-live until a named person
+# has genuinely verified them and recorded that here.
+#
+# Every entry ships attested: false. That is deliberate: nothing about this desk
+# is live-ready today, so the gate BLOCKS by default. Setting attested: true
+# without having done the work defeats the entire point of item 150.
+#
+# To attest a condition, set:
+#   attested:    true
+#   attested_by: "<your name>"
+#   attested_on: "YYYY-MM-DD"
+#   note:        "<what was verified / where the evidence lives>"
+#
+# An entry is only counted as PASS when attested is exactly true AND attested_by
+# and attested_on are both filled in. The condition ids MUST match
+# MANUAL_CONDITIONS in src/live_capital_preflight.py.
+
+attestations:
+  explicit_owner_approval:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  strategy_earned_live_capital:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  broker_capabilities_reviewed:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  threat_model_and_credential_design:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  governor_and_sentinel_specs:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  breaker_thresholds_and_escalation_matrix:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  broker_local_reconciliation:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  failure_mode_tests_passed:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  deployment_change_control_incident_recovery:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  capital_promotion_criteria:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  live_readiness_review_signed:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
+  margin_2x_rederived_for_live:
+    attested: false
+    attested_by: null
+    attested_on: null
+    note: null
