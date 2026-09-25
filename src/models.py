@@ -1822,6 +1822,39 @@ class SmartMoneyObservation(LLMOutputModel):
                 self.transient_admission_eligible = eligible
         return self
 
+    @property
+    def signal_direction(self) -> int:
+        """Sign of this row's directional view: +1 bullish, -1 bearish, 0 none.
+
+        ``signal_weight`` is a single "how much attention" scalar in [0, 1] and
+        CANNOT carry a sign, so on its own a large insider SALE and a large
+        insider BUY of the same dollar value rank and size identically (board
+        item 63). This derived channel supplies the missing sign so the
+        deterministic ranking in ``src/agents/smart_money_analyst.py`` can
+        multiply ``value * signal_weight`` by it and never let a contra signal
+        rank or size as if it were bullish. It is computed from ``direction``,
+        never stored -- nothing to keep that code cannot recompute.
+
+        A BUY (open-market purchase) is unambiguously bullish -> +1; its
+        effective sign is unchanged from before this channel existed, so every
+        currently-admitted row keeps the exact ranking contribution it had.
+
+        A SALE is NOT counted as bullish (that identity WAS the bug) but is
+        also NOT signed bearish here: Scott & Xu (FAJ 2004) find a small sale
+        (< ~50% of the holding) is mildly POSITIVE while a sale over ~50% is
+        negative, so a sell's sign is magnitude-dependent, and no published
+        SIGNED scoring scheme sets that -1-vs-0 boundary (board item 63
+        open_question, ruled out pending a source or enough own outcome data;
+        ``holdings_fraction_band``'s sourced 50% edge is the hook for it once
+        owner appetite decides to actually down-rank on large selling). The
+        desk is long-only on smart-money admission (a row is admission-eligible
+        only when ``direction == "buy"``), so neutralising a sale to 0 -- rather
+        than guessing a bearish magnitude -- is the safe minimal structure fix:
+        a sale never inflates a bullish ranking. ``exchange``/``unknown`` state
+        no directional view -> 0.
+        """
+        return 1 if self.direction == "buy" else 0
+
 
 #: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.conviction`. NEW
 #: JUDGMENT, not a restatement (the finding carries no confidence field to

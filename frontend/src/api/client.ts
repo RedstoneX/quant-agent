@@ -1147,7 +1147,15 @@ export const api = {
     getJSON<OrdersResponse>(`/orders?status=${status}`),
   company: (symbol: string) =>
     getJSON<CompanyIdentity>(`/company/${encodeURIComponent(symbol)}`),
-  trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
+  // `symbol` lets a caller look up one specific order/trade link on
+  // demand (see inspectOrder in App.tsx) without raising the default
+  // page-wide `limit`, which stays small for the Trades panel display.
+  trades: (opts: number | { limit?: number; symbol?: string } = 30) => {
+    const { limit = 30, symbol } = typeof opts === "number" ? { limit: opts, symbol: undefined } : opts;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (symbol) params.set("symbol", symbol);
+    return getJSON<TradesResponse>(`/trades?${params.toString()}`);
+  },
   positionHistory: (positionId: string) =>
     getJSON<PositionHistoryResponse>(`/positions/${encodeURIComponent(positionId)}/history`),
   prices: (symbol: string, lookbackDays = 120, timeframe: ChartTimeframe = "1d") =>
