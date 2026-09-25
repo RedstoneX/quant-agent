@@ -1439,7 +1439,7 @@ EARNINGS_LOOKUP_TIMEOUT = "unavailable_lookup_timeout"
 EARNINGS_DEADLINE_EXCEEDED = "unavailable_deadline_exceeded"
 
 #: The complete status vocabulary, mirroring `pace_status`'s
-#: measured / too_early / n/a_breakout / unavailable_no_pinned_horizon shape:
+#: measured / n/a_breakout / unavailable_no_pinned_horizon shape:
 #: one value for a real figure, and a NAMED reason for every way the figure can
 #: be absent. Never collapse these into a bare None — the whole point is that a
 #: reader can tell "the source said nothing" from "the source never answered".

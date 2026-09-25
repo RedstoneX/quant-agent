@@ -14070,15 +14070,17 @@ class TradingPipeline:
                 # is the same weekend-aware count the noise-band scaling above
                 # already uses (`trading_calendar.trading_sessions_held`) —
                 # no new number, just the one already computed above.
+                # Board item 165 (owner ruling 2026-09-25): there is NO
+                # elapsed-time floor before pace is judged. The old
+                # `sessions_held < max(1, pinned_horizon / 3)` "too_early" gate
+                # was a made-up clock stacked on a guessed horizon; the desk
+                # reassesses every review from the live instrument, so pace is
+                # computed and surfaced from the first review whenever the
+                # inputs exist. Early pace is naturally extreme (a tiny
+                # time_fraction), which the reviewer reads as context — it is
+                # never on its own a reason to exit (see the prompt).
                 if progress_pct is None or not pinned_horizon or sessions_held is None:
                     pace_status = "unavailable_no_pinned_horizon"
-                elif sessions_held < max(1, pinned_horizon / 3):
-                    # Below one third of the pinned horizon the metric is
-                    # mathematically meaningless — a thesis given 15 sessions
-                    # cannot be "behind schedule" on session 2, and reading it
-                    # as such is exactly how a day-5 position gets sold for
-                    # "not progressing".
-                    pace_status = "too_early"
                 else:
                     time_fraction = sessions_held / pinned_horizon
                     if time_fraction > 0:

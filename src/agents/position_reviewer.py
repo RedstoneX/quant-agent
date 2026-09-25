@@ -315,13 +315,6 @@ class PositionReviewerAgent(BaseAgent):
                         "pace=n/a (breakout setup — progress/pace disabled by "
                         "design; manage by trailing, not by schedule)"
                     )
-                elif _status == "too_early":
-                    _h = pf.get("expected_horizon_sessions")
-                    metric_bits.append(
-                        f"pace=not-yet-measurable ({pf.get('sessions_held')} of "
-                        f"{_h} sessions elapsed; under 1/3, so pace is "
-                        f"mathematically meaningless — this is NOT 'stalled')"
-                    )
                 elif _status == "unavailable_no_pinned_horizon":
                     metric_bits.append(
                         "pace=unavailable (no horizon pinned at entry — do not "
