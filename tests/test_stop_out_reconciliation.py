@@ -450,6 +450,124 @@ def test_reconcile_stop_out_fills_noop_without_config(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# item 173(a): the recovered exit must be labelled by what the broker fill
+# ACTUALLY was, never a blanket STOP_OUT. `list_filled_sell_orders` already
+# reports each fill's order_type; the reconciler must thread it through so a
+# market/limit sell is not misattributed to a protective stop, and a fill
+# whose type does not prove it was a stop is recorded as an honest,
+# unattributed exit rather than a stop it cannot substantiate.
+# ---------------------------------------------------------------------------
+
+from src.pipeline import _reconciled_exit_action  # noqa: E402
+
+
+def _sell_order(order_id, symbol, qty, price, order_type,
+                filled_at="2026-09-21T15:00:00+00:00"):
+    return {
+        "id": order_id, "symbol": symbol, "qty": qty, "price": price,
+        "filled_at": filled_at, "order_type": order_type,
+    }
+
+
+@pytest.mark.parametrize("order_type,expected", [
+    ("stop", "STOP_OUT"),
+    ("stop_limit", "STOP_OUT"),
+    ("trailing_stop", "STOP_OUT"),
+    ("OrderType.STOP", "STOP_OUT"),
+    ("market", "SELL"),
+    ("limit", "SELL"),
+    ("OrderType.MARKET", "SELL"),
+    (None, "RECONCILED_EXIT"),
+    ("", "RECONCILED_EXIT"),
+    ("something_new", "RECONCILED_EXIT"),
+])
+def test_reconciled_exit_action_maps_order_type_honestly(order_type, expected):
+    """The pure mapping — genuine stops to STOP_OUT, plain sells to SELL,
+    everything else to the unattributed marker, NEVER a guessed STOP_OUT."""
+    assert _reconciled_exit_action(order_type) == expected
+
+
+def test_reconcile_records_stop_fill_as_stop_out(tmp_path):
+    """A recovered fill the broker reports as a stop-limit is a genuine
+    protective stop — labelled STOP_OUT, exit_reason_category broker_stop_fill."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "ONDS", 17, 8.53, "entry-onds")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+    broker.list_filled_sell_orders.return_value = [
+        _sell_order("stop-onds", "ONDS", 17.0, 7.93, "stop_limit"),
+    ]
+
+    pipeline = _mk_pipeline(db, broker)
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+    assert results[0]["recorded"] == 1
+
+    rows = db.get_trades(symbol="ONDS", executed_only=True)
+    row = next(r for r in rows if r["broker_order_id"] == "stop-onds")
+    assert row["action"] == "STOP_OUT"
+    assert row["exit_reason_category"] == "broker_stop_fill"
+    assert not any(
+        r["action"] in ("SELL", "RECONCILED_EXIT") for r in rows
+    )
+
+
+def test_reconcile_records_market_sell_as_sell_not_stop_out(tmp_path):
+    """EQNR-style motivating case: the recovered fill was a MARKET sell, not
+    a protective stop. It must be recorded as SELL — never STOP_OUT — so
+    owner-facing P&L attribution does not invent a protective stop."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "EQNR", 10, 25.0, "entry-eqnr")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+    broker.list_filled_sell_orders.return_value = [
+        _sell_order("mkt-eqnr", "EQNR", 8.5962, 24.0, "market"),
+    ]
+
+    pipeline = _mk_pipeline(db, broker)
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+    assert results[0]["recorded"] == 1
+
+    rows = db.get_trades(symbol="EQNR", executed_only=True)
+    row = next(r for r in rows if r["broker_order_id"] == "mkt-eqnr")
+    assert row["action"] == "SELL"
+    assert row["action"] != "STOP_OUT"
+    # A plain reconciled sell carries no protective-stop category.
+    assert row["exit_reason_category"] != "broker_stop_fill"
+
+
+def test_reconcile_records_missing_order_type_as_unattributed_not_stop_out(tmp_path):
+    """A fill whose order_type the broker did not report must NOT be guessed
+    a protective stop. It is recorded as an honest, distinct unattributed
+    exit — never STOP_OUT — so attribution never claims a stop it can't prove."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "AMD", 2.0, 549.11, "entry-amd")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []
+    broker.list_filled_sell_orders.return_value = [
+        {"id": "ambiguous-amd", "qty": 2.0, "price": 500.0,
+         "filled_at": "2026-09-22 14:00:00"},  # no order_type at all
+    ]
+
+    pipeline = _mk_pipeline(db, broker)
+    results = pipeline._reconcile_stop_out_fills(run_id="r1")
+    assert results[0]["recorded"] == 1
+
+    rows = db.get_trades(symbol="AMD", executed_only=True)
+    row = next(r for r in rows if r["broker_order_id"] == "ambiguous-amd")
+    assert row["action"] == "RECONCILED_EXIT"
+    assert row["action"] != "STOP_OUT"
+    assert row["exit_reason_category"] == "reconciled_unattributed_exit"
+    # The share-count ledger still sees the exit (row written, book matches).
+    assert db.get_symbols_with_open_ledger_qty().get("AMD", 0.0) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Existing system-initiated exits must be UNCHANGED by this fix — hard
 # literals, not just "still passes". SELL / REDUCE / TRAIL_STOP / SWEEP_SELL
 # already had a working write-back path (insert_trade at submission +
@@ -888,7 +1006,7 @@ def test_reconciler_now_sees_a_stop_out_masked_by_a_resting_stop(tmp_path):
     broker.get_positions.return_value = []  # broker flat: the stop fired
     broker.list_filled_sell_orders.return_value = [
         {"id": "untracked-stop-fill", "qty": 2.0, "price": 500.0,
-         "filled_at": "2026-09-22 14:00:00"},
+         "filled_at": "2026-09-22 14:00:00", "order_type": "stop_limit"},
     ]
 
     pipeline = _mk_pipeline(db, broker)

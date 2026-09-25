@@ -780,6 +780,35 @@ def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
     return "SEC Form 4 only (congressional cross-check switched off)"
 
 
+def _reconciled_exit_action(order_type: str | None) -> str:
+    """Map a broker fill's order_type to the HONEST action to record for an
+    exit the reconciler recovered (item 173(a)).
+
+    `_reconcile_stop_out_fills` writes back exits the broker made that the
+    ledger never saw. It used to label every one STOP_OUT — a protective
+    stop — even when the broker fill was an ordinary market/limit sell.
+    That misattributes owner-facing realized-P&L cause. The broker already
+    reports each fill's order_type (`AlpacaBroker.list_filled_sell_orders`);
+    this decides the action from it and NEVER guesses STOP_OUT:
+
+      - a genuine stop / stop-limit / trailing-stop  -> STOP_OUT
+      - a market or limit sell                       -> SELL
+      - anything missing or unrecognised             -> RECONCILED_EXIT
+        (an honest 'the broker closed this, cause unattributed' marker —
+        never a protective stop the broker record can't substantiate)
+    """
+    ot = (order_type or "").strip().lower()
+    if not ot:
+        return "RECONCILED_EXIT"
+    # stop / stop_limit / trailing_stop all name a broker-resident protective
+    # stop; substring match tolerates enum spellings like "OrderType.STOP".
+    if "stop" in ot or "trailing" in ot:
+        return "STOP_OUT"
+    if ot in ("market", "limit") or ot.endswith(".market") or ot.endswith(".limit"):
+        return "SELL"
+    return "RECONCILED_EXIT"
+
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -6279,12 +6308,18 @@ class TradingPipeline:
 
             recorded = 0
             for fill in new_fills:
+                # item 173(a): record the action the broker fill actually was,
+                # never a blanket STOP_OUT. The broker reports each fill's
+                # order_type; a market/limit sell must not be attributed to a
+                # protective stop, and a fill whose type doesn't prove it was a
+                # stop is recorded as an unattributed reconciled exit.
+                action = _reconciled_exit_action(fill.get("order_type"))
                 try:
                     row_id, created = self.db.insert_stop_out_trade(
                         symbol=symbol, qty=fill["qty"], price=fill["price"],
                         broker_order_id=fill["id"],
                         filled_at=self._parse_broker_fill_timestamp(fill.get("filled_at")),
-                        run_id=run_id,
+                        run_id=run_id, action=action,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
@@ -6306,11 +6341,11 @@ class TradingPipeline:
                         realized = r.get("realized_pnl")
                         break
                 logger.warning(
-                    "STOP-OUT RECORDED: %s %s sh @ $%.4f (order %s, "
-                    "realized_pnl=%s) — broker-initiated protective-stop "
-                    "fill written back to the ledger by the stop-out "
-                    "reconciler", symbol, self._format_qty(fill["qty"]),
-                    fill["price"], fill["id"],
+                    "EXIT RECORDED (%s): %s %s sh @ $%.4f (order %s, "
+                    "type=%s, realized_pnl=%s) — broker-initiated exit "
+                    "written back to the ledger by the reconciler",
+                    action, symbol, self._format_qty(fill["qty"]),
+                    fill["price"], fill["id"], fill.get("order_type") or "unknown",
                     "unknown" if realized is None else f"${realized:.2f}",
                 )
                 if realized is None:
@@ -7391,9 +7426,15 @@ class TradingPipeline:
     # most likely to be uncomfortable.
     # TAKE_PROFIT stays for HISTORICAL rows: the auto trim that wrote it was
     # deleted 2026-09-12 and nothing writes the label any more.
+    # RECONCILED_EXIT (item 173(a)): a recovered broker exit whose order_type
+    # could not be proven a protective stop. Before 173(a) every recovered
+    # exit was labelled STOP_OUT and thus audited here; keeping it out would
+    # drop real closed exits from decision-quality auditing — exactly the
+    # "did the market force us out before a bounce" question this audit
+    # exists to answer.
     _EXIT_AUDIT_ACTIONS = (
         "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
-        "STOP_OUT",
+        "STOP_OUT", "RECONCILED_EXIT",
     )
 
     def _build_post_exit_reality(

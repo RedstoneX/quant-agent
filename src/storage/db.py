@@ -99,6 +99,13 @@ _SHORT_EXIT_PREFIXES: tuple[str, ...] = ("COVER", "PARTIAL_COVER")
 #: position is open, and the trades row records no side of its own.
 _EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset({
     "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
+    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
+    # back but whose order_type it could NOT prove was a protective stop —
+    # an honest "the broker closed this, cause unattributed" marker, never
+    # a STOP_OUT it can't stand behind. It retires a real position exactly
+    # like a filled STOP_OUT, so it belongs to the exit-side chain here for
+    # position_id assignment and calibration to count it as a closed lot.
+    "RECONCILED_EXIT",
 })
 
 #: Kept as the flat union for every caller that only asks "is this row on the
@@ -385,6 +392,12 @@ def _categorize_exit_reason(
     act = (action or "").upper()
     if act == "STOP_OUT":
         return "broker_stop_fill"
+    if act == "RECONCILED_EXIT":
+        # A recovered broker exit whose order_type could not be proven to be
+        # a protective stop (item 173(a)): a distinct, honest category so
+        # owner-facing attribution never files it under a stop it can't
+        # substantiate, and never silently under an ordinary decided sale.
+        return "reconciled_unattributed_exit"
     if act == "TRAIL_STOP":
         row = {"fill_status": fill_status, "fill_qty": fill_qty}
         return "broker_stop_fill" if _is_filled_trail_stop(row, act) else None
@@ -1918,6 +1931,14 @@ class Database:
         unmatched exit; `_reconcile_stop_out_fills` flags that case rather
         than silently accepting an unpriced row).
 
+        `action` (item 173(a)): the caller sets this from the broker fill's
+        own order_type — STOP_OUT only when the broker order really was a
+        protective stop, SELL for a market/limit exit, and RECONCILED_EXIT
+        when the type does not prove it was a stop. It defaults to STOP_OUT
+        only for backward compatibility with callers that pass none; the
+        reconciler always passes it explicitly so a recovered exit is never
+        labelled a protective stop the broker record can't substantiate.
+
         Returns `(row_id, created)`. `created=False` means the order was
         already recorded — the existing row's id is returned so a caller
         never needs a second lookup to stay idempotent-safe.
@@ -1945,12 +1966,32 @@ class Database:
             if existing is not None:
                 return existing["id"], False
             ts = filled_at or self._sqlite_utc_timestamp(datetime.now(UTC))
-            reasoning_final = reasoning or (
-                "Broker-initiated protective-stop fill — the system "
-                "never submitted this order as a decision; written "
-                "back by the stop-out reconciler (2026-08-28 "
-                "ONDS/CCJ gap; see ReconciliationConfig)."
-            )
+            act_norm = (action or "").upper()
+            if reasoning:
+                reasoning_final = reasoning
+            elif act_norm == "STOP_OUT":
+                reasoning_final = (
+                    "Broker-initiated protective-stop fill — the system "
+                    "never submitted this order as a decision; written "
+                    "back by the stop-out reconciler (2026-08-28 "
+                    "ONDS/CCJ gap; see ReconciliationConfig)."
+                )
+            elif act_norm == "RECONCILED_EXIT":
+                # item 173(a): the reconciler proved a broker exit happened but
+                # NOT that it was a protective stop — say exactly that, never a
+                # cause it can't stand behind.
+                reasoning_final = (
+                    "Broker-initiated exit the ledger never saw; the broker's "
+                    "order type did not identify it as a protective stop, so it "
+                    "is recorded as an unattributed reconciled exit rather than "
+                    "a STOP_OUT (item 173(a); see ReconciliationConfig)."
+                )
+            else:
+                reasoning_final = (
+                    f"Broker-initiated {act_norm or 'exit'} the ledger never "
+                    "saw; written back by the exit reconciler (item 173(a); "
+                    "see ReconciliationConfig)."
+                )
             position_id = self._resolve_new_row_position_id(
                 symbol, action, qty=qty, fill_status="filled", fill_qty=qty,
                 timestamp=ts,
@@ -4519,8 +4560,14 @@ class Database:
                 })
             elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
                   or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
-                             "REDUCE", "TAKE_PROFIT", "STOP_OUT")
+                             "REDUCE", "TAKE_PROFIT", "STOP_OUT",
+                             "RECONCILED_EXIT")
                   or _is_filled_trail_stop(row, act)):
+                # RECONCILED_EXIT (item 173(a)) is, like STOP_OUT, written by
+                # _reconcile_stop_out_fills ONLY after the broker confirmed the
+                # fill — every such row that exists is a realized close, so it
+                # must retire a lot here or it leaves a phantom open lot exactly
+                # like the 2026-07-16 TRAIL_STOP omission.
                 # STOP_OUT (added 2026-08-28, ONDS/CCJ) is written by
                 # _reconcile_stop_out_fills ONLY once the broker has already
                 # confirmed the fill — unlike TRAIL_STOP, which is written

@@ -338,6 +338,12 @@ _POSITION_OPEN_ACTIONS = frozenset({"BUY", "SHORT"})
 _POSITION_EXIT_ACTIONS = frozenset({
     "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER", "REDUCE",
     "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
+    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
+    # back but could not prove was a protective stop. The writer counts it as
+    # a real closed lot (_EITHER_SIDE_EXIT_ACTIONS in src/storage/db.py), so
+    # the reader MUST subtract it too — otherwise a position the broker
+    # actually closed reports "open" forever in get_position_history.
+    "RECONCILED_EXIT",
 })
 _POSITION_EXIT_PREFIXES = ("SELL", "PARTIAL_SELL", "COVER", "PARTIAL_COVER")
 
