@@ -1025,6 +1025,7 @@ class CongressionalTradingProvider:
                     economic_role="confirmatory",
                     cross_source_agreement=raw.get("cross_source_agreement", ""),
                     cross_source_note=raw.get("cross_source_note", ""),
+                    disclosure_date_estimated=bool(raw.get("disclosure_date_estimated", False)),
                 )
             except Exception:
                 invalid += 1
