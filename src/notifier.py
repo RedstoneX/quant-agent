@@ -293,6 +293,74 @@ def _redact_malformed_numbers(text: str) -> str:
         return text
 
 
+#: Neutral stand-in for a raw exception / internal-error string this guard
+#: caught before it reached the owner. Board item 89 defect 5: reason codes
+#: were made plain English, but the desk's many `f"... raised: {exc}"` /
+#: `f"... failed ({exc})"` internal-error strings (e.g.
+#: `src/coverage_watchdog.py`'s `_scan_for_gaps`, whose `reason=` field can
+#: end up inside `unreadable_stop_text()`) were never touched, so a genuine
+#: `ConnectionError('timed out')` or a traceback frame could still surface
+#: verbatim in a Telegram message. The FULL original text is always logged
+#: (see `_redact_raw_exception_text` below) — this marker only replaces
+#: what the owner sees.
+_RAW_ERROR_MARKER = "[internal error — the desk logged the details]"
+
+#: A Python traceback dump, start to end of string. Tracebacks are always
+#: printed as the tail of whatever text produced them, so consuming to the
+#: end of the string (DOTALL) is correct and cannot eat legitimate prose
+#: that would have to come AFTER a traceback, which never happens.
+_TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\):.*", re.DOTALL)
+
+#: A `File "path", line N[, in func]` traceback frame on its own.
+_TRACE_FRAME_RE = re.compile(r'File "[^"\n]*", line \d+(?:, in \S+)?')
+
+#: A raw exception class name — optionally module-qualified
+#: (`sqlite3.OperationalError`), always CamelCase ending in `Error` or
+#: `Exception` — plus whatever `str(exc)`/`repr(exc)` tail follows it
+#: (`: message text` or `(message text)`) up to the end of the line.
+#: Deliberately narrow: it requires the CamelCase class shape, so ordinary
+#: owner prose ("a data error occurred", "tracking error") never matches —
+#: only an actual exception-class token does.
+_EXCEPTION_TOKEN_RE = re.compile(
+    r"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b"
+    r"(?:\s*:\s*[^\n]*|\s*\([^)\n]*\))?"
+)
+
+
+def _redact_raw_exception_text(text: str) -> str:
+    """Replace any raw exception / traceback text in `text` with a neutral,
+    owner-appropriate marker, so a genuine `str(exc)`/`repr(exc)` (a
+    `ConnectionError`, a `sqlite3.OperationalError`, a traceback frame, ...)
+    can never reach the owner as-is — see board item 89 defect 5: internal
+    STATUS CODES were made plain English, but raw internal-error TEXT
+    interpolated into a reason string was not.
+
+    Same shape and same rationale as `_redact_malformed_numbers` right
+    above — replace only the offending span, log the original in full so
+    nothing is lost for debugging, and fail open (never block a real
+    alert) if the guard itself breaks.
+    """
+    try:
+        if not text:
+            return text
+        original = text
+        redacted = _TRACEBACK_RE.sub(_RAW_ERROR_MARKER, text)
+        redacted = _TRACE_FRAME_RE.sub(_RAW_ERROR_MARKER, redacted)
+        redacted = _EXCEPTION_TOKEN_RE.sub(_RAW_ERROR_MARKER, redacted)
+        if redacted != original:
+            logger.warning(
+                "notifier: redacted raw exception/internal-error text before "
+                "sending to the owner — original text for diagnosis: %r",
+                original,
+            )
+        return redacted
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "notifier: raw-exception guard itself failed; sending text unredacted"
+        )
+        return text
+
+
 def _seal_section(lines: list[str], start: int, *, may_glue: bool = False) -> None:
     """Insert one blank line before `lines[start:]` to set it apart from
     whatever precedes it — unless there is nothing to separate from yet
@@ -883,6 +951,12 @@ class TelegramNotifier:
         # at each of those call sites, and for the deliberate distinction
         # from the REJECTED prompt-text scanner (board item 99).
         text = _redact_malformed_numbers(text)
+        # Board item 89 defect 5: a genuine raw exception/internal-error
+        # string (e.g. a `reason=f"... raised: {exc}"` built upstream) must
+        # never reach the owner verbatim, even though internal STATUS CODES
+        # are already plain English. Same chokepoint as the guard above —
+        # see `_redact_raw_exception_text`'s docstring.
+        text = _redact_raw_exception_text(text)
         if _REHEARSAL_MODE:
             # A rehearsal replays a real session, so it raises real alerts —
             # "PAID ANALYSIS SUSPENDED", "STOP COVERAGE REPAIRED", trade
