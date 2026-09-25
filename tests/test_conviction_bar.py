@@ -51,6 +51,20 @@ def _v(seat, symbol="X", *, direction="bullish", conviction="medium",
     )
 
 
+def _macro(symbol="X", *, direction="bearish", sector_specific):
+    """A MACRO verdict. `sector_specific=True` carries a `sector_stance:<sector>`
+    evidence label, exactly as `MacroAnalysis.to_verdict` stamps a sector-driven
+    direction; `False` is the market-wide `equity_outlook` broadcast, whose
+    evidence carries no such label."""
+    label = "sector_stance:energy" if sector_specific else "equity_outlook"
+    return AnalystVerdict(
+        seat="macro", symbol=symbol, direction=direction,
+        magnitude=0.0, conviction="medium",
+        evidence=[VerdictEvidence(label=label, text="a checkable observed fact")],
+        invalidation="the broad regime call reverses",
+    )
+
+
 def _rank(symbol, direction="bullish"):
     return RankedCandidate(symbol=symbol, direction=direction, score=1.0)
 
@@ -109,7 +123,7 @@ def test_neutral_chart_does_not_confirm_timing_is_refused():
 def test_one_opposed_seat_blocks_even_with_confirming_chart_and_thesis():
     verdicts = [
         _v("technical"), _v("news"),
-        _v("macro", direction="bearish"),
+        _v("earnings", direction="bearish"),
     ]
     reason = own_bar_block_reason(verdicts, direction="bullish")
     assert reason is not None and "opposed" in reason.lower()
@@ -140,7 +154,7 @@ def test_short_side_uses_bearish_as_supportive():
     ]
     assert own_bar_block_reason(verdicts, direction="bearish") is None
     # a bullish seat is OPPOSED to a short
-    verdicts.append(_v("macro", direction="bullish"))
+    verdicts.append(_v("earnings", direction="bullish"))
     assert own_bar_block_reason(verdicts, direction="bearish") is not None
 
 
@@ -201,7 +215,7 @@ def test_ranked_names_with_technical_verdicts_never_hit_absent_technical_branch(
     verdicts = [
         _v("technical", "CLEAR"), _v("news", "CLEAR"),
         _v("technical", "OPPOSED"), _v("news", "OPPOSED"),
-        _v("macro", "OPPOSED", direction="bearish"),
+        _v("earnings", "OPPOSED", direction="bearish"),
         _v("technical", "NOTHESIS"),
     ]
     survivors, blocked = _apply(ranked, verdicts)
@@ -289,7 +303,7 @@ def test_opposition_reason_fires_only_on_active_opposition():
     assert r is not None and "technical" in r.lower() and r.startswith(OWN_BAR_REASON_PREFIX)
     # a non-technical seat opposed (chart confirming)
     r = own_bar_opposition_reason(
-        [_v("technical"), _v("news"), _v("macro", direction="bearish")],
+        [_v("technical"), _v("news"), _v("earnings", direction="bearish")],
         direction="bullish")
     assert r is not None and "opposed" in r.lower()
 
@@ -354,7 +368,7 @@ def test_stay_nontechnical_seat_opposed_is_culled_on_first_review():
         [_rank("HELD")],
         [
             _v("technical", "HELD"), _v("news", "HELD"),
-            _v("macro", "HELD", direction="bearish"),
+            _v("earnings", "HELD", direction="bearish"),
         ],
         held={"HELD"},
     )
@@ -400,3 +414,72 @@ def test_no_dead_references_to_removed_stay_counter():
     assert not hasattr(db_mod.Database, "CONVICTION_BAR_MISS_KIND")
     import inspect
     assert "held_conviction_miss_prior" not in inspect.signature(PM.decide).parameters
+
+
+# ---------------------------------------------------------------------------
+# MACRO broadcast vs sector-specific: a market-wide macro flip is NOT
+# per-name opposition (adversary bug on #723 — one bearish equity_outlook was
+# culling the whole non-price-protected long book on a single review).
+# ---------------------------------------------------------------------------
+
+def test_broadcast_bearish_macro_is_not_opposition():
+    """A held long with a confirming chart, a real supportive thesis, and a
+    market-wide bearish macro BROADCAST (no sector stance) is NOT culled — the
+    broad view is not a name-specific edge."""
+    verdicts = [_v("technical"), _v("news"), _macro(sector_specific=False)]
+    assert own_bar_opposition_reason(verdicts, direction="bullish") is None
+    survivors, blocked = _apply([_rank("HELD")],
+                                [_v("technical", "HELD"), _v("news", "HELD"),
+                                 _macro("HELD", sector_specific=False)],
+                                held={"HELD"})
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ()
+
+
+def test_sector_specific_bearish_macro_is_opposition():
+    """A sector-SPECIFIC bearish macro stance (carries a sector_stance label) IS
+    genuine name-level opposition and culls the held name on the first review."""
+    verdicts = [_v("technical"), _v("news"), _macro(sector_specific=True)]
+    r = own_bar_opposition_reason(verdicts, direction="bullish")
+    assert r is not None and "macro" in r.lower()
+    survivors, blocked = _apply([_rank("HELD")],
+                                [_v("technical", "HELD"), _v("news", "HELD"),
+                                 _macro("HELD", sector_specific=True)],
+                                held={"HELD"})
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ("HELD",)
+
+
+def test_broadcast_bearish_macro_does_not_block_entry():
+    """The same carve-out on the ENTRY side: a broad bearish macro must not
+    refuse a new name that has a confirming chart and a supportive thesis."""
+    verdicts = [_v("technical", "NEW"), _v("news", "NEW"),
+                _macro("NEW", sector_specific=False)]
+    assert own_bar_block_reason(verdicts, direction="bullish") is None
+    survivors, blocked = _apply([_rank("NEW")], verdicts, held=frozenset())
+    assert [c.symbol for c in survivors] == ["NEW"]
+
+
+def test_sector_specific_bearish_macro_blocks_entry():
+    """A sector-specific bearish macro DOES refuse entry (name-level opposition),
+    proving the carve-out is broadcast-only, not a blanket macro exemption."""
+    verdicts = [_v("technical", "NEW"), _v("news", "NEW"),
+                _macro("NEW", sector_specific=True)]
+    reason = own_bar_block_reason(verdicts, direction="bullish")
+    assert reason is not None and "opposed" in reason.lower()
+
+
+def test_name_specific_opposition_culls_regardless_of_structure_or_capital():
+    """Residual edge the adversary flagged, pinned as INTENDED: the conviction
+    bar's opposition cull is a pure function of the seat verdicts. It has no
+    notion of whether the name has a readable protective stop or whether the
+    book is capital-constrained — so a held name with a genuinely name-specific
+    opposed seat lands in the cull set (`blocked`) even when price gave no exit
+    and structure is unreadable. This is deliberate: a name with no readable
+    stop should not be held anyway, and the actual sell still passes through
+    rotation's ineligible_hold path downstream. Broadcast macro is excluded (see
+    above), so this fires only on genuine name-level opposition."""
+    survivors, blocked = _apply(
+        [_rank("HELD")],
+        [_v("technical", "HELD"), _v("news", "HELD", direction="bearish")],
+        held={"HELD"},
+    )
+    assert holdings_below_entry_bar(blocked, {"HELD"}) == ("HELD",)

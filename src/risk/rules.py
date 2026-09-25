@@ -565,6 +565,35 @@ def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool
     )
 
 
+def _is_broadcast_macro_verdict(v: "AnalystVerdict") -> bool:
+    """True for a MACRO verdict whose direction is the MARKET-WIDE
+    `equity_outlook` broadcast, not a name/sector-SPECIFIC stance.
+
+    `MacroAnalysis.to_verdict` (src/models.py) sets a symbol's macro direction
+    to its SECTOR's own stance when this read stated one for that sector, and
+    falls back to the broad `equity_outlook` otherwise. It marks the difference
+    on the verdict itself: a sector-specific direction carries a
+    `sector_stance:<sector>` evidence label (added there precisely so a reader
+    can see WHY a symbol's macro direction differs from the broad one); the
+    broadcast fallback carries no such label.
+
+    A market-wide macro view is NOT a name-specific edge — owner ruling: macro
+    alone cannot drive a name decision. So a broadcast-macro verdict must never
+    count as per-name OPPOSITION. Without this, one bearish `equity_outlook`
+    flip broadcasts "macro opposed" onto every held long that has no bullish
+    sector row, culling the whole non-price-protected long book on a single
+    review and blocking every new entry in any cautious-macro regime. A
+    sector-SPECIFIC bearish macro stance is a genuine name-level opposition and
+    still counts.
+    """
+    if v.seat != "macro":
+        return False
+    return not any(
+        str(getattr(ev, "label", "") or "").startswith("sector_stance:")
+        for ev in (v.evidence or [])
+    )
+
+
 def own_bar_block_reason(
     seat_verdicts: list["AnalystVerdict"],
     *,
@@ -588,7 +617,11 @@ def own_bar_block_reason(
          CONSERVATIVE choice: a name with no chart read this review does not get
          the benefit of the doubt on timing.
       2. NO seat opposed. A single seat pointing the other way fails the name
-         outright — the mandate is "no seat opposed".
+         outright — the mandate is "no seat opposed". ONE carve-out
+         (`_is_broadcast_macro_verdict`): a MACRO seat whose direction is the
+         market-wide `equity_outlook` broadcast (no sector-specific stance) is
+         NOT counted as opposition, because a market-wide view is not a
+         name-specific edge; a sector-SPECIFIC bearish macro stance still is.
       3. At least one NON-technical seat took a SUPPORTED DIRECTIONAL side
          (see `_has_supported_directional_thesis`) — a real directional call
          backed by evidence and an invalidation, not a bare neutral shrug.
@@ -625,6 +658,7 @@ def own_bar_block_reason(
     other_opposed = sorted({
         v.seat for v in seat_verdicts
         if v.direction == opposed and v.seat != "technical"
+        and not _is_broadcast_macro_verdict(v)
     })
     if other_opposed:
         return (
@@ -657,7 +691,10 @@ def own_bar_opposition_reason(
     merely fails the ENTRY bar on SOFT grounds (no technical read this review, a
     neutral/non-confirming technical read, or support that faded to neutral).
     Those soft cases drop a held name from the ranked survivors but never cull
-    it; only opposition does.
+    it; only opposition does. A broadcast-macro verdict (market-wide
+    `equity_outlook`, no sector-specific stance) is NOT opposition here either —
+    the same `_is_broadcast_macro_verdict` carve-out entry uses — so a single
+    macro flip cannot cull the whole non-price-protected long book.
 
     ENTRY still uses the full-strict `own_bar_block_reason`; this narrower test
     exists solely for the held side. It reuses the SAME aligned/opposed
@@ -680,6 +717,7 @@ def own_bar_opposition_reason(
     other_opposed = sorted({
         v.seat for v in seat_verdicts
         if v.direction == opposed and v.seat != "technical"
+        and not _is_broadcast_macro_verdict(v)
     })
     if other_opposed:
         return (
