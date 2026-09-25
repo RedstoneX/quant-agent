@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency surface
     TradingStream = None
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest,
+    StopOrderRequest,
     TakeProfitRequest, StopLossRequest, ReplaceOrderRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
@@ -1410,6 +1411,47 @@ def _is_terminal_broker_rejection(exc: BaseException) -> bool:
     """
     status_code = getattr(exc, "status_code", None)
     return status_code in (400, 404, 422)
+
+
+def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
+    """True when the broker refused a stop-MARKET specifically because the
+    order TYPE / TIME-IN-FORCE combination is not supported — the one
+    rejection that must degrade to a stop-LIMIT rather than to no stop.
+
+    Owner ratified 2026-09-25: protective stops are stop-MARKET (a guaranteed
+    exit — an elected stop fills instead of resting unfilled past a limit).
+    Every combo this desk submits (whole-share GTC, fractional DAY) is a
+    plain stop order and should be accepted (STOP/DAY was proven accepted by
+    the 2026-09-01 live probe); this classifier exists ONLY so a position is
+    never left unprotected if some combo turns out refused — a market-stop
+    refusal degrades to a stop-limit, never to no stop.
+
+    Deliberately NARROW so it cannot swallow an unrelated rejection:
+
+      * a held_for_orders / insufficient-qty refusal is NOT this — it is
+        handled by the retry / existing-stop path and must propagate;
+      * a garbage stop price is short-circuited before submit;
+      * only a 400/422 whose message names the order TYPE / CLASS or the
+        TIME-IN-FORCE as the problem qualifies.
+
+    A false positive here is harmless anyway: the stop-limit fallback submit
+    is UNGUARDED, so a rejection that was not really a type/tif problem still
+    surfaces as an exception from that second attempt — never swallowed,
+    only retried once as a stop-limit.
+    """
+    if _is_held_for_orders_error(exc):
+        return False
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in (400, 422):
+        return False
+    text = str(exc).lower()
+    type_terms = (
+        "order type", "order_type", "order class", "order_class",
+        "time_in_force", "time in force",
+        "not supported", "unsupported",
+        "not permitted", "not allowed", "invalid order",
+    )
+    return any(term in text for term in type_terms)
 
 
 def _split_protective_qty(qty) -> tuple[float, float]:
@@ -3648,7 +3690,8 @@ class AlpacaBroker:
         process itself submitted or remembers.
 
         2026-08-28 ONDS/CCJ: both positions were closed by their broker-
-        resident protective stop (a GTC stop-limit order placed by
+        resident protective stop (a GTC stop-MARKET order — stop-limit only
+        on the unsupported-combo fallback — placed by
         `place_entry_protection` / `_repair_stop_coverage` /
         `shift_stops_down`), and none of those paths ever write the STOP
         ORDER ITSELF into `trades` — only every system-DECIDED exit (SELL /
@@ -4650,7 +4693,8 @@ class AlpacaBroker:
                         ),
                     }
 
-        # Protective stop for a BUY is placed as a SEPARATE GTC stop-limit
+        # Protective stop for a BUY is placed as a SEPARATE GTC stop-MARKET
+        # (guaranteed exit; stop-limit only on the unsupported-combo fallback)
         # AFTER the entry fills — NOT as an OTO leg.
         #
         # WHY (2026-07-16 audit, CRITICAL): `StopLossRequest` carries no
@@ -4726,11 +4770,19 @@ class AlpacaBroker:
             "pending_stop_price": stop_loss_price if use_stop else None,
         }
 
+    # SCOPE (owner ratified 2026-09-25): primary PROTECTIVE stops are now
+    # stop-MARKET (guaranteed exit), so this buffer NO LONGER governs the
+    # protective stop the desk normally places. It governs only (a) the
+    # stop-LIMIT FALLBACK taken when the broker refuses a stop-market for an
+    # unsupported type/tif combo, and (b) the force-de-lever must-fill SELL.
+    #
     # 3% beyond the stop: a stop-MARKET fills at whatever the book has on a
     # gap (10%+ worse than the stop); a stop-limit caps the worst-case fill.
     # The buffer must be wide enough that routine volatility clears it
-    # ("prioritize fill over price"). Trade-off: on gaps beyond 3% the limit
-    # won't fill and the position stays open until a session can act.
+    # ("prioritize fill over price"). Trade-off on those fallback/de-lever
+    # legs: on gaps beyond 3% the limit won't fill and the position stays
+    # open until a session can act — which is exactly why the primary
+    # protective stop is now market and not subject to this trade-off.
     #
     # "Beyond", not "below": a long's protective order is a SELL stop, so
     # its limit sits 3% BELOW the trigger (a SELL needs its floor under the
@@ -5007,7 +5059,8 @@ class AlpacaBroker:
         held_qty_before: float = 0.0,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
-        protective stop-limit for the ACTUAL filled qty.
+        protective stop (stop-MARKET, guaranteed exit) for the ACTUAL filled
+        qty.
 
         If the entry is STILL WORKING after the wait (slow tape, wide limit),
         the unfilled remainder is CANCELLED first — audit round 2: the 15s
@@ -5369,7 +5422,7 @@ class AlpacaBroker:
                 )
             else:
                 logger.info(
-                    "entry protection: [%s] %s stop-limit placed for %s "
+                    "entry protection: [%s] %s protective stop placed for %s "
                     "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
                 )
             return order
@@ -5659,11 +5712,26 @@ class AlpacaBroker:
         *,
         side: str = "sell",
     ) -> dict:
-        """Submit a GTC stop-limit order. `side` is the STOP ORDER's own
+        """Submit a protective stop. `side` is the STOP ORDER's own
         side — "sell" (default) protects a long and fires as price falls;
         "buy" protects a short and fires as price rises. Defaults to "sell"
-        so every pre-shorts call site (none of which pass `side`) submits
-        byte-identical orders to before.
+        so every pre-shorts call site (none of which pass `side`) keeps its
+        behaviour.
+
+        PRIMARY: a stop-MARKET (`StopOrderRequest`) — owner ratified
+        2026-09-25 for a GUARANTEED exit. An elected market stop fills at the
+        next print instead of resting unfilled past a limit on a gap, which
+        is the exposure the stop exists to close. `limit_price` is therefore
+        IGNORED on the primary order (a market stop has no limit).
+
+        SAFETY FALLBACK: if the broker refuses the stop-MARKET for an
+        unsupported order-type/tif combination
+        (`_is_unsupported_stop_market_rejection`), this degrades to the
+        original stop-LIMIT for the SAME leg so the position is never left
+        unprotected — a market-stop refusal becomes a stop-limit, never no
+        stop. Any OTHER rejection propagates unchanged. `STOP_LIMIT_BUFFER_PCT`
+        and `limit_price` govern ONLY this fallback now (and the separate
+        force-de-lever must-fill SELL), not the primary protective stop.
 
         When `limit_price` is not supplied, the fallback buffer must sit on
         the correct side of the trigger too: a SELL's limit belongs BELOW
@@ -5741,6 +5809,10 @@ class AlpacaBroker:
                 "coverage sweep.", symbol, qty,
             )
         stop_price_q = _quantize_price(stop_price)
+        # The limit is computed EAGERLY but used ONLY by the stop-limit
+        # fallback below — the primary protective order is a stop-MARKET and
+        # carries no limit. Same buffer/side rule the fallback and the
+        # force-de-lever must-fill SELL use.
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
         else:
@@ -5749,15 +5821,44 @@ class AlpacaBroker:
                 else (1 - self.STOP_LIMIT_BUFFER_PCT)
             )
             limit_price_q = _quantize_price(stop_price * buffer_mult)
-        req = StopLimitOrderRequest(
+        # PRIMARY: stop-MARKET (guaranteed exit) — owner ratified 2026-09-25.
+        market_req = StopOrderRequest(
             symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=order_side,
             time_in_force=time_in_force,
             stop_price=stop_price_q,
-            limit_price=limit_price_q,
         )
-        order = self.client.submit_order(req)
+        try:
+            order = self.client.submit_order(market_req)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_unsupported_stop_market_rejection(exc):
+                # NOT a type/tif refusal — held_for_orders, buying-power,
+                # symbol, rate-limit, 5xx, etc. must propagate unchanged so
+                # the retry / existing-stop / escalation paths above see the
+                # real cause. The fallback must never swallow these.
+                raise
+            # SAFETY FALLBACK: the broker refused the stop-MARKET for an
+            # unsupported order-type/tif combo. Degrade to the ORIGINAL
+            # stop-LIMIT for this same leg so the position is NEVER left
+            # unprotected. This second submit is UNGUARDED: if it too is
+            # rejected, that exception surfaces to the caller — a naked
+            # position is never reported as covered.
+            logger.warning(
+                "protective stop-MARKET refused for %s (qty=%s, stop $%.4f) as "
+                "an unsupported order-type/tif combo (%s) — falling back to a "
+                "stop-LIMIT (limit $%s) so the position stays protected.",
+                symbol, qty, stop_price_q, exc, limit_price_q,
+            )
+            limit_req = StopLimitOrderRequest(
+                symbol=_alpaca_symbol(symbol),
+                qty=qty,
+                side=order_side,
+                time_in_force=time_in_force,
+                stop_price=stop_price_q,
+                limit_price=limit_price_q,
+            )
+            order = self.client.submit_order(limit_req)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),

@@ -3309,13 +3309,18 @@ class TradingPipeline:
             # ---- ELECTED BUT UNFILLED -------------------------------------
             # Runs for EVERY held position, including the ones this sweep is
             # about to call perfectly covered — which is the entire point.
-            # The desk's protective stops rest at the broker as stop-LIMIT
-            # orders (see `StopLimitOrderRequest` / `STOP_LIMIT_BUFFER_PCT`).
-            # On a gap past the limit the stop is ELECTED and does not fill,
-            # and the order stays `status=OPEN`, so `specs` above still
-            # counts its shares as covered and this sweep — correctly by its
-            # own logic — does nothing about it, indefinitely. The shares are
-            # not protected: an unfilled order is not an exit.
+            # The desk's protective stops now rest as stop-MARKET orders
+            # (owner ratified 2026-09-25), which FILL when elected — so this
+            # state should no longer arise for them. It CAN still arise for
+            # the stop-LIMIT fallback (taken only when the broker refuses a
+            # stop-market for an unsupported type/tif combo — see
+            # `_submit_stop_limit_order` / `STOP_LIMIT_BUFFER_PCT`): on a gap
+            # past that limit the stop is ELECTED and does not fill, the
+            # order stays `status=OPEN`, so `specs` above still counts its
+            # shares as covered and this sweep — correctly by its own logic —
+            # does nothing about it, indefinitely. The shares are not
+            # protected: an unfilled order is not an exit. Kept as the
+            # backstop for exactly that residual case.
             #
             # Detected only while the market is OPEN, reusing the one
             # `market_open` read this pass already took: with the tape shut
@@ -3705,6 +3710,9 @@ class TradingPipeline:
         This is the state `STOP_LIMIT_BUFFER_PCT`'s own comment describes
         ("on gaps beyond 3% the limit won't fill and the position stays open
         until a session can act") and which nothing could previously see.
+        Primary protective stops are now stop-MARKET and fill when elected,
+        so this only fires for the stop-limit fallback leg — kept as its
+        backstop.
 
         DETECTS ONLY. Nothing here sells, cancels, replaces or re-prices
         anything — an exit decision on an unfilled stop is an owner-level
@@ -18178,8 +18186,10 @@ class TradingPipeline:
                     # is merely TIGHT (an ordinary session could reach it)
                     # and a stop that has already been BLOWN THROUGH without
                     # filling (nothing is standing watch over those shares).
-                    # The second is the state the whole stop-limit buffer
-                    # trade-off produces on a gap, and it now reads as
+                    # The second is the state the stop-limit buffer trade-off
+                    # produces on a gap — now only reachable on the stop-limit
+                    # FALLBACK leg, since primary protective stops are
+                    # stop-market and fill when elected — and it now reads as
                     # itself. The distance is reported as a positive number
                     # of dollars PAST the trigger, which is a different
                     # quantity from `gap` and carries a different name.
