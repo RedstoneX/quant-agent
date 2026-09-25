@@ -592,10 +592,32 @@ export default function App() {
     }
   }
 
-  function inspectOrder(order: OrderItem) {
-    const linkedTrade = trades.find((trade) => trade.broker_order_id === order.id);
-    if (linkedTrade) inspectTrade(linkedTrade);
-    else inspectSymbol(order.symbol);
+  async function inspectOrder(order: OrderItem) {
+    const cached = trades.find((trade) => trade.broker_order_id === order.id);
+    if (cached) {
+      inspectTrade(cached);
+      return;
+    }
+    // The order list (status=closed/all) reaches back further than the
+    // `trades` state above, which is capped at its own display limit for
+    // the Trades panel. A BUY whose fill has aged out of that cache used
+    // to silently fall through to inspectSymbol below, which only opens a
+    // popup for a symbol in TODAY's live candidate funnel — so any older
+    // filled buy opened nothing at all, indistinguishable from a
+    // SELL-STOP row's (expected) lack of detail. Look the trade up by
+    // symbol on demand before giving up on it.
+    try {
+      const { trades: bySymbol } = await api.trades({ symbol: order.symbol, limit: 20 });
+      const linkedTrade = bySymbol.find((trade) => trade.broker_order_id === order.id);
+      if (linkedTrade) {
+        inspectTrade(linkedTrade);
+        return;
+      }
+    } catch {
+      // Non-fatal: fall through to the symbol-only inspection below,
+      // same as when no linked trade exists at all (e.g. a resting stop).
+    }
+    inspectSymbol(order.symbol);
   }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
