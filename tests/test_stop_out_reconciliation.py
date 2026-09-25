@@ -241,12 +241,12 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
     def _fills(symbol, after):
         if symbol == "ONDS":
             return [_stop_order(
-                "865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93,
+                "00000000-0000-4000-8000-000000000001", "ONDS", 17.0, 7.93,
                 "2026-08-28T16:16:07.476647+00:00",
             )]
         if symbol == "CCJ":
             return [_stop_order(
-                "c785ae7e-359d-49fc-9853-0930e879eae5", "CCJ", 2.0, 102.955,
+                "00000000-0000-4000-8000-000000000002", "CCJ", 2.0, 102.955,
                 "2026-08-28T14:05:17.636316+00:00",
             )]
         return []
@@ -267,8 +267,8 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
                if r["action"] == "STOP_OUT")
     assert onds["realized_pnl"] == -10.2
     assert ccj["realized_pnl"] == -9.02
-    assert onds["broker_order_id"] == "865a3187-af9d-4752-be45-f121dcb9a390"
-    assert ccj["broker_order_id"] == "c785ae7e-359d-49fc-9853-0930e879eae5"
+    assert onds["broker_order_id"] == "00000000-0000-4000-8000-000000000001"
+    assert ccj["broker_order_id"] == "00000000-0000-4000-8000-000000000002"
     # Backdated to the ACTUAL fill time, not "now" (detection time).
     assert onds["timestamp"].startswith("2026-08-28 16:16:07")
     assert ccj["timestamp"].startswith("2026-08-28 14:05:17")
@@ -1075,3 +1075,114 @@ def test_calibration_and_ledger_qty_agree_on_trail_stop_fill_state(tmp_path):
     # Exactly the three stops that fired closed a round trip — BBB is still
     # open to BOTH accountings, which is the agreement being asserted.
     assert stats["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Item 101: surfacing the reconciler's dropped return values to the owner.
+#
+# Before this, `_reconcile_stop_out_fills` wrote a broker-made stop-out back
+# to the ledger (a real forced-loss exit) and `_drain_pending_protection_
+# restores` re-protected naked positions, but every call site invoked both as
+# BARE statements — the return values were dropped and NEITHER event ever
+# reached the owner. `_surface_reconcile_outcomes` is the routing point that
+# closes that gap by paging through the same `send_owner_alert` path the
+# unexplained-gap branch already uses. These tests prove a reconciled stop-out
+# now produces owner-facing output where before it produced none.
+# ---------------------------------------------------------------------------
+
+def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
+    tmp_path, monkeypatch,
+):
+    """The exact ONDS incident: a reconciled broker stop-out now sends a
+    standalone owner alert carrying WHY (symbol, shares, price, realized
+    loss). Before item 101 the call site dropped this return value and the
+    owner heard nothing."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    _filled_buy(db, "ONDS", 17, 8.53, "entry-onds", ts="2026-08-27 14:31:55")
+
+    broker = MagicMock()
+    broker.get_positions.return_value = []  # flat at the broker
+
+    def _fills(symbol, after):
+        if symbol == "ONDS":
+            return [_stop_order(
+                "865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93,
+                "2026-08-28T16:16:07.476647+00:00",
+            )]
+        return []
+    broker.list_filled_sell_orders.side_effect = _fills
+
+    pipeline = _mk_pipeline(db, broker)
+    reco = pipeline._reconcile_stop_out_fills(run_id="r-reconcile")
+    assert next(r for r in reco if r["symbol"] == "ONDS")["recorded"] == 1
+
+    import src.notifier as notifier
+    sent = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        lambda text, **kw: sent.append((text, kw)) or True,
+    )
+
+    pipeline._surface_reconcile_outcomes(reco, 0, run_id="r-reconcile")
+
+    assert len(sent) == 1, "a reconciled stop-out must page the owner exactly once"
+    text, kw = sent[0]
+    assert "BROKER STOPPED YOU OUT" in text
+    assert "ONDS" in text
+    assert "17 share" in text          # the WHY: how many
+    assert "7.93" in text              # the WHY: at what price
+    assert "$10.20" in text            # the WHY: realized loss magnitude
+    assert "−" in text                 # ...and it was a LOSS (signed)
+    assert kw.get("symbols") == ["ONDS"]
+
+
+def test_surface_reconcile_outcomes_pages_re_protection_count(
+    tmp_path, monkeypatch,
+):
+    """A drained (re-protected) naked position is a live-risk event; its
+    count now reaches the owner instead of being silently discarded."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    pipeline = _mk_pipeline(db, MagicMock())
+
+    import src.notifier as notifier
+    sent = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        lambda text, **kw: sent.append((text, kw)) or True,
+    )
+
+    pipeline._surface_reconcile_outcomes([], drained_count=2, run_id="r1")
+
+    assert len(sent) == 1
+    text, _ = sent[0]
+    assert "PROTECTION RESTORED" in text
+    assert "2 positions" in text
+
+
+def test_surface_reconcile_outcomes_silent_when_nothing_happened(
+    tmp_path, monkeypatch,
+):
+    """No stop-out recorded and nothing drained → no owner page. An
+    unexplained-gap result (matched False / recorded 0) is handled by the
+    reconciler's own records-disagree alert, NOT by this surfacing helper,
+    so it must not double-page here."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    pipeline = _mk_pipeline(db, MagicMock())
+
+    import src.notifier as notifier
+    sent = []
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        lambda text, **kw: sent.append((text, kw)) or True,
+    )
+
+    pipeline._surface_reconcile_outcomes(
+        [{"symbol": "XYZ", "ledger_qty": 5.0, "broker_qty": 0.0,
+          "matched": False, "recorded": 0}],
+        0, run_id="r1",
+    )
+
+    assert sent == []

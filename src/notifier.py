@@ -1865,6 +1865,106 @@ def alert_records_disagree_with_broker(
         return False
 
 
+def alert_stop_out_recorded(
+    symbol: str, qty: float, price: float, realized_pnl: float | None = None,
+) -> bool:
+    """PAGE: the broker closed a position on its own protective stop.
+
+    Fires when `_reconcile_stop_out_fills` writes back a broker-initiated
+    protective-stop fill the ledger never saw — an exit the market FORCED,
+    not one the system chose. A protective stop only fires on a loss, so
+    this is always a real loss the owner had no way of knowing about
+    otherwise: before this alert existed the write-back happened silently
+    (a log line and a ledger row) and reached the owner NOWHERE.
+
+    Gets its OWN standalone message, per the owner's alert-design rule that
+    alerts are never bundled into a run summary — a forced exit is exactly
+    the kind of thing that must not hide inside a "session OK" message.
+
+    `realized_pnl` is whatever the ledger could compute (`None` when its own
+    BUY history can't cover the exited quantity — that unpriced case is
+    flagged separately and NOT guessed here).
+    """
+    try:
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        sym = str(symbol or "").strip() or "a position"
+        if realized_pnl is None:
+            pnl_line = (
+                "The desk could not compute the profit or loss on this exit "
+                "from its own records — that is being reviewed separately, "
+                "not guessed."
+            )
+        else:
+            pnl_line = (
+                f"Realized profit-and-loss on this exit: "
+                f"{_fmt_signed_money(realized_pnl)}."
+            )
+        body = (
+            "BROKER STOPPED YOU OUT — a protective stop fired and closed a "
+            "position; the desk did not choose this exit\n"
+            f"{sym}: your broker's own protective stop order sold "
+            f"{_fmt_qty(qty)} share(s) at ${_fmt_price(price)}. The desk did "
+            "not decide to sell — a stop it had resting at the broker "
+            "triggered on the price move and closed the position for you. A "
+            "protective stop only fires on a loss.\n"
+            "\n"
+            f"WHY YOU'RE HEARING THIS: this exit happened at the broker with "
+            f"no matching order in the desk's own records, so it was written "
+            f"back into the ledger just now. {pnl_line}\n"
+            f"WHAT TO CHECK: your broker account's {sym} history, as of "
+            + when + ". The position is already closed; nothing further is "
+            "required of you — this is a notice that the market took you out, "
+            "not a request."
+        )
+        return send_owner_alert(body, symbols=[sym])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "stop-out-recorded alert for %s could not be sent: %s", symbol, exc,
+        )
+        return False
+
+
+def alert_positions_reprotected(count: int) -> bool:
+    """NOTICE: naked positions from a prior bail were re-protected.
+
+    Fires when `_drain_pending_protection_restores` successfully rebuilds
+    stop coverage for one or more positions left unprotected by an earlier
+    session that bailed mid-finalize (a lingering SELL that hadn't converged,
+    or a broker-API hiccup). The write-back already happened silently before
+    this — this surfaces that a live-risk gap existed and is now closed, so a
+    period of unprotected exposure never passes unreported.
+
+    Its own standalone message, same alert-design rule as the siblings above.
+    """
+    try:
+        n = int(count or 0)
+        if n <= 0:
+            return False
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        noun = "position" if n == 1 else "positions"
+        body = (
+            "PROTECTION RESTORED — a position that was left without a stop is "
+            "covered again\n"
+            f"The desk found {n} {noun} that an earlier run had left without "
+            "a protective stop (an exit that didn't finish cleanly) and put "
+            "the stop coverage back on just now, as of " + when + ".\n"
+            "\n"
+            "WHY YOU'RE HEARING THIS: for a short window that "
+            f"{'position was' if n == 1 else 'those positions were'} exposed "
+            "with no automatic downside protection. That gap is now closed; "
+            "nothing is required of you — this is a notice that it happened "
+            "and was fixed."
+        )
+        return send_owner_alert(body)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "positions-reprotected alert could not be sent: %s", exc,
+        )
+        return False
+
+
 # === Session result formatting ===
 # Built as a free function (not a TelegramNotifier method) so it's
 # easy to unit-test without the network stub and so main.py can

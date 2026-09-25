@@ -6368,6 +6368,92 @@ class TradingPipeline:
             })
         return results
 
+    def _surface_reconcile_outcomes(
+        self,
+        reco_results: list[dict] | None = None,
+        drained_count: int | None = None,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        """Route dropped reconciler return values to the owner feed.
+
+        Item 101: both `_reconcile_stop_out_fills` (returns a per-symbol list
+        of what it wrote back) and `_drain_pending_protection_restores`
+        (returns a count of re-protected naked positions) do their write-back
+        silently — every call site discarded the return value, so a
+        broker-side stop-out reached the owner NOWHERE and a re-protection
+        was equally invisible. This is the single surfacing point the call
+        sites feed those return values into.
+
+        Does NOT change the reconciliation logic: it only reads what already
+        happened and pages the owner through the SAME `send_owner_alert` path
+        the unexplained-gap branch already uses (`alert_records_disagree_
+        with_broker`). A recorded stop-out is a real forced-loss exit, so per
+        the alert-design rule it gets its own standalone message rather than a
+        bundled session line.
+
+        Never raises — a surfacing fault must not break the trading path it
+        reports on, matching `send_owner_alert`'s own contract.
+        """
+        try:
+            from src.notifier import (
+                alert_positions_reprotected,
+                alert_stop_out_recorded,
+            )
+
+            if drained_count:
+                try:
+                    alert_positions_reprotected(int(drained_count))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "reconcile surfacing: re-protection alert failed: %s", exc,
+                    )
+
+            for res in reco_results or []:
+                if not (res.get("matched") and res.get("recorded")):
+                    continue
+                symbol = res.get("symbol")
+                if not symbol:
+                    continue
+                # Pull the rows this pass just wrote so the page carries the
+                # WHY (qty / price / realized P&L) rather than only a count.
+                # `insert_stop_out_trade` stamps each row with action
+                # 'STOP_OUT' and this run_id, so filtering on both isolates
+                # exactly what THIS pass recorded for THIS symbol — never an
+                # older stop-out from a previous session/run.
+                try:
+                    rows = self.db.get_trades(symbol=symbol, limit=50)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "reconcile surfacing: trade lookup failed for %s: %s "
+                        "— stop-out recorded but not surfaced this pass",
+                        symbol, exc,
+                    )
+                    continue
+                surfaced = 0
+                for r in rows:
+                    if surfaced >= int(res.get("recorded") or 0):
+                        break
+                    if r.get("action") != "STOP_OUT":
+                        continue
+                    if run_id is not None and r.get("run_id") != run_id:
+                        continue
+                    try:
+                        alert_stop_out_recorded(
+                            symbol=symbol,
+                            qty=r.get("fill_qty", r.get("qty")),
+                            price=r.get("fill_price", r.get("price")),
+                            realized_pnl=r.get("realized_pnl"),
+                        )
+                        surfaced += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "reconcile surfacing: stop-out alert failed for "
+                            "%s: %s", symbol, exc,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconcile surfacing failed (non-fatal): %s", exc)
+
     def _build_position_history(self, positions) -> dict[str, dict]:
         """L2 memory: for each held symbol, entry context + Tech rating trajectory.
 
@@ -13374,7 +13460,7 @@ class TradingPipeline:
             # sessions where finalize had to bail (lingering SELL didn't
             # converge, or broker API hiccup). Each drained row brings a
             # symbol's stop coverage back in line with broker reality.
-            self._drain_pending_protection_restores()
+            drained = self._drain_pending_protection_restores()
             self._drain_pending_repegs()
             # audit F4: resolve BUY write-ahead orphans from a prior
             # crashed session before this run touches positions/cash.
@@ -13384,10 +13470,14 @@ class TradingPipeline:
             # first — the position has been closed for hours by the time
             # this runs, and every other session entry point runs this same
             # check again in case morning's own attempt failed.
+            reco = None
             try:
-                self._reconcile_stop_out_fills(run_id)
+                reco = self._reconcile_stop_out_fills(run_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("morning stop-out reconcile failed (non-fatal): %s", exc)
+            # Item 101: surface a broker-made stop-out / re-protection to the
+            # owner — the write-backs above are otherwise silent.
+            self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
             # 0. Cancel stale entry orders from previous sessions, but preserve live protective exits.
             self.broker.cancel_open_entry_orders()
@@ -14243,7 +14333,7 @@ class TradingPipeline:
         # If morning bailed on a finalize and the SELL has since become
         # terminal, recover stop coverage NOW rather than waiting for
         # next-morning's drain — codex r8 #2.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit (independent of the WAL).
@@ -14254,13 +14344,16 @@ class TradingPipeline:
         # every trading day, so this is the most frequent chance to catch a
         # stop that fired since the last pass and write it back before the
         # reviewer builds its "what happened today" picture.
+        reco = None
         try:
-            self._reconcile_stop_out_fills(run_id)
+            reco = self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "%s stop-out reconcile failed (non-fatal): %s",
                 session_type, exc,
             )
+        # Item 101: surface a broker-made stop-out / re-protection to owner.
+        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
         # 1. Sync positions (snapshot into ctx)
         account = self.broker.get_account()
@@ -14846,9 +14939,13 @@ class TradingPipeline:
         # an unprotected position would ride the open-gap with no stop —
         # matches the drain pattern used in run_morning / run_position_review
         # / run_intra_check / run_evening.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
+        # Item 101: this pre-market session runs no stop-out reconcile, but a
+        # naked position it re-protects is a live-risk event the owner should
+        # still hear about — surface the drain count on its own.
+        self._surface_reconcile_outcomes(drained_count=drained, run_id=run_id)
 
         # Refresh the credentialless SEC Form 4 cache before any paid-analysis
         # gate. This deterministic source work remains available while the
@@ -15181,7 +15278,7 @@ class TradingPipeline:
                 # Drain orphaned protection-restore intents — intra runs every
                 # 30 min so this is the most frequent recovery opportunity for
                 # bails that landed during morning. Codex r8 #2.
-                self._drain_pending_protection_restores()
+                drained = self._drain_pending_protection_restores()
                 self._drain_pending_repegs()
                 # Broker-truth coverage audit + auto-repair every tick (audit round
                 # 2): an entry that fills after place_entry_protection's wait, or a
@@ -15205,10 +15302,15 @@ class TradingPipeline:
                 # runs on — a stop that fires mid-session is written back within
                 # one tick instead of sitting unrecorded until the next scheduled
                 # session hours later.
+                reco = None
                 try:
-                    self._reconcile_stop_out_fills(run_id)
+                    reco = self._reconcile_stop_out_fills(run_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+                # Item 101: surface a broker-made stop-out / re-protection to
+                # owner — intra is the tightest cadence, so this is where a
+                # mid-session stop-out reaches him fastest.
+                self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
                 # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
                 # table still read 'submitted' half an hour later. The stop-coverage
@@ -17432,7 +17534,7 @@ class TradingPipeline:
         # the trading day ends. If close-session bailed and the SELL has
         # since gone terminal, recover coverage now rather than carrying
         # a naked position overnight. Codex r8 #2.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit — last check before carrying positions
@@ -17442,10 +17544,13 @@ class TradingPipeline:
         # the daily P&L snapshot below is computed, so a same-day stop-out
         # is reflected in tonight's report rather than showing up as an
         # unexplained gap the next time someone looks at realized_pnl.
+        reco = None
         try:
-            self._reconcile_stop_out_fills(run_id)
+            reco = self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("evening stop-out reconcile failed (non-fatal): %s", exc)
+        # Item 101: surface a broker-made stop-out / re-protection to owner.
+        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
         # 1. Record daily PnL — use Alpaca's last_equity (previous trading-day close)
         # as the baseline. This correctly handles weekends/holidays (Alpaca updates
