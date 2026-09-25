@@ -555,19 +555,45 @@ class MacroEventCalendarProvider:
             days=max(horizon_days, RELEASE_SCHEDULE_LOOKAHEAD_DAYS),
         )
 
-        self._deadline = time.monotonic() + self.total_fetch_deadline_s
+        # Board item 187: seven releases share one 20s deadline (item
+        # 119's own diagnosis of the same disease in the FRED SERIES fetch —
+        # "the observation calls ... share the same worker slots ... so a
+        # healthy batch spends nearly the whole clock and one slow series
+        # starves the rest" — applies unchanged here, and this fetch has no
+        # cache to move it off the trading path). Left as one shared
+        # deadline, a single early release can burn up to `request_timeout_s`
+        # (15s) of the 20s total on its own, and — because `self.releases`
+        # is always walked in the same MACRO_RELEASES order — the SAME tail
+        # releases (PPI, PCE, GDP, Retail Sales, Initial Jobless Claims)
+        # starve on every run while CPI/NFP at the front almost always get
+        # through; production logs from 09-24/09-25 show exactly that set
+        # failing `fetch_deadline_exceeded` run after run.
+        #
+        # Fix: split the REMAINING budget evenly across the releases not yet
+        # attempted, recomputed fresh before each one. No release can eat
+        # more than its fair share of what is actually left, so a slow
+        # response degrades the NEXT release's budget proportionally instead
+        # of erasing it — and because the split is recomputed off the true
+        # remaining time (not a static 1/7th), a release that returns fast
+        # hands its unused time forward to the rest. This introduces no new
+        # timeout/threshold constant: the per-release budget is a derived
+        # fraction of the existing operator-set `total_fetch_deadline_s`,
+        # not a guessed number.
+        global_deadline = time.monotonic() + self.total_fetch_deadline_s
+        self._deadline = global_deadline
         self._consecutive_failed = 0
         succeeded = 0
         failures: list[ReleaseFailure] = []
         events: list[MacroEvent] = []
         beyond: list[MacroEvent] = []
         try:
-            for release in self.releases:
+            for idx, release in enumerate(self.releases):
                 # Hard wall-clock check FIRST — if earlier releases in this same
                 # call ate the whole budget, skip without even attempting. This
                 # is what actually bounds the worst case; retry/backoff below is
                 # best-effort recovery, not a ceiling.
-                if time.monotonic() >= self._deadline:
+                remaining_global = global_deadline - time.monotonic()
+                if remaining_global <= 0:
                     logger.warning(
                         "Event-calendar deadline (%.0fs) already exceeded — "
                         "skipping %s without an attempt",
@@ -580,9 +606,22 @@ class MacroEventCalendarProvider:
                     self._consecutive_failed += 1
                     continue
 
+                # This release's fair share of whatever time is actually
+                # left, split across itself and every release still to come.
+                # `self._deadline` is what `_fetch_release_dates` and
+                # `_next_backoff` clip their own timeouts/sleeps to, so
+                # tightening it here — never past `global_deadline` — is
+                # what stops one release from spending the whole run.
+                releases_left = len(self.releases) - idx
+                self._deadline = time.monotonic() + (remaining_global / releases_left)
+
                 dates, reason = self._fetch_release_dates(
                     release, today, fetch_end,
                 )
+                # Restore the real ceiling so the NEXT release's fair share
+                # is computed off true remaining time, not this release's
+                # tightened sub-budget.
+                self._deadline = global_deadline
                 if reason:
                     failures.append(ReleaseFailure(
                         release.release_id, release.label,
