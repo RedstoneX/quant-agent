@@ -1779,6 +1779,16 @@ class SmartMoneyObservation(LLMOutputModel):
     # congressional row cached before this field existed.
     cross_source_agreement: Literal["", "single_source", "agreement", "discrepancy"] = ""
     cross_source_note: str = ""
+    # True only for a congresswatch.us row: that feed carries no filing-date
+    # field at all, so `CongressionalTradingProvider._normalize_congresswatch`
+    # estimates one at the STOCK Act's 45-day ceiling. That estimate is a
+    # guess about WHEN we could have learned of the trade, not a measurement,
+    # so it must never be read as evidence the disclosure was timely — see
+    # `SmartMoneyFinding.deterministic_eligibility`'s lag_days check, which
+    # treats an estimated date as failing the freshness gate outright rather
+    # than as satisfying it by construction. Always False for kadoa and for
+    # every SEC Form 4 (stream="insider") row.
+    disclosure_date_estimated: bool = False
     # The most recent same-day opportunistic insider purchase cluster in this
     # row's symbol, stamped by `SECForm4Provider.fetch` on every insider row
     # of a CONFIGURED-UNIVERSE symbol (never on a non-universe or
@@ -1936,11 +1946,22 @@ class SmartMoneyFinding(LLMOutputModel):
             # learn about the trade), not the trade's own informational
             # age — a different question, kept.
             actors = {o.actor.strip().casefold() for o in self.observations}
+            # `lag_days <= 45` on its own cannot fail for a congresswatch.us
+            # row: that source has no real filing date, so the provider
+            # estimates one at exactly the 45-day ceiling this check applies
+            # (see `disclosure_date_estimated`'s docstring). An estimate is
+            # not a measurement of timeliness, so it must not be allowed to
+            # satisfy this gate — an estimated-date observation always fails
+            # it here, regardless of its lag_days value, the same as any
+            # other observation whose disclosure timing is unverified.
             self.support_eligible = (
                 len(self.observations) >= 2
                 and len(actors) >= 2
                 and len(directional) == 1
-                and all(o.lag_days <= 45 for o in self.observations)
+                and all(
+                    o.lag_days <= 45 and not o.disclosure_date_estimated
+                    for o in self.observations
+                )
             )
             # Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20
             # entry): congressional disclosures are evidence and must never

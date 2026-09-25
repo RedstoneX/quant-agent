@@ -597,6 +597,73 @@ def test_rule4_transaction_date_is_never_inferred_from_lag_or_pattern(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Item 170: an ESTIMATED disclosure date (congresswatch.us has no real filing
+# date, so one is guessed at the 45-day statutory ceiling) must never satisfy
+# the `lag_days <= 45` freshness gate -- an estimate that is BY CONSTRUCTION
+# equal to the threshold cannot fail it, which made the least-known rows
+# read as the most timely.
+# ---------------------------------------------------------------------------
+
+def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
+    """A same-day two-actor cluster whose dates are all estimated (i.e. every
+    row is congresswatch-only, lag_days == 45 by construction) must NOT
+    become support_eligible -- the estimate is a guess, not a measurement of
+    on-time disclosure."""
+    estimated = [
+        SmartMoneyObservation(
+            symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
+            direction="buy", amount_range="$15,001 - $50,000",
+            transaction_date=TODAY - timedelta(days=45),
+            disclosure_date=TODAY,
+            known_at=datetime.combine(TODAY, datetime.min.time()),
+            source_url="https://congresswatch.us/",
+            transaction_value_usd=15001.0,
+            in_core_universe=True, in_trading_universe=True,
+            admission_eligible=False, transient_admission_eligible=False,
+            lag_days=45, disclosure_age_days=0, freshness="delayed",
+            economic_role="confirmatory", disclosure_date_estimated=True,
+        )
+        for actor in ("Kevin Hern", "Jane Doe")
+    ]
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Two members bought, both dates estimated.",
+        why_now="lag_days == 45 only because it was guessed at the ceiling.",
+        observations=estimated,
+    )
+    assert finding.support_eligible is False
+    assert finding.economic_role == "historical"
+
+    # The same cluster with REAL (non-estimated) dates at the same lag is
+    # still genuinely eligible -- this is not a blanket ban on lag==45.
+    real = [o.model_copy(update={"disclosure_date_estimated": False}) for o in estimated]
+    real_finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Two members bought, real dates.",
+        why_now="lag_days == 45, verified against a real filing date.",
+        observations=real,
+    )
+    assert real_finding.support_eligible is True
+
+
+def test_fetch_marks_congresswatch_observations_as_disclosure_date_estimated(tmp_path):
+    """The `disclosure_date_estimated` flag set at normalization time must
+    survive all the way onto the `SmartMoneyObservation` that `fetch()`
+    hands to the seat -- it was previously dropped when building the
+    observation, silently discarding the only signal that a row's date is a
+    guess rather than a measurement."""
+    congresswatch = [_congresswatch_row(transaction_date=TODAY - timedelta(days=10))]
+    provider = CongressionalTradingProvider(
+        data_dir=str(tmp_path), session=_mock_session([], congresswatch),
+        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+    )
+    provider.refresh()
+    rows, _ = provider.fetch(["NVDA"])
+    assert len(rows) == 1
+    assert rows[0].disclosure_date_estimated is True
+
+
+# ---------------------------------------------------------------------------
 # Direction parsing (bug 2) — House PTR forms carry SHORT CODES (P/S/E), not
 # only full words. Those fell through to "unknown" and were lost.
 # ---------------------------------------------------------------------------
