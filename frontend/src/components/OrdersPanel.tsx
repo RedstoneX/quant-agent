@@ -119,6 +119,12 @@ export function OrdersPanel({
             getRowId={(order) => order.id}
             initialSorting={[{ id: "submitted_at", desc: true }]}
             onRowClick={onInspect}
+            // Every order row is wired to the same onInspect handler above
+            // (there is no non-clickable row type here — even a resting
+            // stop with no linked trade still re-charts its symbol), so a
+            // uniform disclosure affordance is correct rather than
+            // singling any row out. See DataTable's showRowChevron doc.
+            showRowChevron
             resizable
             reorderable
             storageKey="orders-columns"

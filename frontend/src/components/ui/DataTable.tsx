@@ -88,6 +88,7 @@ export function DataTable<T extends object>({
   scrollX = false,
   footer,
   storageKey,
+  showRowChevron = false,
 }: {
   data: T[];
   columns: LegacyColumnDef<T, unknown>[];
@@ -131,6 +132,19 @@ export function DataTable<T extends object>({
   /** Unique per table instance. Required to actually persist when
    * `resizable` or `reorderable` is set (silently skipped without it). */
   storageKey?: string;
+  /** Decorates the last visible cell of every clickable row with a small
+   * faint disclosure chevron that darkens on row hover, so a row that
+   * opens a detail popup on click visibly reads as clickable (owner
+   * report 2026-09-25: only the bold ticker button showed a hover
+   * affordance, so users clicked IT expecting a popup and got the chart
+   * instead). No-op unless `onRowClick` is also set. Deliberately opt-in
+   * (default off) rather than automatic whenever `onRowClick` is passed,
+   * so existing tables (Positions, Trades) keep their current look and
+   * only a caller that wants the chevron gets it. Anchored to whichever
+   * cell is currently LAST rather than to a specific column id, so it
+   * still sits at the row's true right edge if columns get reordered
+   * (this table is `reorderable`). */
+  showRowChevron?: boolean;
 }) {
   // Percentage-width columns and horizontal scrolling are mutually
   // exclusive by construction (see `scrollX` above), so one flag governs
@@ -524,7 +538,7 @@ export function DataTable<T extends object>({
           {table.getRowModel().rows.map((row) => (
             <TableRow
               key={row.id}
-              className={onRowClick ? "cursor-pointer hover:bg-panel-alt" : ""}
+              className={onRowClick ? "group cursor-pointer hover:bg-panel-alt" : ""}
               tabIndex={onRowClick ? 0 : undefined}
               onClick={() => onRowClick?.(row.original)}
               onKeyDown={(event) => {
@@ -533,15 +547,34 @@ export function DataTable<T extends object>({
                 onRowClick(row.original);
               }}
             >
-              {row.getVisibleCells().map((cell) => (
-                <TableCell
-                  key={cell.id}
-                  className={`font-mono tabular-nums px-2 py-2 ${sizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
-                  style={sizable ? { width: `${(fractions[cell.column.id] ?? 0) * 100}%` } : undefined}
-                >
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </TableCell>
-              ))}
+              {row.getVisibleCells().map((cell, cellIndex) => {
+                const isLastCell = cellIndex === row.getVisibleCells().length - 1;
+                const showChevron = Boolean(onRowClick) && showRowChevron && isLastCell;
+                return (
+                  <TableCell
+                    key={cell.id}
+                    className={`font-mono tabular-nums px-2 py-2 ${sizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
+                    style={sizable ? { width: `${(fractions[cell.column.id] ?? 0) * 100}%` } : undefined}
+                  >
+                    {showChevron ? (
+                      // Disclosure chevron, not a new column: it rides inside
+                      // whichever cell is currently last so no header/column
+                      // is added. text-dim -> group-hover:text-ink mirrors the
+                      // existing expand/collapse caret token pairing (see
+                      // CandidateRail's row-expander), just driven by the ROW's
+                      // hover (via `group` above) instead of the icon's own.
+                      <div className="flex min-w-0 items-center justify-between gap-1">
+                        <span className="min-w-0 truncate">{flexRender(cell.column.columnDef.cell, cell.getContext())}</span>
+                        <span aria-hidden="true" className="shrink-0 text-dim transition-colors group-hover:text-ink">
+                          ›
+                        </span>
+                      </div>
+                    ) : (
+                      flexRender(cell.column.columnDef.cell, cell.getContext())
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           ))}
           {footer && (
