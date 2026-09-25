@@ -116,21 +116,11 @@ detail: docs/BOARD_NOTES.md (item 78)
 **80. Stop provenance — every shipped stop must trace to a computed level, the signal bar, or the volatility band. OPEN, TIER 1; the REFUSAL path is contested, filed 2026-09-17.** A model-typed stop matching no level, signal bar or volatility band is honoured today, and **since the stop sets position size, an unverifiable number is sizing real trades.** Tracing is agreed.
 detail: docs/BOARD_NOTES.md (item 80)
 
-**82. `setup_type` is classified twice, inconsistently, so the risk reviewer cut a breakout it is forbidden to cut — TIER 2 DEFECT, filed 2026-09-17.** Two paths disagree about the same trade and the reviewer's breakout exemption was decided off the wrong one.
-detail: docs/BOARD_NOTES.md (item 82)
-
-**83. The review path works from stale position state — DEFECT, filed 2026-09-17. Both instances SHIPPED the same night (#453): fills are reconciled every half-hour, and a fully-sold symbol no longer reaches the position reviewer. Residue is ONE live-session confirmation, then write it up and retire.**
-
-**84. All six timers fire in the same second — DEFECT, filed 2026-09-17. SHIPPED the same night (#454): the intraday check is offset off the shared tick and the coverage-sweep repair is deferred during a live session. Already written up in `docs/INCIDENT_HISTORY.md` ("2026-09-17 — six timers on one tick; two stop-coverage repairs raced") — do NOT add a second entry. Residue is ONE live-session confirmation, then retire.**
-
 **86. The live-fill `trade_updates` websocket has never once authenticated — cause found and fix SHIPPED 2026-09-18 (#517), item stays OPEN until a live attempt proves it.** 1,017 failures across three days, zero successes [measured 2026-09-18].
 
 DONE WHEN:
   - [ ] one live log line records `trade_updates websocket authenticated`
 detail: docs/BOARD_NOTES.md (item 86)
-
-**89. Nineteen Telegram defects, 2026-09-17 audit — most fixed 2026-09-18. Catalogue: `docs/BOARD_NOTES.md` ("item 89"); fixes: `docs/INCIDENT_HISTORY.md` (2026-09-18). Open only on three named defects, confirmable only against a live session (the DB is unreadable from the operator account to re-render a past one).** Defect 5 (raw internal error text): reason codes are now plain English but genuine exception text still reaches the owner — the write-up's prose disagrees with this, don't close on the prose.
-detail: docs/BOARD_NOTES.md (item 89)
 
 **90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails.
 detail: docs/BOARD_NOTES.md (item 90)
@@ -143,12 +133,6 @@ detail: docs/BOARD_NOTES.md (item 95)
 
 **99. Analyst-seat prompt audit and enforcement gap — TIER 2, filed 2026-09-18; not yet placed in the owner's priority order. Detail: `docs/BOARD_NOTES.md` ("item 99").** **(d) Enforcement: build the check at the DELETION site** — when a mechanism is removed, grep its symbol name across every prompt and every Python-assembled agent string.
 detail: docs/BOARD_NOTES.md (item 99)
-
-**169. Cockpit chart draws today's candle/LIVE line off a raw last trade, can be stale — TIER 2, filed 2026-09-20 out of item 120's review.** `PriceChartPanel.tsx` uses raw `quote.last_price`, not item 120's resolved fields (`session_bar_is_today`, `src/data/live_price.py`) — a thin name's chart can disagree with its own session range.
-
-DONE WHEN:
-  - [ ] chart driven by a price the API marks as today's, or shows no price
-  - [ ] a stale-last-trade name cannot show a disagreeing candle/range (item 120's scenario)
 
 **170. `congresswatch.us` rows have no filing date, so the desk estimates one at trade+45d — filed 2026-09-20 from item 126's review.** That estimate feeds `SmartMoneyFinding`'s `lag_days <= 45` test, which then cannot fail on an estimated row by construction. **Measured:** real-date rows show median 60-day lag [2026-09-19]; estimated rows read as best-behaved instead.
 
@@ -170,9 +154,6 @@ detail: docs/BOARD_NOTES.md (item 173)
 NO CRITERIA: whether a failed de-lever should also alert or act is, by this audit's own framing, a live-selling-path decision for the owner, not a self-authorised patch.
 detail: docs/BOARD_NOTES.md (item 112)
 
-**101. Two reconciliation results are computed and then thrown away, so nothing downstream can act on them — filed 2026-09-18, pre-existing. SURFACING SHIPPED 2026-09-25, item stays OPEN for the owner to assess retirement.** `_reconcile_stop_out_fills` returns the exits the broker made that the ledger never heard about, and `_drain_pending_protection_restores` returns how many unprotected positions it just re-protected. **Every one of the five call sites discarded both return values** [verified 2026-09-18 against `src/pipeline.py`] — morning, the intraday check, the pre-earnings pass, the evening report, and the shared midday/close body. Fix: all five call sites now capture both return values and route them through `_surface_reconcile_outcomes`, which pages the owner via the SAME `send_owner_alert` path the unexplained-gap branch already used — `alert_stop_out_recorded` (carries symbol / shares / price / realized P&L; own standalone message per the alert-design rule) for a broker-made stop-out, `alert_positions_reprotected` for a re-protection count. The reconciliation logic itself is untouched. Covered by `tests/test_stop_out_reconciliation.py` (`test_surface_reconcile_outcomes_*`).
-detail: docs/BOARD_NOTES.md (item 101)
-
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17.
 detail: docs/BOARD_NOTES.md (item 107)
 
@@ -184,13 +165,6 @@ detail: docs/BOARD_NOTES.md (item 114)
 
 **115. The run-detail popup still shows raw machine evidence verbatim — filed 2026-09-18, split out of item 106 so it is not audited away as a duplicate.** Owner-facing output, not a trading-path defect — same class as item 89.
 detail: docs/BOARD_NOTES.md (item 115)
-
-**118. The de-levering ladder may not be able to SELL — its trims are LIMIT orders 1% through the market, priced for the one day they cannot fill. Filed 2026-09-18. NOT item 87's question; do not close it with item 87.** `src/pipeline.py::_enforce_gross_ceiling` priced every trim at `position.current_price * 0.99` (`1.01` for a COVER) [verified on main 2026-09-18].
-
-CODE FIXED (branch `delever-live-fill`, supersedes the fixed-3% approach that PR #636 shipped): the owner RULED the fixed % wrong — a fixed % of a possibly-stale `current_price` rests ABOVE the falling market on a gap wider than 3% (leaving the book over its ceiling / the deficit uncleared) and is oversized inside normal noise. BOTH de-lever paths — `_enforce_gross_ceiling` and its sibling `_force_delever` — now price the must-fill trim off the LIVE quote at submit time via `_live_delever_price`: a MARKETABLE LIMIT that crosses the current quote (a SELL at the live bid, a COVER at the live ask), so it fills at ANY gap size because the gap is already in the quote, and a MARKET order (`limit_price=None`) when no usable live quote is available (the guaranteed fill). The reference passed to the broker is the live mid, so the 20% fat-finger guard passes a legitimately gapped fill instead of rejecting it against yesterday's mark; a market order carries no limit and skips the guard entirely. No new % constant is introduced (the two former `0.97`/`1.03` fill-limit sites are removed from the number ledger; only the sweep's conservative proceeds haircut retains a `0.97`). Slippage is bounded to the live quote in the normal case and only unbounded in the no-quote market fallback, where fill certainty wins per the owner's ruling. WIDE-SPREAD RESIDUAL CLOSED: a wide-spread live quote (LULD halt-reopen, thin/inverse name) can make the marketable limit deviate >20% from mid and trip the broker's own fat-finger guard (`rejected_outlier`); rather than skip the name, `_submit_protected_sell` now ESCALATES to a MARKET order on any non-accept of the de-lever limit (both paths pass `escalate_to_market_on_reject=True`), preserving the cancel→submit→restore-on-failure stop invariant. A name is reported incomplete only if even the market order fails: the gross path re-measures and sets `delever_incomplete`; the cash-sweep path now has its own `_alert_owner_force_delever_incomplete` (parity with the gross path) so a genuinely unfillable name, or no long to sell, pages the owner instead of a silent skip. Tests in `tests/test_gross_exposure_ladder.py` prove each path fills at a 3%, 8% and 20% gap (where the old fixed-3% limit would have rested), the market fallback fires when no quote is available, a rejected marketable limit escalates to a filled market order with coverage rebuilt, incompleteness is reported only when even the market order fails, and the gross-ceiling trim takes the correct qty/side without over-trimming below the ceiling; `tests/test_broker.py` proves a market order skips the fat-finger guard.
-
-RESOLVED (was: owner risk-appetite decision): the owner ruled the emergency de-lever must fill regardless of gap size, fill taking priority over a few bps of slippage — implemented as the marketable-limit-crossing-the-live-quote with a market-order fallback above.
-detail: docs/BOARD_NOTES.md (item 118)
 
 **119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
 
@@ -226,19 +200,6 @@ DONE WHEN:
   - [ ] every broker-mutating write in `intra_check`'s preamble runs inside the same process lock the paid scan already holds
   - [ ] a repair cannot add a stop inside a session's deliberate cancel-stops-then-sell window, proven against that pairing and not only against two repairs racing
 
-**128. `intra_check`'s exemption from the session lock is justified by a mechanism that no longer exists at all — filed 2026-09-18, and SHARPENED 2026-09-20. The prompt-and-comment rot class.** `scripts/run_if_et_window.sh` justified the exemption as protecting a "stateless flash-crash circuit breaker" that "MUST fire on every 30-min tick".
-
-DONE WHEN:
-  - [ ] the exemption is either re-justified in the script against what the breaker does today, or removed
-  - [ ] no comment left in the scheduling path still describes the breaker as a seller
-detail: docs/BOARD_NOTES.md (item 128)
-
-**134. The risk seat's position-size edits are INVENTED numbers — filed 2026-09-18, TIER 1.** Across 28 recorded decision rows the seat has made 9 size modifications ever, all on the same field, and 6 of the 9 are whole numbers; `scale_all_buys` has only ever held 1.0 (14 times) or 0.7 (3 times), and 0.7 is the literal worked example in the seat's own briefing [measured 2026-09-18 against the live decision record].
-
-DONE WHEN:
-  - [x] a model-picked, unverifiable multiplier no longer sizes real trades — RESOLVED 2026-09-25 (owner ruling, reaffirming 2026-09-19): on ENTRIES `scale_all_buys` is now ADVISORY. The seat's concern + reason are captured and recorded durably (per-entry `scale_advisory` pipeline event + trader feed), but the multiplier is NOT applied to any `allocation_pct` and drops no trade; the hard aggregate limits (gross ceiling, per-trade risk %, correlation / at-risk budget) remain the real constraint. Briefing rewritten to state the advisory posture. → docs/INCIDENT_HISTORY.md.
-detail: docs/BOARD_NOTES.md (item 134)
-
 **138. Five unsourced order-price buffer sites carrying three values — filed 2026-09-18, TIER 1.** A 1% ladder offset, a 0.5% midday offset and a 3% stop-limit buffer decide whether an order fills, and none of the five sites is in `config/number_ledger.yaml` (they sit in the broker/execution path item 130 shows the ledger's scope rule excludes). **Item 118 is a NEAR-NEIGHBOUR and does NOT cover this** — it asks whether the ladder's 1% limit fills on a gap day; this is the whole family of unsourced price buffers.
 
 DONE WHEN:
@@ -256,23 +217,11 @@ DONE WHEN:
   - [ ] a check, not a rule, flags a new item that restates an existing one before it can merge
 detail: docs/BOARD_NOTES.md (item 140)
 
-**142. Range setups never trail until price exceeds the target — filed 2026-09-18.** Named in the exit review as the largest asymmetric-downside rule on the desk: the whole move up to the target is given back if price reverses, because nothing tightens before it.
-
-DONE WHEN:
-  - [ ] the range setup either trails before its target or the exemption is justified against a cited source or a measurement, and recorded
-detail: docs/BOARD_NOTES.md (item 142)
-
 **143. `docs/RESEARCH_FINDINGS.md` has ZERO entries for ATR bands, trailing, profit-taking, pacing or ranking granularity — filed 2026-09-18.** The only exit-side measurement it carries is the level-touch/stop bar in section 7.
 
 DONE WHEN:
   - [ ] each of the five areas has either a research entry or a recorded statement that no published source was found, with what was searched
 detail: docs/BOARD_NOTES.md (item 143)
-
-**145. The two reward:risk gates still read DIFFERENT numbers — filed 2026-09-18.** The portfolio-manager eligibility gate reads the model's own stated ratio; the constructor reads a derived structural one.
-
-DONE WHEN:
-  - [ ] the two gates read one number, or the reason they legitimately read different ones is recorded and the second is not described as the same test
-detail: docs/BOARD_NOTES.md (item 145)
 
 **147. A model call that succeeds with NO usage data is charged the FULL reservation and marks the day inexact — filed 2026-09-18.** `src/cost_circuit.py` stamps the day inexact whenever it charges the conservative reserve; three live null-cost rows exist on 2026-08-31.
 
@@ -287,13 +236,6 @@ DONE WHEN:
   - [ ] the correlation window's current value has a recorded reason, or is named as arbitrary like the threshold beside it
 detail: docs/BOARD_NOTES.md (item 148)
 
-**149. A FAILED benchmark check prints the word "passed" in its own detail string — filed 2026-09-18.** `ops/model_policy/scenarios.py` hands `Check("parsed_and_grounded", ..., "PortfolioDecision passed live grounding validation")` a detail written as an assertion of success, so result files under `ops/model_policy/results/` carry `"passed": false` beside a detail saying it passed [verified 2026-09-18 on four result files].
-
-DONE WHEN:
-  - [x] a check's detail states what was tested, not that it succeeded, so the detail cannot contradict the flag beside it
-FIXED 2026-09-25: the three `parsed_and_grounded` details in `ops/model_policy/scenarios.py` now read "checked PortfolioDecision parses and is grounded against live data" (a description of the test) instead of the old success assertion, so the detail is truthful whether the flag is true or false; a `None`-decision test pins that the detail never asserts a pass. Historical result files under `ops/model_policy/results/` still carry the old wording and were left untouched.
-detail: docs/BOARD_NOTES.md (item 149)
-
 **150. The live-capital pre-flight checklist exists NOWHERE in the repo as an actual gate — filed 2026-09-18, TIER 1.** The conditions that must hold before real money is switched on live in memory and prose, not in code or in a test, so nothing would stop or even notice a live-capital switch taken with an unmet condition.
 
 DONE WHEN:
@@ -304,12 +246,6 @@ DONE WHEN:
 DONE WHEN:
   - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry
 detail: docs/BOARD_NOTES.md (item 152)
-
-**153. A company the desk asked about, dropped from a seat's answer with no recovery, has no board item — filed 2026-09-18, from the log-health report.** Distinct from a missing name that comes back on retry: this is only the case where the seat gives up and the desk judges without it.
-
-DONE WHEN:
-  - [ ] a name the seat gives up on gets one more recovery attempt, or the decision it fed is marked as made without it
-detail: docs/BOARD_NOTES.md (item 153)
 
 **154. A research seat being unreachable, with the work going ahead short-handed, has no board item — filed 2026-09-18, from the log-health report.** `Morning research degraded` fired 14 times across the retained logs.
 
@@ -335,11 +271,6 @@ detail: docs/BOARD_NOTES.md (item 157)
 DONE WHEN:
   - [ ] the per-stock drop reason is stored alongside the stock it was dropped for, not only in the log
 
-**160. Two feature switches in `config/feature_flags.yaml` have no recorded reason — filed 2026-09-19, from #537's findings.** `RiskConfig.require_stop_loss` and `AlpacaConfig.paper` are marked `reason: "reason not recorded"`; neither is disputed as wrong, both are undocumented.
-
-DONE WHEN:
-  - [ ] each switch's reason is recovered from history and recorded, or an owner ruling sets one going forward
-
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
 
 DONE WHEN:
@@ -354,36 +285,12 @@ DONE WHEN:
   - [x] session counts use the real market-holiday calendar already available in the codebase instead of a bare Mon-Fri assumption — reuses `broker.trading_sessions_held` (Alpaca's real calendar; falls back to the weekday counter only on a calendar-query failure)
 detail: docs/BOARD_NOTES.md (item 165)
 
-**166. The auto-fix loop is built but has never run unsupervised — filed 2026-09-20 with the mechanism itself.** The owner authorised an automatic session after each desk health report ("you can use my cloud allowance, make sure that you're running everything with adversary"); it is shipped INERT — nothing installed, nothing enabled, and the handoff directory it needs does not exist.
-
-DONE WHEN:
-  - [ ] a supervised `--rehearse` run has been watched to completion more than once, and what it said it would do was right
-  - [ ] a test fails when a deny rule is removed from the permission envelope
-  - [ ] the decision to enable it, or not to, is recorded with its reason
-detail: docs/BOARD_NOTES.md (item 166)
-
-**167. Auto-fix loop's permission envelope has real bypasses, found by a qamc-adversary review of PR #560 after it reached main (item 166's mechanism; undone by PR #561) — filed 2026-09-20, OPEN: redesign not started.** Detail in `docs/INCIDENT_HISTORY.md`: (1) the deny list matches literal strings not effects — `python3 -c` reaches `sudo`/`systemctl`/`crontab` given passwordless root sudo; (2) the session could have edited and auto-merged its own permission/prompt files, no required reviewers or CODEOWNERS on main; (3) a snapshot re-read is a prompt-injection surface with a ~4.4h blind-window bug; (4) the design doc's "enforced by deny rules" claims were false as written; (5) the gating review ran parallel to auto-merge and lost the race.
-
-DONE WHEN:
-  - [ ] the envelope is proven against a privilege-escalation attempt (e.g. `python3 -c os.system(...)`), not pattern-matched strings
-  - [ ] the session's own config/prompt files require a human merge to change, never auto-merge
-  - [ ] whatever feeds external content into the session's prompt has a stated injection mitigation
-  - [ ] the mechanism's safety claims are tested, not only asserted in prose
-detail: docs/BOARD_NOTES.md (item 167)
-
 **174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
 DONE WHEN:
   - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, stating the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; durable/retryable like the quota-recovery alert
   - [ ] cooldown and allowance re-read against a real occurrence
 detail: docs/BOARD_NOTES.md (item 174)
-
-**175. FRED overdue dates can land on a Saturday; fetch timeouts are chronic — filed 2026-09-23, report-only.** `expected_next_by` is a plain calendar date, so DFF (cadence 1d, lag 1d) came due Sat 09-19 and read OVERDUE Mon 09-21 before an agency business day passed [measured, 1 firing].
-
-DONE WHEN:
-  - [x] `expected_next_by` rolls to a business day — already shipped under item 119 (#585, 2026-09-23): the weekend + federal-holiday roll lives in `src/data/fred_publication_days.py` and is applied at the overdue comparison in `src/data/macro.py`, covered by `tests/test_macro_prefetch.py`; verified on current main 2026-09-25 (the DFF Sat-09-19 firing no longer reproduces). Holidays covered in full (statutory rule set, no table to rot); the only residual is the lag approximation, which can flag a genuinely-late release a day or two early — the safe direction, and unrelated to weekends.
-  - [ ] the chronic `fetch_deadline_exceeded` half stays OPEN — owned by the approved fetch redesign (see `docs/BOARD_NOTES.md` item 175)
-detail: docs/BOARD_NOTES.md (item 175)
 
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
 
@@ -393,12 +300,6 @@ DONE WHEN:
   - [ ] every intra-preamble job on its own schedule
   - [ ] spend and actions re-measured
 detail: docs/BOARD_NOTES.md (item 177)
-
-**178. The execution SELL loop has two staleness postures, chosen by whether a rotation is present — filed 2026-09-20 from the item-39 review, renumbered from 168 because `main` claimed 168 in the meantime.** A ranked-margin rotation's close is sized off a broker read taken moments earlier; every other SELL uses `positions` as at research time, which the execution stage's own comment calls "5-10 minutes earlier".
-
-DONE WHEN:
-- [ ] counted: every SELL in the retained logs, research-time quantity beside execution-time quantity, how many differ and by how much
-- [ ] the asymmetry removed either way — the rotation's refresh deleted, or a refresh on every exit
 
 **179. The macro seat's paid heal hands on a plain dict where the desk expects the model object, and stores nothing — filed 2026-09-23.** The store-write half is now FIXED (2026-09-25): a paid macro heal is persisted to the macro store like the scheduled read. The "plain dict / zero nominations" half was investigated and is NOT a defect (dict is the canonical shape; nominations are collected before the heal runs). Left OPEN only for the `mechanical_heal_macro` dead-code OWNER call. See `docs/BOARD_NOTES.md` (item 179).
 
@@ -426,11 +327,6 @@ DONE WHEN:
   - [ ] each constant is sourced, measured, owner-ratified as appetite, or reformulated away
   - [ ] DEAD CONFIG, remove rather than source: the T-bill cash-sweep was retired 2026-09-17 (`cash_sweep.enabled: false`), so its still-`arbitrary` constants `_BUY_LIMIT_PAD` 1.001, `_SELL_LIMIT_PAD` 0.999, `_FUND_BUFFER_FRAC` 0.01, `_FUND_BUFFER_MIN_USD` 50 and `CashSweepConfig.min_order_usd` 500 are unreachable while the sweep is off and should be deleted, not re-derived
 
-**184. Stop-distance floors and level-honouring thresholds are made-up money numbers with no board item — filed 2026-09-25, TIER 1.** Item 90's half two, surfaced for visibility. The minimum stop distance when no level backs the stop is a flat 2.5 ATRs (`RiskConfig.min_stop_atr_multiple`, a single point picked inside a published 2.5-3.0x range), a level needs 5 touches before a tight stop is honoured against it (`RiskConfig.min_level_touches_for_stop_honor`, Osler searched and ruled out), and the raw stop width is scaled by regime at 1.2 / 1.1 / 0.95 (`ConstructorConfig.stop_atr_regime_scale`). Each sets how tight a stop may be and therefore the share count. Distinct from item 70 (the absolute 1x ATR floor) and item 55 (the pivot windows and cluster tolerance), which already track those. **2026-09-25 (owner delegated to the adversary):** all three named constants resolved — `min_stop_atr_multiple` (2.5) and the three `stop_atr_regime_scale` magnitudes (1.2/1.1/0.95) RATIFIED as owner-appetite (values unchanged, kept `status: arbitrary`+note), and `min_level_touches_for_stop_honor` (5) RECLASSIFIED `arbitrary`→`sourced` against the in-repo measured bounce-probability study (non-overlapping 95% CIs only at 5+ touches), which moved the arbitrary count 142→141. Item note updated; left OPEN pending the transfer-to-traded-universe open question kept on the touches entry.
-
-DONE WHEN:
-  - [ ] each constant is sourced, measured, owner-ratified as appetite, or reformulated away
-
 **185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25.** Item 90's half two, surfaced for visibility. How much of a run-up the desk gives back is a flat 3x-ATR chandelier (`trailing.CHANDELIER_ATR_MULTIPLE`, called "the conventional setting" with no citation), a proposed stop must ratchet at least 2% above the live stop (`trailing.MIN_RATCHET_PCT`), and midday refuses a trail whose new stop sits below 50% of the current price as a likely model typo (`_midday_execute_llm_actions`). All `status: arbitrary`. The trailing pivot window is already tracked by item 55 and the range ratchets by item 142, so they are excluded here.
 
 DONE WHEN:
@@ -441,7 +337,13 @@ DONE WHEN:
 DONE WHEN:
   - [ ] each constant is sourced, measured, owner-ratified as appetite, or reformulated away
 
-**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73, 79, 81, 85, 87, 88, 91, 92, 94, 96, 97, 98, 100, 102, 103, 104, 105, 106, 108, 110, 111, 113, 116, 117, 120, 122, 124, 126, 129, 130, 131, 132, 133, 135, 136, 137, 141, 144, 146, 151, 156, 159, 161, 162, 164, 168, 171, 172, 176, 181 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md` — every retirement's reason lives there; this line is deliberately not re-narrated. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Item 151 never sat on this board (filed and closed in the same change). The one piece of the items-135/136/137 PR NOT finished — the short-side guard living one layer out from where it belongs — is item 155, still OPEN work, not history. Item 38's follow-up survives as item 52, whose residue is item 63; item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file it. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. Item 141 (live technical-seat ranking ties breaking alphabetically) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 126 was retired 2026-09-20; residue is items 170 (disclosure-lag) and 169 (cockpit chart). Item 120 was retired 2026-09-23 — its SIZING half (new-name buy/short share counts dividing by a mid or stale price) kept it open past the 2026-09-20 rendering fix, so the earlier "retired 2026-09-20" claim was premature; reason in `docs/INCIDENT_HISTORY.md`, residue item 181. Item 111 (the earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 168 was retired 2026-09-20 (upstream-history claim now rendered from `trading.lookback_days`, not a hand-typed number); reason in `docs/INCIDENT_HISTORY.md`. Items 164 and 171 were retired 2026-09-23; reasons in `docs/INCIDENT_HISTORY.md`. 171's intent survives as item 99(g). Item 32 was retired 2026-09-20 by owner instruction, not by a fix: he removed the whole account-level loss alarm — daily halt and 5d/20d BUY-halving brakes — instead of answering the one-response-or-two question. The §11.2 ladder stays. Items 92 and 144 were VOIDED with it, not answered: both asked about the daily-loss trigger and its 5d/20d rungs, which are deleted. The ladder's own unmeasurable-drawdown behaviour is a separate live question. Item 172 (an unreadable protective stop reaching no owner alert) was FILED AND CLOSED inside the same change that caused it, 2026-09-23: it never sat on this board as open work, and was fixed rather than filed because per-position stops became the only loss protection in the same commit. Item 181 (a SHORT's risk-budget divisor using the analyst's stale entry instead of the today print, inflating `qty_by_risk`) was retired 2026-09-24 — the risk-budget path now sizes off the print via a separate `risk_sizing_price`, the allocation path and the BUY path are unchanged; reason in `docs/INCIDENT_HISTORY.md`. Item 132 (the definition-of-done gate's blind commit range on a shallow checkout) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 159 (dead Form 4 peek-ahead functions with no live caller) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 81 (the reward:risk inventory's residue) was retired 2026-09-24 — `RiskConfig.min_reward_risk_after_widening`, `ConstructorConfig.min_reward_risk_after_widening` and the dead `SUBFLOOR_SIZE_CAPPED_STATUS` were deleted as zero-reader dead code, but `REWARD_RISK_FLOOR` was NOT deleted: it is still read by `ops/model_policy/deterministic_selection.py`'s model-selection benchmark; reason in `docs/INCIDENT_HISTORY.md`. Item 130 (the number-ledger's `SCOPED_PATHS` excluding the broker order path) was retired 2026-09-25 — shipped via #544 on 2026-09-19: `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py` are already in `SCOPED_PATHS` (`src/number_sources.py`), verified still true on current main; reason in `docs/INCIDENT_HISTORY.md`. Item 108 (the position reviewer's 2% minimum stop-raise stated as a hard rule but not enforced) was retired 2026-09-25 — enforced via #641: `_midday_execute_llm_actions`'s TRAIL_STOP validation now reads the live broker stop and rejects an under-`MIN_RATCHET_PCT` ratchet (`src/pipeline.py`, constant single-sourced from `src.risk.trailing`), covered by `tests/test_exit_quality.py`; reason in `docs/INCIDENT_HISTORY.md`. Item 131 (the standalone coverage sweep leaving no record that it ran) was retired 2026-09-25 — closed via #547: `record_sweep_run` (`src/coverage_watchdog.py`) writes a `specialist_evidence` row every run and `sweep_log_line` writes the greppable log line, both called from `scripts/alert_heartbeat.py`; reason in `docs/INCIDENT_HISTORY.md`. Items 97, 116, 124 and 133 were retired 2026-09-25 on verification against current main — 97's pace already reads the horizon pinned at entry off the trade row (moot), 116's morning/midday/close/intra-check/pre-earnings answers are all persisted (shipped), 124's cluster fact is stamped on every row before truncation so within-symbol crowd-out cannot starve the seat (moot), and 133's held-name accounting is reconciled so a full held book is not read as a jam (shipped); reasons in `docs/INCIDENT_HISTORY.md`. Items 96, 102, 122, 129 and 162 were retired 2026-09-25 on verification against current main — 96 is stale (`veto_contradicted_exit` in `src/risk/exit_guard.py` already runs this check and is wired into the live path), 102 shipped (`src/pipeline.py`'s `partially_filled` branch now records the cumulative fill qty/price), 122 shipped (`scripts/merge_and_deploy.sh` copies changed units, daemon-reloads and enables them, showing a diff before overwriting a hand-edited copy), 129 shipped (`_is_terminal_broker_rejection` in `src/execution/broker.py` classifies a genuine rejection by status code so only a real transient failure spends the retry burst, and both retry constants are recorded as arbitrary with an open question in `config/number_ledger.yaml`), and 162 shipped (both of its own DONE WHEN boxes are checked, resolved 2026-09-23/25); reasons in `docs/INCIDENT_HISTORY.md`. **Next free number is 182 (165-171 filed above/below, 172 filed and closed in one change, 173-177 allocated, 178 the execution SELL loop's split staleness posture, 179 the macro heal's shape-and-storage gap, 180 young-listing, 181 retired 2026-09-24 — the short-side risk-budget over-size) — and note that this sentence has been stale more than once**, because a number is claimed on a branch before it reaches this file. Check the open branches, not just this line.
+**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — filed 2026-09-25, carried out of item 175's retirement. Item 175's weekend/holiday overdue-date roll shipped and was retired; this is the separate, still-open half. Detail: `docs/BOARD_NOTES.md` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
+
+DONE WHEN:
+  - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
+detail: docs/BOARD_NOTES.md (item 187)
+
+**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73, 79, 81, 85, 87, 88, 91, 92, 94, 96, 97, 98, 100, 102, 103, 104, 105, 106, 108, 110, 111, 113, 116, 117, 120, 122, 124, 126, 129, 130, 131, 132, 133, 135, 136, 137, 141, 144, 146, 151, 156, 159, 161, 162, 164, 168, 171, 172, 176, 181, 82, 83, 84, 89, 101, 118, 128, 134, 142, 145, 149, 153, 160, 166, 167, 169, 175, 178, 184 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md` — every retirement's reason lives there; this line is deliberately not re-narrated. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Item 151 never sat on this board (filed and closed in the same change). The one piece of the items-135/136/137 PR NOT finished — the short-side guard living one layer out from where it belongs — is item 155, still OPEN work, not history. Item 38's follow-up survives as item 52, whose residue is item 63; item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file it. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. Item 141 (live technical-seat ranking ties breaking alphabetically) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 126 was retired 2026-09-20; residue is items 170 (disclosure-lag) and 169 (cockpit chart). Item 120 was retired 2026-09-23 — its SIZING half (new-name buy/short share counts dividing by a mid or stale price) kept it open past the 2026-09-20 rendering fix, so the earlier "retired 2026-09-20" claim was premature; reason in `docs/INCIDENT_HISTORY.md`, residue item 181. Item 111 (the earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 168 was retired 2026-09-20 (upstream-history claim now rendered from `trading.lookback_days`, not a hand-typed number); reason in `docs/INCIDENT_HISTORY.md`. Items 164 and 171 were retired 2026-09-23; reasons in `docs/INCIDENT_HISTORY.md`. 171's intent survives as item 99(g). Item 32 was retired 2026-09-20 by owner instruction, not by a fix: he removed the whole account-level loss alarm — daily halt and 5d/20d BUY-halving brakes — instead of answering the one-response-or-two question. The §11.2 ladder stays. Items 92 and 144 were VOIDED with it, not answered: both asked about the daily-loss trigger and its 5d/20d rungs, which are deleted. The ladder's own unmeasurable-drawdown behaviour is a separate live question. Item 172 (an unreadable protective stop reaching no owner alert) was FILED AND CLOSED inside the same change that caused it, 2026-09-23: it never sat on this board as open work, and was fixed rather than filed because per-position stops became the only loss protection in the same commit. Item 181 (a SHORT's risk-budget divisor using the analyst's stale entry instead of the today print, inflating `qty_by_risk`) was retired 2026-09-24 — the risk-budget path now sizes off the print via a separate `risk_sizing_price`, the allocation path and the BUY path are unchanged; reason in `docs/INCIDENT_HISTORY.md`. Item 132 (the definition-of-done gate's blind commit range on a shallow checkout) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 159 (dead Form 4 peek-ahead functions with no live caller) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 81 (the reward:risk inventory's residue) was retired 2026-09-24 — `RiskConfig.min_reward_risk_after_widening`, `ConstructorConfig.min_reward_risk_after_widening` and the dead `SUBFLOOR_SIZE_CAPPED_STATUS` were deleted as zero-reader dead code, but `REWARD_RISK_FLOOR` was NOT deleted: it is still read by `ops/model_policy/deterministic_selection.py`'s model-selection benchmark; reason in `docs/INCIDENT_HISTORY.md`. Item 130 (the number-ledger's `SCOPED_PATHS` excluding the broker order path) was retired 2026-09-25 — shipped via #544 on 2026-09-19: `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py` are already in `SCOPED_PATHS` (`src/number_sources.py`), verified still true on current main; reason in `docs/INCIDENT_HISTORY.md`. Item 108 (the position reviewer's 2% minimum stop-raise stated as a hard rule but not enforced) was retired 2026-09-25 — enforced via #641: `_midday_execute_llm_actions`'s TRAIL_STOP validation now reads the live broker stop and rejects an under-`MIN_RATCHET_PCT` ratchet (`src/pipeline.py`, constant single-sourced from `src.risk.trailing`), covered by `tests/test_exit_quality.py`; reason in `docs/INCIDENT_HISTORY.md`. Item 131 (the standalone coverage sweep leaving no record that it ran) was retired 2026-09-25 — closed via #547: `record_sweep_run` (`src/coverage_watchdog.py`) writes a `specialist_evidence` row every run and `sweep_log_line` writes the greppable log line, both called from `scripts/alert_heartbeat.py`; reason in `docs/INCIDENT_HISTORY.md`. Items 97, 116, 124 and 133 were retired 2026-09-25 on verification against current main — 97's pace already reads the horizon pinned at entry off the trade row (moot), 116's morning/midday/close/intra-check/pre-earnings answers are all persisted (shipped), 124's cluster fact is stamped on every row before truncation so within-symbol crowd-out cannot starve the seat (moot), and 133's held-name accounting is reconciled so a full held book is not read as a jam (shipped); reasons in `docs/INCIDENT_HISTORY.md`. Items 96, 102, 122, 129 and 162 were retired 2026-09-25 on verification against current main — 96 is stale (`veto_contradicted_exit` in `src/risk/exit_guard.py` already runs this check and is wired into the live path), 102 shipped (`src/pipeline.py`'s `partially_filled` branch now records the cumulative fill qty/price), 122 shipped (`scripts/merge_and_deploy.sh` copies changed units, daemon-reloads and enables them, showing a diff before overwriting a hand-edited copy), 129 shipped (`_is_terminal_broker_rejection` in `src/execution/broker.py` classifies a genuine rejection by status code so only a real transient failure spends the retry burst, and both retry constants are recorded as arbitrary with an open question in `config/number_ledger.yaml`), and 162 shipped (both of its own DONE WHEN boxes are checked, resolved 2026-09-23/25); reasons in `docs/INCIDENT_HISTORY.md`. **Next free number is 182 (165-171 filed above/below, 172 filed and closed in one change, 173-177 allocated, 178 the execution SELL loop's split staleness posture, 179 the macro heal's shape-and-storage gap, 180 young-listing, 181 retired 2026-09-24 — the short-side risk-budget over-size) — and note that this sentence has been stale more than once**, because a number is claimed on a branch before it reaches this file. Check the open branches, not just this line.
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 

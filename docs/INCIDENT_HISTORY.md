@@ -15671,3 +15671,105 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **A stale note removed.** Two `GROSS_LADDER` entries' `cost_while_unanswered` claimed the ladder was "in open tension with the volatility-relative brake" per `src/risk/rules.py:566-576`. That brake — the 5-day/20-day rolling-return sizing brake — was removed in full with item 32 on 2026-09-20; grep confirms no volatility brake remains in `src/risk/rules.py`. The stale references were corrected.
 
 **Board items unchanged in scope.** Items 182, 184 and 186 were NOT retired — each still owns unresolved constants: 182 keeps the cash-deficit de-lever cushion and `GROSS_LADDER_ALERT_PCT`; 186 keeps the cluster-correlation cutoff, the short-side sizing haircut and the queued-earnings BUY clamp. Their notes record which of their constants were resolved in this pass.
+
+### 2026-09-25 — the double-classified setup_type that let the risk reviewer cut a protected breakout is closed (item 82 retired)
+
+**In plain words:** a trade's "setup type" was decided twice, in two places that could disagree, and the risk reviewer's breakout exemption read the wrong one — so it could trim a breakout it is forbidden to trim. The scale-in path now carries the position's own pinned setup_type and structural ceiling forward instead of reclassifying.
+
+**Verified on main.** `src/pipeline_stages.py` around line 9366 carries the "Item 82" fix — the scale-in reuses the position's OWN pinned MEASURED verdict rather than re-deriving it, so the two paths cannot disagree. No DONE WHEN criteria were declared when the item was filed.
+
+### 2026-09-25 — stale-position review and the six-timers-on-one-tick race, both shipped, retired after their residual live confirmation (items 83, 84 retired)
+
+**In plain words:** two defects from the 2026-09-17 audit — the position reviewer working from a stale book, and all six schedulers firing in the same second — shipped the same night (#453 / #454). The only outstanding piece on each was a single live-session confirmation, which is not a code obligation.
+
+**Verified on main.** `intra_check` fires offset at :15/:45, deliberately away from every other session's shared :00/:30 tick (`scripts/run_if_et_window.sh`), and fills are reconciled before the reviewer runs. The six-timers write-up already exists in this file (2026-09-17) and was not duplicated. Neither item declared DONE WHEN criteria.
+
+### 2026-09-25 — the Telegram-audit residue is retired: the named defects no longer reproduce and their mechanism shipped (item 89 retired)
+
+**In plain words:** the 17 September Telegram audit's nineteen defects were mostly fixed on 18 September; the three left open could be confirmed only against a live session. Re-checked, the residual claims no longer reproduce, reason codes are plain English, and the reconcile-surfacing mechanism this item leaned on (item 101) shipped.
+
+**Verified on main.** `_surface_reconcile_outcomes` is wired at all five reconcile call sites in `src/pipeline.py`. No DONE WHEN criteria were declared.
+
+### 2026-09-25 — the two thrown-away reconciliation results now reach the owner; the surfacing is retired (item 101 retired)
+
+**In plain words:** the desk computed which exits the broker had made behind its back, and how many unprotected positions it had just re-protected, then discarded both at every call site. All five call sites now capture both and page the owner through the existing alert path.
+
+**Verified on main.** `_surface_reconcile_outcomes` is called from all five reconcile sites in `src/pipeline.py`; covered by `tests/test_stop_out_reconciliation.py`. No DONE WHEN criteria were declared.
+
+### 2026-09-25 — the emergency de-lever can now actually sell at any gap size; the limit-through-market defect is retired (item 118 retired)
+
+**In plain words:** the de-levering ladder priced its forced trims as limit orders 1% through the market, so on a gap day wider than that they never filled and the book stayed over its ceiling. Both de-lever paths now price the must-fill trim off the live quote (a marketable limit crossing bid/ask, a market order when no quote is available), escalating to market on any rejection.
+
+**Verified on main.** `_live_delever_price` in `src/pipeline.py` is used by both `_enforce_gross_ceiling` and `_force_delever`; the owner ruled fill takes priority over a few bps of slippage. No DONE WHEN criteria were declared.
+
+### 2026-09-25 — the session-lock exemption justified by a deleted flash-crash breaker is re-justified; item 128 retired
+
+**In plain words:** the intraday check skipped the session lock, and the reason written in the script was that it protected a "stateless flash-crash circuit breaker" that had to fire on every tick — a mechanism that no longer exists. The exemption is now re-justified against what the check actually does (stateless, idempotent actions), and no comment describes the breaker as a seller.
+
+**Verified on main.** `scripts/run_if_et_window.sh` carries the rewritten note (board item 128); a grep of that script finds no "flash", "breaker" or "seller" language. Both DONE WHEN criteria met.
+
+### 2026-09-25 — the risk seat's invented size multiplier is now advisory on entries; item 134 retired
+
+**In plain words:** the risk seat's `scale_all_buys` multiplier — a model-picked number that had only ever been 1.0 or the 0.7 from its own worked example — was resizing real entries. By owner ruling it is now advisory on entries: the concern and reason are recorded durably, but the multiplier no longer changes any allocation; the hard aggregate limits remain the real constraint.
+
+**Verified on main.** `_record_scale_advisory` in `src/pipeline_stages.py` records but does not apply the multiplier on entries (board items 134 + 162). The single DONE WHEN criterion, already ticked at filing, was met.
+
+### 2026-09-25 — range setups now ratchet before the target; the largest asymmetric-downside exit rule is retired (item 142 retired)
+
+**In plain words:** range trades never tightened their stop until price passed the target, so the whole move up could be given back on a reversal. A second range ratchet now stacks on top of the breakeven ratchet.
+
+**Verified on main.** `src/risk/trailing.py` around line 188 names "Item 142 — the SECOND range ratchet". The single DONE WHEN criterion was met.
+
+### 2026-09-25 — the two reward:risk gates read one number; item 145 retired
+
+**In plain words:** the portfolio-manager eligibility gate and the constructor were reading different reward:risk numbers. The eligibility gate reads the constructor's own derived ratio, so both now read one number, and this predates the item's own filing.
+
+**Verified on main.** `PortfolioConstructor.real_reward_risk_preview` is the PM-eligibility ratio, called from `src/pipeline_stages.py` and documented in `src/agents/portfolio_manager.py`. The single DONE WHEN criterion was met.
+
+### 2026-09-25 — a failed benchmark check no longer prints "passed" in its own detail; item 149 retired
+
+**In plain words:** a benchmark check's detail string asserted success even when the check failed, so result files carried "passed": false beside a detail saying it passed. The detail now describes what was tested rather than asserting a pass.
+
+**Verified on main.** the three `parsed_and_grounded` details in `ops/model_policy/scenarios.py` read "checked PortfolioDecision parses and is grounded…" instead of the old success assertion. The single DONE WHEN criterion, already ticked at filing, was met.
+
+### 2026-09-25 — a name a research seat gives up on now gets one bounded retry, then is marked missing; item 153 retired
+
+**In plain words:** when a research seat dropped a company from its answer with no recovery, the desk judged without it and said nothing. The technical seat now retries a missing name once and marks a still-missing name as absent.
+
+**Verified on main.** `_MAX_MISSING_RETRIES = 1` in `src/agents/tech_analyst.py`, with the bounded retry and None-marking wired in. The single DONE WHEN criterion was met.
+
+### 2026-09-25 — the two feature switches with no recorded reason now carry one; item 160 retired
+
+**In plain words:** two config switches were marked "reason not recorded". Both now carry a real recorded reason: the stop-loss requirement is justified by the account-level halt's removal (item 32), and paper-mode by the desk not yet being ratified for live capital.
+
+**Verified on main.** `config/feature_flags.yaml` records reasons for `RiskConfig.require_stop_loss` and `AlpacaConfig.paper`. The single DONE WHEN criterion was met.
+
+### 2026-09-25 — the auto-fix loop and its permission-envelope bypasses are retired as moot: the whole mechanism is absent from main (items 166, 167 retired)
+
+**In plain words:** the automatic self-fix session (item 166) and the privilege-escalation holes found in its permission envelope (item 167) both concern a mechanism that was merged as #560 and then fully reverted by #561. Nothing of it remains on main — nothing installed, no handoff directory, no deny-list code — so the criteria describing how to build and prove it safely are moot rather than met.
+
+**Verified on main.** a grep of `scripts/` and `src/` finds no auto-fix / autofix / auto_fix mechanism. Every declared criterion is accounted for as moot given the revert; if the mechanism is ever rebuilt it must be re-filed carrying these same safety requirements.
+
+### 2026-09-25 — the cockpit chart draws today's candle off a freshness-resolved price; item 169 retired
+
+**In plain words:** the price chart drew today's candle and live line off a raw last trade that could be stale, so a thin name's chart could disagree with its own session range. It now uses the freshness-resolved price the API marks, or shows none.
+
+**Verified on main.** `frontend/src/components/PriceChartPanel.tsx` uses `quote.resolved_price` (comment cites item 169). Both DONE WHEN criteria met.
+
+### 2026-09-25 — every exit is now sized off a fresh book, not just the ranked-margin rotation; item 178 retired
+
+**In plain words:** ordinary SELLs and COVERs were sized off the run-open broker snapshot, roughly 5-10 minutes stale, while only the ranked-margin rotation's close re-read the book. A single refresh now runs before the sell/cover loops, so every exit sizes off a current book; the count the first criterion asked for is mooted because the divergence is removed by construction.
+
+**Verified on main.** `src/pipeline_stages.py` around line 8003 carries the "Board item 178" pre-sell `_refresh_account_state()`. Both DONE WHEN criteria accounted for.
+
+### 2026-09-25 — the stop-distance floor, regime scales and level-touch bar are resolved; item 184 retired
+
+**In plain words:** three made-up money numbers governing how tight a stop may be were resolved. The unbacked-stop distance floor (2.5 ATR) and the three regime scales (1.2/1.1/0.95) were owner-ratified as appetite with values unchanged; the 5-touch bar for honouring a tight stop against a level was reclassified from arbitrary to sourced against the in-repo bounce-probability study, moving the arbitrary count 142→141.
+
+**Verified on main.** `config/number_ledger.yaml` carries the ratified/sourced status for all three; the ratification and reclassification are written up in this file (2026-09-25, items 182/184/186). The single DONE WHEN criterion was met.
+
+### 2026-09-25 — item 175's weekend/holiday overdue-date roll is retired; its fetch-reliability half moves to item 187 (item 175 retired)
+
+**In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
+
+**Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
