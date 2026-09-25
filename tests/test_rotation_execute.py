@@ -292,6 +292,112 @@ def test_protection_check_failure_fails_closed(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Board item 39 — the cull walk does not give up on the first protected name
+# ---------------------------------------------------------------------------
+
+WORST_REASONS = ("R2 rating below bar", "R5 net evidence -1 if long — no rung")
+NEXT_REASONS = ("R5 net evidence -1 if long — no rung",)
+MULTI_HISTORY = {
+    "WORST": {"thesis_invalid_if": "closes below 50", "entry_price": 50.0,
+              "stop_loss": 46.0},
+    "NEXT": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0,
+             "stop_loss": 92.0},
+}
+
+
+class _PerSymbolProbe:
+    """Structural-protection stand-in that answers per symbol, so a test can
+    make the WORST below-bar name protected and the NEXT-worst not."""
+
+    def __init__(self, protected_by_symbol: dict[str, bool]):
+        self.protected_by_symbol = protected_by_symbol
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs) -> StructuralProtectionCheck:
+        self.calls.append(kwargs)
+        sym = str(kwargs.get("symbol") or "").upper()
+        protected = self.protected_by_symbol[sym]
+        return StructuralProtectionCheck(
+            protected=protected,
+            basis="structural_level_intact" if protected
+            else "structural_level_broken",
+            detail=BROKEN_DETAIL,
+        )
+
+
+def _multi_opportunity() -> RotationOpportunity:
+    """Two held names below the entry bar this session, worst-first."""
+    return RotationOpportunity(
+        new_symbol="NEW", new_score=1.8, held_symbol="WORST", held_score=None,
+        tier="ineligible_hold", reasons=WORST_REASONS,
+        ineligible_candidates=(("WORST", WORST_REASONS), ("NEXT", NEXT_REASONS)),
+    )
+
+
+def test_protected_worst_advances_to_the_next_worst_below_bar_holding(tmp_path):
+    """>=2 holdings below the bar, the worst structurally protected: the tier
+    must cull the NEXT-worst rather than abandon the whole rotation."""
+    pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
+    probe = _PerSymbolProbe({"WORST": True, "NEXT": False})
+    pipeline._structural_protection_for_holding = probe
+    ctx = _ctx()
+    decision = _decision(_buy_new())
+    positions = [_pos(symbol="WORST", price=45.0), _pos(symbol="NEXT", price=95.0)]
+
+    _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
+
+    # The NEXT-worst is the one closed; the protected WORST is left alone.
+    assert [t.symbol for t in decision.targets] == ["NEW", "NEXT"]
+    assert ctx.rotation is not None
+    assert ctx.rotation["held_symbol"] == "NEXT"
+    assert ctx.rotation["new_symbol"] == "NEW"
+    assert ctx.rotation["held_reasons"] == list(NEXT_REASONS)
+    close = decision.targets[1]
+    assert close.is_close and close.risk_allocation_pct == 0.0
+    assert close.thesis.startswith("ROTATION (deterministic, src/rotation.py): NEXT")
+    assert close.thesis_invalid_if == "closes below 100"
+
+    # Both names were protection-checked, worst first, then next-worst.
+    assert [c["symbol"] for c in probe.calls] == ["WORST", "NEXT"]
+
+    # The protected worst is recorded as skipped; the next-worst as proposed.
+    events = _rotation_events(db)
+    skipped = {
+        sym: e for sym, e in events
+        if e["outcome"] == "skipped"
+        and e["reason"] == "held_symbol_structurally_protected"
+    }
+    proposed = [(sym, e) for sym, e in events if e["outcome"] == "proposed"]
+    assert list(skipped) == ["WORST"]
+    assert skipped["WORST"]["protection_basis"] == "structural_level_intact"
+    assert len(proposed) == 1 and proposed[0][0] == "NEXT"
+
+
+def test_rotation_abandoned_only_when_every_below_bar_holding_is_protected(tmp_path):
+    """All below-bar holdings structurally protected: nothing is sold, and
+    every one is recorded as skipped under its own name."""
+    pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
+    probe = _PerSymbolProbe({"WORST": True, "NEXT": True})
+    pipeline._structural_protection_for_holding = probe
+    ctx = _ctx()
+    decision = _decision(_buy_new())
+    positions = [_pos(symbol="WORST", price=45.0), _pos(symbol="NEXT", price=95.0)]
+
+    _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
+
+    assert [t.symbol for t in decision.targets] == ["NEW"]
+    assert ctx.rotation is None
+    events = _rotation_events(db)
+    skipped = sorted(
+        sym for sym, e in events
+        if e["outcome"] == "skipped"
+        and e["reason"] == "held_symbol_structurally_protected"
+    )
+    assert skipped == ["NEXT", "WORST"]
+    assert not any(e["outcome"] == "proposed" for _, e in events)
+
+
+# ---------------------------------------------------------------------------
 # The desk never invents the buy leg and never overrides the PM on the held name
 # ---------------------------------------------------------------------------
 

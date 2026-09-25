@@ -2664,9 +2664,15 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     assert 1 not in by_rank
     assert 4 not in by_rank
     assert 49 not in by_rank
-    for rank in (20, 39):
+    # Item 39 was retired 2026-09-25 — its last open thread (the categorical
+    # rotation tier abandoning the whole swap when its single worst below-bar
+    # holding was structurally protected) is fixed; the tier now walks the
+    # whole below-bar cull set worst-first. Written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md.
+    assert 39 not in by_rank
+    for rank in (20,):
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (20, 39):
+    for rank in (20,):
         assert by_rank[rank].bucket == "in_hand", rank
     # Item 3 used to be pinned here as the "no_action" case (WORKING AS
     # INTENDED, no follow-on). It was written up in
