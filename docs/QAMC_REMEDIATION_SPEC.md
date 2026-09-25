@@ -1135,7 +1135,7 @@ four levers, narrowest first:
 |---|---|---|
 | `modifications` | one symbol's fields | the trade is sound, sized or stopped wrong |
 | `rejected_symbols` | one symbol, refused | *that name* fails |
-| `scale_all_buys` | every new BUY/SHORT | the entry side is too big for the regime |
+| `scale_all_buys` | ADVISORY only (owner ruling 2026-09-25) | the entry side is too big for the regime — RECORDED with a reason, but resizes/drops nothing; the hard aggregate limits are the cap |
 | `approved: false` | the whole plan | the BOOK is what fails |
 
 Book-level risk still refuses broadly and is evaluated FIRST — correlation

@@ -566,6 +566,121 @@ def test_thesis_health_context_deep_dive_exception_does_not_raise(tmp_path):
     assert out["XYZ"]["earnings_deep_dive"] is None
 
 
+def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
+    """Item 165: the evening reviewer judges PACE off holding time, so the
+    figure it reads must be in TRADING SESSIONS, not calendar days. A Friday
+    entry reviewed the following Monday is ONE trading session, not three
+    calendar days — a calendar-day count made a good position look 'too slow'
+    and could exit it early. The evening path must emit `sessions_held` (the
+    weekend/holiday-aware count) via the SAME `broker.trading_sessions_held`
+    helper the morning/midday facts path uses, not a parallel calendar path.
+    """
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from src.models import Position
+    from src.pipeline import TradingPipeline
+    from src.storage.db import Database
+    from src.trading_calendar import trading_sessions_held
+
+    fri = date(2026, 9, 18)   # Friday entry
+    mon = date(2026, 9, 21)   # Monday review
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = Database(str(tmp_path / "t.db"))
+    p.db.initialize()
+    p.db.conn.execute(
+        "INSERT INTO trades (symbol, action, qty, price, reasoning, "
+        "run_id, fill_status, fill_qty, fill_price, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("AAPL", "BUY", 10, 190.0, "iPhone supercycle", "r1",
+         "filled", 10, 190.0, f"{fri.isoformat()} 09:35:00"),
+    )
+    p.db.conn.commit()
+
+    p.market = MagicMock()
+    p.market.get_valuation_metrics.return_value = {
+        "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+    }
+    p.news_store = MagicMock()
+    p.news_store.data_dir = None
+    p.earnings_provider = MagicMock()
+    p.earnings_provider.manifest = {}
+    p.macro_store = MagicMock()
+    p.macro_store.load_last_state.return_value = None
+
+    # The broker's real-market-calendar helper stands in as the weekday
+    # counter here so the test is deterministic and never calls Alpaca. The
+    # pipeline must call THIS method rather than recompute sessions itself.
+    p.broker = MagicMock()
+    p.broker.trading_sessions_held.side_effect = (
+        lambda start, end: trading_sessions_held(start, end)
+    )
+
+    aapl = Position(
+        symbol="AAPL", qty=10, avg_entry=190.0, current_price=200.0,
+        market_value=2000, unrealized_pnl=100, sector="Technology",
+    )
+    with patch("src.pipeline.et_today", return_value=mon), \
+            patch("src.execution.broker._get_sector", return_value="Technology"):
+        out = p._build_thesis_health_context([aapl], lookback_weeks=8)
+
+    row = out["AAPL"]
+    # The holding-time figure the reviewer reads for pace is in SESSIONS:
+    # Fri -> Mon is one session...
+    assert row["sessions_held"] == 1
+    # ...not the three raw calendar days (kept only for context).
+    assert row["days_held"] == 3
+    # ...and it came from the shared broker helper, not a second method.
+    p.broker.trading_sessions_held.assert_called_once_with(fri, mon)
+
+
+def test_evening_prompt_renders_holding_time_in_sessions_not_calendar_days():
+    """Item 165: the evening thesis-health block feeds the model's pace
+    judgement, so the rendered holding-time figure must be in TRADING
+    SESSIONS. A context with sessions_held=1 / days_held=3 must render
+    '1 session held', never the raw '3d held' calendar figure that could
+    make a fast position look slow and trigger an early exit."""
+    from unittest.mock import patch as _patch
+
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    with _patch("anthropic.Anthropic"):
+        agent = EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
+
+    ctx = {
+        "AAPL": {
+            "symbol": "AAPL",
+            "entry_date": "2026-09-18",
+            "entry_reasoning": "iPhone supercycle",
+            "days_held": 3,
+            "sessions_held": 1,
+            "entry_price": 190.0,
+            "current_price": 200.0,
+            "pnl_pct": 5.3,
+            "sector": "Technology",
+            "tech_trajectory": ["buy"],
+            "news_count_8w": 0,
+            "latest_news_headlines": [],
+            "recent_earnings_signal": None,
+            "macro_sector_stance": "bullish",
+            "valuation": {
+                "trailing_pe": 30, "forward_pe": 28,
+                "ps_ratio": 7, "signal": "fair",
+            },
+            "earnings_deep_dive": None,
+        },
+    }
+    msg = agent.build_user_message(
+        positions=[], macro_summary={"vix": {"current": 18}},
+        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        thesis_health_context=ctx,
+    )
+    assert "1 session held" in msg
+    assert "3d held" not in msg
+    assert "3 calendar days" not in msg
+
+
 # ---------------------------------------------------------------------------
 # Integration: evening prompt renders the deep-dive section
 # ---------------------------------------------------------------------------

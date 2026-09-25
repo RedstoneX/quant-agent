@@ -185,66 +185,76 @@ def _sell(symbol):
     )
 
 
-def test_apply_scale_all_buys_zero_drops_every_buy():
-    """scale_all_buys=0.0 is the documented full-BUY veto. The pre-fix
-    `or 1.0` collapsed 0.0 to 1.0 because Python truthiness, silently
-    disabling the veto. Pin: zero passes through and zeros every BUY,
-    while HOLD and SELL pass unchanged."""
+def test_scale_advisory_zero_does_not_change_or_drop_any_entry():
+    """Board items 134 + 162 (owner ruling 2026-09-25). scale_all_buys is
+    ADVISORY on entries: even 0.0 — the old full-entry-side veto — now changes
+    NO allocation_pct and drops NO trade. Every entry survives at its original
+    size; the concern is recorded, not applied."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
         approved=True, scale_all_buys=0.0,
         reasoning_chain=_risk_rc(),
-        reasoning="risk-off — kill all BUYs",
+        reasoning="risk-off — exposure concern",
     )
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.0, "0.0 must propagate, not collapse to 1.0"
-    actions = [d.action for d in scaled]
-    assert "BUY" not in actions, f"every BUY must be dropped; got {actions}"
-    assert "HOLD" in actions and "SELL" in actions
+    # Nothing dropped, nothing resized.
+    assert [(d.symbol, d.action, d.allocation_pct) for d in out] == [
+        ("SPY", "BUY", 10.0), ("QQQ", "BUY", 8.0),
+        ("MSFT", "HOLD", 0.0), ("NVDA", "SELL", 100.0),
+    ]
+    # Both entries flagged for the advisory record; exits not flagged.
+    assert sorted(advised) == [("QQQ", 8.0), ("SPY", 10.0)]
 
 
-def test_apply_scale_all_buys_partial_scales_buy_allocations():
-    """0 < scale < 1 reduces BUY allocations proportionally, keeps HOLD/SELL."""
+def test_scale_advisory_partial_records_entries_but_does_not_resize():
+    """0 < scale < 1 flags every BUY/SHORT for the advisory record but leaves
+    allocations untouched; HOLD/SELL are neither resized nor flagged."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
-    verdict = RiskVerdict(approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(), reasoning="trim")
-    decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT")]
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(), reasoning="trim",
+    )
+    decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT")]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.5
-    by_sym = {d.symbol: d for d in scaled}
-    assert by_sym["SPY"].allocation_pct == 5.0
-    assert by_sym["QQQ"].allocation_pct == 4.0
+    by_sym = {d.symbol: d for d in out}
+    assert by_sym["SPY"].allocation_pct == 10.0
+    assert by_sym["XLU"].allocation_pct == 8.0
     assert by_sym["MSFT"].action == "HOLD"
+    assert sorted(advised) == [("SPY", 10.0), ("XLU", 8.0)]
 
 
-def test_apply_scale_all_buys_one_is_no_op():
-    """scale=1.0 (default) leaves decisions untouched."""
+def test_scale_advisory_one_is_no_op_and_flags_nothing():
+    """scale=1.0 (default) leaves decisions untouched and flags nothing."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(approved=True, scale_all_buys=1.0, reasoning_chain=_risk_rc(), reasoning="ok")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8)]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 1.0
-    assert [(d.symbol, d.allocation_pct) for d in scaled] == [
+    assert advised == []
+    assert [(d.symbol, d.allocation_pct) for d in out] == [
         ("SPY", 10.0), ("QQQ", 8.0),
     ]
 
 
-def test_apply_scale_all_buys_handles_missing_attribute_as_one():
+def test_scale_advisory_handles_missing_attribute_as_one():
     """If a verdict somehow lacks scale_all_buys (legacy or partial parse),
-    treat as 1.0 (no scaling) — not as None propagating to a TypeError."""
-    from src.pipeline_stages import _apply_scale_all_buys
+    treat as 1.0 (no concern) — not as None propagating to a TypeError."""
+    from src.pipeline_stages import _record_scale_advisory
 
     class LegacyVerdict:
         approved = True
@@ -252,10 +262,11 @@ def test_apply_scale_all_buys_handles_missing_attribute_as_one():
         modifications = []
 
     decisions = [_buy("SPY", 10)]
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, LegacyVerdict())
+    out, scale, advised = _record_scale_advisory(decisions, LegacyVerdict())
 
     assert scale == 1.0
-    assert len(scaled) == 1
+    assert advised == []
+    assert len(out) == 1 and out[0].allocation_pct == 10.0
 
 
 
@@ -3920,15 +3931,14 @@ def test_item135_buy_guard_is_unchanged_by_the_sweep():
     assert len(rejected) == 1, f"exactly one refusal, not two; got {rejected}"
 
 
-def test_item136_scale_all_buys_reports_every_entry_it_drops():
-    """Board item 136. The 0.0 lever DROPS each entry rather than zeroing it
-    — which is correct and stays, because a zero allocation reads as SKIP at
-    execution. What was missing is any trace: the drop emitted a logger line
-    only, and the decision is gone from the list before `RiskStage.run`'s
-    per-decision event loop, so `scale_all_buys=0.0` deleted the entire entry
-    side with no pipeline event for any symbol."""
+def test_item134_scale_advisory_records_every_entry_without_dropping_it():
+    """Board items 134 + 162 (owner ruling 2026-09-25). scale_all_buys is now
+    ADVISORY on entries: it drops NOTHING (contrast the old item-136 drop it
+    replaces) and resizes NOTHING, but it still flags every BUY/SHORT so the
+    caller can file the per-symbol advisory record that carries the concern +
+    reason to the desk. Exits are never flagged."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
         approved=True, scale_all_buys=0.0,
@@ -3936,26 +3946,159 @@ def test_item136_scale_all_buys_reports_every_entry_it_drops():
     )
     decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale, dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.0
-    assert [d.action for d in scaled] == ["HOLD", "SELL"]
-    assert sorted(dropped) == [("SPY", 10.0), ("XLU", 8.0)], (
-        f"every dropped entry must be reported with its pre-scale size; "
-        f"got {dropped}"
+    # Nothing dropped — every decision survives, including both entries.
+    assert [d.action for d in out] == ["BUY", "SHORT", "HOLD", "SELL"]
+    assert [d.allocation_pct for d in out] == [10.0, 8.0, 0.0, 100.0]
+    assert sorted(advised) == [("SPY", 10.0), ("XLU", 8.0)], (
+        f"every flagged entry must be recorded with its size; got {advised}"
     )
 
 
-def test_item136_no_drops_reported_when_the_lever_is_not_pulled():
-    """Control. A scale that removes nothing reports nothing."""
+def test_item134_nothing_flagged_when_scale_is_one():
+    """Control. scale == 1.0 (no concern) flags nothing and resizes nothing."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.5,
-        reasoning_chain=_risk_rc(), reasoning="trim",
+        approved=True, scale_all_buys=1.0,
+        reasoning_chain=_risk_rc(), reasoning="ok",
     )
-    scaled, scale, dropped = _apply_scale_all_buys([_buy("SPY", 10)], verdict)
+    out, scale, advised = _record_scale_advisory([_buy("SPY", 10)], verdict)
 
-    assert scaled[0].allocation_pct == 5.0
-    assert dropped == []
+    assert out[0].allocation_pct == 10.0
+    assert advised == []
+
+
+def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
+    """Board items 134 + 162, end-to-end through `RiskStage.run`. A verdict with
+    scale_all_buys < 1.0 must (a) leave every entry's allocation_pct unchanged
+    and drop nothing, and (b) surface the seat's exposure concern + its reason
+    as a durable `scale_advisory` pipeline event per entry."""
+    import src.pipeline_stages as ps
+    from src.pipeline_stages import RiskStage
+    from src.pipeline import TradingPipeline
+    from src.models import (
+        PortfolioDecision, ReasoningChain, RiskVerdict, RiskReasoningChain,
+    )
+
+    events: list = []
+    monkeypatch.setattr(
+        ps, "_record_pipeline_event",
+        lambda pipeline, ctx, sym, kind, outcome, reason, **kw: events.append(
+            {"symbol": sym, "kind": kind, "outcome": outcome,
+             "reason": reason, "kw": kw}
+        ),
+    )
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.market = MagicMock()
+    p.market.get_ohlcv.return_value = []
+    p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
+    p._clamp_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
+    # Hard filter is a pass-through HERE so we can isolate the scale behaviour;
+    # a separate test proves the real hard filter still binds.
+    p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
+    p.risk_manager = MagicMock()
+    p.risk_manager.review.return_value = (
+        RiskVerdict(
+            approved=True, modifications=[],
+            scale_all_buys=0.5,
+            reasoning="Aggregate exposure looks stretched for the regime.",
+            reason_category="oversized",
+            reasoning_chain=RiskReasoningChain(
+                rr_audit="x", signal_fidelity="x", correlation_check="x",
+                event_risk="x", sizing_sanity="x", overall="x",
+            ),
+        ),
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0),
+    )
+    p.db = MagicMock()
+    p.config = MagicMock()
+    p.config.llm.risk_manager_model = "test-model"
+    p.config.trading.lookback_days = 120
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.deployable_cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="x", news_check="x", earnings_check="x",
+            signal_conflicts="x", sizing_logic="x",
+            portfolio_balance="x", cash_target="x",
+        ),
+        decisions=[_buy("SPY", 10.0), _short("XLU", 8.0)],
+        portfolio_view="v",
+    )
+    ctx.symbols_bars = {}
+    ctx.data_status = {}
+
+    RiskStage(pipeline=p).run(ctx)
+
+    # (a) sizes untouched, nothing dropped.
+    final = {(d.symbol, d.action): d.allocation_pct
+             for d in ctx.portfolio_decision.decisions}
+    assert final == {("SPY", "BUY"): 10.0, ("XLU", "SHORT"): 8.0}
+
+    # (b) the concern + reason are surfaced as scale_advisory events.
+    advisories = [e for e in events if e["outcome"] == "scale_advisory"]
+    assert {e["symbol"] for e in advisories} == {"SPY", "XLU"}
+    for e in advisories:
+        assert "scale_all_buys=0.50" in e["reason"]
+        assert "ADVISORY ONLY" in e["reason"]
+        assert "Aggregate exposure looks stretched" in e["reason"]
+    # And no scale-driven DROP event exists any more.
+    assert not [e for e in events if e["outcome"] == "scaled_out"]
+
+
+def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
+    """Board items 134 + 162. Because scale_all_buys no longer shrinks entries,
+    the hard aggregate limit is the ONLY thing standing between an over-cap plan
+    and execution — and it must still bind. Prove the advisory pass leaves the
+    over-cap plan intact, then the real hard filter blocks it."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_stages import _record_scale_advisory
+    from src.risk.rules import RiskRuleEngine
+    from src.config import RiskConfig
+    from src.models import RiskVerdict, TradeDecision
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(),
+        reasoning="too aggressive", reason_category="oversized",
+    )
+    # Two same-direction longs summing to 60% net, over a 50% hard total cap.
+    decisions = [
+        TradeDecision(action="BUY", symbol="SPY", allocation_pct=30,
+                      entry_price=500, stop_loss=480, take_profit=530,
+                      reasoning="core"),
+        TradeDecision(action="BUY", symbol="QQQ", allocation_pct=30,
+                      entry_price=400, stop_loss=380, take_profit=430,
+                      reasoning="also core"),
+    ]
+
+    # Advisory pass changes NOTHING — the plan is still over the cap.
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
+    assert [(d.symbol, d.allocation_pct) for d in out] == [
+        ("SPY", 30.0), ("QQQ", 30.0)]
+    assert sorted(advised) == [("QQQ", 30.0), ("SPY", 30.0)]
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
+        max_position_pct=40, max_total_position_pct=50,
+        max_sector_pct=90, require_stop_loss=True,
+    ))
+    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+        "src.execution.broker._get_sector", return_value="Broad"
+    ):
+        allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+            out, positions=[], total_value=100000,)
+
+    # The hard cap still binds: the second long is blocked.
+    assert [d.symbol for d in allowed] == ["SPY"]
+    assert any("Net exposure" in r for r in blocked)

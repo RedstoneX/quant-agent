@@ -22,6 +22,38 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — the risk seat's portfolio-wide BUY/SHORT multiplier no longer sizes trades; it is now advisory on entries (items 134 + 162)
+
+**In plain words:** the AI risk officer had a single knob that could shrink every new trade in the plan at once — cut them all to 70%, half them, or zero the whole new-entry side. The number it wrote there was never derived from anything measurable; across the whole decision record it only ever held 1.0 or 0.7, and 0.7 was literally the example in its own instructions. The owner ruled that a made-up, uncheckable number may not decide how much real money goes into a trade. So on new trades the knob is now ADVISORY: the seat still expresses the concern and its reason, and that reaches the owner, but it no longer changes any trade size and drops nothing. What actually limits total exposure are the hard limits already enforced in code — the gross-exposure ceiling, the per-trade risk budget, and the correlation / at-risk budget — which run before the seat is even consulted.
+
+**What changed.** On the morning entry path the multiplier is captured and recorded but not applied. Every entry proceeds at the size the constructor set. The seat's two trade-changing levers on entries are now `rejected_symbols` (drop a named entry) and `modifications` (resize a named entry); the portfolio-wide knob is a recorded signal only. The exit path never used the knob and is unchanged.
+
+**How the concern still reaches the owner.** For every entry the seat flags (knob below 1.0), a durable per-symbol evidence event is written stating the flagged value, that it is advisory only, that the size is unchanged and the trade not dropped, and the seat's own stated reason and category. The owner-facing trader feed shows the same as a flagged exposure concern rather than a size cut. PM's self-calibration history, which reads the recorded value, is untouched.
+
+**What this supersedes.** Board item 136 had added a `scaled_out` pipeline event for each entry the knob zeroed and dropped. That drop can no longer occur, so that event no longer fires from scaling; its recording role is replaced by the advisory event above. The now-removed behaviour was the multiplication of `allocation_pct` and the zero-drop; the field itself, its schema range, and its logging/metrics/feed consumers stay.
+
+**What was deliberately NOT done.** No hard aggregate limit or per-symbol hard check was touched — this change only removes the soft multiplier's effect on entry sizing. No number was invented to replace it. The `scale_all_buys` field was kept (it now carries the advisory concern), so nothing became a dead constant. The retired-item-numbers line was left alone for the owner to assess whether 134/162 retire. A pre-existing staleness was noted and left: `docs/QAMC_REMEDIATION_SPEC.md`'s lever table still lists a four-lever model including an `approved: false` whole-plan veto that was removed 2026-09-24 — only the `scale_all_buys` row was corrected here.
+
+**Owner ratified 2026-09-25** (reaffirming the 2026-09-19 ruling that over guidelines the seat may resize but never veto).
+
+---
+
+### 2026-09-25 — four more board items found already shipped or moot on verification, retired (items 97, 116, 124, 133)
+
+**In plain words:** four open board items no longer describe anything wrong with the desk. Two were already fixed by earlier work; two describe a risk the current design cannot produce. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on the main branch, not against the notes that claimed it.
+
+**Item 97 — the pace test was said to judge a trade "too slow" against a holding horizon the model merely guesses (moot).** The pace figure is computed against the horizon the technical analyst PINNED at entry, read straight off the trade's own buy row and never recomputed at review — the position reviewer's own doctrine says the horizon "is never recomputed", and the review code reads it from the buy row and hands out no pace figure at all when the row has none rather than inventing one. The feared unverifiable guessed number does not exist on this path, so the item describes a defect that is not present.
+
+**Item 116 — every session used to pay for model and broker answers and then throw them away, checked only for the evening report (shipped).** The same persist-verbatim pattern that item 113 gave the evening report was extended to morning, midday, close and the half-hourly intra-check (one row per trading day, keyed by run, written fail-soft), and the pre-earnings pass persists its analysis the same way. All five remaining checkpoints the item named are covered. Confirmed by finding the live persistence call at each session's return path, not by trusting the pull request.
+
+**Item 124 — the insider seat's within-symbol crowd-out (a symbol's own non-cluster rows crowding its cluster rows out of the observation cap) is moot.** The cluster is computed over every parsed row and the cluster FACT is stamped on every surviving row of that symbol BEFORE the observation cap truncates anything, and the seat reads the fact off whichever of the symbol's rows survive. So even when a symbol's own cluster rows are cut, the fact still reaches the seat on a surviving non-cluster row of the same symbol — row order stopped deciding whether the fact is delivered. Verified by running the real fetch path against a 40-solo-buy crowd-out scenario: the two rescue rows were truncated, yet all forty surviving rows carried the cluster fact. The test that used to assert "the fact never reaches the seat" had a stale docstring; it now pins both truths (the rescue rows are cut, the fact is present on the survivors) with an added assertion. The cross-symbol axis was already fixed and reserved earlier; the demand to demonstrate an axis "at production scale" is mooted along with the axis itself, because nothing the seat consumes can be starved by row order.
+
+**Item 133 — the last open half (reconcile the held-name accounting with the jam-streak so a full held book is not misread as a jammed gate) shipped.** Held-name outcomes are excluded from the refusal-streak evidence and a specialist data outage is no longer counted as a refusal, so a full book of held names reports nothing while a genuinely stuck gate underneath still fires. Confirmed against the live streak logic, which excludes the held-name outcomes and treats a specialist failure as a data outage rather than a gate refusal.
+
+**Not touched.** No trading code changed in this pass. The only code edit is to the item-124 test's docstring, comments and one added assertion, to stop it asserting a defect that no longer exists. This is a board-truth pass: each item was checked to no longer reproduce, then removed from `docs/WORK.md`'s open list, deleted from `docs/BOARD_NOTES.md`, and added to the retired-numbers line.
+
+---
+
 ### 2026-09-25 — two more board items found already shipped, retired on verification (items 108 and 131)
 
 **In plain words:** two open board items turned out to already be fixed by earlier, unrelated pull requests. Neither needed new code; both needed the board told the truth.

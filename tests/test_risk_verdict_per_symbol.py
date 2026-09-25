@@ -299,10 +299,12 @@ def test_approved_false_alone_lets_the_whole_batch_through():
     assert len(_veto_ignored_events(pipeline)) == 1
 
 
-def test_scale_all_buys_zero_stops_new_buying_without_a_veto():
-    """Ruling test 2 — scale_all_buys=0 shrinks every new BUY/SHORT to zero
-    (dropped by resize, not by veto) while a proposed exit still proceeds and
-    existing holdings are untouched."""
+def test_scale_all_buys_zero_is_advisory_and_does_not_stop_new_buying():
+    """Board items 134 + 162 (owner ruling 2026-09-25, reaffirming 2026-09-19).
+    scale_all_buys is ADVISORY on entries: even 0.0 — the old full-entry-side
+    stop — no longer drops or resizes any new BUY/SHORT. Every entry survives at
+    its proposed size, the proposed exit still flows, and the seat's exposure
+    concern is recorded as a `scale_advisory` event per entry (never a drop)."""
     decisions = [_xle(), _chpx(), _sell("HELD")]
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(), scale_all_buys=0.0,
@@ -314,9 +316,15 @@ def test_scale_all_buys_zero_stops_new_buying_without_a_veto():
     result = RiskStage(pipeline=pipeline).run(ctx)
 
     assert result is None, "not a rejection — the exit must still flow to execution"
-    assert _symbols(ctx) == ["HELD"], "all new entries scaled out; the SELL survives"
-    scaled = [e for e in _events(pipeline) if e[2] == "scaled_out"]
-    assert {e[0] for e in scaled} == {"XLE", "CHPX"}, "both entries dropped via resize"
+    # Entries are neither dropped nor resized; the SELL flows too.
+    assert _symbols(ctx) == ["XLE", "CHPX", "HELD"]
+    by_sym = {d.symbol: d for d in ctx.portfolio_decision.decisions}
+    assert by_sym["XLE"].allocation_pct == 5.0
+    assert by_sym["CHPX"].allocation_pct == 6.0
+    # The concern is recorded per entry; no scale-driven DROP exists any more.
+    advis = [e for e in _events(pipeline) if e[2] == "scale_advisory"]
+    assert {e[0] for e in advis} == {"XLE", "CHPX"}
+    assert not [e for e in _events(pipeline) if e[2] == "scaled_out"]
 
 
 def test_a_proposed_protective_sell_is_never_dropped_by_the_seat():
@@ -425,14 +433,16 @@ def test_hard_gate_still_enforced_after_scale():
     }
 
 
-def test_scale_all_buys_still_applies_to_the_survivors():
-    """Portfolio-level sizing is untouched by this change: it applies to
-    whatever remains after a per-symbol refusal, exactly as before."""
+def test_scale_all_buys_does_not_resize_the_survivors():
+    """Board items 134 + 162. A per-symbol refusal still drops its name (that
+    lever is unchanged), but scale_all_buys is advisory on entries: the survivor
+    is NOT resized — it keeps its proposed size and the scale concern is recorded
+    against it instead."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
-        scale_all_buys=0.5, reasoning="XLE refused; halve what is left",
+        scale_all_buys=0.5, reasoning="XLE refused; scale flagged, advisory only",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
@@ -440,7 +450,9 @@ def test_scale_all_buys_still_applies_to_the_survivors():
     assert RiskStage(pipeline=pipeline).run(ctx) is None
     survivors = ctx.portfolio_decision.decisions
     assert [d.symbol for d in survivors] == ["CHPX"]
-    assert survivors[0].allocation_pct == pytest.approx(3.0)  # 6.0 x 0.5
+    assert survivors[0].allocation_pct == pytest.approx(6.0)  # unchanged, not 3.0
+    advis = [e for e in _events(pipeline) if e[2] == "scale_advisory"]
+    assert {e[0] for e in advis} == {"CHPX"}
 
 
 def test_an_empty_verdict_behaves_exactly_as_before():

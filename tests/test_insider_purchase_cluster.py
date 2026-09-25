@@ -282,16 +282,21 @@ def test_the_lift_does_not_apply_to_a_bearish_or_neutral_read():
 # --------------------------------------------------------------------------
 
 def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_the_seat_sees_it(tmp_path):
-    """Board item 124's DONE-WHEN #2 is NOT met: a cluster's own rows are not
-    protected in ``SECForm4Provider.fetch``'s final sort, so when enough
-    individually-material opportunistic buys compete for the same
-    ``max_observations`` cap, a below-threshold cluster (rescued into
+    """The rescued cluster's OWN rows can be truncated by higher-dollar solo
+    buys of the same symbol, but the cluster FACT still reaches the seat.
+
+    ``SECForm4Provider.fetch``'s final sort does not protect a cluster's own
+    rows: when enough individually-material opportunistic buys compete for the
+    same ``max_observations`` cap, a below-threshold cluster (rescued into
     ``cluster_survivors`` by the two-owner window rule, and simultaneously a
-    same-day opportunistic ``insider_purchase_clusters`` cluster) is the
-    first thing cut. The sort key in ``SECForm4Provider.fetch`` is
-    ``(not transient_admission_eligible, not in_core_universe,
-    -signal_weight, -transaction_value_usd, -accepted_at)`` — nothing in it
-    ever looks at ``purchase_cluster``.
+    same-day opportunistic ``insider_purchase_clusters`` cluster) is the first
+    thing cut. But that no longer starves the seat: ``fetch`` computes the
+    cluster over EVERY parsed row and stamps ``purchase_cluster`` on every
+    surviving row of that symbol BEFORE the observation cap, so the seat reads
+    the fact off whichever of the symbol's rows survive. That is why board item
+    124's within-symbol crowd-out concern is moot — the row order stopped
+    deciding whether the fact is delivered. This test pins both truths: the
+    rescued rows are cut, and the fact is present on the survivors regardless.
     """
     provider = SECForm4Provider(data_dir=str(tmp_path))
     today = date.today()
@@ -328,20 +333,29 @@ def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_t
     assert len(got) == provider.max_observations == 40
 
     rescued = [row for row in got if row.actor_cik in ("rescue-1", "rescue-2")]
-    # This assertion documents the CURRENT, UNFIXED behaviour: the rescue
-    # pair is real (both rows would independently show up as a cluster) but
-    # is crowded out by 40 higher-dollar solo buys before the seat ever
-    # receives it, so the cluster's own rows do NOT survive the truncation.
-    # If this assertion starts failing, item 124's DONE-WHEN #2 may finally
-    # be met and should be re-examined against real data before closing it.
+    # The rescue pair's OWN rows are crowded out by the 40 higher-dollar solo
+    # buys of the same symbol and do not survive the truncation. This is
+    # expected and no longer a defect: the cluster fact is stamped before the
+    # cap (asserted next), so losing these specific rows does not starve the
+    # seat. If this assertion changes, the crowd-out behaviour changed too.
     assert rescued == [], (
-        "cluster-rescued rows unexpectedly survived truncation — re-check "
-        "item 124's second DONE-WHEN criterion against this result"
+        "cluster-rescued rows unexpectedly survived truncation — the "
+        "crowd-out scenario this test relies on has changed"
     )
 
-    # The cluster fact itself is real and was computed correctly (confirming
-    # the defect is specifically about the SORT, not about cluster
-    # detection): had the rescue pair survived, they would have carried it.
+    # The cluster FACT reaches the seat anyway: every surviving row of the
+    # clustered symbol carries ``purchase_cluster``, so the seat reads it off
+    # a survivor even though the rescue pair itself was cut. This is the
+    # within-symbol crowd-out being moot (board item 124, retired).
+    assert len(got) > 0
+    assert all(row.purchase_cluster is not None for row in got), (
+        "surviving rows of the clustered symbol must carry the cluster fact "
+        "even after their own cluster rows are truncated"
+    )
+
+    # The cluster fact itself is real and was computed correctly (the sort
+    # never looks at ``purchase_cluster``, which is why the rescue rows lose —
+    # but that no longer matters, per the survivor assertion above).
     # ``insider_purchase_clusters`` only counts rows already classified
     # opportunistic (`fetch` stamps this; these raw rows have not been
     # through the classifier, so stamp them the same way here).

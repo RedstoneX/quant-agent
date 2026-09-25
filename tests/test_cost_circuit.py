@@ -2267,6 +2267,90 @@ def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(
     )
 
 
+def test_auto_clear_alerts_the_owner_on_the_same_surface_as_the_suspension(
+    tmp_path, monkeypatch,
+):
+    """Item 174: the suspension reaches Telegram, but the auto-expiry used to
+    write only an `auto_reset` DB event and a log line -- so the owner saw
+    'desk suspended' and never 'desk back live'. The auto-clear now sends the
+    same-surface owner alert, stating the desk resumed and why (auto-expiry),
+    while keeping the DB event and the log.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+
+    # The suspension WAS announced on Telegram; the resume was not, yet.
+    assert any("SUSPENDED" in m for m in notifier.messages)
+    assert [m for m in notifier.messages if "RESUMED" in m] == []
+
+    _age_latch(path, 16)
+    state = circuit.status()
+    assert state["suspended"] is False
+
+    resumes = [m for m in notifier.messages if "RESUMED" in m]
+    assert len(resumes) == 1
+    # It says WHAT resumed the desk (the forgiven trigger) and WHY (auto-expiry).
+    assert "failed_call_unknown_cost" in resumes[0]
+    assert "auto-expired" in resumes[0]
+
+    # The DB event the auto-clear always wrote is preserved, not replaced.
+    with sqlite3.connect(path) as conn:
+        auto_resets = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+        alerted = conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+    assert auto_resets == 1
+    assert alerted == 1  # marked sent
+
+    # A later boundary does NOT re-announce the same resume.
+    circuit.status()
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+
+def test_auto_clear_resume_alert_retries_after_a_telegram_outage(
+    tmp_path, monkeypatch,
+):
+    """A failed send leaves the resume alert PENDING (state 0), not lost, so
+    the next boundary tries again -- the durable-retry posture the quota
+    recovery alert already has, applied to item 174."""
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path, notifier=_Notifier())
+    _age_latch(path, 16)
+
+    # Swap in a notifier whose send() fails, THEN let the latch auto-clear.
+    class _Down:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, _message):
+            self.calls += 1
+            return False
+
+    down = _Down()
+    circuit.notifier = down
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert down.calls >= 1
+    with sqlite3.connect(path) as conn:
+        pending = conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+    assert pending == 0  # not sent -> still pending for a later retry
+
+    # Telegram comes back; the pending resume is delivered on the next boundary.
+    good = _Notifier()
+    circuit.notifier = good
+    circuit.status()
+    assert len([m for m in good.messages if "RESUMED" in m]) == 1
+
+
 def test_transient_latch_does_not_clear_before_the_cooldown(tmp_path):
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)

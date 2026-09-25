@@ -1304,9 +1304,15 @@ def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     label = "APPROVED" if approved is True else "REJECTED" if approved is False else "UNKNOWN"
     category = _risk_category_words(risk.get("reason_category"))
     scale = risk.get("scale_all_buys")
+    # Board items 134 + 162 (owner ruling 2026-09-25): scale_all_buys is an
+    # ADVISORY exposure concern on entries — it is recorded and surfaced but no
+    # longer resizes any buy. Show the seat's concern, not a size cut that no
+    # longer happens; a value of 1.0 (no concern) shows nothing.
     scale_text = (
-        f" · every buy cut to {scale * 100:.0f}% of the size asked for"
-        if isinstance(scale, (int, float)) else ""
+        f" · risk seat flagged a portfolio-wide exposure concern "
+        f"(scale_all_buys {scale * 100:.0f}%) — advisory only, entries were "
+        f"NOT resized"
+        if isinstance(scale, (int, float)) and scale < 1.0 else ""
     )
     mods = snap.get("risk_mods") or []
     # Phase 10.1: a verdict can now be APPROVED overall and still have refused

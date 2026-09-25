@@ -495,6 +495,14 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             attempts INTEGER,
             session_cost_usd REAL,
             daily_cost_usd REAL,
+            -- Item 174: an `auto_reset` event (a transient latch that expired on
+            -- its own) must reach the owner on the same Telegram surface the
+            -- suspension did. These two columns track that recovery alert with
+            -- the same 0=pending / -1=claimed-retryable / 1=sent state machine
+            -- `llm_quota_holds.recovery_alert_state` uses. They stay 0 (NULL on
+            -- a legacy row -> treated as 0) for every non-`auto_reset` event.
+            recovery_alert_state INTEGER NOT NULL DEFAULT 0,
+            recovery_alert_updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -586,6 +594,34 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE llm_budget_sessions ADD COLUMN costs_exact INTEGER "
             "NOT NULL DEFAULT 1"
+        )
+    # Item 174: recovery-alert tracking for `auto_reset` events on databases
+    # created before this column existed. Defaults to 0 (pending), so any
+    # auto_reset row already on the books when this column appears is treated
+    # as not-yet-alerted and the owner is told on the next boundary -- the
+    # conservative direction (a possibly-duplicate "back live" note, never a
+    # silently-missed one).
+    event_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(llm_circuit_events)")
+    }
+    if "recovery_alert_state" not in event_columns:
+        conn.execute(
+            "ALTER TABLE llm_circuit_events ADD COLUMN recovery_alert_state "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+        # Any auto_reset row already on the books cleared before this alert
+        # existed; its latch is long gone. Mark those handled (state=1) so the
+        # first boundary after deploy does NOT fire a burst of stale "desk
+        # resumed" notes for latches that expired days ago -- a stale recovery
+        # alert is itself a defect. Only auto-clears from here forward alert.
+        conn.execute(
+            "UPDATE llm_circuit_events SET recovery_alert_state=1 "
+            "WHERE event_type='auto_reset'"
+        )
+    if "recovery_alert_updated_at" not in event_columns:
+        conn.execute(
+            "ALTER TABLE llm_circuit_events ADD COLUMN recovery_alert_updated_at "
+            "TEXT NOT NULL DEFAULT (datetime('now'))"
         )
 
     # Migrate a latch created by the original one-state implementation.  Known
@@ -2422,6 +2458,7 @@ class LLMCostCircuitBreaker:
                 conn.commit()
         self._notify_quota_holds_if_needed()
         self._notify_quota_recoveries_if_needed()
+        self._notify_auto_resets_if_needed()
 
     def _notify_quota_holds_if_needed(self) -> None:
         while True:
@@ -2506,6 +2543,78 @@ class LLMCostCircuitBreaker:
                 conn.commit()
             if not sent:
                 return
+
+    def _notify_auto_resets_if_needed(self) -> None:
+        """Tell the owner, on the same Telegram surface as the suspension, that
+        a transient latch expired on its own and the desk is trading again.
+
+        Item 174: the suspension path reaches the owner (`_notify_if_needed`
+        / the sentinel's `_alert`), but `_auto_clear_transient_latch_locked`
+        used to write only an `auto_reset` DB event and a log line, so the
+        owner saw "desk suspended" and never "desk back live." This mirrors
+        `_notify_quota_recoveries_if_needed` exactly -- same claim/retry state
+        machine, same notifier -- so a crash between the auto-clear and the
+        send, or a Telegram outage, leaves the alert pending for the next
+        authorization boundary instead of dropping it silently. The DB event
+        and the log line the auto-clear already writes are untouched.
+        """
+
+        while True:
+            event: dict[str, Any] | None = None
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM llm_circuit_events WHERE event_type='auto_reset' "
+                    "AND (recovery_alert_state=0 OR (recovery_alert_state=-1 AND "
+                    "recovery_alert_updated_at <= datetime('now', '-2 minutes'))) "
+                    "ORDER BY id LIMIT 1"
+                ).fetchone()
+                if row is not None:
+                    claimed = conn.execute(
+                        "UPDATE llm_circuit_events SET recovery_alert_state=-1, "
+                        "recovery_alert_updated_at=datetime('now') "
+                        "WHERE id=? AND (recovery_alert_state=0 OR "
+                        "recovery_alert_state=-1)",
+                        (row["id"],),
+                    ).rowcount == 1
+                    if claimed:
+                        event = dict(row)
+                conn.commit()
+            if event is None:
+                return
+            message = self.format_auto_reset_alert(event)
+            logger.info("\n%s", message)
+            sent = False
+            try:
+                sent = bool(self.notifier.send(message))
+            except Exception:
+                logger.exception("cost-circuit auto-reset Telegram alert failed")
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE llm_circuit_events SET recovery_alert_state=?, "
+                    "recovery_alert_updated_at=datetime('now') "
+                    "WHERE id=? AND recovery_alert_state=-1",
+                    (1 if sent else 0, event["id"]),
+                )
+                conn.commit()
+            if not sent:
+                return
+
+    @staticmethod
+    def format_auto_reset_alert(event: dict[str, Any]) -> str:
+        code = str(event.get("trigger_code") or "transient provider latch")
+        session_cost = float(event.get("session_cost_usd") or 0.0)
+        daily_cost = float(event.get("daily_cost_usd") or 0.0)
+        return (
+            "🟢 QAMC PAID ANALYSIS RESUMED\n"
+            f"previous suspension: {code}\n"
+            f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
+            f"settled spend at resume: ${session_cost:.4f} this run · "
+            f"${daily_cost:.4f} today\n"
+            "status: paid analysis is live again; no operator reset was needed. "
+            "Session, call-count, attempt, and daily limits remain enforced and "
+            "re-latch instantly if real settled spend is over a cap."
+        )
 
     @staticmethod
     def format_quota_alert(hold: dict[str, Any]) -> str:
