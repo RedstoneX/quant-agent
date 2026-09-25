@@ -22,6 +22,17 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — item 52 retired: the insider-trade dollar size gate is deleted, not re-sourced
+
+**In plain words:** the desk used to throw away any insider stock purchase below a flat dollar figure — $100,000 for names it already follows, $250,000 for everything else — and nobody could point to research behind either number. That question is now answered: no published study supports single-transaction dollar size as a positive signal at all, so both cutoffs are deleted rather than replaced with a better number.
+
+**What was found.** The closest published research (Cziraki & Gider 2019) measures a filer's whole-quarter total in one stock, not one purchase at a time, and finds size inversely related to being a good signal where it says anything at all — the opposite of what a "bigger purchase = stronger signal" gate would assume. No study was found that supports gating admission on a single transaction's dollar size, in either direction.
+
+**What changed.** `min_transaction_value_usd` and `external_min_transaction_value_usd` are removed from `src/config.py::SmartMoneyConfig` and from `SECForm4Provider`'s constructor (`src/data/smart_money.py`) — a purchase is no longer discarded for being under $100,000 or $250,000. Relative size (the ratio of a transaction to the filer's own holdings) is unaffected: it has been computed and reported on every observation since 2026-09-13 and remains the only size measure in use. A related per-transaction holdings-ratio cutoff was also considered and rejected — it was built and then removed rather than shipped, for lack of a per-transaction source.
+
+**Not touched.** The routine-vs-opportunistic classifier, the clustering logic, and every other Form 4 admission rule are unchanged; this was a size-only gate. Item 63 (the ranking scalar's own inability to express "this matters, but the sign is reversed") is separate open residue from this same original item and stays open.
+
+
 ### 2026-09-25 — rotation gave up the whole swap when the worst stale holding was one it was not allowed to sell (item 39 retired)
 
 **In plain words:** when the book is full and the desk wants to make room by selling something it would no longer buy today, it looks at every holding that has fallen below its own entry bar and picks the worst one to sell. If that single worst name turned out to be one the desk is forbidden to sell — because the original reason for holding it is still standing — the desk abandoned the entire swap, even when the second-worst stale holding was free to sell and would have made exactly the same room. It now moves on to the next-worst stale name and only gives up when every stale holding is one it may not touch. This was the last thing keeping board item 39 open.
@@ -15704,7 +15715,6 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **A stale note removed.** Two `GROSS_LADDER` entries' `cost_while_unanswered` claimed the ladder was "in open tension with the volatility-relative brake" per `src/risk/rules.py:566-576`. That brake — the 5-day/20-day rolling-return sizing brake — was removed in full with item 32 on 2026-09-20; grep confirms no volatility brake remains in `src/risk/rules.py`. The stale references were corrected.
 
 **Board items unchanged in scope.** Items 182, 184 and 186 were NOT retired — each still owns unresolved constants: 182 keeps the cash-deficit de-lever cushion and `GROSS_LADDER_ALERT_PCT`; 186 keeps the cluster-correlation cutoff, the short-side sizing haircut and the queued-earnings BUY clamp. Their notes record which of their constants were resolved in this pass.
-
 ### 2026-09-25 — the double-classified setup_type that let the risk reviewer cut a protected breakout is closed (item 82 retired)
 
 **In plain words:** a trade's "setup type" was decided twice, in two places that could disagree, and the risk reviewer's breakout exemption read the wrong one — so it could trim a breakout it is forbidden to trim. The scale-in path now carries the position's own pinned setup_type and structural ceiling forward instead of reclassifying.

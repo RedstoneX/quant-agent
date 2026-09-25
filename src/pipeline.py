@@ -1075,10 +1075,6 @@ class TradingPipeline:
             lookback_days=config.smart_money.lookback_days,
             max_filings_per_refresh=config.smart_money.max_filings_per_refresh,
             max_observations=config.smart_money.max_observations,
-            min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
-            external_min_transaction_value_usd=(
-                config.smart_money.external_min_transaction_value_usd
-            ),
             cluster_window_days=config.smart_money.cluster_window_days,
             min_cluster_owners=config.smart_money.min_cluster_owners,
             insider_calendar_routine_years=config.smart_money.insider_calendar_routine_years,
@@ -1110,10 +1106,12 @@ class TradingPipeline:
                     config.smart_money.congress_assumed_max_disclosure_lag_days
                 ),
                 lookback_days=config.smart_money.congress_lookback_days,
-                min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
-                external_min_transaction_value_usd=(
-                    config.smart_money.external_min_transaction_value_usd
-                ),
+                # Board item 52 deleted the shared insider-Form4 dollar
+                # floors from `SmartMoneyConfig`; that item is scoped to
+                # Form 4 only, so this congressional-trading gate is left
+                # unchanged by taking `CongressionalTradingProvider`'s own
+                # default floors (same $100k/$250k values) instead of the
+                # now-deleted config fields.
                 cluster_window_days=config.smart_money.cluster_window_days,
                 min_cluster_owners=config.smart_money.min_cluster_owners,
                 max_observations=config.smart_money.max_observations,
