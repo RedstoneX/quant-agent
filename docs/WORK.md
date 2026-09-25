@@ -145,7 +145,8 @@ detail: docs/BOARD_NOTES.md (item 170)
 
 DONE WHEN:
   - [ ] EQNR resolved on its own evidence before the lookback expires, or the alert bounded
-  - [ ] (b) and (c) designed and approved, or accepted — (b) suppresses a live page, so it needs a bound or a never-reconciled fill goes silent
+  - [x] (c) DONE 2026-09-25 — `get_symbols_with_open_ledger_qty` signs by position side: a COVER-family action and a filled buy-to-cover TRAIL_STOP now RETIRE a short (a 36-short fully covered reads 0, not -72); long-side signs unchanged. Both routes fixed together; the pinning known-defect test was deleted per its own instruction; new tests in `tests/test_stop_out_reconciliation.py`. Silent today (caller is LONG-only), correct for when shorts are enabled.
+  - [x] (b) VERIFIED 2026-09-25 — no change needed. All four call sites checked on origin/main: intraday + evening already reconcile fills first (#697); morning and the midday/close review keep the old order intentionally (their `_reconcile_fills` runs later over this session's own rows only, so no stale 'submitted' SELL raises a false page). No remaining old-order site produces a false CRITICAL, so #697 was not touched.
 detail: docs/BOARD_NOTES.md (item 173)
 
 **112. A de-lever that leaves the book over its ceiling now writes a durable record — TIER 1, filed 2026-09-18 out of the item 87 audit, RECORD SHIPPED 2026-09-19; the alert decision stays open.** `_enforce_gross_ceiling` used to only log a warning; a run-scoped `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) is now written whenever a de-lever finishes over ceiling, carrying gross/equity before and after and each order's outcome.
