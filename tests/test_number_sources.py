@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 141, (
+    assert MAX_ARBITRARY_ENTRIES == 143, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -203,7 +203,16 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "`src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening` "
         "was deleted as dead code -- no code in `PortfolioConstructor` ever "
         "read it, confirmed by grep before deleting. A row left the ledger, "
-        "so the count is lowered in the same commit."
+        "so the count is lowered in the same commit. "
+        "141 -> 143 on 2026-09-25, item 142 adversary review: "
+        "`src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R` (value 2) and "
+        "`RANGE_SECOND_RATCHET_LOCK_R` (value 1) were recorded `derived` from "
+        "`RANGE_BREAKEVEN_R_MULTIPLE`, but neither is computed from the +1R "
+        "breakeven unit -- 2R is a chosen appetite multiple and the 1R lock "
+        "equals the breakeven unit only by coincidence of appetite, not a "
+        "derivation -- so both were reclassified `arbitrary`. Owner-ratified "
+        "appetite is not a source. Two rows changed status, so the count rises "
+        "by exactly two in the same commit."
     )
 
 

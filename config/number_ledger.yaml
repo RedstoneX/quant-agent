@@ -2528,6 +2528,50 @@ numbers:
     cost_while_unanswered: >-
       Every range trade's stop moves on a borrowed convention; too early it
       exits winners at scratch, too late it gives back the bank.
+  - id: src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R
+    value: 2
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      Item 142's SECOND range ratchet fires when a range / Type A trade reaches
+      this many initial-risk-units (R) of open profit, at which point the stop
+      is moved up to lock +RANGE_SECOND_RATCHET_LOCK_R (see that entry). This is
+      a CHOSEN appetite multiple: 2R is not computed from the +1R breakeven unit
+      by any formula, nor read off the instrument -- the desk picked a 2R
+      trigger over the established 1R. Owner appetite, ratified by Rex on
+      2026-09-25 for item 142 ("let's try your recommendation"); ratified is not
+      sourced -- ratification records WHO chose the number, not a measurement
+      behind it.
+    open_question: >-
+      At what R of open profit does moving the stop up to lock gain stop costing
+      more in premature exits than it saves in given-back gains, on this desk's
+      own closed trades?
+    cost_while_unanswered: >-
+      The second ratchet fires on a chosen multiple; too early it exits winners
+      at the lock for a scratch-plus, too late it gives back the bank on a
+      reversal before +2R is tagged.
+  - id: src.risk.trailing.RANGE_SECOND_RATCHET_LOCK_R
+    value: 1
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      Where item 142's second ratchet parks the stop once the +2R trigger
+      (RANGE_SECOND_RATCHET_TRIGGER_R) is reached: +1R, locking one
+      initial-risk-unit of gain instead of giving back everything between
+      breakeven and target on a reversal. This is a CHOSEN appetite dial for how
+      much gain to protect: it happens to equal the +1R breakeven unit, but that
+      is a coincidence of appetite, not a derivation -- there is no formula tying
+      the lock level to the breakeven multiple, and had the desk wanted to lock
+      1.5R the two would simply diverge. Owner appetite, ratified by Rex on
+      2026-09-25 for item 142; ratified is not sourced -- ratification records
+      WHO chose the number, not a measurement behind it.
+    open_question: >-
+      At what R of open profit does moving the stop up to lock gain stop costing
+      more in premature exits than it saves in given-back gains, on this desk's
+      own closed trades?
+    cost_while_unanswered: >-
+      The lock level is a chosen multiple; too high it rarely engages and gives
+      back more, too low it caps the trade near scratch on a normal pullback.
   - id: src.rotation.ROTATION_MARGIN_PCT
     value: 0.25
     status: arbitrary

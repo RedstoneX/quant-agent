@@ -13,6 +13,8 @@ from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
     MIN_RATCHET_PCT,
     RANGE_BREAKEVEN_R_MULTIPLE,
+    RANGE_SECOND_RATCHET_LOCK_R,
+    RANGE_SECOND_RATCHET_TRIGGER_R,
     compute_trailing_stop,
 )
 
@@ -204,6 +206,136 @@ def test_breakeven_ratchet_uses_the_initial_stop_not_the_live_one():
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
+
+
+# ---------------------------------------------------------------------------
+# Type A (range) +2R -> +1R SECOND ratchet — item 142, owner-ratified
+# 2026-09-25. Stacks on top of the breakeven step and stays below the target:
+# once a range trade reaches +2R, lock the stop at +1R instead of giving back
+# everything between breakeven and target on a reversal.
+#
+# Worked example throughout: entry 100, initial stop 95, so 1R = $5, +1R = 105,
+# +2R = 110, target 130.
+# ---------------------------------------------------------------------------
+
+def test_range_second_ratchet_locks_plus_1r_at_plus_2r():
+    """At +2R (price 110) the stop moves from breakeven (100) up to +1R (105)."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 105.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_second_ratchet_fires_directly_from_the_initial_stop():
+    """It does not require the breakeven step to have run first: from the entry
+    stop (95) straight to +1R (105) once +2R is reached. Never loosens — 105
+    beats 95."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 105.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_reversal_after_2r_stops_with_plus_1r_locked():
+    """The gap item 142 closes. Price reaches +2R (110), the stop locks at +1R
+    (105); a reversal back to 105 then stops the trade out at +1R of gain
+    instead of round-tripping to breakeven."""
+    initial_stop = 95.0
+    # Step 1: +2R reached -> stop ratchets to +1R.
+    first = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert first is not None and first.new_stop == 105.0
+    live_stop = first.new_stop
+
+    # Step 2: price reverses toward the lock. No further ratchet on the way
+    # down, and the live stop the broker holds is +1R, not breakeven.
+    second = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=106.0,
+        current_stop=live_stop, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert second is None
+    assert live_stop == 105.0 > 100.0  # +1R locked, above breakeven
+
+
+def test_range_below_2r_stays_at_breakeven_unchanged():
+    """Between +1R and +2R (price 108) the stop stays at breakeven (100), the
+    same as before item 142 — the second ratchet has not been earned yet."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=108.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    ) is None
+
+
+def test_range_second_ratchet_never_loosens_a_stop():
+    """The stop already sits above +1R (at 106). The +2R trigger is met, but
+    the lock (105) would LOWER the stop, so nothing is proposed."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=106.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    ) is None
+
+
+def test_breakout_gets_no_second_ratchet():
+    """A breakout (Type B) is UNCHANGED: at +2R with no structure or usable
+    chandelier it proposes nothing, proving the second ratchet is Type A only.
+    The identical range trade would lock +1R."""
+    breakout = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=None, initial_stop=95.0,
+    )
+    assert breakout is None
+    range_trade = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=None, initial_stop=95.0,
+    )
+    assert range_trade is not None and range_trade.new_stop == 105.0
+
+
+def test_range_second_ratchet_short_mirror():
+    """Short mirror: entry 100, initial stop 105 -> 1R = 5, +2R at price 90,
+    lock at +1R = 95. Stop moves from breakeven (100) down to 95."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=90.0,
+        current_stop=100.0, reference_target=70.0,
+        bars=[], atr=2.0, initial_stop=105.0, qty=-10,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 95.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_second_ratchet_needs_the_initial_stop():
+    """Backward compatibility: with no `initial_stop`, R is unmeasurable, so
+    neither ratchet fires — the exact pre-fix behaviour."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=[], atr=2.0,
+    ) is None
+
+
+def test_second_ratchet_multiples_are_the_owner_ratified_values():
+    """Pin the owner-appetite numbers (Rex 2026-09-25, item 142): trigger +2R,
+    lock +1R."""
+    assert RANGE_SECOND_RATCHET_TRIGGER_R == 2.0
+    assert RANGE_SECOND_RATCHET_LOCK_R == 1.0
+    assert RANGE_SECOND_RATCHET_LOCK_R == RANGE_BREAKEVEN_R_MULTIPLE
 
 
 # ---------------------------------------------------------------------------
