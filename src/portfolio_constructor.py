@@ -3495,6 +3495,12 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling. Same expression the reward:
+            # risk gate above (inside `_widen_stop_past_noise`, via
+            # `_resolve_entry_and_stop`) used against THIS `derivation`, so
+            # the Risk Manager sees the identical verdict construction saw.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
@@ -3697,6 +3703,10 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling and the identical comment in
+            # `_build_buy`.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,

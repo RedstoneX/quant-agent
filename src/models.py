@@ -1454,6 +1454,24 @@ class TradeDecision(LLMOutputModel):
     #     not show a Risk Manager an "R/R x:1" figure for a trade whose
     #     approval never depended on one.
     setup_type: str | None = None
+    # --- The MEASURED half of the same verdict (item 82, 2026-09-25) ------
+    # `structural_ceiling=(derivation.level_used is not None)` — the SAME
+    # value the constructor itself fed into `is_trend_trade`/
+    # `reward_risk_floor_applies` when it decided whether this trade's stop
+    # got a reward:risk check at all. `setup_type` above is only the
+    # analyst's raw label; construction's actual verdict is
+    # `reward_risk_floor_applies(setup_type, structural_ceiling=...)`, which
+    # is True (breakout, no ratio) whenever EITHER the label says
+    # "breakout" OR this field is False.
+    #
+    # Without this, a downstream consumer that re-derives the verdict from
+    # `setup_type` alone (no structural_ceiling) sees only the label half —
+    # so a measured breakout the analyst still labelled "range" is shown a
+    # real R/R ratio and can be refused/resized, which construction's own
+    # exemption forbids. `src/agents/risk_manager.py`'s rendering of the
+    # order must reach the SAME verdict construction reached, not a
+    # label-only approximation of it.
+    structural_ceiling: bool | None = None
     # --- Thesis invalidation, as a real field (2026-09-03) ----------------
     # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
     # SHORT) only, default None so every pre-existing construction site
