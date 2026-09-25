@@ -151,9 +151,6 @@ detail: docs/BOARD_NOTES.md (item 109)
 **114. The revisable take-profit refuses rather than re-derives after a big run, by design — filed 2026-09-18 with the change that created it.** `src/risk/target_revision.py` holds the ENTRY PRICE and the PINNED HORIZON fixed across a re-derivation, so `horizon_reach` is still measured from entry over the whole original horizon.
 detail: docs/BOARD_NOTES.md (item 114)
 
-**115. The run-detail popup still shows raw machine evidence verbatim — filed 2026-09-18, split out of item 106 so it is not audited away as a duplicate.** Owner-facing output, not a trading-path defect — same class as item 89.
-detail: docs/BOARD_NOTES.md (item 115)
-
 **119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
 
 DONE WHEN:
@@ -192,12 +189,6 @@ DONE WHEN:
   - [ ] finished sessions remove their own worktree, or a swept-on-a-schedule rule exists and is recorded
 detail: docs/BOARD_NOTES.md (item 139)
 
-**140. Nothing mechanically prevents a fifth duplicate board filing — filed 2026-09-18.** Four duplicate items were filed in one day by parallel agents hours apart, each writing up the same finding in different words without reading the board first; three have since been collapsed by hand.
-
-DONE WHEN:
-  - [ ] a check, not a rule, flags a new item that restates an existing one before it can merge
-detail: docs/BOARD_NOTES.md (item 140)
-
 **143. `docs/RESEARCH_FINDINGS.md` has ZERO entries for ATR bands, trailing, profit-taking, pacing or ranking granularity — filed 2026-09-18.** The only exit-side measurement it carries is the level-touch/stop bar in section 7.
 
 DONE WHEN:
@@ -216,11 +207,6 @@ DONE WHEN:
   - [ ] both inline literals carry a ledger entry or are moved to a scanned definition site, with no value changed in the same pass
   - [ ] the correlation window's current value has a recorded reason, or is named as arbitrary like the threshold beside it
 detail: docs/BOARD_NOTES.md (item 148)
-
-**150. The live-capital pre-flight checklist exists NOWHERE in the repo as an actual gate — filed 2026-09-18, TIER 1.** The conditions that must hold before real money is switched on live in memory and prose, not in code or in a test, so nothing would stop or even notice a live-capital switch taken with an unmet condition.
-
-DONE WHEN:
-  - [ ] the pre-flight conditions exist as a single checked artefact that names each condition and its current state, and the owner has seen it before any live-capital activation
 
 **152. A research seat's answer coming back unreadable has no board item — filed 2026-09-18, from the log-health report; the technical-seat half is SETTLED by #538 (2026-09-19), news seat still open.** A parse failure means the call was paid for and thrown away with nothing to show for it; measured on the retained logs: 11 on the news seat, 79 on the technical seat [measured 2026-09-18 against `quant_agent.log` and its five rotations].
 
