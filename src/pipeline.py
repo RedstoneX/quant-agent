@@ -17249,7 +17249,11 @@ class TradingPipeline:
         tick's calendar window ends; "intraday_scan_no_opportunity" for
         every other early return (no
         snapshots, no qualifying moves, no ledgerable symbols, no usable
-        bars, no usable tech analysis). Past that point, a real result dict
+        bars). A tech seat that is fully LOST (every submitted symbol
+        failed, or the batch call raised) is NOT folded into that status —
+        item 20 (board) — it is classified `data_status["tech"]="failed"`
+        and routed through the same evidence-gate skip + unsuppressible
+        alert morning uses. Past that point, a real result dict
         mirroring the shape callers of run_morning already expect
         (status/orders/run_id). Best-effort: any failure degrades to a
         status dict, never raises (the caller also wraps this
@@ -17411,14 +17415,28 @@ class TradingPipeline:
                 len(_missing) + len(_stale), _missing[:10], _stale[:10],
             )
         self._require_paid_analysis("intraday_tech_analyst")
-        analyses_map, ta_result = self.tech_analyst.analyze_batch(
-            symbols_data,
-            prior_ratings=prior_ratings,
-            valuations={},
-            intraday_context=intraday_context,
-            prior_macro_regime=prior_macro_state.get("regime"),
-            prior_macro_outlook=prior_macro_state.get("equity_outlook"),
-        )
+        try:
+            analyses_map, ta_result = self.tech_analyst.analyze_batch(
+                symbols_data,
+                prior_ratings=prior_ratings,
+                valuations={},
+                intraday_context=intraday_context,
+                prior_macro_regime=prior_macro_state.get("regime"),
+                prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+            )
+        except PaidAnalysisSuspended:
+            raise
+        except Exception as e:  # noqa: BLE001 — mirrors morning's tech
+            # try/except (pipeline_stages.py): a bare call here had no
+            # guard at all, so a batch-level raise (provider outage,
+            # unparseable response) crashed the whole intraday tick
+            # instead of being recorded as a LOST tech seat like every
+            # other failure mode this scan already handles.
+            logger.error(
+                "Intraday scan: tech_analyst.analyze_batch raised: %s. "
+                "Tech seat LOST this tick.", e,
+            )
+            analyses_map, ta_result = {}, None
         # analyses_map carries every candidate symbol as a key (2026-08-19
         # Tech batch-response symbol-loss fix) — None marks a symbol
         # tech_analyst could not resolve even after its own bounded retry.
@@ -17479,9 +17497,13 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("Intraday scan: tech store update failed: %s", e)
 
-        if not analyses:
-            logger.info("Intraday scan: tech_analyst returned no usable analyses this tick")
-            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+        # Item 20 (board): deliberately no early "no analyses" return here.
+        # `symbols_data` was already confirmed non-empty above, so zero
+        # usable analyses at this point is a LOST tech seat, not a quiet
+        # tick — it must fall through to the shared `data_status`/gate path
+        # below (classification just before `ctx.data_status`), not return
+        # "intraday_scan_no_opportunity" indistinguishably from a real
+        # empty candidate set.
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
         #
@@ -17505,8 +17527,23 @@ class TradingPipeline:
         carried_news = self._carry_forward_news(ctx)
         carried_earnings = self._carry_forward_earnings(ctx)
         carried_insider = self._carry_forward_insider(ctx)
+        # Item 20 (board): three-way, matching morning's classification.
+        # `symbols_data` was non-empty going in, so `analyses` empty here
+        # means every submitted symbol failed (or the batch call raised,
+        # caught above) — a LOST seat, not an ordinary quiet tick. A
+        # partial batch (some resolved) stays REPORTED, exactly as before —
+        # this must not start blocking intraday trading on one bad symbol.
+        if analyses:
+            tech_status = "partial" if failed_count else "ok"
+        else:
+            tech_status = "failed"
+            logger.error(
+                "Intraday scan: tech seat LOST — %d/%d submitted symbol(s) "
+                "resolved to a usable analysis this tick",
+                len(analyses), len(analyses_map),
+            )
         ctx.data_status = {
-            "tech": "partial" if failed_count else "ok",
+            "tech": tech_status,
             # Status comes from the kind+event helpers, not from payload
             # truthiness. Same-session GOOD reuse is `carried_from_morning`
             # (PR #430). Cross-day GOOD macro is `remembered`. Empty/failed
