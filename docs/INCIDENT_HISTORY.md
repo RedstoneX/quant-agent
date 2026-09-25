@@ -22,6 +22,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
+
+**In plain words:** the file that records what has gone wrong and been fixed can be edited by two sessions at once, and a tool merges their edits automatically. Twelve entries in it were written with the wrong heading style, so that merge tool could not see them and could quietly overwrite one with another. The code fix for this landed on 2026-09-24, but the board (`docs/WORK.md`, `docs/BOARD_NOTES.md`) was never told, so it kept reporting the defect as open.
+
+**What was actually wrong, and what fixed it.** All twelve headings in `docs/INCIDENT_HISTORY.md` used `##` (two hashes) instead of the `###` (three hashes) the merge tool's own entry-boundary pattern requires (`_ENTRY_HEADING_RE` in `scripts/resolve_doc_conflict.py`). PR #665 (2026-09-24) promoted every mis-leveled dated heading to `###` and added `tests/test_incident_history_headings.py`, a lint that fails the build if a dated entry ever sits at `##` again.
+
+**What was missed, and how it was found.** That same PR's own commit message claimed it also retired board item 93, but the diff only removed items 108/130/131 from `docs/WORK.md` and `docs/BOARD_NOTES.md` — item 93's open block, its `docs/BOARD_NOTES.md` section and its slot in the retired-item-numbers line were never touched. Re-verified 2026-09-25: `grep`-ing the file for the two-hash malformed pattern (`^(#{1,2}|#{4,6})\s+\d{4}-\d{2}-\d{2}`) now returns zero matches, and `tests/test_incident_history_headings.py` passes — the code fix is real and already on `main`. Item 93's board write-up is what was missing, not a code fix.
+
+**What would catch it next time.** A "retire item N" commit message is not itself evidence the board was updated — the definition-of-done check for a retirement should confirm the item's block is actually gone from `docs/WORK.md`, not just that the commit message says so.
+
 ### 2026-09-25 — five more board items found already shipped or moot on verification, retired (items 96, 102, 122, 129, 162)
 
 **In plain words:** five open board items no longer describe anything wrong with the desk. One was already fixed by earlier, unrelated work and had gone stale; four describe fixes that had already shipped. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on `origin/main`, not against the note that filed it.
