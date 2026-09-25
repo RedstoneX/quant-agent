@@ -22,6 +22,19 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — the desk was told to buy for "balance"; the prompt now forbids it
+
+**In plain words:** the owner ruled that conviction outranks balance — the desk must never buy or size a position UP to diversify, to balance the sectors, to improve "the shape of the book", or just to use up spare borrowing room. A purchase now has to stand on its own multi-seat conviction and nothing else. Leaving borrowing room unused is a perfectly acceptable outcome when nothing is good enough to buy; it is not a problem to be solved by reaching for the least-bad name. On 2026-09-24 a real decision had done exactly the barred thing, calling a name "the cleanest non-Technology candidate for closing the deployment gap" — that is the reasoning this ruling outlaws.
+
+**Detail.** Four defects in the portfolio-manager prompt (`config/prompts/portfolio_manager.md`) actively pushed balance-as-a-buy-reason and were rewritten so diversification can only ever SHRINK or VETO a position, never create or justify one:
+
+- The risk-history table row that read "concentration → Diversify; at most 1 BUY per sector" now says a concentration flag must trim or skip into a crowded sector and may never open or add a name to diversify — concentration can shed weight, it cannot buy it. This also resolves a contradiction with the prompt's own stance elsewhere that diversification "is not a goal here" and the sector limit is "a survival ceiling, not a diversification rule".
+- The `portfolio_balance` reasoning field is now defined explicitly as a concentration-RISK check, not a shape-of-the-book target: "improves balance / improves non-Technology exposure / better shape" is barred as a reason to open or add, and the field may only flag over-concentration to trim or skip.
+- The "stay 100% invested" preference (owner mandate 2026-09-17) is subordinated to this ruling: the desk still deploys fully INTO conviction, but filling capacity, hitting a gross target, or closing a deployment gap may never manufacture a sub-conviction buy, and undeployed margin is named an acceptable outcome rather than a cost to apologise for.
+- `sizing_logic` / `signal_conflicts` now bar "diversifies away from Technology" / "improves non-Tech exposure" (and equivalents) as a reason to size up or prefer a name; size flows from conviction and stop distance alone.
+
+The worked example block was updated to model the new behaviour. **What was deliberately NOT touched:** every genuine risk limit stands exactly as before — the soft sector target (`max_sector_pct`), the hard sector block (`sector_hard_ceiling_pct`), the single-name survival ceiling (`max_position_pct`), correlation-cluster limits and the drawdown gross-exposure ladder. Those only ever shrink or block; the ruling removes balance as a REASON TO BUY, not the caps that shrink. No board item covered this (item 107 is prompt-drift detection and prompt-only numbers, a different class), so none was retired or edited. Prompt-anchor, prompt-contract and prompt-safety guards were re-run and pass, confirming no load-bearing anchor was lost.
+
 ### 2026-09-25 — a leftover 09:30 tick was quietly sold to the owner as a second paid intraday opportunity, fixed
 
 **In plain words:** on the day the morning session and a routine risk check both landed at 09:30, the risk check waited for morning to finish and then ran its own paid market-data look seven minutes later, telling the owner it had found an INTRADAY OPPORTUNITY. It had not — that was still the market open, already covered by the morning session, and the desk paid for a duplicate look and sent a misleading message about it.
