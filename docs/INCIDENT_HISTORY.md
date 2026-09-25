@@ -11661,7 +11661,7 @@ refused.
 
 ---
 
-## 2026-09-02 — the rehearsal rig's verdict was a coin flip
+### 2026-09-02 — the rehearsal rig's verdict was a coin flip
 
 **The pre-deploy gate has been giving PASS or FAIL on the same code depending
 on which recorded responses it happened to draw. A green light from it meant
@@ -13531,7 +13531,7 @@ not introduced by it.
 
 ---
 
-## 2026-09-04 — Congressional-trading feed was throwing away real trades two different ways (found before merge, PR #271)
+### 2026-09-04 — Congressional-trading feed was throwing away real trades two different ways (found before merge, PR #271)
 
 **In plain words.** The brand-new "what did members of Congress buy and sell"
 data feed was quietly losing real trades before anyone could look at them, for
@@ -14010,7 +14010,7 @@ deterministically.
 
 ---
 
-## 2026-09-04 — two bugs in the drawdown-brake multipliers themselves: a decorative daily circuit breaker, and a 20-day brake that contradicted the de-levering ladder by twenty points
+### 2026-09-04 — two bugs in the drawdown-brake multipliers themselves: a decorative daily circuit breaker, and a 20-day brake that contradicted the de-levering ladder by twenty points
 
 PR #263 (same day, merged) fixed the *unit* the three drawdown brakes are
 expressed in — from flat hard-coded percentages to `N × max_position_risk_pct`
