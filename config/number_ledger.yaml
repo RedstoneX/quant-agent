@@ -2552,10 +2552,25 @@ numbers:
       1.02x old stop" min-bump rule so the deterministic path does not churn
       orders the discretionary one would have skipped. CORRECTION 2026-09-18:
       the first version rendered that as the quotation "new_stop >= old_stop x
-      1.02", which is a paraphrase presented as a quote.
+      1.02", which is a paraphrase presented as a quote. CAMPAIGN REVIEW
+      2026-09-25: the adversary reviewed this and the ~2-4-session ratchet
+      cooldown (src/pipeline.py `_trail_tightened_recently`) and RULED
+      not-to-reform, staying `arbitrary` — status quo kept, no behavior
+      change. It is ratified as owner CHURN-appetite: a chosen
+      "is this move worth an order" threshold, not a derived or measured
+      number.
     open_question: >-
-      How far must a stop move to be worth an order, given commission, spread
-      and broker replace behaviour?
+      This is a COST question, not a market-structure one: is a given stop
+      move worth the commission, spread and broker replace cost it triggers?
+      Paper fills cannot settle it — paper has no live commission/spread/
+      replace-latency cost, so no paper measurement can show what the
+      threshold should be. Revisit only once live capital produces real
+      cost data. Separately, flag for reconsideration at that point whether
+      this gate is REDUNDANT given the two other clamps already on the same
+      TRAIL_STOP path: the ~2-4-session ratchet cooldown
+      (`_trail_tightened_recently`, 4 calendar days) and the 1.25x-ATR14
+      noise-band clamp — three churn-limiting gates stacked on one action
+      may be doing overlapping work.
     cost_while_unanswered: >-
       Either the desk churns stop orders, or a genuine ratchet is skipped.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
