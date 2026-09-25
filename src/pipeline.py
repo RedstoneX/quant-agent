@@ -9632,6 +9632,60 @@ class TradingPipeline:
                 out.add(sym)
         return out
 
+    def _symbols_already_news_cut_today(self) -> set[str]:
+        """Symbols that already had an ADVERSE_NEWS-triggered sell-side
+        action executed earlier today (ET).
+
+        Board item 74: the existing same-day-trim discipline
+        (`_symbols_already_trimmed_today`) was deliberately narrowed to a
+        phrase gate in Phase 3.3 — ANY named trigger exempts a symbol's
+        second same-day sell-side action, on purpose (a stop, then a
+        genuinely separate thesis break, must both go through). That
+        leaves the documented residual gap: a symbol trimmed at midday on
+        one news event can be trimmed AGAIN at close on the exact SAME
+        news event, because nothing dedupes by trigger KIND. This set
+        exists to close that one gap, narrowly — news only, not the
+        general trigger vocabulary — so a stop-fired or thesis-invalidated
+        second cut is untouched.
+
+        Reuses the trades table's own `reasoning` column (no new storage)
+        and the structured trigger vocabulary already shipped in
+        `src.risk.exit_trigger` (no new phrase list) — classifies each
+        row's reasoning exactly the way `_substantiate_exit_triggers`
+        would have healed it from prose. Failure returns empty (fail
+        open, matching `_symbols_already_trimmed_today`'s own posture) —
+        never raises.
+        """
+        from src.risk.exit_trigger import ExitTrigger, derive_trigger_from_reason
+
+        try:
+            rows = self.db.get_trades(today_only=True, limit=200)
+        except Exception as exc:
+            logger.warning(
+                "_symbols_already_news_cut_today: query failed: %s", exc,
+            )
+            return set()
+        sell_actions = {
+            "REDUCE", "SELL", "TAKE_PROFIT",
+            "EMERGENCY_SELL", "FORCE_DELEVER",
+            "COVER", "EMERGENCY_COVER",
+        }
+        out: set[str] = set()
+        for r in rows:
+            action = (r.get("action") or "").upper()
+            base_action = action.split("(", 1)[0].strip()
+            if (base_action not in sell_actions
+                    and base_action not in ("PARTIAL_SELL", "PARTIAL_COVER")):
+                continue
+            if not self._trade_executed_or_pending(r):
+                continue
+            if derive_trigger_from_reason(r.get("reasoning")) is not ExitTrigger.ADVERSE_NEWS:
+                continue
+            sym = r.get("symbol")
+            if sym:
+                out.add(sym)
+        return out
+
     def _atr_for_symbol(self, symbol: str) -> float | None:
         """ATR(14) from ~30 days of daily bars; None when unknowable.
 
@@ -11339,6 +11393,7 @@ class TradingPipeline:
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
         position_facts: dict | None = None,
+        already_news_cut_today: set[str] | None = None,
     ) -> list[dict]:
         """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP / COVER actions
         to broker.
@@ -11603,6 +11658,54 @@ class TradingPipeline:
                 reason_text = (
                     reason_text if isinstance(reason_text, str) else str(reason_text or "")
                 )
+
+            # Board item 74 — one news event may not cut the same holding
+            # twice in a day. Deliberately narrower than the deleted
+            # same-day-trim gate above: it fires ONLY when THIS action's
+            # own trigger is ADVERSE_NEWS and the symbol already had an
+            # ADVERSE_NEWS exit executed earlier today. A stop, a
+            # thesis-invalidation, an earnings miss, or a genuinely
+            # different symbol are all untouched — see
+            # `_symbols_already_news_cut_today` for why this is scoped to
+            # news specifically rather than reopening the general
+            # hard-trigger dedup Phase 3.3 intentionally left out of scope.
+            if act in ("SELL", "REDUCE", "COVER"):
+                from src.risk.exit_trigger import (
+                    ExitTrigger, derive_trigger_from_reason, normalize_trigger,
+                )
+                from src.risk.exit_refusal import CODE_NEWS_DOUBLE_CUT
+
+                _this_trigger = normalize_trigger(action_item.get("exit_trigger"))
+                if _this_trigger is None:
+                    _this_trigger = derive_trigger_from_reason(reason_text)
+                if (
+                    _this_trigger is ExitTrigger.ADVERSE_NEWS
+                    and symbol in (already_news_cut_today or set())
+                ):
+                    logger.warning(
+                        "Position reviewer: blocking %s %s — a news-driven "
+                        "cut already executed on this symbol earlier today; "
+                        "one news event cannot cut the same holding twice "
+                        "in a day. Reason: %r",
+                        act, symbol, reason_text[:160],
+                    )
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status="exit_blocked_news_double_cut",
+                            detail=f"{act}: {reason_text[:400]}",
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "news double-cut gate: audit write failed: %s", e,
+                        )
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=CODE_NEWS_DOUBLE_CUT, dropped=True,
+                        detail=f"{act}: {reason_text[:400]}",
+                        layer="news_double_cut",
+                    )
+                    continue
 
             # 2026-09-11 — and now: is the named trigger actually TRUE?
             #
@@ -14457,6 +14560,12 @@ class TradingPipeline:
             already_trimmed_today = self._symbols_already_trimmed_today() & {
                 p.symbol for p in review_positions
             }
+            # Board item 74 — same broker-truth intersection as above, so a
+            # sold-out name can't gate a news double-cut it can no longer
+            # commit either.
+            already_news_cut_today = self._symbols_already_news_cut_today() & {
+                p.symbol for p in review_positions
+            }
 
             yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
             recent_performance = self._compute_recent_performance(last_equity)
@@ -14598,6 +14707,7 @@ class TradingPipeline:
                 metric_deltas=metric_deltas,
                 risk_vetoed_symbols=risk_vetoed,
                 position_facts=position_facts,
+                already_news_cut_today=already_news_cut_today,
             ))
 
             # Take-profit revision flags, adjudicated LAST — after every

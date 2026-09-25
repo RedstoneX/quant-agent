@@ -2907,6 +2907,120 @@ def test_symbols_already_trimmed_today_recognises_force_delever_action():
     assert trimmed == {"NVDA"}
 
 
+# ============================================================================
+# Board item 74 — "news can cut the same holding twice in one day". The
+# Phase 3.3 hard-trigger gate exempts ANY named trigger from the same-day
+# discipline (a stop, then a genuinely separate thesis break, must both go
+# through), which reopened exactly this gap for the SAME trigger repeated:
+# a midday ADVERSE_NEWS cut and a close ADVERSE_NEWS cut on the same symbol
+# off the same event both pass the phrase gate. These tests pin the new,
+# narrower guard: a second ADVERSE_NEWS-triggered exit on an
+# already-news-cut symbol is blocked, while a stop / thesis-invalidation /
+# earnings trigger (or a different symbol) is untouched.
+# ============================================================================
+
+def test_symbols_already_news_cut_today_recognises_adverse_news_reason():
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    pipeline.db.get_trades.return_value = [
+        {"action": "REDUCE", "symbol": "AMZN", "fill_status": "filled",
+         "reasoning": "adverse news: regulator opens probe into the segment"},
+        {"action": "SELL", "symbol": "NVDA", "fill_status": "filled",
+         "reasoning": "thesis_invalid triggered: closed below MA50 on 2x volume"},
+        {"action": "REDUCE", "symbol": "XOM", "fill_status": "rejected",
+         "reasoning": "material news: OPEC surprise cut"},
+    ]
+    news_cut = pipeline._symbols_already_news_cut_today()
+    # AMZN: filled REDUCE with an adverse-news reason -> counts.
+    # NVDA: filled SELL but the trigger is thesis_invalid, not news -> excluded.
+    # XOM: rejected (no shares moved) -> fair game, excluded.
+    assert news_cut == {"AMZN"}
+
+
+def test_midday_blocks_second_news_driven_cut_on_the_same_symbol():
+    """AMZN already had a news-driven REDUCE executed earlier today. A
+    second ADVERSE_NEWS-triggered exit on AMZN, later the same day, off
+    the same event kind, must NOT reach the broker."""
+    position = Position(
+        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=170.0,
+        market_value=3400.0, unrealized_pnl=-200.0,
+        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+    )
+    pipeline = _mk_midday_pipeline(position)
+    review = PositionReview(
+        reasoning_chain=_review_rc(),
+        actions=[PositionAction(
+            action="SELL", symbol="AMZN",
+            reason="adverse news: follow-on coverage of the same regulator probe",
+        )],
+        overall_assessment="cut further on the news",
+        risk_level="high",
+    )
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position], review=review, run_id="r-1",
+        already_trimmed_today=set(),  # not a same-day-trim scenario at all
+        already_news_cut_today={"AMZN"},
+    )
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+    pipeline.db.insert_trade.assert_not_called()
+
+
+def test_midday_allows_a_different_trigger_on_a_news_cut_symbol():
+    """AMZN was news-cut earlier today, but THIS exit's trigger is
+    thesis-invalidation, a genuinely different event — the news
+    double-cut guard must not block it."""
+    position = Position(
+        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=160.0,
+        market_value=3200.0, unrealized_pnl=-400.0,
+        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+    )
+    pipeline = _mk_midday_pipeline(position)
+    review = PositionReview(
+        reasoning_chain=_review_rc(),
+        actions=[PositionAction(
+            action="SELL", symbol="AMZN",
+            reason="thesis_invalid triggered: closed below MA50 on 2x volume",
+        )],
+        overall_assessment="thesis broke, unrelated to the earlier news",
+        risk_level="high",
+    )
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position], review=review, run_id="r-1",
+        already_trimmed_today=set(),
+        already_news_cut_today={"AMZN"},
+    )
+    assert len(orders) == 1
+    pipeline.broker.submit_order.assert_called_once()
+
+
+def test_midday_allows_first_news_cut_on_a_symbol_not_yet_news_cut_today():
+    """A different symbol (or the same symbol's FIRST news cut today)
+    is not in `already_news_cut_today` and must pass exactly as before."""
+    position = Position(
+        symbol="XOM", qty=15.0, avg_entry=110.0, current_price=104.0,
+        market_value=1560.0, unrealized_pnl=-90.0,
+        unrealized_intraday_pnl=0.0, sector="Energy",
+    )
+    pipeline = _mk_midday_pipeline(position)
+    review = PositionReview(
+        reasoning_chain=_review_rc(),
+        actions=[PositionAction(
+            action="REDUCE", symbol="XOM",
+            reason="material news: OPEC surprise cut hits refining margins",
+        )],
+        overall_assessment="trim on fresh news",
+        risk_level="moderate",
+    )
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position], review=review, run_id="r-1",
+        already_trimmed_today=set(),
+        already_news_cut_today=set(),  # AMZN's cut, not XOM's — set is empty for XOM
+    )
+    assert len(orders) == 1
+    pipeline.broker.submit_order.assert_called_once()
+
+
 def test_sold_out_symbol_does_not_reach_position_reviewer():
     """2026-09-17 XOM incident: XOM was fully SOLD this morning (broker no
     longer holds it — only AAPL remains) yet the reviewer returned 7 actions

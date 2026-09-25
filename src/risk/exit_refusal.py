@@ -72,6 +72,10 @@ CODE_AI_RISK_REJECT = "ai_risk_reject"
 CODE_NOISE_BAND = "inside_atr_noise_band"
 CODE_CONTRADICTS_METRICS = "contradicts_own_metrics"
 CODE_HOLDING_DISCIPLINE_FALSE = "holding_discipline_claim_false"
+# Board item 74: a second ADVERSE_NEWS-triggered exit on a symbol already
+# news-cut today, off the same event kind. Does not touch any other
+# trigger — a stop or a genuinely different (non-news) trigger is unaffected.
+CODE_NEWS_DOUBLE_CUT = "news_double_cut"
 
 # Uncertainty — recorded, not a drop from that layer.
 CODE_HARD_TRIGGER_UNCERTAIN = "hard_trigger_uncertain"
