@@ -529,6 +529,13 @@ def run_backtest(
                 current_price=bar.close, current_stop=pos.stop,
                 reference_target=pos.target, bars=bars_since_entry, atr=atr_today,
                 qty=qty_sign,
+                # The ENTRY stop, frozen at fill — never the live `pos.stop` a
+                # prior trail already moved. Powers the Type A +1R breakeven
+                # ratchet and the +2R -> +1R second ratchet (item 142), the
+                # same way `_trail_open_positions` passes `initial_stop_loss`
+                # in the live pipeline. Without it both R-multiple ratchets
+                # cannot measure risk and stay silent.
+                initial_stop=pos.stop_initial,
             )
             if proposal is not None:
                 pos.stop = proposal.new_stop
