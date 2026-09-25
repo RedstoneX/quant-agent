@@ -22,6 +22,12 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — a leftover 09:30 tick was quietly sold to the owner as a second paid intraday opportunity, fixed
+
+**In plain words:** on the day the morning session and a routine risk check both landed at 09:30, the risk check waited for morning to finish and then ran its own paid market-data look seven minutes later, telling the owner it had found an INTRADAY OPPORTUNITY. It had not — that was still the market open, already covered by the morning session, and the desk paid for a duplicate look and sent a misleading message about it.
+
+**Detail.** `_await_paid_scan_slot` (`src/pipeline.py`) now knows which session it was waiting behind. If it was waiting on morning specifically, the tick is skipped outright (new `intraday_scan_open_overlap` status) instead of running a paid discovery scan on the same half-hour morning already owns — the boundary is morning's own lock release, not an invented number of minutes after 09:30. The next real paid intraday look is simply the next half-hour fire that finds no lock at all. Deterministic risk and coverage checks still run on that 09:30 tick as before; only the paid discovery scan and its owner-facing message are suppressed, via `intraday_scan_open_overlap` being added to the list of statuses Telegram stays silent on. Midday and close waits were not touched — they run on a different cadence and were never affected. A related change bundled into the same investigation (four new statuses for an offline rehearsal rig) was deliberately left out of this fix and not carried forward.
+
 ### 2026-09-25 — five more board items found already shipped or moot on verification, retired (items 96, 102, 122, 129, 162)
 
 **In plain words:** five open board items no longer describe anything wrong with the desk. One was already fixed by earlier, unrelated work and had gone stale; four describe fixes that had already shipped. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on `origin/main`, not against the note that filed it.
