@@ -458,3 +458,77 @@ def test_an_unconfirmed_recent_low_is_not_used():
     assert _swing_lows(bars) == []
     # And a monotonic ramp has no local minimum anywhere.
     assert _swing_lows(_bars([(100 + i, 99 + i) for i in range(14)])) == []
+
+
+# ---------------------------------------------------------------------------
+# Item 82 — Type A/B routed on the MEASURED breakout verdict, not the label
+# alone (#649/#652 carried construction's `structural_ceiling`; this closes
+# the same label-only bug in the trailing reader). `is_trend_trade` ORs the
+# analyst's label with the measured `structural_ceiling`: a measured breakout
+# the analyst mislabelled "range" (label "range" + structural_ceiling False)
+# must be trailed as Type B. A correctly-labelled range (ceiling None on a
+# legacy row, or True when a ceiling was measured) and a correctly-labelled
+# breakout must be BYTE-IDENTICAL to before this change.
+#
+# All three share ONE fixture: price 118, below target 130, so the choice is
+# purely Type A (breakeven ratchet at entry, 100) vs Type B (structural trail
+# to the confirmed higher low, 110).
+# ---------------------------------------------------------------------------
+
+def _regime_fixture(setup_type, structural_ceiling):
+    return compute_trailing_stop(
+        symbol="AAA", setup_type=setup_type,
+        structural_ceiling=structural_ceiling,
+        entry=100.0, current_price=118.0, current_stop=95.0,
+        reference_target=130.0, bars=_rising_with_higher_lows(),
+        atr=2.0, initial_stop=90.0,
+    )
+
+
+def test_item82_correct_range_is_unchanged_legacy_null_ceiling():
+    """A correctly-labelled range on a legacy row (structural_ceiling absent /
+    None) keeps Type A: the +1R breakeven ratchet, stop to entry."""
+    proposal = _regime_fixture("range", None)
+    assert proposal is not None
+    assert proposal.source == "breakeven_ratchet"
+    assert proposal.new_stop == 100.0
+    # Identical to passing no structural_ceiling at all (the pre-item-82 call).
+    legacy = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=_rising_with_higher_lows(), atr=2.0, initial_stop=90.0,
+    )
+    assert legacy is not None
+    assert (legacy.source, legacy.new_stop) == (proposal.source, proposal.new_stop)
+
+
+def test_item82_correct_range_is_unchanged_when_a_ceiling_was_measured():
+    """A correctly-labelled range WITH a measured ceiling (structural_ceiling
+    True) stays Type A — is_trend_trade is False, exactly as the label says."""
+    proposal = _regime_fixture("range", True)
+    assert proposal is not None
+    assert proposal.source == "breakeven_ratchet"
+    assert proposal.new_stop == 100.0
+
+
+def test_item82_correct_breakout_is_unchanged():
+    """A correctly-labelled breakout keeps Type B: the structural trail to the
+    confirmed higher low, with no measured verdict needed."""
+    proposal = _regime_fixture("breakout", None)
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+
+
+def test_item82_mislabelled_range_breakout_now_gets_type_b():
+    """THE FIX: label "range" but the constructor MEASURED no ceiling
+    (structural_ceiling False → is_trend_trade True). Previously this got Type
+    A (breakeven ratchet at 100); it must now be trailed as Type B (structural
+    trail to 110), identical to the correctly-labelled breakout above."""
+    proposal = _regime_fixture("range", False)
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+    # And it matches the correctly-labelled breakout exactly.
+    breakout = _regime_fixture("breakout", None)
+    assert (proposal.source, proposal.new_stop) == (breakout.source, breakout.new_stop)

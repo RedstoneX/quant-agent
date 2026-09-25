@@ -10809,9 +10809,21 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
 
+            # Item 82: the MEASURED half of the breakout verdict, pinned at
+            # entry alongside `setup_type` (stored 0/1/NULL). Present → this
+            # path reaches construction's OWN verdict so a measured breakout
+            # the analyst mislabelled "range" is trailed as Type B, not Type
+            # A; NULL (legacy row, or a pre-item-82 entry) → `is_trend_trade`
+            # inside `evaluate_trailing_stop` falls back to the label alone,
+            # exactly the pre-item-82 `!= "breakout"` behaviour. Read the
+            # SAME way the pace/progress path does (#652).
+            _sc_raw = (buy or {}).get("structural_ceiling")
+            structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
+
             evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
+                structural_ceiling=structural_ceiling,
                 entry=position.avg_entry,
                 current_price=position.current_price,
                 current_stop=current_stop,
