@@ -32,6 +32,7 @@ from src.api.deps import (
     get_cash_sweep_symbol,
     get_risk_limits,
 )
+from src.data.live_price import resolve_live_price
 from src.execution.broker import AlpacaBroker, _internal_symbol
 from src.trading_calendar import live_price_is_today
 
@@ -669,8 +670,18 @@ def read_live_quotes(symbols: list[str]) -> dict:
             # cockpit as this session's. Blank them unless the bar's own
             # timestamp says today.
             session_is_today = live_price_is_today(snap.get("session_bar_at"))
+            # item 169: `last_price` above is the RAW provider last trade,
+            # never freshness-checked (see `get_intraday_snapshots`'
+            # docstring) — a thin name can carry a stale print here while
+            # still resolving to a real today price via the minute/session
+            # bar. `resolved_price` is `src.data.live_price.resolve_live_price`
+            # run over the SAME snapshot: `None` unless a real print from
+            # THIS session exists, so a chart consumer never draws a stale
+            # last trade as today's close.
+            resolved_price = resolve_live_price(snap).price
             quotes[sym] = {
                 "last_price": last_price,
+                "resolved_price": resolved_price,
                 "quote": {
                     "value": last_price,
                     "price_kind": "current_quote",

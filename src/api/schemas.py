@@ -474,6 +474,16 @@ class LiveQuote(BaseModel):
     never fabricated."""
     symbol: str
     last_price: float | None = None
+    # The freshness-resolved current-session price (docs/WORK.md item 169
+    # — `src.data.live_price.resolve_live_price` run over the same
+    # snapshot `last_price` above comes from). `last_price` is the raw,
+    # never-freshness-checked provider last trade and can be stale for a
+    # thin name; `resolved_price` is `None` unless a real print (last
+    # trade, minute bar, or today's forming session bar) exists from THIS
+    # session. A chart or any other "current price" render should use
+    # this field, not `last_price`, to avoid drawing a stale print as
+    # today's.
+    resolved_price: float | None = None
     # Provenance for `last_price` (docs/WORK.md item 15 — "we cannot tell a
     # stale price from a live one"). `market_as_of` is Alpaca's own
     # `latest_trade.timestamp` — a real per-trade exchange timestamp the

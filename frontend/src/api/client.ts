@@ -393,6 +393,13 @@ export interface SymbolEventsResponse {
 export interface LiveQuote {
   symbol: string;
   last_price: number | null;
+  // Freshness-resolved current-session price (item 169): `null` unless a
+  // real print (last trade, minute bar, or today's forming session bar)
+  // exists from THIS session. `last_price` above is the raw, never
+  // freshness-checked provider last trade and can be stale for a thin
+  // name — prefer this field for anything rendered as "the current
+  // price" (e.g. the chart's live line / forming candle).
+  resolved_price: number | null;
   prev_close: number | null;
   session_open: number | null;
   session_high: number | null;
