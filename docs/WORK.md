@@ -256,7 +256,7 @@ detail: docs/BOARD_NOTES.md (item 129)
 **134. The risk seat's position-size edits are INVENTED numbers — filed 2026-09-18, TIER 1.** Across 28 recorded decision rows the seat has made 9 size modifications ever, all on the same field, and 6 of the 9 are whole numbers; `scale_all_buys` has only ever held 1.0 (14 times) or 0.7 (3 times), and 0.7 is the literal worked example in the seat's own briefing [measured 2026-09-18 against the live decision record].
 
 DONE WHEN:
-  - [ ] the size the seat writes is derived from something measurable about the instrument, the way stop distances already are, with the derivation stated in the briefing
+  - [x] a model-picked, unverifiable multiplier no longer sizes real trades — RESOLVED 2026-09-25 (owner ruling, reaffirming 2026-09-19): on ENTRIES `scale_all_buys` is now ADVISORY. The seat's concern + reason are captured and recorded durably (per-entry `scale_advisory` pipeline event + trader feed), but the multiplier is NOT applied to any `allocation_pct` and drops no trade; the hard aggregate limits (gross ceiling, per-trade risk %, correlation / at-risk budget) remain the real constraint. Briefing rewritten to state the advisory posture. → docs/INCIDENT_HISTORY.md.
 detail: docs/BOARD_NOTES.md (item 134)
 
 **138. Five unsourced order-price buffer sites carrying three values — filed 2026-09-18, TIER 1.** A 1% ladder offset, a 0.5% midday offset and a 3% stop-limit buffer decide whether an order fills, and none of the five sites is in `config/number_ledger.yaml` (they sit in the broker/execution path item 130 shows the ledger's scope rule excludes). **Item 118 is a NEAR-NEIGHBOUR and does NOT cover this** — it asks whether the ladder's 1% limit fills on a gap day; this is the whole family of unsourced price buffers.
@@ -363,7 +363,7 @@ DONE WHEN:
 
 DONE WHEN:
   - [x] the briefing distinguishes advisory limits from hard rules — 2026-09-23: the block renders HARD LIMIT BREACHED above ADVISORY, classified by `HARD_BLOCK_RULES` membership, and its empty case no longer claims a false all-clear (a hard breach is dropped upstream and can never appear there).
-  - [ ] a real breach uses per-symbol rejection, not a whole-plan veto
+  - [x] a real breach uses per-symbol rejection, not a whole-plan veto — and the portfolio-wide `scale_all_buys` lever no longer resizes entries either: RESOLVED 2026-09-25 (owner ruling) it is ADVISORY on entries, recorded not applied (see item 134). The seat's only trade-changing levers on entries are now `rejected_symbols` (drop a name) and `modifications` (resize a name); aggregate exposure is bounded by the hard limits in code. → docs/INCIDENT_HISTORY.md.
 detail: docs/BOARD_NOTES.md (item 162)
 
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.

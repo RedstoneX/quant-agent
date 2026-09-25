@@ -4452,9 +4452,9 @@ def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list
 
     `_apply_risk_modifications` guard 1b already does this for a BUY. It was
     written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
-    the same cumulative clamp in the constructor, and scaled alongside BUY by
-    `_apply_scale_all_buys` precisely because both open new risk — could be
-    enlarged by an edit the seat believed was protective. On a short that ADDS
+    the same cumulative clamp in the constructor, and treated alongside BUY as
+    new risk (as `_record_scale_advisory` also does) — could be enlarged by an
+    edit the seat believed was protective. On a short that ADDS
     to a short already held, `allocation_pct` is an increment exactly as it is
     on a long add, so an upward edit grows the short by more than the number
     reads.
@@ -4609,11 +4609,12 @@ def _risk_event_for(
             f"budget after the risk seat edited {widened} (wider stop / edited "
             f"entry -> smaller position, never larger dollar risk)"
         )
-    if (
-        scale < 1.0 and decision.action in ("BUY", "SHORT")
-        and "allocation_pct" in changes
-    ):
-        seat_reasons.append(f"scale_all_buys={scale:.2f} applied to every entry")
+    # Board items 134 + 162 (owner ruling 2026-09-25): `scale_all_buys` is
+    # ADVISORY on entries and no longer changes any allocation_pct, so it can
+    # no longer be the cause of an allocation move here — any allocation change
+    # in `changes` now comes only from the seat's per-symbol `modifications`.
+    # The scale concern is recorded separately as a `scale_advisory` event in
+    # `RiskStage.run`; it must not be attributed to a modification here.
     details["changes"] = changes
     reason = "; ".join(seat_reasons) or (
         f"risk manager changed {', '.join(sorted(changes))} on "
@@ -4622,70 +4623,51 @@ def _risk_event_for(
     return "modified", reason, details
 
 
-def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float, list]:
-    """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
+def _record_scale_advisory(decisions, verdict) -> tuple[list, float, list]:
+    """RECORD — but do NOT APPLY — RiskVerdict.scale_all_buys on entries.
 
-    `scale_all_buys` is documented in config/prompts/risk_manager.md as
-    a portfolio-level sizing knob with a ge=0.0 le=1.0 range — 0.0 is
-    an explicit "kill all BUYs" veto. The pre-fix code did
-    ``getattr(...) or 1.0`` which silently collapsed 0.0 to 1.0 because
-    0.0 is falsy in Python, disabling the veto. Treat None/missing as
-    1.0 (no scaling), but pass 0.0 through so the scaling branch zeros
-    every BUY allocation.
+    Owner ruling 2026-09-25 (reaffirming his 2026-09-19 ruling), board items
+    134 + 162: a model-picked, unverifiable portfolio-wide multiplier may not
+    size real trades. On ENTRIES the risk seat is now ADVISORY — its
+    `scale_all_buys` concern and reason are captured and recorded durably
+    (owner-facing evidence / feed), but the multiplier is NOT applied to any
+    `allocation_pct` and drops NO trade. Every entry proceeds at the size the
+    constructor / allocator set, subject to the HARD aggregate limits enforced
+    downstream (gross-exposure ceiling, per-trade risk %, correlation /
+    at-risk budget, per-name `max_position_pct`), which are unchanged and
+    remain the real constraint.
 
-    SHORT scales alongside BUY: both open new risk, and RM's portfolio-
-    level "cut everything new" knob should not have a blind spot for one
-    of the two ways to open it. SELL, COVER and HOLD are untouched.
+    Before this ruling the same value multiplied every BUY/SHORT allocation
+    and DROPPED any entry it zeroed (board item 136). That sizing effect is
+    removed. The recording it fed is kept, re-cast as an advisory record: the
+    caller files one pipeline event per flagged entry so the concern + reason
+    still reach the desk. `scale_all_buys` still feeds logging / metrics / the
+    trader feed elsewhere (unchanged) — the ONLY behaviour removed here is its
+    effect on entry sizing.
 
-    Returns ``(scaled_decisions, scale, dropped)`` so the caller can use the
-    coerced scale for follow-up filters (re-running hard risk if the
-    scale dropped allocations into different buckets) and file a visible
-    pipeline event for every entry the scaling removed outright (board item
-    136 — see the drop branch below).
+    Treats None/missing as 1.0 (no concern). Returns
+    ``(decisions_unchanged, scale, advised)`` where `advised` is the list of
+    ``(symbol, allocation_pct)`` BUY/SHORT entries the seat flagged, populated
+    only when ``0.0 <= scale < 1.0``. SELL, COVER and HOLD were never scaled
+    and are never flagged. The decisions list is returned unchanged.
     """
     scale_raw = getattr(verdict, "scale_all_buys", 1.0)
     scale = 1.0 if scale_raw is None else float(scale_raw)
-    dropped: list[tuple[str, float]] = []
-    if scale >= 1.0 or scale < 0.0:
-        return list(decisions), scale, dropped
+    advised: list[tuple[str, float]] = []
+    if not (0.0 <= scale < 1.0):
+        return list(decisions), scale, advised
 
-    scaled: list = []
     for d in decisions:
-        if d.action in ("BUY", "SHORT"):
-            new_alloc = max(0.0, min(100.0, d.allocation_pct * scale))
-            if new_alloc <= 0:
-                logger.info(
-                    "scale_all_buys=%.2f drops %s (alloc 0 after scaling)",
-                    scale, d.symbol,
-                )
-                # Board item 136. The DROP is correct and stays: this desk's
-                # standing rule is that a refusal must remove a target, never
-                # zero one, because an allocation_pct of 0 reads as SKIP at
-                # execution (the same convention guard 1 in
-                # `_apply_risk_modifications` protects). What was wrong is
-                # that the drop left NO trace anywhere the desk can read —
-                # a logger line only, and the decision is gone from the list
-                # before the per-decision event loop in `RiskStage.run`
-                # runs, so `scale_all_buys=0.0` silently deleted the whole
-                # entry side with no pipeline event for any symbol. Recorded
-                # here so the caller can file one per dropped name.
-                dropped.append((d.symbol, d.allocation_pct))
-                continue
-            try:
-                scaled.append(d.model_copy(update={"allocation_pct": new_alloc}))
-                logger.info(
-                    "scale_all_buys=%.2f: %s %.2f%% → %.2f%%",
-                    scale, d.symbol, d.allocation_pct, new_alloc,
-                )
-            except Exception as e:
-                logger.warning(
-                    "scale_all_buys copy failed for %s: %s — keeping original",
-                    d.symbol, e,
-                )
-                scaled.append(d)
-        else:
-            scaled.append(d)
-    return scaled, scale, dropped
+        if d is not None and d.action in ("BUY", "SHORT"):
+            advised.append((d.symbol, d.allocation_pct))
+            logger.info(
+                "scale_all_buys=%.2f is ADVISORY on entries (board item 134): "
+                "recording %s's exposure concern; allocation_pct %.2f%% is "
+                "UNCHANGED and the trade is NOT dropped — the hard aggregate "
+                "limits remain the constraint",
+                scale, d.symbol, d.allocation_pct,
+            )
+    return list(decisions), scale, advised
 
 
 class MorningResearchStage:
@@ -7842,7 +7824,7 @@ class RiskStage:
             # although the constructor sizes it with the identical cumulative
             # arithmetic (`name_headroom_pct = (max_position_pct -
             # current_short_gross_pct) / gross_mul`, the explicit mirror of
-            # the long clamp) and `_apply_scale_all_buys` already treats the
+            # the long clamp) and `_record_scale_advisory` already treats the
             # two sides alike because both open new risk. Snapshotted here
             # and enforced below for BOTH sides: for a BUY the inner guard
             # has already reverted the edit, so this sweep is a no-op and
@@ -7893,21 +7875,30 @@ class RiskStage:
                     rejected["reason"], **_details,
                 )
 
-        portfolio_decision.decisions, scale, scale_dropped = _apply_scale_all_buys(
+        portfolio_decision.decisions, scale, scale_advised = _record_scale_advisory(
             portfolio_decision.decisions, verdict,
         )
-        # Board item 136 — a scale-driven drop is a real refusal of a real
-        # trade and must leave the same kind of trace an RM refusal does.
-        # It cannot use the loop at the bottom of this method: the decision
-        # is no longer in the list by then.
-        for _sym, _pre_alloc in scale_dropped:
+        # Board items 134 + 162 (owner ruling 2026-09-25, reaffirming
+        # 2026-09-19). `scale_all_buys` is ADVISORY on entries: a model-picked,
+        # unverifiable portfolio-wide multiplier may not size real trades. The
+        # seat's exposure concern and its stated reason are RECORDED here per
+        # flagged entry — the same owner-facing trace board item 136 built for
+        # the old scale-driven drop — but no allocation_pct is changed and no
+        # trade is dropped. The hard aggregate limits below remain the real
+        # constraint. `scaled_out` (a drop) can no longer occur from scaling.
+        _scale_reason = (getattr(verdict, "reasoning", None) or "").strip()
+        for _sym, _alloc in scale_advised:
             _record_pipeline_event(
-                pipeline, ctx, _sym, "risk", "scaled_out",
-                f"scale_all_buys={scale:.2f} reduced {_sym}'s entry "
-                f"allocation_pct from {_pre_alloc:.2f} to 0 — the order is "
-                f"DROPPED, not zeroed (a zero allocation reads as SKIP at "
-                f"execution). RM reason category: "
-                f"{getattr(verdict, 'reason_category', None)!r}",
+                pipeline, ctx, _sym, "risk", "scale_advisory",
+                f"risk seat set scale_all_buys={scale:.2f}, a portfolio-wide "
+                f"exposure concern — ADVISORY ONLY on entries (owner ruling "
+                f"2026-09-25): {_sym}'s entry allocation_pct {_alloc:.2f}% is "
+                f"UNCHANGED and the trade is NOT dropped. The hard aggregate "
+                f"limits (gross ceiling, per-trade risk %, correlation / "
+                f"at-risk budget, per-name cap) remain the constraint. RM "
+                f"reason: "
+                f"{_scale_reason[:300] if _scale_reason else 'none stated'} "
+                f"(category {getattr(verdict, 'reason_category', None)!r})",
                 field="allocation_pct",
             )
 

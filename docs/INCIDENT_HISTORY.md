@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-25 — the risk seat's portfolio-wide BUY/SHORT multiplier no longer sizes trades; it is now advisory on entries (items 134 + 162)
+
+**In plain words:** the AI risk officer had a single knob that could shrink every new trade in the plan at once — cut them all to 70%, half them, or zero the whole new-entry side. The number it wrote there was never derived from anything measurable; across the whole decision record it only ever held 1.0 or 0.7, and 0.7 was literally the example in its own instructions. The owner ruled that a made-up, uncheckable number may not decide how much real money goes into a trade. So on new trades the knob is now ADVISORY: the seat still expresses the concern and its reason, and that reaches the owner, but it no longer changes any trade size and drops nothing. What actually limits total exposure are the hard limits already enforced in code — the gross-exposure ceiling, the per-trade risk budget, and the correlation / at-risk budget — which run before the seat is even consulted.
+
+**What changed.** On the morning entry path the multiplier is captured and recorded but not applied. Every entry proceeds at the size the constructor set. The seat's two trade-changing levers on entries are now `rejected_symbols` (drop a named entry) and `modifications` (resize a named entry); the portfolio-wide knob is a recorded signal only. The exit path never used the knob and is unchanged.
+
+**How the concern still reaches the owner.** For every entry the seat flags (knob below 1.0), a durable per-symbol evidence event is written stating the flagged value, that it is advisory only, that the size is unchanged and the trade not dropped, and the seat's own stated reason and category. The owner-facing trader feed shows the same as a flagged exposure concern rather than a size cut. PM's self-calibration history, which reads the recorded value, is untouched.
+
+**What this supersedes.** Board item 136 had added a `scaled_out` pipeline event for each entry the knob zeroed and dropped. That drop can no longer occur, so that event no longer fires from scaling; its recording role is replaced by the advisory event above. The now-removed behaviour was the multiplication of `allocation_pct` and the zero-drop; the field itself, its schema range, and its logging/metrics/feed consumers stay.
+
+**What was deliberately NOT done.** No hard aggregate limit or per-symbol hard check was touched — this change only removes the soft multiplier's effect on entry sizing. No number was invented to replace it. The `scale_all_buys` field was kept (it now carries the advisory concern), so nothing became a dead constant. The retired-item-numbers line was left alone for the owner to assess whether 134/162 retire. A pre-existing staleness was noted and left: `docs/QAMC_REMEDIATION_SPEC.md`'s lever table still lists a four-lever model including an `approved: false` whole-plan veto that was removed 2026-09-24 — only the `scale_all_buys` row was corrected here.
+
+**Owner ratified 2026-09-25** (reaffirming the 2026-09-19 ruling that over guidelines the seat may resize but never veto).
+
+---
+
 ### 2026-09-25 — four more board items found already shipped or moot on verification, retired (items 97, 116, 124, 133)
 
 **In plain words:** four open board items no longer describe anything wrong with the desk. Two were already fixed by earlier work; two describe a risk the current design cannot produce. None needed new code — the board just needed to be told the truth. Each was re-checked against the live code on the main branch, not against the notes that claimed it.
