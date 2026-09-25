@@ -375,9 +375,9 @@ DONE WHEN:
 **165. Item 91's calendar-days bug has siblings the fix didn't touch — filed 2026-09-20, adversary pass on item 91's retirement.** PR #493 correctly fixed the position reviewer's own `too_early`/`time_fraction` pace calculation to read session-based `sessions_held` instead of calendar-day `days_held` — that specific mechanism is genuinely closed and item 91 is retired for it.
 
 DONE WHEN:
-  - [ ] the evening reviewer's holding-time figure is either converted to sessions or explicitly labeled as calendar days so the model isn't silently judging session-scale progress off a calendar-day number
-  - [ ] the `1/3` pace floor is re-derived against sessions (or shown to already hold) rather than carried over unexamined from the calendar-day version
-  - [ ] session counts use the real market-holiday calendar already available in the codebase instead of a bare Mon-Fri assumption
+  - [x] the evening reviewer's holding-time figure is either converted to sessions or explicitly labeled as calendar days so the model isn't silently judging session-scale progress off a calendar-day number — the evening thesis-health snapshot now emits `sessions_held` alongside `days_held`, computed with the shared `broker.trading_sessions_held` helper, matching the field the reviewer prompt reads for pace
+  - [ ] the `1/3` pace floor is re-derived against sessions (or shown to already hold) rather than carried over unexamined from the calendar-day version — NOT done here: changing a trade-governing number needs sourcing/owner appetite; the `1/3` floor is `sessions_held < max(1, pinned_horizon / 3)` in the morning/midday facts path (already session-based) and the reviewer-prompt doctrine, and remains unchanged (routed to owner)
+  - [x] session counts use the real market-holiday calendar already available in the codebase instead of a bare Mon-Fri assumption — reuses `broker.trading_sessions_held` (Alpaca's real calendar; falls back to the weekday counter only on a calendar-query failure)
 detail: docs/BOARD_NOTES.md (item 165)
 
 **166. The auto-fix loop is built but has never run unsupervised — filed 2026-09-20 with the mechanism itself.** The owner authorised an automatic session after each desk health report ("you can use my cloud allowance, make sure that you're running everything with adversary"); it is shipped INERT — nothing installed, nothing enabled, and the handoff directory it needs does not exist.
