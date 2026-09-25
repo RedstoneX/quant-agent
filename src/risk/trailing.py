@@ -40,14 +40,17 @@ it already rides the position from day one and has no equivalent gap.
 
 2026-09-25, item 142 (owner-ratified): breakeven alone still gave back
 everything a range trade earned BETWEEN breakeven and the target on a
-reversal — the largest asymmetric-downside gap left after fix #3. A SECOND
-ratchet now stacks on top of the breakeven step and stays below the target:
-once price reaches +2R (see `RANGE_SECOND_RATCHET_TRIGGER_R`) the stop moves
-up to +1R (see `RANGE_SECOND_RATCHET_LOCK_R`), locking one initial-risk-unit
-of gain. Both steps are Type A only, both fire only below the target, and
-both ratchet the stop UP only — never down. Breakouts are untouched: they use
-the structural/chandelier trail from entry and never reach either R-multiple
-step.
+reversal. A SECOND ratchet now stacks on top of the breakeven step and stays
+below the target: once price reaches +2R (see `RANGE_SECOND_RATCHET_TRIGGER_R`)
+the stop moves up to +1R (see `RANGE_SECOND_RATCHET_LOCK_R`), locking one
+initial-risk-unit of gain. This REDUCES the give-back to a +1R floor once +2R
+is tagged; it does NOT close the give-back gap — between +1R (the lock) and the
+target the stop is pinned at +1R and no structural trail runs, so a run to +5R
+then a reversal still gives back to +1R. The residual give-back between +1R and
+target is unchanged. Both steps are Type A only, both fire only below the
+target, and both ratchet the stop UP only — never down. Breakouts are
+untouched: they use the structural/chandelier trail from entry and never reach
+either R-multiple step.
 
 **Type B — `breakout`.** There is no overhead structure and the target is a
 measured-move reference, not a level. Progress and pace are meaningless here
@@ -185,17 +188,19 @@ RANGE_BREAKEVEN_R_MULTIPLE = 1.0
 #: Item 142 — the SECOND range ratchet, stacked ON TOP of the +1R breakeven
 #: step above and BELOW the target. Once a range / Type A trade reaches +2R of
 #: open profit, its stop is moved up to +1R, locking in one initial-risk-unit
-#: of gain instead of letting a move between breakeven and target be given back
-#: in full on a reversal (the largest asymmetric-downside gap the exit audit
-#: left open after fix #3 closed the "no protection until target" gap). Both
-#: multiples are OWNER APPETITE, ratified by Rex on 2026-09-25 for item 142
-#: ("let's try your recommendation"): the desk chose to express the second
-#: ratchet in the SAME initial-risk unit (R) the first ratchet already uses —
-#: trigger at 2R, lock at 1R — so both are recorded as `derived` from
-#: `RANGE_BREAKEVEN_R_MULTIPLE`, not as freshly-invented arbitrary numbers and
-#: not as sourced measurements. R itself is `abs(entry - initial_stop)`, the
-#: same denominator the breakeven ratchet uses; never the live (already
-#: ratcheted) stop.
+#: of gain. This REDUCES the give-back to a +1R floor once +2R is tagged; it
+#: does NOT close the give-back gap — between +1R (the lock) and the target the
+#: stop is pinned at +1R and no structural trail runs, so a run to +5R then a
+#: reversal still gives back to +1R. The residual give-back between +1R and
+#: target is unchanged. Both multiples are OWNER APPETITE, ratified by Rex on
+#: 2026-09-25 for item 142 ("let's try your recommendation"): they are CHOSEN
+#: appetite multiples — 2R is not computed from the +1R breakeven unit by any
+#: formula, and the 1R lock equals the breakeven unit only by coincidence of
+#: appetite — so both are recorded as `arbitrary`, not `derived` and not
+#: sourced. Ratified is not sourced: it records WHO chose the number, not a
+#: measurement behind it. R itself is `abs(entry - initial_stop)`, the same
+#: denominator the breakeven ratchet uses; never the live (already ratcheted)
+#: stop.
 RANGE_SECOND_RATCHET_TRIGGER_R = 2.0
 RANGE_SECOND_RATCHET_LOCK_R = 1.0
 
@@ -405,8 +410,10 @@ def _range_second_ratchet(
     Stacks ON TOP of `_range_breakeven_ratchet` and BELOW the target: once a
     range trade reaches +`RANGE_SECOND_RATCHET_TRIGGER_R`R (2R) of open profit,
     move the stop up to +`RANGE_SECOND_RATCHET_LOCK_R`R (1R), locking in one
-    initial-risk-unit of gain instead of giving back everything between
-    breakeven and target on a reversal.
+    initial-risk-unit of gain. This REDUCES the give-back to a +1R floor once
+    +2R is tagged; it does NOT close the gap — the stop is then pinned at +1R
+    with no structural trail until the target is exceeded, so a run past +2R
+    and a reversal still gives back down to +1R.
 
     Mirrors `_range_breakeven_ratchet` exactly: fails closed with no
     `initial_stop` (the ENTRY stop, never the live one a prior trail moved) so

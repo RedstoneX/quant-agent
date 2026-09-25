@@ -537,6 +537,14 @@ def run_backtest(
                 # cannot measure risk and stay silent.
                 initial_stop=pos.stop_initial,
             )
+            # CAVEAT (item 142): passing the frozen entry stop here means BOTH
+            # R-ratchets now fire in backtest whereas NONE fired before this
+            # change — so pre-this-change backtest numbers are NOT comparable to
+            # post-change ones. And this backtest is optimistically one-sided:
+            # a stop freshly locked to +1R this bar cannot stop out on the SAME
+            # bar it is set, so the second ratchet will look LESS scratchy here
+            # than it will live. Do NOT trust backtest scratch-rates to tune the
+            # R multiples (`RANGE_SECOND_RATCHET_TRIGGER_R` / `_LOCK_R`).
             if proposal is not None:
                 pos.stop = proposal.new_stop
 
