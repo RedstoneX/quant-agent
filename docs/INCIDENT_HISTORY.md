@@ -40,6 +40,20 @@ what would catch it next time.
 
 **What would catch it next time.** `tests/test_news.py` pins the salvage on the exact production payload, pins that the dropped value is never coerced and always renders as ABSENT, and pins the per-stock names in the failure dump. `tests/test_pipeline_stages.py` pins the `field_unreadable` status, its rank against a per-stock loss, and that one `analysis_drop` row per affected stock is filed on an unreadable answer and none on a clean one.
 
+### 2026-09-26 — the rule stopping the risk seat from making a trade BIGGER was enforced in two places at once (item 155 retired)
+
+**In plain words:** the risk seat is allowed to shrink a planned trade, never to grow one. That rule was being applied twice, in two different parts of the code, and the second copy was written for one side of the market and the first copy for the other. Nothing was mis-sized by it, but two copies of one safety rule is exactly how the copies drift apart and one of them stops matching. It is now enforced in one place, covering both buying and short selling, and a test fails the build if a second copy ever comes back.
+
+**What was actually wrong.** The original guard only understood a BUY. On 2026-09-18 the short side needed the same protection, but the file holding the guard was locked by another piece of work at the time, so the short-side check was added one layer out as a separate sweep over the whole plan. Its own comment said so and named the guard as the place to consolidate onto. The duplicate was deliberate and temporary; it then sat there for eight days.
+
+**What was verified before collapsing them.** The board's claim was "these are duplicates", and board claims have been wrong before, so it was not assumed. A differential harness ran thirty-four scenarios — both sides, single and repeated edits to the same name, edits that shrink, grow, equal, go out of range or go negative, stop and entry edits, unknown fields, edits naming a name not in the plan, mixed buy-and-short plans, exits and holds — through the real code before and after the change, comparing every resulting position size and every refusal recorded.
+
+- Thirty-one of thirty-four are byte-identical. Every buy scenario is identical, which proves the outer sweep really was doing nothing for a buy.
+- Three differ, all on the short side, all where the seat edits the same name's size more than once in one run, and all in the safer direction. The old outer sweep only compared the final size against the starting size, so a seat that cut a short from 10 to 5 and then pushed it back up to 8 was left at 8 with no record. The single guard refuses each upward edit as it happens, so that case now ends at 5 and the refusal is written down.
+- So the two were not equivalent, but the difference runs the right way: the surviving guard catches strictly more, and never permits a size the deleted sweep would have refused. That is the test the decision turned on — had the outer sweep caught anything the inner one could not, the collapse would have been abandoned.
+
+**What would catch it next time.** A test reads the guard's own source: it fails if a sweep function reappears in the stage layer, and it fails if the guard narrows back to buy-only, which is the gap that made a second enforcement point look necessary in the first place. Both failure modes were confirmed by breaking the code on purpose and watching the test go red.
+
 ### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
 
 **In plain words.** A single figure, "one average day's range", was deciding
