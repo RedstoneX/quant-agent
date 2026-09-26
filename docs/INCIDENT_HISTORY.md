@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 retired, item 119's attempt half closed)
+### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 stays open on its own criterion, item 119's attempt half closed)
 
 **In plain words:** the desk fetches fifteen economic readings before it decides anything. It gives that whole job ninety seconds. Whoever went first was allowed to spend as much of the ninety seconds as it liked, so on a bad morning one reading that hung on a dead connection would use the lot and the desk simply never asked for the last five or eight at all. Nobody chose that; it fell out of sharing one stopwatch with no rule about whose turn it was. Each reading now has its own reserved slice of the ninety seconds, and nothing — not a retry, not a second attempt, not the little lookup that only decides how to LABEL a reading — can spend a slice that belongs to a reading still waiting in line.
 
