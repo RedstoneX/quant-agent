@@ -31,7 +31,12 @@ from src.agents.base import BaseAgent
 from src.models import (
     NewsIntelligenceReport, Position, PositionAction, PositionReview,
 )
-from src.risk.metrics import unrealized_pnl_pct
+from src.agents.prompt_limits import render_prompt_limits
+from src.risk.metrics import (
+    DRIFT_PNL_PCT,
+    DRIFT_WEIGHT_PCT,
+    unrealized_pnl_pct,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +110,13 @@ class PositionReviewerAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
+            # Item 107: the sheet's drift thresholds are placeholders, not
+            # typed digits, so they cannot disagree with the pair the flag is
+            # actually computed from. `risk_config=None` is correct here —
+            # this sheet is registered for the `flags` namespace only, and a
+            # `{{risk.*}}` placeholder added to it raises rather than
+            # rendering blank.
+            return render_prompt_limits(PROMPT_PATH.read_text(), None)
         return "You are a position reviewer. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:
@@ -349,7 +360,12 @@ class PositionReviewerAgent(BaseAgent):
             if pf.get("parabolic_flag"):
                 flag_bits.append("⚠️ PARABOLIC (+15% in <3d, momentum confirmation needed)")
             if pf.get("drift_flag"):
-                flag_bits.append("⚠️ DRIFT (weight > 12% + PnL > 10%)")
+                # Rendered, not typed: the same pair the flag is computed
+                # from (`src.risk.metrics`), board item 107.
+                flag_bits.append(
+                    f"⚠️ DRIFT (weight > {DRIFT_WEIGHT_PCT:g}% + "
+                    f"PnL > {DRIFT_PNL_PCT:g}%)"
+                )
             if pf.get("target_breach_flag"):
                 flag_bits.append("⚠️ TARGET_BREACH (>150% of reference_target)")
             if flag_bits:

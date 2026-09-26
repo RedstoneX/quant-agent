@@ -23,7 +23,7 @@ from src.risk.constants import (
     reward_risk_floor_applies,
 )
 from src.risk.budget import allocate_risk_budget
-from src.risk.metrics import unrealized_pnl_pct
+from src.risk.metrics import drift_flag as _drift_flag, unrealized_pnl_pct
 from src.risk.rules import (
     EARNINGS_STANCE_MAX_AGE_DAYS,
     _gross_multiplier,
@@ -769,11 +769,10 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             # line. None means genuinely unknowable, and must not drift-flag.
             pnl_pct = unrealized_pnl_pct(p)
             pnl_pct_str = f"{pnl_pct:+.1f}%" if pnl_pct is not None else "n/a"
-            drift_flag = (
-                " ⚠️DRIFT"
-                if weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
-                else ""
-            )
+            # The thresholds are `src.risk.metrics.DRIFT_WEIGHT_PCT` /
+            # `DRIFT_PNL_PCT` — one definition, board item 107. The prompt
+            # prose that describes this flag renders from the same pair.
+            drift_flag = " ⚠️DRIFT" if _drift_flag(weight_pct, pnl_pct) else ""
             core = (
                 f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | "
                 f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} ({pnl_pct_str}) | "

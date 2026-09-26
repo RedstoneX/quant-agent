@@ -692,7 +692,10 @@ you submit — do not pre-apply that one.
 Use the mid of each conviction's range as the formula's `base`; you
 may shade ±0.5pp inside the range based on Step 4 alignment quality
 (at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
-that's what `rr_mult` and `evening` are for. RM's `scale_all_buys` is
+that's what `rr_mult` is for. **There is no `evening` term in this
+formula.** One was removed on 2026-09-17 — it multiplied by `1.0 +
+evening_tilt`, a ±0.20/±0.10 table with no derivation behind it — and
+this sentence went on naming it. RM's `scale_all_buys` is
 applied AFTER you submit, so don't pre-scale by it.
 
 ## The audit trail you must produce
@@ -836,7 +839,7 @@ one-directional formality.
 | 1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
 | 3 | Earnings-queued (`JUST FILED`) → **that name has no earnings seat**; size it on the seats that remain | Citing a cached prior-quarter stance as if it were current | The newest filing supersedes the cached one and nobody has read it yet. You cannot count what you have not read. |
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
-| 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
+| 5 | Drift trim >{{flags.drift_weight_pct}}% weight with P&L >{{flags.drift_pnl_pct}}% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | 7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
 | 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
@@ -886,7 +889,7 @@ question is a number):
   sector, split by side and rendered as gross (unsigned) percentages. They are
   NOT netted: each side carries its own budget against the same `max_sector_pct` limit
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
-- `positions_drift_flagged` — holdings with Weight > 12% + P&L > 10%
+- `positions_drift_flagged` — holdings with Weight > {{flags.drift_weight_pct}}% + P&L > {{flags.drift_pnl_pct}}%
   (need trim or named reason). Counted from the SAME gross weight and the
   SAME P&L% printed on each position line above, so the count and the lines
   can never disagree

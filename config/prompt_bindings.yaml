@@ -1,0 +1,74 @@
+# Behaviour-change registry — board item 107(a).
+#
+# Each entry pairs CODE that decides something with the PROMPT PROSE that
+# tells a paid seat what that code does. Both sides are pinned by a digest.
+# Change one side and the build fails until somebody has looked at the
+# other. See `src/prompt_bindings.py` for what the digests cover (syntax,
+# not formatting; docstrings excluded) and for the limits of the idea.
+#
+# THIS IS NOT THE DELETION CHECK. A mechanism that is REMOVED goes in
+# `config/retired_mechanisms.yaml` instead; that check greps for surviving
+# sentences by the words they use. This one is for behaviour that changed
+# while still existing, which that check states it cannot see.
+#
+# TO ADD A BINDING: write the entry with any digest values, then run
+# `python -m scripts.repin_prompt_bindings` and commit the result.
+# TO RESOLVE A FAILURE: read the prose, fix it if it is now wrong, then
+# re-pin. Re-pinning without reading is the one way to defeat this, and it
+# is the same trade the deletion-site check already accepts.
+
+bindings:
+  - name: position_drift_flag
+    why: >
+      A holding is flagged as "drifted" when its weight has grown past a
+      threshold AND it is up past a second one — concentration that arrived
+      by winning. The flag is informational: it decorates the position
+      lines the Portfolio Manager and the Position Reviewer read, and no
+      Python trims on it. Both thresholds now have ONE definition
+      (`src.risk.metrics.DRIFT_WEIGHT_PCT` / `DRIFT_PNL_PCT`) and the two
+      sheets render them rather than typing them, so a value change cannot
+      produce a lying sheet. What a rendered number CANNOT catch is the
+      sentence around it — "trim is reasonable", "escalate to SELL" — so
+      the shape of the rule is bound here.
+    code:
+      - file: src/risk/metrics.py
+        symbol: drift_flag
+      - file: src/agents/portfolio_manager.py
+        symbol: PortfolioManagerAgent._fmt_position
+    prose:
+      - file: config/prompts/position_reviewer.md
+        contains:
+          - "`⚠️ DRIFT` — weight >"
+          - "would still leave `weight_pct >"
+      - file: config/prompts/portfolio_manager.md
+        contains:
+          - "| 5 | Drift trim >"
+          - "`positions_drift_flagged` — holdings with Weight >"
+    code_digest: "6a9859462f024c49"
+    prose_digest: "dae1d24c36df9247"
+
+  - name: constructor_stop_widening
+    why: >
+      The technical seat is told, in four figures, what the portfolio
+      constructor will do to the stop it places: honoured exactly when it
+      sits within a quarter of an ATR of a computed structural level,
+      otherwise pushed out to `risk.min_stop_atr_multiple` (base 2.5,
+      scaled by setup and regime, reachable range 2.14-3.00), with a
+      separate tighter absolute backstop at 1 ATR. Every one of those is a
+      claim about code in `src/portfolio_constructor.py`, hand-typed into
+      the sheet, and the base has already moved twice (3.0 -> 1.5 -> 2.5).
+      This is the exact shape of drift the deletion-site check cannot see:
+      nothing was retired, the numbers moved underneath the sentence.
+    code:
+      - file: src/portfolio_constructor.py
+        symbol: PortfolioConstructor._stop_atr_multiple
+      - file: src/portfolio_constructor.py
+        symbol: PortfolioConstructor._level_backing_stop
+    prose:
+      - file: config/prompts/tech_analyst.md
+        contains:
+          - "the stop is honoured exactly as you placed it"
+          - "pushed out to a deterministic minimum distance"
+          - "Absolute backstop, applied in code even to a level-backed stop"
+    code_digest: "2d35148fddbc181a"
+    prose_digest: "95abcef3c955d171"

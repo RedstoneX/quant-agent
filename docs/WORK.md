@@ -142,7 +142,15 @@ detail: docs/BOARD_NOTES.md (item 173)
 NO CRITERIA: whether a failed de-lever should also alert or act is, by this audit's own framing, a live-selling-path decision for the owner, not a self-authorised patch.
 detail: docs/BOARD_NOTES.md (item 112)
 
-**107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17.
+**107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
+
+DONE WHEN:
+  - [x] (a) a behaviour that CHANGES without being deleted forces the prose describing it to be re-read — `src/prompt_bindings.py` + `config/prompt_bindings.yaml` pin code and prompt prose to each other by digest and fail the build when one side moves; the deletion-site check was checked for first and left alone
+  - [x] (c) all ten standing sheets are covered by the rendering check, an unregistered sheet is refused, and a placeholder no renderer can resolve fails in CI instead of at agent construction on a live morning
+  - [x] the 12/10 drift pair has one definition (`src.risk.metrics.DRIFT_WEIGHT_PCT` / `DRIFT_PNL_PCT`), both sheets render it, and the one remaining literal site is named in the test so the count can only go down — `src/pipeline.py:_build_position_facts`, not editable in that pass
+  - [ ] the last literal drift-threshold site in `src/pipeline.py` uses the named constant
+  - [ ] (b) the trade-picking sheet's prompt-only sizing arithmetic (bases 3.0/1.75/0.75 and their ranges, the 0.25 reward:risk bonus, the 0.5 stale halving at age >=8d, the +/-0.5pp shade) and the technical sheet's prompt-only levels ("3+ aligned signals", the 1-3/4-7/8+ freshness tiers, forward-PE 40/60 and P/S 15/25) are each sourced or taken OUT of the path — verified 2026-09-26 that no code computes any of them and none is in the number ledger. The +/-0.20/+/-0.10 evening tilt this item listed was already gone from the formula (2026-09-17); its dangling mention was removed 2026-09-26
+  - [ ] the 12/10 drift pair and the two prompt-only sets above carry a `config/number_ledger.yaml` entry with a source, or the open question and what the desk pays meanwhile
 detail: docs/BOARD_NOTES.md (item 107)
 
 **109. One mandate question and the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17. Prompts corrected; NO gate touched.** Part (b) was removed as fixed (PR #489, verified on main 2026-09-18).
