@@ -22,6 +22,15 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — the trade-picker never contradicted itself; the desk's own sizing cap did (item 163 retired)
+**In plain words:** the board recorded that the portfolio manager said one thing and emitted another — that it wrote "RSG and AAPL get 2.5% risk each" while emitting 0.5 for RSG. It did not. Reproduced read-only against the stored run: the seat's own raw response asks for RSG 2.5 and ZS 1.75 and contains the string "0.5" nowhere. The 0.5 was written AFTER parsing by the desk's deterministic sub-floor size cap (RSG was a range setup at reward:risk 0.81), whose own log line already said "Deterministic, not PM inconsistency". RSG was then traded at the capped size, correctly.
+
+**So the filed defect was misdiagnosed, and the real one is narration lag:** the story is written before a mechanical adjustment and never restated, so a reader comparing prose to stored numbers sees a contradiction that never happened. The detector shipped earlier reads the stored decision and flags a symbol whose prose names a risk % materially different from its emitted `risk_allocation_pct`, recording each to the evidence stream; detection only, and `risk_allocation_pct` stays authoritative. Its tolerance is read off the emitted field's own precision rather than borrowed from the risk-budget floor, which had called prose "2.5% risk" and an emitted 2.0 the same thing.
+
+**Block versus record:** a blocking gate was built first and then deleted. On the only case the desk has measured, blocking would have refused a correctly-sized, correctly-capped trade over a stale sentence, and nothing available distinguishes "the seat contradicted itself" from "a rule moved the number after the seat wrote about it".
+
+**Both criteria are now met.** The second — which value the seat meant — is answered: 2.5%, and the emitted 0.5 was not an erroneous field. The sub-floor cap that caused it was retired 2026-09-17, so this exact path is no longer live; nothing restates the narrative after any mechanical size change, and that residual lag is what the detector surfaces. An earlier write-up claiming the emitted field was the error was withdrawn and its pull request closed.
+
 ### 2026-09-26 — item 170 retired: a guessed disclosure date was scoring as a perfectly-timely one
 
 **In plain words:** one of the two free sources of congressional trading data
