@@ -294,15 +294,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Same round number, two questions, no source, nothing tying them. The first job blocked 7 of 8 recorded discretionary exits. Settles with, for each independently, a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant. How readily the desk should block a sale at all is the owner's appetite, not this item.
 
-## item 74
-
-**Plain language —** The desk is meant to stop itself cutting the same holding twice in a day. It still can, if the reason is a genuine one — a midday cut on bad earnings can be followed by a second cut at the close on those same earnings. The instructions the reviewer reads do say this is allowed. What is not settled is whether it should be.
-**Example —** A holding is trimmed at midday on a poor earnings report. At the close the reviewer reads the same report again and trims again. One piece of news, two cuts.
-**The decision —** None for you yet. There is a fair case both ways: a second look at the same report can genuinely find it worse, and forbidding that would be its own mistake. It is on the board so it gets thought through rather than left as a warning in the log.
-**Recommendation —** Decide whether a reason is used up once it has been acted on that day, and if not, what separates a worse reading from the same reading used twice.
-
-**Moved from WORK.md (2026-09-24) —** Nothing deduplicates by event; the exit claim check never tests earnings. A later session may legitimately read the filing as worse; the 2026-05-04 AMZN double cut is the harm on the other side; frequency is unmeasured. Settles with a decision on whether a hard trigger is spent once acted on for a symbol that day, and if not, what distinguishes a worse reading from a repeat.
-
 ## item 75
 
 **Plain language —** When the desk bought Oracle on 2 September, the chart analyst set a profit target of $159.52 — a price Oracle had already failed at twice. Every seat saw that number: the portfolio manager used it to justify buying, the risk manager saw it, and the position reviewer was shown it every session with the words "soft — you manage exit". But nothing ever used it to sell. The reviewer is told it manages the exit, while its sell rules refuse "taking profit" as a reason, and the "past target" warning only appears at 150% of the way there. Oracle traded above the target on 4 and 8 September. Selling at target would have made about 9%; the desk would have ended slightly below its purchase price.
