@@ -38,7 +38,7 @@ from src.models import TargetRevisionFlag
 from src.risk import target_revision as tr
 from src.risk.exit_guard import (
     _HIGHER_IS_BETTER,
-    NOISE_BAND_ATR_MULTIPLE,
+    BREAK_CONFIRMATION_ATR_MULTIPLE,
     compute_deltas,
     veto_contradicted_exit,
 )
@@ -461,11 +461,11 @@ def test_a_target_the_price_has_already_passed_is_refused_not_stored():
 def test_shorts_break_their_target_level_downward():
     """Direction is the mirror image, not a long-only rule with a patch."""
     assert tr.target_level_broken(
-        target_level=90.0, close_price=90.0 - 2.5 * NOISE_BAND_ATR_MULTIPLE,
+        target_level=90.0, close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
         atr=2.5, is_short=True,
     ) is True
     assert tr.target_level_broken(
-        target_level=90.0, close_price=90.0 - 2.5 * NOISE_BAND_ATR_MULTIPLE,
+        target_level=90.0, close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
         atr=2.5, is_short=False,
     ) is False
     # Unanswerable rather than "not broken" when an input is missing.

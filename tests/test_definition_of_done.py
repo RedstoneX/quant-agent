@@ -765,3 +765,52 @@ def test_a_continuation_never_swallows_the_next_trailer():
         "    Objection-2: an indented second objection is still its own trailer\n"
     )
     assert len(dod.OBJECTION.findall(dod.unwrap_trailers(text))) == 2
+
+
+def test_an_unindented_continuation_is_joined_too():
+    """The indented-only rule rescued none of the five PRs it shipped for.
+
+    Git's trailer convention says a continuation is indented. Nobody writing
+    these indents them, so the first version of `unwrap_trailers` described a
+    convention this desk does not follow and left every blocked pull request
+    exactly where it was. A rule nobody follows is not a rule.
+    """
+    wrapped = (
+        "Subject\n"
+        "\n"
+        "Acceptance-observable: tests/test_definition_of_done.py refuses a\n"
+        "declaration whose first physical line is too short to carry a claim\n"
+    )
+    values = dod.trailer(dod.unwrap_trailers(wrapped), "Acceptance-observable")
+    assert len(values) == 1
+    assert values[0].endswith("carry a claim")
+    assert len(values[0].split()) >= 10
+
+
+def test_prose_after_a_non_gate_colon_line_is_left_alone():
+    """Joining is restricted to the keys this module reads.
+
+    A commit body is full of colons. If any `Word:` line could absorb the
+    sentence under it, the normaliser would be silently rewriting prose it has
+    no business touching — so only the gate's own keys pull a continuation.
+    """
+    text = (
+        "Note: this paragraph explains the change\n"
+        "and continues on a second line that must not be joined.\n"
+    )
+    assert dod.unwrap_trailers(text) == text
+
+
+def test_a_blank_line_ends_a_continuation():
+    """Otherwise one trailer would swallow the whole rest of the message."""
+    text = (
+        "Objection-1: the first argument is long enough to clear the floor\n"
+        "and wraps onto this line\n"
+        "\n"
+        "An unrelated paragraph that belongs to nobody.\n"
+    )
+    joined = dod.unwrap_trailers(text)
+    objections = dod.OBJECTION.findall(joined)
+    assert len(objections) == 1
+    assert "wraps onto this line" in objections[0][1]
+    assert "unrelated paragraph" not in objections[0][1]

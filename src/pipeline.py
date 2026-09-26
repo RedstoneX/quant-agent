@@ -701,14 +701,10 @@ def build_constructor_config(config, risk_engine_config):
             # for, this one gets structurally.
             max_sector_pct=risk_engine_config.max_sector_pct,
             max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
-            # §10.3's floor — reuses the existing $500 threshold rather than
-            # inventing a second notion of "too small to bother". It lives
-            # under `cash_sweep` because that is where it was first needed;
-            # the number, not the section, is what is being reused.
-            min_order_usd=_risk_number(
-                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
-                500.0,
-            ),
+            # No `min_order_usd`: board item 183 deleted
+            # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
+            # constructor read it — the one call that forwarded it reached an
+            # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
@@ -753,9 +749,6 @@ def build_constructor_config(config, risk_engine_config):
             ),
             max_target_reach_atr_multiple=_risk_setting(
                 "max_target_reach_atr_multiple", 1.5,
-            ),
-            max_stop_width_reach_atr_multiple=_risk_setting(
-                "max_stop_width_reach_atr_multiple", 1.5,
             ),
             max_target_horizon_sessions=int(
                 _risk_setting("max_target_horizon_sessions", 60),
@@ -2416,9 +2409,10 @@ class TradingPipeline:
            governing the validation-failure branch below, and it does not
            require inventing a new rejection channel for something the
            schema already has one for.
-        1b. **A BUY's `allocation_pct` may only be reduced.** This seat exists
-           to be MORE protective than the constructor, and nothing enforced
-           that: `RiskModification.new_value` is unbounded. On a BUY that adds
+        1b. **An entry's `allocation_pct` may only be reduced — BUY and
+           SHORT alike.** This seat exists to be MORE protective than the
+           constructor, and nothing enforced that:
+           `RiskModification.new_value` is unbounded. On an entry that adds
            to a held name the field is an INCREMENT on top of the existing
            weight, so an upward edit grows the position by more than the
            number reads (2026-09-18: an edit believed to cut a name to 30%
@@ -2572,32 +2566,46 @@ class TradingPipeline:
                     updated_decisions[idx] = None
                     break
 
-                # Guard 1b — an `allocation_pct` edit on a BUY may only
-                # REDUCE. The Risk Manager's stated job at this seat is to be
-                # MORE protective than the constructor; nothing in the schema
-                # enforced that for this field (`RiskModification.new_value`
-                # is unbounded and `TradeDecision.allocation_pct` only clamps
-                # 0-100), so a larger number sailed through as a
-                # "protection". Compounding it, on a BUY that ADDS the field
-                # is an INCREMENT on top of the existing holding, so an
-                # upward edit grows the position by more than the number
-                # suggests — observed 2026-09-18, where an edit the seat
-                # believed cut a name to 30% left it at 50.8%. The prompt now
-                # states the increment and the resulting weight; this guard is
-                # the part that holds regardless of what the model reasons.
+                # Guard 1b — an `allocation_pct` edit on an ENTRY (BUY *or*
+                # SHORT) may only REDUCE. The Risk Manager's stated job at
+                # this seat is to be MORE protective than the constructor;
+                # nothing in the schema enforced that for this field
+                # (`RiskModification.new_value` is unbounded and
+                # `TradeDecision.allocation_pct` only clamps 0-100), so a
+                # larger number sailed through as a "protection". Compounding
+                # it, on an entry that ADDS to a name already held the field
+                # is an INCREMENT on top of the existing position, so an
+                # upward edit grows it by more than the number suggests —
+                # observed 2026-09-18, where an edit the seat believed cut a
+                # name to 30% left it at 50.8%. The prompt now states the
+                # increment and the resulting weight; this guard is the part
+                # that holds regardless of what the model reasons.
+                #
+                # Board item 155 (2026-09-26): SHORT was folded in HERE. It
+                # used to be policed one layer out, by
+                # `_revert_entry_size_increases` in `src/pipeline_stages.py`,
+                # only because this file was locked by another workstream on
+                # 2026-09-18 — never because two enforcement points for one
+                # rule were the right shape. The outer sweep is deleted. This
+                # is now the SINGLE enforcement point, and
+                # `tests/test_pipeline_stages.py` fails the build if a second
+                # one reappears. A short is sized by the explicit mirror of
+                # the long clamp and opens new risk exactly as a BUY does, so
+                # one condition covers both sides.
                 if (
-                    decision.action == "BUY"
+                    decision.action in ("BUY", "SHORT")
                     and mod.field == "allocation_pct"
                     and float(mod.new_value) > decision.allocation_pct
                 ):
                     reason = (
-                        f"RM modification would INCREASE {mod.symbol}'s BUY "
-                        f"allocation_pct ({decision.allocation_pct:.2f} -> "
+                        f"RM modification would INCREASE {mod.symbol}'s "
+                        f"{decision.action} allocation_pct "
+                        f"({decision.allocation_pct:.2f} -> "
                         f"{mod.new_value:.2f}). Reverted — the risk seat may "
-                        f"only reduce a BUY's size, never enlarge it; on an "
-                        f"add this field is an increment, so an upward edit "
-                        f"grows the position by more than the number reads. "
-                        f"RM reason given: {mod.reason!r}"
+                        f"only reduce an entry's size, never enlarge it; on "
+                        f"an add this field is an increment, so an upward "
+                        f"edit grows the position by more than the number "
+                        f"reads. RM reason given: {mod.reason!r}"
                     )
                     logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
                     rejected_mods.append({
@@ -2634,9 +2642,9 @@ class TradingPipeline:
                 # SIZE. The constructor sized the position for the ORIGINAL
                 # stop distance: `shares = equity*risk_pct / |entry - stop|`,
                 # so `allocation_pct` and the stop distance are two halves of
-                # one granted dollar-risk budget. Guards 1b/2 and
-                # `_revert_entry_size_increases` police `allocation_pct` and
-                # the stop's noise band, but NOTHING recomputed the size after
+                # one granted dollar-risk budget. Guards 1b and 2 police
+                # `allocation_pct` and the stop's noise band, but NOTHING
+                # recomputed the size after
                 # a stop/entry edit — so widening the stop (larger
                 # |entry - stop|) while `allocation_pct` stayed fixed shipped a
                 # position whose real dollar risk (shares x new stop distance)
@@ -8349,9 +8357,11 @@ class TradingPipeline:
                 # 2026-09-12: a refusal the constructor recorded AS DATA
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
-                # beside it — today `stop_wider_than_instrument_reach`
-                # or `no_structural_stop_and_no_volatility_reading`; the
-                # young-listing bar-count refusal was dropped, item 180).
+                # beside it — today `no_structural_stop_and_no_
+                # volatility_reading`; the young-listing bar-count refusal
+                # was dropped, item 180, and the stop-WIDTH refusal
+                # `stop_wider_than_instrument_reach` was deleted 2026-09-26,
+                # item 56, after refusing nothing in 648 sized stops).
                 # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.

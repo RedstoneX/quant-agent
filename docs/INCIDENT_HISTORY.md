@@ -90,6 +90,223 @@ have silently changed that behaviour.
 
 ---
 
+### 2026-09-26 — the rule stopping the risk seat from making a trade BIGGER was enforced in two places at once (item 155 retired)
+
+**In plain words:** the risk seat is allowed to shrink a planned trade, never to grow one. That rule was being applied twice, in two different parts of the code, and the second copy was written for one side of the market and the first copy for the other. Nothing was mis-sized by it, but two copies of one safety rule is exactly how the copies drift apart and one of them stops matching. It is now enforced in one place, covering both buying and short selling, and a test fails the build if a second copy ever comes back.
+
+**What was actually wrong.** The original guard only understood a BUY. On 2026-09-18 the short side needed the same protection, but the file holding the guard was locked by another piece of work at the time, so the short-side check was added one layer out as a separate sweep over the whole plan. Its own comment said so and named the guard as the place to consolidate onto. The duplicate was deliberate and temporary; it then sat there for eight days.
+
+**What was verified before collapsing them.** The board's claim was "these are duplicates", and board claims have been wrong before, so it was not assumed. A differential harness ran thirty-four scenarios — both sides, single and repeated edits to the same name, edits that shrink, grow, equal, go out of range or go negative, stop and entry edits, unknown fields, edits naming a name not in the plan, mixed buy-and-short plans, exits and holds — through the real code before and after the change, comparing every resulting position size and every refusal recorded.
+
+- Thirty-one of thirty-four are byte-identical. Every buy scenario is identical, which proves the outer sweep really was doing nothing for a buy.
+- Three differ, all on the short side, all where the seat edits the same name's size more than once in one run, and all in the safer direction. The old outer sweep only compared the final size against the starting size, so a seat that cut a short from 10 to 5 and then pushed it back up to 8 was left at 8 with no record. The single guard refuses each upward edit as it happens, so that case now ends at 5 and the refusal is written down.
+- So the two were not equivalent, but the difference runs the right way: the surviving guard catches strictly more, and never permits a size the deleted sweep would have refused. That is the test the decision turned on — had the outer sweep caught anything the inner one could not, the collapse would have been abandoned.
+
+**What would catch it next time.** A test reads the guard's own source: it fails if a sweep function reappears in the stage layer, and it fails if the guard narrows back to buy-only, which is the gap that made a second enforcement point look necessary in the first place. Both failure modes were confirmed by breaking the code on purpose and watching the test go red.
+
+### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
+
+**In plain words.** A single figure, "one average day's range", was deciding
+two unrelated things: how far a holding must fall before the desk accepts the
+fall is real, and how far a day's closing price must sit past a support level
+before that level counts as broken. They are different questions about
+different things, and because they shared one figure neither could be answered
+without silently moving the other. They are now two separate figures. Both are
+still exactly what they were, nothing the desk does changed today, and neither
+was nudged — this item's own terms forbid retuning either while splitting them.
+Separately, five gates that decide whether an order is placed at all were
+examined against the desk's own filled orders. One was deleted outright as dead.
+Three were measured for the first time, and the measurements are genuinely
+useful while still not picking a value. The last one cannot be removed on its
+own without making the account report less honest than it is today.
+
+**The split, and a labelling error found while doing it.** The exit path's band
+was recorded in the number ledger as if it were worked out from the trailing
+stop's band of 1.25 average ranges. It reads 1.0. A figure that is not its
+stated parent's figure was never derived from it; it is a second flat number
+and is now recorded as one. That correction, and the new name for the break
+margin, are why the ledger's count of unanswered numbers rises by one after the
+deletion below lowers it by one.
+
+**What the published work actually says, so this is not searched a third time.**
+For the "has it really moved against me" band, every published multiple sits
+near three average daily ranges, not one — Wilder's 1978 volatility system, the
+Chandelier Exit's standard setting, and Kaufman, who treats it as a dial and
+blesses no constant. All three measure a stop's distance from a running high
+rather than a move away from the entry price, so they are the closest published
+analogue and not the same measurement; that is why nothing was swapped. Going
+from one to three would make the desk markedly slower to accept a loss as real,
+which is owner appetite and outside this item. For the "has this level broken"
+margin there is no answer in these units at all: the literature measures a break
+as a percentage of price and differently for a major level than a minor one
+(Edwards & Magee, roughly 3% and 1%), or holds that a decisive close needs no
+distance at all (Bulkowski). The confirmation rule wrapped around it — two
+consecutive closes — is properly sourced. Only the distance is not, and it is
+unidentifiable in the units it is written in rather than merely uncited.
+
+**The order gates, measured.** Method, so it can be repeated: the production
+`trades` table, rows with `fill_status = 'filled'`, 2026-09-15 to 2026-09-25,
+30 buy entries and 3 short entries. The submitted limit is stored, and the
+slippage belt itself sets that limit at the reference price plus or minus 40
+basis points, so the reference price can be recovered from it and the realised
+slippage is the fill against that reference. Results:
+
+* The entry-slippage belt runs at a median of 2.6 basis points, a 90th
+  percentile of 26.4, and a maximum of exactly 40.0 — one order in thirty
+  filled at the belt and none above it. It does not explain any ordinary fill.
+  It also cannot be identified from this data, because the belt censors its own
+  tail: an order that would have slipped further is refused and never appears.
+  The refusals are nowhere near it — all nine recorded slippage skips had the
+  quoted offer between 391 and 1466 basis points above the reference.
+* The 2% ask-skip therefore fires at about 241 basis points above the
+  reference, which sits inside a roughly 350-point band of the desk's own data
+  containing no observation whatsoever. Every multiple between about 1.004 and
+  about 1.035 would have produced an identical decision on every case the desk
+  has ever seen. The measurement the ledger asked for is done; it tells us the
+  gate is far from both populations and cannot tell us the value.
+* The 0.5% minimum weight change faces zero commission — Alpaca charges none on
+  stock — so its whole cost is that same measured slippage. On a $10,000 book a
+  0.5% change is a $50 order whose measured expected cost is about one cent.
+  The cost side cannot justify a floor of this size. What the floor should be
+  is still open, because the other half of the question is how much pointless
+  order churn the desk will tolerate, and that is appetite.
+
+**The deletion, and what it changes.** The constructor's own $500 minimum-order
+floor is gone. Nothing in the constructor read it. The single call that
+forwarded it reached a parameter that `apply_gross_ceiling` has explicitly
+accepted and ignored since 2026-09-24 — so the comment sitting at the field's
+definition site, which said that gate still read it as a notional floor, was
+false on the day it was written. No order size, refusal or gate behaves
+differently. The sweep's own separately-named $500 is untouched.
+
+**Why the cash reserve band was NOT deleted.** The advisory that reads it is
+display-only — the repo's own quantities module says in terms that subtracting
+it from deployable cash produced a figure no part of the engine ever used, and
+no consumer of the two API fields exists here. But the band has a second reader:
+the cash sweeper itself, which is disabled rather than removed. Deleting the
+advisory alone would leave the band alive, no longer reported anywhere, and one
+configuration flag away from governing real money again — worse than today, not
+better. The band, the four dead sweep padding and buffer constants, the sweep's
+minimum order and the advisory all retire together with the sweeper, which is
+about 187 references across the pipeline, the API and nine test modules. That is
+its own job and was not begun here.
+### 2026-09-26 — the file the desk consults so it never has to guess an exit-side number was empty for five whole topics (item 143 retired)
+
+**In plain words:** `docs/RESEARCH_FINDINGS.md` is where the desk is supposed to look up what published work actually says, so it never has to invent a number. For five subjects that govern real money — how much of a move is just ordinary daily wobble, how far a trailing stop should sit, whether to take profit at a target, how long a position may take to work, and how finely the desk's own scoring separates one stock from another — the file said nothing at all. So every number in those areas was, by construction, unsourceable from the desk's own research file. Five sections were added recording what a real literature pass found, INCLUDING where it found nothing. No number was picked and nothing live was changed.
+
+**What the pass actually supports, and what it does not.** Four findings are worth carrying forward because the next session will otherwise re-invent them:
+
+- **Volatility bands.** The 2-3 x ATR magnitude is corroborated by two named sources (Wilder's 1978 ATR, LeBeau's Chandelier Exit at 3 x ATR(22)), and neither gives a derivation — the Chandelier reference explicitly says to vary the multiplier and states no bounds. **The quantity the desk's noise band actually bounds — the multiple at which an adverse move stops being noise — has no published measurement at all.** Searched directly; the only hits were mutually contradictory practitioner blogs, which is why nothing from them was recorded.
+- **Stops are conditionally valuable, not unconditionally.** Kaminski & Lo's framework result is that a 0/1 stop-loss rule ALWAYS lowers expected return under a random walk, and adds value only under momentum or regime-switching. Their empirical work deliberately reports a threshold RANGE (-1.5 to -0.5 standard deviations) and says why: scanning avoids data-selection bias. Their frequency finding cuts against short clocks — short-horizon stop policies carried negative stopping premiums; policies above one month did better.
+- **Preset profit targets.** Odean (1998) measured that the winners retail investors sell outperform the losers they keep by 3.41% over the next 252 trading days. That is evidence that closing a position because it is a winner is a documented, costly bias — the class the desk's deleted auto-trim belonged to. It is NOT a test of a fixed-percentage trim, and the entry says so; the trend-convexity paper cited beside it is about capping POSITION SIZE, not profit targets, and is cited for the mechanism only.
+- **Pacing and ranking granularity are the two genuine blanks.** Nothing published gives a per-position horizon or pace threshold for a discretionary multi-day equity trade; the momentum literature gives a portfolio REBALANCING horizon (Jegadeesh & Titman's 16-cell grid, all cells positive) which is a different quantity. Nothing in finance addresses score granularity or tie rates in stock ranking either — the rigorous work on it is in recommender-system and information-retrieval evaluation, a different field, and the entry labels it as such and transfers only the mechanism (coarse scores make the tiebreak the real ranking rule), never the magnitudes.
+
+**What was deliberately NOT done, and why it matters more than what was.** No value was picked inside any range found, no live number was recommended for change, and no code or config was touched. Where the literature gives a band, the entry says explicitly that choosing inside it is owner appetite and not research. The desk's existing work on these topics was LINKED rather than restated — item 70's two-jobs-one-number split, the 2026-09-10 stop-floor re-derivation and its warning not to conflate a fixed entry stop with a trailing one, the 2026-09-25 ratification of the floor and regime scales, the 2026-09-12 deletion of the auto take-profit trim, item 75's exit-comparison proposal, item 165's removal of the made-up pace floor, item 141's measured tie rates and three-stage tiebreak, and the item 39(a) finding that the rotation margin sits inside its own score's noise.
+
+**One thing the pass surfaced that is not closed by it.** Item 141's own write-up records that neither the touch-count tiebreak nor the reward:risk tiebreak is rendered into the portfolio manager's prompt or any owner-facing surface. The published tie-handling evidence — that when scores are coarse the tie-break rule becomes an undeclared ranking feature and can dominate the result — is consistent with that gap mattering. It does not measure how much it matters here, and no such measurement is claimed.
+
+**What would catch it next time.** The gap was not that research was missing; it was that a "searched and found nothing" result had nowhere to live, so each session re-searched or re-guessed. A negative result recorded as a section, with what was searched, is the thing that stops the next invented number.
+
+### 2026-09-26 — the safety check that refused a trade for a too-wide stop had never refused anything, and the number it turned on could not be sourced (item 56 retired)
+
+**Plain language.** When the desk works out where to put a stop-loss, a
+separate safety check asked one more question: is this stop so far away that
+the share price could not plausibly reach it before the trade is over? If so,
+it refused the trade, on the reasoning that a stop price will never touch is
+not really a stop, and a position size worked out from it is fiction. That
+check has now been deleted. It never refused a single trade, the number it
+turned on was never read off anything, and the thing it claimed to protect was
+already handled: the desk answers a wide stop by buying fewer shares.
+
+**What the check actually did.** It compared the stop's distance from the
+entry price against how far the stock could plausibly travel inside the
+trade's own expected length — its average daily range, scaled by the square
+root of the number of sessions, multiplied by 1.5. Past that, refuse. The 1.5
+was the whole question: nobody derived it, and because the cap and the
+distance both scale the same way with the trade's length, the 1.5 amounts to
+refusing any stop with less than a 1.67% chance of being touched before the
+trade ends. Item 56 narrowed the board question to exactly that: how unlikely
+must a touch be before a stop stops being a stop?
+
+**Measured before deleting, from the desk's own production record.** Between
+2026-09-13 (when the desk began stamping a touch-probability reading on every
+stop it sizes) and 2026-09-26, `quant_agent.log` holds 648 such readings and
+ZERO refusals — the check never fired once. The widest stop it ever saw sat at
+1.29 average daily ranges per square-root-session against its 1.5 cap, so
+nothing ever came within a sixth of the limit. The lowest touch probability
+ever recorded was 4.0%, against a check that refuses below 1.67%; the median
+was 27%. The production database holds no record of the refusal code either,
+across 4,718 recorded funnel events from 2026-09-02 onward. And it could not
+have fired on the desk's own fallback stop — the 2.5-average-range noise band
+it falls back to when the chart offers nothing — at any trade length of three
+sessions or more, while the shortest horizon the desk has ever actually stated
+is six.
+
+**The three routes, and why two were wrong.**
+
+*A cited measurement (rejected — the literature measures a different thing).*
+The stop-loss literature measures what a stop threshold does to returns and to
+volatility (Acar & Toffel 2000; Kaminski & Lo; Han/Zhou/Zhu on momentum
+stop-losses). None of it measures a minimum touch probability below which a
+level stops counting as a stop. That is a different quantity, so it was not
+adopted, and nothing was borrowed to stand in for it.
+
+*The threshold-free reformulation (rejected — it is not threshold-free).* The
+item proposed refusing when the stop's touch probability is below the target's
+reach probability on the same instrument, on the grounds that this removes the
+number instead of sourcing it. It does not. Both probabilities read the same
+volatility over the same horizon, and touch probability falls strictly as
+distance grows, so the inequality reduces exactly to "the stop is further away
+than the target" — a reward-to-risk floor of 1.0 wearing a probability
+costume. The desk deleted its reward:risk floor on 2026-09-24 (item 81) and
+the owner ruled twice, on 2026-09-11 and again on 2026-09-17, that a breakout
+setup gets no reward-side refusal at all. Adopting it would have smuggled a
+refused rule back in while claiming to have removed a number. The equivalence
+is now pinned by a test
+(`test_the_threshold_free_reformulation_is_a_reward_risk_floor`).
+
+*Delete it (what shipped).* The check's own justification was that a size
+computed off an unreachable distance is fiction. But the desk's ratified sizing
+rule already answers a wide stop by holding the risked dollars constant and
+buying fewer shares — twice the stop distance, half the position — which is
+also what the published practice the check cited actually prescribes; and at
+the extreme the position rounds to nothing and is refused by name
+(`position_sized_to_zero`). The upstream universe screen separately refuses
+instruments whose daily range is too large a fraction of their price. Nothing
+was protected that is not still protected.
+
+**What was kept.** The READING survives untouched and is still stamped on every
+stop the desk sizes: the probability, from the reflection principle and the
+published range-to-sigma identity, that this stop is touched inside this
+trade's horizon. No constant is chosen anywhere in it. It is the evidence that
+could one day answer the question the deleted check pretended to have
+answered, and it now accumulates without a gate attached to it.
+
+**Consequence recorded rather than hidden.** The portfolio manager's
+eligibility rule R6 shows the manager any name the constructor's preview
+already refused. The width check was that preview's only live producer of a
+refusal, so today the preview records none at all: the one remaining refusal
+needs a missing volatility reading, which the preview classifies one step
+earlier as a data fault. R6 itself is unchanged and still reads whatever it is
+handed, and the ENFORCING check was always one stage later, in construction, so
+no enforcement was lost — only an advance warning that currently has nothing to
+warn about. Pinned by a test that fails if a preview-time refusal reappears
+without this being revisited.
+
+**What would catch it next time.** The refusal code stays defined so that old
+records remain readable and the blocked-proposal census can still name it, but
+a test now walks every module under `src/` and fails if any live code emits it
+again, so the gate cannot come back silently. Two more tests fail if the
+deleted threshold reappears on either of its former definition sites, and a
+settings file still carrying the key now raises at config load rather than
+loading silently and letting an operator believe a width refusal is in force.
+
+**Still `arbitrary`, and not touched here.** The target-side reach multiple
+(the other 1.5, which estimates how far a stock can travel toward a price
+target) is a different number doing a different job and is unchanged and still
+unsourced. The desk's 2.5-average-range fallback stop is also unchanged.
+
+
 ### 2026-09-26 — the desk let the trade-picker spend borrowed money without ever telling it borrowing costs anything (item 95 retired)
 
 **Plain language.** The account is allowed to borrow, up to twice what it owns.

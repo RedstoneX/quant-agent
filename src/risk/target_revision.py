@@ -102,8 +102,8 @@ third:
    been closed through, and the break is CONFIRMED on two consecutive
    trading-day closes. Both halves of that are existing desk convention,
    reused rather than reinvented: the margin is
-   `exit_guard.NOISE_BAND_ATR_MULTIPLE` (the desk's one answer to "is a move
-   beyond a level real"), and the two-close confirmation is the same
+   `exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` (the desk's one answer to "is
+   a close beyond a level real"), and the two-close confirmation is the same
    CONFIRMATION GATE `exit_guard.check_structural_protection` applies, for
    the same reason — a one-day spring or an intrabar wick is not a break.
 
@@ -152,7 +152,7 @@ from src.data.levels import (
     derive_structural_target,
     horizon_reach,
 )
-from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
+from src.risk.exit_guard import BREAK_CONFIRMATION_ATR_MULTIPLE
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +359,7 @@ def levels_still_in_the_way(
     close_price: float | None,
     atr: float | None,
     is_short: bool,
-    noise_band_atr_multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    break_margin_atr_multiple: float = BREAK_CONFIRMATION_ATR_MULTIPLE,
 ) -> list[float]:
     """Drop the levels TODAY'S CLOSE has already decisively cleared.
 
@@ -373,7 +373,7 @@ def levels_still_in_the_way(
     ceiling is gone, and the derivation hands it back.
 
     The test applied is the SAME break test as `target_level_broken` — one
-    `NOISE_BAND_ATR_MULTIPLE` beyond the level on a completed daily close —
+    `BREAK_CONFIRMATION_ATR_MULTIPLE` beyond the level on a completed daily close —
     applied to every level rather than only the one the target sat on. No
     new constant, and no second definition of "broken": a resistance the
     price has closed decisively above is not overhead any more, whichever
@@ -388,7 +388,7 @@ def levels_still_in_the_way(
     vol = _finite(atr)
     if close is None or vol is None or vol <= 0:
         return levels
-    margin = vol * noise_band_atr_multiple
+    margin = vol * break_margin_atr_multiple
     if is_short:
         # A short's targets sit below; a level the close has fallen a noise
         # band beneath is no longer a floor in the way.
@@ -402,13 +402,13 @@ def target_level_broken(
     close_price: float | None,
     atr: float | None,
     is_short: bool,
-    noise_band_atr_multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    break_margin_atr_multiple: float = BREAK_CONFIRMATION_ATR_MULTIPLE,
 ) -> bool | None:
     """True when today's CLOSE has cleared the target's level decisively.
 
     `close_price` MUST be the latest completed DAILY CLOSE, never a live
     quote — a wick through a level that closes back inside is not a break.
-    Same requirement, and same `NOISE_BAND_ATR_MULTIPLE` margin, as
+    Same requirement, and same `BREAK_CONFIRMATION_ATR_MULTIPLE` margin, as
     `exit_guard.check_structural_protection`.
 
     Direction is the mirror of the stop's case. A long's target sits ABOVE
@@ -425,7 +425,7 @@ def target_level_broken(
     vol = _finite(atr)
     if level is None or level <= 0 or close is None or vol is None or vol <= 0:
         return None
-    margin = vol * noise_band_atr_multiple
+    margin = vol * break_margin_atr_multiple
     if is_short:
         return close <= level - margin
     return close >= level + margin
@@ -490,7 +490,7 @@ def assess_target_revision(
     breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
     max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
     max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
-    noise_band_atr_multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    break_margin_atr_multiple: float = BREAK_CONFIRMATION_ATR_MULTIPLE,
 ) -> TargetRevisionOutcome:
     """Decide whether one flagged symbol's target may be re-derived, and if
     so re-derive it. Pure — no DB, no broker, no market-data, no LLM.
@@ -553,7 +553,7 @@ def assess_target_revision(
     trigger = ""
     broken = target_level_broken(
         target_level=target_level, close_price=close, atr=vol,
-        is_short=is_short, noise_band_atr_multiple=noise_band_atr_multiple,
+        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
     )
     if broken:
         if not break_seen_prior_close:
@@ -602,7 +602,7 @@ def assess_target_revision(
     raw_levels = [p for p in (_finite(lv) for lv in levels or ()) if p is not None]
     surviving = levels_still_in_the_way(
         computed_levels=raw_levels, close_price=close, atr=vol,
-        is_short=is_short, noise_band_atr_multiple=noise_band_atr_multiple,
+        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
     )
     if raw_levels and not surviving:
         # The chart HAS structure; the price has closed decisively beyond all
