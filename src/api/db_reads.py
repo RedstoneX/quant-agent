@@ -1313,9 +1313,13 @@ def get_holding_why(symbol: str) -> dict | None:
                 # take-profit, or a named refusal to re-derive one, happens
                 # in a LATER session than the entry, and the holding view
                 # must show which number it is currently displaying and why.
+                # `at_target_management` on the same basis, for the same
+                # reason: it is what says whether the target still governs
+                # this position or whether only the trailing stop does, and
+                # the view would otherwise state the wrong rule.
                 "SELECT * FROM specialist_evidence WHERE symbol = ? AND "
-                "(run_id = ? OR (kind IN ('review_metrics', 'target_revision') "
-                "AND timestamp >= ?)) "
+                "(run_id = ? OR (kind IN ('review_metrics', 'target_revision', "
+                "'at_target_management') AND timestamp >= ?)) "
                 "ORDER BY id",
                 (symbol, entry.get("run_id") or "", entry.get("timestamp") or ""),
             ).fetchall()

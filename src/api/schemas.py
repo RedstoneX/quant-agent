@@ -1290,10 +1290,19 @@ class HoldingHorizon(BaseModel):
 class HoldingTakeProfit(BaseModel):
     price: float | None = None
     plain: str
-    #: ALWAYS False today. The automatic take-profit trim was deleted on
-    #: 2026-09-12 and no caller passes `take_profit_price` to the broker,
-    #: so no order exists at this price. Kept as an explicit field rather
-    #: than a comment so a future change has to flip it deliberately.
+    #: Whether the desk ACTS when this price is reached. True for a held
+    #: position under the at-target rule (owner ruling 2026-09-25): reaching
+    #: the target puts the position to a decision whose default is to sell in
+    #: full, so the number governs behaviour even though no order rests at it.
+    #: False when there is no target on the row, and False for a position that
+    #: has moved to trailing-stop-only management because its target can no
+    #: longer extend — that position has left the rule and only its stop acts.
+    #: It is still NOT a resting order: nothing fires intrabar, the test is the
+    #: completed daily close, and `note` says so in the owner's words.
+    #:
+    #: Until 2026-09-25 this was hardcoded False with a comment reading "kept
+    #: as an explicit field rather than a comment so a future change has to
+    #: flip it deliberately". This is that change.
     acted_on: bool = False
     note: str
     #: The target PINNED AT ENTRY (`trades.initial_take_profit`). `price`

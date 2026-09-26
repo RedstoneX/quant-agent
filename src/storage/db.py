@@ -3231,6 +3231,67 @@ class Database:
     #: alike. A flag is NEVER a silent no-op and never a blank.
     TARGET_REVISION_KIND = "target_revision"
 
+    #: How a position that has REACHED its target is managed from here.
+    #: `reached` is a one-way fact, so without a durable record a position
+    #: sitting above its target is re-put to the at-target FULL-CLOSE vote on
+    #: every review for as long as it is held; one noisy swing read then closes
+    #: the biggest runner in the book. One row is written when a position moves
+    #: to trailing-stop-only management (target reached, chart still trending,
+    #: and no ceiling left in reach to extend the target to), and another when
+    #: a later re-derivation does extend the target and puts the position back
+    #: in front of a real one. The NEWEST row wins, and only rows newer than
+    #: the position's own opening row count — a re-entry in the same ticker is
+    #: a different position and must start clean.
+    AT_TARGET_MANAGEMENT_KIND = "at_target_management"
+
+    def record_at_target_management(
+        self, *, run_id: str, symbol: str, code: str, trailing_only: bool,
+        detail: str = "",
+    ) -> int:
+        """File how a position at/over its target is managed from here."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.AT_TARGET_MANAGEMENT_KIND, scope="symbol",
+            symbol=str(symbol).upper(),
+            evidence_json=json.dumps({
+                "code": str(code), "trailing_only": bool(trailing_only),
+                "detail": str(detail or ""),
+            }),
+        )
+
+    def get_at_target_management(self, symbols) -> dict[str, dict]:
+        """The NEWEST at-target management row per symbol, payload plus its
+        `timestamp`. A symbol absent from the result has no row, and callers
+        must read that as "still in the at-target vote" — a missing row can
+        never take a position out of it.
+        """
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol IN "
+            f"({placeholders}) ORDER BY timestamp DESC, id DESC LIMIT 500"
+        )
+        with self._lock:
+            rows = self.conn.execute(
+                sql, (self.AT_TARGET_MANAGEMENT_KIND, *wanted),
+            ).fetchall()
+        out: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            sym = row["symbol"]
+            if sym in out:
+                continue
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            payload["timestamp"] = row.get("timestamp")
+            out[sym] = payload
+        return out
+
     def save_target_level_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
     ) -> int:

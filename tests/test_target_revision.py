@@ -19,10 +19,14 @@
    target (`trades.initial_take_profit`) rather than the live one. These
    tests pin it end to end: the arithmetic, and the guard's actual verdict.
 
-2. NOTHING AUTOMATICALLY EXITS AT THE TARGET, and the revision path did not
-   change that. The automatic trim was deleted in PR #321;
+2. THE REVISION MODULE ITSELF NEVER EXITS ANYTHING. Reaching a STRUCTURAL
+   target IS a decision point since the owner's 2026-09-25 ruling — see
+   `tests/test_at_target_decision.py` — but that decision belongs to
+   `src.risk.exit_guard.decide_at_target` and the pipeline, not here: this
+   module adjusts a measurement and must stay pure. The FIXED-GAIN automatic
+   trim remains deleted (PR #321);
    `tests/test_pipeline.py::test_no_fixed_gain_automatic_profit_trim_exists`
-   pins the general rule, and the checks here pin it specifically for the
+   pins that general rule, and the checks here pin purity specifically for the
    revision module and for the flag schema.
 """
 
@@ -180,7 +184,7 @@ def test_pinned_target_column_is_never_written_by_a_revision():
 
 
 # ---------------------------------------------------------------------------
-# 2. No automatic exit at the target
+# 2. The revision module itself exits nothing
 # ---------------------------------------------------------------------------
 
 
@@ -544,3 +548,140 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
     assert not out.revised
     assert out.new_price is None
     assert out.code == tr.REVISION_NO_CEILING_LEFT
+
+
+# ---------------------------------------------------------------------------
+# EVERY-REVIEW re-derivation (owner ruling 2026-09-25): the target is re-read
+# off today's bars EVERY review, not only on a seat flag or a structural event.
+# `require_trigger=False` is the every-review path; True is the unchanged
+# seat-flag path. These pin (a): re-derived each review, never frozen.
+# ---------------------------------------------------------------------------
+
+
+def test_every_review_never_steps_the_target_down():
+    """Owner ruling 2026-09-25: a re-derivation may only EXTEND the target
+    further from entry, never pull it back. A NEARER resistance (108) has
+    formed inside the old 110 target; the every-review re-read runs but REFUSES
+    to weaken the take-profit to it, and the stored 110 stands."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[108.0, 110.0, 95.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert not out.revised
+    assert out.code == tr.REVISION_WOULD_WEAKEN
+    assert out.prior_price == pytest.approx(110.0)
+
+
+def test_every_review_extends_the_target_up_without_a_seat_flag():
+    """The every-review path catches a structural extension with NO seat flag:
+    the 110 ceiling gaps through and confirms, and the target ratchets UP to the
+    next level (128) — the whole point of re-deriving every review."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=True,
+        require_trigger=False, **_COMMON,
+    )
+    assert out.revised
+    assert out.new_price == pytest.approx(128.0)
+    # And on the SAME inputs the seat-flag path also extends up — the direction
+    # is the same; only the SCHEDULE (every review vs on a flag) differs.
+    flagged = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=True,
+        require_trigger=True, **_COMMON,
+    )
+    assert flagged.new_price == pytest.approx(128.0)
+
+
+def test_every_review_unchanged_structure_re_reads_not_freezes():
+    """Unchanged structure still RE-DERIVES every review — it lands on the same
+    price and is recorded as NO_CHANGE, never as a silent frozen no-op."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 95.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert not out.revised
+    assert out.code == tr.REVISION_NO_CHANGE
+    assert out.trigger == tr.TRIGGER_EACH_REVIEW_REREAD
+
+
+def test_every_review_still_honours_every_protective_refusal():
+    """The schedule changed, not the safety. A missing input is still a FAULT,
+    no pinned horizon is still refused, and a target the price has passed still
+    leaves the old one standing — all with require_trigger=False."""
+    fault = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0],
+        atr=None, close_price=None, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert fault.code == tr.REVISION_UNMEASURABLE_INPUTS and fault.fault
+
+    args = dict(_COMMON)
+    args["pinned_horizon_sessions"] = None
+    no_h = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0],
+        atr=2.5, close_price=104.0, break_seen_prior_close=False,
+        require_trigger=False, **args,
+    )
+    assert no_h.code == tr.REVISION_NO_PINNED_HORIZON
+
+    behind = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 116.0],
+        atr=6.0, close_price=117.0, break_seen_prior_close=True,
+        require_trigger=False, **_COMMON,
+    )
+    assert behind.code == tr.REVISION_BEHIND_PRICE
+    assert behind.prior_price == pytest.approx(110.0)
+
+
+def test_every_review_still_waits_two_closes_for_a_break():
+    """A one-day close through the target's level is still a possible spring,
+    not a confirmed break — even on the every-review path the old target stands
+    until the second confirming close."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        atr=6.0, close_price=118.0, break_seen_prior_close=False,
+        require_trigger=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_BREAK_PENDING_CONFIRMATION
+    assert out.new_price is None
+
+
+# ---------------------------------------------------------------------------
+# 3. The every-review sweep is not gated on a seat happening to speak
+# ---------------------------------------------------------------------------
+
+
+def test_the_sweep_re_derives_every_held_name_with_no_flags_raised():
+    """Owner ruling 2026-09-25 is EVERY review, not "every review on which a
+    seat raised a flag". It is also what tells the at-target decision whether a
+    target can still extend, so a skipped sweep silently re-puts a runner that
+    has nothing left overhead to the full-close vote every review."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.db.get_at_target_management.return_value = {}
+    p.risk_engine = SimpleNamespace(config=SimpleNamespace())
+    p._assess_one_target_revision = MagicMock(
+        return_value={"symbol": "AAPL", "code": "NO_CHANGE_ON_REDERIVATION",
+                      "applied": False},
+    )
+    review = SimpleNamespace(target_revision_flags=[])
+    positions = [SimpleNamespace(symbol="AAPL", qty=10.0, avg_entry=90.0)]
+
+    out = p._adjudicate_target_revision_flags(
+        review, positions, run_id="r", seat="position_reviewer",
+    )
+
+    assert p._assess_one_target_revision.call_count == 1
+    assert p._assess_one_target_revision.call_args.kwargs["sym"] == "AAPL"
+    assert p._assess_one_target_revision.call_args.kwargs["require_trigger"] is False
+    assert [o["symbol"] for o in out] == ["AAPL"]
+    # And the outcome is handed to the at-target decision.
+    assert p._target_can_extend("AAPL") is True

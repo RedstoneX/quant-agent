@@ -452,6 +452,208 @@ def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str]]
     return pivots
 
 
+def _collapse_same_kind(ordered: list[tuple]) -> list[tuple]:
+    """Zig-zag reduction of an already time-ordered pivot list: consecutive
+    pivots of the same kind are ONE leg, so keep only the more extreme of them.
+    What comes back strictly alternates R, S, R, S, ...
+    """
+    seq: list[tuple] = []
+    for pivot in ordered:
+        if seq and seq[-1][2] == pivot[2]:
+            more_extreme = (
+                pivot[1] > seq[-1][1] if pivot[2] == "R" else pivot[1] < seq[-1][1]
+            )
+            if more_extreme:
+                seq[-1] = pivot
+            continue
+        seq.append(pivot)
+    return seq
+
+
+def _alternating_swings(
+    pivots: list[tuple[int, float, str]],
+) -> list[tuple[int, float, str]]:
+    """Collapse raw pivots into a real ALTERNATING swing sequence, in time order.
+
+    `_find_pivots` returns highs and lows independently, so the raw list can hold
+    two swing highs in a row with no intervening low (a stair-step of local
+    peaks inside one leg). Comparing "the last two highs" across such a list is
+    not a Dow read at all: the two highs being compared may not have a low
+    between them, and the two lows being compared may not have a high between
+    them, so the structure asserted need never have existed.
+
+    This is the standard zig-zag reduction (see `_collapse_same_kind`). A bar
+    that `_find_pivots` reports as BOTH a swing high and a swing low is dropped:
+    its neighbourhood is flat, so it carries no swing information and cannot be
+    placed in the sequence without inventing an order for it.
+
+    Introduces no number: the only input is the pivot list the caller already
+    computed with the ratified window.
+    """
+    both = {i for (i, _p, k) in pivots if k == "R"} & {
+        i for (i, _p, k) in pivots if k == "S"
+    }
+    ordered = sorted(
+        (p for p in pivots if p[0] not in both), key=lambda p: p[0],
+    )
+    return _collapse_same_kind(ordered)
+
+
+def _in_progress_swing(
+    bars: list[OHLCV], seq: list[tuple[int, float, str]], kind: str,
+) -> tuple[int, float, str] | None:
+    """The swing IN PROGRESS on one side, or None if there is not one.
+
+    A confirmed pivot needs `window` bars on BOTH sides, so the newest confirmed
+    swing is always up to `window` sessions old and the leg happening right now
+    is invisible. This recovers that leg on one side, and it is called for BOTH
+    sides so that a break of structure registers exactly as fast as a new
+    extreme does (see `making_higher_highs_and_lows`).
+
+    The rule, in one sentence: price is beyond the last confirmed swing on this
+    side RIGHT NOW and has been on at least two consecutive closes, and the
+    swing in progress is the extreme of that unbroken run.
+
+    Four deliberate properties:
+
+    * CLOSES, not highs and lows. `decide_at_target` judges "reached the
+      target" on the latest completed CLOSE precisely so that a routine
+      intrabar wick through the number is not a reach; a trend read that can
+      override that decision must be made of the same stuff, or the desk holds
+      a position because of a wick it has already refused to call a touch.
+    * The leg must still be IN FORCE. The run is measured back from the LATEST
+      bar, so a one-bar blow-off that price has since closed back under leaves
+      no swing in progress at all — it is a spike that failed, and reading it
+      as a new high while the collapse behind it is invisible is exactly how a
+      topping chart gets held past its target.
+    * TWO CONSECUTIVE CLOSES beyond the swing, never one. This is not a new
+      number: it is the desk's existing standard for "has this level actually
+      been broken?", the same two-trading-day closing confirmation
+      `check_structural_protection` requires before it will treat a stop's
+      support as gone and `src.risk.target_revision.target_level_broken`
+      requires before it will re-derive a target. A single close through a
+      level is a one-day spring, and a plausible gap bar that bar-cleaning
+      cannot remove is exactly the case it exists to refuse. It applies to both
+      sides, so it slows nothing relative to the other.
+    * No tolerance, and the extreme is read from the CURRENT run only. If price
+      closed back inside and then out again, the leg in progress is the new one,
+      not the old high-water mark.
+    """
+    same_side = [p for p in seq if p[2] == kind]
+    if not same_side or not bars:
+        return None
+    level = same_side[-1][1]
+    start = same_side[-1][0] + 1
+    tail = bars[start:]
+    if not tail:
+        return None
+    try:
+        closes = [float(b.close) for b in tail]
+    except (TypeError, ValueError):
+        return None
+
+    def beyond(close: float) -> bool:
+        return close < level if kind == "S" else close > level
+
+    # The UNBROKEN run of closes beyond the swing, counted back from the latest
+    # bar. Empty when price is back inside — then there is no leg in progress.
+    run_start = len(closes)
+    for i in range(len(closes) - 1, -1, -1):
+        if not beyond(closes[i]):
+            break
+        run_start = i
+    run = closes[run_start:]
+    # Two consecutive closes, the desk's own break standard. One is a spring.
+    if len(run) < 2:
+        return None
+    running = min(run) if kind == "S" else max(run)
+    return (start + run_start + run.index(running), float(running), kind)
+
+
+def making_higher_highs_and_lows(
+    bars: list, *, is_short: bool = False, window: int = PIVOT_WINDOW,
+) -> bool | None:
+    """Is the instrument CLEARLY still trending in the position's favour, read
+    from its OWN swing structure? Pure.
+
+    THE DOW READ, AS ACTUALLY IMPLEMENTED
+    -------------------------------------
+    Bars are CLEANED first (`_clean_bars`, the same guard `find_structural_levels`
+    runs before its own pivot scan — a single bad vendor print is a phantom
+    pivot, and this read can decide a full close). Pivots are then found with
+    the same symmetric window `find_structural_levels` uses (`PIVOT_WINDOW` — no
+    new number is introduced here) and reduced by `_alternating_swings` to a
+    strictly alternating R, S, R, S sequence. The answer compares the last two
+    swing highs and the last two swing lows OF THAT SEQUENCE, so the compared
+    swings always interleave in time — a higher high with a low between it and
+    the previous high, and a higher low with a high between it and the previous
+    low. That interleaving is the Dow definition; two independent lists of highs
+    and lows are not.
+
+      LONG  — True when the latest swing high is above the prior swing high AND
+              the latest swing low is above the prior swing low.
+      SHORT — the mirror: lower-highs and lower-lows.
+
+    THE LEG IN PROGRESS, ON BOTH SIDES
+    ----------------------------------
+    A confirmed pivot needs `window` bars on BOTH sides, so the most recent
+    CONFIRMED swing is up to `window` sessions old. Reading only confirmed
+    pivots makes this function structurally blind in exactly the situations it
+    is asked about, and blind in BOTH directions:
+
+    * At the moment a long closes at a resistance TARGET, the move that reached
+      the target is a fresh breakout with no bars after it yet, so the newest
+      confirmed swing high is the PRE-breakout peak. Confirmed-only, the read
+      reports "not making higher highs" BECAUSE the thrust is too recent — and
+      the at-target rule then banks the cleanest breakouts, which is the
+      behaviour the fixed-gain auto-trim was deleted to stop.
+    * The mirror is worse, because this read decides a SELL. If a new extreme
+      registers in one bar but the BREAK of the last higher low needs five, the
+      read is biased toward HOLD during exactly the transition a Dow read
+      exists to catch: a blow-off followed by a collapse, or a straight drop
+      clean through the last higher low, would both keep reporting "clearly
+      still trending" for a week of reviews.
+
+    So `_in_progress_swing` is applied to BOTH sides, on the same terms, and the
+    provisional swings it returns are merged into the sequence at the bar that
+    made them before the zig-zag reduction. Gaining strength and losing it
+    register at the same speed. See `_in_progress_swing` for the rule and for
+    why it is close-based and requires the leg to still be in force.
+
+    Returns None when the resulting sequence does not hold two swing highs and
+    two swing lows to compare (too few bars, or a young position). For the
+    at-target decision a None reads as "not CLEARLY still trending" — the
+    owner's lean is to bank a win at a real target unless the chart is clearly
+    still running.
+    """
+    series = _clean_bars(list(bars or []))
+    seq = _alternating_swings(_find_pivots(series, window))
+
+    # Both sides, same terms. A provisional is tagged so that when it lands on
+    # the same bar as a confirmed swing it sorts AFTER it — the confirmed swing
+    # is the older fact about that bar.
+    provisional = [
+        p for p in (
+            _in_progress_swing(series, seq, "R"),
+            _in_progress_swing(series, seq, "S"),
+        ) if p is not None
+    ]
+    if provisional:
+        merged = sorted(
+            [(p, 0) for p in seq] + [(p, 1) for p in provisional],
+            key=lambda t: (t[0][0], t[1]),
+        )
+        seq = _collapse_same_kind([p for (p, _tag) in merged])
+
+    highs = [price for (_i, price, k) in seq if k == "R"]
+    lows = [price for (_i, price, k) in seq if k == "S"]
+    if len(highs) < 2 or len(lows) < 2:
+        return None
+    if is_short:
+        return highs[-1] < highs[-2] and lows[-1] < lows[-2]
+    return highs[-1] > highs[-2] and lows[-1] > lows[-2]
+
+
 def _cluster(
     pivots: list[tuple[int, float, str]], tolerance_pct: float
 ) -> list[list[tuple[int, float, str]]]:

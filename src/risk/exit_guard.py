@@ -65,6 +65,16 @@ __all__ = [
     "StructuralProtectionCheck",
     "check_structural_protection",
     "structural_protection_broken",
+    "AtTargetDecision",
+    "decide_at_target",
+    "AT_TARGET_NOT_REACHED",
+    "AT_TARGET_HOLD_STILL_TRENDING",
+    "AT_TARGET_SELL_STALLED",
+    "AT_TARGET_INPUTS_UNREADABLE",
+    "AT_TARGET_TRAILING_STOP_ONLY",
+    "AT_TARGET_TRAILING_STOP_ONLY_LATCHED",
+    "TARGET_CANNOT_EXTEND_CODES",
+    "target_cannot_extend",
 ]
 
 
@@ -2230,3 +2240,268 @@ def structural_protection_broken(
         prior_session_dates=prior_session_dates,
     ).protected
 
+
+
+# ---------------------------------------------------------------------------
+# Decision at the take-profit target — owner ruling 2026-09-25
+# ---------------------------------------------------------------------------
+#
+# The owner's lean, in his words: "lean towards selling if it hits target; if
+# the chart is showing higher highs and higher lows you could move up the stop
+# and reassess." So reaching a real target is a REASSESS point whose DEFAULT is
+# to SELL and bank the win; the EXCEPTION is a name that is CLEARLY still
+# running — fresh higher-highs-and-higher-lows structure — which is held and let
+# run under a raised trailing stop.
+#
+#   SELL  when the target is reached AND the chart is NOT clearly still trending
+#         in the position's favour (no fresh higher-high / higher-low structure,
+#         or too little structure to prove one). Bank the win.
+#   HOLD  when the target is reached AND the instrument is clearly still making
+#         higher-highs-and-higher-lows (the short mirror: lower-highs-and-lower-
+#         lows): raise the stop and let the trail carry it.
+#
+# This is NOT a bare "sell at X": the sell is conditional on the LIVE trend read
+# off the instrument, never the price alone. It is NOT the deleted fixed-gain
+# auto-trim either: that sold a fixed fraction at a fixed % GAIN regardless of
+# the chart; this sells at a STRUCTURAL target only when momentum is not
+# continuing, and reads the continuation from the instrument's own swing
+# structure (`src.data.levels.making_higher_highs_and_lows`, the ratified pivot
+# window — no new number). "Reached" is judged against the pinned/only-extended-
+# upward take-profit, so the target can never step DOWN to trip an early sell.
+
+#: The latest completed close has not reached the target — nothing to decide.
+AT_TARGET_NOT_REACHED = "TARGET_NOT_REACHED"
+#: Target reached AND the chart is clearly still trending in the position's
+#: favour (higher-highs-and-higher-lows) — HOLD, raise the stop, let it run.
+AT_TARGET_HOLD_STILL_TRENDING = "AT_TARGET_HOLD_STILL_TRENDING"
+#: Target reached AND the chart is NOT clearly still trending — SELL, bank it.
+AT_TARGET_SELL_STALLED = "AT_TARGET_SELL_MOMENTUM_NOT_CONTINUING"
+#: Close or target could not be read — cannot decide; the caller holds.
+AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
+#: Target reached, the chart IS still trending, and today's re-derivation could
+#: not put ANY target ahead of price — there is no ceiling in reach to extend
+#: to. The position leaves the at-target vote and is managed by the trailing
+#: stop alone from here; see the note below for why.
+AT_TARGET_TRAILING_STOP_ONLY = "AT_TARGET_TRAILING_STOP_ONLY_NO_CEILING_IN_REACH"
+#: A prior review moved this position to trailing-stop-only management AND the
+#: chart is still clearly trending, so it is not put to the full-close vote this
+#: review. Re-checked every review: the state lasts exactly as long as the
+#: structure that justified it.
+AT_TARGET_TRAILING_STOP_ONLY_LATCHED = "AT_TARGET_TRAILING_STOP_ONLY_ALREADY"
+
+# --- Leaving the at-target vote when the target can no longer move -----------
+#
+# `reached` is a one-way fact: once the close has passed the target it stays
+# passed, so WITHOUT this the position is put to the at-target full-close vote
+# again on EVERY review for as long as it is held. The vote's default is SELL,
+# and its only defence is the live swing read, which is a noisy per-review
+# boolean. Over enough reviews one ordinary pullback flips it and the biggest
+# runner in the book is closed in full — the desk would be running a slow
+# random full-exit on its best position, which is the fixed-gain auto-trim
+# failure wearing a different hat.
+#
+# That only bites when the target CANNOT move. Normally it can: the every-
+# review re-derivation extends the take-profit to the next structure in reach,
+# the position is below the new target, and the question simply stops being
+# asked until it gets there. The trap is the position with nothing left
+# overhead — the re-derivation has no ceiling to measure against — where the
+# target is pinned under the price forever.
+#
+# So when the at-target decision is HOLD and today's re-derivation refused for
+# want of any target ahead of price, the position leaves the at-target vote and
+# is managed by the trailing stop alone. Nothing is loosened: the trailing stop
+# is the desk's ratified profit-taking mechanism, it still ratchets and it still
+# closes the position. Nothing is unmanaged either — `_apply_deterministic_trails`
+# runs over EVERY held position every review and knows nothing about this state,
+# which `tests/test_at_target_decision.py` pins by putting a position in it and
+# showing its stop still raised in the same review. What is removed is a
+# repeated full-close coin-flip that no longer has a decision to inform it.
+#
+# It is NOT permanent, and deliberately so. This state is entered on ONE
+# review's reading of the chart, and that reading can be wrong — it is also the
+# EXPECTED outcome for the strongest runners, because the re-derivation measures
+# reach from the pinned ENTRY over the pinned horizon, so a position that has
+# travelled a long way will routinely have no derivable target ahead of it.
+# A one-way latch on a fallible read, applied by default to the largest winners
+# in the book, is not a safety property. So the condition is re-tested every
+# review: the position stays out of the vote only while the chart is still
+# clearly trending, and the moment that structure breaks it rejoins the rule and
+# is banked like any other stalled position at its target.
+#
+#: The re-derivation outcome codes that mean "no target could be put ahead of
+#: price on today's bars". Kept as a named set, not a string test at the call
+#: site, so the two modules cannot drift.
+TARGET_CANNOT_EXTEND_CODES = frozenset({
+    # target_revision: the chart HAS levels and price closed beyond all of them
+    "REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION",
+    # target_revision: the only derivable target is one price already passed
+    "REFUSAL_DERIVED_TARGET_BEHIND_PRICE",
+    # levels.derive_structural_target: no level at all on this history
+    "no_structural_levels",
+    # levels.derive_structural_target: no level on the trade's side
+    "no_level_in_direction",
+    # levels.derive_structural_target: the measured-move fallback was rejected
+    "projection_implausible",
+})
+
+
+def target_cannot_extend(revision_code: object) -> bool:
+    """True when a take-profit re-derivation outcome code means "today's bars
+    put NO target ahead of price". Pure; unknown/blank codes read False, so a
+    missing revision record can never move a position out of the at-target
+    vote by accident.
+    """
+    return str(revision_code or "").strip() in TARGET_CANNOT_EXTEND_CODES
+
+
+@dataclass(frozen=True)
+class AtTargetDecision:
+    """What to do about a position that may have reached its take-profit target.
+
+    `should_sell` is the one field a caller acts on. Per the owner's lean it is
+    True whenever the target is reached and the chart is NOT clearly still
+    trending in the position's favour; it is False (HOLD, raise the stop, let it
+    run) only when the instrument is clearly still making higher-highs-and-
+    higher-lows. `reason` is the plain-language, owner-facing sentence (why +
+    when), empty only when there is nothing to voice (not reached, or inputs
+    unreadable).
+    """
+
+    symbol: str
+    code: str
+    reached: bool
+    should_sell: bool
+    reason: str = ""
+    target_price: float | None = None
+    close_price: float | None = None
+
+
+def decide_at_target(
+    *,
+    symbol: str,
+    is_short: bool,
+    close_price: float | None,
+    target_price: float | None,
+    still_making_new_highs: bool | None,
+    target_can_extend: bool | None = None,
+    already_trailing_only: bool = False,
+) -> AtTargetDecision:
+    """Decide whether a position that has REACHED its take-profit target should
+    be sold now (bank the win) or held for a clear runner. Pure — no I/O.
+
+    `close_price` MUST be the latest COMPLETED DAILY CLOSE, never a live quote:
+    "reached the target" is judged on the same close basis as the swing read,
+    so a routine intrabar wick through the number is not a reach.
+
+    `target_price` MUST be the pinned / only-extended-upward take-profit (a
+    re-derivation may only push it further from entry, never back toward it), so
+    the reach test can never be tripped by a target that stepped down.
+
+    `still_making_new_highs` is `src.data.levels.making_higher_highs_and_lows`:
+    True when the instrument is CLEARLY still trending in the position's favour
+    (higher-highs-and-higher-lows for a long, the mirror for a short), False
+    when it is not, and None when there is too little swing structure to tell.
+    Per the owner's lean BOTH False and None sell — the desk banks a win at a
+    real target unless the chart is CLEARLY still running.
+
+    `target_can_extend` is this review's take-profit re-derivation, reduced to
+    one fact: False when today's bars put NO target ahead of price (there is no
+    ceiling left in reach to extend to), True when the target could move, None
+    when it was not assessed. It only ever matters on a HOLD — see the note
+    above `AT_TARGET_TRAILING_STOP_ONLY`. It can never cause a sell.
+
+    `already_trailing_only` says a PRIOR review already moved this position to
+    trailing-stop-only management. It is NOT a bypass: the trend read still
+    runs, and the position stays out of the vote only for as long as the chart
+    is still clearly trending — the same condition that put it there. When that
+    structure breaks the position rejoins the rule and is banked. Nothing is
+    re-voiced while the state holds, because the durable reason was written
+    when it moved.
+    """
+    sym = str(symbol or "").strip().upper()
+    close = _finite(close_price)
+    target = _finite(target_price)
+    if close is None or target is None or target <= 0 or close <= 0:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_INPUTS_UNREADABLE, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    reached = close <= target if is_short else close >= target
+    if not reached:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_NOT_REACHED, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    move = "lower-highs and lower-lows" if is_short else "higher-highs and higher-lows"
+
+    # A position ALREADY on trailing-stop-only management is re-examined here,
+    # not waved through. The state was entered on one review's verdict that the
+    # chart was clearly still trending, and that verdict can be wrong; the
+    # thing that must re-open it is the thing that justified it failing. So
+    # while the chart is still clearly trending it stays out of the vote
+    # (silently — the durable reason was written when it moved, and re-voicing
+    # the same sentence every review is noise), and the moment the structure
+    # breaks it rejoins the vote and is banked on the branch below like any
+    # other stalled position.
+    if already_trailing_only and still_making_new_highs is True:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_TRAILING_STOP_ONLY_LATCHED,
+            reached=True, should_sell=False,
+            target_price=target, close_price=close,
+        )
+
+    if still_making_new_highs is True and target_can_extend is False:
+        # HOLD, and the target is pinned under the price with no ceiling in
+        # reach to extend to. Leave the at-target vote for good rather than
+        # re-running a full-close coin-flip every review.
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_TRAILING_STOP_ONLY, reached=True,
+            should_sell=False, target_price=target, close_price=close,
+            reason=(
+                f"reached its ${target:,.2f} target (close ${close:,.2f}) and "
+                f"is clearly still trending — the chart is still making {move} "
+                f"— but today's bars hold no structure left ahead of price to "
+                f"extend the target to, so the target cannot move up with it. "
+                f"The desk is NOT banking it here and is NOT going to re-run "
+                f"this full-close decision every review on a target the price "
+                f"has already left behind: from here this position is managed "
+                f"by its trailing stop alone, which keeps ratcheting up under "
+                f"it and is what will eventually close it."
+            ),
+        )
+    if still_making_new_highs is True:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_HOLD_STILL_TRENDING, reached=True,
+            should_sell=False, target_price=target, close_price=close,
+            reason=(
+                f"reached its ${target:,.2f} target (close ${close:,.2f}) and "
+                f"is clearly still trending — the chart is still making {move} "
+                f"— so the desk is NOT banking it here; it raises the stop and "
+                f"lets the trailing stop carry the runner."
+            ),
+        )
+
+    # Default lean: reached a real target and NOT clearly still running (or too
+    # little structure to prove a runner) — bank the win.
+    unclear = (
+        " (too little swing structure to confirm a runner)"
+        if still_making_new_highs is None else ""
+    )
+    broke = (
+        " The structure that took this position off the at-target decision and "
+        "onto trailing-stop-only management has now broken, so it rejoins the "
+        "rule and is banked."
+        if already_trailing_only else ""
+    )
+    return AtTargetDecision(
+        symbol=sym, code=AT_TARGET_SELL_STALLED, reached=True,
+        should_sell=True, target_price=target, close_price=close,
+        reason=(
+            f"reached its ${target:,.2f} target (close ${close:,.2f}) and is "
+            f"NOT clearly still trending{unclear} — the desk is banking the win "
+            f"at the target rather than giving it back, since the {move} that "
+            f"would justify holding for more are not there.{broke}"
+        ),
+    )

@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from src.api.holding_why import (
-    NOTHING_ACTS_ON_TARGET,
+    WHAT_HAPPENS_AT_TARGET,
     build_holding_why,
     humanize_date,
     humanize_dollars,
@@ -140,12 +140,39 @@ def test_rsg_machine_detail_is_kept_available_behind_the_toggle(rsg):
     assert raw["identifiers"]["run_id"] == "run-a93b805c"
 
 
-def test_rsg_take_profit_is_shown_as_a_reference_that_nothing_acts_on(rsg):
+def test_rsg_take_profit_is_shown_as_a_decision_point_the_desk_acts_on(rsg):
+    """Owner ruling 2026-09-25: reaching the target puts the position to a
+    decision whose default is a full sell, so the field that says whether the
+    desk acts on this number has to say True. It said False, with a comment
+    explaining that a future change would have to flip it deliberately."""
     tp = rsg["readable"]["take_profit"]
     assert tp["price"] == pytest.approx(224.20)
+    assert tp["acted_on"] is True
+    assert tp["plain"].startswith("Decision target:")
+    assert tp["note"] == WHAT_HAPPENS_AT_TARGET
+    # Still not an order resting at the number, and the note still says so.
+    assert "reassessment point" in tp["note"]
+    assert "not a standing sell order" in tp["note"]
+
+
+def test_a_position_on_trailing_stop_only_says_the_target_no_longer_acts(rsg):
+    """The one case where the target genuinely does not govern any more."""
+    from src.api.holding_why import TRAILING_STOP_ONLY_NOW
+
+    data = json.loads(FIXTURE.read_text())
+    evidence = list(data["evidence"]) + [{
+        "agent_name": "risk_manager", "kind": "at_target_management",
+        "symbol": "RSG", "evidence_json": json.dumps({
+            "code": "AT_TARGET_TRAILING_STOP_ONLY_NO_CEILING_IN_REACH",
+            "trailing_only": True,
+        }),
+    }]
+    tp = build_holding_why(
+        data["entry"], evidence, data["interim"],
+    )["readable"]["take_profit"]
     assert tp["acted_on"] is False
-    assert tp["note"] == NOTHING_ACTS_ON_TARGET
-    assert "Nothing sells at this price" in tp["note"]
+    assert tp["note"] == TRAILING_STOP_ONLY_NOW
+    assert tp["plain"].startswith("Reference target:")
 
 
 def test_rsg_horizon_is_the_pinned_plan_and_says_nothing_acts_on_it(rsg):
@@ -206,9 +233,9 @@ def test_a_holding_with_no_recorded_why_says_so_in_every_field():
     assert "Not recorded." in readable["horizon"]["plain"]
     assert readable["take_profit"]["price"] is None
     assert "Not recorded." in readable["take_profit"]["plain"]
-    # Still true with nothing recorded, and still worth saying.
+    # No target on the row, so there is nothing for the desk to act on.
     assert readable["take_profit"]["acted_on"] is False
-    assert readable["take_profit"]["note"] == NOTHING_ACTS_ON_TARGET
+    assert readable["take_profit"]["note"] == WHAT_HAPPENS_AT_TARGET
     assert readable["invalidation"] == "What would prove this wrong: Not recorded."
     # The order price survives even on this bare row, so it is reported as
     # the order price and explicitly NOT as a fill. The date is genuinely
@@ -310,7 +337,7 @@ def test_route_serves_the_plain_language_answer_and_404s_on_an_unheld_symbol(
     assert body["symbol"] == "ZZZ"
     assert body["company_name"] == "Zzz Corp."
     assert "Big Fund LP" in body["lede"] and "$480 million" in body["lede"]
-    assert body["readable"]["take_profit"]["acted_on"] is False
+    assert body["readable"]["take_profit"]["acted_on"] is True
     assert body["readable"]["horizon"]["sessions"] == 8
     assert "closes below 95 on volume" in body["readable"]["invalidation"]
     # The accession number is reachable, but only behind the toggle.

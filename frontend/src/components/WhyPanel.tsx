@@ -200,7 +200,13 @@ export function WhyPanel({
             <span className="mt-1 block text-dim">{readable.horizon.note}</span>
           </Detail>
 
-          <Detail label="The profit target we recorded">
+          {/* Not "the target we recorded": since the owner's 2026-09-25
+              ruling, reaching it puts the position to a sell-or-hold
+              decision whose default is to bank the win in full. The label
+              has to name the behaviour; `plain` and `note` carry the rest,
+              including the case where a position has left the rule and is
+              on its trailing stop alone. */}
+          <Detail label="The profit target, and what happens when we reach it">
             <span>{readable.take_profit.plain}</span>
             <span className="mt-1 block text-dim">{readable.take_profit.note}</span>
           </Detail>

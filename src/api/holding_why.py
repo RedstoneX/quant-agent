@@ -40,9 +40,14 @@ read-only API-safety invariant in `src/api/db_reads.py` untouched.
   a person writes them ("11 September 2026").
 * A missing field SAYS it is missing. It is never omitted and never
   zeroed — "not recorded" is information, a silent gap is not.
-* The take-profit price is labelled for what it actually is. Nothing in
-  the desk executes against it (see `NOTHING_ACTS_ON_TARGET`), so
-  showing it as an instruction would be a lie.
+* The take-profit price is labelled for what it actually is — a DECISION
+  point the desk re-derives from the chart every review, whose default is
+  to sell the position in full when it is reached (owner ruling
+  2026-09-25). It is not a standing sell order and nothing fires intrabar,
+  so `note` says both halves; but calling it merely a "reference" the desk
+  never acts on, which this view did until that ruling shipped, is the
+  lie it was written to avoid. A position that has left the rule for
+  trailing-stop-only management says THAT instead.
 """
 
 from __future__ import annotations
@@ -53,19 +58,39 @@ from datetime import date
 from typing import Any
 
 #: Verbatim, because getting this wrong misleads the owner about whether
-#: the desk will ever sell at the number on his screen. Established from
-#: code and history on 2026-09-18: the automatic take-profit trim was
-#: deleted on 2026-09-12 (`docs/INCIDENT_HISTORY.md`, "the automatic
-#: take-profit trim is deleted; the trailing stop is the only exit rule");
-#: no caller anywhere passes `take_profit_price` to the broker; and
-#: "taking profits" / "TARGET_BREACH" are deliberately absent from the
-#: list of reasons that can justify an exit (`src/pipeline.py`).
-NOTHING_ACTS_ON_TARGET = (
-    "Nothing sells at this price. It is a reference the desk recorded at "
-    "entry, not an instruction. Since 12 September 2026 the trailing stop "
-    "is the only automatic exit, and reaching a profit target is not by "
-    "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+#: the desk will ever sell at the number on his screen. The fixed "sell 15%
+#: at +30%" trim was deleted 2026-09-12 and a bare "sell at X" rule is not
+#: coming back. But the owner ruling of 2026-09-25 made two things true that
+#: this line must now state honestly: the target is RE-DERIVED from the chart
+#: every review (no longer frozen at entry), and reaching it is a REASSESS
+#: point at which the desk WILL sell — but only when the chart independently
+#: confirms the move is over (its trend structure breaks), never on the number
+#: alone. (The constant name predates the ruling; the desk now acts on the
+#: target conditionally, which is exactly what this text spells out.)
+#: What the desk does at the target, in the owner's terms. Named for the
+#: behaviour it describes; the old name (`NOTHING_ACTS_ON_TARGET`) described
+#: the deleted fixed-gain trim's absence and stopped being true on 2026-09-25.
+WHAT_HAPPENS_AT_TARGET = (
+    "This price is a reassessment point, not a standing sell order. The desk "
+    "re-derives it from the chart every review, so it stays current rather "
+    "than frozen at entry. Reaching it is not by itself a reason to sell: the "
+    "desk sells here only if the chart also confirms the move is over — its "
+    "own trend structure breaks — and otherwise holds and lets the trailing "
+    "stop, which ratchets up every review, carry the position."
+)
+
+#: The same field for a position that has LEFT the at-target rule. It is over
+#: its target with nothing left overhead to extend the target to, so the desk
+#: stopped re-running a full-close decision on a number the price has passed
+#: for good, and the trailing stop is the only thing that acts now.
+TRAILING_STOP_ONLY_NOW = (
+    "This position has run past this price with no structure left above it to "
+    "aim at, so the desk has stopped treating the number as a decision point: "
+    "re-running a sell-or-hold vote every review on a target the price has "
+    "already left behind would eventually close the position on noise. It is "
+    "now managed by its trailing stop alone, which ratchets up every review "
+    "and is what will close it. If the chart rolls over, the position rejoins "
+    "the sell-at-target rule and is banked."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry
@@ -704,6 +729,14 @@ def build_holding_why(
     revised = bool(
         tp and entry_target and round(tp, 2) != round(entry_target, 2)
     )
+    # Has this position LEFT the at-target rule? It does that when it is over
+    # its target, still trending, and the chart holds no structure left ahead
+    # of price to extend the target to — from then on only the trailing stop
+    # acts, and saying otherwise would state the wrong rule to the owner.
+    management_rows = by_kind.get(("risk_manager", "at_target_management")) or []
+    management = _payload(management_rows[-1]) if management_rows else {}
+    trailing_only = bool(management.get("trailing_only"))
+    note = TRAILING_STOP_ONLY_NOW if trailing_only else WHAT_HAPPENS_AT_TARGET
     if tp:
         move = ""
         if entry_price:
@@ -711,18 +744,19 @@ def build_holding_why(
                 f", about {abs(tp - entry_price) / entry_price * 100:.1f}% from "
                 "where we bought"
             )
-        plain = f"Reference target: ${tp:,.2f}{move}."
+        label = "Reference target" if trailing_only else "Decision target"
+        plain = f"{label}: ${tp:,.2f}{move}."
         if revised and entry_target:
             plain = (
-                f"Reference target: ${tp:,.2f}{move} — re-derived from "
+                f"{label}: ${tp:,.2f}{move} — re-derived from "
                 f"${entry_target:,.2f}, which is still what progress and pace "
                 f"are measured against."
             )
         take_profit = {
             "price": tp,
             "plain": plain,
-            "acted_on": False,
-            "note": NOTHING_ACTS_ON_TARGET,
+            "acted_on": not trailing_only,
+            "note": note,
             "entry_price_target": entry_target,
             "revised": revised,
             "basis": str(revision.get("basis") or "") if revised else "",
@@ -734,7 +768,7 @@ def build_holding_why(
             "price": None,
             "plain": f"Take-profit target: {NOT_RECORDED}",
             "acted_on": False,
-            "note": NOTHING_ACTS_ON_TARGET,
+            "note": note,
             "entry_price_target": entry_target,
             "revised": False,
             "basis": "",
