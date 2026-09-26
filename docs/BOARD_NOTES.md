@@ -465,6 +465,8 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
 
+**Sweep shipped 2026-09-25 —** `scripts/prune_worktrees.py` is the mechanical guard: it clears registrations whose scratch directory is gone (`git worktree prune`) and removes worktrees that are merged into `origin/main`, clean, unlocked, owned by us and idle >= 7 days (`git worktree remove`, never `--force`). Scoped by construction to this repo's own registered worktrees and refuses any path owned by another uid, so it can never touch another tenant on this shared box. Read-only by default; `--prune` acts. The swept-on-a-schedule rule is `scripts/systemd/quant-agent-worktree-prune.{service,timer}` (daily 04:10 ET, off-hours because it is the one maintenance sweep that writes), run through `scripts/run_worktree_prune.sh`. Detection logic is unit-tested against injected git/fs stubs plus a real-git integration test (`tests/test_prune_worktrees.py`).
+
 ## item 143
 
 **Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
@@ -490,6 +492,8 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
 
 ## item 174
+
+**Pairing added 2026-09-26 —** the resume alert is now tied to a suspension alert the owner actually received. When the "SUSPENDED" send fails, the auto-clear wipes `suspended` and `alert_state`, so that suspension alert becomes permanently undeliverable; sending "RESUMED" anyway reported a recovery from an incident he was never told about. The auto-clear now records the suspension's alert state at the last moment it is knowable, and an unpaired resume is resolved without sending. Also: the offline harness could not reach this path at all (its 503 is pre-generation, hence provably free, hence never latches), so a `server_error_mid_stream` kind was added and a morning rehearsal reproduced latch → suspension alert → auto-expiry → paired resume alert end to end. Detail in `docs/INCIDENT_HISTORY.md`.
 
 **Alert shipped 2026-09-25 —** the auto-expiry now sends the owner the same-surface Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; delivery is durable/retryable with the same claim state machine the quota-recovery alert uses. Still open: the two unledgered constants below remain unmeasured.
 

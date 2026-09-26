@@ -910,6 +910,21 @@ class CandidateFunnelItem(BaseModel):
     # indistinguishable from a deliberate no-trade.
     execution_skip_reason: str | None = None
     execution_skip_detail: str | None = None
+    # Why the desk could not READ this candidate's analysis at all, when that
+    # happened — quoted from the `analysis_drop` evidence row the risk stage
+    # writes (board item 158). Same shape and same purpose as the execution
+    # skip above, one stage earlier: without it a name the technical seat
+    # dropped shows up in the funnel with every other field empty and no way
+    # to tell a parse loss from a candidate nothing liked.
+    # `analysis_drop_code` is the stable enum (`malformed_row`,
+    # `schema_invalid`, `unspecified`); `analysis_drop_reason` is the human
+    # detail. `analysis_drop_recovered` is True when a retry put the name back
+    # into the book anyway — a cost note, not missing coverage. All None when
+    # no drop was recorded, and a pre-158 row with no code reads as
+    # `unspecified` rather than failing.
+    analysis_drop_code: str | None = None
+    analysis_drop_reason: str | None = None
+    analysis_drop_recovered: bool | None = None
 
 
 class RunFunnelResponse(BaseModel):

@@ -85,6 +85,18 @@ function expandedSummary(c: CandidateFunnelItem, funnel: RunFunnelResponse): str
   } else if (c.reached_pm_target && !c.reached_proposed_order) {
     parts.push("No order was constructed; candidate-specific reason was not recorded.");
   }
+  // Board item 158 — "why is this name not here?". A candidate whose analysis
+  // could not be read has every stage field above empty for one specific
+  // reason, and the fallback sentence below ("reason was not recorded") is
+  // simply untrue once the reason IS recorded. Said first, in plain words.
+  if (c.analysis_drop_reason || c.analysis_drop_code) {
+    const why = c.analysis_drop_reason || (c.analysis_drop_code ?? "").replace(/_/g, " ");
+    parts.unshift(
+      c.analysis_drop_recovered
+        ? `Analysis first came back unreadable (${why}); a retry recovered it, so this name did reach the desk.`
+        : `Analysis could not be read — ${why}. Dropped before the Portfolio Manager ever saw it.`
+    );
+  }
   if (!parts.length) parts.push("Screened but never reached a Portfolio Manager target this run; candidate-specific reason was not recorded.");
   return parts.join(" · ");
 }
