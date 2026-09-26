@@ -603,14 +603,17 @@ class ConstructorConfig:
     # the refusal was a bad decision justified by a false reason.
     # `_apply_sector_crowding_scale` now lets a sector-crowded trade through
     # at whatever size crowding leaves, however small, rather than refusing
-    # it outright. This field is kept (not deleted) because
-    # `apply_gross_ceiling` (see `construct_orders`'s call into
-    # `src/risk/rules.py`) still reads it as the notional floor for the
-    # SEPARATE gross-exposure-ceiling entry check — that gate was left
-    # unchanged; see the fix notes for why. Mirrors
-    # `cash_sweep.min_order_usd`, which still does its original job gating
-    # the spare-cash SWEEP, unrelated to this trade path.
-    min_order_usd: float = 500.0
+    # it outright.
+    #
+    # DELETED 2026-09-26, board item 183. The sentence that used to stand here
+    # said the field was "kept (not deleted) because `apply_gross_ceiling`
+    # still reads it as the notional floor" — that had been false since
+    # 2026-09-24, when the same fix turned that parameter into an explicitly
+    # accepted-and-ignored argument (`src/risk/rules.py`, the comment on its
+    # signature). Nothing in the constructor read this field, and the one
+    # place it was passed to discarded it, so the constructor no longer passes
+    # anything: no order size, refusal or gate changes. The sweep's own
+    # `cash_sweep.min_order_usd` is a different field and is untouched.
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
     # this before it is converted to a weight, so the same risk allocation
@@ -1355,7 +1358,10 @@ class PortfolioConstructor:
         outcome = apply_gross_ceiling(
             orders, positions, total_value, ceiling,
             cash_park_symbol=self.cfg.cash_park_symbol,
-            min_order_usd=self.cfg.min_order_usd,
+            # No `min_order_usd`: board item 183 deleted the constructor's
+            # copy of the flat $500 floor. `apply_gross_ceiling` accepts the
+            # argument only as an ignored legacy parameter and falls back to
+            # its own default, which it never reads either.
             emit_trims=False,
         )
         for note in outcome.notes:
