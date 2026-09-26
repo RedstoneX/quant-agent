@@ -23,7 +23,7 @@ never by elapsed time. Priority order tested below:
 intraday quote — a wick that pierces a level and closes back inside is
 noise, not a break (real technical-analysis practice, and the reason this
 module's confirmation gate exists at all). Deciding WHETHER a close counts
-as "beyond" the level reuses `NOISE_BAND_ATR_MULTIPLE` (the same margin
+as "beyond" the level is `BREAK_CONFIRMATION_ATR_MULTIPLE` (the margin
 already ratified for "is an adverse move real") — an ATR question. That is
 deliberately NOT the level-zone tolerance used to identify which level a
 stop sits on, which is a percentage-of-price identity question
@@ -44,6 +44,7 @@ Every number below is hand-computed against the real formulas in
 
 from src.data.levels import CLUSTER_TOLERANCE_PCT
 from src.risk.exit_guard import (
+    BREAK_CONFIRMATION_ATR_MULTIPLE,
     NOISE_BAND_ATR_MULTIPLE,
     check_structural_protection,
     structural_protection_broken,
@@ -173,15 +174,15 @@ def test_thesis_invalid_if_not_triggered_stays_protected_indefinitely():
 # ---------------------------------------------------------------------------
 # 2. Structural level backing the stop, when thesis_invalid_if is absent or
 #    unparseable — level IDENTIFICATION as `_level_backing_stop`, break
-#    MARGIN as `NOISE_BAND_ATR_MULTIPLE` (1.0), not the level-zone tolerance.
+#    MARGIN as `BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0), not the level-zone tolerance.
 # ---------------------------------------------------------------------------
 
 def test_structural_level_broken_two_consecutive_closes_lifts_protection():
     # Long: entry 100, stop 90, atr 2. Level IDENTIFICATION tolerance =
     # 0.25 * 2 = 0.5 -> a verified level at 90.3 (gap 0.3 <= 0.5) with 6
-    # touches (>= 5) backs the stop. Break MARGIN = NOISE_BAND_ATR_MULTIPLE
+    # touches (>= 5) backs the stop. Break MARGIN = BREAK_CONFIRMATION_ATR_MULTIPLE
     # (1.0) * atr (2) = 2.0 -> broken when close <= level - margin = 88.3.
-    assert NOISE_BAND_ATR_MULTIPLE == 1.0
+    assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
     result = check_structural_protection(
         thesis_invalid_if=None,
         current_price=88.0,   # <= 88.3 -> decisively broken
@@ -221,7 +222,7 @@ def test_structural_level_broken_single_close_stays_protected():
 
 def test_small_close_below_level_within_break_margin_is_not_a_break():
     """A close that dips modestly below the level but stays inside the
-    NOISE_BAND_ATR_MULTIPLE margin is exactly the same shape as an
+    BREAK_CONFIRMATION_ATR_MULTIPLE margin is exactly the same shape as an
     intrabar wick that closes back inside it — real trading practice does
     not call this a break, and neither does this function. This also
     covers the "intraday wick closing back inside on the same day never
