@@ -9,7 +9,7 @@ Two sourced regimes (see the module note in `src/risk/exit_guard.py`):
     ratified two-consecutive-close floor, reclaim resets. Nothing exits faster
     than this floor — there is NO single-close path.
 
-The break MARGIN is always NOISE_BAND_ATR_MULTIPLE (1.0 ATR). These tests also
+The break MARGIN is always BREAK_CONFIRMATION_ATR_MULTIPLE (1.0 ATR). These tests also
 cover the cross-day counting fixes (streak adjacency, margin consistency) and
 the owner-facing voicing to both surfaces, including the silent-action guard
 when the Telegram send RETURNS FALSE (it does not raise).
@@ -29,7 +29,7 @@ from src.data.technical import ADX_PERIOD, compute_indicators
 from src.models import OHLCV
 from src.risk.exit_guard import (
     ADX_STRONG_TREND_THRESHOLD,
-    NOISE_BAND_ATR_MULTIPLE,
+    BREAK_CONFIRMATION_ATR_MULTIPLE,
     TREND_CONFIRMING_CLOSES,
     REGIME_STRONG_WITH_TREND,
     REGIME_DEFAULT,
@@ -273,7 +273,7 @@ def test_margin_conflation_cannot_confirm_early():
 
 
 def test_margin_is_always_one_atr_across_regimes():
-    assert NOISE_BAND_ATR_MULTIPLE == 1.0
+    assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
     for kw in (dict(adx=30.0, **_DOWNTREND), dict(adx=30.0, **_UPTREND)):
         broke = check_structural_protection(**_common(current_price=88.7, **kw))
         assert broke.raw_broken is True   # 88.7 beyond 1.0-ATR margin in both

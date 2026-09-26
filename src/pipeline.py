@@ -701,14 +701,10 @@ def build_constructor_config(config, risk_engine_config):
             # for, this one gets structurally.
             max_sector_pct=risk_engine_config.max_sector_pct,
             max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
-            # §10.3's floor — reuses the existing $500 threshold rather than
-            # inventing a second notion of "too small to bother". It lives
-            # under `cash_sweep` because that is where it was first needed;
-            # the number, not the section, is what is being reused.
-            min_order_usd=_risk_number(
-                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
-                500.0,
-            ),
+            # No `min_order_usd`: board item 183 deleted
+            # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
+            # constructor read it — the one call that forwarded it reached an
+            # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
@@ -753,9 +749,6 @@ def build_constructor_config(config, risk_engine_config):
             ),
             max_target_reach_atr_multiple=_risk_setting(
                 "max_target_reach_atr_multiple", 1.5,
-            ),
-            max_stop_width_reach_atr_multiple=_risk_setting(
-                "max_stop_width_reach_atr_multiple", 1.5,
             ),
             max_target_horizon_sessions=int(
                 _risk_setting("max_target_horizon_sessions", 60),
@@ -8349,9 +8342,11 @@ class TradingPipeline:
                 # 2026-09-12: a refusal the constructor recorded AS DATA
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
-                # beside it — today `stop_wider_than_instrument_reach`
-                # or `no_structural_stop_and_no_volatility_reading`; the
-                # young-listing bar-count refusal was dropped, item 180).
+                # beside it — today `no_structural_stop_and_no_
+                # volatility_reading`; the young-listing bar-count refusal
+                # was dropped, item 180, and the stop-WIDTH refusal
+                # `stop_wider_than_instrument_reach` was deleted 2026-09-26,
+                # item 56, after refusing nothing in 648 sized stops).
                 # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.
