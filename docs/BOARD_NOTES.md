@@ -486,10 +486,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** Distinct from item 20, which refuses a decision when a seat's answer is LOST entirely — this is the proceed-anyway case, and nothing tracks it.
 
-## item 155
-
-**Moved from WORK.md (2026-09-24) —** It is pinned as a verified no-op behind guard 1b for a BUY (`test_item135_buy_guard_is_unchanged_by_the_sweep`, which asserts exactly one refusal is recorded, not two) and the new function's own docstring names guard 1b as the consolidation target, so nothing is silently drifting — but this codebase's own comments elsewhere call exactly this kind of duplication the drift that produced the #519 defect in the first place.
-
 ## item 157
 
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
