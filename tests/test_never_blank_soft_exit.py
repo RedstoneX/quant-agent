@@ -600,3 +600,221 @@ def test_owner_missing_data_rule_forbids_skip_as_the_product():
     outcome = (repo / "docs" / "OUTCOME.md").read_text()
     assert "Missing data is a defect in the step that should have produced it" in outcome
 
+
+
+# ---------------------------------------------------------------------------
+# Board item 78: the heal must be recorded, and the refusal must not assert a
+# retry that never happened. The isolate stays; it is the last resort, not the
+# product.
+# ---------------------------------------------------------------------------
+
+def _blank_buy_plan():
+    return SimpleNamespace(
+        decisions=[TradeDecision(
+            action="BUY", symbol="MRVL", allocation_pct=3.0,
+            entry_price=80.0, stop_loss=75.0, take_profit=90.0,
+            reasoning="blank", thesis_invalid_if=None,
+        )],
+        targets=[TargetPosition(
+            symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
+            thesis_invalid_if="",
+        )],
+        constructor_dropped=[],
+    )
+
+
+def _evidence_payloads(db):
+    import json
+    out = []
+    for call in db.insert_specialist_evidence.mock_calls:
+        raw = call.kwargs.get("evidence_json")
+        if isinstance(raw, str):
+            try:
+                out.append(json.loads(raw))
+            except ValueError:
+                pass
+    return out
+
+
+def test_isolate_still_exists_and_still_refuses():
+    """Item 78 is NOT retired here: the last-resort isolate must stay live."""
+    from src.pipeline_stages import _isolate_empty_soft_exit_entries as iso
+    assert callable(iso)
+    pipeline = SimpleNamespace(db=MagicMock())
+    plan = _blank_buy_plan()
+    assert iso(pipeline, RunContext.start("morning"), plan) == ["MRVL"]
+
+
+def test_refusal_does_not_claim_a_retry_that_never_ran():
+    """Untrue is a lie: with no heal record the reason must say so."""
+    pipeline = SimpleNamespace(db=MagicMock())
+    plan = _blank_buy_plan()
+    _isolate_empty_soft_exit_entries(pipeline, RunContext.start("morning"), plan)
+    rows = [
+        p for p in _evidence_payloads(pipeline.db)
+        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
+    ]
+    assert len(rows) == 1
+    assert rows[0]["heal_outcome"] == "none_recorded"
+    assert "one paid retry" not in rows[0]["detail"]
+    assert "no soft-exit heal was recorded" in rows[0]["detail"]
+
+
+def test_refusal_quotes_the_real_heal_outcome_per_name():
+    """A name whose retry was blocked by the cap says exactly that."""
+    from src.seat_heal import HEAL_CAP_BLOCKED
+    pipeline = SimpleNamespace(db=MagicMock())
+    ctx = RunContext.start("morning")
+    ctx.soft_exit_heals = {
+        "MRVL": {"outcome": HEAL_CAP_BLOCKED, "detail": "spend cap refused it"},
+    }
+    _isolate_empty_soft_exit_entries(pipeline, ctx, _blank_buy_plan())
+    rows = [
+        p for p in _evidence_payloads(pipeline.db)
+        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
+    ]
+    assert rows[0]["heal_outcome"] == HEAL_CAP_BLOCKED
+    assert "spend cap refused it" in rows[0]["detail"]
+
+
+def test_nothing_is_silently_dropped_every_isolated_name_has_a_row():
+    """Two blank BUYs, two durable per-name rows. No silent drop."""
+    pipeline = SimpleNamespace(db=MagicMock())
+    plan = _blank_buy_plan()
+    plan.decisions.append(TradeDecision(
+        action="SHORT", symbol="XYZ", allocation_pct=2.0,
+        entry_price=50.0, stop_loss=55.0, take_profit=40.0,
+        reasoning="blank", thesis_invalid_if=None,
+    ))
+    plan.targets.append(TargetPosition(
+        symbol="XYZ", risk_allocation_pct=1.0, thesis="t",
+        thesis_invalid_if="",
+    ))
+    isolated = _isolate_empty_soft_exit_entries(
+        pipeline, RunContext.start("morning"), plan,
+    )
+    assert sorted(isolated) == ["MRVL", "XYZ"]
+    named = {
+        p.get("reason"): 0 for p in _evidence_payloads(pipeline.db)
+    }
+    rows = [
+        p for p in _evidence_payloads(pipeline.db)
+        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
+    ]
+    assert len(rows) == 2, named
+    assert sorted(plan.constructor_dropped) == ["MRVL", "XYZ"]
+
+
+def test_heal_outcomes_are_drained_to_durable_rows_and_onto_ctx():
+    """The heal's own outcome is machine-readable, not a log line."""
+    from src.models import SOFT_EXIT_HEAL_EVENT_REASON
+    from src.pipeline_stages import _record_soft_exit_heals
+    from src.seat_heal import HEAL_NOT_ATTEMPTED
+    agent = SimpleNamespace(
+        last_soft_exit_heals={
+            "MRVL": {"outcome": HEAL_NOT_ATTEMPTED, "detail": "never asked"},
+        },
+    )
+    agent.drain_soft_exit_heals = (
+        lambda: (lambda d: (setattr(agent, "last_soft_exit_heals", {}), d)[1])(
+            dict(agent.last_soft_exit_heals)
+        )
+    )
+    pipeline = SimpleNamespace(db=MagicMock(), portfolio_manager=agent)
+    ctx = RunContext.start("morning")
+    _record_soft_exit_heals(pipeline, ctx)
+    assert ctx.soft_exit_heals["MRVL"]["outcome"] == HEAL_NOT_ATTEMPTED
+    rows = [
+        p for p in _evidence_payloads(pipeline.db)
+        if p.get("reason") == SOFT_EXIT_HEAL_EVENT_REASON
+    ]
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == HEAL_NOT_ATTEMPTED
+    assert rows[0]["detail"] == "never asked"
+    # Drained: a second call must not re-file a stale outcome.
+    pipeline.db.reset_mock()
+    _record_soft_exit_heals(pipeline, ctx)
+    assert not pipeline.db.insert_specialist_evidence.mock_calls
+
+
+def test_pm_records_heal_not_attempted_when_there_is_nothing_to_replay():
+    """The silent bail-out now leaves a per-name machine-readable reason."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.seat_heal import HEAL_NOT_ATTEMPTED
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    agent._soft_exit_retry_used = False
+    agent.last_soft_exit_heals = {}
+    decision = SimpleNamespace(targets=[TargetPosition(
+        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
+        thesis_invalid_if="",
+    )])
+    result = SimpleNamespace(user_message="")
+    out, _ = agent._fill_missing_open_falsifiers(decision, result)
+    heals = agent.drain_soft_exit_heals()
+    assert heals["MRVL"]["outcome"] == HEAL_NOT_ATTEMPTED
+    assert "NEVER ATTEMPTED" in heals["MRVL"]["detail"]
+    # No falsifier was invented on the way out.
+    assert out.targets[0].thesis_invalid_if in ("", None, SOFT_EXIT_UNKNOWN)
+    # And drained means drained.
+    assert agent.drain_soft_exit_heals() == {}
+
+
+def test_pm_records_a_filled_falsifier_as_a_paid_retry_heal():
+    """A healed name is recorded as healed, and is never refused."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.seat_heal import HEAL_PAID_RETRY
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    agent._soft_exit_retry_used = False
+    agent.last_soft_exit_heals = {}
+    agent._target_intent = lambda t, *a, **k: "buy"
+    agent._execute = lambda *a, **k: SimpleNamespace(
+        parse_json=lambda: {"targets": [
+            {"symbol": "MRVL", "thesis_invalid_if": "closes below 75"},
+        ]},
+    )
+    decision = SimpleNamespace(targets=[TargetPosition(
+        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
+        thesis_invalid_if="",
+    )])
+    result = SimpleNamespace(user_message="original prompt")
+    out, _ = agent._fill_missing_open_falsifiers(decision, result)
+    assert out.targets[0].thesis_invalid_if == "closes below 75"
+    heals = agent.drain_soft_exit_heals()
+    assert heals["MRVL"]["outcome"] == HEAL_PAID_RETRY
+    # A healed name reaches the isolate with a real falsifier, so the
+    # isolate is unreachable for it.
+    plan = SimpleNamespace(
+        decisions=[TradeDecision(
+            action="BUY", symbol="MRVL", allocation_pct=3.0,
+            entry_price=80.0, stop_loss=75.0, take_profit=90.0,
+            reasoning="healed", thesis_invalid_if="closes below 75",
+        )],
+        targets=out.targets, constructor_dropped=[],
+    )
+    pipeline = SimpleNamespace(db=MagicMock())
+    assert _isolate_empty_soft_exit_entries(
+        pipeline, RunContext.start("morning"), plan,
+    ) == []
+
+
+def test_pm_records_a_retry_that_ran_and_still_produced_nothing():
+    """`failed` and `not_attempted` must not be confusable."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.seat_heal import HEAL_FAILED
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    agent._soft_exit_retry_used = False
+    agent.last_soft_exit_heals = {}
+    agent._target_intent = lambda t, *a, **k: "buy"
+    agent._execute = lambda *a, **k: SimpleNamespace(
+        parse_json=lambda: {"targets": [{"symbol": "MRVL"}]},
+    )
+    decision = SimpleNamespace(targets=[TargetPosition(
+        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
+        thesis_invalid_if="",
+    )])
+    out, _ = agent._fill_missing_open_falsifiers(
+        decision, SimpleNamespace(user_message="original prompt"),
+    )
+    heals = agent.drain_soft_exit_heals()
+    assert heals["MRVL"]["outcome"] == HEAL_FAILED
+    assert "WAS attempted" in heals["MRVL"]["detail"]

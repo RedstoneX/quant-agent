@@ -408,6 +408,12 @@ _SOFT_EXIT_FIELDS = frozenset({"thesis_invalid_if", "catalyst"})
 # TEMPORARY last-resort that records this reason; delete that isolate
 # when a live session proves no actionable name arrives blank.
 SOFT_EXIT_MISSING_AFTER_RETRY = "soft-exit missing after retry"
+# Durable per-name record of what the soft-exit heal ACTUALLY did before
+# that refusal could be reached — filled on the one paid retry, blocked by
+# the spend cap, never attempted, errored, or re-asked and still blank.
+# Board item 78: without it, the refusal above asserts a retry that may
+# never have run, and a heal that quietly did nothing leaves no trace.
+SOFT_EXIT_HEAL_EVENT_REASON = "soft_exit_heal"
 ACTIONABLE_TECH_RATINGS = frozenset({"buy", "strong_buy", "sell", "strong_sell"})
 
 
