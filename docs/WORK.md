@@ -186,7 +186,7 @@ DONE WHEN:
 **139. Roughly 74 of the repo's 90 registered git worktrees are session scratch under `/tmp` — filed 2026-09-18, housekeeping, pre-existing, nobody's current task.** CORRECTION to the filing brief: none of them is stale in git's sense — every registered path still exists, so `git worktree prune` removes nothing [verified 2026-09-18].
 
 DONE WHEN:
-  - [ ] finished sessions remove their own worktree, or a swept-on-a-schedule rule exists and is recorded
+  - [x] finished sessions remove their own worktree, or a swept-on-a-schedule rule exists and is recorded
 detail: docs/BOARD_NOTES.md (item 139)
 
 **143. `docs/RESEARCH_FINDINGS.md` has ZERO entries for ATR bands, trailing, profit-taking, pacing or ranking granularity — filed 2026-09-18.** The only exit-side measurement it carries is the level-touch/stop bar in section 7.
