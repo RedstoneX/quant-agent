@@ -285,6 +285,15 @@ def run_rehearsal(
     # message, not a database snapshot.
     injector = ProviderFaultInjector.from_specs(provider_faults)
 
+    # A rehearsal is a fresh session. Route demotions are process-wide and
+    # survive one, so two rehearsals in one process had the second start at
+    # the secondary route because the first exhausted its recordings — the
+    # second run's verdict became a function of the first instead of of the
+    # code under test. Cleared here, where every other piece of
+    # session-carried state (clock, broker, config) is also replaced.
+    from src.agents.base import reset_route_breakers
+    reset_route_breakers()
+
     from src.trading_calendar import ET
 
     now_et = now_et or datetime.now(ET)
