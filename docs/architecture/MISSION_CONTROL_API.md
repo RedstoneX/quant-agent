@@ -243,6 +243,17 @@ line — closing a frontend-only contract gap where a specific persisted
 skip reason existed but the UI fell back to a generic "proposed but not
 executed."
 
+`CandidateFunnelItem` also carries `analysis_drop_code` /
+`analysis_drop_reason` / `analysis_drop_recovered` (board item 158): why the
+desk could not READ this candidate's analysis, one stage earlier than the
+execution skip above, quoted from the `analysis_drop` evidence row the risk
+stage writes. The code is a stable enum (`malformed_row`, `schema_invalid`,
+`unspecified`) safe to switch on; the reason is the human detail. All three
+are null when no drop was recorded, and a row written before the code existed
+reads as `unspecified` rather than failing. Without them a dropped name
+appeared in the funnel with every other field empty and the UI fell back to
+"candidate-specific reason was not recorded" when the reason WAS recorded.
+
 Frontend-only, no backend change: the professional Today Sessions strip
 can pin the primary view (Candidates / Decision Room / chart) to an
 explicit earlier run from the current ET day. Automatic mode truthfully

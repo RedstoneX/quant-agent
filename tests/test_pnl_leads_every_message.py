@@ -70,12 +70,16 @@ def test_morning_decision_session_leads_with_pnl():
 
 
 def test_midday_position_review_leads_with_pnl():
+    # A stop-coverage gap renders a banner, so the P&L assertion has
+    # something to be ahead OF. (This used to use the daily-loss halt
+    # status; that mechanism was removed 2026-09-20, retired item 32.)
     msg = trader_feed._format_position_review(
-        "midday", {**PNL_RESULT, "status": "daily_loss_halted"}, 10.0,
+        "midday",
+        {**PNL_RESULT, "stop_coverage_gaps": [
+            {"symbol": "NVDA", "state": "uncovered", "coverage": "none"},
+        ]},
+        10.0,
     )
-    # A status that renders the halt banner, so the assertion has something
-    # to be ahead OF.
-    assert "CIRCUIT BREAKER" in msg
     assert_pnl_leads(msg)
 
 
@@ -122,8 +126,16 @@ def test_premarket_earnings_leads_with_an_honest_not_available():
     """The pre-open filing reader does no account read, so there is no
     figure. The block still leads — and says why it is empty rather than
     being dropped (an absent block reads as a broken one) or filled with a
-    fabricated zero."""
-    result = {"status": "preprocessed", "run_id": "r", "filings": []}
+    fabricated zero.
+
+    The reason is now carried by the result (`run_earnings_preprocess` sets
+    `pnl_unavailable_reason`) instead of being inferred from the absent
+    keys: inferring it made every trading session assert an account read it
+    HAD made had not happened (2026-09-23)."""
+    result = {
+        "status": "preprocessed", "run_id": "r", "filings": [],
+        "pnl_unavailable_reason": "no_account_read",
+    }
     msg = trader_feed._format_earnings(result, 10.0)
     assert_pnl_leads(msg)
     assert "not available" in msg

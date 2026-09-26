@@ -1079,6 +1079,57 @@ def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
     assert "AAPL" in msg
 
 
+def test_format_evening_position_snapshot_null_entry_or_price_says_not_available(
+    tmp_path, monkeypatch,
+):
+    """`_row_line` used to compute `(curr / avg - 1) * 100` with `avg`
+    falsy meaning "treat as 0%", which rendered a fabricated "(+0.0%)"
+    on a NULL `avg_entry` instead of admitting the return isn't known.
+    Worse, a NULL `current_price` with a real `avg_entry` raised
+    TypeError on `curr / avg` — uncaught at this granularity, which
+    would drop the entire winners/losers block for every row, not just
+    the gapped one. Both must now render "not available" for that row's
+    percentage and keep the rest of the block intact."""
+    import sqlite3
+    db_path = tmp_path / "positions.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE positions ("
+        "symbol TEXT PRIMARY KEY, qty REAL, avg_entry REAL,"
+        " current_price REAL, market_value REAL,"
+        " unrealized_pnl REAL, sector TEXT)"
+    )
+    # NULL avg_entry, both winning (positive pnl).
+    conn.execute(
+        "INSERT INTO positions VALUES ('AAPL', 10, NULL, 105, 1050, 50, 'Tech')"
+    )
+    # NULL current_price with a real avg_entry — the unguarded-division case.
+    conn.execute(
+        "INSERT INTO positions VALUES ('MSFT', 5, 300, NULL, 1500, 25, 'Tech')"
+    )
+    # One clean row so the block has something normal to compare against.
+    conn.execute(
+        "INSERT INTO positions VALUES ('NVDA', 5, 200, 220, 1100, 100, 'Tech')"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    result = {
+        "status": "analyzed", "run_id": "run-null-entry",
+        "daily_pnl": 0.0, "total_value": 3650.0,
+        "analysis": {"risk_rating": "moderate"},
+    }
+    # Must not raise, and must not drop the block.
+    msg = format_session_result("evening", result, 30.0)
+    assert msg is not None
+    assert "Top winners" in msg
+    assert "AAPL" in msg and "MSFT" in msg and "NVDA" in msg
+    assert "(+0.0%)" not in msg
+    assert "(not available)" in msg
+    assert "+10.0%" in msg  # NVDA's real percentage still computes normally
+
+
 def test_format_evening_daily_return_uses_prior_equity_denominator():
     """Daily return is P&L over PRIOR-day equity, not over current.
     Using current understates losses (denominator includes today's
@@ -1183,6 +1234,46 @@ def test_format_earnings_preprocess_fetch_error_is_silent():
     result = {"status": "fetch_error", "run_id": "run-ep", "error": "SEC 503"}
     msg = format_session_result("earnings_preprocess", result, 5.0)
     assert msg is None
+
+
+def test_format_earnings_preprocess_suspended_shows_backlog_not_nothing():
+    """2026-09-24: a suspended run used to render 'analyzed:0 confirmed:0
+    failed:0' — indistinguishable from a day with no filings at all — even
+    when N filings were queued and waiting on the cost circuit. The
+    suspended payload now carries `filings_waiting`, and the message must
+    say so rather than the misleading zero counts."""
+    result = {
+        "status": "paid_analysis_suspended",
+        "run_id": "run-ep-suspended",
+        "paid_analysis_suspended": True,
+        "error": "mandatory cost circuit is open",
+        "orders": [],
+        "filings_waiting": [
+            {"symbol": "NVDA", "form_type": "10-Q",
+             "filing_date": "2026-09-24", "outcome": "waiting"},
+        ],
+        "filings_waiting_count": 1,
+    }
+    msg = format_session_result("earnings_preprocess", result, 4.0)
+    assert msg is not None
+    assert "analyzed: 0" not in msg
+    assert "1 filing(s) waiting" in msg
+    assert "NVDA" in msg
+
+
+def test_format_earnings_preprocess_suspended_with_no_backlog_says_so():
+    result = {
+        "status": "paid_analysis_suspended",
+        "run_id": "run-ep-suspended-empty",
+        "paid_analysis_suspended": True,
+        "error": "mandatory cost circuit is open",
+        "orders": [],
+        "filings_waiting": [],
+        "filings_waiting_count": 0,
+    }
+    msg = format_session_result("earnings_preprocess", result, 4.0)
+    assert msg is not None
+    assert "no filings waiting" in msg
 
 
 def test_format_intra_check_ok_is_silent():
@@ -1439,32 +1530,12 @@ def test_format_evening_no_meta_line_on_normal_day():
     assert "🧪 meta" not in msg
 
 
-# === deterministic escalation + dead-man's banner + action ordering ===
-
-def test_format_evening_deterministic_loss_escalation_independent_of_llm():
-    """A loss within 80% of the daily-loss circuit-breaker raises a 🚨 even
-    when the LLM under-rated the day (risk_rating=moderate). The deterministic
-    layer must not depend on the model grading its own day correctly."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -4500.0, "total_value": 95_500.0,   # prior_eq=100k → 4.5% loss
-        "max_daily_loss_pct": 5.0,                        # 0.8*5 = 4.0% threshold
-        "analysis": {"risk_rating": "moderate"},          # LLM did NOT escalate
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" in msg
-    assert "OPERATOR ATTENTION" not in msg  # LLM banner correctly stays quiet
-
-
-def test_format_evening_no_deterministic_alert_when_loss_modest():
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -500.0, "total_value": 99_500.0,     # 0.5% loss
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" not in msg
+# === dead-man's banner + action ordering ===
+# The deterministic daily-loss escalation banner that was also covered in
+# this section is gone: its four tests were deleted 2026-09-20 with the
+# account-level loss alarms (retired board item 32). Two of them asserted
+# the banner FIRED; the other two asserted it stayed quiet, and those two
+# would have gone on passing against a feature that no longer exists.
 
 
 def test_format_evening_missing_morning_session_is_red():
@@ -1633,35 +1704,6 @@ def test_format_evening_risk_capital_line_uses_realtime_fallback_pnl():
     msg = format_session_result("evening", result, 10.0)
     assert "4pm close" not in msg
     assert "vs risk capital: +20.00%" in msg   # 300 / 1500
-
-
-def test_deterministic_escalation_uses_4pm_basis_not_realtime():
-    """[B] The deterministic alert must evaluate the SAME 4pm basis as the
-    headline. Here the 4pm loss is 4.5% (≥80% of the 5% cap → fire) while the
-    real-time daily_pnl is tiny — proves it no longer keys off daily_pnl."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -100.0, "total_value": 99_900.0,      # real-time: ~0.1% loss
-        "pnl_4pm": -4500.0, "equity_close": 95_500.0,      # 4pm: 4.5% loss (baseline 100k)
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},                # LLM did NOT escalate
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" in msg
-
-
-def test_deterministic_escalation_ignores_realtime_loss_when_4pm_small():
-    """[B] inverse: a big real-time AH loss must NOT fire the alert when the
-    4pm close-to-close loss is small (the 4pm basis is authoritative)."""
-    result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -4500.0, "total_value": 95_500.0,     # real-time: big AH loss
-        "pnl_4pm": -100.0, "equity_close": 99_900.0,       # 4pm: ~0.1% loss
-        "max_daily_loss_pct": 5.0,
-        "analysis": {"risk_rating": "low"},
-    }
-    msg = format_session_result("evening", result, 10.0)
-    assert "DETERMINISTIC ALERT" not in msg
 
 
 def test_rehearsal_mode_suppresses_operator_alerts(monkeypatch):
@@ -1905,6 +1947,27 @@ def test_bad_data_status_fires_a_standalone_alert():
     # it; it stays in the log line and every stored row.
     assert "run-abc123" not in body
     assert "morning" in body
+
+
+def test_market_wide_blind_pages_the_owner_in_plain_words():
+    """2026-09-23. The market-wide Form 4 pass read nothing for five
+    sessions and nothing said so, because the seat's word for it was
+    `partial` — the same word it uses on an ordinary residue. The new word
+    has to reach the owner through the SAME standing alert, in words, with
+    no seat names or state tokens in the sentence he reads."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {"data_status": {"tech": "ok", "smart_money": "market_wide_blind"}}
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "DATA QUALITY ALERT" in body
+    assert "read none of the wider market's insider filings" in body
+    # The raw pair is kept for the log line only, beneath the plain words.
+    assert "smart_money=market_wide_blind" in body
+    assert "no plain wording" not in body
 
 
 def test_same_session_reuse_does_not_fire_data_quality_alert():
@@ -2340,6 +2403,37 @@ def test_recorded_output_never_contains_token_or_chat_id(tmp_path, monkeypatch):
     assert "<redacted>" in dump
 
 
+def test_truncated_send_records_the_delivered_text_not_the_original(tmp_path, monkeypatch):
+    """2026-09-24: `send()` truncates oversized text inside `_build_payload`
+    before it goes on the wire, but used to record the ORIGINAL `text` in
+    `notifier_sends` regardless — so the durable record differed from what
+    Telegram actually delivered, with no marker a truncation happened at
+    all. The recorded row must now match what was actually sent."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+    oversized = "x" * (n.MAX_MESSAGE_CHARS + 500)
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send(oversized, kind="generic") is True
+
+    delivered = mock_post.call_args.kwargs["json"]["text"]
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    # The record must match what actually went on the wire...
+    assert rows[0]["text"] == delivered
+    # ...which is shorter than (not equal to) the original oversized text.
+    assert len(rows[0]["text"]) < len(oversized)
+    assert rows[0]["text"] != oversized
+    assert "[...truncated]" in rows[0]["text"]
+
+
 def test_recording_failure_does_not_prevent_the_send(tmp_path, monkeypatch):
     """A recording bug (bad DB path, locked file, whatever) must never
     stop the message from sending — the notifier is a best-effort side
@@ -2543,3 +2637,214 @@ def test_congress_enabled_now_defaults_false_on_load_failure(monkeypatch):
 
     monkeypatch.setattr("yaml.safe_load", _boom)
     assert notifier._congress_enabled_now() is False
+
+
+# === malformed-number guard (garbled figures in LLM narrative prose) ===
+#
+# The bug this catches: a deterministic number is validated before it ever
+# reaches an owner message, but free-text PM/risk/analyst prose is never
+# reworded — so a garbled figure the LLM wrote inside its own reasoning
+# (the real incident: "$10,21.36") went straight through. These tests prove
+# the guard catches that shape and its close siblings, and — just as
+# importantly — never touches a real desk figure.
+
+def test_finds_the_actual_reported_defect():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("total exposure came to $10,21.36 today")
+    assert ("$10,21.36", "malformed thousands separator") in found
+
+
+def test_finds_malformed_thousands_separator_without_dollar_sign():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("that's roughly 10,21.36 shares")
+    assert any(tok == "10,21.36" for tok, _reason in found)
+
+
+def test_finds_multiple_decimal_points():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("price ticked between 12.34.56 all day")
+    assert ("12.34.56", "multiple decimal points") in found
+
+
+def test_finds_dollar_amount_with_wrong_decimal_places():
+    from src.notifier import _find_malformed_numeric_tokens
+
+    found = _find_malformed_numeric_tokens("cost basis was $10.567 per share")
+    assert ("$10.567", "dollar amount without exactly 2 decimal places") in found
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "closed the position for $1,021.36 net of fees",
+        "up 14.6% on the day, mostly momentum",
+        "sized at 2.0x the usual allocation",
+        "expects a pullback in the 5-15 day window",
+        "raised roughly $10M from the sweep account",
+        "as of 2026-09-24 the book is fully hedged",
+        "filled at 12:51 after the open",
+        "added 0.3155 shares to round out the lot",
+        "trimmed CRM, now $492.30 in realized P&L",
+        "core position is 14,600 shares, unchanged",
+    ],
+)
+def test_never_flags_a_real_desk_figure(sentence):
+    """False-positive battery: every one of these is a genuine, correctly
+    formatted figure the desk writes routinely. None may be touched."""
+    from src.notifier import _find_malformed_numeric_tokens
+
+    assert _find_malformed_numeric_tokens(sentence) == []
+
+
+def test_redact_replaces_only_the_malformed_token_and_leaves_the_rest():
+    from src.notifier import _redact_malformed_numbers
+
+    text = "PM view: sized at 2.0x, but total came to $10,21.36 net of fees."
+    redacted = _redact_malformed_numbers(text)
+    assert "$10,21.36" not in redacted
+    assert "[number garbled" in redacted
+    assert "2.0x" in redacted
+    assert "net of fees" in redacted
+
+
+def test_redact_never_touches_clean_text():
+    from src.notifier import _redact_malformed_numbers
+
+    text = "closed CRM for $1,021.36, up 14.6% on the day"
+    assert _redact_malformed_numbers(text) == text
+
+
+def test_redact_logs_the_original_garbled_token_for_diagnosis(caplog):
+    from src.notifier import _redact_malformed_numbers
+
+    with caplog.at_level("WARNING"):
+        _redact_malformed_numbers("total exposure came to $10,21.36 today")
+    assert any("10,21.36" in rec.message for rec in caplog.records)
+
+
+def test_send_redacts_malformed_number_before_it_reaches_telegram(monkeypatch):
+    """End-to-end: `send()` is the single chokepoint every owner-facing
+    message passes through (Telegram/owner reports), regardless of which
+    upstream formatter wrote the free-text prose — so the guard belongs
+    here, not duplicated across every PM/risk/thesis call site."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send("PM view: total exposure came to $10,21.36 today")
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "10,21.36" not in sent
+    assert "number garbled" in sent
+
+
+def test_redact_raw_exception_text_replaces_only_the_exception_token():
+    """Board item 89 defect 5: a `reason=f"... raised: {exc}"` style string
+    built upstream (e.g. `src/coverage_watchdog.py`) must not reach the
+    owner with the raw exception text intact."""
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "  AAPL: holding 10.0000 — snapshot_protective_stops raised: "
+        "ConnectionError('Connection timed out after 5s')"
+    )
+    redacted = _redact_raw_exception_text(text)
+    assert "ConnectionError" not in redacted
+    assert "Connection timed out" not in redacted
+    assert "internal error" in redacted
+    assert "AAPL: holding 10.0000" in redacted
+
+
+def test_redact_raw_exception_text_strips_a_traceback():
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "risk manager raised:\n"
+        "Traceback (most recent call last):\n"
+        '  File "src/pipeline.py", line 1234, in _run\n'
+        "    raise ValueError('bad state')\n"
+        "ValueError: bad state"
+    )
+    redacted = _redact_raw_exception_text(text)
+    assert "Traceback" not in redacted
+    assert "bad state" not in redacted
+    assert "src/pipeline.py" not in redacted
+    assert "internal error" in redacted
+
+
+def test_redact_raw_exception_text_never_touches_clean_owner_text():
+    """False-positive guard: ordinary owner prose — prices, symbols, plain-
+    English reasons — must pass through unchanged."""
+    from src.notifier import _redact_raw_exception_text
+
+    text = (
+        "closed CRM for $1,021.36, up 14.6% on the day — the risk check "
+        "turned the plan down because the position was already at its cap."
+    )
+    assert _redact_raw_exception_text(text) == text
+
+
+def test_redact_raw_exception_text_logs_the_original_for_diagnosis(caplog):
+    from src.notifier import _redact_raw_exception_text
+
+    with caplog.at_level("WARNING"):
+        _redact_raw_exception_text("placement raised (sqlite3.OperationalError: no such table: agent_logs)")
+    assert any("OperationalError" in rec.message for rec in caplog.records)
+
+
+def test_send_redacts_raw_exception_text_before_it_reaches_telegram(monkeypatch):
+    """End-to-end: `send()` is the single chokepoint every owner-facing
+    message passes through — a raw exception string must be sanitized here
+    regardless of which upstream reason-string builder produced it."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send(
+            "PROTECTIVE STOP UNREADABLE\n"
+            "  AAPL: holding 10.0000 — snapshot_protective_stops raised: "
+            "ConnectionError('timed out')"
+        )
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert "ConnectionError" not in sent
+    assert "timed out" not in sent
+    assert "internal error" in sent
+
+
+def test_send_does_not_alter_a_normal_owner_message(monkeypatch):
+    """Sanity check for the same chokepoint: a normal message with no
+    malformed numbers and no raw exception text passes through unchanged."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "BOT_TOK")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "CHAT_ID")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    plain = "Closing review: bought CRM at $271.36, up 1.2% on the day."
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        ok = n.send(plain)
+
+    assert ok is True
+    sent = mock_post.call_args.kwargs["json"]["text"]
+    assert plain in sent

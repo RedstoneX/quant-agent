@@ -18,3 +18,9 @@ build/
 .DS_Store
 *.log
 *.log.*
+
+# Left beside a board document when scripts/resolve_doc_conflict.py refuses a
+# merge: it carries the plain-English reason and, where the resolver got that
+# far, the merged text. Never board content — see that script for why the
+# reason is deliberately NOT put inside the document.
+*.merge-refusal

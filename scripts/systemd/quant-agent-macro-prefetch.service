@@ -1,0 +1,40 @@
+# FRED macro series prefetch — pairs with quant-agent-macro-prefetch.timer.
+# Board item 119.
+#
+# Install:
+#   cp scripts/systemd/quant-agent-macro-prefetch.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-macro-prefetch.timer
+#
+# BEFORE ENABLING, CHECK ONE THING. The production .env carries a placeholder
+# FRED_API_KEY and the real credential is injected by the outbound gateway on
+# REST calls. Whether a NEW user unit inherits that injection has not been
+# verified. If it does not, this job writes nothing, every session falls back
+# to fetching live — which is exactly today's behaviour, so nothing breaks —
+# but the defect is then one level further from the log line that names it.
+# Run `scripts/run_macro_prefetch.sh` by hand once and confirm the coverage
+# line it prints says 15/15 before trusting the timer.
+[Unit]
+Description=quant-agent FRED macro prefetch (no LLM call, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Writes one small JSON file per series under data/macro/series_cache/ and
+# nothing else. `data/` is gitignored, so a refresh can never dirty the
+# checkout and become deploy drift. Every write is tmp-file + os.replace, so a
+# session reading the cache at the same instant sees the old file or the new
+# one, never a half-written one — which is why this is safe to fire regardless
+# of what else is running. It takes no session lock and holds no trading state.
+ExecStart=/home/qamc/quant-agent/scripts/run_macro_prefetch.sh --quiet
+# Exit 1 means at least one series did not land. The cache is then incomplete
+# and the next session fetches the missing ones live — a degradation, not an
+# outage, but one worth seeing in `systemctl --user status` rather than
+# discovering as a thin macro seat at the open.
+SuccessExitStatus=0
+# Above the wrapper's own 1020+30s kill, so the wrapper kills Python before
+# systemd kills the wrapper. Same convention as
+# quant-agent-pricing-refresh.service.
+TimeoutStartSec=1080
+StandardOutput=journal
+StandardError=journal

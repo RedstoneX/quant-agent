@@ -77,35 +77,7 @@ def test_partial_trim_keeps_its_entry_orders():
     p.broker.cancel_open_entry_orders.assert_not_called()
 
 
-def test_daily_loss_halt_cancels_all_entry_orders_and_sells_nothing():
-    """The halt keeps the audit-round-2 guarantee that a resting entry order
-    cannot re-add risk, and adds the one this change is about: it places no
-    sell of any kind (docs/WORK.md item 32)."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
-    p.db = MagicMock()
-    p._reconcile_fills = MagicMock()
-    p._reconcile_stop_coverage = MagicMock(return_value=[])
-    p._sweeper = MagicMock(return_value=None)
-    p.broker.snapshot_protective_stops.return_value = (True, [{"qty": 26}])
-    p._submit_protected_sell = MagicMock()
-    violation = MagicMock(message="daily loss 3.2% > 3%")
-
-    result = p._halt_on_daily_loss_breach(
-        [Position(symbol="GE", qty=26, avg_entry=316, current_price=350,
-                  market_value=9_100, unrealized_pnl=884, sector="Industrials")],
-        violation, "r1", where="test",
-    )
-    p.broker.cancel_open_entry_orders.assert_called_once_with()
-    p._submit_protected_sell.assert_not_called()
-    p.broker.submit_order.assert_not_called()
-    assert result["orders"] == []
-    assert result["halted"] is True
-
-
-# ---------- park_excess never parks on a breach day ----------
-
-def _park_pipeline(breach):
+def _park_pipeline():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
@@ -114,13 +86,13 @@ def _park_pipeline(breach):
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
                                    reserve_pct=1.0, min_order_usd=500.0),
         risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                        max_daily_loss_pct=3, max_sector_pct=40,
+                        max_sector_pct=40,
                         require_stop_loss=True, allow_margin=False),
     )
     p.broker = MagicMock()
     p.broker.get_account.return_value = {
         "cash": 99_000.0, "portfolio_value": 100_000.0,
-        "last_equity": 104_000.0,   # -3.85% today when breach fixture used
+        "last_equity": 104_000.0,
     }
     p.broker.get_positions.return_value = []
     p.broker.open_buy_notional.return_value = 0.0
@@ -129,25 +101,18 @@ def _park_pipeline(breach):
     p.db = MagicMock()
     p.db.insert_trade.return_value = 9
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = breach
     p.cash_sweeper = CashSweeper(pipeline=p)
     return p
 
 
-def test_park_excess_refuses_on_a_breach_day():
-    """After an emergency liquidation the bookend used to buy ~99% of equity
-    into SGOV; the next intra tick emergency-sold it (spurious 🚨), and the
-    cycle repeated all day."""
+def test_park_excess_parks_cash_over_the_reserve():
+    """Renamed 2026-09-20. It was `..._without_breach`, and the pairing it
+    named — a sibling asserting the daily-loss breach BLOCKED the park — was
+    deleted with the account-level loss alarm (retired item 32). Nothing
+    gates the sweep on an account-level loss reading any more, so the claim
+    left standing is the plain one: cash above the reserve gets parked."""
     from src.pipeline_context import RunContext
-    breach = MagicMock(message="daily loss 3.85% exceeds max 3%")
-    p = _park_pipeline(breach)
-    assert p.cash_sweeper.park_excess(RunContext.start("midday")) is None
-    p.broker.submit_order.assert_not_called()
-
-
-def test_park_excess_parks_normally_without_breach():
-    from src.pipeline_context import RunContext
-    p = _park_pipeline(None)
+    p = _park_pipeline()
     assert p.cash_sweeper.park_excess(RunContext.start("midday")) is not None
 
 
@@ -259,7 +224,6 @@ def test_pm_parse_failure_is_analysis_error_not_no_trades():
     }
     p.broker.get_positions.return_value = []
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.morning_research_stage = MagicMock()
     def _research(ctx):
         ctx.analyses = [MagicMock()]
@@ -346,13 +310,12 @@ def test_nonfinite_cash_blocks_instead_of_failing_open():
     from src.models import TradeDecision
     from src.pipeline import HARD_BLOCK_RULES
     eng = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90, max_daily_loss_pct=3,
+        max_position_pct=20, max_total_position_pct=90,
         max_sector_pct=40, require_stop_loss=True, allow_margin=False))
     d = TradeDecision(action="BUY", symbol="NVDA", allocation_pct=10,
                       entry_price=100.0, stop_loss=95.0, take_profit=120.0,
                       reasoning="x")
-    v = eng.check(decision=d, positions=[], total_value=100_000.0,
-                  daily_pnl=0.0, cash=float("nan"))
+    v = eng.check(decision=d, positions=[], total_value=100_000.0, cash=float("nan"))
     assert v and any(x.rule in HARD_BLOCK_RULES for x in v)
 
 
@@ -368,7 +331,7 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
                                    reserve_pct=1.0, min_order_usd=500.0),
         risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                        max_daily_loss_pct=3, max_sector_pct=40,
+                        max_sector_pct=40,
                         require_stop_loss=True, allow_margin=False))
     p.cash_sweeper = CashSweeper(pipeline=p)
     p.broker = MagicMock()

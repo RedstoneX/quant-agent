@@ -415,6 +415,68 @@ def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
 
 
 # ---------------------------------------------------------------------------
+# item 132: a stale last_trade must not shadow a live minute/session bar.
+# `get_latest_price_stamped` only ever stamps `is_today_print` for a real
+# `last_trade` — never for today's still-forming minute/session bar, even
+# though `src.data.live_price.resolve_live_price` (the same freshness
+# resolver the research path trusts) treats either as a legitimate today
+# print. Before this fix, a name with a stale last_trade but a live minute
+# bar refused here regardless — an avoidable no-print refusal and a false
+# owner alarm.
+# ---------------------------------------------------------------------------
+
+def _today_snapshot(**overrides):
+    """An intraday-snapshot payload with a today session_bar_at.
+
+    `session_bar_at` is dated (not timed), so date-equality against the
+    real ET "now" is enough to make it today's regardless of what wall-clock
+    hour the test happens to run at — no need to fake the 09:30 ET bound
+    that `resolve_live_price` applies to point-in-time candidates.
+    """
+    from src.trading_calendar import et_now
+
+    payload = {
+        "last_price": None, "last_trade_at": None,
+        "minute_close": None, "minute_bar_at": None,
+        "session_open": 164.0, "session_close": None,
+        "session_bar_at": et_now(),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_stale_last_trade_is_repaired_off_a_live_today_bar():
+    """A stale last_trade alone would refuse (see test above), but a today
+    session bar sitting in the same snapshot is a real print and must let
+    the repair through."""
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, is_today=False, is_today_print=False,
+    )
+    p.broker.get_intraday_snapshots.return_value = {
+        "VST": _today_snapshot(session_open=164.0),
+    }
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    # Repaired against the recorded stop level, not the fallback price.
+    assert p.broker._submit_protective_stop_retrying.call_args.kwargs["stop_price"] == 158.75
+
+
+def test_no_last_trade_and_no_today_bar_still_refuses():
+    """No today print anywhere — genuinely unverifiable — must still refuse,
+    exactly as before this fix."""
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, is_today=False, is_today_print=False,
+    )
+    p.broker.get_intraday_snapshots.return_value = {"VST": {}}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is not True
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # a failed SESSION-HOURS re-placement has to reach the owner from the session
 # ---------------------------------------------------------------------------
 # On 2026-09-18 09:30:45 ET the fractional coverage repair refused NET
@@ -724,3 +786,213 @@ def test_the_evening_feed_spells_out_a_blown_through_stop():
     assert "$158.00" in text and "$8.00 past it" in text
     assert "nothing standing watch over them" in text
     assert "inside one ordinary day's move" not in text
+
+
+# ---------------------------------------------------------------------------
+# WHICH SWEEP IS ENTITLED TO PAGE
+# ---------------------------------------------------------------------------
+# Measured, production log, all retained rotations (2026-08-21..2026-09-23):
+# the `no_trade_print_today` refusal occurred 6 times on 4 sessions (NET and
+# RSG 09-18; BRK-B, NUE and RSG 09-21; RSG 09-23), every one between
+# 13:30:43 and 13:30:45 UTC, and every one resolved in the same session. On
+# 2026-09-23 the owner was paged in red at 13:30:45 and told to place a stop
+# by hand; the desk placed it itself at 13:45:45 and never said so.
+#
+# The refusal is correct and is NOT under test here. What is under test is
+# that the FIRST attempt, seconds after the bell, is not the one that pages,
+# that a genuinely stuck position still does, and that a red alarm which
+# clears says so.
+
+
+def _no_print_pipeline(symbol, held, covered, price, *, buy_stop):
+    """A fractional gap whose repair refuses because the name has not
+    printed today — the exact 2026-09-23 RSG state."""
+    from src.execution.broker import LivePrice
+
+    p = _fractional_pipeline(symbol, held, covered, price, buy_stop=buy_stop)
+    p.broker.get_latest_price_stamped.return_value = LivePrice(
+        price=price, source="last_trade", trade_at=None,
+        is_today=False, is_today_print=False,
+    )
+    return p
+
+
+def test_the_bell_adjacent_no_print_refusal_does_not_page(shared_marker):
+    """43 seconds after the open a name that has not printed yet is an
+    expected state, not a placement failure. The whole-share leg is still
+    standing watch and the desk's own next pass resolves it."""
+    p = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    gaps, send = _run(p)
+    assert gaps[0]["awaiting_first_print"] is True
+    assert gaps[0]["session_repair_failed"] is False
+    assert gaps[0]["coverage"] == "partial", (
+        "the shortfall is real and must stay visible in the banner; only the "
+        "interruption is withheld"
+    )
+    send.assert_not_called()
+
+
+def test_the_repair_is_still_attempted_on_the_quiet_pass(shared_marker):
+    """docs/INCIDENT_HISTORY.md 2026-09-18 rejected DEFERRING THE RETRY.
+    That ruling stands: only the page waits."""
+    p = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    _run(p)
+    assert p.broker.get_latest_price_stamped.called, (
+        "the pass must still have tried to price and place the stop"
+    )
+
+
+def test_a_broker_rejection_still_pages_on_the_first_attempt(shared_marker):
+    """2026-09-16 BRK-B: retries exhausted at the broker. Nothing about the
+    tape resolves that, so it is a fault on sight and the grace must not
+    reach it."""
+    p = _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    gaps, send = _run(p)
+    assert gaps[0]["session_repair_failed"] is True
+    assert send.call_count == 1
+    assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in send.call_args.args[0]
+
+
+def test_a_no_print_refusal_with_nothing_covered_pages_immediately(
+    shared_marker,
+):
+    """The grace leans entirely on the durable whole-share leg holding the
+    position while the tape catches up. With zero coverage there is no leg
+    to lean on and the reason for the refusal stops mattering."""
+    p = _no_print_pipeline("RSG", 0.5862, 0.0, 213.79, buy_stop=213.33)
+    gaps, send = _run(p)
+    assert gaps[0].get("awaiting_first_print") is not True
+    assert send.call_count == 1
+
+
+def test_a_name_that_never_printed_all_session_pages_after_the_close(
+    shared_marker,
+):
+    """Where the quiet state ENDS. A sliver that waited for a first print all
+    day and never got a stop is NOT the ratified overnight lapse, and filing
+    it as one would turn the bell-adjacent silence into a suppression."""
+    session = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    _gaps, send = _run(session)
+    send.assert_not_called()
+
+    after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    with patch("src.notifier.send_owner_alert") as shut, \
+            patch("src.pipeline._market_is_open_now", return_value=False), \
+            patch("src.trader_feed._profiles", return_value={}):
+        gaps = after_close._reconcile_stop_coverage()
+    assert gaps[0]["coverage"] != "fractional_overnight"
+    assert gaps[0]["never_printed_today"] is True
+    assert gaps[0]["session_repair_failed"] is True
+    assert shut.call_count == 1
+    assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in shut.call_args.args[0]
+
+
+def test_a_repaired_name_is_not_reported_after_the_close(shared_marker):
+    """The ordinary case: it waited at the bell, the next pass placed the
+    stop, and the evening must say nothing about it."""
+    session = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    _run(session)
+
+    repaired = _fractional_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    repaired.broker._submit_protective_stop_retrying.return_value = {
+        "id": "ord-1", "status": "accepted",
+    }
+    _gaps, _send = _run(repaired)
+
+    after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
+    with patch("src.notifier.send_owner_alert") as shut, \
+            patch("src.pipeline._market_is_open_now", return_value=False):
+        gaps = after_close._reconcile_stop_coverage()
+    assert gaps[0]["coverage"] == "fractional_overnight"
+    shut.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# the retraction — the half that did not exist
+# ---------------------------------------------------------------------------
+
+
+def _repairing_pipeline(symbol, held, covered, price, *, buy_stop):
+    p = _fractional_pipeline(symbol, held, covered, price, buy_stop=buy_stop)
+    p.broker._submit_protective_stop_retrying.return_value = {
+        "id": "ord-1", "status": "accepted",
+    }
+    return p
+
+
+def test_a_red_alarm_that_clears_tells_the_owner_it_cleared(shared_marker):
+    """2026-09-23: paged at 13:30:45, repaired by the desk at 13:45:45,
+    never retracted. The owner spent the day holding an instruction to place
+    by hand a stop that already existed."""
+    _gaps, first = _run(
+        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert first.call_count == 1
+    assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in first.call_args.args[0]
+
+    _gaps, second = _run(
+        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert second.call_count == 1, "the all-clear must reach the same channel"
+    text = second.call_args.args[0]
+    assert "THE PROTECTIVE STOP IS BACK" in text
+    assert "BRK-B" in text
+    assert second.call_args.kwargs["symbols"] == ["BRK-B"]
+
+
+def test_the_once_a_day_cap_does_not_swallow_the_all_clear(shared_marker):
+    """The placement-failure marker is claimed for the day by the alarm. The
+    retraction must not be gated on it — that is exactly how it would be
+    swallowed — so it carries its own marker."""
+    from src import coverage_watchdog
+
+    _gaps, _first = _run(
+        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert coverage_watchdog.claim_repair_failure_alert(["BRK-B"]) == [], (
+        "precondition: the failure is already claimed for today"
+    )
+    _gaps, second = _run(
+        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert second.call_count == 1
+    assert "THE PROTECTIVE STOP IS BACK" in second.call_args.args[0]
+
+
+def test_the_all_clear_is_sent_once_per_symbol_per_day(shared_marker):
+    _gaps, _first = _run(
+        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    _gaps, second = _run(
+        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert second.call_count == 1
+    _gaps, third = _run(
+        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    third.assert_not_called()
+
+
+def test_a_routine_repair_nobody_was_alarmed_about_stays_silent(shared_marker):
+    """Every fractional position is re-covered at the open every single day.
+    If that sent an all-clear the channel would carry one per position per
+    morning, which is the noise the alarm design forbids."""
+    _gaps, send = _run(
+        _repairing_pipeline("AAPL", 9.7630, 9.0, 330.0, buy_stop=315.0)
+    )
+    send.assert_not_called()
+
+
+def test_the_failure_claim_is_not_released_by_the_all_clear(shared_marker):
+    """Both alarm bodies promise "at most once per trading day". Releasing
+    the claim on resolution would make that sentence false and would let a
+    flapping name send two messages a cycle."""
+    from src import coverage_watchdog
+
+    _gaps, _first = _run(
+        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    _gaps, _second = _run(
+        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    )
+    assert coverage_watchdog.claim_repair_failure_alert(["BRK-B"]) == []

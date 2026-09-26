@@ -133,6 +133,39 @@ FRED_RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
 #: `src.data.news._FAILURE_REASON_MAX_LEN` (same shape of problem).
 _FAILURE_REASON_MAX_LEN = 200
 
+#: How far ahead ONE `/fred/release/dates` request looks. This is the FETCH
+#: window and it is deliberately NOT the horizon: `get_upcoming_events`'s
+#: `horizon_days` still decides what counts as imminent and what is returned to
+#: a seat. Fetching wide costs nothing extra — it is the same single request
+#: per release, with a later `realtime_end`.
+#:
+#: WHERE 120 COMES FROM. Every statistical release in `MACRO_RELEASES` except
+#: Initial Jobless Claims (weekly) publishes MONTHLY, so a window of N days
+#: contains roughly N/30 scheduled dates. The window has to clear one full
+#: monthly cadence with margin, or a release that is simply 5 weeks out is
+#: indistinguishable from a release with no published schedule at all. Four
+#: monthly cycles (120 days) is the smallest round multiple of that cadence
+#: that still returns 3 dates per release when the nearest one has just passed,
+#: which is what makes "the wide query came back EMPTY" a trustworthy signal of
+#: a genuinely unpublished schedule rather than an artefact of the window.
+#:
+#: Live-verified against the FRED API on 2026-09-23 (read-only GETs, real key,
+#: the same params the code sends). Next 10 days vs next 120 days:
+#:   * release 10  (CPI):          0 dates | 2026-10-14, 2026-11-10, 2026-12-10
+#:   * release 46  (PPI):          0 dates | 2026-10-15, 2026-11-13, 2026-12-15
+#:   * release 9   (Retail Sales): 0 dates | 2026-10-15, 2026-11-17, 2026-12-16
+#:   * release 50  (Employment):   1 date  | 3 dates
+#: Three of the four came back empty at 10 days and the code recorded that as
+#: `no_scheduled_dates_published` — a SOURCE FAILURE — which is what produced
+#: the recurring "Macro event calendar PARTIAL this run" warning in production.
+#: The schedules were published the whole time; the window was too narrow to
+#: see them.
+#:
+#: The FRED row `limit` below (60) is well clear of what this window can
+#: return: 120 days is ~4 dates for a monthly release and ~17 for weekly
+#: Initial Jobless Claims.
+RELEASE_SCHEDULE_LOOKAHEAD_DAYS = 120
+
 
 @dataclass(frozen=True)
 class MacroRelease:
@@ -196,7 +229,13 @@ class ReleaseFailure:
 
 @dataclass
 class MacroEvent:
-    """One scheduled macro release landing inside the requested horizon."""
+    """One scheduled macro release date.
+
+    `get_upcoming_events` returns only those landing INSIDE the requested
+    horizon. The same shape is reused for the next date BEYOND the horizon
+    (`EventCalendarCoverage.next_beyond_horizon`) rather than inventing a
+    second near-identical type — a seat that can read one can read the other.
+    """
 
     release_id: int
     label: str
@@ -223,11 +262,23 @@ class EventCalendarCoverage:
     `describe()` contract of naming what happened rather than going quiet.
     Reusing the shape is the point: the desk already knows how to read it, and
     a parallel third convention is exactly what the standing rule forbids.
+
+    One field is this class's own and has no `MacroCoverage` counterpart:
+    `next_beyond_horizon`. A release whose schedule IS published but whose next
+    date falls outside the horizon is a SUCCESS — the release is covered and
+    nothing is imminent — and it used to be recorded as the failure
+    `no_scheduled_dates_published` purely because the fetch window was 10 days
+    wide and the releases are monthly (see `RELEASE_SCHEDULE_LOOKAHEAD_DAYS`).
+    Carrying the date here is what lets the desk say "CPI lands on 14 October"
+    instead of going quiet about it.
     """
 
     configured: int
     succeeded: int
     failed: list[ReleaseFailure] = field(default_factory=list)
+    #: Next scheduled date for each release that HAS a published schedule but
+    #: nothing inside the horizon. Never a failure; never rendered as one.
+    next_beyond_horizon: list[MacroEvent] = field(default_factory=list)
 
     @property
     def failed_count(self) -> int:
@@ -387,6 +438,18 @@ class MacroEventCalendarProvider:
         # too, so the flag cannot be inventing dates: over a PAST window
         # (2026-01-01..2026-08-30) release 10 returned the identical eight
         # dates with the flag on and off.
+        #
+        # The WIDTH of `realtime_start`..`realtime_end` matters just as much as
+        # the flag, and getting it wrong looks exactly like a source failure.
+        # Live-verified 2026-09-23 (read-only GETs, real key, these same
+        # params): over the next 10 days release 10 (CPI) returned 0 dates,
+        # release 46 (PPI) 0 and release 9 (Retail Sales) 0, while over the
+        # next 120 days they returned 2026-10-14/11-10/12-10, 2026-10-15/
+        # 11-13/12-15 and 2026-10-15/11-17/12-16 respectively. Release 50
+        # (Employment Situation) returned 1 date at 10 days and 3 at 120. The
+        # releases are MONTHLY; a 10-day window is empty most of the month.
+        # So the caller passes `RELEASE_SCHEDULE_LOOKAHEAD_DAYS`, not the
+        # horizon, and filters afterwards.
         params = {
             "release_id": release.release_id,
             "api_key": self.api_key,
@@ -467,23 +530,70 @@ class MacroEventCalendarProvider:
         total-failure path, where an EMPTY LIST MUST NOT be read as "no events
         scheduled". The coverage object is the only thing that distinguishes
         those two, which is why every caller is expected to render it.
+
+        Each release is FETCHED over `RELEASE_SCHEDULE_LOOKAHEAD_DAYS` and
+        FILTERED to `horizon_days`. That is one request per release either way
+        — the same call count, a later `realtime_end` — and it separates three
+        outcomes the old 10-day fetch could only see as two:
+
+          * a date inside the horizon        -> success, event returned;
+          * a published schedule, all of it
+            beyond the horizon               -> SUCCESS, nothing imminent, the
+                                                next date recorded on the
+                                                coverage object;
+          * nothing at all over 120 days     -> genuine
+                                                `no_scheduled_dates_published`.
+
+        The middle case used to be counted as the third one, which is what put
+        CPI, PPI and Retail Sales in the FAILED list of most production runs.
         """
         horizon_days = max(0, int(horizon_days))
         today = et_today()
         end = today + timedelta(days=horizon_days)
+        # Never narrower than the horizon a caller asked for.
+        fetch_end = today + timedelta(
+            days=max(horizon_days, RELEASE_SCHEDULE_LOOKAHEAD_DAYS),
+        )
 
-        self._deadline = time.monotonic() + self.total_fetch_deadline_s
+        # Board item 187: seven releases share one 20s deadline (item
+        # 119's own diagnosis of the same disease in the FRED SERIES fetch —
+        # "the observation calls ... share the same worker slots ... so a
+        # healthy batch spends nearly the whole clock and one slow series
+        # starves the rest" — applies unchanged here, and this fetch has no
+        # cache to move it off the trading path). Left as one shared
+        # deadline, a single early release can burn up to `request_timeout_s`
+        # (15s) of the 20s total on its own, and — because `self.releases`
+        # is always walked in the same MACRO_RELEASES order — the SAME tail
+        # releases (PPI, PCE, GDP, Retail Sales, Initial Jobless Claims)
+        # starve on every run while CPI/NFP at the front almost always get
+        # through; production logs from 09-24/09-25 show exactly that set
+        # failing `fetch_deadline_exceeded` run after run.
+        #
+        # Fix: split the REMAINING budget evenly across the releases not yet
+        # attempted, recomputed fresh before each one. No release can eat
+        # more than its fair share of what is actually left, so a slow
+        # response degrades the NEXT release's budget proportionally instead
+        # of erasing it — and because the split is recomputed off the true
+        # remaining time (not a static 1/7th), a release that returns fast
+        # hands its unused time forward to the rest. This introduces no new
+        # timeout/threshold constant: the per-release budget is a derived
+        # fraction of the existing operator-set `total_fetch_deadline_s`,
+        # not a guessed number.
+        global_deadline = time.monotonic() + self.total_fetch_deadline_s
+        self._deadline = global_deadline
         self._consecutive_failed = 0
         succeeded = 0
         failures: list[ReleaseFailure] = []
         events: list[MacroEvent] = []
+        beyond: list[MacroEvent] = []
         try:
-            for release in self.releases:
+            for idx, release in enumerate(self.releases):
                 # Hard wall-clock check FIRST — if earlier releases in this same
                 # call ate the whole budget, skip without even attempting. This
                 # is what actually bounds the worst case; retry/backoff below is
                 # best-effort recovery, not a ceiling.
-                if time.monotonic() >= self._deadline:
+                remaining_global = global_deadline - time.monotonic()
+                if remaining_global <= 0:
                     logger.warning(
                         "Event-calendar deadline (%.0fs) already exceeded — "
                         "skipping %s without an attempt",
@@ -496,7 +606,22 @@ class MacroEventCalendarProvider:
                     self._consecutive_failed += 1
                     continue
 
-                dates, reason = self._fetch_release_dates(release, today, end)
+                # This release's fair share of whatever time is actually
+                # left, split across itself and every release still to come.
+                # `self._deadline` is what `_fetch_release_dates` and
+                # `_next_backoff` clip their own timeouts/sleeps to, so
+                # tightening it here — never past `global_deadline` — is
+                # what stops one release from spending the whole run.
+                releases_left = len(self.releases) - idx
+                self._deadline = time.monotonic() + (remaining_global / releases_left)
+
+                dates, reason = self._fetch_release_dates(
+                    release, today, fetch_end,
+                )
+                # Restore the real ceiling so the NEXT release's fair share
+                # is computed off true remaining time, not this release's
+                # tightened sub-budget.
+                self._deadline = global_deadline
                 if reason:
                     failures.append(ReleaseFailure(
                         release.release_id, release.label,
@@ -505,23 +630,37 @@ class MacroEventCalendarProvider:
                     self._consecutive_failed += 1
                     continue
 
+                # The schedule IS published. That is the success condition,
+                # whether or not anything lands inside the horizon.
                 self._consecutive_failed = 0
                 succeeded += 1
-                for event_date in dates:
-                    if today <= event_date <= end:
-                        events.append(MacroEvent(
-                            release_id=release.release_id,
-                            label=release.label,
-                            why=release.why,
-                            event_date=event_date,
-                            days_away=(event_date - today).days,
-                        ))
+
+                def _event(event_date: date, _r: MacroRelease = release) -> MacroEvent:
+                    return MacroEvent(
+                        release_id=_r.release_id,
+                        label=_r.label,
+                        why=_r.why,
+                        event_date=event_date,
+                        days_away=(event_date - today).days,
+                    )
+
+                inside = [d for d in dates if today <= d <= end]
+                if inside:
+                    events.extend(_event(d) for d in inside)
+                    continue
+                # Published, but nothing imminent. Name the next date rather
+                # than going quiet about a release the desk is still covering.
+                ahead = [d for d in dates if d > end]
+                if ahead:
+                    beyond.append(_event(min(ahead)))
         finally:
             self._deadline = None
+            beyond.sort(key=lambda e: (e.event_date, e.label))
             self.last_coverage = EventCalendarCoverage(
                 configured=len(self.releases),
                 succeeded=succeeded,
                 failed=failures,
+                next_beyond_horizon=beyond,
             )
 
         events.sort(key=lambda e: (e.event_date, e.label))
@@ -1300,7 +1439,7 @@ EARNINGS_LOOKUP_TIMEOUT = "unavailable_lookup_timeout"
 EARNINGS_DEADLINE_EXCEEDED = "unavailable_deadline_exceeded"
 
 #: The complete status vocabulary, mirroring `pace_status`'s
-#: measured / too_early / n/a_breakout / unavailable_no_pinned_horizon shape:
+#: measured / n/a_breakout / unavailable_no_pinned_horizon shape:
 #: one value for a real figure, and a NAMED reason for every way the figure can
 #: be absent. Never collapse these into a bare None — the whole point is that a
 #: reader can tell "the source said nothing" from "the source never answered".
@@ -1575,6 +1714,20 @@ def format_macro_events_section(
                 "- None returned — but read the coverage line below: this "
                 "calendar is impaired, so an empty list here does NOT mean an "
                 "empty calendar."
+            )
+        # Releases that ARE covered but whose next date sits past the horizon.
+        # Rendered separately and explicitly NOT as event risk, so the seat can
+        # name the date without treating it as imminent.
+        if coverage.next_beyond_horizon:
+            lines.append(
+                f"- Beyond the next {horizon_days} calendar days — scheduled, "
+                f"fetched, NOT imminent (do not treat these as event risk for "
+                f"this session):"
+            )
+            lines.extend(
+                f"  - {e.event_date.isoformat()} (in {e.days_away} calendar "
+                f"days): {e.label}"
+                for e in coverage.next_beyond_horizon
             )
         lines.append(f"- {coverage.describe()}")
 

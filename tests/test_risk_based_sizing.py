@@ -496,7 +496,7 @@ def test_risk_envelope_reaches_the_constructor_from_config():
     # place rather than silently reverting to a looser envelope.
     defaults = RiskConfig(
         max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=40, require_stop_loss=True,
+        max_sector_pct=40, require_stop_loss=True,
     )
     assert defaults.max_position_risk_pct == 5.0
     assert defaults.min_position_risk_pct == 0.5
@@ -568,12 +568,11 @@ def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
 
     # And the engine that would have blocked it now passes it.
     engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=100, max_daily_loss_pct=5,
+        max_position_pct=20, max_total_position_pct=100,
         max_sector_pct=40, require_stop_loss=True,
     ))
     violations = engine.check(
-        decisions[0], [], EQUITY, 0.0, cash=EQUITY,
-    )
+        decisions[0], [], EQUITY, 0.0, cash=EQUITY,)
     assert [v.rule for v in violations] == []
 
 
@@ -790,7 +789,7 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
     from src.models import TradeDecision
 
     engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=65, max_total_position_pct=200, max_daily_loss_pct=5,
+        max_position_pct=65, max_total_position_pct=200,
         max_sector_pct=75, require_stop_loss=True,
     ))
 
@@ -801,8 +800,7 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
                 entry_price=100.0, stop_loss=95.0, take_profit=140.0,
                 reasoning="test",
             ),
-            [], EQUITY, 0.0, cash=EQUITY * 3,
-        )]
+            [], EQUITY, 0.0, cash=EQUITY * 3,)]
 
     assert "max_position_pct" not in check(65.0)
     assert "max_position_pct" in check(66.0)
@@ -1004,14 +1002,26 @@ def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
     assert decisions[0].reward_risk < 1.5
 
 
-def test_no_volatility_reading_leaves_the_structural_stop_untouched():
-    """Stop widening still fails toward existing behaviour rather than
-    inventing a width: with no ATR the structural stop is returned as-is."""
+def test_no_volatility_reading_derives_structural_stop_and_holds():
+    """Board item 80 (2026-09-25, REWORKED per owner ruling). With no ATR the
+    stop is READ from price structure and the position HELD, not refused: a
+    missing volatility reading is never a reason to skip protection. The first
+    item-80 pass refused this input; the ruling overruled it ("there are always
+    levels"). The unverifiable typed 97.6 does NOT set the stop — the nearest
+    VERIFIED computed level below entry does, one buffer below it."""
     constructor = PortfolioConstructor()
-    analysis = _vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)
-    assert constructor._widen_stop_past_noise(
+    # A close, verified structural level below entry (the fixture leaves the
+    # typed stop unbacked; `computed` supplies the level the fallback reads).
+    analysis = _vol_analysis(
+        "MSFT", 100.0, 97.6, 160.0, atr=None, computed=[97.0],
+    )
+    buffer = constructor.cfg.structural_stop_buffer_pct
+    stop = constructor._widen_stop_past_noise(
         "MSFT", analysis, 100.0, 97.6, target_price=160.0,
-    ) == 97.6
+    )
+    assert stop is not None, "a missing ATR must not skip protection"
+    assert abs(stop - 97.0 * (1.0 - buffer)) < 1e-9
+    assert constructor.last_refusals == {}
 
 
 def test_no_volatility_reading_refuses_the_trade_outright():
@@ -1658,7 +1668,6 @@ def test_both_reward_risk_computations_agree_on_one_trade():
     assert d.reward_risk == round(gate, 2)
     assert d.reward_risk == round(reward_to_risk(
         d.entry_price, d.stop_loss, d.take_profit, is_short=False), 2)
-    assert gate >= constructor.cfg.min_reward_risk_after_widening
 
 
 def test_the_shipped_order_records_the_rule_that_placed_its_stop():
@@ -1907,10 +1916,17 @@ def test_gross_exposure_ceiling_block_leaves_a_durable_reason():
     from src.portfolio_constructor import STOP_REFUSAL_GROSS_EXPOSURE_CEILING
 
     constructor = PortfolioConstructor()
+    # Fixed 2026-09-24: `apply_gross_ceiling` no longer refuses an entry for
+    # being under the flat $500 `min_order_usd` floor — only a genuine ZERO
+    # headroom still refuses. `ceiling_x=0.001` (a $100 ceiling on $100k
+    # equity) used to hit that removed floor; it is now GRANTED at a small
+    # size instead, so the ceiling here is shrunk further, to a literal
+    # sub-cent headroom, to still exercise the real "no headroom at all"
+    # refusal this test is actually about.
     tiny_ceiling = GrossCeiling(
-        ceiling_x=0.001, base_x=0.001, drawdown_pct=None,
+        ceiling_x=0.0000001, base_x=0.0000001, drawdown_pct=None,
         alert_owner=False, rung="test", reason="test-fixture ceiling",
-    )  # $100k equity -> $100 ceiling, under the $500 minimum order
+    )  # $100k equity -> $0.01 ceiling, rounds down to a genuine zero
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 5.0)], positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],

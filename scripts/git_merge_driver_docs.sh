@@ -27,16 +27,28 @@
 #     %P = the path in the tree, used to pick which of the three documents
 #          this is (the resolver has one entry point per document kind)
 #   exit 0  = clean merge, %A holds the result git will use.
-#   exit !=0 = git treats the path as still conflicted, the same as if no
-#          driver had run at all. We never touch %A on that path, so it is
-#          left exactly as git initialised it (the "ours" content, no
-#          markers) and `git status` reports the file unmerged — a human
-#          resolves it by hand, same as any other merge conflict.
+#   exit !=0 = git treats the path as still conflicted. Git marks the INDEX;
+#          it does NOT write conflict markers into the file, and it does not
+#          restore anything. Whatever is in %A when the driver exits is what
+#          sits in the worktree.
 #
-# The resolver's own exit code 2 ("REFUSING TO WRITE — this merge needs a
-# human") is exactly the "still conflicted" case above: a refusal must read to
-# git as an unresolved merge, never as success, so the deliberate stop for a
-# human is never mistaken for a machine having agreed.
+# THE CORRECTION OF 2026-09-23. This comment used to say that on a non-zero
+# exit "we never touch %A ... a human resolves it by hand, same as any other
+# merge conflict", and tests/test_git_merge_driver_docs.py asserted it. Both
+# were wrong, and the error was load-bearing: because %A arrives holding the
+# OURS copy, refusing without writing left a file that was valid markdown,
+# carried no conflict marker, and was MISSING everything that existed only on
+# the other side. Three agents hit it in one night and one nearly committed a
+# silent revert of other people's board entries. `git checkout
+# --conflict=diff3` does not recover it either — that re-invokes this driver,
+# which refuses again [reproduced 2026-09-23].
+#
+# So the resolver now WRITES on refusal: an obviously-unresolved document with
+# minimal diff3 conflict regions, both sides preserved, at least one marker
+# always present, and the plain-English reason in a gitignored sidecar file
+# rather than in the document (see "What a refusal leaves on disk" in
+# scripts/resolve_doc_conflict.py). The exit code is still non-zero, because a
+# refusal must never read to git as success.
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
@@ -68,4 +80,4 @@ fi
 
 exec "${PY}" "${REPO_ROOT}/scripts/resolve_doc_conflict.py" \
   --kind "${KIND}" --base "${BASE}" --ours "${OURS}" --theirs "${THEIRS}" \
-  --out "${OURS}"
+  --out "${OURS}" --tree-path "${TREE_PATH}"

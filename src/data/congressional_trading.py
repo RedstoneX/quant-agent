@@ -1025,6 +1025,7 @@ class CongressionalTradingProvider:
                     economic_role="confirmatory",
                     cross_source_agreement=raw.get("cross_source_agreement", ""),
                     cross_source_note=raw.get("cross_source_note", ""),
+                    disclosure_date_estimated=bool(raw.get("disclosure_date_estimated", False)),
                 )
             except Exception:
                 invalid += 1
@@ -1327,7 +1328,13 @@ class CombinedSmartMoneyProvider:
 
         blank_edgar = blank_edgar_coverage()
         merged = {"known": False, "as_of": "", "watched": 0,
-                  "read_through": 0, "unread": [], "edgar": dict(blank_edgar)}
+                  "read_through": 0, "unread": [], "edgar": dict(blank_edgar),
+                  # Market-wide blindness merges as OR, the same posture as
+                  # `unread` and `verified`: one sub-provider that read none
+                  # of the wider market makes the merged view blind, because
+                  # the coverage it did not get is not supplied by another.
+                  "market_wide_blind": False, "market_wide_read": 0,
+                  "market_wide_pending": 0}
         found = False
         # EDGAR coverage across sub-providers is only as verified as the
         # least verified one, and its reasons are the union — the same
@@ -1354,6 +1361,16 @@ class CombinedSmartMoneyProvider:
             merged["watched"] += int(result.get("watched") or 0)
             merged["read_through"] += int(result.get("read_through") or 0)
             merged["unread"].extend(str(s) for s in (result.get("unread") or []))
+            merged["market_wide_blind"] = bool(
+                merged["market_wide_blind"] or result.get("market_wide_blind")
+            )
+            try:
+                merged["market_wide_read"] += int(result.get("market_wide_read") or 0)
+                merged["market_wide_pending"] += int(
+                    result.get("market_wide_pending") or 0,
+                )
+            except (TypeError, ValueError):
+                pass
             sub_edgar = result.get("edgar")
             if not isinstance(sub_edgar, dict):
                 sub_edgar = dict(blank_edgar)
@@ -1406,25 +1423,3 @@ class CombinedSmartMoneyProvider:
         )
         return merged
 
-    def peek_form4_accessions(self, symbols: list[str] | None = None) -> set[str]:
-        """Union of Form 4 accessions currently visible on every sub-provider.
-
-        Congressional providers have no accession peek; they are skipped.
-        A sub-provider failure is isolated — same posture as refresh/fetch.
-        ``symbols`` restricts discovery to names this desk is watching.
-        """
-        out: set[str] = set()
-        for index, provider in enumerate(self.providers):
-            peek = getattr(provider, "peek_accessions", None)
-            if not callable(peek):
-                continue
-            name = f"{index}:{type(provider).__name__}"
-            try:
-                try:
-                    found = peek(symbols)
-                except TypeError:
-                    found = peek()
-                out.update(str(a).strip() for a in (found or []) if str(a).strip())
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Form 4 accession peek failed (%s): %s", name, exc)
-        return out

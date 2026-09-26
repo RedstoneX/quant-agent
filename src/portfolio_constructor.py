@@ -33,6 +33,7 @@ from src.data.levels import (
     COVERAGE_UNKNOWN,
     FAULT_NO_ANALYSIS,
     FAULT_NO_ENTRY,
+    FAULT_NO_PRICE,
     TargetDerivation,
     derive_structural_target,
     horizon_reach,
@@ -45,6 +46,7 @@ from src.models import (
     reward_to_risk, stated_soft_exit,
 )
 from src.risk.constants import reward_risk_floor_applies
+from src.universe_screen import STOP_SANITY_FLOOR_FRACTION
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +240,14 @@ STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
 # `_widen_stop_past_noise`. Named now, for the same reason every other
 # outcome is named.
 STOP_RULE_OUTSIDE_BAND = "stop_kept_already_outside_atr_band"
+#: RETIRED as a shipping rule (board item 80, 2026-09-25, reworked). This named
+#: the one branch that honoured a typed stop with NO ATR to verify it against,
+#: letting an unverifiable distance size a position. That branch now DERIVES the
+#: stop from price structure and HOLDS (`STOP_RULE_STRUCTURAL_NO_ATR` /
+#: `STOP_RULE_PRIOR_BAR_NO_ATR`), refusing only when no structure is readable,
+#: so no shipping stop carries this rule any more. Kept defined only so the
+#: `_GEOMETRY_REFUSAL_BY_RULE` lookup and any historical record referencing the
+#: string still resolve.
 STOP_RULE_NO_VOLATILITY = "stop_kept_no_atr_reading"
 STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
 #: The unbacked-stop fallback placed the stop under the SIGNAL BAR's low
@@ -249,6 +259,16 @@ STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
 #: construction: it only wins when the signal bar itself spans more than
 #: the noise band, i.e. a climactic bar.
 STOP_RULE_SIGNAL_BAR = "stop_placed_past_signal_bar"
+#: No-ATR structural fallback (owner ruling 2026-09-25, board item 80).
+#: The protective stop was READ from price structure because there was no
+#: volatility reading to place one from: `STRUCTURAL_NO_ATR` sits one
+#: buffer beyond the nearest VERIFIED computed level on the protective
+#: side of entry (a swing-low / structure stop); `PRIOR_BAR_NO_ATR` sits
+#: one buffer beyond the last completed bar's far edge (a prior-bar low
+#: stop) when no computed level qualifies. Both HOLD the position -- a
+#: missing ATR is never a reason to skip protection.
+STOP_RULE_STRUCTURAL_NO_ATR = "stop_read_from_structure_no_atr"
+STOP_RULE_PRIOR_BAR_NO_ATR = "stop_read_from_prior_bar_no_atr"
 #: 2026-09-12 (second ruling of the day — see docs/WORK.md item 54). The
 #: stop this trade REQUIRES is wider than the instrument can plausibly
 #: travel inside the trade's own horizon. The published constraint on a
@@ -274,18 +294,22 @@ STOP_RULE_SIGNAL_BAR = "stop_placed_past_signal_bar"
 #: the same stock. The width test is on WHATEVER stop would ship — an
 #: honoured level, the absolute floor, the band, or the signal bar.
 STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
-#: The instrument has fewer completed sessions than the LONGEST indicator
-#: window the analyst is briefed with (`src/data/technical.py::
-#: LONGEST_INDICATOR_WINDOW`, the 200-session moving average). The 2026-
-#: 07-16 audit already treated that reference's absence as the analyst
-#: judging trend blind; a listing too young to have it also has too few
-#: repeated turning points for the level scan to say anything reliable.
-#: This is a refusal about the INSTRUMENT (a listing is young), not a data
-#: fault (a feed is dead) — PR #326's split classifies the latter. Read
-#: from `TechAnalysisResult.bars_available`, Python-set by the analyst from
-#: the bars it actually received; None (older row, hand-built object) is
-#: not judged, because an unknown count is not a short one.
-STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
+#: RETIRED as a constructor refusal (board item 180, owner ruling 2026-09-25).
+#: This named the young-listing refusal that fired on a bar COUNT: fewer
+#: completed sessions than `LONGEST_INDICATOR_WINDOW` (200) and the trade was
+#: turned away, however readable its stop and levels were. The owner dropped
+#: the count gate: a young listing is TRADEABLE when a defensible protective
+#: stop is readable from whatever bars exist and the seats clear it, and is
+#: refused ONLY when no stop can be read from the instrument -- the existing
+#: stop-readability rule (`_derive_structural_stop_no_atr` /
+#: `STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`, board item 80) is now the
+#: real gate, catching same-day-IPO / near-zero-bar names on what the trade
+#: needs rather than on a calendar count. Indicators already degrade to the
+#: bars that exist (`compute_indicators`), so a short history simply leaves
+#: `ma_200` = None, which the exit guard treats as UNPARSEABLE for any
+#: `thesis_invalid_if` that references it. The string is deliberately NOT
+#: reused here; the universe screen and the transient-admission lane keep
+#: their own separate `insufficient_history` gates (out of this item's scope).
 #: retired board item 49 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). The portfolio risk budget was spent
 #: before this candidate's turn came round. NOT a judgement about the idea:
 #: it passed every gate, and on a day with fewer competing names it would
@@ -376,9 +400,32 @@ TRIM_REFUSAL_NO_USABLE_LIVE_STOP = "trim_without_analysis_has_no_usable_live_sto
 #: input arrived and is nonsense, so it is refused rather than compared.
 STOP_REFUSAL_STOP_NOT_FINITE = "stop_price_not_finite"
 STOP_REFUSAL_ENTRY_NOT_FINITE = "entry_price_not_finite"
-#: Nothing typed a stop and there is no ATR reading to derive one from, so
-#: there is no stop at all to judge. The ONE path the regex never saw.
+#: RETIRED as an emitted refusal (board item 80, 2026-09-25, reworked): nothing
+#: typed and no ATR no longer refuses on sight -- the branch first tries to
+#: DERIVE a stop from price structure and only refuses (with
+#: `STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`) when none is readable. Kept
+#: defined as a greppable key: it appears in pre-rework production logs and in
+#: docs/INCIDENT_HISTORY.md, and nothing emits it any more.
 STOP_REFUSAL_NO_STOP_NO_VOLATILITY = "no_stop_and_no_volatility_reading"
+#: No-ATR structural-stop fallback refusals (owner ruling 2026-09-25,
+#: board item 80, reworked). The branch used to REFUSE a typed stop with
+#: no ATR outright (`typed_stop_but_no_volatility_reading`); that was
+#: wrong per the ruling -- a missing volatility reading is never a reason
+#: to skip protection. The branch now derives the stop from price
+#: structure and HOLDS, and only these two refusals remain:
+#:  * NO_STRUCTURAL_STOP_NO_VOLATILITY -- no ATR AND no structural level
+#:    (computed level with enough touches, or signal-bar edge) on the
+#:    protective side of entry: a monotonic move, no structure, or zero
+#:    bars. The ruling's genuine skip-correct case. Per-symbol, durable,
+#:    never a book-wide halt.
+#:  * STRUCTURAL_STOP_TOO_FAR -- a level was readable but sits past the
+#:    desk's existing stop-distance sanity bound (`STOP_SANITY_FLOOR_
+#:    FRACTION`), so the implied per-trade risk exceeds what the desk
+#:    accepts: skip on RISK, not on the missing reading.
+STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY = (
+    "no_structural_stop_and_no_volatility_reading"
+)
+STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR = "structural_stop_past_sanity_bound"
 #: `_resolve_entry_and_stop`'s terminal side check: whatever the stop rules
 #: above produced is absent, non-positive, or on the wrong side of entry.
 #: Filed only when no more specific refusal was already recorded for this
@@ -482,9 +529,12 @@ class ConstructorConfig:
     # (spec §2.1) this caps `TargetPosition.risk_allocation_pct` rather than
     # driving it — conviction sets the size, this bounds it.
     risk_budget_pct: float = 5.0
-    # Below this, an idea is not worth trading: a token position pays full
-    # commission and full attention for an immaterial payoff. A request
-    # rationed under the floor is denied outright rather than shrunk.
+    # Below this, an idea is not worth trading: a token position still
+    # consumes a book slot and needs its own stop and ongoing attention for
+    # an immaterial payoff, and its spread/slippage cost is a large share of
+    # the whole position (Alpaca charges no stock commission — this is not a
+    # commission floor). A request rationed under the floor is denied
+    # outright rather than shrunk.
     min_risk_pct: float = 0.5
     # Spec §2.2. Total at-risk ceiling across the book, and the share of it any
     # one correlated cluster may take. Enforced only when the caller supplies
@@ -544,13 +594,21 @@ class ConstructorConfig:
     # 40 -> 75 and 60 -> 90.
     max_sector_pct: float = 75.0
     max_sector_hard_pct: float = 90.0
-    # Spec §10.3's floor. A position shrunk to near-nothing by sector crowding
-    # still pays commission, still consumes a slot, still needs a stop and
-    # still needs watching — it cannot pay for its own risk. Below this the
-    # honest answer is no trade, not a token trade. Deliberately the SAME
-    # $500 threshold `cash_sweep.min_order_usd` already uses rather than a
-    # second, divergent notion of "too small to bother"; pipeline.py wires it
-    # from that setting.
+    # NO LONGER used to reject a sector-crowded trade for being small (fixed
+    # 2026-09-24: a genuine ~$295 / 2.95%-of-equity MRVL trade was refused
+    # here as "under the $500 minimum order ... pays full commission" — the
+    # $500 was an arbitrary round number (config/number_ledger.yaml) with no
+    # broker minimum behind it, and Alpaca charges NO stock commission, so
+    # the refusal was a bad decision justified by a false reason.
+    # `_apply_sector_crowding_scale` now lets a sector-crowded trade through
+    # at whatever size crowding leaves, however small, rather than refusing
+    # it outright. This field is kept (not deleted) because
+    # `apply_gross_ceiling` (see `construct_orders`'s call into
+    # `src/risk/rules.py`) still reads it as the notional floor for the
+    # SEPARATE gross-exposure-ceiling entry check — that gate was left
+    # unchanged; see the fix notes for why. Mirrors
+    # `cash_sweep.min_order_usd`, which still does its original job gating
+    # the spare-cash SWEEP, unrelated to this trade path.
     min_order_usd: float = 500.0
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
@@ -660,14 +718,6 @@ class ConstructorConfig:
         ("transitional", 1.10),
         ("risk-on", 0.95),
     )
-    # Widening a stop lowers reward:risk, because the target does not move.
-    # **Retired as a gate (owner 2026-09-17): rejects nothing and caps
-    # nothing.** No code in this class reads
-    # `self.min_reward_risk_after_widening` — grep confirms it. Kept only
-    # as the default of a historical settings key so a silent rename
-    # cannot drop a deployed threshold; see `src/risk/constants.py`
-    # (`REWARD_RISK_FLOOR`) for the full history. Do not re-arm it.
-    min_reward_risk_after_widening: float = 1.5
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
     # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
@@ -705,6 +755,19 @@ class ConstructorConfig:
     # an unbacked stop does. Kept in sync with
     # `risk.min_level_touches_for_stop_honor`.
     min_level_touches_for_stop_honor: int = 5
+    # How far BELOW a structural level (ABOVE it for a short) the
+    # protective stop sits when it must be READ from price structure
+    # because there is no ATR reading -- `_derive_structural_stop_no_atr`,
+    # owner ruling 2026-09-25 (board item 80). A fraction of the level
+    # price, so a wick that just tags the level does not trigger the stop.
+    # OWNER-APPETITE, not doctrine: the published methods (swing-low,
+    # prior-bar low, Donchian channel-low) agree a buffer is needed but
+    # none fixes its size. Ledgered with an OPEN QUESTION in
+    # config/number_ledger.yaml. Default 0.5% is a modest slack,
+    # deliberately smaller than the 1.0% level-cluster zone
+    # (`levels.CLUSTER_TOLERANCE_PCT`) so the stop sits just past the zone
+    # the level was matched within, never inside it.
+    structural_stop_buffer_pct: float = 0.005
     # --- Target derivation (2026-09-01) ---------------------------------
     # The stop has been computed from measured volatility since 2026-08-27;
     # the target was still the language model's `reference_target`, so the
@@ -786,10 +849,20 @@ class PortfolioConstructor:
         # the caller's job to drain once per session.
         self.last_data_faults: dict[str, dict[str, str]] = {}
 
+        # New names the caller could not price to a fresh today print (item
+        # 120), mapping SYMBOL -> the fault code to file (FAULT_NO_PRICE or
+        # FAULT_STALE_PRICE). Populated per `construct_orders` call from its
+        # `unpriceable_symbols` argument; consulted by
+        # `_resolve_entry_and_stop` so such a name is refused as a data fault
+        # rather than sized on a stale/mid price. Initialised here so the
+        # backtest shim and older tests that call `_resolve_entry_and_stop`
+        # directly never hit an unset attribute.
+        self._unpriceable_symbols: dict[str, str] = {}
+
         # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
         # "direction"}} for every trade this instance refused BY NAME —
-        # today STOP_REFUSAL_WIDER_THAN_REACH and
-        # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
+        # e.g. STOP_REFUSAL_WIDER_THAN_REACH and
+        # STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY. Written directly, never
         # recovered from log text: `last_drop_reasons`
         # is a regex over the constructor's own log lines and several
         # messages miss its pattern, so a refusal that mattered could reach
@@ -897,48 +970,6 @@ class PortfolioConstructor:
             symbol, refusal, detail,
         )
 
-    def _require_sufficient_history(
-        self,
-        symbol: str,
-        analysis: TechAnalysisResult | None,
-        direction: str,
-    ) -> bool:
-        """True unless the instrument is too YOUNG to be measured.
-
-        The one narrow refusal that survived the 2026-09-12 replacement of
-        "no floor, no trade" (docs/WORK.md item 54): a listing with fewer
-        completed sessions than the longest indicator window the analyst is
-        briefed with (`LONGEST_INDICATOR_WINDOW`, the 200-session moving
-        average) is refused by name, on both setup types, from the ONE
-        funnel `real_reward_risk_preview` and `_resolve_entry_and_stop`
-        share — FIRST, before the target derivation, because a listing this
-        young usually yields no levels either and the honest name for that
-        is this one, not the derivation's `no_structural_levels`. Nothing
-        about the chart's SHAPE is judged here — absent
-        structure is not a reason (no published method refuses a trade for
-        lack of support below); an unmeasurable instrument is.
-
-        Not a data fault: the bars arrived and are clean, there are simply
-        too few of them yet. A missing count (older persisted row, a
-        hand-built analysis) is not judged — an unknown count is not a
-        short one, and the desk does not refuse on what it did not measure.
-        """
-        count = getattr(analysis, "bars_available", None)
-        try:
-            count = int(count) if count is not None else None
-        except (TypeError, ValueError):
-            count = None
-        if count is None or count >= LONGEST_INDICATOR_WINDOW:
-            return True
-        self._note_refusal(
-            symbol, direction, STOP_REFUSAL_INSUFFICIENT_HISTORY,
-            f"only {count} completed session(s) of history against the "
-            f"{LONGEST_INDICATOR_WINDOW}-session window the analyst's own "
-            f"trend reference needs. Too young to measure, not a judgement "
-            f"about the chart: the name qualifies the day it has the history.",
-        )
-        return False
-
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
         """Same contract as `_construct_orders_impl` — see its docstring for
         every parameter. Wraps it only to capture, via `_DropReasonCapture`,
@@ -973,6 +1004,7 @@ class PortfolioConstructor:
         gross_ceiling=None,
         ranking: Sequence[str] | None = None,
         live_stops: dict[str, float] | None = None,
+        unpriceable_symbols: dict[str, str] | set[str] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -984,6 +1016,20 @@ class PortfolioConstructor:
         `price_map`: optional {symbol: live_price} — required for BUYs so
         the constructor can sanity-check TA's entry. If absent for a BUY
         symbol, we fall back to TA's entry_price.
+
+        `unpriceable_symbols`: new names (docs/WORK.md item 120) for which
+        the caller's freshness resolver (`src.data.live_price`) could NOT
+        obtain a fresh today print this session — a thin name with no print,
+        or a feed that returned only a stale print. A mapping SYMBOL ->
+        fault code (`FAULT_NO_PRICE` / `FAULT_STALE_PRICE`); a bare set is
+        also accepted and defaults every entry to `FAULT_NO_PRICE`. Sizing a
+        buy off a stale price (or a quote mid) mis-sizes it proportionally,
+        so each of these is refused as a DATA FAULT and dropped rather than
+        sized on a bad price OR on the TA entry fallback. It never affects a
+        held name: the caller only lists new targets it tried and failed to
+        price. `resolve_live_price` returns a real print or today's forming
+        session bar and never a quote mid, so an absent value here means no
+        usable today price of any kind — not merely "no last trade".
 
         `existing_risk_pct` / `clusters`: spec §2.2. The book's current
         per-symbol budget risk (`src/risk/metrics.py`) and its measured
@@ -1037,6 +1083,21 @@ class PortfolioConstructor:
         if total_value <= 0:
             return []
         price_map = price_map or {}
+        # New names the caller could not price to a fresh today print (item
+        # 120), keyed upper-cased so the lookup in `_resolve_entry_and_stop`
+        # cannot miss on case/whitespace drift; the value is the fault code
+        # to file. A bare set defaults every entry to FAULT_NO_PRICE. Reset
+        # every call — per-run state, like `price_map` itself.
+        if isinstance(unpriceable_symbols, dict):
+            self._unpriceable_symbols = {
+                str(s).strip().upper(): str(code or FAULT_NO_PRICE)
+                for s, code in unpriceable_symbols.items()
+            }
+        else:
+            self._unpriceable_symbols = {
+                str(s).strip().upper(): FAULT_NO_PRICE
+                for s in (unpriceable_symbols or ())
+            }
         current_weights = self._current_weights(positions, total_value)
         analyses_by_sym = {a.symbol: a for a in analyses}
         positions_by_sym = {p.symbol: p for p in positions}
@@ -1898,6 +1959,32 @@ class PortfolioConstructor:
         exactly one definition of what a tradeable entry/stop pair is.
         """
         is_short = target.direction == "short"
+
+        # Item 120: a new name the caller could not price to a fresh today
+        # print is refused HERE, before the TA-entry fallback below can size
+        # it off a stale analyst number. The freshness resolver
+        # (`src.data.live_price.resolve_live_price`) already rejected a quote
+        # mid and a prior-session trade for this name — it returns a real
+        # print or today's forming session bar, never a quote mid — so an
+        # entry here means no usable today price of any kind. Falling back to
+        # the TA entry would reintroduce exactly the bad-price sizing the
+        # resolver exists to prevent. Filed under its own SIZING fault code
+        # (FAULT_NO_PRICE / FAULT_STALE_PRICE, carried from the caller) so it
+        # routes through the existing unmeasurable-drop path
+        # (`_record_constructor_drops` / `_alert_unmeasurable_symbols`) and
+        # is never counted as a trade the desk judged.
+        fault_code = self._unpriceable_symbols.get(target.symbol.strip().upper())
+        if fault_code is not None:
+            self._note_data_fault(
+                target.symbol, target.direction, fault_code,
+                "DATA FAULT: no fresh today print to size this new name this "
+                "session (a quote mid or a prior-session price is not a "
+                "sizing reference) — the buy cannot be sized without "
+                "inventing a price, so the name is refused as unmeasurable "
+                "rather than mis-sized",
+            )
+            return (None, None)
+
         entry_price = 0.0
         if market_price and market_price > 0:
             entry_price = float(market_price)
@@ -1926,17 +2013,14 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
-        # Too young to measure (item 54, 2026-09-12). Checked FIRST, before
-        # the target derivation: a listing with too few sessions usually
-        # also yields no levels, and "insufficient history" is the true
-        # name for that, not `no_structural_levels` (which PR #326 reads
-        # as a feed fault).
-        if not self._require_sufficient_history(
-            target.symbol, analysis, target.direction,
-        ):
-            # drop-reason: delegated — `_require_sufficient_history` files
-            # STOP_REFUSAL_INSUFFICIENT_HISTORY before returning False.
-            return (None, None)
+        #
+        # No young-listing count gate here any more (board item 180, owner
+        # ruling 2026-09-25): a short history is NOT refused on a bar count.
+        # Indicators degrade to the bars that exist upstream (`ma_200` = None
+        # under 200 sessions), and a name too young to read ANY stop from is
+        # caught below by the stop-readability rule (`_derive_structural_stop_
+        # no_atr` / `STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`), on what
+        # the trade needs rather than on a calendar count.
 
         # The target is derived BEFORE the stop is finalised, because the
         # reward:risk check inside `_widen_stop_past_noise` needs a real
@@ -2133,6 +2217,106 @@ class PortfolioConstructor:
                 best, best_gap = price, gap
         return best
 
+    def _derive_structural_stop_no_atr(
+        self,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        is_short: bool,
+    ) -> tuple[float | None, float, str] | None:
+        """Read a protective stop from price STRUCTURE when ATR is absent.
+
+        Owner ruling 2026-09-25 (board item 80): a missing volatility reading
+        is never a reason to skip protection or to size off an unverifiable
+        typed number. ATR is gone and no raw bars survive into the constructor
+        (it is a pure decision over an already-computed `TechAnalysisResult`),
+        but the STRUCTURE those bars produced does survive on the analysis
+        object. Tried in order of how defensible the level is:
+
+          1. The NEAREST verified computed structural level on the protective
+             side of entry -- support at/below a long, resistance at/above a
+             short -- with at least `risk.min_level_touches_for_stop_honor`
+             prior touches, the SAME trust bar `_level_backing_stop` applies
+             before it will honour a tight typed stop. This is a swing-low /
+             structure stop (IG, LuxAlgo). The shipping stop is placed one
+             buffer BEYOND the level (the losing side).
+          2. The signal (last completed) bar's low for a long / high for a
+             short -- a prior-bar low stop (Ticker Daily), which is also what a
+             Donchian channel-low collapses to when only the last bar is
+             trustworthy. The shipping stop is placed one buffer beyond it.
+
+        Returns (matched_level_or_None, stop_price, rule) or None when neither
+        tier yields a usable level on the protective side of entry (a monotonic
+        move, no structure, or zero bars -- the ruling's genuine skip case).
+        The buffer is `ConstructorConfig.structural_stop_buffer_pct` --
+        owner-appetite, ledgered with an open question, not doctrine.
+        """
+        buffer_pct = self.cfg.structural_stop_buffer_pct
+
+        def _beyond(level_price: float) -> float:
+            # Just past the level on the losing side: below it for a long,
+            # above it for a short.
+            return (
+                level_price * (1.0 + buffer_pct) if is_short
+                else level_price * (1.0 - buffer_pct)
+            )
+
+        def _usable(stop_price: float) -> bool:
+            return (
+                math.isfinite(stop_price) and stop_price > 0
+                and (stop_price > entry_price if is_short
+                     else stop_price < entry_price)
+            )
+
+        # ---- Tier 1: nearest verified computed structural level ----------
+        raw_levels = getattr(analysis, "computed_levels", None) or []
+        touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        min_touches = self.cfg.min_level_touches_for_stop_honor
+        best_level: float | None = None
+        best_gap = float("inf")
+        for raw in raw_levels:
+            try:
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(price) or price <= 0:
+                continue
+            # Protective side only, judged against THIS entry (not last close),
+            # same re-partition `_level_backing_stop` and target derivation do.
+            if is_short and price <= entry_price:
+                continue
+            if not is_short and price >= entry_price:
+                continue
+            touches = touches_by_price.get(price)
+            if touches is None or touches < min_touches:
+                # Unverified or under-touched: fail closed, exactly as the
+                # tight-stop exemption does. It is not trusted enough to anchor
+                # the only protection this name will get.
+                continue
+            gap = abs(entry_price - price)
+            if gap < best_gap:
+                best_level, best_gap = price, gap
+        if best_level is not None:
+            stop = _beyond(best_level)
+            if _usable(stop):
+                return (best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR)
+
+        # ---- Tier 2: the signal (prior) bar's far edge -------------------
+        bar_edge = getattr(
+            analysis, "signal_bar_high" if is_short else "signal_bar_low", None,
+        )
+        try:
+            bar_edge = float(bar_edge) if bar_edge is not None else None
+        except (TypeError, ValueError):
+            bar_edge = None
+        if bar_edge is not None and math.isfinite(bar_edge) and bar_edge > 0 and (
+            bar_edge > entry_price if is_short else bar_edge < entry_price
+        ):
+            stop = _beyond(bar_edge)
+            if _usable(stop):
+                return (bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR)
+
+        return None
+
     def _reward_risk_at(
         self,
         entry_price: float,
@@ -2221,13 +2405,11 @@ class PortfolioConstructor:
         entry_price = float(entry_price)
         is_short = direction == "short"
 
-        # Too young to measure — same check, same place in the funnel, as
-        # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
-        # constructor would refuse one stage later.
-        if not self._require_sufficient_history(
-            analysis.symbol, analysis, direction,
-        ):
-            return None
+        # No young-listing count gate here (board item 180, owner ruling
+        # 2026-09-25): the preview mirrors `_resolve_entry_and_stop`, which no
+        # longer refuses on a bar count. A name too young to read any stop from
+        # still previews None below when the stop-readability rule cannot place
+        # a stop, so the PM is not shown a candidate the constructor would drop.
 
         derivation = self._derive_target(
             analysis.symbol, analysis, entry_price, direction,
@@ -2517,29 +2699,97 @@ class PortfolioConstructor:
         # whichever branch produced it.
         # -------------------------------------------------------------
         if atr is None:
-            # No volatility reading — leave structure alone, as always. The
-            # stop is still judged on its own geometry below: whether we
-            # can measure this name's noise has nothing to do with whether
-            # the trade's payoff clears the floor. With nothing typed AND
-            # nothing to read, there is no stop: the caller rejects None.
-            if stop_loss is None:
-                # Board item 10 (2026-09-14, second pass). THE ONE PATH THE
-                # REGEX NEVER SAW: this message puts "has" straight after the
-                # symbol, and `_DropReasonCapture._SYMBOL` requires
-                # rejected|refused|skipped there. A candidate dropped here
-                # reached the record as the literal "no matching constructor
-                # log line captured" — the exact signature the first pass
-                # went looking for and reported as fully eliminated.
+            # No volatility reading -- but a missing ATR is NEVER a reason to
+            # skip protection or to size off an unverifiable typed number
+            # (owner ruling 2026-09-25, board item 80, reworked). ATR is
+            # Python-set upstream from the same bars that produced this
+            # analysis; when it is gone the raw OHLC series is gone with it,
+            # BUT the price STRUCTURE those bars yielded survives on the
+            # analysis object -- `computed_levels` (every level
+            # `find_structural_levels` clustered over the full fetched history,
+            # with `computed_level_touches`) and `signal_bar_low`/
+            # `signal_bar_high` (the last completed bar). "There are always
+            # levels, even from a few days ago." So DERIVE the protective stop
+            # from that structure and HOLD; refuse this one name ONLY when no
+            # structural level is readable at all, or the level that is sits so
+            # far from entry that it fails the desk's own stop-distance sanity
+            # bound (skip on risk, not on the missing reading). Never a
+            # book-wide halt -- a transient ATR loss drops only the names it
+            # actually hits.
+            #
+            # Published basis (cited, not re-derived here): a swing-low /
+            # structure stop placed just beyond the nearest confirmed level
+            # (IG, LuxAlgo), degrading to a prior-bar low stop when only the
+            # last completed bar is trustworthy (Ticker Daily; a Donchian
+            # channel-low collapses to the same thing as the window shrinks).
+            # The buffer past the level is owner-appetite, not doctrine --
+            # `ConstructorConfig.structural_stop_buffer_pct`, ledgered with an
+            # open question. O'Neil's 7-8% percentage stop is deliberately NOT
+            # used even as a floor: it is a fitted number, and inventing one
+            # conflicts with desk doctrine (no arbitrary numbers) -- SKIP is
+            # preferred over an invented stop when no level can be read.
+            derived = self._derive_structural_stop_no_atr(
+                analysis, entry_price, is_short,
+            )
+            if derived is None:
+                # No verified structural level on the protective side of entry,
+                # and no usable signal-bar edge either: a monotonic move with
+                # no intervening low, a chart with no structure, or zero
+                # completed bars. Nothing measurable to protect this trade
+                # with, so refuse THIS one name -- the ruling's genuine
+                # skip-correct case, not a view on the idea. Per-symbol,
+                # durable, never a halt.
+                typed = "" if stop_loss is None else (
+                    f" A stop was typed at ${stop_loss:,.2f}, but with no ATR "
+                    f"and no readable structural level there is nothing to "
+                    f"verify or place a stop from."
+                )
                 self._note_refusal(
-                    symbol, direction, STOP_REFUSAL_NO_STOP_NO_VOLATILITY,
-                    "no stop was typed by the PM or the analyst and there is "
-                    "no ATR reading to derive one from, so this trade has no "
-                    "stop at all to judge. Not a view on the idea: nothing "
-                    "measurable was available to protect it with.",
+                    symbol, direction,
+                    STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+                    f"there is no ATR reading for this name and no structural "
+                    f"level (a computed level with enough touches, or the "
+                    f"signal-bar edge) sits on the protective side of the "
+                    f"${entry_price:,.2f} entry, so no stop can be read from "
+                    f"the instrument to hold it.{typed} Not a view on the "
+                    f"idea -- nothing measurable was available to protect it.",
                 )
                 return None
-            honoured, rule, level = stop_loss, STOP_RULE_NO_VOLATILITY, None
-            band_edge = multiple = None
+            level, honoured, rule = derived
+            # Sanity / risk skip, reusing the desk's EXISTING stop-distance
+            # bound rather than inventing a new one: a stop further than
+            # `STOP_SANITY_FLOOR_FRACTION` of entry away is refused elsewhere
+            # on the desk as not-a-real-stop (the universe screen's volatility
+            # ceiling and the midday trail both use it). Applied here it is the
+            # owner's "the only readable level sits so far below entry that the
+            # implied risk exceeds the limit -- skip on risk". Equity per-trade
+            # risk (`max_position_risk_pct`) stays bounded downstream by
+            # fixed-fractional sizing whatever the width; this only catches an
+            # absurd distance the sizing would otherwise shrink to a stub.
+            width_frac = abs(entry_price - honoured) / entry_price
+            if width_frac > (1.0 - STOP_SANITY_FLOOR_FRACTION):
+                self._note_refusal(
+                    symbol, direction, STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR,
+                    f"the only structural stop readable with no ATR sits "
+                    f"${honoured:,.2f} [{rule}], {100 * width_frac:.1f}% "
+                    f"{side_word} the ${entry_price:,.2f} entry -- past the "
+                    f"desk's {100 * (1.0 - STOP_SANITY_FLOOR_FRACTION):.0f}% "
+                    f"stop-distance sanity bound. A stop that far implies more "
+                    f"per-trade risk than the desk accepts, so this one name "
+                    f"is skipped on risk, not on the missing reading.",
+                )
+                return None
+            logger.info(
+                "Constructor: %s %s had no ATR reading; protective stop "
+                "derived from price structure at $%.2f [%s]%s and HELD -- a "
+                "missing volatility reading is not a reason to skip protection "
+                "(owner 2026-09-25, board item 80).",
+                side_label, symbol, honoured, rule,
+                f" (structural level ${level:.2f})" if level is not None else "",
+            )
+            # honoured/rule set above; falls through to the width gate (skipped
+            # with no ATR) and the single reward:risk tail, exactly like the
+            # ATR path.
         else:
             multiple = self._stop_atr_multiple(analysis, regime)
             band_edge = (
@@ -3005,29 +3255,19 @@ class PortfolioConstructor:
                 f"Concentration scales size, but not without end]"
             )
 
-        # The floor. A position this small cannot pay for its own risk.
-        notional = total_value * final / 100
-        if notional < self.cfg.min_order_usd:
-            # Board item 10 (2026-09-14, second pass) — see the sibling
-            # refusal above.
-            self._note_refusal(
-                symbol, "short" if side == "short" else "long",
-                STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
-                f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
-                f"equity, so crowding leaves only {final:.2f}% "
-                f"(~${notional:,.0f}) — under the "
-                f"${self.cfg.min_order_usd:,.0f} minimum order. A position "
-                f"this small pays full commission and full attention for an "
-                f"immaterial payoff, so it is not taken at all.",
-            )
-            return -1.0, (
-                f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
-                f"at {current_pct:.1f}% of equity, so crowding leaves only "
-                f"{final:.2f}% (~${notional:,.0f}). That is under the "
-                f"${self.cfg.min_order_usd:,.0f} minimum order: a position "
-                f"this small pays full commission and full attention for an "
-                f"immaterial payoff, so it is not taken at all]"
-            )
+        # Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity
+        # MRVL trade was refused here as "under the $500 minimum order ...
+        # pays full commission"). `min_order_usd` was an arbitrary flat $500
+        # with no broker minimum behind it (config/number_ledger.yaml), and
+        # Alpaca charges NO stock commission — the refusal was a bad
+        # decision justified by a false reason. A sector-crowded trade is no
+        # longer refused for notional size; it goes through at whatever
+        # `final` leaves, however small (no commission + fractional shares
+        # mean a small trade is not actually costly to hold). This
+        # deliberately does NOT invent a new, arbitrary sliver threshold —
+        # see the board note for why. `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER`
+        # is kept defined (tests reference it) even though this path no
+        # longer raises it.
 
         logger.info(
             "Constructor: %s size scaled for sector crowding "
@@ -3434,6 +3674,12 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling. Same expression the reward:
+            # risk gate above (inside `_widen_stop_past_noise`, via
+            # `_resolve_entry_and_stop`) used against THIS `derivation`, so
+            # the Risk Manager sees the identical verdict construction saw.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
@@ -3636,6 +3882,10 @@ class PortfolioConstructor:
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.
             setup_type=getattr(analysis, "setup_type", None),
+            # The MEASURED half of the same verdict (item 82) — see
+            # TradeDecision.structural_ceiling and the identical comment in
+            # `_build_buy`.
+            structural_ceiling=(derivation.level_used is not None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,

@@ -31,6 +31,7 @@ from src.data.event_calendar import (
     EARNINGS_MEASURED,
     EARNINGS_NO_FETCHED_DATE,
     MACRO_RELEASES,
+    RELEASE_SCHEDULE_LOOKAHEAD_DAYS,
     UNCOVERED_EVENTS,
     EarningsProximity,
     EventCalendarCoverage,
@@ -351,6 +352,157 @@ def test_a_clean_response_with_no_scheduled_dates_is_an_absence_not_a_success():
     assert {f.reason for f in coverage.failed} == {"no_scheduled_dates_published"}
 
 
+# --- the three outcomes of one release fetch --------------------------------
+#
+# Until 2026-09-23 there were only two. The fetch window was the HORIZON
+# (10 days by default) and the tracked releases are monthly, so a release whose
+# schedule was published and simply five weeks out came back empty and was
+# recorded as `no_scheduled_dates_published` -- a source failure. Measured
+# against the live FRED API on 2026-09-23: over the next 10 days CPI (10), PPI
+# (46) and Retail Sales (9) each returned 0 dates; over the next 120 days they
+# returned three real dates apiece. Production logged "Macro event calendar
+# PARTIAL this run" with those three in the FAILED list, every run, for
+# releases that were never missing.
+
+
+def test_the_fetch_window_is_the_wide_lookahead_not_the_horizon():
+    """One request per release, just a later `realtime_end`. The horizon must
+    not be what is asked of FRED -- that is the defect."""
+    payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
+    provider = _calendar(payloads)
+    today = et_today()
+    provider.get_upcoming_events(horizon_days=10)
+
+    assert len(provider.transport_calls) == len(MACRO_RELEASES)
+    expected_end = (
+        today + timedelta(days=RELEASE_SCHEDULE_LOOKAHEAD_DAYS)
+    ).isoformat()
+    for url, _timeout in provider.transport_calls:
+        assert f"realtime_start={today.isoformat()}" in url
+        assert f"realtime_end={expected_end}" in url
+
+
+def test_a_horizon_wider_than_the_lookahead_still_fetches_the_whole_horizon():
+    payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
+    provider = _calendar(payloads)
+    today = et_today()
+    horizon = RELEASE_SCHEDULE_LOOKAHEAD_DAYS + 90
+    provider.get_upcoming_events(horizon_days=horizon)
+    expected_end = (today + timedelta(days=horizon)).isoformat()
+    for url, _timeout in provider.transport_calls:
+        assert f"realtime_end={expected_end}" in url
+
+
+def test_outcome_one_a_date_inside_the_horizon_is_an_event():
+    today = et_today()
+    payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
+    payloads[10] = _dates_payload([today + timedelta(days=4)])
+    provider = _calendar(payloads)
+    events = provider.get_upcoming_events(horizon_days=10)
+    coverage = provider.last_coverage
+
+    assert [(e.label, e.days_away) for e in events] == [("CPI", 4)]
+    assert 10 not in {f.release_id for f in coverage.failed}
+    # An imminent release is event risk, not a "beyond the horizon" note.
+    assert all(e.release_id != 10 for e in coverage.next_beyond_horizon)
+
+
+def test_outcome_two_a_published_schedule_beyond_the_horizon_is_not_a_failure():
+    """The regression this fix exists for. CPI, PPI and Retail Sales all have
+    real published schedules whose next date is ~3 weeks out. None of them is
+    imminent and NONE of them is a failed fetch."""
+    today = et_today()
+    payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
+    monthly = {
+        10: today + timedelta(days=21),
+        46: today + timedelta(days=22),
+        9: today + timedelta(days=22),
+    }
+    for release_id, first in monthly.items():
+        payloads[release_id] = _dates_payload(
+            [first, first + timedelta(days=28), first + timedelta(days=58)]
+        )
+    # Everything else answers with a schedule too, so `failed` is empty only if
+    # the beyond-horizon releases are genuinely counted as successes.
+    for release in MACRO_RELEASES:
+        if release.release_id not in monthly:
+            payloads[release.release_id] = _dates_payload(
+                [today + timedelta(days=40)]
+            )
+    provider = _calendar(payloads)
+    events = provider.get_upcoming_events(horizon_days=10)
+    coverage = provider.last_coverage
+
+    assert events == []
+    assert coverage.status == "ok"
+    assert coverage.complete is True
+    assert coverage.succeeded == len(MACRO_RELEASES)
+    assert coverage.failed == []
+    # The specific mislabelling that produced the production warning.
+    assert "no_scheduled_dates_published" not in coverage.describe()
+    assert "FAILED" not in coverage.describe()
+
+    # And the next date is surfaced rather than dropped: the desk can name it.
+    by_label = {e.label: e for e in coverage.next_beyond_horizon}
+    assert by_label["CPI"].event_date == monthly[10]
+    assert by_label["CPI"].days_away == 21
+    assert by_label["PPI"].event_date == monthly[46]
+    # Only the NEXT one per release, and sorted soonest first.
+    assert len(by_label) == len(MACRO_RELEASES)
+    assert coverage.next_beyond_horizon == sorted(
+        coverage.next_beyond_horizon, key=lambda e: (e.event_date, e.label)
+    )
+
+    rendered = format_macro_events_section(events, coverage, 10)
+    assert monthly[10].isoformat() in rendered
+    assert "NOT imminent" in rendered
+    assert "Full coverage" in rendered
+
+
+def test_outcome_three_an_empty_wide_window_is_still_a_real_failure():
+    """The wide window is what makes this trustworthy: 120 days of nothing for
+    a monthly release is a genuinely unpublished schedule, not a narrow query.
+    """
+    payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
+    provider = _calendar(payloads)
+    events = provider.get_upcoming_events(horizon_days=10)
+    coverage = provider.last_coverage
+
+    assert events == []
+    assert coverage.status == "failed"
+    assert coverage.succeeded == 0
+    assert {f.reason for f in coverage.failed} == {"no_scheduled_dates_published"}
+    assert coverage.next_beyond_horizon == []
+
+
+def test_a_beyond_horizon_release_never_degrades_macro_coverage():
+    """One release genuinely unpublished, one merely not imminent. Exactly one
+    of them may appear in FAILED."""
+    today = et_today()
+    payloads = {
+        r.release_id: _dates_payload([today + timedelta(days=45)])
+        for r in MACRO_RELEASES
+    }
+    payloads[180] = _dates_payload([])  # genuinely nothing published
+    provider = _calendar(payloads)
+    provider.get_upcoming_events(horizon_days=10)
+    coverage = provider.last_coverage
+
+    assert coverage.status == "partial"
+    assert [f.label for f in coverage.failed] == ["Initial Jobless Claims"]
+    assert coverage.succeeded == len(MACRO_RELEASES) - 1
+    labels = {e.label for e in coverage.next_beyond_horizon}
+    assert "CPI" in labels
+    assert "Initial Jobless Claims" not in labels
+
+
+def test_nothing_beyond_the_horizon_renders_no_beyond_horizon_block():
+    ok = EventCalendarCoverage(configured=7, succeeded=7, failed=[])
+    rendered = format_macro_events_section([], ok, 10)
+    assert "NOT imminent" not in rendered
+    assert "None. All 7 tracked release schedules fetched successfully" in rendered
+
+
 def test_an_empty_calendar_reads_as_empty_only_when_coverage_is_ok():
     today = et_today()
     ok = EventCalendarCoverage(configured=7, succeeded=7, failed=[])
@@ -384,6 +536,72 @@ def test_the_calendar_respects_its_wall_clock_ceiling():
         provider.last_coverage.succeeded + provider.last_coverage.failed_count
         == len(MACRO_RELEASES)
     )
+
+
+def test_a_slow_release_does_not_starve_the_releases_behind_it_in_the_list():
+    """Board item 187. Production logs (2026-09-24/25) showed the SAME tail
+    releases — PPI, PCE, GDP, Retail Sales, Initial Jobless Claims — failing
+    `fetch_deadline_exceeded` run after run, while CPI/NFP at the front of
+    `MACRO_RELEASES` almost always got through. The cause: one shared
+    deadline let an early, slow release consume nearly the whole budget
+    (up to its full `request_timeout_s`), so every release behind it in the
+    fixed iteration order was skipped WITHOUT EVEN AN ATTEMPT.
+
+    This pins the fix: the remaining budget is split fairly across the
+    releases not yet attempted, so a slow CPI response can only consume its
+    own share, not the releases behind it. CPI genuinely times out here (its
+    fake transport takes far longer than any fair share can afford); the six
+    releases behind it must still each get a real attempt and succeed.
+    """
+    today = et_today()
+    calls = []
+
+    def _transport(url, timeout):
+        release_id = int(url.split("release_id=")[1].split("&")[0])
+        calls.append(release_id)
+        if release_id == 10:  # CPI — the always-first release in the list
+            # A response slower than any per-release share can afford.
+            # Mirrors what a real socket timeout does: block for the granted
+            # window, then raise, rather than returning instantly.
+            time.sleep(timeout)
+            raise OSError("read timed out")
+        return _dates_payload([today + timedelta(days=2)])
+
+    provider = MacroEventCalendarProvider(
+        api_key="dummy",
+        total_fetch_deadline_s=1.0,
+        request_timeout_s=1.0,
+        max_retries=0,
+        retry_backoff_base_s=0.0,
+        retry_backoff_max_s=0.0,
+        retry_backoff_jitter_s=0.0,
+        breaker_after_failed_releases=10,
+    )
+    provider._http_get_json = _transport
+
+    started = time.monotonic()
+    events = provider.get_upcoming_events(horizon_days=10)
+    elapsed = time.monotonic() - started
+    coverage = provider.last_coverage
+
+    # Every release was actually attempted — none skipped on the "deadline
+    # already exceeded, no attempt made" path that starved the tail before.
+    assert sorted(calls) == sorted(r.release_id for r in MACRO_RELEASES)
+    # CPI is the one genuine failure; the other six all succeeded, including
+    # the releases that were chronically starved in production.
+    assert coverage.succeeded == len(MACRO_RELEASES) - 1
+    failed_labels = {f.label for f in coverage.failed}
+    assert failed_labels == {"CPI"}
+    for label in (
+        "PPI", "Personal Income and Outlays (PCE)", "GDP",
+        "Retail Sales (advance)", "Initial Jobless Claims",
+    ):
+        assert any(e.label == label for e in events), (
+            f"{label} was starved even though it should have gotten its "
+            "fair share of the remaining budget"
+        )
+    # The fair-share ceiling still respects the overall wall-clock budget.
+    assert elapsed < 2.0, f"calendar overran its ceiling: {elapsed:.1f}s"
 
 
 def test_the_calendar_retries_a_transient_failure_before_degrading():

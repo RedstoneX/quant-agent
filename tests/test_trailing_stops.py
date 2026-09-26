@@ -13,6 +13,8 @@ from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
     MIN_RATCHET_PCT,
     RANGE_BREAKEVEN_R_MULTIPLE,
+    RANGE_SECOND_RATCHET_LOCK_R,
+    RANGE_SECOND_RATCHET_TRIGGER_R,
     compute_trailing_stop,
 )
 
@@ -204,6 +206,136 @@ def test_breakeven_ratchet_uses_the_initial_stop_not_the_live_one():
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
+
+
+# ---------------------------------------------------------------------------
+# Type A (range) +2R -> +1R SECOND ratchet — item 142, owner-ratified
+# 2026-09-25. Stacks on top of the breakeven step and stays below the target:
+# once a range trade reaches +2R, lock the stop at +1R instead of giving back
+# everything between breakeven and target on a reversal.
+#
+# Worked example throughout: entry 100, initial stop 95, so 1R = $5, +1R = 105,
+# +2R = 110, target 130.
+# ---------------------------------------------------------------------------
+
+def test_range_second_ratchet_locks_plus_1r_at_plus_2r():
+    """At +2R (price 110) the stop moves from breakeven (100) up to +1R (105)."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 105.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_second_ratchet_fires_directly_from_the_initial_stop():
+    """It does not require the breakeven step to have run first: from the entry
+    stop (95) straight to +1R (105) once +2R is reached. Never loosens — 105
+    beats 95."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 105.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_reversal_after_2r_stops_with_plus_1r_locked():
+    """The gap item 142 closes. Price reaches +2R (110), the stop locks at +1R
+    (105); a reversal back to 105 then stops the trade out at +1R of gain
+    instead of round-tripping to breakeven."""
+    initial_stop = 95.0
+    # Step 1: +2R reached -> stop ratchets to +1R.
+    first = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert first is not None and first.new_stop == 105.0
+    live_stop = first.new_stop
+
+    # Step 2: price reverses toward the lock. No further ratchet on the way
+    # down, and the live stop the broker holds is +1R, not breakeven.
+    second = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=106.0,
+        current_stop=live_stop, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert second is None
+    assert live_stop == 105.0 > 100.0  # +1R locked, above breakeven
+
+
+def test_range_below_2r_stays_at_breakeven_unchanged():
+    """Between +1R and +2R (price 108) the stop stays at breakeven (100), the
+    same as before item 142 — the second ratchet has not been earned yet."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=108.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    ) is None
+
+
+def test_range_second_ratchet_never_loosens_a_stop():
+    """The stop already sits above +1R (at 106). The +2R trigger is met, but
+    the lock (105) would LOWER the stop, so nothing is proposed."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=106.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=95.0,
+    ) is None
+
+
+def test_breakout_gets_no_second_ratchet():
+    """A breakout (Type B) is UNCHANGED: at +2R with no structure or usable
+    chandelier it proposes nothing, proving the second ratchet is Type A only.
+    The identical range trade would lock +1R."""
+    breakout = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=None, initial_stop=95.0,
+    )
+    assert breakout is None
+    range_trade = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=None, initial_stop=95.0,
+    )
+    assert range_trade is not None and range_trade.new_stop == 105.0
+
+
+def test_range_second_ratchet_short_mirror():
+    """Short mirror: entry 100, initial stop 105 -> 1R = 5, +2R at price 90,
+    lock at +1R = 95. Stop moves from breakeven (100) down to 95."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=90.0,
+        current_stop=100.0, reference_target=70.0,
+        bars=[], atr=2.0, initial_stop=105.0, qty=-10,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 95.0
+    assert proposal.source == "second_ratchet"
+
+
+def test_range_second_ratchet_needs_the_initial_stop():
+    """Backward compatibility: with no `initial_stop`, R is unmeasurable, so
+    neither ratchet fires — the exact pre-fix behaviour."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=[], atr=2.0,
+    ) is None
+
+
+def test_second_ratchet_multiples_are_the_owner_ratified_values():
+    """Pin the owner-appetite numbers (Rex 2026-09-25, item 142): trigger +2R,
+    lock +1R."""
+    assert RANGE_SECOND_RATCHET_TRIGGER_R == 2.0
+    assert RANGE_SECOND_RATCHET_LOCK_R == 1.0
+    assert RANGE_SECOND_RATCHET_LOCK_R == RANGE_BREAKEVEN_R_MULTIPLE
 
 
 # ---------------------------------------------------------------------------
@@ -458,3 +590,77 @@ def test_an_unconfirmed_recent_low_is_not_used():
     assert _swing_lows(bars) == []
     # And a monotonic ramp has no local minimum anywhere.
     assert _swing_lows(_bars([(100 + i, 99 + i) for i in range(14)])) == []
+
+
+# ---------------------------------------------------------------------------
+# Item 82 — Type A/B routed on the MEASURED breakout verdict, not the label
+# alone (#649/#652 carried construction's `structural_ceiling`; this closes
+# the same label-only bug in the trailing reader). `is_trend_trade` ORs the
+# analyst's label with the measured `structural_ceiling`: a measured breakout
+# the analyst mislabelled "range" (label "range" + structural_ceiling False)
+# must be trailed as Type B. A correctly-labelled range (ceiling None on a
+# legacy row, or True when a ceiling was measured) and a correctly-labelled
+# breakout must be BYTE-IDENTICAL to before this change.
+#
+# All three share ONE fixture: price 118, below target 130, so the choice is
+# purely Type A (breakeven ratchet at entry, 100) vs Type B (structural trail
+# to the confirmed higher low, 110).
+# ---------------------------------------------------------------------------
+
+def _regime_fixture(setup_type, structural_ceiling):
+    return compute_trailing_stop(
+        symbol="AAA", setup_type=setup_type,
+        structural_ceiling=structural_ceiling,
+        entry=100.0, current_price=118.0, current_stop=95.0,
+        reference_target=130.0, bars=_rising_with_higher_lows(),
+        atr=2.0, initial_stop=90.0,
+    )
+
+
+def test_item82_correct_range_is_unchanged_legacy_null_ceiling():
+    """A correctly-labelled range on a legacy row (structural_ceiling absent /
+    None) keeps Type A: the +1R breakeven ratchet, stop to entry."""
+    proposal = _regime_fixture("range", None)
+    assert proposal is not None
+    assert proposal.source == "breakeven_ratchet"
+    assert proposal.new_stop == 100.0
+    # Identical to passing no structural_ceiling at all (the pre-item-82 call).
+    legacy = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=95.0, reference_target=130.0,
+        bars=_rising_with_higher_lows(), atr=2.0, initial_stop=90.0,
+    )
+    assert legacy is not None
+    assert (legacy.source, legacy.new_stop) == (proposal.source, proposal.new_stop)
+
+
+def test_item82_correct_range_is_unchanged_when_a_ceiling_was_measured():
+    """A correctly-labelled range WITH a measured ceiling (structural_ceiling
+    True) stays Type A — is_trend_trade is False, exactly as the label says."""
+    proposal = _regime_fixture("range", True)
+    assert proposal is not None
+    assert proposal.source == "breakeven_ratchet"
+    assert proposal.new_stop == 100.0
+
+
+def test_item82_correct_breakout_is_unchanged():
+    """A correctly-labelled breakout keeps Type B: the structural trail to the
+    confirmed higher low, with no measured verdict needed."""
+    proposal = _regime_fixture("breakout", None)
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+
+
+def test_item82_mislabelled_range_breakout_now_gets_type_b():
+    """THE FIX: label "range" but the constructor MEASURED no ceiling
+    (structural_ceiling False → is_trend_trade True). Previously this got Type
+    A (breakeven ratchet at 100); it must now be trailed as Type B (structural
+    trail to 110), identical to the correctly-labelled breakout above."""
+    proposal = _regime_fixture("range", False)
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+    # And it matches the correctly-labelled breakout exactly.
+    breakout = _regime_fixture("breakout", None)
+    assert (proposal.source, proposal.new_stop) == (breakout.source, breakout.new_stop)

@@ -65,7 +65,6 @@ import src.agents.portfolio_manager as pm_module
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.agents.portfolio_manager import (
     SUBFLOOR_CATALYST_UNVERIFIED_STATUS,
-    SUBFLOOR_SIZE_CAPPED_STATUS,
     PortfolioManagerAgent,
 )
 from src.models import (
@@ -838,17 +837,16 @@ def test_decide_does_not_drop_on_the_retired_production_thresholds(mock_cls):
 
 def test_status_keys_are_stable_greppable_constants():
     assert SUBFLOOR_CATALYST_UNVERIFIED_STATUS == "pm_subfloor_catalyst_unverified"
-    assert SUBFLOOR_SIZE_CAPPED_STATUS == "pm_subfloor_size_capped"
 
 
 def test_the_gate_reuses_the_risk_configs_own_numbers():
-    """The floor the PM is gated on must be the floor the constructor
-    enforces, and the cap must be the size the risk budget will actually
-    grant — one definition each, not a second opinion that can drift."""
+    """The cap must be the size the risk budget will actually grant — one
+    definition, not a second opinion that can drift. (The reward:risk floor
+    field this test also checked, `RiskConfig.min_reward_risk_after_widening`,
+    was removed as dead — board item 81; nothing ever read it.)"""
     from src.config import RiskConfig
 
     fields = RiskConfig.model_fields
-    assert fields["min_reward_risk_after_widening"].default == REWARD_RISK_FLOOR
     assert fields["min_position_risk_pct"].default == STARTER_POSITION_RISK_PCT
 
 

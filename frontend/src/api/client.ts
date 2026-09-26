@@ -146,13 +146,53 @@ export interface MarginInterestEstimate {
   /** Plain-language result of checking the estimate against the broker's
    * own INT activity records. Null until a debit has been carried. */
   broker_check_note: string | null;
+  /** Calendar days tonight's carry spans before the next trading day — 1 on
+   * a normal weeknight, 3 over a weekend (Friday), 4 before a Monday
+   * holiday. Same figure the Telegram alert names. Null only in the fault
+   * case, alongside the other numeric fields. */
+  days_charged: number | null;
+  /** `daily_usd * days_charged` — the real total for tonight's carry, not
+   * just the per-day rate. */
+  period_usd: number | null;
   error: string | null;
+  /** The owner-facing cumulative view (this week / current month / up to
+   * 6 months / all-time) that replaced the per-day/per-year figures and
+   * the ESTIMATE-caveat paragraph as the cockpit/Telegram headline,
+   * 2026-09-24. `null` only on a read failure. */
+  cumulative: MarginInterestCumulative | null;
+}
+
+/** Owner ask, 2026-09-24: this week's running total, the current month,
+ * each of up to five more recent months that had any interest (zero
+ * months omitted, never padded in), and an all-time total — replacing the
+ * per-day/per-year figures and the ESTIMATE-caveat paragraph.
+ *
+ * `source` is `"broker_actual"` when every dollar is a broker-confirmed
+ * `INT` charge (Alpaca's own permanent ledger — covers the account's full
+ * history), `"estimate"` when it falls back to our own persisted
+ * daily-accrual formula (only covers days since this tracker started
+ * persisting — see `all_time_since`), or `"no_data"` when neither source
+ * has anything yet. `is_estimate` is the single small "est." marker shown
+ * in place of the old caveat paragraph. */
+export interface MarginInterestCumulative {
+  this_week_usd: number;
+  current_month_usd: number;
+  current_month_label: string;
+  prior_months: { label: string; usd: number }[];
+  all_time_usd: number;
+  /** The date `all_time_usd` is actually counted from — the earliest
+   * broker-confirmed INT activity, or (estimate fallback) the earliest day
+   * THIS TRACKER persisted a row. Not necessarily the day the desk first
+   * went on margin; always shown alongside the total for exactly that
+   * reason. */
+  all_time_since: string;
+  is_estimate: boolean;
+  source: "broker_actual" | "estimate" | "no_data";
 }
 
 export interface RiskLimits {
   max_position_pct: number | null;
   max_total_position_pct: number | null;
-  max_daily_loss_pct: number | null;
   max_sector_pct: number | null;
 }
 
@@ -162,6 +202,15 @@ export interface AccountResponse {
   last_equity: number | null;
   daily_pnl: number | null;
   daily_pnl_pct: number | null;
+  /** Total P&L since the `daily_pnl` table's own earliest row — NOT
+   * derivable from `history` below, which is capped at 30 recent rows and
+   * may be truncated. Server-computed in src/api/routes_live.py; `null`
+   * when the table can't be read or has no rows, never a fabricated 0. */
+  total_pnl: number | null;
+  total_pnl_pct: number | null;
+  /** The trading day `total_pnl`'s baseline is measured from — same value
+   * the Telegram feed labels "Total P&L since <date>" with. */
+  total_pnl_since: string | null;
   paper: boolean | null;
   history: DailyPnlPoint[];
   liquidity: LiquidityBreakdown | null;
@@ -262,6 +311,14 @@ export interface TradeItem {
   timestamp: string | null;
   stop_loss: number | null;
   take_profit: number | null;
+  /** The analyst's stated soft-exit falsifier at entry, free text (e.g.
+   * "Price closes below MA20 (377.08) on above-average volume"). Was
+   * already persisted on the trades row (src/storage/db.py) but not
+   * previously exposed here — wired through in schemas.py's TradeItem so
+   * PriceChartPanel's thesis-break line has a real field to read instead
+   * of inventing one. Null on rows written before this column existed,
+   * or on any non-entry row. */
+  thesis_invalid_if?: string | null;
   position_id?: string | null;
   exit_reason_category?: string | null;
   // Conviction ledger (spec §7.2, PR #159) — pinned at ENTRY only, so
@@ -344,6 +401,13 @@ export interface SymbolEventsResponse {
 export interface LiveQuote {
   symbol: string;
   last_price: number | null;
+  // Freshness-resolved current-session price (item 169): `null` unless a
+  // real print (last trade, minute bar, or today's forming session bar)
+  // exists from THIS session. `last_price` above is the raw, never
+  // freshness-checked provider last trade and can be stale for a thin
+  // name — prefer this field for anything rendered as "the current
+  // price" (e.g. the chart's live line / forming candle).
+  resolved_price: number | null;
   prev_close: number | null;
   session_open: number | null;
   session_high: number | null;
@@ -624,6 +688,17 @@ export interface CandidateFunnelItem {
   // executed" even when a specific reason existed).
   execution_skip_reason: string | null;
   execution_skip_detail: string | null;
+  // Why the desk could not READ this candidate's analysis, one stage earlier
+  // than the execution skip above — quoted from the persisted `analysis_drop`
+  // evidence row (board item 158). `analysis_drop_code` is a stable enum
+  // ("malformed_row" | "schema_invalid" | "unspecified"), safe to switch on;
+  // `analysis_drop_reason` is the human detail and is the thing to show.
+  // `analysis_drop_recovered` true means a retry put the name back in the
+  // book anyway — a cost note, not missing coverage. Optional: absent on
+  // every candidate that was never dropped, and on older backends.
+  analysis_drop_code?: string | null;
+  analysis_drop_reason?: string | null;
+  analysis_drop_recovered?: boolean | null;
 }
 
 export interface RunFunnelResponse {
@@ -1091,7 +1166,15 @@ export const api = {
     getJSON<OrdersResponse>(`/orders?status=${status}`),
   company: (symbol: string) =>
     getJSON<CompanyIdentity>(`/company/${encodeURIComponent(symbol)}`),
-  trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
+  // `symbol` lets a caller look up one specific order/trade link on
+  // demand (see inspectOrder in App.tsx) without raising the default
+  // page-wide `limit`, which stays small for the Trades panel display.
+  trades: (opts: number | { limit?: number; symbol?: string } = 30) => {
+    const { limit = 30, symbol } = typeof opts === "number" ? { limit: opts, symbol: undefined } : opts;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (symbol) params.set("symbol", symbol);
+    return getJSON<TradesResponse>(`/trades?${params.toString()}`);
+  },
   positionHistory: (positionId: string) =>
     getJSON<PositionHistoryResponse>(`/positions/${encodeURIComponent(positionId)}/history`),
   prices: (symbol: string, lookbackDays = 120, timeframe: ChartTimeframe = "1d") =>

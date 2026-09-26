@@ -67,6 +67,16 @@ REGISTRY_PATH = REPO_ROOT / "config" / "retired_mechanisms.yaml"
 #: trigger does NOT match. Per LINE, not per file: allowing a whole file is
 #: how `src/pipeline.py` would have gone on hiding the `run_intra_check`
 #: docstring, one of the four sites this check exists to find.
+#:
+#: It is matched against the SOURCE line as well as the extracted prose.
+#: That second half was added 2026-09-20 and it fixed a real defect, not a
+#: nicety: `_prose_lines` hands `scan` the CONTENT of a string literal, so
+#: a marker written as a trailing `#` comment on the same source line could
+#: never reach it. A dict entry like
+#: `"daily_loss_halted": "...",  # retired-ok` was therefore un-markable,
+#: and five such markers already sat inert in `src/config.py` looking as
+#: though they worked. Only whole-line comments could be marked, which is
+#: not what this constant's own documentation said.
 OPT_OUT_MARKER = "retired-ok"
 
 #: Where prose about the desk lives. Prompt markdown, the agent modules that
@@ -217,13 +227,22 @@ def scan(
     for path in _scan_targets(root):
         rel = path.relative_to(root).as_posix()
         prose: list[tuple[int, str]] | None = None
+        source: list[str] | None = None
         for entry in entries:
             if rel in entry.allowed_in:
                 continue
             if prose is None:
                 prose = _prose_lines(path)
+                source = path.read_text().splitlines()
             for lineno, line in prose:
+                # The marker counts whether it is inside the extracted prose
+                # or on the source line the prose came from — see
+                # OPT_OUT_MARKER. Without the second read, a marker on a
+                # string-literal line is invisible here.
                 if OPT_OUT_MARKER in line:
+                    continue
+                if source is not None and 1 <= lineno <= len(source) \
+                        and OPT_OUT_MARKER in source[lineno - 1]:
                     continue
                 low = line.lower()
                 for phrase in entry.phrases:

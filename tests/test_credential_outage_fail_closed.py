@@ -38,7 +38,7 @@ from src.pipeline import TradingPipeline
 # Reuse test_pipeline.py's model stubs rather than re-deriving them — they
 # already track the real pydantic shapes, and a second copy would drift.
 from tests.test_pipeline import (  # noqa: E402
-    _macro_stub, _mock_agent_result, _news_stub, _pm_rc, _risk_rc, _trc,
+    _macro_stub, _mock_agent_result, _news_stub, _pm_rc, _risk_rc, _today_snapshot, _trc,
 )
 
 
@@ -67,7 +67,6 @@ def mock_config():
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
     cfg.risk.max_total_position_pct = 90
-    cfg.risk.max_daily_loss_pct = 3
     cfg.risk.max_sector_pct = 40
     cfg.risk.require_stop_loss = True
     cfg.trading.universe = ["SPY"]
@@ -148,6 +147,7 @@ def _wire_happy_path(mocks, tmp_path, cfg):
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0,
                                             "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []

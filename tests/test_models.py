@@ -21,6 +21,7 @@ from src.models import (
     MacroAnalysis,
     NewsIntelligenceReport,
     EveningReport,
+    TargetPosition,
 )
 
 
@@ -1203,3 +1204,72 @@ def test_unsourced_prompts_list_fields_tolerate_the_bare_token():
                     "the prompt never instructs the token into this field"
                 )
     assert checked > 0, "no list-typed fields found — mapping likely stale"
+
+
+# --------------------------------------------------------------------------
+# item 163 — PM risk-narrative-mismatch flag on TargetPosition
+# --------------------------------------------------------------------------
+
+def _target(thesis: str, risk_pct: float) -> TargetPosition:
+    return TargetPosition(
+        symbol="NVDA", risk_allocation_pct=risk_pct, conviction="high",
+        thesis=thesis,
+    )
+
+
+def test_risk_narrative_matching_prose_does_not_flag():
+    """Prose risk claim within tolerance of the field is not a mismatch."""
+    t = _target("Risking 2% here given the wide stop and strong setup.", 2.0)
+    assert t.risk_narrative_mismatch is False
+    assert t.risk_narrative_mismatch_detail == ""
+
+
+def test_risk_narrative_contradictory_prose_flags():
+    """A clear, materially different risk-% claim in prose sets the flag,
+    but never overrides the authoritative field."""
+    t = _target("Risking 4% on this idea given the strong setup.", 1.0)
+    assert t.risk_narrative_mismatch is True
+    assert "4%" in t.risk_narrative_mismatch_detail
+    assert "1%" in t.risk_narrative_mismatch_detail
+    # authoritative field is untouched by the mismatched prose
+    assert t.risk_allocation_pct == 1.0
+
+
+def test_risk_narrative_incidental_percentage_does_not_false_flag():
+    """Percentages in the thesis that are not an explicit risk-% claim
+    (target weight, stop distance, a price gain, a macro figure) must not
+    trip the flag even though they numerically differ from risk_allocation_pct."""
+    t = _target(
+        "Target weight 8%, stop set 12% below entry, stock is up 25% off "
+        "its low; GDP grew 3% last quarter.",
+        1.5,
+    )
+    assert t.risk_narrative_mismatch is False
+    assert t.risk_narrative_mismatch_detail == ""
+
+
+def test_risk_narrative_hyphenated_compound_not_misread_as_risk_claim():
+    """'<n>% risk-adjusted' / '<n>% risk-reward' are not risk-allocation
+    claims and must not trip the flag."""
+    t = _target(
+        "This offers a 12% risk-adjusted return at a favorable risk-reward.",
+        1.0,
+    )
+    assert t.risk_narrative_mismatch is False
+
+
+def test_risk_narrative_within_tolerance_not_flagged():
+    """A prose claim within RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT of the
+    field (rounding in the LLM's own words) is not a mismatch."""
+    t = _target("Risking about 1.9% on this name.", 2.0)
+    assert t.risk_narrative_mismatch is False
+
+
+def test_risk_narrative_skipped_without_authoritative_field():
+    """No risk_allocation_pct means no authoritative number to check prose
+    against -- legacy target_weight_pct-only targets are never flagged."""
+    t = TargetPosition(
+        symbol="NVDA", target_weight_pct=5.0, conviction="high",
+        thesis="Risking 4% on this idea.",
+    )
+    assert t.risk_narrative_mismatch is False

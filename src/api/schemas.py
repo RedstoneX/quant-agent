@@ -140,17 +140,6 @@ class RiskLimits(BaseModel):
     fails — never a guessed/default limit standing in for the real one."""
     max_position_pct: float | None = None
     max_total_position_pct: float | None = None
-    # docs/WORK.md item 32 (owner call 2026-09-11): this is the CONFIGURED
-    # fixed-percentage fallback, NOT the threshold necessarily in force.
-    # Since that change the daily circuit breaker trips at a multiple of the
-    # held book's own normal daily move whenever that is measurable, and
-    # that figure needs `src.risk.rules` + the market price history of the
-    # current holdings — neither of which `src/api/` may reach
-    # (tests/test_api_safety.py). Same deliberate omission, and same
-    # reason, as `max_gross_exposure_x` below: the live number reaches the
-    # operator on the session alert, not here. Do not "fix" this by
-    # importing the risk module.
-    max_daily_loss_pct: float | None = None
     max_sector_pct: float | None = None
     # Spec §11.2. The STANDING gross-exposure cap as a multiple of equity
     # (long market value + absolute short market value, cash park excluded).
@@ -186,6 +175,17 @@ class MarginInterestEstimate(BaseModel):
     daily_usd: float | None = None
     annual_usd: float | None = None
     label: str | None = None
+    #: Calendar days tonight's carry spans before the next trading day —
+    #: 1 on a normal weeknight, 3 over a weekend (Friday), 4 before a
+    #: Monday holiday. Same figure the Telegram alert names
+    #: (`src.margin_interest.days_charged_until_next_trading_day`); `None`
+    #: only in the fault case, alongside the other numeric fields.
+    days_charged: int | None = None
+    #: `daily_usd * days_charged` — what tonight's carry actually costs in
+    #: total, not just the per-day rate. `daily_usd` is deliberately left
+    #: unchanged by the multi-day carry so the dashboard can show both the
+    #: per-day figure and the real period total without conflating them.
+    period_usd: float | None = None
     #: Result of comparing the estimate against the broker's own `INT`
     #: account-activity records — plain-language, e.g. "broker confirmed
     #: a margin interest charge of $X..." or "no INT activity ... not
@@ -193,6 +193,45 @@ class MarginInterestEstimate(BaseModel):
     #: overnight at least once.
     broker_check_note: str | None = None
     error: str | None = None
+    #: The owner-facing cumulative view (this week / current month / up to
+    #: 6 months / all-time) that replaced the per-day/per-year figures
+    #: above as the cockpit/Telegram headline, 2026-09-24. `None` only on a
+    #: read failure — a genuine "nothing measured yet" state is
+    #: `MarginInterestCumulative(source="no_data", ...)`, not `None`.
+    cumulative: "MarginInterestCumulative | None" = None
+
+
+class MarginInterestCumulative(BaseModel):
+    """Owner ask, 2026-09-24: replace the per-day/per-year figures and the
+    ESTIMATE-caveat paragraph with a running cumulative total — this week,
+    the current month, each of up to five more recent months that had any
+    interest (months with none are omitted, never padded in as zero), and
+    an all-time total.
+
+    `source` is `"broker_actual"` when every dollar counted is a
+    broker-confirmed `INT` charge (Alpaca's own permanent activity ledger —
+    covers the account's full history, no local storage needed),
+    `"estimate"` when it falls back to our own persisted daily-accrual
+    ESTIMATE rows (only ever covers days since this tracker started
+    persisting — see `all_time_since`), or `"no_data"` when neither source
+    has anything yet. `is_estimate` is the single small "est." marker the
+    cockpit/Telegram show in place of the old caveat paragraph.
+    """
+    this_week_usd: float
+    current_month_usd: float
+    current_month_label: str
+    prior_months: list[dict]
+    all_time_usd: float
+    #: The date the `all_time_usd` total is actually counted from. For the
+    #: broker-actual source this is the earliest `INT` activity Alpaca has
+    #: on record. For the estimate fallback it is the earliest day THIS
+    #: TRACKER persisted a row — NOT necessarily the day the desk first
+    #: went on margin, since no historical debit balance was ever stored
+    #: before this feature existed. Always shown alongside the total so
+    #: "all-time" is never misread as more complete than it is.
+    all_time_since: str
+    is_estimate: bool
+    source: str
 
 
 class AccountResponse(BaseModel):
@@ -201,6 +240,25 @@ class AccountResponse(BaseModel):
     last_equity: float | None = None
     daily_pnl: float | None = None       # portfolio_value - last_equity (computed here)
     daily_pnl_pct: float | None = None
+    #: Total P&L since the earliest row the `daily_pnl` table actually has —
+    #: `current portfolio_value - (that row's total_value - that row's own
+    #: daily_pnl)`, i.e. the broker equity going into the first tracked day.
+    #: Same baseline definition and the same "never reconstructed from an
+    #: archive" posture as `TradingPipeline._total_pnl_since_reset`, which
+    #: the Telegram feed's own "Total P&L since <date>" line already uses —
+    #: this is that same figure, reused for the dashboard rather than
+    #: recomputed a second way. `None` when the table can't be read or has
+    #: no rows, never a fabricated 0. `history` (above) is NOT the source —
+    #: it is capped at 30 recent rows and may be truncated, so it cannot
+    #: safely stand in for "since the start of the board".
+    total_pnl: float | None = None
+    total_pnl_pct: float | None = None
+    #: The trading day the `total_pnl` baseline is measured from (that
+    #: earliest row's own `date`) — same value trader_feed shows as
+    #: "Total P&L since <date>", carried here so the dashboard can label
+    #: the figure the same way rather than presenting a bare "total" that
+    #: reads as "since the account began".
+    total_pnl_since: str | None = None
     paper: bool | None = None
     source: str = "alpaca_live"
     history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
@@ -416,6 +474,16 @@ class LiveQuote(BaseModel):
     never fabricated."""
     symbol: str
     last_price: float | None = None
+    # The freshness-resolved current-session price (docs/WORK.md item 169
+    # — `src.data.live_price.resolve_live_price` run over the same
+    # snapshot `last_price` above comes from). `last_price` is the raw,
+    # never-freshness-checked provider last trade and can be stale for a
+    # thin name; `resolved_price` is `None` unless a real print (last
+    # trade, minute bar, or today's forming session bar) exists from THIS
+    # session. A chart or any other "current price" render should use
+    # this field, not `last_price`, to avoid drawing a stale print as
+    # today's.
+    resolved_price: float | None = None
     # Provenance for `last_price` (docs/WORK.md item 15 — "we cannot tell a
     # stale price from a live one"). `market_as_of` is Alpaca's own
     # `latest_trade.timestamp` — a real per-trade exchange timestamp the
@@ -474,6 +542,14 @@ class TradeItem(BaseModel):
     timestamp: str | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    # The analyst's stated soft-exit falsifier at entry (models.py's
+    # `TradeDecision.thesis_invalid_if`, persisted verbatim on the trades
+    # row — see storage/db.py's `_ensure_column("trades", "thesis_invalid_if", ...)`).
+    # Was already in the DB row `get_trades()` selects (`SELECT *`) but
+    # dropped silently when this model was built with `TradeItem(**row)`,
+    # since pydantic ignores unknown keys by default — added here so the
+    # cockpit's chart can draw the CONDITIONAL thesis-break reference line.
+    thesis_invalid_if: str | None = None
     # Phase 6 (§6.2a/e): links this trade to the position it belongs to, and
     # (for an exit-family row only) the deterministic category its exit was
     # classified into. Both None on rows written before this existed and
@@ -834,6 +910,21 @@ class CandidateFunnelItem(BaseModel):
     # indistinguishable from a deliberate no-trade.
     execution_skip_reason: str | None = None
     execution_skip_detail: str | None = None
+    # Why the desk could not READ this candidate's analysis at all, when that
+    # happened — quoted from the `analysis_drop` evidence row the risk stage
+    # writes (board item 158). Same shape and same purpose as the execution
+    # skip above, one stage earlier: without it a name the technical seat
+    # dropped shows up in the funnel with every other field empty and no way
+    # to tell a parse loss from a candidate nothing liked.
+    # `analysis_drop_code` is the stable enum (`malformed_row`,
+    # `schema_invalid`, `unspecified`); `analysis_drop_reason` is the human
+    # detail. `analysis_drop_recovered` is True when a retry put the name back
+    # into the book anyway — a cost note, not missing coverage. All None when
+    # no drop was recorded, and a pre-158 row with no code reads as
+    # `unspecified` rather than failing.
+    analysis_drop_code: str | None = None
+    analysis_drop_reason: str | None = None
+    analysis_drop_recovered: bool | None = None
 
 
 class RunFunnelResponse(BaseModel):

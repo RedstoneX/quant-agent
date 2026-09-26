@@ -361,8 +361,6 @@ class SECForm4Provider:
         request_timeout_s: float = 15.0,
         requests_per_second: float = 8.0,
         lookback_days: int = 14,
-        min_transaction_value_usd: float = 100_000,
-        external_min_transaction_value_usd: float = 250_000,
         # ROW-RETENTION window for `cluster_survivors`, NOT the research cluster
         # (corrected 2026-09-19, board item 124). Alldredge & Blank's abstract
         # (J. Financial Research, 2019) measures SAME-DAY purchases; "within two
@@ -414,11 +412,6 @@ class SECForm4Provider:
         self.timeout_s = max(1.0, float(effective_timeout))
         self.request_interval_s = 1.0 / min(8.0, max(0.5, float(requests_per_second)))
         self.lookback_days = max(1, int(lookback_days))
-        self.min_transaction_value_usd = max(0.0, float(min_transaction_value_usd))
-        self.external_min_transaction_value_usd = max(
-            self.min_transaction_value_usd,
-            float(external_min_transaction_value_usd),
-        )
         self.cluster_window_days = max(1, int(cluster_window_days))
         self.min_cluster_owners = max(2, int(min_cluster_owners))
         self.max_observations = max(1, int(max_observations))
@@ -616,16 +609,19 @@ class SECForm4Provider:
     ) -> list[dict]:
         """Unread Form 4 candidates, watched names first.
 
-        ``priority_ciks`` does NOT filter — it reorders how the
-        ``max_filings_per_refresh`` budget is spent. Filings on the desk's
-        own names are collected first; everything else fills whatever budget
-        remains, because external candidate nomination
-        (``max_external_candidates``) reads filings on names the desk does
-        not yet watch. Without the reordering the cap binds on the freshest
-        day slice, so the desk's own names could sit unread behind a
-        thousand filings from companies it does not trade — a backlog that
-        reads as "a new Form 4 I have not read" to the research-expiry peek
-        and refuses the midday decision.
+        ``priority_ciks`` does NOT filter and does NOT change when this scan
+        stops — it only ORDERS what the scan hands back. Filings on the
+        desk's own names are emitted first so the submission downloads that
+        follow are spent on them first; everything else follows, because
+        external candidate nomination (``max_external_candidates``) reads
+        filings on names the desk does not yet watch.
+
+        Watched-name COVERAGE is not this function's responsibility. The
+        watched-name drain in ``refresh`` (#539) asks each watched issuer
+        for its filing history directly, on its own
+        ``watched_drain_deadline_s`` budget, and records read-through per
+        issuer. See ``_budget_spent`` for why termination must never again
+        be made conditional on the watched bucket filling up.
 
         ``stats``, when given, is filled with the counts part 3 reports:
         every unread listed candidate seen (``candidates``), the watched
@@ -672,12 +668,40 @@ class SECForm4Provider:
         days_in_window = self.lookback_days + 1
 
         def _budget_spent() -> bool:
-            # With no watched names this is exactly the old condition. With
-            # watched names the scan continues past a full residue bucket,
-            # because a watched filing further into the window must still be
-            # able to displace a non-watched one from the budget.
-            if watched_ciks:
-                return len(priority) >= cap
+            # ONE condition, reachable whether or not watched names were
+            # supplied. DO NOT reintroduce a `if watched_ciks: return
+            # len(priority) >= cap` branch here.
+            #
+            # That branch shipped 2026-09-18 (PR #513) and made this scan
+            # unterminatable in production. `priority` only ever holds
+            # filings from the ~82 watched issuers, who file 13-31 a day
+            # [measured: the watched drain's own reads, production log
+            # 2026-09-21..23], so `len(priority)` cannot reach a cap of
+            # 1,000 and production always supplies watched names. The only
+            # remaining terminator was `refresh_deadline_s`, so discovery
+            # spent the whole 180 s paginating EDGAR and the read loop below
+            # then raised on an already-expired deadline. Market-wide reads
+            # went 1,000/run through 2026-09-18 to 0, 31 and 13 on the three
+            # runs after it [measured: `processed_filings` in the production
+            # log, and 31/13 are the watched drain's, not this pass's].
+            #
+            # What #539 now guarantees, and why the branch is redundant: the
+            # desk's own names have their OWN pass. `refresh` runs a
+            # watched-name drain after this one, on its own
+            # `watched_drain_deadline_s` budget, asking each watched issuer
+            # for its filing history directly and recording read-through per
+            # issuer. A watched filing this scan never reaches is read
+            # there. Watched-first ORDERING inside this function is kept —
+            # `priority` is still emitted ahead of `other` below, so the
+            # submission downloads that follow are still spent on the desk's
+            # own names first — but watched COVERAGE is no longer this
+            # function's job, and must not be bought with its termination.
+            #
+            # The cap is reachable against real volume: steady-state
+            # market-wide inflow is 247 unread listed-issuer Form 4s/day
+            # [measured: 21,217 pending / 86 days queried, 2026-09-23 run],
+            # and at 0.156 s/filing [measured, see the ledger] a day's worth
+            # is 38.5 s inside a 180 s budget.
             return len(other) >= cap
 
         # Query one day at a time. EFTS caps deep pagination, while 14 days of
@@ -1069,10 +1093,9 @@ class SECForm4Provider:
     #       O(watched names) plain GETs with no pagination.
     #
     # `form4_freshness` answers (b) and is what a decision tick calls.
-    # `peek_accessions` below answers (a). CORRECTED 2026-09-19: this comment
-    # said it "is kept for the producing step"; nothing in `src/` calls it
-    # since PR #529 — `refresh` runs its own discovery. It is dead code on
-    # the live path, kept only because tests still exercise it.
+    # Question (a) had its own `peek_accessions` path, deleted 2026-09-24
+    # (item 159): nothing in `src/` had called it since PR #529 — `refresh`
+    # runs its own discovery — so it was dead code kept alive only by tests.
 
     def _submissions_form4(
         self, cik: str, deadline: float,
@@ -1213,7 +1236,9 @@ class SECForm4Provider:
         blank_edgar = blank_edgar_coverage()
         if not isinstance(manifest, dict) or not manifest.get("coverage_as_of"):
             return {"known": False, "as_of": "", "watched": 0,
-                    "read_through": 0, "unread": [], "edgar": blank_edgar}
+                    "read_through": 0, "unread": [], "edgar": blank_edgar,
+                    "market_wide_blind": False, "market_wide_read": 0,
+                    "market_wide_pending": 0}
         as_of = str(manifest.get("coverage_as_of") or "")[:10]
         recorded = manifest.get("edgar_coverage")
         if not isinstance(recorded, dict):
@@ -1236,6 +1261,21 @@ class SECForm4Provider:
             "watched": int(manifest.get("watched_names") or 0),
             "read_through": int(manifest.get("watched_names_read_through") or 0),
             "unread": [str(s) for s in (manifest.get("watched_names_unread") or [])],
+            # The market-wide half of coverage, which `unread` above cannot
+            # speak for: it counts the desk's OWN names only. Reported ONLY
+            # from a record written today, for the same reason the EDGAR
+            # record is aged out below — a pass that ran yesterday says
+            # nothing about whether today's read anything. A manifest
+            # written before this shipped carries neither key and reads as
+            # not-blind, which is right: absence of the record is not
+            # evidence of a blind pass, and the ordinary `partial` path
+            # still covers the day it is first written.
+            "market_wide_blind": bool(
+                manifest.get("market_wide_blind")
+                and as_of == et_today().isoformat()
+            ),
+            "market_wide_read": int(manifest.get("market_wide_read") or 0),
+            "market_wide_pending": int(manifest.get("pending_filings") or 0),
             # EDGAR's own denominator, as the last pass recorded it. A
             # manifest written before board item 126 shipped carries no such
             # record, and reads as unverified rather than as complete —
@@ -1354,53 +1394,6 @@ class SECForm4Provider:
         )
         return verdict
 
-    def peek_accessions(self, symbols: list[str] | None = None) -> set[str]:
-        """Known accessions plus newly listed filings for names we watch.
-
-        Discovery-only — does not download submissions. Restricted to the
-        ``symbols`` the caller names (the desk universe) and nothing else.
-        A market-wide Form 4 is not a change to remembered research, and a
-        false expiry on the midday tick cannot be healed
-        (docs/INCIDENT_HISTORY.md). The observations cache is NOT a source
-        of relevance: ``refresh`` caches rows for the whole listed market,
-        so unioning it in made the relevant set market-wide by
-        construction. Failed discover returns the already-known set.
-        """
-        known = self.known_accessions()
-        relevant = {_symbol(s) for s in (symbols or []) if str(s).strip()}
-        if not relevant:
-            return known
-        try:
-            deadline = time.monotonic() + self.refresh_deadline_s
-            listed = self._listed_map(deadline)
-            priority = self._ciks_for_symbols(listed, sorted(relevant))
-            peek_stats: dict = {}
-            for filing in self._discover(listed, deadline, known, priority, peek_stats):
-                cik = str((filing or {}).get("cik") or "")
-                tickers = listed.get(cik) if isinstance(listed, dict) else None
-                if not isinstance(tickers, dict):
-                    continue
-                if not any(_symbol(t) in relevant for t in tickers):
-                    continue
-                text = str((filing or {}).get("accession") or "").strip()
-                if text:
-                    known.add(text)
-            if peek_stats.get("deadline_hit"):
-                # `_discover` now hands back its partial, watched-first set
-                # instead of discarding it, so the deadline no longer erases
-                # every filing found. A truncated peek can still MISS a
-                # genuinely new filing and let superseded research be reused,
-                # which errs in the dangerous direction — log it loudly.
-                logger.warning(
-                    "SEC Form 4 accession peek truncated by the refresh "
-                    "deadline: a new filing may be unseen",
-                )
-        except _RefreshDeadline:
-            logger.warning("SEC Form 4 accession peek hit refresh deadline")
-        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
-            logger.warning("SEC Form 4 accession peek failed: %s", exc)
-        return known
-
     def refresh(self, symbols: list[str] | None = None) -> dict:
         """Network refresh with a JSON-safe status/result summary.
 
@@ -1419,6 +1412,13 @@ class SECForm4Provider:
             observations[key] = raw
         new_count = 0
         processed_count = 0
+        # The market-wide pass's OWN read count. `processed_count` is shared
+        # with the watched-name drain below, which is exactly why the
+        # 2026-09-18 discovery regression was invisible: on 2026-09-22 and
+        # 2026-09-23 `processed_filings` read 31 and 13, every one of them
+        # the drain's, while this pass read nothing at all.
+        market_wide_read = 0
+        market_wide_ran = False
         watched_processed = 0
         errors: list[str] = []
         discovery: dict = {}
@@ -1429,6 +1429,7 @@ class SECForm4Provider:
         try:
             listed = self._listed_map(deadline)
             priority = self._ciks_for_symbols(listed, symbols)
+            market_wide_ran = True
             discovered = self._discover(listed, deadline, processed, priority, discovery)
             discovered_count = len(discovered)
             if discovery.get("deadline_hit"):
@@ -1448,6 +1449,7 @@ class SECForm4Provider:
                         observations[key] = row.model_dump(mode="json")
                     processed.add(accession)
                     processed_count += 1
+                    market_wide_read += 1
                     if str(filing.get("cik") or "") in priority:
                         watched_processed += 1
                 except _RefreshDeadline:
@@ -1599,6 +1601,37 @@ class SECForm4Provider:
         edgar = edgar_coverage(discovery)
         seen_candidates = int(discovery.get("candidates", discovered_count) or 0)
         pending_filings = max(0, seen_candidates - processed_count)
+        # ---- the market-wide pass read NOTHING (the 2026-09-18 regression) --
+        #
+        # This is the alarm that did not exist. Between 2026-09-18 and
+        # 2026-09-23 `_discover` could not terminate on its own cap, spent
+        # the whole refresh deadline paginating, and the read loop raised on
+        # an expired deadline — so market-wide insider coverage fell from
+        # ~180-210 distinct symbols a day to 2-8 and the backlog grew
+        # 10,229 -> 16,782 -> 21,217 [measured: production log and the Form 4
+        # manifest, 2026-09-21..23]. Every health signal stayed green: the
+        # seat reported `partial`, which is what it reports on ANY ordinary
+        # residue, and the watched drain went on reporting 82/82.
+        #
+        # So the condition is stated as its own fact, separate from residue
+        # depth: this pass ran, read zero, and there was something to read.
+        # No threshold and no new constant — zero is zero, and the backlog
+        # is the pass's own `pending_filings`. A pass that read zero because
+        # there was genuinely nothing unread is NOT this, and does not fire.
+        market_wide_blind = bool(
+            market_wide_ran and market_wide_read == 0 and pending_filings > 0
+        )
+        if market_wide_blind:
+            logger.error(
+                "SEC Form 4 market-wide pass read ZERO filings with %s unread "
+                "candidate(s) outstanding — external insider coverage is "
+                "blind this session (discovery: cap_reached=%s deadline_hit=%s; "
+                "the watched-name drain read %s separately)",
+                pending_filings,
+                bool(discovery.get("cap_reached", False)),
+                bool(discovery.get("deadline_hit", False)),
+                drain_read,
+            )
         watched_pending = max(
             0, int(discovery.get("watched_candidates", 0) or 0) - watched_processed,
         )
@@ -1671,6 +1704,12 @@ class SECForm4Provider:
                 # be compared without re-crawling EDGAR.
                 "pending_filings": pending_filings,
                 "watched_pending_filings": watched_pending,
+                # The market-wide pass's own read count and the blind flag
+                # derived from it. Persisted for the same reason the EDGAR
+                # coverage record is: the morning seat reads this without
+                # the network, through `form4_coverage`.
+                "market_wide_read": market_wide_read,
+                "market_wide_blind": market_wide_blind,
                 "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
                 # Date through which EVERY watched name is read. Advanced
                 # only by a clean drain; reported, no longer read by freshness.
@@ -1706,6 +1745,12 @@ class SECForm4Provider:
             "discovered_filings": discovered_count,
             "pending_filings": pending_filings,
             "watched_pending_filings": watched_pending,
+            # How much the MARKET-WIDE pass read, and whether it read
+            # nothing at all while unread candidates were outstanding.
+            # `processed_filings` above cannot answer either question: the
+            # watched drain shares it.
+            "market_wide_read": market_wide_read,
+            "market_wide_blind": market_wide_blind,
             "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
             "cached_observations": len(kept),
             # The drain's own outcome, for the pre-open check. `read_through`
@@ -1787,10 +1832,13 @@ class SECForm4Provider:
             )
             if age_days > self.lookback_days:
                 continue
-            threshold = (
-                self.min_transaction_value_usd
-                if item.symbol in core else self.external_min_transaction_value_usd
-            )
+            # Board item 52: no published study supports single-transaction
+            # dollar SIZE as an insider-buy predictor (the closest, Cziraki &
+            # Gider 2019, finds size inversely related), so size gates
+            # nothing here. The two flat cutoffs (`min_transaction_value_usd`,
+            # `external_min_transaction_value_usd`) that used to sit in this
+            # admission test and in the `cluster_survivors` call below were
+            # deleted rather than re-derived.
             admission = (
                 item.symbol not in core
                 and not item.amendment
@@ -1801,7 +1849,6 @@ class SECForm4Provider:
                 # trading surface. Strictly narrows the existing gate.
                 and verdict.label != "routine"
                 and item.transaction_value_usd is not None
-                and item.transaction_value_usd >= threshold
                 and item.freshness != "stale"
             )
             parsed.append(item.model_copy(update={
@@ -1832,10 +1879,12 @@ class SECForm4Provider:
 
         survivors = cluster_survivors(
             parsed,
-            threshold_fn=lambda symbol: (
-                self.min_transaction_value_usd
-                if symbol in core else self.external_min_transaction_value_usd
-            ),
+            # Board item 52: no dollar floor gates row retention any more —
+            # `cluster_survivors` still keeps its generic materiality
+            # parameter (shared with `CongressionalTradingProvider`, which
+            # keeps its own separate, unaffected floor), but this caller
+            # passes zero so every parsed row clears it on size alone.
+            threshold_fn=lambda symbol: 0.0,
             cluster_window_days=self.cluster_window_days,
             min_cluster_owners=self.min_cluster_owners,
         )

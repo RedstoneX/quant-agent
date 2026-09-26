@@ -4,7 +4,7 @@ import statistics
 import sys
 from dataclasses import dataclass, field
 from src.config import RiskConfig
-from src.models import TradeDecision, Position
+from src.models import TradeDecision, Position, AnalystVerdict
 # The leverage table and the two multiplier functions now live in
 # `src.quantities` — a dependency-free module OUTSIDE `src.risk`, so
 # `src/api/` (forbidden by tests/test_api_safety.py from importing the risk
@@ -199,12 +199,11 @@ def sector_side_weights(
 # once.
 #
 # THE COST, STATED PLAINLY BECAUSE IT IS REAL: at 75% of equity in one
-# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — several
-# times the daily-loss circuit breaker, and it will trip the de-levering
-# ladder. That is the accepted price of a concentrated trading desk, not an
-# oversight. (The breaker is no longer a fixed 6.7%: since 2026-09-11 it is
-# a multiple of the held book's own normal daily move, ~3% for a book moving
-# ~1% a session. The comparison got worse, not better.)
+# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — three
+# times the per-trade risk unit, and it will trip the de-levering ladder.
+# That is the accepted price of a concentrated trading desk, not an
+# oversight. Nothing halts the desk on an account-level loss reading any
+# more; the per-position stop is the protection.
 #
 # The 90 ceiling is NOT in the ratified §12.3 text — the spec set the target
 # and left the terminal bound unstated. 90 was chosen when §12.3 was built:
@@ -509,6 +508,226 @@ def agreement_refuses_trade(score: int) -> bool:
     return score <= 0
 
 
+# --- Owner mandate 2026-09-25 — the ROLE-BASED conviction bar (R7) ---------
+#
+# "Earn the right to ENTER and to STAY." A name clears this bar only when a
+# SUPPORTIVE seat carries a real, falsifiable reason AND no seat is opposed AND
+# the chart is not fighting the trade. It is deliberately SEPARATE from
+# `agreement_refuses_trade` (the §9.4 net-evidence floor) and from the
+# continuous ranking score in `src/verdicts.py`: those grade and order, this
+# one is a role-aware yes/no.
+#
+# WHY THIS INTRODUCES NO ARBITRARY NUMBER. The whole rule is counts, booleans
+# and non-empty checks — "at least one" is existence, not a dial; "no seat
+# opposed" is zero, not a chosen floor; the technical veto is a boolean. There
+# is nothing here to ledger as `arbitrary` (contrast the discarded HIGH-count
+# gate, which would have needed two owner-appetite numbers). The wider change
+# carries no number at all: the STAY side culls a held name ONLY when a seat is
+# ACTIVELY OPPOSED (owner ruling 2026-09-25), which is zero-versus-count, not a
+# dial — there is no confirmation window and no streak.
+
+#: Reasons these functions emit all start with this tag, the SAME string
+#: `src.rotation.CONVICTION_BAR_REASON_PREFIX` matches on, so the STAY cull
+#: (rotation's `ineligible_hold` tier) recognises exactly these reasons and
+#: `holdings_below_entry_bar` counts them. A test pins the two equal.
+OWN_BAR_REASON_PREFIX = "R7 conviction bar"
+
+
+def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool:
+    """A NON-technical seat that took a SUPPORTED DIRECTIONAL side.
+
+    MECHANICAL DEFINITION, honest about what the seats actually emit
+    (2026-09-25, renamed 2026-09-25 to match what this actually enforces).
+    Only Technical carries a machine-readable named invalidation LEVEL (a stop
+    price); Earnings carries a genuine analyst-authored falsifier
+    (`bear_case`/`bull_case`) or its verdict refuses to build; Macro carries a
+    real trigger when the analyst stated one, else a generic fallback; News and
+    Smart-money ALWAYS synthesise a templated/constructed invalidation. So there
+    is no distinct "has a named falsifier" boolean to read downstream — that
+    distinction is lost when `to_verdict()` runs, and News/Smart-money can
+    NEVER fail this check on specificity grounds since their invalidation is
+    always synthesised. This is NOT a test for a genuinely specific or
+    falsifiable thesis — it cannot tell a templated invalidation from an
+    analyst-authored one. Requiring a NON-generic invalidation string would
+    couple this gate to those exact template sentences, which rot.
+
+    What this actually checks, and all it checks: a supportive seat that took
+    a DIRECTIONAL side (not a lukewarm neutral shrug), which
+    `AnalystVerdict`'s own validator then FORCES to carry a non-empty
+    invalidation condition AND at least one checkable evidence item. Technical
+    is excluded — it adds no positive weight, it only gates (below).
+    """
+    return (
+        v.seat != "technical"
+        and v.direction == aligned
+        and bool((v.invalidation or "").strip())
+        and bool(v.evidence)
+    )
+
+
+def _is_broadcast_macro_verdict(v: "AnalystVerdict") -> bool:
+    """True for a MACRO verdict whose direction is the MARKET-WIDE
+    `equity_outlook` broadcast, not a name/sector-SPECIFIC stance.
+
+    `MacroAnalysis.to_verdict` (src/models.py) sets a symbol's macro direction
+    to its SECTOR's own stance when this read stated one for that sector, and
+    falls back to the broad `equity_outlook` otherwise. It marks the difference
+    on the verdict itself: a sector-specific direction carries a
+    `sector_stance:<sector>` evidence label (added there precisely so a reader
+    can see WHY a symbol's macro direction differs from the broad one); the
+    broadcast fallback carries no such label.
+
+    A market-wide macro view is NOT a name-specific edge — owner ruling: macro
+    alone cannot drive a name decision. So a broadcast-macro verdict must never
+    count as per-name OPPOSITION. Without this, one bearish `equity_outlook`
+    flip broadcasts "macro opposed" onto every held long that has no bullish
+    sector row, culling the whole non-price-protected long book on a single
+    review and blocking every new entry in any cautious-macro regime. A
+    sector-SPECIFIC bearish macro stance is a genuine name-level opposition and
+    still counts.
+    """
+    if v.seat != "macro":
+        return False
+    return not any(
+        str(getattr(ev, "label", "") or "").startswith("sector_stance:")
+        for ev in (v.evidence or [])
+    )
+
+
+def own_bar_block_reason(
+    seat_verdicts: list["AnalystVerdict"],
+    *,
+    direction: str,
+) -> str | None:
+    """The role-based conviction bar (owner mandate 2026-09-25), as one yes/no.
+
+    `None` when the name CLEARS the bar for `direction`, else the one-line
+    reason it does not. ONE definition drives ENTRY (`candidate_eligibility`
+    R7) and STAYING (the same `blocked` set, via rotation's `ineligible_hold`
+    tier). Pure: a function of the seat `AnalystVerdict`s for one name only.
+
+    The bar clears iff ALL of:
+
+      1. TECHNICAL TIMING VETO not triggered. Technical is a timing gate, not a
+         yes-vote: it must be PRESENT and CONFIRMING (aligned with the trade).
+         A bearish technical read (chart hostile), a neutral one (chart not
+         confirming), or NO technical read at all (cannot confirm timing) each
+         block ENTRY even when the fundamental thesis is strong — "right
+         name, wrong time". Absence is treated as "cannot confirm", the
+         CONSERVATIVE choice: a name with no chart read this review does not get
+         the benefit of the doubt on timing.
+      2. NO seat opposed. A single seat pointing the other way fails the name
+         outright — the mandate is "no seat opposed". ONE carve-out
+         (`_is_broadcast_macro_verdict`): a MACRO seat whose direction is the
+         market-wide `equity_outlook` broadcast (no sector-specific stance) is
+         NOT counted as opposition, because a market-wide view is not a
+         name-specific edge; a sector-SPECIFIC bearish macro stance still is.
+      3. At least one NON-technical seat took a SUPPORTED DIRECTIONAL side
+         (see `_has_supported_directional_thesis`) — a real directional call
+         backed by evidence and an invalidation, not a bare neutral shrug.
+         This is not a genuine specificity/falsifiability test (News and
+         Smart-money always synthesise their invalidation); it is "a
+         supported directional non-technical seat exists". Technical
+         confirming is necessary but NOT sufficient and is never counted
+         here — it carries no positive weight.
+
+    Supportive/opposed are read from `AnalystVerdict.direction` (a long is
+    supported by a bullish verdict, a short by a bearish one), the one
+    vocabulary every seat speaks, never the flat registry stance.
+    """
+    aligned = "bullish" if direction == "bullish" else "bearish"
+    opposed = "bearish" if direction == "bullish" else "bullish"
+
+    tech = [v for v in seat_verdicts if v.seat == "technical"]
+    if not tech:
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — no technical read this review; "
+            "timing cannot be confirmed (right name, wrong time)"
+        )
+    if any(v.direction == opposed for v in tech):
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to "
+            "the trade (right name, wrong time)"
+        )
+    if not any(v.direction == aligned for v in tech):
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — technical does not confirm timing; "
+            "chart neutral/broken (right name, wrong time)"
+        )
+
+    other_opposed = sorted({
+        v.seat for v in seat_verdicts
+        if v.direction == opposed and v.seat != "technical"
+        and not _is_broadcast_macro_verdict(v)
+    })
+    if other_opposed:
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed "
+            "(mandate: no seat may be opposed)"
+        )
+
+    if not any(
+        _has_supported_directional_thesis(v, aligned) for v in seat_verdicts
+    ):
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a "
+            "supported directional side"
+        )
+
+    return None
+
+
+def own_bar_opposition_reason(
+    seat_verdicts: list["AnalystVerdict"],
+    *,
+    direction: str,
+) -> str | None:
+    """The OPPOSITION-only subset of the conviction bar — the STAY cull test.
+
+    `None` unless a seat is ACTIVELY OPPOSED to the held `direction`, else the
+    one-line reason it is culled. Owner ruling 2026-09-25: a currently-HELD name
+    earns its right to STAY, and it is culled ONLY when a seat turns actively
+    opposed (technical opposed OR any non-technical seat opposed) — NOT when it
+    merely fails the ENTRY bar on SOFT grounds (no technical read this review, a
+    neutral/non-confirming technical read, or support that faded to neutral).
+    Those soft cases drop a held name from the ranked survivors but never cull
+    it; only opposition does. A broadcast-macro verdict (market-wide
+    `equity_outlook`, no sector-specific stance) is NOT opposition here either —
+    the same `_is_broadcast_macro_verdict` carve-out entry uses — so a single
+    macro flip cannot cull the whole non-price-protected long book.
+
+    ENTRY still uses the full-strict `own_bar_block_reason`; this narrower test
+    exists solely for the held side. It reuses the SAME aligned/opposed
+    vocabulary and the SAME reason strings as the two opposition branches of
+    `own_bar_block_reason`, so a held name that IS culled reads identically to
+    an entry candidate refused for the same opposition.
+
+    Pure: a function of the seat `AnalystVerdict`s for one name only.
+    """
+    aligned = "bullish" if direction == "bullish" else "bearish"
+    opposed = "bearish" if direction == "bullish" else "bullish"
+
+    tech = [v for v in seat_verdicts if v.seat == "technical"]
+    if any(v.direction == opposed for v in tech):
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to "
+            "the trade (right name, wrong time)"
+        )
+
+    other_opposed = sorted({
+        v.seat for v in seat_verdicts
+        if v.direction == opposed and v.seat != "technical"
+        and not _is_broadcast_macro_verdict(v)
+    })
+    if other_opposed:
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed "
+            "(mandate: no seat may be opposed)"
+        )
+
+    return None
+
+
 # --- Spec §11.2 — gross exposure, its ceiling, and the de-levering ladder --
 #
 # WHAT DID NOT EXIST BEFORE THIS SECTION: any gross-exposure ceiling at all.
@@ -538,41 +757,25 @@ def agreement_refuses_trade(score: int) -> bool:
 #: rung — the ladder can only ever tighten it, never raise it, so an operator
 #: who lowers the setting lowers every rung with it.
 #:
-#: **This is not the desk's only drawdown response.** The two were set side
-#: by side on 2026-09-14 (docs/INCIDENT_HISTORY.md; docs/WORK.md item 32).
-#: They cannot contradict each other — a tripped daily breaker cannot block
-#: this ladder's de-levering (SELL and COVER return no violations before any
-#: rule runs), the two cannot double-sell the same shares (this ladder runs
-#: first in the session preamble and refreshes the broker snapshot before the
-#: breaker is evaluated), and the cap below keeps the severity ordering
-#: coherent. What the comparison DID find is a severity inversion, recorded
-#: rather than changed because it is risk appetite: the daily breaker trips
-#: soonest, while this ladder's deepest rung only halves exposure. (This
-#: comment said the breaker "force-LIQUIDATES" until 2026-09-17 (retired-ok);
-#: it had not
-#: done so since 2026-09-14, when item 32 replaced the whole-book
-#: liquidation with a halt that sells nothing. The inversion is now one of
-#: trip ORDER, not of severity of action.) The rolling-return "drawdown
-#: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
-#: `drawdown_20d_threshold_pct`, halving new BUY size via
-#: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window
-#: return, not peak-to-trough — and were calibrated independently.
+#: **This is now the desk's ONLY account-level drawdown response**
+#: (2026-09-20, owner instruction, docs/WORK.md item 32 retired). The desk
+#: used to carry a second, separate mechanism alongside it: a daily
+#: circuit breaker that halted all new trading on the day's loss, and
+#: 5-day / 20-day rolling-return "drawdown brakes" that halved every new
+#: BUY and SHORT. Both were removed in full. The owner's reason, verbatim:
+#: "I'm starting to think that I'm fine with the stops on the individual
+#: stocks and I do not want a nuclear option so remove the whole secondary
+#: halt on portfolio completely because there's too many things you keep
+#: finding where a slight normal fluctuation in the market can liquidate or
+#: halt everything — that's too dangerous to leave — the proper stop losses
+#: should be enough."
 #:
-#: They are at least no longer in open contradiction with this table.
-#: `GROSS_LADDER_ALERT_PCT` below is a hard cap on all three of them, so
-#: none can be asleep past the point THIS ladder halves the book and alerts
-#: the owner — the constraint that came out of bug 2 on 2026-09-04, and it
-#: survived the 2026-09-11 change of their basis from a fixed percentage of
-#: equity to a multiple of the held book's own realized volatility. THIS
-#: TABLE IS STILL FIXED PERCENTAGES, deliberately: it is a ratified owner
-#: table about peak-to-trough exposure, not a loss alarm, and it was not in
-#: scope for that change.
-#:
-#: That cap is a floor on the disagreement, not agreement. Whether one
-#: drawdown response should govern both, and which, is an open OWNER-level
-#: design question. **Do not re-tune either side in isolation** — changing
-#: this table without checking `src/config.py::drawdown_vol_sensitivity`
-#: and `drawdown_20d_risk_multiple` re-opens the same gap.
+#: This ladder was deliberately left untouched by that removal, and its
+#: character is why: it TRIMS gross exposure gradually at -8% / -15% /
+#: -20% peak-to-trough, it never halts the desk, and it never sells a
+#: position outright. It is a ratified owner table about how much the book
+#: may OWN, not a loss alarm. Do not reintroduce a halt or a sizing brake
+#: on the strength of this table.
 GROSS_LADDER: tuple[tuple[float, float], ...] = (
     (-8.0, 1.5),
     (-15.0, 1.0),
@@ -585,656 +788,46 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 GROSS_LADDER_ALERT_PCT = -20.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
-#: `HARD_BLOCK_RULES` (src/pipeline.py) — one string, two files.
+#: `HARD_BLOCK_RULES` (below in this file) — one string, two places.
 GROSS_EXPOSURE_RULE = "max_gross_exposure"
 
-
-# ---------------------------------------------------------------------------
-# Volatility-relative drawdown alarm basis (docs/WORK.md item 32)
-# ---------------------------------------------------------------------------
-#
-# WHY THIS EXISTS. The three loss alarms — the daily circuit breaker and the
-# 5-day / 20-day rolling-return brakes — were each a FIXED PERCENTAGE OF
-# EQUITY (-6.7% / -15% / -20%), derived once from `max_position_risk_pct`.
-# A fixed percentage assumes the future resembles the past: whatever number
-# is chosen is right only for the volatility regime it was chosen in, and
-# markets are not stationary. It is too tight in a quiet market (the alarm
-# fires on ordinary noise and de-levers a book that is behaving normally)
-# and too loose in a violent one (the alarm sleeps through a genuinely
-# abnormal loss because the absolute number has not moved). Owner call
-# 2026-09-11: recalibrating the fixed number from more history was REFUSED
-# for exactly this reason — the basis, not the calibration, was wrong.
-#
-# THE BASIS NOW. Each alarm trips at a multiple of the normal day-to-day
-# movement of THE BOOK THE DESK IS ACTUALLY HOLDING — reconstructed from the
-# real market price history of its current holdings at their current
-# weights, recomputed every session, so the thresholds move with conditions
-# instead of being frozen.
-#
-# WHY NOT THE ACCOUNT'S OWN EQUITY CURVE. That was the first implementation
-# of this change and the owner rejected it on 2026-09-11, correctly, for two
-# reasons that no amount of calibration fixes:
-#
-#   1. RAMP-UP CONTAMINATION. The account was reset 2026-09-02 and spends
-#      its first sessions going from all-cash to fully deployed. A
-#      mostly-cash account barely moves, so its measured volatility over
-#      exactly the sessions needed to activate the alarms is artificially
-#      LOW — which sets the thresholds artificially TIGHT, and they then
-#      fire on completely normal behaviour once the book is deployed.
-#   2. THE RECORD IS CONTAMINATED ANYWAY. This desk has never operated
-#      correctly; that is the entire content of its open defect backlog.
-#      Calibrating a safety threshold from a record of malfunction is not
-#      sound, and no waiting period cures it.
-#
-# Measuring the HOLDINGS instead fixes both and costs nothing:
-#
-#   - It WORKS IMMEDIATELY. There is no minimum wait on the account,
-#     because the history used is the holdings' market price history, which
-#     is abundant and long. A position opened this morning is measurable
-#     today — its ticker has years of bars regardless of when we bought it.
-#   - It SCALES WITH DEPLOYMENT AUTOMATICALLY, and this is intended. Weights
-#     are fractions OF EQUITY and are deliberately NOT renormalised to sum
-#     to one, so a 30%-deployed book reconstructs a normal daily move about
-#     30% the size of the same basket fully deployed, and the threshold
-#     tightens to match. That is correct: a third of the book at risk should
-#     not be allowed the same loss as all of it.
-#   - It NEVER READS THE ACCOUNT'S OWN PAST PERFORMANCE. Immune to the
-#     malfunction history and to the ramp.
-#
-# WHY WEIGHTED RETURNS RATHER THAN SUMMED VOLATILITIES. The daily return
-# series of the actual basket is built first and the standard deviation is
-# taken of THAT. Summing or averaging the holdings' individual volatilities
-# would ignore how they co-move and overstate a diversified book's normal
-# move (and understate a book that is really one bet wearing four tickers).
-# Correlation is handled implicitly and exactly by weighting the returns.
-#
-# THIS IS NOT VOLATILITY TARGETING. Nothing here resizes positions. The
-# only thing volatility is used for is the YARDSTICK the alarm measures a
-# loss against. Continuous volatility-target exposure scaling was
-# separately investigated and REJECTED for this desk (it imports a fund's
-# smoothness goal, not this desk's survival goal — see docs/OUTCOME.md).
-# Do not extend this machinery into sizing.
-
-#: Trailing window, in trading sessions, over which the held book's
-#: realized daily volatility is measured. 20 sessions (~one trading month)
-#: is a standard convention for realized-volatility estimation and is
-#: already the longer of the two rolling-return windows this desk brakes
-#: on, so no new window length is introduced by this change.
-REALIZED_VOL_WINDOW_SESSIONS = 20
-
-#: Fewest daily basket returns that may stand behind a volatility estimate
-#: before it is allowed to set a risk threshold. NOT a round number: the
-#: relative standard error of a sample standard deviation is approximately
-#: `1 / sqrt(2(n-1))`, so n=10 returns puts the estimate's own error at
-#: ~24% of the estimate, and n=5 at ~35%. 10 is the point at which the
-#: yardstick is more precise than the ~25%-ish uncertainty already carried
-#: by the provisional sensitivity multiple below; below it the estimate is
-#: the dominant source of error and the fixed-percentage fallback is the
-#: more honest answer.
+#: WHICH RULES ACTUALLY STOP AN ORDER.
 #:
-#: Unchanged in value and in derivation from the equity-curve version this
-#: replaced, but it is now a minimum on the HOLDINGS' PRICE HISTORY, not on
-#: the account's own trading record — which is the whole point of the
-#: 2026-09-11 basis change. In practice it is satisfied on day one for any
-#: normally-traded symbol and only bites on a genuinely new listing.
-MIN_REALIZED_VOL_RETURNS = 10
+#: Moved here from `src/pipeline.py` on 2026-09-23 (board item 162). It is
+#: the ONLY code-level answer to "is this entry a hard limit or an advisory",
+#: and the risk seat's renderer (`src/agents/risk_manager.py`) must be able
+#: to ask it. That module cannot import `src.pipeline` — `src.pipeline`
+#: imports it — so the set had to sit below both. `src.pipeline` re-exports
+#: this name, so every existing `from src.pipeline import HARD_BLOCK_RULES`
+#: still resolves.
+#:
+#: Membership is the WHOLE distinction, and it is never derivable from a
+#: rule's NAME: `max_sector_pct` and `max_sector_hard_pct` differ by one
+#: word and sit on opposite sides of it.
 
-#: Sessions dropped from the NEWEST end before the volatility window starts.
-#: 1, because the yardstick must not include the session being judged: a
-#: violent day would otherwise widen its own alarm threshold, which is
-#: precisely backwards — a -6% session on a book that normally moves 0.25%
-#: raises the measured volatility enough to re-classify itself as ordinary.
-#: The alarm asks "is today abnormal against what came BEFORE it", so the
-#: window ends at the previous session.
-REALIZED_VOL_SKIP_NEWEST_SESSIONS = 1
-
-
-@dataclass(frozen=True)
-class PortfolioVolEstimate:
-    """What a holdings-based volatility measurement actually produced.
-
-    `daily_vol_pct` is None whenever no measurement worth acting on exists,
-    and `reason` says which honest case it was. None is a real answer — it
-    means "fall back to the fixed percentage" — never an error, and it is
-    the ONLY way a threshold may be produced without a measurement behind
-    it. Never invent a number here.
-
-    The diagnostics exist so an operator can see WHY a threshold sits where
-    it does, and specifically so an incomplete measurement is visible rather
-    than silent: `unmeasured_symbols` names holdings whose price history
-    could not support a return series, and `measured_weight_pct` is how much
-    of the book's gross exposure has its OWN price history behind it —
-    `unmeasured_symbols` still contribute to `daily_vol_pct` itself (item 92:
-    they are assumed to move like the measurable peers' median, not dropped),
-    so `measured_weight_pct` is a provenance figure, not the coverage of the
-    number produced.
-    """
-    daily_vol_pct: float | None
-    reason: str = ""
-    observations: int = 0
-    #: Gross (unsigned) weight of equity, in percent, covered by the
-    #: estimate. Less than the book's full gross weight when a holding had
-    #: unusable price history.
-    measured_weight_pct: float = 0.0
-    #: Gross weight of equity, in percent, of every holding considered.
-    book_weight_pct: float = 0.0
-    symbols_used: tuple[str, ...] = ()
-    unmeasured_symbols: tuple[str, ...] = ()
-
-
-def _closes_by_date(bars) -> dict:
-    """`{date: close}` from a bar series, skipping unusable bars.
-
-    Tolerates either OHLCV models or plain mappings so a caller is not
-    forced through one bar type, and drops any bar with a missing date or a
-    non-positive / non-finite close rather than letting it become an
-    infinite or sign-flipped return downstream.
-    """
-    out: dict = {}
-    for bar in bars or ():
-        if isinstance(bar, dict):
-            day, close = bar.get("date"), bar.get("close")
-        else:
-            day, close = getattr(bar, "date", None), getattr(bar, "close", None)
-        if day is None:
-            continue
-        if isinstance(close, bool) or not isinstance(close, (int, float)):
-            continue
-        close = float(close)
-        if not math.isfinite(close) or close <= 0:
-            continue
-        out[day] = close
-    return out
-
-
-def normalized_holding_weights(
-    positions, equity: float, *, cash_park_symbol: str | None = None,
-) -> dict:
-    """`{symbol: signed weight as a FRACTION of equity}` for held positions.
-
-    docs/WORK.md item 32 (owner call 2026-09-11). The weighting convention
-    for the drawdown alarms' volatility yardstick, in one place so no caller
-    re-derives it.
-
-    **The cash park is excluded, exactly as `gross_exposure` excludes it**
-    (2026-09-14, docs/WORK.md item 32). It was the ONE risk calculation in
-    this module that still counted the sweep vehicle: `gross_exposure`,
-    `book_exposure`, `sector_side_gross`, the stop-coverage audit and every
-    LLM-facing position view all take a `cash_park_symbol` and drop it, and
-    this function did not. The consequence was measured against the archived
-    book: SGOV was 78% of the gross weight the volatility yardstick was
-    computed over, so the denominator of the daily circuit breaker was
-    neither the risk book nor the account but a third object — parked cash
-    blended into a measure of how much the risk book moves. The symbol is
-    passed by the caller from config and is never hardcoded here.
-
-    Excluding it makes the measured volatility SMALLER, not larger, so the
-    threshold comes out tighter and the alarm fires sooner — the safe
-    direction for a brake. It is a small effect precisely because parked
-    cash barely moves (reconstructed on the archived book: the daily trip
-    point tightens from about -0.75% to about -0.70% of equity).
-
-    Two deliberate differences from `position_weight_pct`, which is the
-    weight convention used for EXPOSURE CAPS and must not be reused here:
-
-      - NO LEVERAGE MULTIPLIER. `weight_pct_of` scales a leveraged ETF's
-        weight by its leverage factor, which is right for an exposure cap.
-        It would be double-counting here: a 3x ETF's OWN price history
-        already moves 3x, so multiplying the weight as well would report
-        nine times the volatility the book can actually experience.
-      - SIGNED, not gross. A short's negative weight is what makes a real
-        long/short offset show up as the smaller basket move it is. Taking
-        absolute values would report a hedged book as twice as volatile as
-        an unhedged one.
-
-    Weights are fractions of equity and are NOT renormalised to sum to one.
-    That is the deployment-scaling property: a 30%-deployed book must
-    produce a proportionally smaller normal daily move.
-    """
-    try:
-        eq = float(equity or 0.0)
-    except (TypeError, ValueError):
-        return {}
-    if not math.isfinite(eq) or eq <= 0:
-        return {}
-    park = (cash_park_symbol or "").strip().upper()
-    weights: dict = {}
-    for position in positions or ():
-        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
-        if not symbol:
-            continue
-        if park and symbol == park:
-            continue
-        try:
-            market_value = float(getattr(position, "market_value", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(market_value) or market_value == 0:
-            continue
-        weights[symbol] = weights.get(symbol, 0.0) + market_value / eq
-    return {sym: w for sym, w in weights.items() if w != 0.0}
-
-
-def held_book_daily_pnl(
-    positions, *, cash_park_symbol: str | None = None,
-) -> tuple[float, bool]:
-    """`(dollars, measurable)` — today's mark-to-market change of the HELD
-    BOOK, over exactly the positions `normalized_holding_weights` weights.
-
-    **Why this exists: the daily circuit breaker was comparing two different
-    objects** (2026-09-14, docs/WORK.md item 32). Its threshold is built from
-    the HELD BOOK's own realized volatility — `normalized_holding_weights`
-    fed to `measure_portfolio_daily_vol` — while the loss compared against
-    that threshold was `total_value - last_equity`, the WHOLE ACCOUNT's day
-    change: realized losses on positions already closed today, commissions
-    and spread included, none of which the denominator models. A threshold
-    that says "this is more than the book I hold normally moves in a day" was
-    being tested against a number that can move without the book moving at
-    all.
-
-    So the numerator is rebuilt from the same object the denominator is: the
-    sum of each held position's own intraday unrealized change, with the cash
-    park dropped for the same reason it is dropped from the weights.
-
-    `measurable` is False when any non-park holding does not expose a finite
-    intraday change — the part of the book that could not be read is not
-    assumed flat, because assuming flat would understate a loss and delay a
-    brake. A caller that gets False must fall back to the account-wide number
-    and say so: that number is the more negative of the two on any day with
-    realized losses, so the fallback trips SOONER, never later.
-
-    An empty book is `(0.0, True)`: there is no held book to lose anything.
-    """
-    park = (cash_park_symbol or "").strip().upper()
-    total = 0.0
-    measurable = True
-    for position in positions or ():
-        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
-        if not symbol or (park and symbol == park):
-            continue
-        value = getattr(position, "unrealized_intraday_pnl", None)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            measurable = False
-            continue
-        value = float(value)
-        if not math.isfinite(value):
-            measurable = False
-            continue
-        total += value
-    return total, measurable
-
-
-def daily_loss_numerator(
-    account_pnl: float, positions, *, vol_relative: bool,
-    cash_park_symbol: str | None = None,
-) -> tuple[float, str]:
-    """`(pnl, basis)` — WHICH day-change number the daily circuit breaker
-    compares against its threshold. One rule, one place, no numbers in it.
-
-    **Numerator and denominator must measure the same object.** They did not
-    (2026-09-14, docs/WORK.md item 32): the threshold was built from the HELD
-    BOOK's own realized volatility while the loss tested against it was
-    `total_value - last_equity`, the whole account's day change — realized
-    losses on positions already closed today, commissions and spread
-    included, none of which the denominator models.
-
-    But the denominator is not always the held book, which is why
-    `vol_relative` is a required argument rather than something guessed
-    here. `RiskRuleEngine.daily_loss_limit_pct` has three rungs: an explicit
-    `max_daily_loss_pct`, then the volatility-relative threshold, then the
-    fixed percentage derived from the per-trade risk unit. Rungs 1 and 3 are
-    percentages OF THE ACCOUNT, so the account's day change is the number
-    that matches them, and passing the held book's there would be the same
-    mismatch pointing the other way. Only rung 2 is measured from the held
-    book. The caller reads which one governed from
-    `RiskRuleEngine.daily_loss_limit_basis()` and says so.
-
-    Even under rung 2 the account number is used as a FALLBACK when the held
-    book cannot honestly be measured:
-
-      * ``"held_book"`` — the threshold is volatility-relative and every
-        non-park holding exposed a finite intraday change.
-      * ``"account"`` — anything else. Either a fixed-percentage rung is
-        governing, or a holding exposed no readable intraday change, or the
-        held book reads exactly flat on a book that IS held while the
-        account is down. A broker that omits the intraday field reports
-        precisely that flat zero and nothing here can distinguish it from a
-        genuinely unmoved book, so the flat read is not trusted to suppress
-        a breach the account-wide number raises. The account number includes
-        realized losses, commissions and spread, so it is the more negative
-        of the two on any such day and trips SOONER — fail toward not
-        trading.
-
-    Every branch turns on whether a measurement EXISTS, never on how big it
-    is. No threshold, cutoff or tolerance is introduced here.
-    """
-    try:
-        account_pnl = float(account_pnl)
-    except (TypeError, ValueError):
-        return float("nan"), "account"
-    if not vol_relative:
-        return account_pnl, "account"
-    book_pnl, measurable = held_book_daily_pnl(
-        positions, cash_park_symbol=cash_park_symbol,
-    )
-    park = (cash_park_symbol or "").strip().upper()
-    held_any = any(
-        str(getattr(p, "symbol", "") or "").strip().upper() not in ("", park)
-        for p in (positions or ())
-    )
-    if not measurable:
-        logger.warning(
-            "Daily circuit breaker: a holding exposed no readable intraday "
-            "change, so the held-book loss could not be measured over the "
-            "whole book. Comparing the ACCOUNT's day change ($%.2f) instead "
-            "of the held book's ($%.2f) — the more negative of the two on a "
-            "day with realized losses, so it trips sooner.",
-            account_pnl, book_pnl,
-        )
-        return account_pnl, "account"
-    if held_any and book_pnl == 0.0 and account_pnl < 0:
-        logger.warning(
-            "Daily circuit breaker: the held book's intraday change reads "
-            "exactly $0.00 on a book that IS held, while the account is down "
-            "$%.2f. A broker that omits the intraday field reports exactly "
-            "this and nothing here can tell it apart from a genuinely flat "
-            "book — comparing the account's day change.", account_pnl,
-        )
-        return account_pnl, "account"
-    return book_pnl, "held_book"
-
-
-def measure_portfolio_daily_vol(
-    weights,
-    bars_by_symbol,
-    *,
-    window_sessions: int = REALIZED_VOL_WINDOW_SESSIONS,
-    min_returns: int = MIN_REALIZED_VOL_RETURNS,
-    skip_newest: int = REALIZED_VOL_SKIP_NEWEST_SESSIONS,
-) -> PortfolioVolEstimate:
-    """Realized daily volatility of the book actually held, in percent.
-
-    docs/WORK.md item 32, owner call 2026-09-11. `weights` is
-    `{symbol: signed fraction of equity}` from `normalized_holding_weights`;
-    `bars_by_symbol` is `{symbol: bar series}` of REAL MARKET price history
-    for those same symbols, in any order (dates are read off the bars, never
-    inferred from position in the list).
-
-    The basket's own daily return series is reconstructed first —
-    `r_portfolio(d) = sum_i weight_i * r_i(d)` — and the sample standard
-    deviation (ddof=1) is taken of that, the same convention the rest of
-    this module uses. Correlation between holdings is therefore handled
-    implicitly and exactly; nothing here sums individual volatilities.
-
-    Returns a `PortfolioVolEstimate` whose `daily_vol_pct` is None when no
-    measurement worth acting on is available. It NEVER raises and NEVER
-    returns a number it did not measure.
-
-    THE COMMON DATE AXIS. Returns are computed on the dates every measurable
-    holding has a bar for, so each holding's return covers the same interval
-    and one symbol's halt cannot splice a multi-session move into another's
-    single-day return. Calendar gaps in that axis (weekends, market
-    holidays) are not splices — no trading happened, so there is no return
-    being skipped over.
-
-    A HOLDING WITH NO USABLE HISTORY is named in `unmeasured_symbols` but is
-    NOT dropped from the basket (docs/BOARD_NOTES.md item 92, fixed
-    2026-09-18). An earlier version excluded it entirely, which reasoned
-    that a smaller measured volatility is "the safe direction for a brake"
-    — but that reasoning is backwards for THIS brake: silently zeroing an
-    unmeasurable holding's contribution makes the book look calmer than it
-    really is, so the computed threshold comes out SMALLER and the breaker
-    becomes MORE likely to halt the desk on an ordinary day. A tighter
-    number is not automatically the safe one when the mechanism it feeds is
-    itself a halt with a cost (cancelled orders, an owner alert, blocked new
-    risk) rather than a passive ceiling.
-
-    Instead, an unmeasurable holding is assumed to move like a NORMAL
-    holding in the same book — the cross-sectional MEDIAN of that session's
-    per-symbol returns among the holdings that DO have price history. This
-    introduces no new number: the median is read off the measurable part of
-    the same book on every session, never a constant. It keeps the
-    holding's own weight and sign (long adds the peer move, short adds its
-    negative) rather than assuming it moves with the book's own correlation
-    structure, which `unmeasured_symbols` already names as an assumption,
-    not a measurement.
-
-    When there are no measurable peers at all (`closes` is empty) there is
-    nothing to derive a median from, and the estimate is None — the fixed
-    percentage governs, exactly as before. When NOTHING is measurable the
-    answer is None and the fixed percentage governs.
-    """
-    try:
-        window = int(window_sessions)
-        floor = int(min_returns)
-        skip = max(0, int(skip_newest))
-    except (TypeError, ValueError):
-        return PortfolioVolEstimate(None, reason="bad measurement parameters")
-    if window < 2 or floor < 2:
-        return PortfolioVolEstimate(None, reason="bad measurement parameters")
-
-    clean: dict = {}
-    for symbol, weight in (weights or {}).items():
-        sym = str(symbol or "").strip().upper()
-        if not sym:
-            continue
-        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
-            continue
-        weight = float(weight)
-        if not math.isfinite(weight) or weight == 0.0:
-            continue
-        clean[sym] = clean.get(sym, 0.0) + weight
-    clean = {sym: w for sym, w in clean.items() if w != 0.0}
-    book_weight_pct = sum(abs(w) for w in clean.values()) * 100.0
-
-    if not clean:
-        # The book is entirely in cash. There is no portfolio to measure —
-        # not "a portfolio with zero volatility". Zero would collapse every
-        # threshold to zero and trip the alarm on the first cent lost.
-        return PortfolioVolEstimate(
-            None, reason="no holdings — the book is entirely in cash",
-        )
-
-    closes: dict = {}
-    unmeasured: list = []
-    for sym in clean:
-        series = _closes_by_date((bars_by_symbol or {}).get(sym))
-        # `floor` returns needs `floor + 1` closes, and `skip` more to drop
-        # the session under judgement from the newest end.
-        if len(series) < floor + 1 + skip:
-            unmeasured.append(sym)
-            continue
-        closes[sym] = series
-
-    if not closes:
-        return PortfolioVolEstimate(
-            None,
-            reason="no holding has enough price history to measure",
-            book_weight_pct=round(book_weight_pct, 4),
-            unmeasured_symbols=tuple(sorted(unmeasured)),
-        )
-
-    axis = sorted(set.intersection(*(set(s) for s in closes.values())))
-    if skip:
-        axis = axis[:-skip] if skip < len(axis) else []
-    # `window` returns needs `window + 1` dates.
-    axis = axis[-(window + 1):]
-    if len(axis) < floor + 1:
-        return PortfolioVolEstimate(
-            None,
-            reason=(
-                f"only {max(0, len(axis) - 1)} overlapping session(s) of "
-                f"price history across the holdings; {floor} needed"
-            ),
-            observations=max(0, len(axis) - 1),
-            book_weight_pct=round(book_weight_pct, 4),
-            unmeasured_symbols=tuple(sorted(unmeasured)),
-        )
-
-    # Weight still held by names with no usable price history of their own.
-    # `unmeasured` was built from `clean`, so every entry is still there.
-    unmeasured_weights = {sym: clean[sym] for sym in unmeasured if sym in clean}
-
-    returns: list = []
-    for i in range(1, len(axis)):
-        today, yesterday = axis[i], axis[i - 1]
-        basket = 0.0
-        instrument_returns: list = []
-        for sym, series in closes.items():
-            prev = series[yesterday]
-            r = (series[today] - prev) / prev * 100.0
-            basket += clean[sym] * r
-            instrument_returns.append(r)
-        if unmeasured_weights:
-            # item 92: an unmeasurable holding is assumed to move like a
-            # NORMAL holding in this same book on this same session — the
-            # cross-sectional median of what the measurable peers actually
-            # did — rather than being dropped, which silently zeroed its
-            # contribution and made the book look calmer than it is. This
-            # is read off the book every session, never a fixed number.
-            peer_return = statistics.median(instrument_returns)
-            for sym, weight in unmeasured_weights.items():
-                basket += weight * peer_return
-        returns.append(basket)
-
-    if len(returns) < floor:
-        return PortfolioVolEstimate(
-            None,
-            reason="not enough basket returns to measure",
-            observations=len(returns),
-            book_weight_pct=round(book_weight_pct, 4),
-            unmeasured_symbols=tuple(sorted(unmeasured)),
-        )
-    try:
-        sigma = statistics.stdev(returns)
-    except statistics.StatisticsError:
-        return PortfolioVolEstimate(
-            None, reason="volatility estimate failed",
-            observations=len(returns),
-            book_weight_pct=round(book_weight_pct, 4),
-        )
-    # A dead-flat basket — most realistically a perfectly offsetting
-    # long/short pair — has zero measured volatility. Zero would collapse
-    # every threshold to zero and trip the alarm on the first cent lost, so
-    # it is "no usable estimate" and falls back.
-    #
-    # The comparison is against a NUMERICAL NOISE FLOOR, not against 0.0,
-    # and the floor is DERIVED rather than picked. Each holding's daily
-    # return is `(p_t - p_prev) / p_prev`, a ratio of two nearly-equal
-    # IEEE-754 doubles, so its absolute error is on the order of machine
-    # epsilon — about `100 * epsilon` once expressed in percent. The basket
-    # return sums `len(closes)` such terms, each scaled by its weight, and
-    # the standard deviation of the series inherits that bound. A sigma
-    # below it is floating-point residue in the input prices, not a
-    # measurement of movement.
-    #
-    # Found by test, and it was a real gap: an exactly offsetting long/short
-    # pair measures 2.4e-15%/session, which a plain `sigma <= 0` check let
-    # straight through and which would have produced an alarm threshold of
-    # effectively 0% — tripping on the first cent lost. The floor lands
-    # ~1e-14%/session, so it can only ever reject arithmetic noise; any
-    # volatility a real instrument can exhibit is orders of magnitude above
-    # it and still measures normally.
-    noise_floor = (
-        len(closes) * sys.float_info.epsilon * 100.0
-        * max(abs(w) for w in clean.values())
-    )
-    if not math.isfinite(sigma) or sigma <= noise_floor:
-        return PortfolioVolEstimate(
-            None,
-            reason="the held book shows no measurable daily movement",
-            observations=len(returns),
-            book_weight_pct=round(book_weight_pct, 4),
-            unmeasured_symbols=tuple(sorted(unmeasured)),
-        )
-
-    if unmeasured:
-        logger.warning(
-            "drawdown alarms: %d holding(s) have too little price history to "
-            "measure directly (%s), covering %.1f%% of the book's %.1f%% "
-            "gross exposure. Their contribution is assumed to move like the "
-            "measured peers' session-by-session median (item 92) rather "
-            "than being dropped, so the yardstick is not silently tightened "
-            "by an unmeasurable name.",
-            len(unmeasured), ", ".join(sorted(unmeasured)),
-            sum(abs(clean[s]) for s in closes) * 100.0, book_weight_pct,
-        )
-    return PortfolioVolEstimate(
-        sigma,
-        reason="measured from current holdings' price history",
-        observations=len(returns),
-        measured_weight_pct=round(
-            sum(abs(clean[s]) for s in closes) * 100.0, 4,
-        ),
-        book_weight_pct=round(book_weight_pct, 4),
-        symbols_used=tuple(sorted(closes)),
-        unmeasured_symbols=tuple(sorted(unmeasured)),
-    )
-
-
-def portfolio_daily_vol_pct(weights, bars_by_symbol, **kwargs) -> float | None:
-    """`measure_portfolio_daily_vol(...).daily_vol_pct` — the number alone.
-
-    For callers that only want the yardstick and not the diagnostics.
-    """
-    return measure_portfolio_daily_vol(
-        weights, bars_by_symbol, **kwargs,
-    ).daily_vol_pct
-
-
-def vol_relative_drawdown_threshold_pct(
-    *,
-    daily_vol_pct: float | None,
-    window_sessions: int,
-    sensitivity: float,
-    fallback_pct: float,
-    cap_pct: float | None = None,
-) -> float:
-    """One loss-alarm threshold, as a negative percent of equity.
-
-    `daily_vol_pct` is the held book's realized daily volatility from
-    `measure_portfolio_daily_vol`; None (nothing measurable) returns
-    `fallback_pct` unchanged, which is the fixed-percentage threshold this
-    design replaces — so a cold-started account behaves exactly as it did
-    before this change and nothing has to guess.
-
-    Window scaling is square-root-of-time: drawdown magnitude over a window
-    scales with the square root of the window length (Van Hemert, Ganz,
-    Harvey et al., "Drawdowns", Journal of Portfolio Management, 2020). That
-    relationship is the part of this design that IS research-grounded, and
-    it is unchanged from the fixed-percentage version — one sensitivity
-    multiple, scaled by sqrt(T), reproduces the existing 1 : sqrt(5) ratio
-    between the daily and 5-day alarms exactly.
-
-    `cap_pct` is an optional hard floor on how deep the threshold may go,
-    used by the 20-day window to keep this brake reconciled with the §11.2
-    de-levering ladder (see `GROSS_LADDER`): the brake must not still be
-    asleep past the point the ladder halves the book and alerts the owner.
-    """
-    fallback = float(fallback_pct)
-    if daily_vol_pct is None:
-        return fallback
-    if isinstance(daily_vol_pct, bool) or not isinstance(
-        daily_vol_pct, (int, float),
-    ):
-        return fallback
-    sigma = float(daily_vol_pct)
-    sens = _positive_float(sensitivity, 0.0)
-    if not math.isfinite(sigma) or sigma <= 0 or sens <= 0:
-        return fallback
-    try:
-        horizon = int(window_sessions)
-    except (TypeError, ValueError):
-        return fallback
-    if horizon < 1:
-        return fallback
-
-    magnitude = sens * sigma * math.sqrt(horizon)
-    if not math.isfinite(magnitude) or magnitude <= 0:
-        return fallback
-    if cap_pct is not None and math.isfinite(float(cap_pct)):
-        magnitude = min(magnitude, abs(float(cap_pct)))
-    return -round(magnitude, 2)
+HARD_BLOCK_RULES = {
+    "max_total_position_pct",
+    "max_position_pct",
+    "require_stop_loss",
+    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
+    # a hard block and is deliberately absent from this set. It is now the
+    # diversification TARGET — breaching it emits an ADVISORY violation the
+    # AI Risk Manager and the audit trail see, while the constructor shrinks
+    # the order for crowding instead of the pipeline dropping it. The hard
+    # gate moved to `max_sector_hard_pct` below, which fires only past the
+    # absolute ceiling or on an order that never went through that sizing.
+    # Removing it from here is the whole of "concentration is a dial, not a
+    # gate" at the pipeline level; putting it back reinstates the veto.
+    "max_sector_hard_pct",
+    "cash_only",
+    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
+    # value plus absolute short market value — may not exceed the ladder-
+    # resolved multiple of equity. There was NO gross-exposure ceiling in
+    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
+    # and `max_total_position_pct` bounds NET exposure, where a hedge
+    # cancels a long. Adding this hard block is a tightening.
+    "max_gross_exposure",
+}
 
 
 def _positive_float(value, default: float = 0.0) -> float:
@@ -1304,7 +897,7 @@ def resolve_gross_ceiling(
     fell. It resolves to the configured cap, which is itself a real ceiling,
     and `apply_gross_ceiling` refuses to TRIM on an unmeasurable book. This
     matches how `_compute_recent_performance` has always treated an empty
-    `daily_pnl` table (`in_drawdown: False`).
+    `daily_pnl` table.
 
     **But unknown is no longer SILENT (2026-09-18).** Holding the loosest
     cap was never the defect; doing it without telling anyone was. An
@@ -1374,11 +967,11 @@ def peak_to_trough_pct(
     equity and is included in the peak, so a book making new highs reads 0.0
     rather than a stale negative.
 
-    Deliberately NOT the same measure as `in_drawdown` (rolling 5-day /
-    20-day returns). Those two answer different ratified questions: "has our
-    recent edge degraded, so halve new BUYs" versus "how far are we off the
-    high-water mark, so how much may the book own". Both are drawdown; only
-    one sets the ceiling.
+    This is the desk's only measure of drawdown. The rolling 5-day /
+    20-day return brakes that used to sit beside it ("has our recent edge
+    degraded, so halve new BUYs") were removed on 2026-09-20 by owner
+    instruction; this one answers "how far are we off the high-water mark,
+    so how much may the book own", and it sets the ceiling.
 
     Guard 2 (2026-09-02 operational safety guard): a NaN/inf equity reading
     can NEVER win the `max()` below and become the high-water mark. Another
@@ -1435,8 +1028,8 @@ def peak_to_trough_pct(
             "peak_to_trough_pct: dropped %d non-finite equity reading(s) "
             "(NaN/inf) rather than letting one win max() as a fabricated "
             "high-water mark. Alpaca has been observed to return NaN "
-            "portfolio_value during market-open glitches (see "
-            "RiskRuleEngine.check_daily_loss). The remaining %d historical "
+            "portfolio_value during market-open glitches. "
+            "The remaining %d historical "
             "reading(s) still went into this call's peak.",
             dropped_non_finite, len(history_values),
         )
@@ -1816,6 +1409,11 @@ def apply_gross_ceiling(
     ceiling: GrossCeiling,
     *,
     cash_park_symbol: str | None = None,
+    # Fixed 2026-09-24: no longer used to refuse a new entry (see step 2's
+    # comment) — kept only as an accepted, ignored parameter so existing
+    # callers/tests that pass it do not need to change. An entry the
+    # ceiling shrinks to near-nothing is granted, not refused, for being
+    # small; only a real zero (`after <= 0`) still refuses.
     min_order_usd: float = 500.0,
     # The SIZING gate (`PortfolioConstructor`) sets this False: shrinking an
     # order it is about to propose is its job, authoring a de-lever of the
@@ -1832,10 +1430,11 @@ def apply_gross_ceiling(
     1. Planned exits are counted first — a book already being reduced is
        judged on what it will hold, not on what it holds now.
     2. **New exposure is blocked or shrunk to fit the ceiling.** Every BUY
-       and SHORT is rationed against the remaining headroom; one shrunk
-       below `min_order_usd` is refused outright rather than placed as a
-       token position (§10.3's floor — a position too small to pay for its
-       own risk is not a smaller trade, it is a worse one).
+       and SHORT is rationed against the remaining headroom. Fixed
+       2026-09-24: one shrunk to a small but nonzero size is no longer
+       refused outright — it is placed at whatever headroom remains (no
+       stock commission and fractional shares make a small order fine); only
+       a genuine zero (`after <= 0`) is refused.
     3. **Only then**, and only if the HELD book ALONE still exceeds the
        ceiling, are trims emitted. Proposed new exposure is not an input to
        that test, structurally — so the engine can never sell something you
@@ -1848,9 +1447,9 @@ def apply_gross_ceiling(
     ceiling from account state.
 
     Returns a `GrossCeilingOutcome`. Entry decisions are mutated in place
-    (their `allocation_pct` reduced and their `reasoning` annotated), the
-    same convention `apply_drawdown_scale` uses so the AI Risk Manager does
-    not read deterministic arithmetic as the PM contradicting itself.
+    (their `allocation_pct` reduced and their `reasoning` annotated) so the AI
+    Risk Manager does not read deterministic arithmetic as the PM
+    contradicting itself.
     """
     out = GrossCeilingOutcome(
         decisions=list(decisions or []), ceiling=ceiling,
@@ -1959,35 +1558,26 @@ def apply_gross_ceiling(
                 f"({ceiling.ceiling_x:.1f}x equity)"
             )
         before = float(decision.allocation_pct)
-        # `available` is GROSS dollars; `min_order_usd` is a NOTIONAL floor —
-        # what the order actually costs, which is what pays the commission.
-        # For a leveraged ETF the two differ: $600 of gross headroom in SQQQ
-        # (3x) buys a $200 order, which is below the floor. Comparing gross
-        # against a notional threshold would let exactly that token position
-        # through on the two tickers whose multiplier exceeds 1 (SDS 2x,
-        # SQQQ 3x); for everything else the two figures are identical.
-        if (available / multiplier) < max(0.0, min_order_usd):
-            decision.allocation_pct = 0.0
-            out.blocked.append(decision.symbol)
-            detail = (
-                f"{reason}, and what the ceiling still allows is below the "
-                f"${min_order_usd:,.0f} minimum worth trading. "
-                f"{ceiling.reason}"
-            )
-            out.blocked_detail[decision.symbol] = detail
-            out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
-            continue
+        # Fixed 2026-09-24: this used to refuse outright whenever
+        # `available / multiplier` (the NOTIONAL the ceiling still allows)
+        # was under the flat `min_order_usd` floor — an arbitrary $500 with
+        # no broker minimum behind it (config/number_ledger.yaml), justified
+        # by a false "pays commission" claim (Alpaca charges none). A small
+        # entry is no longer refused for that reason; it is granted whatever
+        # headroom is left, however small. Only a genuinely empty headroom
+        # (`after <= 0` below) still refuses — that is a real "nothing to
+        # buy", not an arbitrary-floor judgement call.
+        #
         # Round DOWN to 2dp so the granted size can never land back above the
         # headroom that permitted it.
         after = math.floor(
             (available / (equity * multiplier) * 100.0) * 100.0
         ) / 100.0
-        if after <= 0 or (equity * (after / 100.0)) < min_order_usd:
+        if after <= 0:
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
             detail = (
-                f"{reason}, and what the ceiling still allows is below the "
-                f"${min_order_usd:,.0f} minimum worth trading. "
+                f"{reason}, and no headroom is left under the ceiling. "
                 f"{ceiling.reason}"
             )
             out.blocked_detail[decision.symbol] = detail
@@ -2101,93 +1691,6 @@ def apply_gross_ceiling(
     return out
 
 
-DRAWDOWN_BUY_SCALE = 0.5
-"""Multiplier applied to every new BUY while the system is in drawdown.
-
-`config/prompts/portfolio_manager.md` has instructed the LLM to halve new BUYs
-whenever `in_drawdown=true` since the rule was written, and
-`config/prompts/risk_manager.md` told the Risk Manager it was "the only check"
-because no deterministic code enforced it. A safety rule that depends on a
-language model remembering to apply it is not a rule (audit §1.1), so the
-halving now lives here, in Python, and the PM prompt no longer pre-applies it —
-two independent halvings would quarter the position.
-"""
-
-
-def apply_drawdown_scale(
-    decisions: list[TradeDecision], in_drawdown: bool,
-    *, ceiling: GrossCeiling | None = None,
-) -> tuple[list[TradeDecision], list[str]]:
-    """Halve every BUY's (and Stage-3 SHORT's) allocation while in drawdown.
-
-    **The §11.2 gross-exposure ceiling is NOT computed here, and must never
-    be.** Scaling proposed decisions and bounding the live book are two
-    different jobs, and only one of them may depend on the Portfolio Manager
-    producing a parseable book. This function takes a decision list; a blank
-    PM response makes it a no-op, which is correct for sizing and would be
-    catastrophic for a ceiling. `resolve_gross_ceiling` therefore reads
-    account state alone and `apply_gross_ceiling` enforces it with
-    `decisions=[]` on exactly those runs. `ceiling` is accepted here only so
-    the note this function writes can NAME the rung that is also in force —
-    it changes no arithmetic, and passing None changes nothing.
-
-    The two are wired to one ladder rather than two mechanisms: there is a
-    single `GROSS_LADDER`, a single `resolve_gross_ceiling`, and this
-    function's halving is the ratified rolling-window rule it always was
-    (`DRAWDOWN_BUY_SCALE`), unchanged in threshold or magnitude by §11.2.
-    See `peak_to_trough_pct` for why the two drawdown measures are
-    deliberately distinct.
-
-    Returns `(decisions, notes)`. Mutates each scaled decision in place and
-    appends provenance to its `reasoning`: the AI Risk Manager audits
-    CONSTRUCTED orders against PM's prose, and an unexplained size
-    difference reads to it as PM contradicting itself — on 2026-08-20
-    exactly that mismatch drew a full-plan veto over deterministic math
-    (see `portfolio_constructor.py` `cap_note`).
-
-    SELL, COVER and HOLD are untouched: de-risking (in either direction)
-    during a drawdown is the point.
-    """
-    if not in_drawdown:
-        return decisions, []
-    notes: list[str] = []
-    for decision in decisions:
-        # Stage 3: a SHORT opens new risk exactly as a BUY does, so the
-        # drawdown-halve applies to it too. SELL, COVER and HOLD stay
-        # untouched — de-risking (in either direction) during a drawdown is
-        # the point.
-        if decision.action not in ("BUY", "SHORT") or decision.allocation_pct <= 0:
-            continue
-        before = decision.allocation_pct
-        after = round(before * DRAWDOWN_BUY_SCALE, 2)
-        if after <= 0:
-            # Rounds to nothing — the halved trade is not worth submitting.
-            decision.allocation_pct = 0.0
-            notes.append(
-                f"{decision.symbol} {before:.2f}% → 0% (halved below the "
-                f"minimum tradable size by the drawdown rule)"
-            )
-            continue
-        decision.allocation_pct = after
-        rung_note = (
-            f" Gross exposure is capped at {ceiling.ceiling_x:.1f}x equity by "
-            f"the §11.2 de-levering ladder."
-            if ceiling is not None and ceiling.de_levered else ""
-        )
-        decision.reasoning = (
-            decision.reasoning
-            + f" [risk engine: {before:.2f}% halved to {after:.2f}% — system "
-              f"in_drawdown=true. Deterministic, not PM inconsistency."
-              f"{rung_note}]"
-        )[:800]
-        notes.append(f"{decision.symbol} {before:.2f}% → {after:.2f}%")
-    if notes:
-        logger.warning(
-            "Drawdown gate: halved %d BUY(s) — %s", len(notes), "; ".join(notes),
-        )
-    return decisions, notes
-
-
 @dataclass
 class RiskViolation:
     rule: str
@@ -2197,149 +1700,11 @@ class RiskViolation:
 
 
 class RiskRuleEngine:
-    def __init__(
-        self,
-        config: RiskConfig,
-        *,
-        portfolio_vol_provider=None,
-    ):
+    def __init__(self, config: RiskConfig):
         self.config = config
-        # docs/WORK.md item 32 (owner call 2026-09-11). Optional zero-arg
-        # callable returning the realized daily volatility, in percent per
-        # session, of THE BOOK CURRENTLY HELD — measured by
-        # `measure_portfolio_daily_vol` from the real market price history
-        # of the actual holdings at their actual weights — or None when
-        # nothing measurable exists. Supplied, the daily circuit breaker
-        # measures a loss against that; not supplied — every existing test
-        # fixture, and any caller with no market data — it falls back to the
-        # fixed percentage exactly as before, so this is additive.
-        #
-        # NOT the account's own equity curve. That was the first version of
-        # this change and the owner rejected it: the post-reset account
-        # spends its first sessions ramping from cash and a mostly-cash
-        # account barely moves, so the measurement would have been
-        # artificially low and the thresholds artificially tight — and the
-        # account's historical record is a record of malfunction anyway. See
-        # the module comment above `REALIZED_VOL_WINDOW_SESSIONS`.
-        #
-        # A PROVIDER rather than a value passed to `check_daily_loss`
-        # deliberately: the breaker is called from six separate places in
-        # `src/pipeline.py`, not all of them holding a position list. And it
-        # returns the FINISHED number rather than raw bars so that this
-        # module keeps exactly one definition of "volatility" and the
-        # gathering of positions and prices stays with the caller that owns
-        # the broker and the market feed.
-        self.portfolio_vol_provider = portfolio_vol_provider
-
-    def portfolio_daily_vol_pct(self) -> float | None:
-        """The held book's realized daily volatility, or None.
-
-        None means no measurement worth acting on exists — an all-cash
-        book, or holdings without enough price history (see
-        `MIN_REALIZED_VOL_RETURNS`) — and the fixed-percentage fallback
-        governs. A provider that raises, or returns something that is not a
-        usable positive number, is treated the same way: a broken
-        volatility read must never disable the circuit breaker, so it
-        degrades to the old basis and logs.
-        """
-        provider = self.portfolio_vol_provider
-        if provider is None:
-            return None
-        try:
-            sigma = provider()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "RiskRuleEngine: portfolio-volatility provider failed (%s) — "
-                "the daily circuit breaker falls back to its "
-                "fixed-percentage threshold for this call.", exc,
-            )
-            return None
-        if sigma is None:
-            return None
-        if isinstance(sigma, bool) or not isinstance(sigma, (int, float)):
-            logger.warning(
-                "RiskRuleEngine: portfolio-volatility provider returned %r, "
-                "which is not a number — falling back to the "
-                "fixed-percentage daily threshold.", sigma,
-            )
-            return None
-        sigma = float(sigma)
-        if not math.isfinite(sigma) or sigma <= 0:
-            return None
-        return sigma
-
-    @property
-    def daily_loss_limit_pct(self) -> float:
-        """The daily circuit breaker's limit, as a POSITIVE percent.
-
-        Precedence, unchanged in its first rung and extended in its second:
-
-          1. an explicit `max_daily_loss_pct` always wins (the override
-             pattern ~50 fixtures in this repo rely on);
-          2. otherwise the volatility-relative threshold, measured from the
-             price history of what the desk is holding right now;
-          3. otherwise `effective_max_daily_loss_pct`, the fixed percentage
-             derived from the real per-trade risk unit — used when there is
-             nothing to measure at all: an all-cash book, holdings without
-             enough price history, or no market-data provider wired in.
-        """
-        limit, _basis = self._daily_loss_limit_and_basis()
-        return limit
-
-    #: `daily_loss_limit_basis` when the limit came from the held book's own
-    #: measured volatility. The ONLY basis whose numerator is the held book —
-    #: see `daily_loss_numerator`.
-    VOL_RELATIVE_BASIS = "volatility_relative"
-    #: Either of the two fixed-percentage rungs. Both are stated as a percent
-    #: of the ACCOUNT, so the account's day change is what matches them.
-    FIXED_BASIS = "fixed_percentage"
-
-    def daily_loss_limit_basis(self) -> str:
-        """WHICH rung of `daily_loss_limit_pct` is governing right now.
-
-        2026-09-14, docs/WORK.md item 32. The breaker's numerator has to
-        measure the same object as its denominator, and the denominator is
-        not always the same object: rungs 1 and 3 are fixed percentages OF
-        THE ACCOUNT, rung 2 is measured from the HELD BOOK. Reading the
-        limit no longer tells you which, so the two are computed together
-        and this reports the answer.
-        """
-        _limit, basis = self._daily_loss_limit_and_basis()
-        return basis
-
-    def _daily_loss_limit_and_basis(self) -> tuple[float, str]:
-        explicit = getattr(self.config, "max_daily_loss_pct", None)
-        if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
-            if math.isfinite(float(explicit)) and float(explicit) > 0:
-                return float(explicit), self.FIXED_BASIS
-        fallback = self.config.effective_max_daily_loss_pct
-        sigma = self.portfolio_daily_vol_pct()
-        if sigma is None:
-            return fallback, self.FIXED_BASIS
-        threshold = vol_relative_drawdown_threshold_pct(
-            daily_vol_pct=sigma,
-            window_sessions=1,
-            sensitivity=getattr(
-                self.config, "drawdown_vol_sensitivity", 0.0,
-            ),
-            fallback_pct=-abs(float(fallback)),
-            # Capped at the §11.2 ladder's owner-alert point for the same
-            # reason the 20-day brake is: a single session that loses more
-            # than that is a circuit-breaker event whatever the book's
-            # recent volatility has been, and without the cap a violent
-            # regime could put the DAILY limit past the 20-day brake's —
-            # a shorter window tolerating a bigger loss than a longer one.
-            cap_pct=GROSS_LADDER_ALERT_PCT,
-        )
-        # `vol_relative_drawdown_threshold_pct` returns `fallback_pct`
-        # unchanged when the sensitivity is unusable, so an equal value here
-        # means no measurement governed after all.
-        if threshold == -abs(float(fallback)):
-            return abs(threshold), self.FIXED_BASIS
-        return abs(threshold), self.VOL_RELATIVE_BASIS
 
     def check(self, decision: TradeDecision, positions: list[Position],
-              total_value: float, daily_pnl: float,
+              total_value: float,
               pending_investment: float = 0.0,
               # Spec §12.2: keyed by `(sector, side)`, not by sector alone —
               # a pending SHORT must not consume the same sector's LONG
@@ -2348,12 +1713,10 @@ class RiskRuleEngine:
               # misses it; `accumulate_pending_sector` is the writer.
               pending_sector_investment: dict[tuple[str, str], float] | None = None,
               pending_symbol_investment: dict[str, float] | None = None,
-              baseline: float | None = None,
               correlation_matrix: dict[str, dict[str, float]] | None = None,
               max_correlated_cluster_pct: float = 50.0,
               cash: float | None = None,
               pending_cash_outflow: float = 0.0,
-              in_drawdown: bool = False,
               # --- Spec §11.2 ---------------------------------------------
               # The EXECUTION half of the gross-exposure ceiling. The sizing
               # half lives in `PortfolioConstructor`, which shrinks orders to
@@ -2382,7 +1745,7 @@ class RiskRuleEngine:
         # Pre-fix the early return was `[]` which has the same shape as
         # "all checks passed" — so an Alpaca portfolio_value=0 blip during
         # market-open silently approved every BUY, bypassing cash_only /
-        # max_position_pct / max_sector_pct / max_daily_loss_pct. Emit a
+        # max_position_pct / max_sector_pct. Emit a
         # synthetic violation in HARD_BLOCK_RULES so the pipeline filter
         # blocks the BUY instead. The empty list reserved exclusively for
         # "checked, found no violations" semantics.
@@ -2398,19 +1761,6 @@ class RiskRuleEngine:
                 value=0.0,
                 limit=0.0,
             )]
-
-        # Daily-loss denominator: yesterday-close equity if provided, else current equity.
-        # The fallback is only intended for first-day / fresh-account cases where Alpaca
-        # legitimately has no last_equity. On an established account a missing baseline
-        # usually signals a broker API glitch, so log a warning — the denominator silently
-        # flipping from yesterday-close to current equity can make the loss cap appear
-        # stricter (or more permissive) than intended within a single session.
-        if baseline is None or baseline <= 0:
-            logger.warning(
-                "daily-loss baseline missing (%s); falling back to current total_value=%.2f",
-                baseline, total_value,
-            )
-            baseline = total_value
 
         # A single non-finite position market_value poisons every sum below.
         # NaN comparisons are all False, so `sector_pct > cap` and
@@ -2522,30 +1872,8 @@ class RiskRuleEngine:
                     limit=self.config.max_position_pct,
                 ))
 
-        # 1b. Drawdown gate (audit §1.1). `apply_drawdown_scale` above has
-        # already halved every BUY on the normal path; this is the fail-closed
-        # backstop for any path that reaches the engine unscaled. It bounds the
-        # NEW money only — deliberately not the whole position, because the
-        # rule the prompts have always stated is "halve every new BUY", not
-        # "force-trim existing winners during a drawdown".
-        if in_drawdown:
-            drawdown_new_cap = self.config.max_position_pct * DRAWDOWN_BUY_SCALE
-            new_pct = decision.allocation_pct * gross_mul
-            if new_pct > drawdown_new_cap:
-                violations.append(RiskViolation(
-                    rule="drawdown_buy_cap",
-                    message=(
-                        f"{decision.symbol} new BUY of {new_pct:.1f}% exceeds the "
-                        f"{drawdown_new_cap:.1f}% drawdown cap "
-                        f"({self.config.max_position_pct:.0f}% x "
-                        f"{DRAWDOWN_BUY_SCALE}) — system is in drawdown"
-                    ),
-                    value=new_pct,
-                    limit=drawdown_new_cap,
-                ))
-
         # 1c. Spec §11.2 — the GROSS-exposure ceiling. HARD BLOCK (in
-        # HARD_BLOCK_RULES, src/pipeline.py).
+        # HARD_BLOCK_RULES, above in this file).
         #
         # Distinct from rule 2 below in the way that matters: rule 2 measures
         # NET exposure, where a hedge cancels a long. That does not answer "how much does the book OWN", which is what
@@ -2614,37 +1942,6 @@ class RiskRuleEngine:
                 value=total_pct,
                 limit=self.config.max_total_position_pct,
             ))
-
-        # 3. Daily loss limit (% of the baseline — prior close equity).
-        # NaN guard mirrors check_daily_loss (line 240): a NaN daily_pnl
-        # (Alpaca portfolio_value glitches propagate into
-        # total_value - last_equity) makes every numeric comparison
-        # False, silently disabling rule 3 inside the per-BUY pipeline
-        # path. Audit 2026-05-27: standalone check_daily_loss + force-
-        # delever already had the guard; this per-BUY backup path did
-        # not — inconsistent defense.
-        if not math.isfinite(daily_pnl):
-            logger.warning(
-                "RiskRuleEngine.check: daily_pnl is non-finite (%s) — "
-                "skipping per-BUY daily-loss rule for %s; standalone "
-                "check_daily_loss + force_delever remain in force",
-                daily_pnl, decision.symbol,
-            )
-        else:
-            daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-            # docs/WORK.md item 32: `daily_loss_limit_pct` (not the raw
-            # field) so this measures the loss against the normal daily
-            # move of the book actually held when that is measurable, and
-            # against the risk-unit-derived fixed percentage when it is
-            # not. Both beaten by an explicit `max_daily_loss_pct`.
-            limit = self.daily_loss_limit_pct
-            if daily_loss_pct > limit:
-                violations.append(RiskViolation(
-                    rule="max_daily_loss_pct",
-                    message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%. Trading paused.",
-                    value=daily_loss_pct,
-                    limit=limit,
-                ))
 
         # 4. Stop loss required
         if self.config.require_stop_loss and decision.stop_loss <= 0:
@@ -2874,49 +2171,3 @@ class RiskRuleEngine:
 
         return violations
 
-    def check_daily_loss(self, baseline: float, daily_pnl: float) -> RiskViolation | None:
-        """Standalone daily loss check. `baseline` is the % denominator (e.g. last_equity).
-
-        NaN handling: any NaN in `baseline` or `daily_pnl` (Alpaca has been
-        observed to return NaN for `portfolio_value` during market-open
-        glitches; that propagates into `last_equity` and `daily_pnl` via
-        `total_value - last_equity`) makes every comparison False, which
-        would SILENTLY DISABLE the circuit breaker on exactly the kind of
-        broken-snapshot day where the breaker is most valuable. So:
-          - NaN baseline → can't compute %, treat as "no signal" + LOG so
-            the operator knows the breaker was bypassed.
-          - NaN daily_pnl → same.
-        Both raise no violation but emit a WARNING; force_delever is the
-        downstream safety net for the actual cash-deficit case.
-        """
-        import math
-        if not math.isfinite(baseline):
-            logger.warning(
-                "check_daily_loss: baseline is non-finite (%s) — circuit "
-                "breaker bypassed for this call. Likely Alpaca returned "
-                "NaN portfolio_value/last_equity; force_delever is the "
-                "downstream safety net.",
-                baseline,
-            )
-            return None
-        if not math.isfinite(daily_pnl):
-            logger.warning(
-                "check_daily_loss: daily_pnl is non-finite (%s) — circuit "
-                "breaker bypassed for this call.",
-                daily_pnl,
-            )
-            return None
-        if baseline <= 0:
-            return None
-        daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-        # docs/WORK.md item 32: volatility-relative limit where measurable,
-        # fixed-percentage fallback otherwise. See `check()` above.
-        limit = self.daily_loss_limit_pct
-        if daily_loss_pct > limit:
-            return RiskViolation(
-                rule="max_daily_loss_pct",
-                message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%",
-                value=daily_loss_pct,
-                limit=limit,
-            )
-        return None

@@ -5,9 +5,10 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, Literal, get_origin
+from typing import Annotated, Any, Literal, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, ValidationInfo, computed_field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from src.quantities import collapse_stances
 # `src.risk.exit_trigger` imports only the stdlib (and `src.risk` has an
@@ -184,6 +185,38 @@ def _normalize_enum_case_fields(
 # a whole candidate.
 
 
+#: `specialist_evidence.kind` for the per-stock parse-drop row (board item
+#: 158). Defined HERE rather than in `src/pipeline_stages.py` so the read-only
+#: API can name the same kind without importing the pipeline — that import is
+#: forbidden for `src/api/routes_evidence.py` and enforced by
+#: `tests/test_api_safety.py`. `src.pipeline_stages.ANALYSIS_DROP_KIND` is an
+#: alias of this constant, not a second copy.
+ANALYSIS_DROP_KIND = "analysis_drop"
+
+#: STABLE machine-readable drop codes. The prose reason beside them is written
+#: for a person and will be reworded; a reader filtering "show me every stock
+#: the tech seat could not read this month" must not be grepping English. These
+#: strings are part of the stored record: rename one and every row already on
+#: disk becomes unmatchable, so add a new code instead.
+#:
+#: `malformed_row`   — the model's row was not valid JSON (the #538 salvage
+#:                     path); the row never became an object.
+#: `schema_invalid`  — the row decoded but failed the Pydantic contract.
+#: `unspecified`     — recorded before codes existed, or by a seat whose drop
+#:                     site passes no code. NOT an error: a row written by the
+#:                     original item-158 fix carries a reason and no code, and
+#:                     must still read back.
+DROP_CODE_MALFORMED_ROW = "malformed_row"
+DROP_CODE_SCHEMA_INVALID = "schema_invalid"
+DROP_CODE_UNSPECIFIED = "unspecified"
+
+ANALYSIS_DROP_CODES = frozenset({
+    DROP_CODE_MALFORMED_ROW,
+    DROP_CODE_SCHEMA_INVALID,
+    DROP_CODE_UNSPECIFIED,
+})
+
+
 class AnalysisParseTelemetry:
     """Per-run tally of what parsing lost or had to paper over.
 
@@ -202,6 +235,20 @@ class AnalysisParseTelemetry:
         self._counts: Counter = Counter()
         self._drops: Counter = Counter()
         self._hygiene: Counter = Counter()
+        # WHY a row was dropped, keyed the same as `_drops` (model, symbol).
+        # Board item 158: the reason used to live only in a log line and the
+        # count above, so a later reader could not tell why a name was absent
+        # without the log. Kept here so the risk stage can persist it beside
+        # the stock it was dropped for (`specialist_evidence`, kind
+        # `analysis_drop`). First concrete reason per key wins — a retry's
+        # second drop of the same symbol never overwrites the original why.
+        #
+        # ONE dict holding `(code, prose)` as a pair, not two dicts. A stable
+        # code and the human detail that contradicts it is worse than either
+        # alone, and two independently-`setdefault`-ed maps can drift the
+        # moment one call site passes a reason and the next passes a code.
+        # Written once, read as two projections below.
+        self._drop_reasons: dict[tuple[str, str], tuple[str, str]] = {}
         self._local = threading.local()
 
     @property
@@ -237,21 +284,50 @@ class AnalysisParseTelemetry:
         with self._lock:
             self._counts[(model_name, field_name)] += 1
 
-    def record_dropped_item(self, model_name: str, key: str) -> None:
+    def record_dropped_item(
+        self, model_name: str, key: str, reason: str | None = None,
+        reason_code: str | None = None,
+    ) -> None:
         """A whole parsed item was discarded — `key` is the symbol where known.
+
+        `reason` is the human-readable WHY (e.g. "malformed: ..." or "failed
+        validation on ..."); `reason_code` is the STABLE machine-readable
+        companion (one of `ANALYSIS_DROP_CODES`), because prose written for a
+        person gets reworded and a later reader must still be able to select
+        every drop of one kind without grepping English. Passed by the
+        technical seat's two drop sites so
+        board item 158's requirement — the reason stored alongside the stock,
+        not only in the log — can be met downstream. Optional so the other
+        seats' drop sites (news, PM, evening) need no change; they record a
+        count with no reason, exactly as before.
 
         This is the loss the null-tolerance rule above is designed to prevent,
         counted separately so "we kept it but blanked a field" is never
         confused with "the desk never saw this candidate at all". Recorded
-        even when a retry later recovers the symbol: today that case logs at
-        INFO, leaves `data_status["tech"]` reading "ok", and is therefore
-        completely invisible to the operator while still costing a paid LLM
-        round-trip.
+        even when a retry later recovers the symbol, and NOT un-recorded when
+        it does: that case logs at INFO, leaves `data_status["tech"]` reading
+        "ok", and would otherwise be completely invisible to the operator
+        while still costing a paid LLM round-trip. Since 2026-09-23 the risk
+        stage reconciles these entries against the book it holds and reports a
+        recovered one as the `analysis_parse_loss_recovered` COST note instead
+        of as missing coverage (`_reconcile_parse_loss` in
+        `src/pipeline_stages.py`), so the signal this counter exists to give
+        survives without the counter ever being erased.
         """
         if self._suspended:
             return
         with self._lock:
             self._drops[(model_name, key)] += 1
+            if reason or reason_code:
+                # First concrete reason per key wins; a later retry's drop of
+                # the same symbol keeps the original why rather than clobbering
+                # it. `setdefault` is inside the same lock as the count, and
+                # code and prose are stored as ONE value so they can never be
+                # half-updated against each other.
+                code = str(reason_code or DROP_CODE_UNSPECIFIED)
+                self._drop_reasons.setdefault(
+                    (model_name, str(key)), (code, str(reason or "")),
+                )
 
     def record_hygiene_violation(self, model_name: str, kind: str) -> None:
         """The raw answer violated an answer-hygiene rule that a schema
@@ -286,6 +362,27 @@ class AnalysisParseTelemetry:
         with self._lock:
             return dict(self._hygiene)
 
+    def dropped_reasons_snapshot(self) -> dict[tuple[str, str], str]:
+        """WHY each dropped item was dropped, in prose, keyed (model, symbol).
+
+        Only keys with real prose appear: a drop recorded with a code and no
+        sentence has nothing to show a person here.
+        """
+        with self._lock:
+            return {
+                key: reason for key, (_code, reason) in self._drop_reasons.items()
+                if reason
+            }
+
+    def dropped_reason_codes_snapshot(self) -> dict[tuple[str, str], str]:
+        """The STABLE code for each dropped item, keyed (model, symbol).
+
+        Same source tuple as `dropped_reasons_snapshot`, so the code and the
+        prose can never name different causes for the same key.
+        """
+        with self._lock:
+            return {key: code for key, (code, _reason) in self._drop_reasons.items()}
+
     def total_null_coercions(self) -> int:
         with self._lock:
             return sum(self._counts.values())
@@ -303,6 +400,7 @@ class AnalysisParseTelemetry:
             self._counts.clear()
             self._drops.clear()
             self._hygiene.clear()
+            self._drop_reasons.clear()
 
     def describe_null_coercions(self) -> str:
         """One-line, grep-able summary for the operator log / RM advisory."""
@@ -515,6 +613,34 @@ def _list_typed_fields(cls: type[BaseModel]) -> frozenset[str]:
     with _LIST_TYPED_FIELDS_CACHE_LOCK:
         _LIST_TYPED_FIELDS_CACHE[key] = result
     return result
+
+
+# ---------------------------------------------------------------------------
+# `SkipJsonSchema` — the marker used throughout this file for a field that
+# exists on a parsed-from-LLM model for the DESK's own bookkeeping and must
+# never appear on the surface the model actually sees.
+#
+# `BaseAgent._response_format_for` builds the OpenRouter / OpenAI
+# `response_format` from `result_model.model_json_schema()`. On the strict
+# path `_strictify_schema` then forces EVERY property in that schema to be
+# `required`, so a desk-owned field left in it is a field the model is
+# COMPELLED to invent and whose value the pipeline overwrites the instant it
+# parses the response. On the `strict: False` fallback path — taken when a
+# model carries a free-form map, e.g. `NewsIntelligenceReport` — the field is
+# an invitation rather than a compulsion, which is weaker but still wrong: it
+# is an output slot for something the seat is not being asked.
+#
+# Annotating the field removes it (and any `$defs` reachable only through it)
+# from the rendered schema. Validation, assignment, storage and serialisation
+# are completely unchanged: the desk still sets it, still persists it, still
+# reads it back. Putting the marker on the field itself — rather than
+# maintaining a second, model-facing copy of the class — is what stops the
+# stored shape and the sent shape from drifting apart.
+#
+# Use it ONLY for a field the desk itself fills. A field the model is
+# genuinely being asked for stays visible. `tests/
+# test_response_format_desk_only_fields.py` is the mechanical check.
+# ---------------------------------------------------------------------------
 
 
 class LLMOutputModel(BaseModel):
@@ -776,6 +902,12 @@ class TechnicalIndicators(BaseModel):
     ma_20: float | None = None
     ma_50: float | None = None
     ma_200: float | None = None
+    #: The 200-session SMA one completed session earlier, so the exit guard can
+    #: read the 200-MA SLOPE (rising vs falling) — not just the level — when it
+    #: classifies a structural break's trend regime (owner mandate 2026-09-24,
+    #: trend-scaled exit). None until there is one extra bar beyond the 200-MA
+    #: warm-up.
+    ma_200_prior: float | None = None
     rsi_14: float | None = None
     macd: float | None = None
     macd_signal: float | None = None
@@ -784,6 +916,17 @@ class TechnicalIndicators(BaseModel):
     bb_middle: float | None = None
     bb_lower: float | None = None
     atr_14: float | None = None
+    #: Wilder's Average Directional Index and its two directional components,
+    #: all on the same 14-session lookback (`src.data.technical.ADX_PERIOD`).
+    #: ADX measures trend STRENGTH only (never direction); +DI/-DI carry the
+    #: direction. Used by `src.risk.exit_guard.check_structural_protection` to
+    #: select a support/resistance break's trend-scaled confirmation regime
+    #: (owner mandate 2026-09-24): a break against the trend or in a weak tape
+    #: exits fast, while a break WITH a strong trend (a likely shakeout) is held
+    #: longer. None until there are enough bars to warm the recursive smoothing.
+    adx_14: float | None = None
+    di_plus_14: float | None = None
+    di_minus_14: float | None = None
     volume_change_pct: float | None = None
 
     @field_validator("symbol")
@@ -1541,6 +1684,24 @@ class TradeDecision(LLMOutputModel):
     #     not show a Risk Manager an "R/R x:1" figure for a trade whose
     #     approval never depended on one.
     setup_type: str | None = None
+    # --- The MEASURED half of the same verdict (item 82, 2026-09-25) ------
+    # `structural_ceiling=(derivation.level_used is not None)` — the SAME
+    # value the constructor itself fed into `is_trend_trade`/
+    # `reward_risk_floor_applies` when it decided whether this trade's stop
+    # got a reward:risk check at all. `setup_type` above is only the
+    # analyst's raw label; construction's actual verdict is
+    # `reward_risk_floor_applies(setup_type, structural_ceiling=...)`, which
+    # is True (breakout, no ratio) whenever EITHER the label says
+    # "breakout" OR this field is False.
+    #
+    # Without this, a downstream consumer that re-derives the verdict from
+    # `setup_type` alone (no structural_ceiling) sees only the label half —
+    # so a measured breakout the analyst still labelled "range" is shown a
+    # real R/R ratio and can be refused/resized, which construction's own
+    # exemption forbids. `src/agents/risk_manager.py`'s rendering of the
+    # order must reach the SAME verdict construction reached, not a
+    # label-only approximation of it.
+    structural_ceiling: bool | None = None
     # --- Thesis invalidation, as a real field (2026-09-03) ----------------
     # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
     # SHORT) only, default None so every pre-existing construction site
@@ -1848,6 +2009,16 @@ class SmartMoneyObservation(LLMOutputModel):
     # congressional row cached before this field existed.
     cross_source_agreement: Literal["", "single_source", "agreement", "discrepancy"] = ""
     cross_source_note: str = ""
+    # True only for a congresswatch.us row: that feed carries no filing-date
+    # field at all, so `CongressionalTradingProvider._normalize_congresswatch`
+    # estimates one at the STOCK Act's 45-day ceiling. That estimate is a
+    # guess about WHEN we could have learned of the trade, not a measurement,
+    # so it must never be read as evidence the disclosure was timely — see
+    # `SmartMoneyFinding.deterministic_eligibility`'s lag_days check, which
+    # treats an estimated date as failing the freshness gate outright rather
+    # than as satisfying it by construction. Always False for kadoa and for
+    # every SEC Form 4 (stream="insider") row.
+    disclosure_date_estimated: bool = False
     # The most recent same-day opportunistic insider purchase cluster in this
     # row's symbol, stamped by `SECForm4Provider.fetch` on every insider row
     # of a CONFIGURED-UNIVERSE symbol (never on a non-universe or
@@ -1880,6 +2051,39 @@ class SmartMoneyObservation(LLMOutputModel):
                 self.admission_eligible = eligible
                 self.transient_admission_eligible = eligible
         return self
+
+    @property
+    def signal_direction(self) -> int:
+        """Sign of this row's directional view: +1 bullish, -1 bearish, 0 none.
+
+        ``signal_weight`` is a single "how much attention" scalar in [0, 1] and
+        CANNOT carry a sign, so on its own a large insider SALE and a large
+        insider BUY of the same dollar value rank and size identically (board
+        item 63). This derived channel supplies the missing sign so the
+        deterministic ranking in ``src/agents/smart_money_analyst.py`` can
+        multiply ``value * signal_weight`` by it and never let a contra signal
+        rank or size as if it were bullish. It is computed from ``direction``,
+        never stored -- nothing to keep that code cannot recompute.
+
+        A BUY (open-market purchase) is unambiguously bullish -> +1; its
+        effective sign is unchanged from before this channel existed, so every
+        currently-admitted row keeps the exact ranking contribution it had.
+
+        A SALE is NOT counted as bullish (that identity WAS the bug) but is
+        also NOT signed bearish here: Scott & Xu (FAJ 2004) find a small sale
+        (< ~50% of the holding) is mildly POSITIVE while a sale over ~50% is
+        negative, so a sell's sign is magnitude-dependent, and no published
+        SIGNED scoring scheme sets that -1-vs-0 boundary (board item 63
+        open_question, ruled out pending a source or enough own outcome data;
+        ``holdings_fraction_band``'s sourced 50% edge is the hook for it once
+        owner appetite decides to actually down-rank on large selling). The
+        desk is long-only on smart-money admission (a row is admission-eligible
+        only when ``direction == "buy"``), so neutralising a sale to 0 -- rather
+        than guessing a bearish magnitude -- is the safe minimal structure fix:
+        a sale never inflates a bullish ranking. ``exchange``/``unknown`` state
+        no directional view -> 0.
+        """
+        return 1 if self.direction == "buy" else 0
 
 
 #: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.conviction`. NEW
@@ -1943,10 +2147,23 @@ class SmartMoneyFinding(LLMOutputModel):
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
     summary: str = Field(min_length=1)
     why_now: str = Field(min_length=1)
-    observations: list[SmartMoneyObservation] = Field(min_length=1)
-    support_eligible: bool = False
-    transient_admission_eligible: bool = False
-    evidence_hash: str = ""
+    # All four are `SkipJsonSchema`: the desk fills every one of them itself,
+    # and before this they were REQUIRED output under strict structured
+    # output. `SmartMoneyAnalystAgent._parse_findings` overwrites
+    # `observations` with `[o.model_dump() for o in source_rows]` and
+    # `evidence_hash` with the desk's own digest on every single finding,
+    # cached or live, and `deterministic_eligibility` below recomputes both
+    # eligibility booleans from the source rows. So the seat was spending its
+    # output budget re-typing a 45-field internal row (accession_number,
+    # transaction_row, signal_weight, freshness, admission_eligible,
+    # transient_admitted, in_core_universe, lag_days, ...) at least once per
+    # finding, plus a sha256 it cannot know, and 100% of it was discarded
+    # before the object was constructed. Nothing validates the echo against
+    # the source rows, so it was never a grounding device either.
+    observations: Annotated[list[SmartMoneyObservation], SkipJsonSchema()] = Field(min_length=1)
+    support_eligible: Annotated[bool, SkipJsonSchema()] = False
+    transient_admission_eligible: Annotated[bool, SkipJsonSchema()] = False
+    evidence_hash: Annotated[str, SkipJsonSchema()] = ""
 
     @field_validator("symbol")
     @classmethod
@@ -1992,11 +2209,22 @@ class SmartMoneyFinding(LLMOutputModel):
             # learn about the trade), not the trade's own informational
             # age — a different question, kept.
             actors = {o.actor.strip().casefold() for o in self.observations}
+            # `lag_days <= 45` on its own cannot fail for a congresswatch.us
+            # row: that source has no real filing date, so the provider
+            # estimates one at exactly the 45-day ceiling this check applies
+            # (see `disclosure_date_estimated`'s docstring). An estimate is
+            # not a measurement of timeliness, so it must not be allowed to
+            # satisfy this gate — an estimated-date observation always fails
+            # it here, regardless of its lag_days value, the same as any
+            # other observation whose disclosure timing is unverified.
             self.support_eligible = (
                 len(self.observations) >= 2
                 and len(actors) >= 2
                 and len(directional) == 1
-                and all(o.lag_days <= 45 for o in self.observations)
+                and all(
+                    o.lag_days <= 45 and not o.disclosure_date_estimated
+                    for o in self.observations
+                )
             )
             # Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20
             # entry): congressional disclosures are evidence and must never
@@ -2168,6 +2396,47 @@ class SmartMoneySynthesis(LLMOutputModel):
     findings: list[SmartMoneyFinding]
 
 
+#: Absolute-percentage-point gap between an explicit risk claim in `thesis`
+#: prose and `TargetPosition.risk_allocation_pct` that is small enough NOT to
+#: count as a mismatch (item 163). Not an independently chosen number: it is
+#: `RiskConfig.min_position_risk_pct` (config/settings.yaml:659), the
+#: owner-ratified floor granularity the risk field is already meaningful at
+#: -- two numbers less than one risk-budget increment apart are the same
+#: risk. Duplicated as a literal here (rather than imported) because
+#: `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at
+#: validation time; see config/number_ledger.yaml for the ledger entry this
+#: constant's inclusion in `MAX_UNSCOPED_NUMERIC_SITES` records.
+RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT = 0.5
+
+#: Matches an EXPLICIT risk-allocation percentage claim in free prose:
+#: "risking 2%", "risk of 2%", "2% risk". Deliberately narrow on purpose
+#: (item 163) -- it anchors on the word "risk"/"risking"/"risks" sitting
+#: directly next to the number (only "up to" may sit between them), so it
+#: does not fire on an incidental percentage elsewhere in the thesis: a
+#: target weight, a stop distance, a price gain, a macro figure. The
+#: `(?!-)` after the third alternative's "risk" excludes a hyphenated
+#: compound right after it ("risk-adjusted", "risk-reward") so "12%
+#: risk-adjusted return" is not misread as a 12% risk claim. Where this
+#: matcher cannot tell a risk-% claim from another percentage with
+#: reasonable confidence, it is built to MISS the claim rather than
+#: false-flag one -- see tests/test_models.py for the cases this covers.
+_RISK_PCT_CLAIM_PATTERN = re.compile(
+    r"\brisk(?:ing|s)?\s+(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*%"
+    r"|\brisk\s+of\s+(\d+(?:\.\d+)?)\s*%"
+    r"|(\d+(?:\.\d+)?)\s*%\s+risk(?!-)\b",
+    re.IGNORECASE,
+)
+
+
+def _explicit_risk_pct_claims(text: str) -> list[float]:
+    """Every explicit risk-percentage claim `_RISK_PCT_CLAIM_PATTERN` finds."""
+    claims: list[float] = []
+    for m in _RISK_PCT_CLAIM_PATTERN.finditer(text or ""):
+        raw = next(g for g in m.groups() if g is not None)
+        claims.append(float(raw))
+    return claims
+
+
 class TargetPosition(LLMOutputModel):
     """PM's per-symbol intent — WHAT the book should look like, not HOW to get there.
 
@@ -2306,6 +2575,44 @@ class TargetPosition(LLMOutputModel):
     # live PM decisions are required to populate this by the deterministic
     # PM grounding validator before they may reach PortfolioConstructor.
     provenance: list[AnalystProvenance] = Field(default_factory=list)
+
+    # --- Risk-narrative cross-check (item 163) -----------------------------
+    # `risk_allocation_pct` is authoritative for anything the desk acts on;
+    # this flag NEVER changes it and prose NEVER overrides it. It only
+    # records that the PM's own words and its own structured field disagreed
+    # about how much this idea risks, so the mismatch is surfaced instead of
+    # silently trusted. Set only by `_flag_risk_narrative_mismatch` below.
+    risk_narrative_mismatch: bool = False
+    risk_narrative_mismatch_detail: str = ""
+
+    @model_validator(mode="after")
+    def _flag_risk_narrative_mismatch(self):
+        """Flag when `thesis` prose states an explicit risk % that
+        materially differs from the authoritative `risk_allocation_pct`.
+
+        Runs only when `risk_allocation_pct` is populated -- a legacy target
+        carrying only `target_weight_pct` has no authoritative risk number to
+        check prose against. Uses `object.__setattr__` rather than a plain
+        assignment because `model_config` sets `validate_assignment=True`:
+        a normal `self.x = ...` here re-enters this same validator on every
+        assignment and recurses without terminating (measured).
+        """
+        if self.risk_allocation_pct is None:
+            return self
+        claims = _explicit_risk_pct_claims(self.thesis)
+        mismatched = [
+            c for c in claims
+            if abs(c - self.risk_allocation_pct) > RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT
+        ]
+        if mismatched:
+            detail = (
+                f"{self.symbol}: thesis states risk {mismatched[0]:g}% but "
+                f"risk_allocation_pct={self.risk_allocation_pct:g}%"
+            )
+            object.__setattr__(self, "risk_narrative_mismatch", True)
+            object.__setattr__(self, "risk_narrative_mismatch_detail", detail)
+            logger.warning("risk_narrative_mismatch: %s", detail)
+        return self
 
     @field_validator("symbol")
     @classmethod
@@ -2491,7 +2798,15 @@ class PortfolioDecision(LLMOutputModel):
     # PM must never fill it directly — the LLM output is validated with
     # `decisions` empty; the pipeline injects constructor output before
     # handing the object off to downstream stages.
-    decisions: list[TradeDecision] = Field(default_factory=list)
+    # `SkipJsonSchema`: kept off the rendered response_format entirely. Strict
+    # structured output made this field REQUIRED, so the seat was ordered to
+    # emit a full order book (entry_price / stop_loss / take_profit per name)
+    # that `PortfolioManagerAgent.validate_grounding` then refuses outright —
+    # "portfolio manager supplied concrete decisions; only grounded targets
+    # may cross the PM boundary" discards every target and the whole book.
+    # The prompt never mentions the field, so there was nothing telling the
+    # seat to leave it empty.
+    decisions: Annotated[list[TradeDecision], SkipJsonSchema()] = Field(default_factory=list)
     #: Symbols the PM proposed that the deterministic constructor DROPPED
     #: (unmeasurable range reward:risk, no readable structure, no valid
     #: stop, ... — no reward:risk floor since 2026-09-11). Set by
@@ -2508,7 +2823,10 @@ class PortfolioDecision(LLMOutputModel):
     #: remaining plan legible. Same reasoning as the constructor's existing
     #: `cap_note` provenance, which solved this once already for allocation
     #: caps (portfolio_constructor.py ~947).
-    constructor_dropped: list[str] = Field(default_factory=list)
+    # `SkipJsonSchema` for the same reason as `decisions` above: set by the
+    # pipeline after `construct_orders`, never by the LLM, so it has no place
+    # in the schema the LLM is handed.
+    constructor_dropped: Annotated[list[str], SkipJsonSchema()] = Field(default_factory=list)
     portfolio_view: str
 
 
@@ -2767,36 +3085,39 @@ class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
 
 
 class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
-    # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
-    # always will: correlation clusters, total exposure and drawdown state are
-    # properties of the whole account, so when the BOOK is what fails, killing
-    # every leg is the correct answer. What changed in Phase 10.1 is only the
-    # GRANULARITY available for the other kind of failure — see
-    # `rejected_symbols`. No threshold moved.
+    # The morning-plan risk verdict. Owner ruling 2026-09-24 (final): the seat
+    # may NEVER cancel or reject the whole batch of new trades. `approved` is
+    # kept in the schema for the audit trail and for backward-compatible
+    # parsing, but `approved=False` is a NO-OP for batch rejection: `RiskStage`
+    # records it in the durable trail and then proceeds. Every bit of real risk
+    # reduction comes from the three levers below.
     approved: bool
     reasoning_chain: RiskReasoningChain
     modifications: list[RiskModification] = []
-    # PER-SYMBOL refusal. Each entry kills exactly one leg and leaves every
-    # other leg standing; the survivors then go through `modifications`,
-    # `scale_all_buys` and the deterministic hard-risk gate unchanged.
+    # PER-SYMBOL refusal. Each entry drops exactly one NEW entry (BUY/SHORT)
+    # and leaves every other decision standing; the survivors then go through
+    # `modifications`, `scale_all_buys` and the deterministic hard-risk gate
+    # unchanged. A SELL/COVER/HOLD named here is a protective exit / existing
+    # holding and is NEVER dropped — `RiskStage` records the attempt and keeps
+    # it (owner ruling 2026-09-24).
     #
-    # This is the third rung of a four-rung ladder, narrowest first:
+    # The seat's THREE levers, narrowest first (there is no fourth — the
+    # whole-batch veto was removed 2026-09-24):
     #   modifications    — retune one symbol's fields (size, stop, target)
-    #   rejected_symbols — refuse one symbol outright, book unaffected
-    #   scale_all_buys   — size the whole entry side down, refuse nothing
-    #   approved=False   — the book itself is unsound; nothing trades
+    #   rejected_symbols — refuse one NEW entry outright, book unaffected
+    #   scale_all_buys   — size the whole entry side down (to 0.0), refuse nothing
     #
-    # Book-level always wins: `approved=False` is evaluated first, so a
-    # verdict carrying both refuses everything regardless of what this list
-    # says. An entry naming a symbol not in the plan is a no-op, logged.
+    # An entry naming a symbol not in the plan is a no-op, logged.
     #
     # Default-empty by design — every historical verdict, and every verdict
     # from a model that never emits the field, replays with byte-identical
     # behaviour.
     rejected_symbols: list[SymbolRejection] = []
-    # Portfolio-level size control. Multiplies every BUY decision's allocation_pct after
-    # per-symbol modifications are applied. 1.0 = no change; 0.5 = half all buys; 0.0
-    # effectively kills BUY side while leaving SELL/HOLD/TRAIL intact.
+    # Portfolio-level size control. Multiplies every BUY/SHORT decision's
+    # allocation_pct after per-symbol modifications are applied. 1.0 = no change;
+    # 0.5 = half all buys; 0.0 shrinks the entire new-entry side to zero (no new
+    # buying) while leaving SELL/COVER/HOLD — every exit and existing holding —
+    # untouched. This, not a veto, is how the seat stops new buying.
     scale_all_buys: float = Field(default=1.0, ge=0.0, le=1.0)
     # Categorized reason for any modification / scaling. PM reads the recent
     # history of this field to self-calibrate in a targeted way: repeated
@@ -3476,7 +3797,12 @@ class NewsIntelligenceReport(LLMOutputModel):
     # `symbol_dropped` and downstream seats do not read the empty list
     # as "no news". Default `[]` so an old persisted/replayed report —
     # and every caller that hasn't been updated — parses unchanged.
-    dropped_news_symbols: list[str] = []
+    # `SkipJsonSchema` is what makes "never asked of the model" true on the
+    # wire as well as in this comment: the field used to be rendered into
+    # this report's `response_format` schema like any other, so the seat was
+    # shown an output slot inviting it to nominate its own coverage gaps,
+    # and `analyze()` overwrote whatever it said one line after parsing.
+    dropped_news_symbols: Annotated[list[str], SkipJsonSchema()] = []
 
     def format_dropped_symbols_block(self) -> str:
         """Prompt text naming symbols shown real headlines but omitted from

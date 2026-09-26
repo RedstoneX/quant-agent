@@ -560,7 +560,8 @@ def _pm_production_invoke(agent):
 
 def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks = [Check("parsed_and_grounded", 0.55, decision is not None,
-                    "PortfolioDecision passed live grounding validation")]
+                    "checked PortfolioDecision parses and is grounded "
+                    "against live data")]
     if decision is None:
         return checks
     held = {p.symbol for p in _PM_PRODUCTION_POSITIONS}
@@ -942,7 +943,7 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks: list[Check] = []
     checks.append(Check(
         "parsed_and_grounded", 0.10, decision is not None,
-        "PortfolioDecision passed live grounding validation",
+        "checked PortfolioDecision parses and is grounded against live data",
     ))
     if decision is None:
         return checks
@@ -2169,10 +2170,10 @@ def _pm_public_day_invoke(agent):
 def _pm_public_day_grade(decision: PortfolioDecision | None) -> list[Check]:
     checks: list[Check] = [Check(
         "parsed_and_grounded", 0.35, decision is not None,
-        "PortfolioDecision passed live grounding validation "
+        "checked PortfolioDecision parses and is grounded against live data "
         "(PortfolioManagerAgent.validate_grounding, "
         "src/agents/portfolio_manager.py:2328) — every cited symbol, source "
-        "and claim exists in the evidence this session actually built.",
+        "and claim must exist in the evidence this session actually built.",
     )]
     if decision is None:
         return checks
@@ -2370,13 +2371,15 @@ SCENARIOS: list[Scenario] = [
         grade=_risk_drawdown_grade,
         default=False,
         blocked_reason=(
-            "same invented PM plan and book as risk_rr_breach; and the grader "
-            "rewards asking for a drawdown halving that "
-            "config/prompts/risk_manager.md:141 says the engine has already "
-            "applied and the seat must NOT ask for again "
-            "(src/risk/rules.py apply_drawdown_scale)"
+            "same invented PM plan and book as risk_rr_breach; and the whole "
+            "rule it grades against is GONE — the account-level loss alarms, "
+            "including the in_drawdown BUY-halving, were retired 2026-09-20 "
+            "on the owner's instruction (docs/INCIDENT_HISTORY.md, board "
+            "item 32). Rewrite or delete this scenario before ever enabling "
+            "it; there is nothing left for the seat to be right or wrong "
+            "about here"
         ),
-        description="Synthetic unhalved drawdown BUY + young-position SELL. BLOCKED.",
+        description="Synthetic unhalved drawdown BUY + young-position SELL. BLOCKED (the rule it grades no longer exists).",
     ),
     Scenario(
         key="tech_batch_full",

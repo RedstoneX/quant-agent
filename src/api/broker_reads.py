@@ -32,6 +32,7 @@ from src.api.deps import (
     get_cash_sweep_symbol,
     get_risk_limits,
 )
+from src.data.live_price import resolve_live_price
 from src.execution.broker import AlpacaBroker, _internal_symbol
 from src.trading_calendar import live_price_is_today
 
@@ -248,7 +249,17 @@ def read_margin_interest(cash: float | None) -> dict:
     — has just fetched it via `read_account()`; this avoids a second broker
     round-trip for the same number). Returns
     `{"debit_balance", "rate_pct", "daily_usd", "annual_usd", "label",
-    "broker_check_note", "error"}`. Never raises.
+    "broker_check_note", "days_charged", "period_usd", "error"}`. Never
+    raises.
+
+    `days_charged`/`period_usd` mirror the Telegram alert's own multi-day
+    carry (`src.notifier._margin_interest_lines`): Alpaca charges for every
+    calendar day a debit is carried, so a Friday overnight is 3 days
+    (weekend), not 1. Computed the same way the Telegram path does — via
+    `src.margin_interest.days_charged_until_next_trading_day`, fed the
+    broker's own `is_trading_day` calendar check — so the dashboard cannot
+    drift from the alert. Degrades to 1 (the pre-existing flat figure) on
+    any calendar read failure, same as the Telegram path.
 
     THREE distinct shapes, and the caller must keep them apart (owner
     decision 2026-09-18 — see `margin_interest.format_daily_line`):
@@ -280,7 +291,8 @@ def read_margin_interest(cash: float | None) -> dict:
     empty = {
         "debit_balance": None, "rate_pct": None, "daily_usd": None,
         "annual_usd": None, "label": None, "broker_check_note": None,
-        "error": None,
+        "days_charged": None, "period_usd": None, "error": None,
+        "cumulative": None,
     }
     try:
         rate_pct = get_risk_limits().margin_interest_rate_pct
@@ -289,9 +301,27 @@ def read_margin_interest(cash: float | None) -> dict:
         return {**empty, "error": str(exc)}
 
     try:
-        from src.margin_interest import build_estimate, overnight_debit_balance
+        from src.margin_interest import (
+            build_estimate,
+            days_charged_until_next_trading_day,
+            overnight_debit_balance,
+        )
         debit_balance = overnight_debit_balance(cash)
-        estimate = build_estimate(debit_balance, rate_pct)
+        # Same calendar lookahead the Telegram alert uses — a broker/calendar
+        # hiccup degrades to 1 (the flat per-day figure shown before this
+        # existed) and must never turn a readable cash balance into a fault.
+        try:
+            from src.util.time import et_today
+            days_charged = days_charged_until_next_trading_day(
+                _get_broker().is_trading_day, et_today(),
+            )
+        except Exception as exc:
+            logger.warning(
+                "broker_reads.read_margin_interest: calendar lookahead failed, "
+                "assuming 1 day charged: %s", exc,
+            )
+            days_charged = 1
+        estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:
         logger.warning("broker_reads.read_margin_interest: estimate failed: %s", exc)
         return {**empty, "error": str(exc)}
@@ -324,9 +354,13 @@ def read_margin_interest(cash: float | None) -> dict:
             "rate_pct": rate_pct,
             "daily_usd": 0.0,
             "annual_usd": 0.0,
+            "days_charged": days_charged,
+            "period_usd": 0.0,
+            "cumulative": _compute_cumulative(),
         }
 
     broker_check_note = None
+    activities: list[dict] = []
     try:
         from src.margin_interest import compare_estimate_to_broker_activity
         broker = _get_broker()
@@ -346,8 +380,49 @@ def read_margin_interest(cash: float | None) -> dict:
         "annual_usd": estimate.annual_usd,
         "label": estimate.label,
         "broker_check_note": broker_check_note,
+        "days_charged": estimate.days_charged,
+        "period_usd": estimate.period_usd,
         "error": None,
+        "cumulative": _compute_cumulative(),
     }
+
+
+def _compute_cumulative() -> dict | None:
+    """The owner-facing cumulative view — this week / current month / up to
+    6 months / all-time (`src.margin_interest.compute_cumulative_margin_interest`).
+
+    Prefers the broker's own FULL `INT` activity history — a fresh,
+    unfiltered fetch, deliberately NOT the same `activities` list the
+    caller's own overnight broker-check may have just pulled: a bucketed
+    "all-time" needs the whole ledger, not one night's slice.
+    Falls back to our own persisted daily-accrual ESTIMATE rows
+    (`margin_interest_daily`) only when the broker has never posted a real
+    `INT` row. Returns `None` — never a fabricated result — on any read
+    failure; the cockpit/Telegram render that as "not available", same as
+    every other fault in this module.
+    """
+    try:
+        from src.api.db_reads import get_margin_interest_daily_all
+        from src.margin_interest import compute_cumulative_margin_interest
+        from src.util.time import et_today
+
+        broker = _get_broker()
+        full_history = broker.get_margin_interest_activities()
+        estimate_rows = get_margin_interest_daily_all()
+        result = compute_cumulative_margin_interest(full_history, estimate_rows, et_today())
+        return {
+            "this_week_usd": result.this_week_usd,
+            "current_month_usd": result.current_month_usd,
+            "current_month_label": result.current_month_label,
+            "prior_months": result.prior_months,
+            "all_time_usd": result.all_time_usd,
+            "all_time_since": result.all_time_since,
+            "is_estimate": result.is_estimate,
+            "source": result.source,
+        }
+    except Exception as exc:
+        logger.warning("broker_reads._compute_cumulative failed: %s", exc)
+        return None
 
 
 _STATUS_MAP_NAMES = {"open": "OPEN", "closed": "CLOSED", "all": "ALL"}
@@ -595,8 +670,18 @@ def read_live_quotes(symbols: list[str]) -> dict:
             # cockpit as this session's. Blank them unless the bar's own
             # timestamp says today.
             session_is_today = live_price_is_today(snap.get("session_bar_at"))
+            # item 169: `last_price` above is the RAW provider last trade,
+            # never freshness-checked (see `get_intraday_snapshots`'
+            # docstring) — a thin name can carry a stale print here while
+            # still resolving to a real today price via the minute/session
+            # bar. `resolved_price` is `src.data.live_price.resolve_live_price`
+            # run over the SAME snapshot: `None` unless a real print from
+            # THIS session exists, so a chart consumer never draws a stale
+            # last trade as today's close.
+            resolved_price = resolve_live_price(snap).price
             quotes[sym] = {
                 "last_price": last_price,
+                "resolved_price": resolved_price,
                 "quote": {
                     "value": last_price,
                     "price_kind": "current_quote",

@@ -220,8 +220,8 @@ _CANNOT_END_A_CANDIDATE = {
     "_resolve_stop": "None means 'read it from the instrument', not 'no trade'",
     "_stop_atr_multiple": "returns a multiple",
     "_level_backing_stop": "returns the level under the stop, or None",
+    "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
-    "_require_sufficient_history": "files its own refusal before returning False",
     "_note_refusal": "the recorder itself",
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",
@@ -493,15 +493,26 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
     by the instrument's own band. That is pinned below, so the day a change
     opens one of these up, the record already says what it will say.
     """
-    from src.portfolio_constructor import STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    from src.portfolio_constructor import (
+        STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+    )
     _, analysis = _one_real_analysis(archive)
     constructor = PortfolioConstructor()
+    # Reworked for board item 80 (owner 2026-09-25): with no ATR the branch
+    # now DERIVES a stop from price structure and HOLDS; only the genuine
+    # no-structure state refuses. Strip the computed levels and the signal bar
+    # so this exercises that refusal -- which must still file a code, not the
+    # regex-missed bare "has no stop" log line the first pass reported gone.
+    stripped = analysis.model_copy(update={
+        "atr_14": None, "computed_levels": [], "computed_level_touches": {},
+        "signal_bar_low": None, "signal_bar_high": None,
+    })
     assert constructor._widen_stop_past_noise(
-        analysis.symbol, analysis.model_copy(update={"atr_14": None}),
+        analysis.symbol, stripped,
         float(analysis.entry_price), None, direction="long",
     ) is None
     record = constructor.last_refusals[analysis.symbol.upper()]
-    assert record["refusal"] == STOP_REFUSAL_NO_STOP_NO_VOLATILITY
+    assert record["refusal"] == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
     assert record["detail"].strip()
 
     # ... and the reachability half, through the real entry point.
@@ -543,10 +554,21 @@ def test_a_stop_on_the_wrong_side_of_entry_is_named(archive):
 def test_the_sector_dial_refusals_are_named(archive):
     """§10.3's two ends. Both logged a sentence the regex happened to match,
     which is how they survived the first pass — a matched sentence lands as a
-    generic `constructor_dropped` row, not as a code the funnel can count."""
+    generic `constructor_dropped` row, not as a code the funnel can count.
+
+    Fixed 2026-09-24: `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER` is no longer
+    raised by this path (the arbitrary $500 notional floor no longer refuses
+    a sector-crowded trade — see the fix note on
+    `ConstructorConfig.min_order_usd`). At exactly the hard ceiling the scale
+    dial can still round a trade down to a genuine zero, which is refused
+    downstream as `STOP_REFUSAL_SIZED_TO_ZERO` — a real "no shares to buy"
+    refusal, not the old arbitrary-floor one — so that code is accepted here
+    too.
+    """
     from src.portfolio_constructor import (
         STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
+        STOP_REFUSAL_SIZED_TO_ZERO,
     )
     decision = next(d for d in archive["decisions"] if d["run_id"] == _REAL_ROW)
     target = TargetPosition.model_validate(
@@ -572,4 +594,5 @@ def test_the_sector_dial_refusals_are_named(archive):
     assert constructor.last_refusals["NVDA"]["refusal"] in (
         STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
+        STOP_REFUSAL_SIZED_TO_ZERO,
     )

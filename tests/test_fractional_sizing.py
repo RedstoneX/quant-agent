@@ -77,7 +77,6 @@ def _pipeline(*, live_price: float, cash: float = 1_000_000.0,
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 10_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.config.execution.fractional_enabled = fractional_enabled
     pipeline.config.execution.fractional_share_decimals = decimals
     if isinstance(fractionable, Exception):
@@ -434,6 +433,45 @@ def test_stop_placement_gives_up_after_a_bounded_number_of_attempts():
     assert broker._submit_stop_limit_order.call_count == 3
 
 
+def test_a_terminal_broker_rejection_does_not_burn_the_retry_burst():
+    """Board item 129: a 400/404/422 (bad price, unsupported qty, closed
+    venue) will fail identically on every attempt — it is the broker's
+    considered answer, not a blip. It must be reported after ONE attempt,
+    not retried three times and only THEN reported, which used to delay the
+    exact owner alert this ceiling was written to deliver promptly."""
+    rejection = RuntimeError("unsupported qty")
+    rejection.status_code = 422
+    broker = _protection_broker(
+        filled_qty=10.0,
+        stop_results=[rejection, {"id": "should-not-be-reached"}],
+    )
+
+    with patch("src.execution.broker.time.sleep") as sleep:
+        out = broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=10)
+
+    assert out is None
+    assert broker._submit_stop_limit_order.call_count == 1, (
+        "a terminal rejection must not spend the retry budget it cannot use"
+    )
+    sleep.assert_not_called()
+
+
+def test_a_transient_failure_with_no_status_code_still_retries_the_full_burst():
+    """The other half of item 129's fix: an exception that carries no HTTP
+    status (a dropped connection, a bare timeout) is exactly the case the
+    ceiling was designed for, and must still spend the whole burst."""
+    broker = _protection_broker(
+        filled_qty=10.0,
+        stop_results=[RuntimeError("connection reset")] * 10,
+    )
+
+    with patch("src.execution.broker.time.sleep"):
+        out = broker.place_entry_protection("NVDA", "e1", 95.0, requested_qty=10)
+
+    assert out is None
+    assert broker._submit_stop_limit_order.call_count == 3
+
+
 def test_a_fractional_fill_is_protected_by_a_hybrid_gtc_plus_day_pair():
     """§11.1 HYBRID FRACTIONAL STOPS — the open question, now answered.
 
@@ -494,7 +532,7 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
     submit a fractional GTC that is refused while the code believes a stop
     was placed. This asserts against the actual request objects."""
     from alpaca.trading.enums import TimeInForce
-    from alpaca.trading.requests import StopLimitOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
 
     with patch("src.execution.broker.TradingClient") as tc_cls:
         client = MagicMock()
@@ -512,7 +550,7 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
 
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
     assert len(reqs) == 2
-    assert all(isinstance(r, StopLimitOrderRequest) for r in reqs)
+    assert all(isinstance(r, StopOrderRequest) for r in reqs)   # primary = stop-MARKET
     frac, whole = reqs
     assert float(frac.qty) == pytest.approx(0.3456)
     assert frac.time_in_force == TimeInForce.DAY    # the only tif the broker takes

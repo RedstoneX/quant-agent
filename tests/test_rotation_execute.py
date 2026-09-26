@@ -232,7 +232,11 @@ def test_categorically_ineligible_unprotected_holding_is_rotated_out(tmp_path):
     assert payload["reason"] == close.thesis
 
 
-def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
+def test_ranked_margin_tier_is_surfaced_only_while_its_flag_is_off(tmp_path):
+    """Board item 39 default posture: `rotation_ranked_margin_enabled` is
+    False, so the tier is information-only and byte-for-byte what it was —
+    no target appended, no rotation on the context, no protection check even
+    attempted."""
     pipeline, db, probe = _pipeline(
         tmp_path, precheck=_precheck(_opportunity("ranked_margin")),
     )
@@ -244,7 +248,7 @@ def test_ranked_margin_tier_is_surfaced_only_never_executed(tmp_path):
     assert probe.calls == []
     (_, payload), = _rotation_events(db)
     assert payload["outcome"] == "skipped"
-    assert payload["reason"] == "ranked_margin_tier_is_surfaced_only"
+    assert payload["reason"] == "ranked_margin_tier_not_enabled"
 
 
 def test_nothing_surfaced_means_nothing_happens(tmp_path):
@@ -285,6 +289,112 @@ def test_protection_check_failure_fails_closed(tmp_path):
     assert [t.symbol for t in decision.targets] == ["NEW"]
     (_, payload), = _rotation_events(db)
     assert payload["reason"] == "protection_check_failed"
+
+
+# ---------------------------------------------------------------------------
+# Board item 39 — the cull walk does not give up on the first protected name
+# ---------------------------------------------------------------------------
+
+WORST_REASONS = ("R2 rating below bar", "R5 net evidence -1 if long — no rung")
+NEXT_REASONS = ("R5 net evidence -1 if long — no rung",)
+MULTI_HISTORY = {
+    "WORST": {"thesis_invalid_if": "closes below 50", "entry_price": 50.0,
+              "stop_loss": 46.0},
+    "NEXT": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0,
+             "stop_loss": 92.0},
+}
+
+
+class _PerSymbolProbe:
+    """Structural-protection stand-in that answers per symbol, so a test can
+    make the WORST below-bar name protected and the NEXT-worst not."""
+
+    def __init__(self, protected_by_symbol: dict[str, bool]):
+        self.protected_by_symbol = protected_by_symbol
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs) -> StructuralProtectionCheck:
+        self.calls.append(kwargs)
+        sym = str(kwargs.get("symbol") or "").upper()
+        protected = self.protected_by_symbol[sym]
+        return StructuralProtectionCheck(
+            protected=protected,
+            basis="structural_level_intact" if protected
+            else "structural_level_broken",
+            detail=BROKEN_DETAIL,
+        )
+
+
+def _multi_opportunity() -> RotationOpportunity:
+    """Two held names below the entry bar this session, worst-first."""
+    return RotationOpportunity(
+        new_symbol="NEW", new_score=1.8, held_symbol="WORST", held_score=None,
+        tier="ineligible_hold", reasons=WORST_REASONS,
+        ineligible_candidates=(("WORST", WORST_REASONS), ("NEXT", NEXT_REASONS)),
+    )
+
+
+def test_protected_worst_advances_to_the_next_worst_below_bar_holding(tmp_path):
+    """>=2 holdings below the bar, the worst structurally protected: the tier
+    must cull the NEXT-worst rather than abandon the whole rotation."""
+    pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
+    probe = _PerSymbolProbe({"WORST": True, "NEXT": False})
+    pipeline._structural_protection_for_holding = probe
+    ctx = _ctx()
+    decision = _decision(_buy_new())
+    positions = [_pos(symbol="WORST", price=45.0), _pos(symbol="NEXT", price=95.0)]
+
+    _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
+
+    # The NEXT-worst is the one closed; the protected WORST is left alone.
+    assert [t.symbol for t in decision.targets] == ["NEW", "NEXT"]
+    assert ctx.rotation is not None
+    assert ctx.rotation["held_symbol"] == "NEXT"
+    assert ctx.rotation["new_symbol"] == "NEW"
+    assert ctx.rotation["held_reasons"] == list(NEXT_REASONS)
+    close = decision.targets[1]
+    assert close.is_close and close.risk_allocation_pct == 0.0
+    assert close.thesis.startswith("ROTATION (deterministic, src/rotation.py): NEXT")
+    assert close.thesis_invalid_if == "closes below 100"
+
+    # Both names were protection-checked, worst first, then next-worst.
+    assert [c["symbol"] for c in probe.calls] == ["WORST", "NEXT"]
+
+    # The protected worst is recorded as skipped; the next-worst as proposed.
+    events = _rotation_events(db)
+    skipped = {
+        sym: e for sym, e in events
+        if e["outcome"] == "skipped"
+        and e["reason"] == "held_symbol_structurally_protected"
+    }
+    proposed = [(sym, e) for sym, e in events if e["outcome"] == "proposed"]
+    assert list(skipped) == ["WORST"]
+    assert skipped["WORST"]["protection_basis"] == "structural_level_intact"
+    assert len(proposed) == 1 and proposed[0][0] == "NEXT"
+
+
+def test_rotation_abandoned_only_when_every_below_bar_holding_is_protected(tmp_path):
+    """All below-bar holdings structurally protected: nothing is sold, and
+    every one is recorded as skipped under its own name."""
+    pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
+    probe = _PerSymbolProbe({"WORST": True, "NEXT": True})
+    pipeline._structural_protection_for_holding = probe
+    ctx = _ctx()
+    decision = _decision(_buy_new())
+    positions = [_pos(symbol="WORST", price=45.0), _pos(symbol="NEXT", price=95.0)]
+
+    _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
+
+    assert [t.symbol for t in decision.targets] == ["NEW"]
+    assert ctx.rotation is None
+    events = _rotation_events(db)
+    skipped = sorted(
+        sym for sym, e in events
+        if e["outcome"] == "skipped"
+        and e["reason"] == "held_symbol_structurally_protected"
+    )
+    assert skipped == ["NEXT", "WORST"]
+    assert not any(e["outcome"] == "proposed" for _, e in events)
 
 
 # ---------------------------------------------------------------------------
@@ -716,10 +826,303 @@ def test_pm_section_says_so_only_when_execution_is_enabled():
     on = PortfolioManagerAgent._render_rotation_section(**kwargs, execute_enabled=True)
     assert "AUTOMATIC ROTATION IS ENABLED" not in off
     assert "AUTOMATIC ROTATION IS ENABLED" in on
+    # Board item 39 deliberately does NOT reword the categorical tier's
+    # live prompt: "doing nothing is another [reasonable call]" is wrong
+    # once the desk can close the name itself, but fixing it is a
+    # behaviour change on a path that is trading today and belongs in its
+    # own change. So this invariant still holds for this tier.
     assert on.startswith(off), "enabling only APPENDS a note; the comparison text is unchanged"
+    assert "doing nothing is another" in off and "doing nothing is another" in on
     # And the precheck the pipeline acts on is the one the prompt was built from.
     precheck = PortfolioManagerAgent.rotation_precheck(**kwargs)
     assert precheck.opportunity is not None
     assert precheck.opportunity.tier == "ineligible_hold"
     assert precheck.opportunity.held_symbol == "OLD"
     assert precheck.headroom_pct == pytest.approx(0.2)
+
+
+# ---------------------------------------------------------------------------
+# The pre-check is RECORDED, whatever it concluded
+# ---------------------------------------------------------------------------
+#
+# The gap: `_apply_rotation_execution` returns silently when nothing was
+# surfaced, and that is the desk's commonest rotation outcome. No log line,
+# no durable row, nothing in the owner's report — a session that made the
+# comparison looked identical to one that never ran it.
+
+def _precheck_events(db, run_id="run-1"):
+    return [
+        e for _s, e in _rotation_events(db, run_id)
+        if e.get("outcome") == "precheck"
+    ]
+
+
+def test_a_surfaced_nothing_still_leaves_a_durable_precheck_row(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path, precheck=_precheck(None))
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "full_nothing_outranked_a_holding"
+    assert rows[0]["headroom_pct"] == pytest.approx(0.2)
+    assert rows[0]["ceiling_pct"] == pytest.approx(25.0)
+
+
+def test_the_precheck_row_is_written_even_with_rotation_execution_off(tmp_path):
+    """The comparison happens in the PM's own prompt whether or not the desk
+    may act on it, so the owner is owed the result either way — and the row
+    records which of the two it was."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(
+        tmp_path, enabled=False, precheck=_precheck(None),
+    )
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["execute_enabled"] is False
+
+
+def test_the_precheck_row_names_the_two_symbols_when_one_was_surfaced(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path)
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _precheck_events(db)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "full_candidate_outranked_a_holding"
+    assert rows[0]["held_symbol"] == "OLD"
+    assert rows[0]["new_symbol"] == "NEW"
+
+
+def test_recording_the_precheck_never_raises(tmp_path):
+    """Bookkeeping must not be able to end a live session."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db, _probe = _pipeline(tmp_path)
+    pipeline.db = None  # any write failure at all
+    _record_rotation_precheck(pipeline, _ctx())
+    assert _precheck_events(db) == []
+
+
+def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
+    tmp_path,
+):
+    from src.rotation import (
+        ROTATION_FULL_NOTHING_BETTER, ROTATION_FULL_OPPORTUNITY,
+        ROTATION_ROOM_AVAILABLE, ROTATION_TELEMETRY_UNAVAILABLE,
+        RotationPrecheck, precheck_outcome,
+    )
+
+    blind = RotationPrecheck(
+        opportunity=None, headroom_pct=0.0, ceiling_pct=25.0, floor_pct=0.5,
+        telemetry_available=False,
+    )
+    roomy = RotationPrecheck(
+        opportunity=None, headroom_pct=4.0, ceiling_pct=25.0, floor_pct=0.5,
+    )
+    assert precheck_outcome(blind) == ROTATION_TELEMETRY_UNAVAILABLE
+    assert precheck_outcome(roomy) == ROTATION_ROOM_AVAILABLE
+    assert precheck_outcome(_precheck(None)) == ROTATION_FULL_NOTHING_BETTER
+    assert precheck_outcome(_precheck(_opportunity())) == ROTATION_FULL_OPPORTUNITY
+    # All four say something to the owner — none renders empty.
+    from src.rotation import owner_precheck_lines, precheck_record
+    for pre in (blind, roomy, _precheck(None), _precheck(_opportunity())):
+        record = precheck_record(
+            pre, execute_enabled=True, ranked_margin_enabled=False,
+        )
+        assert owner_precheck_lines(record), record["outcome"]
+
+
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23 — the near-miss DETAIL rides in that same row.
+#
+# The pre-check row above records THAT a comparison happened and what it
+# concluded. It did not record WHICH holding was weighed against which
+# candidate, on what seats, at what ratio, or which of the seven refusal
+# points was hit — and board item 39(a), the open question behind the
+# unmeasured 25% margin, cannot be answered from anything else. Folded into
+# the one row rather than written as a second: one session's one comparison
+# is one fact.
+# ---------------------------------------------------------------------------
+
+def _refusal_precheck(point="book_not_constrained", **over):
+    from src.rotation import RotationPrecheck, RotationRefusal
+
+    fields = dict(
+        point=point,
+        detail="real room exists on every constraint",
+        held_symbol="OLD", new_symbol="NEW",
+        held_score=0.9, new_score=1.8,
+        shared_seats=("earnings", "technical"),
+        held_shared_score=0.9, new_shared_score=1.8,
+        ratio=2.0, binding=("funding",),
+    )
+    fields.update(over)
+    return RotationPrecheck(
+        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        refusal=RotationRefusal(**fields),
+        entry_budget_usd=92.20, min_order_usd=500.0,
+        binding=fields["binding"],
+    )
+
+
+def _refusal_pipeline(tmp_path, precheck, *, enabled=False):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.config = SimpleNamespace(
+        execution=SimpleNamespace(rotation_enabled=enabled),
+    )
+    pipeline.portfolio_manager = SimpleNamespace(last_rotation_precheck=precheck)
+    return pipeline, db
+
+
+def test_the_near_miss_row_carries_every_named_field(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _refusal_precheck())
+    _record_rotation_precheck(pipeline, _ctx())
+    rows = _rotation_events(db)
+    assert len(rows) == 1, "one session, one comparison, one row"
+    symbol, event = rows[0]
+    assert symbol is None, (
+        "RUN-scoped, with the symbols in the payload. A symbol-scoped row "
+        "here would be read by src/refusal_signature.py as a candidate the "
+        "session considered as a new idea — a weakest HOLDING is not one, "
+        "and this row fires every session, so it would break the "
+        "monomorphic-refusal streak on essentially every run and disarm the "
+        "jam alarm. Board item 164 and exit_path_records.py ruled the same "
+        "way twice before."
+    )
+    assert event["reason"] == "full_nothing_outranked_a_holding"
+    assert event["refusal_point"] == "book_not_constrained"
+    assert event["held_symbol"] == "OLD"
+    assert event["new_symbol"] == "NEW"
+    assert event["held_score"] == 0.9 and event["new_score"] == 1.8
+    assert event["shared_seats"] == "earnings,technical"
+    assert event["held_shared_score"] == 0.9
+    assert event["new_shared_score"] == 1.8
+    assert event["ratio"] == 2.0
+    assert event["margin_pct"] == 0.25
+    assert event["binding"] == "funding"
+    assert event["entry_budget_usd"] == 92.20
+    assert event["min_order_usd"] == 500.0
+    assert event["detail"]
+
+
+def test_every_refusal_point_lands_under_its_own_code(tmp_path):
+    """One code per point, grouped on the CODE rather than on prose — the
+    same `refusal`/`note` split `_record_accounted_candidate` uses."""
+    from src.pipeline_stages import _record_rotation_precheck
+    from src.rotation import ROTATION_REFUSAL_POINTS
+
+    seen = []
+    for i, point in enumerate(ROTATION_REFUSAL_POINTS):
+        (tmp_path / f"p{i}").mkdir(parents=True, exist_ok=True)
+        pipeline, db = _refusal_pipeline(
+            tmp_path / f"p{i}", _refusal_precheck(point=point),
+        )
+        _record_rotation_precheck(pipeline, _ctx())
+        rows = _rotation_events(db)
+        assert len(rows) == 1, point
+        seen.append(rows[0][1]["refusal_point"])
+    assert seen == list(ROTATION_REFUSAL_POINTS)
+
+
+def test_the_near_miss_detail_is_written_with_the_execution_flag_OFF(tmp_path):
+    """Recording is not acting. Gating the dataset on the switch it exists
+    to inform would mean it only starts existing once the decision it
+    informs has already been taken."""
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _refusal_precheck(), enabled=False)
+    _record_rotation_precheck(pipeline, _ctx())
+    assert _rotation_events(db)[0][1]["refusal_point"] == "book_not_constrained"
+
+
+def test_a_surfaced_opportunity_carries_no_refusal_point(tmp_path):
+    from src.pipeline_stages import _record_rotation_precheck
+
+    pipeline, db = _refusal_pipeline(tmp_path, _precheck(_opportunity()))
+    _record_rotation_precheck(pipeline, _ctx())
+    event = _rotation_events(db)[0][1]
+    assert event["reason"] == "full_candidate_outranked_a_holding"
+    assert "refusal_point" not in event
+
+
+def test_the_owner_line_names_the_limit_that_is_actually_binding():
+    """2026-09-17 CRM, from the reporting side. Quoting risk headroom while
+    the real cause is $92 against a $500 minimum is a true-sounding
+    sentence about the wrong number."""
+    from src.rotation import owner_precheck_lines, precheck_record
+
+    record = precheck_record(
+        _refusal_precheck(), execute_enabled=False, ranked_margin_enabled=False,
+    )
+    text = " ".join(owner_precheck_lines(record))
+    assert "the book is FULL" in text
+    assert "$92 of cash and borrowing room" in text
+    assert "$500 smallest order" in text
+    assert "14.50% of risk headroom" not in text
+
+
+def test_a_book_full_only_on_funding_is_not_reported_as_having_room():
+    """THE REGRESSION, at the reporting layer. `precheck_outcome` tested
+    risk headroom alone and so called 14.50% "room available" on the day
+    the book could not fund a $500 order."""
+    from src.rotation import ROTATION_FULL_NOTHING_BETTER, precheck_outcome
+
+    assert precheck_outcome(_refusal_precheck()) == ROTATION_FULL_NOTHING_BETTER
+
+
+def test_an_unread_funding_view_is_not_reported_as_having_room():
+    """Adversary review 2026-09-23. `binding == ()` means "nothing bound",
+    and the owner line rendered that as "enough cash and borrowing room to
+    open a new position" — asserted from a figure that came back
+    unreadable. The direction is adverse: the ladder is unreadable exactly
+    when execution has fallen back to raw settled cash, which on a 2x book
+    is near zero."""
+    from src.rotation import RotationPrecheck, owner_precheck_lines, precheck_record
+
+    unread = RotationPrecheck(
+        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        entry_budget_usd=None, min_order_usd=500.0, binding=(),
+    )
+    text = " ".join(owner_precheck_lines(precheck_record(
+        unread, execute_enabled=False, ranked_margin_enabled=False,
+    )))
+    assert "could NOT read how much cash" in text
+    assert "enough cash and borrowing room" not in text
+
+
+def test_the_sale_reason_names_the_limit_that_actually_bound():
+    """Adversary review 2026-09-23, and the finding that would not have been
+    merged past: the string written onto the broker order and handed to the
+    Risk Manager said "Headroom 14.50% ... under the 0.50% minimum" on a
+    funding-bound rotation. That is a false arithmetic claim on the audit
+    record of a live sale, produced only by this change."""
+    from src.rotation import rotation_sell_reason
+
+    reason = rotation_sell_reason(
+        _opportunity(),
+        protection_basis="structural_level_broken",
+        protection_detail=BROKEN_DETAIL,
+        headroom_pct=14.50, ceiling_pct=25.0, floor_pct=0.5,
+        binding=("funding",), entry_budget_usd=92.20, min_order_usd=500.0,
+    )
+    assert "$92 deployable, under the $500 minimum order." in reason
+    assert "under the 0.50% minimum" not in reason
+    # An unthreaded caller still gets the legacy sentence byte-for-byte.
+    legacy = rotation_sell_reason(
+        _opportunity(),
+        protection_basis="structural_level_broken",
+        protection_detail=BROKEN_DETAIL,
+        headroom_pct=0.20, ceiling_pct=25.0, floor_pct=0.5,
+    )
+    assert "Headroom 0.20% of the 25.00% risk ceiling, under the 0.50% " \
+           "minimum." in legacy

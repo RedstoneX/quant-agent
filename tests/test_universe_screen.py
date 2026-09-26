@@ -499,7 +499,14 @@ def _pipeline(tmp_path, *, enabled=True):
         risk=SimpleNamespace(min_stop_atr_multiple=2.5, max_target_horizon_sessions=60),
         nominations=SimpleNamespace(max_per_seat_per_run=3),
     )
+    # Item 165: sessions_held now comes from `broker.trading_sessions_held`
+    # (holiday-aware). None of these tests span a market holiday, so
+    # delegating the mock to the real weekday counter reproduces the same
+    # numbers as the plain weekday count used to give directly.
+    from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
+
     pipeline.broker = MagicMock()
+    pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     pipeline.broker.get_asset_record.return_value = GOOD_ASSET
     pipeline.broker.get_transient_equity_eligibility.return_value = {
         "eligible": True, "reason": "eligible", "name": "Acme", "exchange": "nyse"}

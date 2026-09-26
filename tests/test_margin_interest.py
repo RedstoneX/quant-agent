@@ -285,6 +285,83 @@ def test_broker_get_margin_interest_activities_never_raises_on_broker_error(Mock
 
 
 # ---------------------------------------------------------------------------
+# Broker method: get_all_account_activities — the full-ledger read the
+# historical margin-interest backfill replays (no activity_type filter,
+# paginated via Alpaca's page_token cursor).
+# ---------------------------------------------------------------------------
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_single_page(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {"id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+         "side": "buy", "price": "100.00", "qty": "10"},
+    ]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities()
+
+    assert len(activities) == 2
+    mock_client.get.assert_called_once()
+    args, _ = mock_client.get.call_args
+    assert args[0] == "/account/activities"
+    assert "direction" in args[1] and args[1]["direction"] == "asc"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_pages_until_short_page(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
+             for i in range(3)]
+    page2 = [{"id": "3", "activity_type": "FEE", "date": "2026-08-15", "net_amount": "-0.01"}]
+    mock_client.get.side_effect = [page1, page2]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities(page_size=3)
+
+    assert len(activities) == 4
+    assert mock_client.get.call_count == 2
+    # Second call must have used the last id of page 1 as the cursor.
+    _, kwargs_call2 = mock_client.get.call_args_list[1]
+    assert mock_client.get.call_args_list[1][0][1]["page_token"] == "2"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_empty_response(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = []
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    assert broker.get_all_account_activities() == []
+
+
+@patch("src.execution.broker.TradingClient")
+def test_broker_get_all_account_activities_never_raises_degrades_to_partial(MockTradingClient):
+    from src.execution.broker import AlpacaBroker
+
+    mock_client = MagicMock()
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
+             for i in range(3)]
+    mock_client.get.side_effect = [page1, RuntimeError("broker down")]
+    MockTradingClient.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    activities = broker.get_all_account_activities(page_size=3)
+    # First page succeeded before the failure -> degrade to what was fetched.
+    assert len(activities) == 3
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: stubbed broker response feeding the comparison, both directions
 # ---------------------------------------------------------------------------
 
@@ -355,10 +432,15 @@ def test_read_margin_interest_no_debit_balance_is_an_explicit_zero(monkeypatch):
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
     )
     out = broker_reads.read_margin_interest(1_000.0)
+    # `cumulative` is best-effort (a broker/DB read of its own) and degrades
+    # to `None` in this unit test, which stubs no broker/config at all for
+    # it — covered separately by the cumulative-specific tests below.
+    out = {**out, "cumulative": None}
     assert out == {
         "debit_balance": 0.0, "rate_pct": 6.25, "daily_usd": 0.0,
         "annual_usd": 0.0, "label": None, "broker_check_note": None,
-        "error": None,
+        "days_charged": 1, "period_usd": 0.0, "error": None,
+        "cumulative": None,
     }
 
 
@@ -447,19 +529,51 @@ def test_read_margin_interest_int_activity_failure_does_not_hide_the_estimate(mo
     assert out["broker_check_note"] is None
 
 
+def test_read_margin_interest_friday_reflects_the_three_day_weekend_carry(monkeypatch):
+    """THE DEFECT THIS PINS: the /account panel (`GET /account` ->
+    `routes_live._compute_margin_interest` -> this function) used to call
+    `build_estimate(debit_balance, rate_pct)` with NO `days_charged`,
+    silently defaulting to 1 every day — a flat per-day figure even on a
+    Friday, while the Telegram alert (`src.notifier._margin_interest_lines`)
+    already named the same debit's real 3-day (Fri+Sat+Sun) weekend carry
+    via `days_charged_until_next_trading_day`. Same calendar helper, same
+    stubbed `is_trading_day`, proving the dashboard no longer disagrees with
+    the alert."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        broker_reads, "get_risk_limits",
+        lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: SimpleNamespace(
+            is_trading_day=_weekday_calendar(),
+            get_margin_interest_activities=lambda: [],
+        ),
+    )
+    monkeypatch.setattr("src.util.time.et_today", lambda: _date(2026, 9, 25))  # Friday
+
+    out = broker_reads.read_margin_interest(-5_000.0)
+
+    assert out["error"] is None
+    assert out["daily_usd"] == pytest.approx(0.87, abs=0.01)
+    assert out["days_charged"] == 3
+    assert out["period_usd"] == pytest.approx(2.60, abs=0.01)
+
+
 # ---------------------------------------------------------------------------
 # 7. src/notifier.py::_margin_interest_lines — the morning Telegram wiring.
 # ---------------------------------------------------------------------------
 
-def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatch):
-    """THE POINT OF THE 2026-09-18 CHANGE. This used to assert `== []`.
-
-    Owner decision, verbatim: "Yes, every day, even if it's zero, that way
-    I know it's still working." A zero must produce a line carrying the
-    measured overnight cash figure, and must NOT carry the ESTIMATE label
-    — nothing borrowed costs nothing at any rate, which is measured."""
+def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatch, tmp_path):
+    """A zero-debit morning still produces exactly one cumulative line
+    (owner decision 2026-09-18's "every day, even if it's zero" carries
+    forward into the 2026-09-24 cumulative rewrite) — nothing borrowed
+    persists as a $0.00 row, and the buckets built from it carry no "est."
+    tag on a certain zero."""
     import src.notifier as n
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
         "src.config.load_config",
         lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
@@ -477,19 +591,18 @@ def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatc
     )
     lines = n._margin_interest_lines()
     assert len(lines) == 1
-    assert lines[0] == (
-        "💳 margin interest: $0.00/day — overnight cash $1,000.00, "
-        "nothing borrowed"
-    )
-    assert "ESTIMATE" not in lines[0]
+    assert "this week $0.00" in lines[0]
+    assert "all-time $0.00" in lines[0]
+    assert "(est.)" not in lines[0]
 
 
-def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(monkeypatch):
+def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(monkeypatch, tmp_path):
     """Regression, same bug as the broker_reads test above: a debit
     balance carried with `allow_margin` False must still produce a line,
     not silence — the Telegram alert is where the desk actually sees it."""
     import src.notifier as n
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
         "src.config.load_config",
         lambda *a, **kw: MagicMock(
@@ -510,7 +623,8 @@ def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(mo
     lines = n._margin_interest_lines()
     assert len(lines) >= 1
     assert "margin interest" in lines[0].lower()
-    assert "ESTIMATE" in lines[0]
+    assert "(est.)" in lines[0]
+    # 9,839 * 6.25 / 100 / 360 = 1.7089...
     assert "1.71" in lines[0]
 
 
@@ -520,9 +634,10 @@ def test_margin_interest_lines_suppressed_in_rehearsal(monkeypatch):
     assert n._margin_interest_lines() == []
 
 
-def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch):
+def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch, tmp_path):
     import src.notifier as n
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
         "src.config.load_config",
         lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
@@ -538,6 +653,84 @@ def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch):
     from src.margin_interest import UNAVAILABLE_LINE
     assert n._margin_interest_lines() == [UNAVAILABLE_LINE]
     assert "$0.00" not in UNAVAILABLE_LINE
+
+
+def test_margin_interest_lines_persists_a_row_for_the_cumulative_view(monkeypatch, tmp_path):
+    """The whole point of persistence: a second morning's debit balance
+    must be summed with the first, not replace it — this is what makes
+    "this week"/"this month" a running total rather than always showing
+    only today."""
+    import sqlite3
+
+    import src.notifier as n
+    db_path = tmp_path / "quant_agent.db"
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    monkeypatch.setattr(n, "_DB_PATH", db_path)
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
+    )
+    monkeypatch.setattr("src.api.deps.get_alpaca_credentials", lambda: ("k", "s"))
+    monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
+    monkeypatch.setattr(
+        "src.execution.broker.AlpacaBroker",
+        lambda **kw: MagicMock(
+            get_account=lambda: {"cash": -5_000.0},
+            get_margin_interest_activities=lambda: [],
+        ),
+    )
+    n._margin_interest_lines()
+    conn = sqlite3.connect(str(db_path))
+    rows = conn.execute("SELECT date, period_usd, source FROM margin_interest_daily").fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0][1] == pytest.approx(0.8680555, abs=1e-4)
+    assert rows[0][2] == "estimate"
+
+
+def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monkeypatch, tmp_path):
+    """Consolidation pin, 2026-09-24: `notifier._persist_margin_interest_daily`
+    used to hand-roll its own `CREATE TABLE`/`INSERT ... ON CONFLICT` with a
+    raw sqlite3 connection — a duplicate of `Database.insert_margin_
+    interest_daily`'s own upsert. Now it must call THAT method and nothing
+    else, so the live daily write and the historical backfill
+    (`Database.backfill_margin_interest_daily`, which also writes through
+    `Database`) can never drift apart on what a row looks like or how
+    conflicts are resolved."""
+    import src.notifier as n
+    from src.storage.db import Database
+
+    db_path = tmp_path / "quant_agent.db"
+    monkeypatch.setattr(n, "_DB_PATH", db_path)
+
+    calls = []
+    original = Database.insert_margin_interest_daily
+
+    def spy(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Database, "insert_margin_interest_daily", spy)
+
+    n._persist_margin_interest_daily(
+        "2026-09-24", debit_balance=5000.0, rate_pct=6.25, daily_usd=0.868,
+        days_charged=1, period_usd=0.868, source="estimate",
+    )
+
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[0] == "2026-09-24"
+    assert args[1] == 5000.0
+    assert args[-1] == "estimate"
+
+    # And the row actually landed via that one path.
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT date, debit_balance, source FROM margin_interest_daily",
+    ).fetchone()
+    conn.close()
+    assert row == ("2026-09-24", 5000.0, "estimate")
 
 
 # ---------------------------------------------------------------------------
@@ -639,3 +832,501 @@ def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypat
     assert any(not lines[i].strip() for i in range(balance_at + 1, margin_at)), (
         "margin interest is still glued to the running-cost block"
     )
+
+
+# ---------------------------------------------------------------------------
+# 10. Weekend / holiday carry — owner-confirmed from Alpaca's docs 2026-09-23
+# ---------------------------------------------------------------------------
+# Alpaca charges margin interest for EVERY calendar day a debit balance is
+# carried, trading day or not. A Friday's overnight is charged 3 days
+# (Fri+Sat+Sun); a Friday before a Monday holiday, 4. The flat per-day
+# figure understated tonight's bill whenever the carry spans a closure.
+
+from datetime import date as _date  # noqa: E402
+
+
+def _weekday_calendar(holidays=()):
+    """Stub for `AlpacaBroker.is_trading_day`: Mon-Fri open, minus holidays."""
+    return lambda d: d.weekday() < 5 and d not in holidays
+
+
+def _stub_broker_with_calendar(monkeypatch, cash, today, calendar, tmp_path=None):
+    monkeypatch.setattr(
+        "src.config.load_config",
+        lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
+    )
+    monkeypatch.setattr("src.api.deps.get_alpaca_credentials", lambda: ("k", "s"))
+    monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
+    monkeypatch.setattr("src.util.time.et_today", lambda: today)
+    monkeypatch.setattr(
+        "src.execution.broker.AlpacaBroker",
+        lambda **kw: MagicMock(
+            get_account=lambda: {"cash": cash},
+            get_margin_interest_activities=lambda: [],
+            is_trading_day=calendar,
+        ),
+    )
+    if tmp_path is not None:
+        import src.notifier as n
+        monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
+
+
+def test_days_charged_weeknight_is_one():
+    from src.margin_interest import days_charged_until_next_trading_day
+    wed = _date(2026, 9, 23)
+    assert wed.weekday() == 2
+    assert days_charged_until_next_trading_day(_weekday_calendar(), wed) == 1
+
+
+def test_days_charged_friday_is_three():
+    from src.margin_interest import days_charged_until_next_trading_day
+    fri = _date(2026, 9, 25)
+    assert fri.weekday() == 4
+    assert days_charged_until_next_trading_day(_weekday_calendar(), fri) == 3
+
+
+def test_days_charged_friday_before_monday_holiday_is_four():
+    from src.margin_interest import days_charged_until_next_trading_day
+    fri = _date(2026, 9, 4)          # Labor Day 2026 is Mon 2026-09-07
+    assert fri.weekday() == 4
+    cal = _weekday_calendar(holidays={_date(2026, 9, 7)})
+    assert days_charged_until_next_trading_day(cal, fri) == 4
+
+
+def test_days_charged_degrades_to_one_when_calendar_raises():
+    from src.margin_interest import days_charged_until_next_trading_day
+
+    def boom(_d):
+        raise RuntimeError("calendar endpoint down")
+    assert days_charged_until_next_trading_day(boom, _date(2026, 9, 25)) == 1
+
+
+def test_days_charged_degrades_to_one_when_no_trading_day_within_bound():
+    """A calendar that says 'closed' forever is a broken read, not a
+    market closure — bounded search, then the old flat figure."""
+    from src.margin_interest import days_charged_until_next_trading_day
+    assert days_charged_until_next_trading_day(lambda d: False, _date(2026, 9, 25)) == 1
+
+
+def test_estimate_period_usd_is_daily_times_days_charged():
+    from src.margin_interest import build_estimate
+    est = build_estimate(5_000.0, 6.25, days_charged=3)
+    assert est.days_charged == 3
+    assert est.period_usd == pytest.approx(est.daily_usd * 3)
+    # The per-day and annual figures are UNCHANGED by the multi-day carry.
+    assert est.daily_usd == pytest.approx(build_estimate(5_000.0, 6.25).daily_usd)
+    assert est.annual_usd == pytest.approx(build_estimate(5_000.0, 6.25).annual_usd)
+
+
+def test_build_estimate_defaults_to_one_day_so_existing_callers_are_unchanged():
+    from src.margin_interest import build_estimate
+    est = build_estimate(5_000.0, 6.25)
+    assert est.days_charged == 1
+    assert est.period_usd == pytest.approx(est.daily_usd)
+
+
+def test_format_daily_line_weeknight_has_no_multi_day_clause():
+    from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=1)
+    assert line == (
+        "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
+        f"at 6.25% — {ESTIMATE_LABEL}"
+    )
+    assert "days" not in line.split(" — ")[0]
+
+
+def test_format_daily_line_friday_names_the_three_day_weekend_total():
+    from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=3)
+    assert line == (
+        "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
+        "at 6.25% — carried over the weekend that's 3 days ≈ $2.60"
+        f" — {ESTIMATE_LABEL}"
+    )
+
+
+def test_format_daily_line_long_weekend_names_four_days():
+    from src.margin_interest import format_daily_line
+    line = format_daily_line(-5_000.0, 6.25, days_charged=4)
+    assert "carried over the long weekend that's 4 days ≈ $3.47" in line
+
+
+def test_format_daily_line_zero_and_fault_states_ignore_days_charged():
+    """The multi-day clause belongs only on a real debit; the zero line and
+    both 'not available' lines are byte-for-byte what they were."""
+    from src.margin_interest import (
+        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, format_daily_line,
+    )
+    assert format_daily_line(None, 6.25, days_charged=3) == UNAVAILABLE_LINE
+    assert format_daily_line(-5_000.0, None, days_charged=3) == RATE_UNAVAILABLE_LINE
+    assert format_daily_line(1_000.0, 6.25, days_charged=3) == format_daily_line(1_000.0, 6.25)
+    assert format_daily_line(-0.99, 6.25, days_charged=3) == format_daily_line(-0.99, 6.25)
+
+
+def test_margin_interest_lines_weeknight_shows_one_day(monkeypatch, tmp_path):
+    """A single weeknight's $5,000 debit at 6.25%/360 = $0.8681, charged
+    for 1 day — that whole period_usd is what the (freshly-empty)
+    cumulative buckets show, since it's the only row ever persisted."""
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    _stub_broker_with_calendar(
+        monkeypatch, -5_000.0, _date(2026, 9, 23), _weekday_calendar(), tmp_path,
+    )
+    lines = n._margin_interest_lines()
+    assert "this week $0.87" in lines[0]
+    assert "(est.)" in lines[0]
+
+
+def test_margin_interest_lines_friday_shows_three_days_via_broker_calendar(monkeypatch, tmp_path):
+    """Friday's carry is 3 days: $0.8681/day x 3 = $2.6042, and THAT total
+    (not the per-day figure) is what the cumulative buckets sum."""
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+    _stub_broker_with_calendar(
+        monkeypatch, -5_000.0, _date(2026, 9, 25), _weekday_calendar(), tmp_path,
+    )
+    lines = n._margin_interest_lines()
+    assert "this week $2.60" in lines[0]
+    assert "(est.)" in lines[0]
+
+
+def test_margin_interest_lines_calendar_failure_degrades_to_one_day_not_an_error(monkeypatch, tmp_path):
+    """A broken calendar read must NOT turn a readable balance into
+    'not available' — the cash WAS read; only the day count is unknown."""
+    import src.notifier as n
+    monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
+
+    def boom(_d):
+        raise RuntimeError("calendar endpoint down")
+    _stub_broker_with_calendar(monkeypatch, -5_000.0, _date(2026, 9, 25), boom, tmp_path)
+    lines = n._margin_interest_lines()
+    assert "this week $0.87" in lines[0]
+    assert "not available" not in lines[0]
+
+
+# ---------------------------------------------------------------------------
+# 11. Cumulative view — owner ask 2026-09-24 (this week / month / 6-month
+#     window / all-time), preferring broker-actual over the ESTIMATE
+#     fallback, and skipping zero-interest months.
+# ---------------------------------------------------------------------------
+
+from src.margin_interest import (  # noqa: E402
+    MAX_LOOKBACK_MONTHS,
+    bucket_broker_activities,
+    bucket_estimate_rows,
+    compute_cumulative_margin_interest,
+    format_cumulative_line,
+)
+
+
+def test_bucket_estimate_rows_splits_this_week_and_current_month():
+    today = _date(2026, 9, 24)  # Thursday
+    rows = [
+        {"date": "2026-09-22", "period_usd": 1.0},  # this week + this month
+        {"date": "2026-09-24", "period_usd": 2.0},  # this week + this month
+        {"date": "2026-09-01", "period_usd": 5.0},  # this month only
+    ]
+    result = bucket_estimate_rows(rows, today)
+    assert result.this_week_usd == pytest.approx(3.0)
+    assert result.current_month_usd == pytest.approx(8.0)
+    assert result.current_month_label == "September 2026"
+    assert result.source == "estimate"
+    assert result.is_estimate is True
+
+
+def test_bucket_estimate_rows_lists_prior_months_newest_first_skips_zero():
+    today = _date(2026, 9, 24)
+    rows = [
+        {"date": "2026-08-05", "period_usd": 10.0},   # August: nonzero
+        {"date": "2026-07-10", "period_usd": 0.0},    # July: zero -> skipped
+        {"date": "2026-06-15", "period_usd": 4.0},    # June: nonzero
+        {"date": "2026-03-01", "period_usd": 99.0},   # outside the 6-month window
+    ]
+    result = bucket_estimate_rows(rows, today)
+    labels = [m["label"] for m in result.prior_months]
+    assert labels == ["August 2026", "June 2026"]
+    assert result.prior_months[0]["usd"] == pytest.approx(10.0)
+    assert result.prior_months[1]["usd"] == pytest.approx(4.0)
+    assert "July 2026" not in labels
+    # The March row is outside the 6-total-month window (current + 5 prior)
+    # and must not silently inflate all_time either — all_time sums
+    # everything GIVEN to this function, so a caller must not hand it more
+    # than it wants counted; this test pins that the WINDOW (not all_time)
+    # is what's bounded to 6 months.
+    assert result.all_time_usd == pytest.approx(10.0 + 0.0 + 4.0 + 99.0)
+
+
+def test_bucket_estimate_rows_window_is_six_months_total():
+    assert MAX_LOOKBACK_MONTHS == 6
+
+
+def test_bucket_estimate_rows_all_time_since_is_earliest_persisted_date():
+    today = _date(2026, 9, 24)
+    rows = [
+        {"date": "2026-09-24", "period_usd": 1.0},
+        {"date": "2026-08-01", "period_usd": 2.0},
+    ]
+    result = bucket_estimate_rows(rows, today)
+    assert result.all_time_since == "2026-08-01"
+    assert result.all_time_usd == pytest.approx(3.0)
+
+
+def test_bucket_estimate_rows_empty_is_no_data_not_a_fabricated_zero():
+    result = bucket_estimate_rows([], _date(2026, 9, 24))
+    assert result.source == "no_data"
+    assert result.this_week_usd == 0.0
+    assert result.all_time_usd == 0.0
+
+
+def test_bucket_broker_activities_returns_none_when_broker_never_confirmed():
+    """No INT row ever -> the caller must fall back to the estimate, never
+    read this as 'broker confirms zero interest charged, ever'."""
+    assert bucket_broker_activities([], _date(2026, 9, 24)) is None
+
+
+def test_bucket_broker_activities_sums_confirmed_charges_by_bucket():
+    today = _date(2026, 9, 24)
+    activities = [
+        {"date": "2026-09-24", "net_amount": -1.50},   # this week/month
+        {"date": "2026-08-15", "net_amount": -3.00},   # prior month
+        {"date": "2026-01-01", "net_amount": -20.00},  # all-time, pre-window
+    ]
+    result = bucket_broker_activities(activities, today)
+    assert result.source == "broker_actual"
+    assert result.is_estimate is False
+    assert result.this_week_usd == pytest.approx(1.50)
+    assert result.current_month_usd == pytest.approx(1.50)
+    assert result.prior_months == [{"label": "August 2026", "usd": pytest.approx(3.00)}]
+    assert result.all_time_usd == pytest.approx(24.50)
+    assert result.all_time_since == "2026-01-01"
+
+
+def test_compute_cumulative_prefers_broker_actual_over_estimate():
+    today = _date(2026, 9, 24)
+    broker_activities = [{"date": "2026-09-24", "net_amount": -1.0}]
+    estimate_rows = [{"date": "2026-09-01", "period_usd": 999.0}]
+    result = compute_cumulative_margin_interest(broker_activities, estimate_rows, today)
+    assert result.source == "broker_actual"
+    assert result.all_time_usd == pytest.approx(1.0)
+
+
+def test_compute_cumulative_falls_back_to_estimate_when_broker_never_confirmed():
+    today = _date(2026, 9, 24)
+    result = compute_cumulative_margin_interest([], [{"date": "2026-09-24", "period_usd": 5.0}], today)
+    assert result.source == "estimate"
+    assert result.is_estimate is True
+    assert result.all_time_usd == pytest.approx(5.0)
+
+
+def test_compute_cumulative_no_data_when_neither_source_has_anything():
+    result = compute_cumulative_margin_interest([], [], _date(2026, 9, 24))
+    assert result.source == "no_data"
+
+
+def test_format_cumulative_line_no_caveat_paragraph_only_est_tag():
+    """The old ESTIMATE_LABEL paragraph is gone; the ENTIRE estimate marker
+    is the short '(est.)' tag, per the owner's 2026-09-24 ask to remove the
+    caveat block from every rendering."""
+    result = bucket_estimate_rows(
+        [{"date": "2026-09-24", "period_usd": 1.23}], _date(2026, 9, 24),
+    )
+    line = format_cumulative_line(result)
+    assert "(est.)" in line
+    assert ESTIMATE_LABEL not in line
+    assert "unconfirmed" not in line.lower()
+    assert "this week" in line
+    assert "all-time" in line
+
+
+def test_format_cumulative_line_broker_actual_carries_no_est_tag():
+    result = bucket_broker_activities(
+        [{"date": "2026-09-24", "net_amount": -1.23}], _date(2026, 9, 24),
+    )
+    line = format_cumulative_line(result)
+    assert "(est.)" not in line
+
+
+def test_format_cumulative_line_no_data_state():
+    result = compute_cumulative_margin_interest([], [], _date(2026, 9, 24))
+    line = format_cumulative_line(result)
+    assert "no data yet" in line
+
+
+# ---------------------------------------------------------------------------
+# 12. Historical backfill — owner ask 2026-09-24: reconstruct an
+#     approximate daily debit balance from the broker's own activity
+#     ledger (no historical cash/positions endpoint exists), since
+#     margin_interest_daily only exists from #637 forward.
+# ---------------------------------------------------------------------------
+
+from src.margin_interest import (  # noqa: E402
+    BackfilledDayEstimate,
+    activity_cash_delta,
+    activity_effective_date,
+    backfill_daily_estimates,
+    nearest_prior_balance,
+    reconstruct_daily_cash_balances,
+)
+
+
+def test_activity_cash_delta_fill_buy_is_negative():
+    activity = {"activity_type": "FILL", "side": "buy", "price": "100.00", "qty": "10"}
+    assert activity_cash_delta(activity) == pytest.approx(-1000.0)
+
+
+def test_activity_cash_delta_fill_sell_is_positive():
+    activity = {"activity_type": "FILL", "side": "sell", "price": "50.00", "qty": "4"}
+    assert activity_cash_delta(activity) == pytest.approx(200.0)
+
+
+def test_activity_cash_delta_fill_unparsable_degrades_to_zero():
+    activity = {"activity_type": "FILL", "side": "buy", "price": "not-a-number", "qty": "10"}
+    assert activity_cash_delta(activity) == 0.0
+
+
+def test_activity_cash_delta_non_fill_uses_net_amount_verbatim():
+    assert activity_cash_delta({"activity_type": "JNLC", "net_amount": "10000"}) == pytest.approx(10000.0)
+    assert activity_cash_delta({"activity_type": "FEE", "net_amount": "-0.01"}) == pytest.approx(-0.01)
+
+
+def test_activity_cash_delta_missing_net_amount_degrades_to_zero():
+    assert activity_cash_delta({"activity_type": "CFEE"}) == 0.0
+
+
+def test_activity_effective_date_prefers_date_field():
+    activity = {"date": "2026-08-26", "transaction_time": "2026-08-27T19:33:24Z"}
+    assert activity_effective_date(activity) == _date(2026, 8, 26)
+
+
+def test_activity_effective_date_falls_back_to_transaction_time_for_fills():
+    activity = {"activity_type": "FILL", "transaction_time": "2026-08-14T18:32:41.394686Z"}
+    assert activity_effective_date(activity) == _date(2026, 8, 14)
+
+
+def test_activity_effective_date_none_when_neither_present():
+    assert activity_effective_date({"activity_type": "FILL"}) is None
+
+
+def test_reconstruct_daily_cash_balances_replays_deposit_then_trades():
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "100.00", "qty": "50",
+        },
+        {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"},
+        {
+            "id": "4", "activity_type": "FILL", "transaction_time": "2026-08-17T14:00:00Z",
+            "side": "buy", "price": "200.00", "qty": "80",
+        },
+    ]
+    by_date = reconstruct_daily_cash_balances(activities)
+    assert by_date[_date(2026, 8, 12)] == pytest.approx(10000.0)
+    assert by_date[_date(2026, 8, 14)] == pytest.approx(10000.0 - 5000.0 - 0.01)
+    # Second buy takes cash negative -> a real debit balance.
+    assert by_date[_date(2026, 8, 17)] == pytest.approx(10000.0 - 5000.0 - 0.01 - 16000.0)
+    assert by_date[_date(2026, 8, 17)] < 0
+
+
+def test_reconstruct_daily_cash_balances_skips_unparseable_dates():
+    activities = [{"activity_type": "FEE", "net_amount": "-1.0"}]  # no date anywhere
+    assert reconstruct_daily_cash_balances(activities) == {}
+
+
+def test_reconstruct_daily_cash_balances_matches_live_account_within_pennies():
+    """Regression pin for the reconstruction method's accuracy, from the
+    real paper account's own ledger checked 2026-09-24: replaying every
+    activity from $0 reproduced the broker's own reported `cash`
+    (-$6,114.51) to within four cents on a ~$6,100 balance. This test uses
+    a small synthetic ledger with the same shape (deposit, buys, a fee) to
+    pin the arithmetic, not the live figures themselves."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "150.00", "qty": "100",
+        },
+        {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.02"},
+    ]
+    by_date = reconstruct_daily_cash_balances(activities)
+    expected = 10000.0 - 15000.0 - 0.02
+    assert by_date[_date(2026, 8, 14)] == pytest.approx(expected, abs=0.01)
+
+
+def test_nearest_prior_balance_carries_forward_over_a_quiet_weekend():
+    by_date = {_date(2026, 8, 14): -500.0}
+    # Monday 8/17 had no activity of its own -> carries Friday's balance.
+    assert nearest_prior_balance(by_date, _date(2026, 8, 17)) == pytest.approx(-500.0)
+
+
+def test_nearest_prior_balance_none_before_first_activity():
+    by_date = {_date(2026, 8, 14): -500.0}
+    assert nearest_prior_balance(by_date, _date(2026, 8, 10)) is None
+
+
+def test_nearest_prior_balance_ignores_same_day_and_future_activity():
+    by_date = {_date(2026, 8, 14): -500.0, _date(2026, 8, 17): -9000.0}
+    assert nearest_prior_balance(by_date, _date(2026, 8, 17)) == pytest.approx(-500.0)
+
+
+def test_backfill_daily_estimates_one_row_per_trading_day_zero_included():
+    """Mirrors the live tracker's own always-write contract
+    (`notifier._persist_margin_interest_daily` is called unconditionally
+    every morning, zero or not) — the backfill must produce a row for
+    every trading day, not just the days with a debit balance."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
+    ]
+    trading_days = [_date(2026, 8, 14), _date(2026, 8, 17)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+    )
+    assert len(rows) == 2
+    assert all(isinstance(r, BackfilledDayEstimate) for r in rows)
+    # No debit was ever carried (deposit only, no trades) -> zero, not skipped.
+    assert rows[0].debit_balance == 0.0
+    assert rows[0].period_usd == 0.0
+    assert rows[0].source == "estimate_backfill"
+
+
+def test_backfill_daily_estimates_debit_day_gets_a_real_estimate():
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "1000"},
+        {
+            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy", "price": "100.00", "qty": "50",  # takes cash to -4000
+        },
+    ]
+    # 8/17 (Monday) morning inherits 8/14's EOD balance of -4000.
+    trading_days = [_date(2026, 8, 17)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.debit_balance == pytest.approx(4000.0)
+    assert row.daily_usd == pytest.approx(4000.0 * 0.0625 / 360)
+    assert row.period_usd > 0
+    assert row.source == "estimate_backfill"
+
+
+def test_backfill_daily_estimates_no_prior_activity_is_a_true_zero():
+    """A trading day before the account's first deposit gets an honest
+    $0 row, not a skipped one — there was nothing to borrow against."""
+    activities = [
+        {"id": "1", "activity_type": "JNLC", "date": "2026-08-20", "net_amount": "1000"},
+    ]
+    trading_days = [_date(2026, 8, 14)]
+    rows = backfill_daily_estimates(
+        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: True,
+    )
+    assert rows[0].debit_balance == 0.0
+    assert rows[0].period_usd == 0.0
+
+
+def test_backfill_daily_estimates_never_raises_on_unparseable_activity():
+    activities = [{"activity_type": "FILL", "side": "buy", "price": "nope", "qty": "1"}]
+    rows = backfill_daily_estimates(
+        [_date(2026, 8, 14)], activities, rate_pct=6.25, is_trading_day=lambda d: True,
+    )
+    assert len(rows) == 1

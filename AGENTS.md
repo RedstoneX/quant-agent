@@ -283,6 +283,20 @@ which includes every CI run. Two agents independently reported it as
 pre-existing repo breakage on 2026-09-18; both were wrong, and it is not
 evidence of anything broken in this repository.
 
+**The gate reads commit messages only, never the PR description** — `git log
+base..HEAD`, nothing else — and that base must be resolved on a FULL-HISTORY
+checkout. `.github/workflows/test.yml`'s checkout step carries
+`fetch-depth: 0` for exactly this reason: a shallow (depth-1) checkout left
+the gate unable to resolve its own base, and even once base resolution was
+patched around that, an earlier commit on a multi-commit branch could still
+be missing from the readable range, so a trailer written two commits back
+went unseen with no explanation (item 132, filed 2026-09-18). Do not
+"optimize" that checkout step back to a shallow one to save CI time — that
+reopens item 132. If the gate reports a missing trailer that you wrote,
+check `scripts/definition_of_done.py::read_scope_note`'s output first (it
+is printed on any failure and names the exact commit range read, plus a
+shallow-checkout warning) before assuming the trailer itself is wrong.
+
 **Deployment is verified on the box, not claimed in a PR.**
 `scripts/check_item_deployment.py` asks, per item, whether the commit that
 added that number to the retired-numbers line is an ancestor of

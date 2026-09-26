@@ -71,6 +71,13 @@ class HealResult:
     seat: str
     outcome: str
     reason: str
+    #: In-memory only, and deliberately NOT in `to_evidence()`. The paid
+    #: heal's answer is persisted by
+    #: `TradingPipeline._persist_heal_call` through the SAME two rows an
+    #: ordinary paid call writes — `agent_logs` (model, tokens, cost, raw
+    #: answer) and `specialist_evidence(kind="analysis")`. Copying it in here
+    #: too would duplicate it into a row that
+    #: `Database.count_paid_seat_heals_today` json-parses on every heal.
     payload: object | None = None
     mechanical: bool = False
     paid_retry: bool = False
@@ -321,67 +328,74 @@ def describe_macro_parse_failure(payload, error: BaseException) -> str:
     return f"macro_parse_failed: {err}"
 
 
-def mechanical_heal_macro(payload) -> HealResult:
-    """Try to make a macro payload usable without a paid call.
+def merge_carried_stock_news(fresher: dict, carried: dict | None) -> dict:
+    """Keep per-symbol news the FRESHER read was never asked about.
 
-    Coerce dict ``sector_guidance`` / stored rows toward MacroAnalysis's
-    list shape. Do not fill reasoning_chain from summary (that would
-    invent macro text). After coerce, the payload must still validate as
-    MacroAnalysis to be ``usable`` for PM. A same-day regime snapshot
-    without a chain is still a regime for holding-discipline carry
-    (`_carry_forward_macro`); it is not silently passed into PM.
+    A paid news heal is handed the general wire text the expiry peek
+    already fetched and NOTHING else — no universe and no
+    `stock_mentions` (`TradingPipeline._try_one_paid_research_retry`). The
+    morning read had both. So the healed report is the fresher answer about
+    the wire, and simultaneously a narrower one about the book: a symbol the
+    morning covered and the afternoon wire never mentioned would silently
+    lose its coverage if the healed report simply replaced it.
+
+    This fills that gap and only that gap. The fresher report wins
+    everywhere it spoke — every field, and every symbol for which it
+    returned a non-empty list. A symbol it has no key for at all keeps the
+    carried entry. A symbol it answered with an EMPTY list keeps that empty,
+    because an explicit empty is the seat saying "nothing on this name", not
+    an omission (`NewsIntelligenceReport.dropped_news_symbols` is the field
+    that distinguishes them, and `analyze()` fills those keys deliberately).
+
+    Nothing here merges `state_changes`, `macro_narrative` or `pm_briefing`.
+    Those are one read's reasoning and splicing two of them would invent a
+    report neither seat produced. Mechanical, per-symbol, never raises.
     """
-    if payload is None:
-        return HealResult(
-            seat="macro", outcome=HEAL_FAILED,
-            reason="no macro payload to heal",
-        )
-    if not isinstance(payload, dict):
-        # Already a MacroAnalysis (or similar) — present is usable.
-        return HealResult(
-            seat="macro", outcome=HEAL_SKIPPED_GOOD,
-            reason="macro payload is already an object, not a broken dict",
-            payload=payload, usable=True,
-        )
-    if not str(payload.get("regime") or "").strip():
-        return HealResult(
-            seat="macro", outcome=HEAL_FAILED,
-            reason="macro dict has no regime — refusing to treat a failed parse as regime ok",
-            payload=payload,
-        )
-    coerced, fixes = coerce_macro_shape(payload)
-    from src.models import MacroAnalysis
-    try:
-        MacroAnalysis.model_validate(coerced)
-    except Exception as exc:
-        # Coerce is not a loosen: a trim still missing reasoning_chain is
-        # a durable fail, not a remembered regime smuggled into PM.
-        return HealResult(
-            seat="macro",
-            outcome=HEAL_FAILED,
-            reason=describe_macro_parse_failure(coerced, exc),
-            payload=coerced,
-            mechanical=bool(fixes),
-            usable=False,
-            details={
-                "fixes": fixes,
-                "has_reasoning_chain": isinstance(
-                    coerced.get("reasoning_chain"), dict,
-                ),
-            },
-        )
-    return HealResult(
-        seat="macro",
-        outcome=HEAL_MECHANICAL if fixes else HEAL_SKIPPED_GOOD,
-        reason=(
-            "coerced stored/live macro shape: " + ", ".join(fixes)
-            if fixes else "macro dict already in usable shape"
-        ),
-        payload=coerced,
-        mechanical=bool(fixes),
-        usable=True,
-        details={"fixes": fixes, "has_reasoning_chain": isinstance(coerced.get("reasoning_chain"), dict)},
-    )
+    if not isinstance(fresher, dict):
+        return fresher
+    if not isinstance(carried, dict):
+        return fresher
+    fresh_news = fresher.get("stock_news")
+    carried_news = carried.get("stock_news")
+    if not isinstance(carried_news, dict) or not carried_news:
+        return fresher
+    merged = dict(fresh_news) if isinstance(fresh_news, dict) else {}
+    for symbol, items in carried_news.items():
+        if symbol in merged:
+            continue
+        merged[symbol] = items
+    out = dict(fresher)
+    out["stock_news"] = merged
+    return out
+
+
+def wire_titles_shown_to_model(titles, news_text: str) -> list[str]:
+    """The peeked headlines the model was ACTUALLY handed, by measurement.
+
+    Marking a headline "already covered" stops it expiring the news seat
+    again, so the set has to be the wire the desk PAID the model to read —
+    not the wire it happened to fetch. Those differ: the prompt text is
+    truncated to `news.max_prompt_items`, so a peek can fetch more titles
+    than the re-ask ever saw, and suppressing an unseen headline would be
+    buying silence instead of research.
+
+    So the bound is read off the prompt itself rather than chosen: a title
+    counts only when it appears in the text handed to the analyst. No cap,
+    no count, no clock. Empty text covers nothing.
+    """
+    text = str(news_text or "")
+    if not text.strip():
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in titles or []:
+        title = str(raw or "").strip()
+        if not title or title in seen:
+            continue
+        if title in text:
+            seen.add(title)
+            out.append(title)
+    return out
 
 
 def can_paid_retry(retries_used: dict[str, int], seat: str, *, max_retries: int = 1) -> bool:

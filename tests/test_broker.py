@@ -161,7 +161,7 @@ def test_submit_market_order(mock_tc_cls):
 def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(mock_tc_cls):
     """BRK-B stays canonical inside QAMC while both Alpaca orders use BRK.B."""
     from types import SimpleNamespace
-    from alpaca.trading.requests import LimitOrderRequest, StopLimitOrderRequest
+    from alpaca.trading.requests import LimitOrderRequest, StopOrderRequest
 
     mock_client = MagicMock()
     mock_client.submit_order.side_effect = [
@@ -189,7 +189,7 @@ def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(
         "BRK-B", entry["id"], entry["pending_stop_price"], requested_qty=2,
     )
     stop_req = mock_client.submit_order.call_args_list[1].args[0]
-    assert isinstance(stop_req, StopLimitOrderRequest)
+    assert isinstance(stop_req, StopOrderRequest)   # primary protective = stop-MARKET
     assert stop_req.symbol == "BRK.B"
     assert protection["symbol"] == "BRK-B"
 
@@ -276,6 +276,75 @@ def test_is_trading_day_uses_calendar(mock_tc_cls):
 
     assert broker.is_trading_day() is True
     mock_client.get_calendar.assert_called_once()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_excludes_market_holiday(mock_tc_cls):
+    """Item 165: a Thanksgiving-week hold must count FEWER sessions than a
+    plain Mon-Fri weekday count, because Thursday (the holiday) never
+    trades. `AlpacaBroker.trading_sessions_held` must reflect only the days
+    the real calendar returns, not a Mon-Fri assumption.
+
+    Thanksgiving 2026 falls on Thursday 2026-11-26. Open days that week are
+    Mon/Tue/Wed/Fri (Thu closed, Fri is a 13:00 early close but still an
+    open session) = 4 sessions, one less than the 5 weekdays a Mon-Fri
+    counter would claim.
+    """
+    from datetime import date as _date
+    from src.trading_calendar import trading_sessions_held as weekday_sessions_held
+
+    start = _date(2026, 11, 22)  # Sunday before Thanksgiving week
+    end = _date(2026, 11, 27)    # Friday (early close) after the holiday
+
+    # Real calendar for that week has no entry for Thu 2026-11-26.
+    open_days = [
+        MagicMock(),  # Mon 11/23
+        MagicMock(),  # Tue 11/24
+        MagicMock(),  # Wed 11/25
+        # Thu 11/26 Thanksgiving — market closed, no entry
+        MagicMock(),  # Fri 11/27 (early close, still a session)
+    ]
+    mock_client = MagicMock()
+    mock_client.get_calendar.return_value = open_days
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    holiday_aware = broker.trading_sessions_held(start, end)
+    plain_weekday = weekday_sessions_held(start, end)
+
+    assert holiday_aware == 4
+    assert plain_weekday == 5, "sanity: the plain weekday counter should still say 5"
+    assert holiday_aware < plain_weekday, (
+        "the holiday-aware count must be strictly lower than the plain "
+        "weekday count across a week containing a market holiday"
+    )
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_zero_when_end_not_after_start(mock_tc_cls):
+    from datetime import date as _date
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    assert broker.trading_sessions_held(_date(2026, 11, 25), _date(2026, 11, 25)) == 0
+    assert broker.trading_sessions_held(_date(2026, 11, 25), _date(2026, 11, 24)) == 0
+    mock_client.get_calendar.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trading_sessions_held_falls_back_to_weekday_on_calendar_error(mock_tc_cls):
+    """A calendar outage must degrade to the weekday approximation, not
+    raise — matching `is_trading_day`'s existing failure posture."""
+    from datetime import date as _date
+    from src.trading_calendar import trading_sessions_held as weekday_sessions_held
+
+    mock_client = MagicMock()
+    mock_client.get_calendar.side_effect = RuntimeError("calendar down")
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    start, end = _date(2026, 11, 22), _date(2026, 11, 27)
+    assert broker.trading_sessions_held(start, end) == weekday_sessions_held(start, end)
 
 
 @patch("src.execution.broker.TradingClient")
@@ -1594,6 +1663,37 @@ def test_submit_order_rejects_outlier_limit_price(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
+def test_a_market_order_skips_the_fat_finger_guard(mock_tc_cls):
+    """The emergency de-lever's fallback: a MARKET order (limit_price=None)
+    must submit even when the reference is far from the live market, because
+    the fat-finger guard measures the LIMIT against the reference and a market
+    order carries no limit. This is why the no-quote fallback is a guaranteed
+    fill (delever-live-fill). The guard only fires on a limit that is >20%
+    from the reference; None is never a limit."""
+    from alpaca.trading.requests import MarketOrderRequest
+
+    mock_client = MagicMock()
+    mock_order = MagicMock()
+    mock_order.id = "order-mkt"
+    mock_order.status = "accepted"
+    mock_order.symbol = "NVDA"
+    mock_client.submit_order.return_value = mock_order
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    # A stale $300 reference against a name that has gapped to ~$80 (73% away):
+    # a LIMIT there would be rejected as an outlier, but a MARKET order submits.
+    result = broker.submit_order(
+        symbol="NVDA", qty=10, side="sell",
+        limit_price=None, reference_price=300.0,
+    )
+    assert result["status"] == "accepted"
+    assert result["id"] == "order-mkt"
+    submitted_req = mock_client.submit_order.call_args.args[0]
+    assert isinstance(submitted_req, MarketOrderRequest)
+
+
+@patch("src.execution.broker.TradingClient")
 def test_submit_order_deviation_band_no_longer_applies_to_the_stop(mock_tc_cls):
     """REPLACES `test_submit_order_rejects_outlier_stop_price` (2026-09-17).
 
@@ -1997,6 +2097,64 @@ def test_submit_stop_limit_order_unwraps_orderstatus_enum_value(mock_tc_cls):
     assert out["status"] == "new"
 
 
+class _FakeAPIError(Exception):
+    """Stand-in for alpaca's APIError: the classifiers only read
+    `status_code` and `str(exc)`, exactly what this carries."""
+    def __init__(self, message, status_code):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@patch("src.execution.broker.TradingClient")
+def test_protective_stop_is_market_and_falls_back_to_stop_limit_on_unsupported_combo(
+    mock_tc_cls,
+):
+    """PRIMARY protective stop is a stop-MARKET (owner ratified 2026-09-25).
+    If the broker refuses that market stop for an unsupported order-type/tif
+    combo, the leg DEGRADES to the original stop-LIMIT so the position is
+    never left unprotected — a market-stop refusal becomes a stop-limit,
+    never no stop."""
+    from types import SimpleNamespace
+    from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
+
+    mock_client = MagicMock()
+    mock_client.submit_order.side_effect = [
+        _FakeAPIError("order type stop is not supported for this account", 422),
+        SimpleNamespace(id="sl-1", status="new", symbol="AAPL"),
+    ]
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    out = broker._submit_stop_limit_order(symbol="AAPL", qty=5, stop_price=150.0)
+
+    reqs = [c.args[0] for c in mock_client.submit_order.call_args_list]
+    assert len(reqs) == 2
+    assert isinstance(reqs[0], StopOrderRequest)         # primary: stop-MARKET
+    assert getattr(reqs[0], "limit_price", None) is None
+    assert isinstance(reqs[1], StopLimitOrderRequest)    # fallback: stop-LIMIT
+    assert float(reqs[1].stop_price) == 150.0
+    assert float(reqs[1].limit_price) == 145.5           # 3% below the trigger
+    assert out["id"] == "sl-1"                            # the fallback's order
+
+
+@patch("src.execution.broker.TradingClient")
+def test_protective_stop_does_not_swallow_a_non_combo_rejection(mock_tc_cls):
+    """The fallback must NOT catch unrelated failures. A held_for_orders /
+    buying-power / rate-limit error must propagate so the retry / existing-
+    stop / escalation paths see the real cause — only ONE submit is made and
+    the exception surfaces, never a silent stop-limit."""
+    mock_client = MagicMock()
+    mock_client.submit_order.side_effect = _FakeAPIError(
+        "insufficient qty available (held_for_orders)", 403,
+    )
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    with pytest.raises(Exception):
+        broker._submit_stop_limit_order(symbol="AAPL", qty=5, stop_price=150.0)
+    assert mock_client.submit_order.call_count == 1      # no fallback attempted
+
+
 @patch("src.execution.broker.TradingClient")
 def test_list_recent_orders_returns_none_on_api_failure(mock_tc_cls):
     """audit F4 review #2: a failed Alpaca query must be distinguishable
@@ -2086,7 +2244,7 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     """The protective stop is GTC (survives the close) and is sized to the
     ACTUAL fill — the old OTO leg was sized to the REQUESTED qty, so a partial
     entry fill left a stop covering shares we never owned."""
-    from alpaca.trading.requests import StopLimitOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
 
     mock_client = MagicMock()
     stop_order = MagicMock(id="s1", status="new", symbol="NVDA")
@@ -2105,11 +2263,12 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
 
     assert out is not None
     req = mock_client.submit_order.call_args[0][0]
-    assert isinstance(req, StopLimitOrderRequest)
+    assert isinstance(req, StopOrderRequest)        # primary protective = stop-MARKET
     assert req.time_in_force == TimeInForce.GTC     # THE fix — survives 16:00 ET
     assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
-    assert float(req.limit_price) == 87.3           # 3% buffer below the stop
+    # A stop-MARKET has no limit — the buffer governs only the stop-limit fallback.
+    assert getattr(req, "limit_price", None) is None
     # 30.0 -> 90.0 (2026-09-10): the fallback-only ceiling now that
     # `wait_for_order_terminal` watches the real-time fill stream first —
     # see tests/test_order_fill_stream.py.

@@ -70,11 +70,14 @@ class _Provider:
 def _bind(obj):
     for name in (
         "_carry_forward_news",
+        "_latest_news_read_today",
+        "_cover_healed_news_wire",
         "_news_has_newer_material_wire",
         "_watched_research_symbols",
         "_peek_news_headlines",
         "_peeked_news_wire_text",
         "_try_one_paid_research_retry",
+        "_persist_heal_call",
     ):
         fn = getattr(TradingPipeline, name, None)
         if fn is not None:
@@ -102,6 +105,12 @@ def _pipeline(titles, *, analyst=None):
         news_analyst=analyst,
         _require_paid_analysis=lambda name: None,
         _record_heal=lambda ctx, result, alert=False: None,
+        # A paid heal now writes the same `agent_logs` row an ordinary paid
+        # call writes, so the stub needs somewhere for it to land.
+        db=SimpleNamespace(
+            insert_agent_log=lambda **kw: None,
+            insert_specialist_evidence=lambda **kw: None,
+        ),
     )
     return _bind(obj)
 

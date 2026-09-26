@@ -1347,6 +1347,178 @@ def test_a_struck_through_title_is_not_flagged(tmp_path):
     assert sb.find_closed_items_not_marked_done(p) == []
 
 
+# ---------------------------------------------------------------------------
+# item 140 -- nothing mechanically prevents a duplicate board filing. Four
+# duplicate items were filed in one day by parallel agents, each writing up
+# the same finding in different words without reading the board first.
+# `find_near_duplicate_open_items` compares OPEN items' own tidied titles
+# (the same text `load_funnel_queue` already extracts) rather than body
+# prose, on purpose: a prose/topic match would flag legitimately distinct
+# items that happen to discuss the same area of the desk.
+# ---------------------------------------------------------------------------
+
+def test_the_real_backlog_has_no_near_duplicate_open_items():
+    """The real docs/WORK.md, not a fixture -- the guard exists to catch a
+    duplicate filing landing on the live board, so it has to run clean
+    against the live board first."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    flagged = sb.find_near_duplicate_open_items(work)
+    assert not flagged, (
+        "these open backlog items look like the same finding filed twice:\n  "
+        + "\n  ".join(flagged)
+    )
+
+
+def test_an_exact_retitled_duplicate_is_flagged(tmp_path):
+    """The literal failure mode item 140 describes: the same finding, filed
+    twice with the word-for-word same headline."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Nothing mechanically prevents a duplicate board filing — "
+        "filed 2026-09-18.**\n\n"
+        "**2. Nothing mechanically prevents a duplicate board filing — "
+        "filed later the same day.**\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+    assert "item 1" in flagged[0] and "item 2" in flagged[0]
+    assert "identical" in flagged[0]
+
+
+def test_a_near_paraphrase_duplicate_is_flagged(tmp_path):
+    """A parallel agent rewording the same finding rather than copying it
+    verbatim must still be caught -- that is the actual historical failure,
+    not just the exact-copy case. One word swapped ("margin" for
+    "financing") keeps this below an exact match (ratio ~0.917) but still
+    over the near-identical threshold."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The overnight margin interest rate is an unsourced made-up "
+        "number — 3 of 53 (6%). DEFECT.**\n\n"
+        "**2. The overnight financing interest rate is an unsourced made-up "
+        "number — 4 of 53 (8%). DEFECT.**\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+    assert "near-identical" in flagged[0]
+
+
+def test_a_done_item_is_never_compared_for_duplication(tmp_path):
+    """A retired/struck-through item sharing an old title with a live one is
+    not a duplicate filing -- it is history. Only OPEN items are compared."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**~~1. The overnight margin interest rate is unsourced — FIXED.~~**\n\n"
+        "**2. The overnight margin interest rate is unsourced — 4 of 53 "
+        "(8%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_legitimately_distinct_items_are_not_flagged(tmp_path):
+    """Two items on the same area of the desk are not the same finding, and
+    a short shared prefix or suffix must not tip the ratio over on its own.
+    These are real, live, distinct titles from docs/WORK.md (items 183/185),
+    the closest real pair the guard sees (ratio ~0.745) -- pinned here so a
+    future threshold change cannot silently start flagging them."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Five order-placement gates are made-up money numbers with no "
+        "board record — 5 of 53 (9%). DEFECT.**\n\n"
+        "**2. Trailing-stop numbers are made-up money numbers with no board "
+        "record — 4 of 53 (8%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_short_generic_titles_do_not_match_by_coincidence(tmp_path):
+    """A short, generic title (below `_DUP_TITLE_MIN_LEN`) must not be
+    flagged just because it happens to normalize to the same handful of
+    words as another short title -- the length floor exists for exactly
+    this case."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Fix it — 1 of 5 (20%). DEFECT.**\n\n"
+        "**2. Fix them — 1 of 5 (20%). DEFECT.**\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_an_unparseable_board_reports_nothing_here(tmp_path):
+    """A shape change that breaks `load_funnel_queue` is that function's own
+    problem to report -- this check must not raise or invent a result on
+    top of an already-broken parse."""
+    p = tmp_path / "WORK.md"
+    p.write_text("# Work\n\nno funnel queue heading here\n")
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+# ---------------------------------------------------------------------------
+# the explicit override marker -- a genuinely deliberate near-neighbour whose
+# TITLES happen to land above the ratio must still be filable, the same way
+# the live board already declares item 138/118 and 183/138 distinct in prose.
+# The marker must NAME the item it claims distinctness from; a bare "not a
+# duplicate" claim with no number does not suppress anything.
+# ---------------------------------------------------------------------------
+
+def test_near_neighbour_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Item 1 is a NEAR-NEIGHBOUR and does NOT cover this — it "
+        "asks a different question about the same buffers.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_distinct_from_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 1, which tracks a different family of "
+        "buffers entirely.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_marker_naming_the_wrong_item_does_not_suppress(tmp_path):
+    """The override must name the ACTUAL other item in the flagged pair, not
+    just claim distinctness from something. A marker pointing at an unrelated
+    item number must not let a real duplicate through."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 99, an item that does not even exist "
+        "here.\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+
+
+def test_a_bare_not_a_duplicate_claim_with_no_item_number_does_not_suppress():
+    """A marker with no number attached is not accountable to anything and
+    must not be honoured -- otherwise any flagged pair could opt out by
+    writing "not a duplicate" with nothing behind it."""
+    assert sb._explicit_distinct_targets(
+        "This is not a duplicate, it is a near-neighbour of something else."
+    ) == set()
+
+
+
 def test_a_partial_or_pending_closure_is_not_flagged():
     """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
     review" are honest about not being finished yet — they must stay open,
@@ -2278,16 +2450,13 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         assert by_rank[rank].part_done is True, rank
     # And the negated lines stay open, as they always did. (28 was the other
     # one; it is retired above.)
-    # 32 joined them on 2026-09-13: it used to read "MOSTLY FIXED, one real
-    # judgment call left" (part_done), but everything except the
-    # drawdown-reconciliation decision has since landed and been written up,
-    # so the item was rewritten to name only what remains. An item whose
-    # entire content is one open owner decision is `open`, not part_done —
-    # a part_done label would be claiming outstanding BUILD work that no
-    # longer exists.
-    for rank in (32,):
-        assert by_rank[rank].bucket == "open", rank
-        assert by_rank[rank].part_done is False, rank
+    # 32 was pinned here from 2026-09-13 until 2026-09-20, when the owner
+    # retired it by removing the mechanism rather than answering its
+    # question (docs/INCIDENT_HISTORY.md). It is gone from the queue, so
+    # the assertion is that it is gone — not a relabelled bucket.
+    assert 32 not in by_rank, (
+        "item 32 was retired 2026-09-20; it must not be back in the queue"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2667,9 +2836,15 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     assert 1 not in by_rank
     assert 4 not in by_rank
     assert 49 not in by_rank
-    for rank in (20, 39):
+    # Item 39 was retired 2026-09-25 — its last open thread (the categorical
+    # rotation tier abandoning the whole swap when its single worst below-bar
+    # holding was structurally protected) is fixed; the tier now walks the
+    # whole below-bar cull set worst-first. Written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md.
+    assert 39 not in by_rank
+    for rank in (20,):
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (20, 39):
+    for rank in (20,):
         assert by_rank[rank].bucket == "in_hand", rank
     # Item 3 used to be pinned here as the "no_action" case (WORKING AS
     # INTENDED, no follow-on). It was written up in

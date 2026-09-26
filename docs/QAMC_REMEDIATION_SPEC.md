@@ -1135,7 +1135,7 @@ four levers, narrowest first:
 |---|---|---|
 | `modifications` | one symbol's fields | the trade is sound, sized or stopped wrong |
 | `rejected_symbols` | one symbol, refused | *that name* fails |
-| `scale_all_buys` | every new BUY/SHORT | the entry side is too big for the regime |
+| `scale_all_buys` | ADVISORY only (owner ruling 2026-09-25) | the entry side is too big for the regime — RECORDED with a reason, but resizes/drops nothing; the hard aggregate limits are the cap |
 | `approved: false` | the whole plan | the BOOK is what fails |
 
 Book-level risk still refuses broadly and is evaluated FIRST — correlation
@@ -1533,7 +1533,10 @@ higher number is acceptable: it is a PAPER account, leverage amplifies gains as
 well as losses, and there are lessons to be learned that cannot be learned at
 1x. **The 2.0x figure is therefore a deliberate learning setting on paper, NOT
 a number to carry into live capital unexamined** — see
-[[qamc-live-capital-checklist]] and re-derive it before real money.
+[[qamc-live-capital-checklist]] and re-derive it before real money. That
+re-derivation is condition `margin_2x_rederived_for_live` in the live-capital
+pre-flight gate (`src/live_capital_preflight.py`), which blocks live activation
+until it is attested.
 My argument was that the desk is 78% cash and refusing to deploy, so leverage
 raises the stakes on the few trades it does take rather than producing more
 of them. He considered it and decided; recorded here so the disagreement is
@@ -1653,6 +1656,18 @@ this is trusted:**
    been flipped on, so no night has yet carried a real debit balance to
    check this against.
 
+   **Weekend/holiday carry, 2026-09-23.** Owner-confirmed from Alpaca's
+   own docs: interest is charged for EVERY calendar day a debit balance is
+   carried, trading day or not — a Friday's overnight is 3 days
+   (Fri+Sat+Sun), a Friday before a Monday holiday is 4. The Telegram line
+   now reads the exchange calendar (`AlpacaBroker.is_trading_day`, via
+   `days_charged_until_next_trading_day`) and, when the carry spans more
+   than one day, appends "carried over the weekend that's 3 days ≈ $X".
+   `daily_usd`/`annual_usd` are unchanged; `period_usd` is the multi-day
+   total. A calendar read failure degrades to 1 day (the old flat figure),
+   never to an error. `GET /account`'s field still reports the flat
+   per-day figure only.
+
    **Verified 2026-09-01, one defect found and fixed.** Both wrappers
    (`read_margin_interest` and the Telegram `_margin_interest_lines`)
    originally fast-exited to "nothing to report" whenever `allow_margin`
@@ -1673,6 +1688,34 @@ this is trusted:**
    renders `margin_interest` yet (the frontend's `AccountResponse` type in
    `frontend/src/api/client.ts` doesn't declare the field). See
    `docs/WORK.md`'s margin-interest status note for the fuller account.
+
+   **Cumulative view shipped 2026-09-24**, closing both gaps above. Owner
+   ask: replace the per-day/per-year figures and the ESTIMATE-caveat
+   paragraph with this week's running total, the current month, each of up
+   to five more recent months that had any interest (zero months skipped),
+   and an all-time total — on both the cockpit panel and the Telegram line.
+   `AlpacaBroker.get_margin_interest_activities()` was re-checked with a
+   real $6,114.51 overnight debit (up from the first $915.83 measurement)
+   and again returned zero `INT` rows — a second, larger, independent
+   confirmation that paper trading does not post real margin-interest
+   charges. `compute_cumulative_margin_interest()`
+   (`src/margin_interest.py`) therefore still prefers a broker-confirmed
+   `INT` charge per bucket (Alpaca's own permanent ledger, which would
+   cover the account's FULL history with no local storage needed) but
+   currently always falls back to summing a NEW daily-accrual persistence
+   table, `margin_interest_daily` (`src/storage/db.py`, written each
+   morning by `src/notifier.py::_persist_margin_interest_daily`).
+   **Known limit, stated rather than papered over:** `daily_pnl` never
+   stored a historical cash/debit figure, so no accurate ESTIMATE-path
+   "all-time" total is possible for any day before this table started
+   being written (2026-09-24) — `all_time_since` on every cumulative
+   result names exactly which date its own total is counted from, so
+   "all-time" can never be misread as "since the desk went on margin" when
+   the two differ. The cockpit's per-day/per-year figures and the
+   paragraph-length `ESTIMATE_LABEL` caveat are gone from both renderings;
+   a single small "est." tag next to a genuinely nonzero, unconfirmed
+   figure is the entire marker now (a certain zero never carries it, same
+   rule `format_daily_line` already applied to the per-day figure).
 2. **Forced liquidation.** Below maintenance margin the broker sells, at the
    worst moment, without asking. Nothing currently watches the distance to
    that threshold or alerts on it.
@@ -1741,6 +1784,13 @@ resolved from account state in the run preamble
 the de-lever is engine-authored. A blank or mid-JSON-truncated PM response —
 measured at 1 run in 10 on one candidate model — is a no-trade session, and
 must never also be a no-de-lever session.
+
+**SUPERSEDED 2026-09-20.** `apply_drawdown_scale` and the whole rolling
+5d/20d `in_drawdown` brake were deleted on the owner's instruction, together
+with the daily-loss breaker (`docs/INCIDENT_HISTORY.md`, retired board item
+32). The §11.2 ladder described in this section is untouched and remains
+live; the paragraph below describes a wiring that no longer exists, and is
+kept because this file records what was specified at the time.
 
 **Wired to `apply_drawdown_scale`, not duplicated.** That function keeps its
 ratified flat 0.5x halving of new BUYs on the rolling 5d/20d `in_drawdown`
@@ -1940,7 +1990,9 @@ outcomes instead of one, each logged by name:
 | at a computed level, ≥ 1x ATR out | **honoured exactly as placed** | the honoured stop |
 | at a computed level, < 1x ATR out | widened to **1x ATR** — never to the band | the 1x ATR stop |
 | not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
-| no ATR reading at all | left alone | the kept stop |
+| no ATR reading at all | **stop READ from price structure and the position HELD** (board item 80, owner 2026-09-25) — nearest verified computed level on the protective side, else the signal/prior bar, placed one appetite buffer past it; refused only when no level is readable or it fails the desk's stop-distance sanity bound | the structural stop |
+
+**Item 80 rework (owner ruling 2026-09-25).** The last row above changed twice. It originally *honoured* a model-typed stop with no ATR (an unverifiable number setting position size — the item-80 defect). A first pass then made it *refuse* the name. The owner overruled that: "there are always levels, even from a few days ago, and there are other ways of setting a stop." So with no ATR the stop is now derived from price structure that survives on the analysis object (`computed_levels` with enough touches, else `signal_bar_low`/`signal_bar_high`) and the position is HELD; the name is skipped only when no structural level is readable at all, or the only readable one sits past the desk's existing stop-distance sanity bound (skip on risk, not on the missing reading). Published basis: swing-low / prior-bar low / Donchian channel-low stops. The buffer past the level is owner-appetite (`ConstructorConfig.structural_stop_buffer_pct`, ledgered).
 
 **Neither threshold moved AT THE TIME THIS SPEC SECTION WAS WRITTEN.**
 `min_stop_atr_multiple` has since moved twice — 3.0 (as written here) -> 1.5
@@ -2242,8 +2294,10 @@ several positions dying in one shock. 75% keeps that bound while permitting
 genuine concentration in a hot sector.
 
 **State the consequence honestly rather than burying it:** at 75% in one
-sector, an ordinary 20% sector drawdown costs 15% of equity — five times the 3%
-daily-loss breaker, and it will trip the Phase 11.2 de-levering ladder. That is
+sector, an ordinary 20% sector drawdown costs 15% of equity — three times the
+ratified 5% per-trade risk unit, and it will trip the Phase 11.2 de-levering
+ladder. (This line compared against the daily-loss breaker until 2026-09-20,
+when that breaker was removed outright — retired board item 32.) That is
 the accepted cost of a concentrated trading desk, not an oversight. Phase
 10.3's scaling still applies underneath: crossing the target shrinks each
 further position rather than refusing it.
@@ -2483,7 +2537,9 @@ chain and prior art this extends.
 
 ## Invariants (must hold at all times)
 
-1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
+1. Alpaca **Paper** only. Live capital requires separate explicit authorization,
+   and is mechanically gated by `src/live_capital_preflight.py` (board item 150) —
+   the gate, not any prose checklist, is the source of truth for the conditions.
 2. Deterministic Python risk and broker protections are **final authority and fail closed**.
 3. Every position carries a **broker-resident stop** from the moment it is opened.
 4. No single trade risks more than **5% of equity**; total at-risk never exceeds **25%**, correlation-adjusted.

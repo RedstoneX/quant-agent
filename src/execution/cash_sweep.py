@@ -50,7 +50,6 @@ import math
 import time
 
 from src.quantities import sweep_reserve_usd
-from src.risk.rules import daily_loss_numerator
 
 logger = logging.getLogger(__name__)
 
@@ -423,43 +422,10 @@ class CashSweeper:
         ctx.deployable_cash = self._pipeline._compute_deployable_cash(cash, positions)
         ctx.total_value = total_value
 
-        # NEVER park on a daily-loss-breach day (audit round 2). The breach
-        # persists all day (P&L basis = last_equity), so parking after the
-        # breaker fired started a deterministic wash loop: the bookend buys
-        # ~99% of equity into the vehicle → the next intra tick's breaker
-        # sold it again with a spurious 🚨 push → the next bookend parks
-        # again — 2-4 full-equity round trips per breach day, violating the
-        # no-new-orders-on-breach invariant. The breaker no longer sells
-        # anything at all (docs/WORK.md item 32), but this choke point
-        # matters MORE rather than less now: a park is new exposure, and a
-        # halt means no new exposure. One choke point guards every current
-        # and future call site.
-        #
-        # Routed through `pipeline._daily_loss_breach` rather than calling
-        # `check_daily_loss` with the account's day change directly, so this
-        # gate and the breaker itself can never disagree about whether the
-        # desk is in breach — they read one measurement.
-        try:
-            last_equity = account.get("last_equity", total_value)
-            from src.pipeline import _limit_is_vol_relative
-            daily_pnl, _basis = daily_loss_numerator(
-                total_value - last_equity, positions,
-                vol_relative=_limit_is_vol_relative(pipeline.risk_engine),
-                cash_park_symbol=self.symbol,
-            )
-            breach = pipeline.risk_engine.check_daily_loss(
-                last_equity, daily_pnl,
-            )
-        except Exception as e:  # noqa: BLE001 — unknowable breach state must not park
-            logger.warning("cash sweep: breach check failed (%s) — skipping "
-                           "park (conservative)", e)
-            return None
-        if breach is not None:
-            logger.warning(
-                "cash sweep: daily-loss breaker active (%s) — not parking on "
-                "a breach day", breach.message,
-            )
-            return None
+        # A daily-loss-breach gate used to sit here: no parking on a day
+        # the account-level breaker had fired. That breaker was removed
+        # 2026-09-20 on the owner's instruction (retired item 32,
+        # docs/INCIDENT_HISTORY.md), so there is no breach state to read.
 
         # Alpaca's `cash` does not subtract open-order holds. Sweeping cash
         # that a pending BUY limit needs would make its fill reject later.

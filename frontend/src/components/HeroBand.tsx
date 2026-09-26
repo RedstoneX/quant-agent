@@ -10,6 +10,7 @@ import {
 } from "@tremor/react";
 import { AccountResponse, MacroBroaderContext, PositionItem } from "../api/client";
 import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
+import { marginInterestCompactLabel } from "./MarginInterestPanel";
 import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
 
@@ -75,6 +76,96 @@ function RegimeCard({ regime }: { regime: { macro: MacroBroaderContext; asOf: st
       )}
       {macro.summary && <Text className="mt-3 leading-snug line-clamp-2">{macro.summary}</Text>}
     </Card>
+  );
+}
+
+/* Portfolio-exposure card — net exposure gauge plus the Long/Hedge/Short/
+ * Liquidity breakdown. Extracted so the page layout (variant="page", iPad
+ * header) and the redesigned Account dockview panel (variant="panel")
+ * render exactly the same card from the same server-computed numbers, with
+ * no second copy to drift. All figures come in already computed by
+ * HeroBand — nothing is re-derived here (the defect that made this gauge
+ * and its own ceiling disagree by 13.6 points came from re-derivation). */
+function ExposureCard({
+  deployedLabel,
+  riskDeployedPct,
+  maxTotalPct,
+  longMv,
+  hedgeMv,
+  shortMv,
+  cashMv,
+}: {
+  deployedLabel: string;
+  riskDeployedPct: number | null;
+  maxTotalPct: number | null;
+  longMv: number;
+  hedgeMv: number;
+  shortMv: number;
+  cashMv: number;
+}) {
+  return (
+    <Card decoration="top" decorationColor="cyan" className="!bg-panel !p-3.5 !ring-border h-full">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Text className="uppercase tracking-wide">Portfolio exposure</Text>
+          <Title
+            className="mt-1 font-mono !text-2xl text-ink"
+            title="Net exposure: holdings after hedges are netted off, leveraged funds at their true multiple. Same measure as the ceiling beside it."
+          >
+            {deployedLabel} net exposure
+          </Title>
+        </div>
+        {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
+      </div>
+      <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
+      <Grid numItems={shortMv !== 0 ? 4 : 3} className="mt-3 gap-2">
+        <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
+        <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
+        {shortMv !== 0 && (
+          <div><Text className="text-xs uppercase">Short</Text><Metric className="font-mono text-base text-neg">{fmtMoneyCompact(shortMv)}</Metric></div>
+        )}
+        <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
+      </Grid>
+    </Card>
+  );
+}
+
+/* One tile in the panel's PRIMARY STAT ROW — the full-width, equally
+ * weighted row of headline glances (NLV, day P&L, total P&L, interest/day)
+ * that replaced the old three-full-width-rows-hugging-the-left layout
+ * (owner 2026-09-23: "weirdly horizontally dead spaced ... hard to find,
+ * the data I wanna see"). The row itself uses an auto-fit grid so the
+ * tiles fill the panel's real width and reflow as it is resized, rather
+ * than leaving a dead band on the right. */
+function StatTile({
+  label,
+  value,
+  valueClass = "text-ink",
+  sub,
+  badge,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  sub?: React.ReactNode;
+  badge?: React.ReactNode;
+  tooltip?: string;
+}) {
+  return (
+    <div
+      className="flex min-w-0 flex-col rounded-lg border border-border bg-panel-alt px-3 py-2"
+      title={tooltip}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="label-xs truncate">{label}</span>
+        {badge}
+      </div>
+      <div className={`mt-0.5 font-mono text-[length:var(--fs-stat)] font-semibold leading-tight tabular-nums ${valueClass}`}>
+        {value}
+      </div>
+      {sub != null && <div className="mt-0.5 text-[length:var(--fs-meta)] text-dim tabular-nums">{sub}</div>}
+    </div>
   );
 }
 
@@ -146,6 +237,17 @@ export function HeroBand({
   const maxTotalPct = account.risk_limits?.max_total_position_pct ?? null;
   const history = equityHistorySeries(account);
 
+  // Total P&L since the board's own tracked start (server-computed,
+  // src/api/routes_live.py — see AccountResponse.total_pnl) and margin
+  // interest (src/margin_interest.py via account.margin_interest) — the
+  // two owner-requested top-left figures that were missing entirely
+  // (owner, 2026-09-23): day P&L and unrealized already showed above.
+  // `null` renders as "—" in both spots rather than a fabricated number.
+  const totalPnlLabel = account.total_pnl === null
+    ? "Total P&L: —"
+    : `Total ${fmtMoney(account.total_pnl)} (${fmtPct(account.total_pnl_pct)})${account.total_pnl_since ? ` since ${account.total_pnl_since}` : ""}`;
+  const marginInterest = marginInterestCompactLabel(account.margin_interest);
+
   if (collapsed) {
     return (
       <div className={`${isPanel ? "" : "mx-3 mt-1 "}flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 overflow-x-hidden rounded-lg border border-border bg-panel px-3 py-1`}>
@@ -171,6 +273,15 @@ export function HeroBand({
         )}
         <span className={`font-mono text-[length:var(--fs-body)] font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
           {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
+        </span>
+        <span
+          className={`font-mono text-[length:var(--fs-meta)] tabular-nums ${pnlClass(account.total_pnl)}`}
+          title={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+        >
+          {totalPnlLabel}
+        </span>
+        <span className="text-[length:var(--fs-meta)] text-dim" title={marginInterest.note}>
+          {marginInterest.text}
         </span>
         {liquidity && (
           <span className="text-[length:var(--fs-meta)] text-dim" title="Cash plus the parked sweep vehicle — the figure sizing uses">
@@ -204,13 +315,136 @@ export function HeroBand({
     );
   }
 
+  /* ==== Account Dockview panel (desktop) — redesigned 2026-09-23 ====
+   *
+   * Owner, live, verbatim: "Can you redesign that panel? It's just weirdly
+   * horizontally dead spaced ... it's just hard to read and hard to find,
+   * the data I wanna see." The three sub-sections used to stack as
+   * full-width rows whose content hugged the left third — a tall panel
+   * with a dead band down the right, and the margin-interest figure buried
+   * at the very bottom where he could not find it.
+   *
+   * The fix is two grids that USE THE FULL WIDTH:
+   *   1. PRIMARY STAT ROW — NLV, day P&L, total P&L since inception, and
+   *      interest/day as four equally weighted tiles in an auto-fit grid.
+   *      This one row answers both complaints: it fills the horizontal
+   *      space, and it lifts interest/day from the bottom to a headline
+   *      glance beside the P&L figures the owner named.
+   *   2. SECONDARY GRID — the exposure gauge and the regime card side by
+   *      side (auto-fit), compact, below the headline.
+   *
+   * Every honest datum and caveat is preserved: the ESTIMATE badge on
+   * interest stays VISIBLE (not tooltip-only), the real "$0.00/day" zero
+   * state and the "not available" degraded state both render as text, and
+   * total P&L still degrades to "—" rather than fabricating a number. The
+   * borrowed/annual/rate ESTIMATE detail continues below in
+   * MarginInterestStrip; this row is the glance, that strip is the detail.
+   */
+  if (isPanel) {
+    const mi = account.margin_interest;
+    const cumulative = mi && !mi.error ? mi.cumulative : null;
+    // Interest tile — owner ask 2026-09-24: replace the per-day figure
+    // with THIS WEEK's cumulative running total, mirroring
+    // MarginInterestStrip's own rules so the two never disagree. A
+    // null/errored estimate or missing cumulative degrades to "not
+    // available" (never a fabricated $0.00); "no data yet" is its own
+    // honest state, not a zero; a genuinely nonzero, unconfirmed total
+    // carries a small "est." badge — never a paragraph.
+    const interestUnavailable = !mi || mi.error || !cumulative;
+    let interestValue: string;
+    let interestBadge: React.ReactNode = null;
+    let interestSub: React.ReactNode = null;
+    if (interestUnavailable) {
+      interestValue = "not available";
+    } else if (cumulative!.source === "no_data") {
+      interestValue = "no data yet";
+      interestSub = "Tracking starts today";
+    } else {
+      interestValue = fmtMoney(cumulative!.this_week_usd);
+      if (cumulative!.is_estimate && cumulative!.this_week_usd !== 0) {
+        interestBadge = (
+          <Badge color="amber" size="xs">
+            est.
+          </Badge>
+        );
+      }
+      interestSub = `${cumulative!.current_month_label}: ${fmtMoney(cumulative!.current_month_usd)}`;
+    }
+
+    return (
+      <div className="min-w-0 overflow-x-hidden">
+        <div
+          className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]"
+          aria-label="Account headline"
+        >
+          <StatTile
+            label="Net liquidation value"
+            value={fmtMoney(account.portfolio_value)}
+            badge={accountError ? <Badge color="amber" size="xs">stale</Badge> : undefined}
+            tooltip="Total account equity — cash plus the market value of every position."
+          />
+          <StatTile
+            label="P&L today"
+            value={fmtMoney(account.daily_pnl)}
+            valueClass={pnlClass(account.daily_pnl)}
+            sub={<span className={pnlClass(account.daily_pnl_pct)}>{fmtPct(account.daily_pnl_pct)}</span>}
+            tooltip={`${fmtMoney(unrealized)} unrealized`}
+          />
+          <StatTile
+            label="Total P&L"
+            value={account.total_pnl === null ? "—" : fmtMoney(account.total_pnl)}
+            valueClass={pnlClass(account.total_pnl)}
+            sub={
+              account.total_pnl === null
+                ? undefined
+                : `${fmtPct(account.total_pnl_pct)}${account.total_pnl_since ? ` since ${account.total_pnl_since}` : ""}`
+            }
+            tooltip={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+          />
+          <StatTile
+            label="Interest this week"
+            value={interestValue}
+            valueClass={interestUnavailable ? "text-dim" : "text-ink"}
+            badge={interestBadge}
+            sub={interestSub}
+            tooltip={marginInterest.note}
+          />
+        </div>
+
+        {history.length > 1 && (
+          <SparkAreaChart
+            data={history}
+            index="date"
+            categories={["equity"]}
+            colors={["cyan"]}
+            className="mt-2 h-8"
+            showGradient
+          />
+        )}
+
+        <div className="mt-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))]">
+          <ExposureCard
+            deployedLabel={deployedLabel}
+            riskDeployedPct={riskDeployedPct}
+            maxTotalPct={maxTotalPct}
+            longMv={longMv}
+            hedgeMv={hedgeMv}
+            shortMv={shortMv}
+            cashMv={cashMv}
+          />
+          <RegimeCard regime={regime} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     /* Vertical-space reallocation pass, 2026-09-11: outer mt-3 -> mt-2,
        same low-risk inter-section trim as the other stacked chrome
        sections (HoldingsStrip/LiquidityPanel/TodaySessionsStrip/
        DecisionStateBanner) — internal mt-3 spacing inside this component
        is untouched. */
-    <div className={`${isPanel ? "min-w-0 overflow-x-hidden " : "mx-3 mt-2 "}grid grid-cols-1 gap-3 ${isPanel ? "" : regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
+    <div className={`mx-3 mt-2 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}
@@ -228,6 +462,17 @@ export function HeroBand({
             {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
           </span>
           <span className={`font-mono tabular-nums ${pnlClass(unrealized)}`}>{fmtMoney(unrealized)} unrealized</span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
+          <span
+            className={`font-mono font-semibold tabular-nums ${pnlClass(account.total_pnl)}`}
+            title={account.total_pnl_since ? `Since the board's earliest tracked day, ${account.total_pnl_since}` : undefined}
+          >
+            {totalPnlLabel}
+          </span>
+          <span className="text-dim" title={marginInterest.note}>
+            {marginInterest.text}
+          </span>
         </div>
         {history.length > 1 && (
           <SparkAreaChart
@@ -260,29 +505,15 @@ export function HeroBand({
         </div>
       </Card>
 
-      <Card decoration="top" decorationColor="cyan" className="!bg-panel !p-3.5 !ring-border h-full">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <Text className="uppercase tracking-wide">Portfolio exposure</Text>
-            <Title
-              className="mt-1 font-mono !text-2xl text-ink"
-              title="Net exposure: holdings after hedges are netted off, leveraged funds at their true multiple. Same measure as the ceiling beside it."
-            >
-              {deployedLabel} net exposure
-            </Title>
-          </div>
-          {maxTotalPct !== null && <Badge color="slate">ceiling {maxTotalPct.toFixed(0)}%</Badge>}
-        </div>
-        <ProgressBar value={riskDeployedPct ?? 0} color="cyan" className="mt-3" />
-        <Grid numItems={shortMv !== 0 ? 4 : 3} className="mt-3 gap-2">
-          <div><Text className="text-xs uppercase">Long</Text><Metric className="font-mono text-base text-pos">{fmtMoneyCompact(longMv)}</Metric></div>
-          <div><Text className="text-xs uppercase">Hedge</Text><Metric className="font-mono text-base text-hedge">{fmtMoneyCompact(hedgeMv)}</Metric></div>
-          {shortMv !== 0 && (
-            <div><Text className="text-xs uppercase">Short</Text><Metric className="font-mono text-base text-neg">{fmtMoneyCompact(shortMv)}</Metric></div>
-          )}
-          <div><Text className="text-xs uppercase">Liquidity</Text><Metric className="font-mono text-base text-ink">{fmtMoneyCompact(cashMv)}</Metric></div>
-        </Grid>
-      </Card>
+      <ExposureCard
+        deployedLabel={deployedLabel}
+        riskDeployedPct={riskDeployedPct}
+        maxTotalPct={maxTotalPct}
+        longMv={longMv}
+        hedgeMv={hedgeMv}
+        shortMv={shortMv}
+        cashMv={cashMv}
+      />
 
       <RegimeCard regime={regime} />
     </div>

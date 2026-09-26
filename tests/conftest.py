@@ -87,3 +87,23 @@ def _isolate_cwd(tmp_path, monkeypatch):
     for _governor in _TOKEN_GOVERNORS.values():
         with _governor._lock:
             _governor._events.clear()
+
+    # `src.agents.base._ROUTE_BREAKERS` is a process-wide dict of half-open
+    # provider breakers (see `RouteBreaker`). Production wants exactly that:
+    # every seat sharing one Google key must share one view of whether that
+    # key is in a cooldown. Tests do not — a case that demotes a provider
+    # would otherwise make the NEXT test's first call skip its primary and
+    # fail for a reason that has nothing to do with what it is testing.
+    # Clearing the registry before each test restores per-test independence
+    # without changing the breaker's own behaviour.
+    from src.agents.base import _reset_route_breakers_for_tests
+    _reset_route_breakers_for_tests()
+
+    # The route journal memoises which DB path it created its schema on, and
+    # counts write failures per process. Both are process-global; reset them
+    # so a test that repoints QUANT_AGENT_DB_PATH gets a real schema and a
+    # clean failure count.
+    from src import llm_route_journal
+    llm_route_journal._reset_schema_cache_for_tests()
+    monkeypatch.setenv("QUANT_AGENT_DB_PATH", str(tmp_path / "route" / "quant_agent.db"))
+    (tmp_path / "route").mkdir(parents=True, exist_ok=True)

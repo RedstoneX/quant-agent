@@ -85,8 +85,7 @@ def test_a_default_bound_to_a_name_is_still_a_site() -> None:
     the gate. Constant arithmetic (`5 * 366`) did the same.
     """
     sites = {s.site_id: s.value for s in collect_sites()}
-    assert sites["src.config.RiskConfig.drawdown_vol_sensitivity"] == 3.0
-    assert sites["src.config.RiskConfig.min_reward_risk_after_widening"] == 1.5
+    assert sites["src.config.RiskConfig.max_position_risk_pct"] == 5.0
     assert sites["src.config.SmartMoneyConfig.insider_history_retention_days"] == 5 * 366
 
 
@@ -158,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 148, (
+    assert MAX_ARBITRARY_ENTRIES == 140, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -183,7 +182,105 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "number, `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` "
         "(the reserved-slot bound for board item 124's fix), recorded "
         "honestly as `arbitrary` with its open question stated rather than "
-        "presented as measured."
+        "presented as measured. "
+        "148 -> 142 on 2026-09-20, retired board item 32: six rows left with "
+        "the account-level loss alarms the owner removed. "
+        "142 -> 143 on 2026-09-23, board item 180: "
+        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the "
+        "200-day moving average being a standard published trend reference, "
+        "which sources the MA WINDOW and not the second use of the same "
+        "constant -- the constructor's outright refusal of any listing under "
+        "200 bars, for which no citation exists. One status per site, so the "
+        "row takes the weaker use's status and the split is written into its "
+        "note. No value changed. "
+        "143 -> 142 on 2026-09-24, item 118: "
+        "`src.pipeline.TradingPipeline._force_delever:factor[1]` (the forced "
+        "de-lever's must-fill SELL limit) was re-sourced from `arbitrary` to "
+        "`derived`, pointing at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the 3%-"
+        "through buffer) to match the gross-ceiling de-lever. A number sourced, "
+        "so the count is lowered in the same commit. "
+        "142 -> 141 on 2026-09-24, board item 81: "
+        "`src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening` "
+        "was deleted as dead code -- no code in `PortfolioConstructor` ever "
+        "read it, confirmed by grep before deleting. A row left the ledger, "
+        "so the count is lowered in the same commit. "
+        "141 -> 143 on 2026-09-25, item 142 adversary review: "
+        "`src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R` (value 2) and "
+        "`RANGE_SECOND_RATCHET_LOCK_R` (value 1) were recorded `derived` from "
+        "`RANGE_BREAKEVEN_R_MULTIPLE`, but neither is computed from the +1R "
+        "breakeven unit -- 2R is a chosen appetite multiple and the 1R lock "
+        "equals the breakeven unit only by coincidence of appetite, not a "
+        "derivation -- so both were reclassified `arbitrary`. Owner-ratified "
+        "appetite is not a source. Two rows changed status, so the count rises "
+        "by exactly two in the same commit. "
+        "143 -> 142 on 2026-09-25, ledger cleanup: "
+        "`src.risk.trailing.CHANDELIER_ATR_MULTIPLE` (value 3) was reclassified "
+        "`arbitrary` -> `sourced`. The Chandelier Exit's published default "
+        "multiple is 3.0 (Chuck LeBeau; StockCharts ChartSchool; Corporate "
+        "Finance Institute). Only the MULTIPLE is sourced -- the desk trails off "
+        "the highest-high-since-entry and a passed-in ATR, not the published "
+        "22-bar / ATR(22) geometry -- so the note records the split. A number "
+        "sourced, so the count is lowered in the same commit. The midday "
+        "stop-sanity floor 0.5 (`_midday_execute_llm_actions:factor[0]`) was "
+        "considered for the same pass but STAYS `arbitrary`: although its "
+        "midday use is a non-binding typo guard, the same 0.5 is reused as the "
+        "universe screen's ATR/price volatility ceiling "
+        "(`STOP_SANITY_FLOOR_FRACTION`), which reaches a trade decision, so "
+        "`not-trade-governing` would be false; only its note was corrected. "
+        "142 -> 141 on 2026-09-25, consolidated appetite-ratification campaign "
+        "(owner delegated to the adversary): "
+        "`src.config.RiskConfig.min_level_touches_for_stop_honor` (value 5) was "
+        "reclassified `arbitrary` -> `sourced` against the in-repo measured "
+        "real-vs-shuffled bounce-probability study (src/config.py:722-740): the "
+        "95% confidence intervals separate cleanly only at 5+ touches (real "
+        "0.644 [0.590, 0.696] vs shuffled 0.505 [0.470, 0.539]) while 3-4 "
+        "overlap the noise control. A number sourced, so the count is lowered "
+        "in the same commit. The campaign also RATIFIED several numbers as "
+        "owner-appetite (max_portfolio_risk_pct 25, max_cluster_risk_share_pct "
+        "40, SECTOR_HARD_CEILING_MAX 90, max_target_horizon_sessions 60, "
+        "min_stop_atr_multiple 2.5, the three stop_atr_regime_scale magnitudes, "
+        "and the six GROSS_LADDER numbers), but ratified appetite stays "
+        "`arbitrary`+note by this ledger's convention, so none of those move "
+        "the count."
+        "141 -> 142 on 2026-09-25, board item 148: "
+        "`src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (value 10), a "
+        "genuinely new number -- the level-strength formula's `/ 10.0` divisor "
+        "was an inline literal outside rule (e)'s factor band and so invisible "
+        "to the scanner (named in this module's own docstring); it is now a "
+        "named module constant with the same value and the same behaviour, "
+        "recorded honestly as `arbitrary` with its open question stated. The "
+        "board item's other literal, a flat 40% max-distance cap, was found "
+        "already gone from the code -- replaced 2026-09-12 by the ATR-based "
+        "`horizon_reach` window, which is already ledgered -- so nothing new "
+        "was added for it. "
+        "142 -> 140 on 2026-09-25, board item 52: "
+        "`src.config.SmartMoneyConfig.min_transaction_value_usd` (100,000) and "
+        "`external_min_transaction_value_usd` (250,000) were deleted, not "
+        "sourced -- no published study supports single-transaction dollar "
+        "size as a positive insider-buy predictor (the closest, Cziraki & "
+        "Gider 2019, finds size inversely related), so the Form 4 insider-buy "
+        "admission screen no longer gates on size at all. Two rows left the "
+        "ledger, so the count is lowered by exactly two in the same commit."
+        "140 -> 141 on 2026-09-25, board item 80 (reworked): a genuinely new "
+        "number, `src.portfolio_constructor.ConstructorConfig."
+        "structural_stop_buffer_pct` (0.005) -- the buffer a no-ATR protective "
+        "stop sits past the structural level it is read from "
+        "(`_derive_structural_stop_no_atr`), added when the item-80 branch was "
+        "reworked from an outright refusal into a structural-stop fallback per "
+        "the owner ruling. No published method fixes a buffer size, so it is "
+        "recorded honestly as `arbitrary`, ratified as owner-appetite with its "
+        "open question and cost stated."
+        "141 -> 140 on 2026-09-25, board item 180 (owner ruling): "
+        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was reclassified "
+        "`arbitrary` -> `sourced`. Its WEAKER, unsourced use -- the "
+        "constructor's `_require_sufficient_history` young-listing refusal that "
+        "read the same 200 as a bar-count data-sufficiency gate -- was removed "
+        "on the owner's ruling (a young listing is now judged on whether a "
+        "protective stop is readable, via the existing stop-readability rule, "
+        "not on a bar count). With that use gone the constant's only remaining "
+        "use is the sourced 200-day MA window, so the row is `sourced` again. A "
+        "use was removed, not a value changed, so the count is lowered in the "
+        "same commit."
     )
 
 
@@ -208,6 +305,51 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
 
     values = [e["value"] for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(values) == MAX_ARBITRARY_ENTRIES
+
+
+def test_item_138_order_price_buffers_have_one_source_each() -> None:
+    """Board item 138. The order-price buffers carry three values across many
+    sites — the 3% stop-limit through-buffer and the 0.5% exit offset
+    (0.995 SELL / 1.005 COVER). Each value must have exactly ONE `arbitrary`
+    definition; every other site that prices off it is `derived` from that one
+    base, so the buffer cannot silently acquire a second, divergent source of
+    truth. The general gate value-matches each literal; this pins the
+    consolidation itself, which is what item 138 asked for.
+    """
+    ledger = load_ledger()
+
+    stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
+    exit_offset = "src.pipeline_stages.ExecutionStage._run_session:factor[0]"
+
+    # The two canonical bases: arbitrary, with their unchanged values.
+    assert ledger[stop_buffer]["status"] == "arbitrary", stop_buffer
+    assert ledger[stop_buffer]["value"] == 0.03, stop_buffer
+    assert ledger[exit_offset]["status"] == "arbitrary", exit_offset
+    assert ledger[exit_offset]["value"] == 0.995, exit_offset
+
+    # Every other order-price site at these values derives from the base above.
+    derived_from_base = {
+        "src.pipeline.TradingPipeline._force_delever:factor[1]": stop_buffer,
+        "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_book:factor[1]": exit_offset,
+    }
+    for site_id, base in derived_from_base.items():
+        assert ledger[site_id]["status"] == "derived", site_id
+        assert ledger[site_id]["derived_from"] == base, site_id
+
+    # No SECOND arbitrary source for any of these buffer values.
+    for value in (0.03, 0.995, 1.005):
+        arbitrary_at_value = [
+            site_id
+            for site_id, entry in ledger.items()
+            if entry.get("status") == "arbitrary" and entry.get("value") == value
+        ]
+        assert len(arbitrary_at_value) <= 1, (value, arbitrary_at_value)
 
 
 def test_every_arbitrary_entry_carries_its_debt() -> None:
@@ -305,7 +447,42 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 147, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 153, (
+        "152 -> 153 on 2026-09-24, item 163: +1 for "
+        "src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT (0.5), the "
+        "tolerance the new PM risk-narrative-mismatch check uses to compare "
+        "an explicit risk-% claim in TargetPosition.thesis prose against the "
+        "authoritative risk_allocation_pct field. Not independent -- it is "
+        "RiskConfig.min_position_risk_pct (already ledgered) duplicated as a "
+        "literal because TargetPosition has no RiskConfig in scope at "
+        "validation time. It only sets a surfaced flag; risk_allocation_pct "
+        "is never overridden, so it cannot decide, size, price or exit a "
+        "trade. "
+        "151 -> 152 on 2026-09-24: +1 for "
+        "src.margin_interest.MAX_LOOKBACK_MONTHS (6), the owner's own ask "
+        "for how many months back the cumulative margin-interest view "
+        "(this week/current month/up to 6 months/all-time) looks. It bounds "
+        "a presentation window, not any trade decision. "
+        "150 -> 151 on 2026-09-23: +1 for "
+        "src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS (7), the safety "
+        "bound on the forward calendar walk behind the owner-facing "
+        "margin-interest ESTIMATE (how many calendar days a Friday debit is "
+        "carried). It bounds a Telegram/dashboard estimate and degrades to 1 "
+        "when exhausted; it never decides, sizes, prices or exits a trade. "
+        "149 -> 150 on 2026-09-23: +1 for "
+        "src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS, the width "
+        "of the one FRED release-dates request per release. It is the fetch "
+        "window, not the event horizon -- get_upcoming_events still filters "
+        "to horizon_days -- so it governs what the desk can SEE, not what it "
+        "trades. "
+
+        "147 -> 149 on 2026-09-23, the three-route failover ladder: +2 for "
+        "`src.llm_route_journal._DEFAULT_DB_RELATIVE`'s companions in that "
+        "new module (the journal's SQLite timeout and its read_events page "
+        "size). Both are plumbing on a durable log of which LLM road "
+        "answered; neither decides, sizes, prices or exits a trade. The four "
+        "numbers the same change added to src/agents/base.py are NOT here -- "
+        "that module is in SCOPED_PATHS and they carry ledger entries. "
         "145 -> 147 on 2026-09-19: +2 for src/number_sources.py's own "
         "FACTOR_BAND, the scanner's classifier band, not a trade number. "
 
@@ -626,8 +803,13 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # (d) class attributes.
     assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
     assert "src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT" in ids
-    # (e) item 138: the 1% de-lever ladder, the 0.5% exit offsets.
-    assert "src.pipeline.TradingPipeline._enforce_gross_ceiling:factor[1]" in ids
+    # (e) item 138: inline order-price factors. The de-lever ladder's own
+    # SELL/COVER fill limits are no longer inline % literals — the emergency
+    # de-lever now crosses the LIVE quote or sends a MARKET order
+    # (delever-live-fill), so `_enforce_gross_ceiling` carries no factor site
+    # and `_force_delever:factor[1]` is now its conservative proceeds haircut.
+    # The forced de-lever's sweep cushion (factor[0]) still proves rule (e).
+    assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids

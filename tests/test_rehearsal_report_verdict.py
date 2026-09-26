@@ -69,9 +69,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #      handled below -- but the *same* shape also applies to
 #      `hard_risk_block` / `agent_failure` / `rejected` / `symbol_block`
 #      (RiskStage.run, a different file: src/pipeline_stages.py),
-#      `daily_loss_halted` (`_halt_on_daily_loss_breach`, itself reached
-#      through `_check_late_breach_and_halt`) and
-#      `paid_analysis_suspended` (`_paid_suspended_payload`) -- both in
+#      and `paid_analysis_suspended` (`_paid_suspended_payload`) -- in
 #      pipeline.py but in a shared helper, not at the `return` site.
 #
 # run_intra_check has its own nested-indirection wrinkle: the opportunity
@@ -251,18 +249,21 @@ _PIPELINE_SESSION_FUNCTIONS = (
     # lives in `_run_morning_body` / `_run_position_review_body` /
     # `_run_intra_check_body`, so the bodies are scanned directly too.
     "_run_morning_body", "_run_position_review_body", "_run_intra_check_body",
+    # `run_earnings_preprocess` became the same shape on 2026-09-23: the
+    # wrapper stamps the P&L block's `pnl_unavailable_reason` (this mode
+    # genuinely reads no account) and every status literal lives in the
+    # body, so the body is scanned directly too.
+    "_run_earnings_preprocess_body",
 )
 
 # Explicit indirection bridges: (source file, lookup, resolved status set).
 # See the derivation's module comment above for why each of these needed a
 # named bridge rather than falling out of a generic walk.
 _BRIDGE_FUNCTION_NAMES = {
-    # 2026-09-14 (docs/WORK.md item 32): the daily-loss breaker halts rather
-    # than liquidating. Its status dict lives in `_halt_on_daily_loss_breach`
-    # and reaches run_morning through `_check_late_breach_and_halt` — two
-    # bridges, both named, replacing the single
-    # `_check_late_breach_and_emergency_liquidate` that used to be here.
-    "_halt_on_daily_loss_breach", "_check_late_breach_and_halt",
+    # The `_halt_on_daily_loss_breach` / `_check_late_breach_and_halt`
+    # bridges that used to be here are gone: the account-level loss breaker
+    # was removed entirely on 2026-09-20 (retired item 32), so there is no
+    # `daily_loss_halted` status left to derive.
     "_risk_stage", "run",
     "_paid_suspended_payload",
     # 2026-09-02: the kill switch halts all three sessions from a shared
@@ -321,22 +322,8 @@ def _derive_known_pipeline_statuses() -> set[str]:
     # from this method's result.
     statuses |= _status_literals(_find_method(stages_tree, "RiskStage", "run"))
 
-    # Bridge 3 & 4: shared helpers inside pipeline.py itself, called (and
+    # Bridge 3: a shared helper inside pipeline.py itself, called (and
     # bare-returned) from several session functions.
-    #
-    # `_halt_on_daily_loss_breach` writes its status as the class attribute
-    # `TradingPipeline.DAILY_LOSS_HALT_STATUS` rather than a literal at the
-    # dict site — deliberately, so the string that the payload, the
-    # checkpoint marker and the notifier all key on has exactly one
-    # definition. `_status_literals` only sees literals, so the attribute's
-    # own definition is resolved here. If it stops being a plain string
-    # constant this raises rather than silently dropping the status.
-    statuses |= _status_literals(
-        _find_function(pipeline_tree, "_halt_on_daily_loss_breach")
-    )
-    statuses.add(_class_str_attr(
-        pipeline_tree, "TradingPipeline", "DAILY_LOSS_HALT_STATUS",
-    ))
     statuses |= _status_literals(_find_function(pipeline_tree, "_paid_suspended_payload"))
 
     # Bridge 5: the item-20 evidence gate — run_morning bare-returns this

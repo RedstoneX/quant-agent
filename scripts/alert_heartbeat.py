@@ -442,9 +442,12 @@ def run_coverage_check(now: datetime | None = None) -> str:
     `src.execution.stop_repair.repair_stop_coverage` a normal session uses. It
     never sells, resizes, closes or cancels anything.
 
-    Two owner alerts, each at most once per trading day: shares still with no
-    stop and no session to have re-placed one, and a placement that was
-    attempted during open hours and did not land. A failed placement is never
+    Three owner alerts, each at most once per trading day (per SYMBOL for the
+    latter two): shares still with no stop and no session to have re-placed
+    one, a placement that was attempted during open hours and did not land,
+    and — board item 172 — a position whose protective stop the broker could
+    not be ASKED about, which is an unknown rather than a measured gap and is
+    sent FIRST. Neither a failed placement nor an unreadable stop is ever
     swallowed.
 
     Returns the journal line; raises only if the broker cannot be built, and
@@ -456,7 +459,7 @@ def run_coverage_check(now: datetime | None = None) -> str:
     from src.coverage_watchdog import (
         SWEEP_AGENT_NAME, SWEEP_LOG_NAME, alert_text, check_coverage,
         record_sweep_run, repair_failure_text, status_line, sweep_log_line,
-        sweep_summary,
+        sweep_summary, unreadable_stop_text,
     )
 
     # Board item 131: every run leaves a named line in the desk's log and
@@ -479,9 +482,62 @@ def run_coverage_check(now: datetime | None = None) -> str:
         raise
     line = status_line(status)
     sent: list[str] = []
-    if status.should_alert or status.should_alert_repair_failure:
+    if status.resolution_notice_symbols:
+        # The all-clear, sent whether or not anything else fires this run: a
+        # red "place the stop by hand" the desk itself resolved has to be
+        # retracted, and nothing did that before. Claimed inside
+        # `check_coverage`, so this sends what was reserved rather than
+        # re-claiming and silencing itself.
+        from src.coverage_watchdog import repair_resolution_text
+        from src.notifier import send_owner_alert as _send_resolution
+
+        names = list(status.resolution_notice_symbols)
+        text = repair_resolution_text(names)
+        print(text, file=sys.stderr)
+        ok = bool(_send_resolution(text, symbols=names))
+        sent.append(
+            f"stop-repair all-clear "
+            f"{'delivered' if ok else 'could NOT be delivered'}"
+        )
+    if (
+        status.should_alert or status.should_alert_repair_failure
+        or status.should_alert_unreadable
+    ):
         from src.notifier import send_owner_alert
 
+        # Board item 172, sent FIRST. A stop the broker could not be asked
+        # about is the only one of these three conditions where the desk
+        # does not know what it is looking at, and it must not arrive after
+        # two messages about measured gaps.
+        #
+        # Claim-before-send is already done inside `check_coverage`, which
+        # wrote the per-symbol marker into the shared state file the same
+        # way it does for a placement failure. Re-claiming here would find
+        # the marker it just wrote and silence the message it was written
+        # for. The live session's own reconcile reads that same marker, so
+        # whichever process sees the symbol first is the one that tells him.
+        if status.should_alert_unreadable:
+            # `unreadable_fresh`, NOT `unreadable`: the message itself
+            # promises "at most once per symbol per trading day", and
+            # rendering the whole list re-named every symbol already
+            # reported today whenever a new one failed. The live session's
+            # path filters to its claim before building the message; this
+            # is the same discipline here.
+            # `check_coverage` always populates `unreadable_fresh`, and when
+            # the gate is open it is non-empty by construction (the gate
+            # closes only when EVERY symbol was already reported). The
+            # fallback covers a status assembled by hand rather than by
+            # `check_coverage`, where saying too much beats saying nothing.
+            rows = status.unreadable_fresh or status.unreadable
+            text = unreadable_stop_text(rows)
+            print(text, file=sys.stderr)
+            ok = bool(send_owner_alert(
+                text, symbols=[r.symbol for r in rows],
+            ))
+            sent.append(
+                f"unreadable-stop alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
         if status.should_alert_repair_failure:
             text = repair_failure_text(status)
             print(text, file=sys.stderr)
@@ -504,7 +560,9 @@ def run_coverage_check(now: datetime | None = None) -> str:
             )
     summary = sweep_summary(status, entry=entry, run_id=run_id, alerts=sent)
     finished = sweep_log_line(summary)
-    if summary["outcome"] in ("repair_failed", "could_not_check"):
+    if summary["outcome"] in (
+        "repair_failed", "could_not_check", "unreadable_stops",
+    ):
         # WARNING, not ERROR: the failure itself is already logged at ERROR
         # by the module that hit it, under wording `src/log_health.py`
         # already classifies; a second ERROR here would be counted twice.

@@ -199,8 +199,9 @@ phases:
         sha: "c89e957deda5e6103c136866f42817cd26425c7f"
         note: "Phase 2a landed commit"
       - kind: symbol_in_file
-        path: "src/risk/rules.py"
-        symbol: "def apply_drawdown_scale"
+        path: "src/risk/metrics.py"
+        symbol: "def portfolio_heat"
+        note: "Was `def apply_drawdown_scale` until 2026-09-20, when the drawdown-halve was retired in full on the owner's instruction (docs/INCIDENT_HISTORY.md, board item 32). Phase 2a's OTHER three findings — portfolio heat, the correlation matrix and R-multiple — are what still stand, so the evidence points at one of those instead of at a deleted symbol."
       - kind: symbol_in_file
         path: "src/data/correlation.py"
         symbol: "def correlation_clusters"
@@ -238,10 +239,6 @@ phases:
         key: "risk.min_stop_atr_multiple"
         value: 2.5
         note: "stop-width floor (3dff940); base re-derived 3.0 -> 1.5 on 2026-09-04 from Sweeney MAE analysis on real signals, then further widened to 2.5 on 2026-09-10 (PR #269) — see docs/INCIDENT_HISTORY.md"
-      - kind: setting_equals
-        path: "config/settings.yaml"
-        key: "risk.min_reward_risk_after_widening"
-        value: 1.5
       - kind: manual
         note: "Confirm production deployment directly: sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1, and check that 46b2029 (or a later SHA) is an ancestor. True at audit time — verified with git merge-base --is-ancestor 46b2029 <production HEAD>."
 

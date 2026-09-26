@@ -171,6 +171,196 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
     return window.rstrip() + marker
 
 
+#: Neutral stand-in for a numeric token this guard judged structurally
+#: impossible (see `_find_malformed_numeric_tokens` below). Never a guessed
+#: value — the desk rule is "report the true state, never fabricate", and a
+#: plausible-looking replacement would itself be a fabricated number.
+_MALFORMED_NUMBER_MARKER = "[number garbled — removed]"
+
+# Scope note, so this is never confused with the REJECTED "prompt-text
+# number scanner" (docs/BOARD_NOTES.md item 99): that idea was scanning
+# ~1,825 numeric tokens inside PROMPT INPUT (config/prompts/*.md) — mostly
+# dates and list numbering, hopeless signal-to-noise, and explicitly not
+# built. This is the opposite direction: it scans the LLM's OUTPUT prose
+# right before that text ships to the owner (see `TelegramNotifier.send`),
+# looking only for a small number of STRUCTURALLY IMPOSSIBLE shapes, not
+# "suspicious" numbers in general. It is deliberately narrow to keep the
+# false-positive rate at zero on real desk language: percentages ("14.6%"),
+# multipliers ("2.0x"), day ranges ("5-15"), shorthand money ("$10M"), ISO
+# dates ("2026-09-24"), times ("12:51"), and share counts ("0.3155") must
+# never be touched.
+_NUMERIC_TOKEN_RE = re.compile(r"-?\$?\d[\d,]*(?:\.\d+)*")
+
+
+def _malformed_numeric_reason(token: str) -> str | None:
+    """Return why `token` (as matched by `_NUMERIC_TOKEN_RE`) is
+    structurally impossible as a number, or None if it's fine.
+
+    Deliberately conservative: only shapes that can NEVER be a correctly
+    written figure are flagged. Three checks, all direct restatements of
+    the bug report ("$10,21.36") and its named siblings:
+
+    1. More than one decimal point in one token ("12.34.56") — no numeric
+       convention has two, so this is never valid.
+    2. A comma-grouped integer part where a group isn't exactly 3 digits
+       ("10,21" — the second group is 2 digits, not 3) — this is the exact
+       shape of the reported defect. A LEADING group of 1-3 digits is fine
+       ("1,021"); every group after the first must be exactly 3.
+    3. A `$` amount that has a decimal point but not exactly 2 digits after
+       it ("$10.5", "$10.567") — dollars-and-cents has exactly one valid
+       decimal length; percentages, multipliers and share counts are NOT
+       constrained this way because they aren't `$` amounts.
+    """
+    body = token[1:] if token.startswith("-") else token
+    is_money = body.startswith("$")
+    if is_money:
+        body = body[1:]
+    parts = body.split(".")
+    if len(parts) > 2:
+        return "multiple decimal points"
+    integer_part = parts[0]
+    decimal_part = parts[1] if len(parts) == 2 else None
+
+    if "," in integer_part:
+        groups = integer_part.split(",")
+        if not groups[0] or not (1 <= len(groups[0]) <= 3) or not groups[0].isdigit():
+            return "malformed thousands separator"
+        for group in groups[1:]:
+            if len(group) != 3 or not group.isdigit():
+                return "malformed thousands separator"
+
+    if is_money and decimal_part is not None and len(decimal_part) != 2:
+        return "dollar amount without exactly 2 decimal places"
+
+    return None
+
+
+def _find_malformed_numeric_tokens(text: str) -> list[tuple[str, str]]:
+    """Scan `text` for numeric tokens that are structurally impossible.
+
+    Returns a list of (token, reason) pairs. Pure function, no I/O — see
+    `_redact_malformed_numbers` for the caller that acts on the result.
+    """
+    found = []
+    for match in _NUMERIC_TOKEN_RE.finditer(text):
+        reason = _malformed_numeric_reason(match.group(0))
+        if reason is not None:
+            found.append((match.group(0), reason))
+    return found
+
+
+def _redact_malformed_numbers(text: str) -> str:
+    """Replace any structurally-impossible numeric token in `text` with a
+    neutral marker, so a garbled figure (e.g. "$10,21.36") can never reach
+    the owner as if it were real.
+
+    Why redact instead of anything cleverer: the desk rule (docs, 2026-09-23)
+    is that a false or fabricated owner-facing number is a defect regardless
+    of intent, so guessing the intended value is not on the table — this
+    guard has no way to know whether "$10,21.36" meant $10.21, $1,021.36, or
+    something else. Dropping the number and saying so is the only action
+    that never ships a false figure. The underlying cause (whatever
+    produced the malformed text) is logged here so it stays visible instead
+    of silently disappearing into a redaction.
+
+    Never raises: this runs on every outgoing message, so a bug in the
+    guard itself must not be able to block a real alert. On any fault the
+    original text goes out unredacted — the guard failing open, not the
+    channel failing closed, matches every other best-effort contract in
+    this module (see `send()`'s own docstring).
+    """
+    try:
+        found = _find_malformed_numeric_tokens(text)
+        if not found:
+            return text
+
+        def _replace(match: "re.Match[str]") -> str:
+            reason = _malformed_numeric_reason(match.group(0))
+            return match.group(0) if reason is None else _MALFORMED_NUMBER_MARKER
+
+        redacted = _NUMERIC_TOKEN_RE.sub(_replace, text)
+        logger.warning(
+            "notifier: redacted %d malformed numeric token(s) before sending "
+            "(%s) — the upstream text generator produced a garbled figure; "
+            "fix that, not this guard",
+            len(found), "; ".join(f"{tok!r} ({reason})" for tok, reason in found),
+        )
+        return redacted
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "notifier: malformed-number guard itself failed; sending text unredacted"
+        )
+        return text
+
+
+#: Neutral stand-in for a raw exception / internal-error string this guard
+#: caught before it reached the owner. Board item 89 defect 5: reason codes
+#: were made plain English, but the desk's many `f"... raised: {exc}"` /
+#: `f"... failed ({exc})"` internal-error strings (e.g.
+#: `src/coverage_watchdog.py`'s `_scan_for_gaps`, whose `reason=` field can
+#: end up inside `unreadable_stop_text()`) were never touched, so a genuine
+#: `ConnectionError('timed out')` or a traceback frame could still surface
+#: verbatim in a Telegram message. The FULL original text is always logged
+#: (see `_redact_raw_exception_text` below) — this marker only replaces
+#: what the owner sees.
+_RAW_ERROR_MARKER = "[internal error — the desk logged the details]"
+
+#: A Python traceback dump, start to end of string. Tracebacks are always
+#: printed as the tail of whatever text produced them, so consuming to the
+#: end of the string (DOTALL) is correct and cannot eat legitimate prose
+#: that would have to come AFTER a traceback, which never happens.
+_TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\):.*", re.DOTALL)
+
+#: A `File "path", line N[, in func]` traceback frame on its own.
+_TRACE_FRAME_RE = re.compile(r'File "[^"\n]*", line \d+(?:, in \S+)?')
+
+#: A raw exception class name — optionally module-qualified
+#: (`sqlite3.OperationalError`), always CamelCase ending in `Error` or
+#: `Exception` — plus whatever `str(exc)`/`repr(exc)` tail follows it
+#: (`: message text` or `(message text)`) up to the end of the line.
+#: Deliberately narrow: it requires the CamelCase class shape, so ordinary
+#: owner prose ("a data error occurred", "tracking error") never matches —
+#: only an actual exception-class token does.
+_EXCEPTION_TOKEN_RE = re.compile(
+    r"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b"
+    r"(?:\s*:\s*[^\n]*|\s*\([^)\n]*\))?"
+)
+
+
+def _redact_raw_exception_text(text: str) -> str:
+    """Replace any raw exception / traceback text in `text` with a neutral,
+    owner-appropriate marker, so a genuine `str(exc)`/`repr(exc)` (a
+    `ConnectionError`, a `sqlite3.OperationalError`, a traceback frame, ...)
+    can never reach the owner as-is — see board item 89 defect 5: internal
+    STATUS CODES were made plain English, but raw internal-error TEXT
+    interpolated into a reason string was not.
+
+    Same shape and same rationale as `_redact_malformed_numbers` right
+    above — replace only the offending span, log the original in full so
+    nothing is lost for debugging, and fail open (never block a real
+    alert) if the guard itself breaks.
+    """
+    try:
+        if not text:
+            return text
+        original = text
+        redacted = _TRACEBACK_RE.sub(_RAW_ERROR_MARKER, text)
+        redacted = _TRACE_FRAME_RE.sub(_RAW_ERROR_MARKER, redacted)
+        redacted = _EXCEPTION_TOKEN_RE.sub(_RAW_ERROR_MARKER, redacted)
+        if redacted != original:
+            logger.warning(
+                "notifier: redacted raw exception/internal-error text before "
+                "sending to the owner — original text for diagnosis: %r",
+                original,
+            )
+        return redacted
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "notifier: raw-exception guard itself failed; sending text unredacted"
+        )
+        return text
+
+
 def _seal_section(lines: list[str], start: int, *, may_glue: bool = False) -> None:
     """Insert one blank line before `lines[start:]` to set it apart from
     whatever precedes it — unless there is nothing to separate from yet
@@ -256,7 +446,10 @@ _STATUS_LABELS: dict[str, str] = {
     "broker_error": "the broker could not be reached",
     "fetch_error": "the data could not be fetched",
     "emergency_sold": "an emergency sale was made (historical)",
-    "daily_loss_halted": "stopped for the day after losses",
+    # Kept, like `emergency_sold`, so a run stored before 2026-09-20 still
+    # renders as words. The whole account-level loss alarm was removed that
+    # day on the owner's instruction (retired item 32); nothing emits this.
+    "daily_loss_halted": "stopped for the day after losses (historical)",  # retired-ok
     "kill_switch_halted": "stopped by the manual kill switch",
     "paid_analysis_suspended": "paid thinking is suspended",
     "evidence_gate_skip": "skipped \u2014 the data was incomplete",
@@ -750,6 +943,20 @@ class TelegramNotifier:
             return False
         if not text:
             return False
+        # Single chokepoint for every owner-facing message this notifier
+        # sends, regardless of which of the ~20 upstream formatters (PM
+        # rationale, risk-manager reasoning, evening outlook, key thesis,
+        # ...) produced the free-text prose it came from — see
+        # `_redact_malformed_numbers`'s docstring for why here rather than
+        # at each of those call sites, and for the deliberate distinction
+        # from the REJECTED prompt-text scanner (board item 99).
+        text = _redact_malformed_numbers(text)
+        # Board item 89 defect 5: a genuine raw exception/internal-error
+        # string (e.g. a `reason=f"... raised: {exc}"` built upstream) must
+        # never reach the owner verbatim, even though internal STATUS CODES
+        # are already plain English. Same chokepoint as the guard above —
+        # see `_redact_raw_exception_text`'s docstring.
+        text = _redact_raw_exception_text(text)
         if _REHEARSAL_MODE:
             # A rehearsal replays a real session, so it raises real alerts —
             # "PAID ANALYSIS SUSPENDED", "STOP COVERAGE REPAIRED", trade
@@ -773,6 +980,14 @@ class TelegramNotifier:
             text, link_url, link_label, symbols,
             preserve_structural_markup=preserve_structural_markup,
         )
+        # 2026-09-24: `notifier_sends` used to record the ORIGINAL `text`
+        # here on both branches below, but `_build_payload` may have
+        # truncated it (`MAX_MESSAGE_CHARS`, see `_clip_text` above) before
+        # it went on the wire. The stored record then differed from what
+        # Telegram actually delivered, with no marker that a truncation
+        # happened at all. `payload["text"]` is the exact string sent, so
+        # recording it (rather than `text`) makes the record match delivery.
+        delivered_text = payload["text"]
 
         try:
             response = requests.post(
@@ -781,7 +996,9 @@ class TelegramNotifier:
                 timeout=self.HTTP_TIMEOUT_S,
             )
             response.raise_for_status()
-            self._safe_record_send(kind=kind, status="sent", text=text, run_id=run_id)
+            self._safe_record_send(
+                kind=kind, status="sent", text=delivered_text, run_id=run_id,
+            )
             return True
         except Exception as exc:
             # Catch broadly on purpose — TelegramNotifier is a
@@ -790,7 +1007,7 @@ class TelegramNotifier:
             # those should bubble up and crash the trading session.
             logger.warning("Telegram notify failed: %s", self._redact(exc))
             self._safe_record_send(
-                kind=kind, status="failed", text=text,
+                kind=kind, status="failed", text=delivered_text,
                 detail=self._redact(exc), run_id=run_id,
             )
             return False
@@ -1230,6 +1447,11 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     "release_overdue": "is waiting on a scheduled data release that is overdue",
     "symbol_dropped": "dropped at least one symbol from its answer",
     "degraded": "returned a degraded answer",
+    "market_wide_blind": (
+        "read none of the wider market's insider filings this session, while "
+        "filings it had not read were still waiting — so it can speak for "
+        "the desk's own holdings and for nothing else"
+    ),
     # The four remaining CATEGORY_LOST states in src/evidence_gate.py had no
     # plain wording, so an evidence-gate skip naming one of them showed the
     # owner the raw token instead. Each phrase below is read straight off
@@ -1349,6 +1571,42 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
     return lines
 
 
+def describe_short_handed_decision(freshness: Any) -> list[str]:
+    """When the desk WENT AHEAD with a research seat absent, mark it as such.
+
+    Symmetric to `describe_skipped_decision`. Board item 20 REFUSES when a
+    blocking seat's answer is lost, and that refusal is marked out loud
+    ("DECISION SKIPPED — NOTHING WAS TRADED"). Board item 154 is the
+    OTHER half: an advisory seat was unreachable, the desk proceeded and
+    decided anyway, and nothing said the decision was made short-handed —
+    the absence read exactly like a seat that had nothing to say. This is
+    that missing mark.
+
+    Disclosure only, not a threshold: it names the seat(s) that returned no
+    answer and states the decision was made without them. It refuses
+    nothing and grades nothing — the minimum-seat count is the owner's
+    (docs/WORK.md item 20), and none may be invented here.
+
+    Reads the same `evidence_freshness.to_evidence()` record the freshness
+    block does, using its `absent_seats` (a seat unreachable this tick, or
+    one whose answer never arrived — the case item 154 names). Returns []
+    when no seat was absent, so a fully-staffed decision costs nothing, and
+    the CALLER is responsible for not rendering it on a refusal, where the
+    skip banner already speaks for the missing seats.
+    """
+    if not isinstance(freshness, dict):
+        return []
+    absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
+    if not absent:
+        return []
+    return [
+        "<b>DECIDED SHORT-HANDED — a research seat could not be reached</b>",
+        f"   • the desk went ahead and decided without {_seat_list_words(absent)}",
+        "   • that research returned no answer this tick, so its view is "
+        "missing from this decision",
+    ]
+
+
 def describe_universe_changes(block: Any) -> list[str]:
     """The owner-facing account of what the universe screen changed.
 
@@ -1410,12 +1668,25 @@ def _append_universe_changes(lines: list[str], result: dict) -> None:
 
 
 def _append_evidence_freshness(lines: list[str], result: dict) -> None:
-    """Put the freshness disclosure into a session message body."""
+    """Put the freshness disclosure into a session message body, and — when
+    the desk PROCEEDED with a seat absent — the short-handed mark (item 154).
+
+    The short-handed mark is suppressed on an evidence-gate refusal: that
+    path already carries its own "DECISION SKIPPED — NOTHING WAS TRADED"
+    banner naming the missing seat, so marking it short-handed too would say
+    the same thing twice and, worse, imply the desk went ahead when it did
+    not."""
     if not isinstance(result, dict):
         return
     block = describe_evidence_freshness(result.get("evidence_freshness"))
     if block:
         _new_section(lines, *block)
+    if result.get("status") != "evidence_gate_skip":
+        short_handed = describe_short_handed_decision(
+            result.get("evidence_freshness")
+        )
+        if short_handed:
+            _new_section(lines, *short_handed)
 
 
 def describe_skipped_decision(
@@ -1639,6 +1910,106 @@ def alert_records_disagree_with_broker(
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "records-disagree alert for %s could not be sent: %s", symbol, exc,
+        )
+        return False
+
+
+def alert_stop_out_recorded(
+    symbol: str, qty: float, price: float, realized_pnl: float | None = None,
+) -> bool:
+    """PAGE: the broker closed a position on its own protective stop.
+
+    Fires when `_reconcile_stop_out_fills` writes back a broker-initiated
+    protective-stop fill the ledger never saw — an exit the market FORCED,
+    not one the system chose. A protective stop only fires on a loss, so
+    this is always a real loss the owner had no way of knowing about
+    otherwise: before this alert existed the write-back happened silently
+    (a log line and a ledger row) and reached the owner NOWHERE.
+
+    Gets its OWN standalone message, per the owner's alert-design rule that
+    alerts are never bundled into a run summary — a forced exit is exactly
+    the kind of thing that must not hide inside a "session OK" message.
+
+    `realized_pnl` is whatever the ledger could compute (`None` when its own
+    BUY history can't cover the exited quantity — that unpriced case is
+    flagged separately and NOT guessed here).
+    """
+    try:
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        sym = str(symbol or "").strip() or "a position"
+        if realized_pnl is None:
+            pnl_line = (
+                "The desk could not compute the profit or loss on this exit "
+                "from its own records — that is being reviewed separately, "
+                "not guessed."
+            )
+        else:
+            pnl_line = (
+                f"Realized profit-and-loss on this exit: "
+                f"{_fmt_signed_money(realized_pnl)}."
+            )
+        body = (
+            "BROKER STOPPED YOU OUT — a protective stop fired and closed a "
+            "position; the desk did not choose this exit\n"
+            f"{sym}: your broker's own protective stop order sold "
+            f"{_fmt_qty(qty)} share(s) at ${_fmt_price(price)}. The desk did "
+            "not decide to sell — a stop it had resting at the broker "
+            "triggered on the price move and closed the position for you. A "
+            "protective stop only fires on a loss.\n"
+            "\n"
+            f"WHY YOU'RE HEARING THIS: this exit happened at the broker with "
+            f"no matching order in the desk's own records, so it was written "
+            f"back into the ledger just now. {pnl_line}\n"
+            f"WHAT TO CHECK: your broker account's {sym} history, as of "
+            + when + ". The position is already closed; nothing further is "
+            "required of you — this is a notice that the market took you out, "
+            "not a request."
+        )
+        return send_owner_alert(body, symbols=[sym])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "stop-out-recorded alert for %s could not be sent: %s", symbol, exc,
+        )
+        return False
+
+
+def alert_positions_reprotected(count: int) -> bool:
+    """NOTICE: naked positions from a prior bail were re-protected.
+
+    Fires when `_drain_pending_protection_restores` successfully rebuilds
+    stop coverage for one or more positions left unprotected by an earlier
+    session that bailed mid-finalize (a lingering SELL that hadn't converged,
+    or a broker-API hiccup). The write-back already happened silently before
+    this — this surfaces that a live-risk gap existed and is now closed, so a
+    period of unprotected exposure never passes unreported.
+
+    Its own standalone message, same alert-design rule as the siblings above.
+    """
+    try:
+        n = int(count or 0)
+        if n <= 0:
+            return False
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        noun = "position" if n == 1 else "positions"
+        body = (
+            "PROTECTION RESTORED — a position that was left without a stop is "
+            "covered again\n"
+            f"The desk found {n} {noun} that an earlier run had left without "
+            "a protective stop (an exit that didn't finish cleanly) and put "
+            "the stop coverage back on just now, as of " + when + ".\n"
+            "\n"
+            "WHY YOU'RE HEARING THIS: for a short window that "
+            f"{'position was' if n == 1 else 'those positions were'} exposed "
+            "with no automatic downside protection. That gap is now closed; "
+            "nothing is required of you — this is a notice that it happened "
+            "and was fixed."
+        )
+        return send_owner_alert(body)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "positions-reprotected alert could not be sent: %s", exc,
         )
         return False
 
@@ -1946,9 +2317,34 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     # alert on every single run, which is how the owner learns to stop
     # reading the banner that matters.
     expected = [g for g in rows if _gap_is_expected_fractional(g)]
-    faults = [g for g in rows if not _gap_is_expected_fractional(g)]
+    # Board item 172. A position whose stops could not be READ is neither a
+    # measured gap nor a covered position, and it must not be swept into the
+    # mis-sized banner, which asserts that a stop IS standing watch over
+    # most of the position — a claim nobody established here.
+    unreadable = [g for g in rows if _gap_is_unreadable(g)]
+    faults = [
+        g for g in rows
+        if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
+    ]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
+    if unreadable:
+        # Below NO STOP AT ALL, above MIS-SIZED. It cannot be the top tier:
+        # the triple mark means unbounded loss confirmed, and this is a
+        # question, not a confirmation. It cannot be the warning tier
+        # either: with per-position stops the desk's only loss protection,
+        # an unanswerable question about one may BE the top tier and
+        # nothing here can rule that out.
+        lines.append(
+            f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) whose "
+            "protective stops the broker could not be asked about — "
+            "coverage UNKNOWN, not confirmed either way — "
+            + "; ".join(
+                f"{g.get('symbol', '?')} holding "
+                f"{_fmt_qty(g.get('held_qty', 0) or 0)}"
+                for g in unreadable[:6]
+            )
+        )
     if uncovered:
         # Top severity tier (item 21b): a held position with ZERO stop
         # coverage is unbounded loss, not just a degraded state — the one
@@ -1965,6 +2361,19 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
             f"protected — {_describe(partial)}"
         )
     _append_fractional_overnight_line(lines, expected)
+
+
+def _gap_is_unreadable(gap: dict) -> bool:
+    """Board item 172 — is this row an unanswered question rather than a
+    measured shortfall?
+
+    Keyed on the `coverage` stamp alone and never derived from
+    `covered_qty`, unlike `_gap_is_uncovered`: an unreadable row carries
+    `covered_qty=None` precisely because no quantity was established, and
+    deriving a classification from the absence of a number is how it would
+    end up in the wrong banner.
+    """
+    return str(gap.get("coverage", "")).strip().lower() == "unreadable"
 
 
 def _gap_is_expected_fractional(gap: dict) -> bool:
@@ -2452,38 +2861,11 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         if isinstance(risk_for_banner, str) and risk_for_banner.lower() in ("elevated", "high"):
             lines.append(f"🚨 OPERATOR ATTENTION — risk_rating={risk_for_banner}")
 
-        # (2) DETERMINISTIC escalation — does NOT depend on the LLM correctly
-        # grading its own day (under-rating is exactly the failure you most want
-        # caught). If today's loss is within 80% of the hard daily-loss circuit-
-        # breaker limit, raise the banner regardless of risk_rating. Mirrors the
-        # trading path's two-layer (hard rule OR LLM) philosophy — the observability
-        # path should escalate on facts too, not just on model judgment.
-        # Use the SAME basis the headline shows: prefer the 4pm close-to-close P&L
-        # (esc_pnl=pnl_4pm, baseline=prior official close = equity_close - pnl_4pm)
-        # so the alert evaluates the number the operator actually sees. Fall back to
-        # the real-time diff when the 4pm figures aren't available. Without this, a
-        # day that recovered after-hours could hide a material 4pm loss from the
-        # alert (or vice-versa).
-        esc_pnl = result.get("pnl_4pm")
-        esc_close = result.get("equity_close")
-        if esc_pnl is not None and isinstance(esc_close, (int, float)):
-            esc_base = esc_close - esc_pnl
-        else:
-            esc_pnl = result.get("daily_pnl")
-            esc_tv = result.get("total_value")
-            esc_base = (esc_tv - esc_pnl) if (
-                isinstance(esc_pnl, (int, float)) and isinstance(esc_tv, (int, float))
-            ) else None
-        dl_limit = result.get("max_daily_loss_pct")
-        if (isinstance(esc_pnl, (int, float)) and isinstance(esc_base, (int, float))
-                and isinstance(dl_limit, (int, float)) and dl_limit > 0
-                and esc_pnl < 0 and esc_base > 0):
-            loss_pct = abs(esc_pnl / esc_base * 100)
-            if loss_pct >= 0.8 * dl_limit:
-                lines.append(
-                    f"🚨 DETERMINISTIC ALERT — daily loss {loss_pct:.2f}% is "
-                    f"≥80% of the {dl_limit:.0f}% circuit-breaker limit"
-                )
+        # A (2) used to sit here: a deterministic banner raised when the
+        # day's loss reached 80% of the account-level daily-loss circuit
+        # breaker. That breaker was removed 2026-09-20 on the owner's
+        # instruction (retired item 32, docs/INCIDENT_HISTORY.md), so there
+        # is no limit left to measure the day against.
 
     _new_block(lines, _render_escalation_banners)
 
@@ -2785,21 +3167,92 @@ def _openrouter_balance_line() -> str | None:
     )
 
 
-def _margin_interest_lines() -> list[str]:
-    """['💳 margin interest: ...', '   broker check: ...'] — spec §11.2.
+def _persist_margin_interest_daily(
+    trading_day, debit_balance: float, rate_pct: float, daily_usd: float,
+    days_charged: int, period_usd: float, source: str = "estimate",
+) -> None:
+    """Write today's margin-interest row so the cumulative view
+    (`src.margin_interest.compute_cumulative_margin_interest`) has
+    something to sum for this-week/current-month/all-time — `daily_pnl`
+    never stored cash/debit, so THIS table is the only historical record of
+    the desk's overnight debit balance from here forward.
 
-    ALWAYS returns at least one line outside rehearsal (owner decision,
-    2026-09-18, verbatim: "Yes, every day, even if it's zero, that way I
-    know it's still working"). `margin_interest.format_daily_line` owns
-    that policy and the wording of all four states — real debit, nothing
-    borrowed, cash unreadable, no rate configured; read its docstring for
-    why the spec's original silent-on-zero rule is deliberately overridden
-    and why a missing rate must NOT render as a zero.
+    Delegates the actual write to `Database.insert_margin_interest_daily`
+    — that method (and its `ON CONFLICT(date) DO UPDATE` upsert) is the
+    ONE place this schema's insert logic is allowed to live, so the live
+    morning write and the historical backfill
+    (`Database.backfill_margin_interest_daily`,
+    `scripts/backfill_margin_interest_history.py`) can never drift apart
+    on what a row looks like. (Before 2026-09-24 this function duplicated
+    that INSERT/`CREATE TABLE` by hand with its own `sqlite3` connection —
+    consolidated here; `Database()` already brings up the same table via
+    `initialize()`.)
+
+    A short-lived `Database` instance is opened and closed for this one
+    write, same "never raises, never blocks the alert" contract as
+    before: a persistence failure here must not be able to stop a
+    Telegram alert that already has its lines built.
+    """
+    try:
+        from src.storage.db import Database
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(str(_DB_PATH))
+        try:
+            db.initialize()
+            db.insert_margin_interest_daily(
+                str(trading_day), debit_balance, rate_pct, daily_usd,
+                days_charged, period_usd, source,
+            )
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001 — persistence is a nicety, not the alert
+        logger.warning("margin interest daily persistence failed: %s", exc)
+
+
+def _read_margin_interest_daily_all() -> list[dict]:
+    """`SELECT * FROM margin_interest_daily ORDER BY date ASC` for the
+    cumulative Telegram line — same table `_persist_margin_interest_daily`
+    writes, read back with its own connection (this module never holds a
+    live `Database()` instance). Returns `[]` on any read failure,
+    including the table not existing yet, which the bucketing function
+    reads as `source="no_data"`, never a fabricated zero."""
+    try:
+        import sqlite3
+        if not _DB_PATH.exists():
+            return []
+        conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT date, debit_balance, rate_pct, daily_usd, "
+                "days_charged, period_usd, source "
+                "FROM margin_interest_daily ORDER BY date ASC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest daily read failed: %s", exc)
+        return []
+
+
+def _margin_interest_lines() -> list[str]:
+    """['💳 margin interest — this week $X, <Month> $Y (est.), all-time $Z
+    (est.) (since <date>)'] — owner ask, 2026-09-24, replacing the old
+    per-day/per-year figures and the ESTIMATE-caveat paragraph with a
+    short cumulative summary. `src.margin_interest.format_cumulative_line`
+    owns the wording; `compute_cumulative_margin_interest` owns the
+    broker-actual-preferred, estimate-fallback bucketing (this week /
+    current month / up to 6 months / all-time).
 
     Morning-only, like the balance/day-cost lines above: interest accrues
     on the OVERNIGHT debit balance, so the morning snapshot — taken before
     any new trading — is the one honest read of what was actually carried
-    across the close.
+    across the close. That reading is also PERSISTED here
+    (`_persist_margin_interest_daily`) — `daily_pnl` never stored cash/
+    debit, so this is the only historical record of the desk's overnight
+    debit balance, which is what makes "this week"/"this month"/"all-time"
+    (for the estimate-fallback path) possible at all going forward.
 
     Reads the account's actual cash regardless of `allow_margin` — that
     flag is QAMC's own risk toggle, not a broker-side guarantee that cash
@@ -2809,16 +3262,7 @@ def _margin_interest_lines() -> list[str]:
     `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
     "cash negative AND allow_margin False" as a real, live state — so a
     debit balance can exist even with margin disabled, and a short-circuit
-    on `allow_margin` alone would silently miss it. On a zero-debit day
-    this still costs one broker round-trip (spent on
-    `overnight_debit_balance()` returning `0.0`) and now renders the
-    explicit zero line it proves.
-
-    When a debit balance IS present, this also reads the broker's own
-    `INT` account activity and reports whether it confirms, denies, or has
-    not yet settled the question of whether paper trading actually charges
-    this — see `src.margin_interest` for why that is deliberately
-    left open rather than assumed either way.
+    on `allow_margin` alone would silently miss it.
 
     Never raises: a broker-read failure here must not be able to block the
     alert — it degrades to a line that SAYS the read failed, rather than to
@@ -2829,7 +3273,8 @@ def _margin_interest_lines() -> list[str]:
     """
     from src.margin_interest import (
         RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
-        compare_estimate_to_broker_activity, format_daily_line,
+        compare_estimate_to_broker_activity, compute_cumulative_margin_interest,
+        days_charged_until_next_trading_day, format_cumulative_line,
         overnight_debit_balance,
     )
 
@@ -2851,27 +3296,48 @@ def _margin_interest_lines() -> list[str]:
         account = broker.get_account()
         cash = account.get("cash")
         debit_balance = overnight_debit_balance(cash)
-        estimate = build_estimate(debit_balance, rate_pct)
+        # Alpaca charges for every calendar day a debit is carried, so a
+        # Friday's overnight is 3 days (4 before a Monday holiday). Read the
+        # exchange calendar for how many days tonight's carry spans; the
+        # helper never raises and degrades to 1 if the calendar can't be read.
+        from src.util.time import et_today
+        today = et_today()
+        days_charged = days_charged_until_next_trading_day(broker.is_trading_day, today)
+        estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest estimate failed: %s", exc)
         return [UNAVAILABLE_LINE]
 
-    # Always exactly one line, zero and fault states included.
-    lines = [format_daily_line(cash, rate_pct)]
-    if estimate is None:
-        # Nothing borrowed: there is no charge to check the broker's own
-        # INT records against, so the second line would have nothing to say.
-        return lines
-
+    period_usd = estimate.period_usd if estimate is not None else 0.0
+    source = "estimate"
     try:
-        activities = broker.get_margin_interest_activities()
-        comparison = compare_estimate_to_broker_activity(estimate, activities)
-        if comparison is not None:
-            lines.append(f"   broker check: {comparison.note}")
+        full_history = broker.get_margin_interest_activities()
+        if estimate is not None:
+            comparison = compare_estimate_to_broker_activity(estimate, full_history)
+            if comparison is not None and comparison.charge_confirmed and comparison.observed_usd:
+                # The broker's own INT record for tonight beats our formula
+                # — use its real number for THIS row (source flips to
+                # broker_actual), without changing the fallback logic the
+                # cumulative view applies to every OTHER day.
+                period_usd = comparison.observed_usd
+                source = "broker_actual"
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest INT-activity check failed: %s", exc)
+        full_history = []
 
-    return lines
+    _persist_margin_interest_daily(
+        today, debit_balance, rate_pct,
+        estimate.daily_usd if estimate is not None else 0.0,
+        days_charged, period_usd, source,
+    )
+
+    try:
+        estimate_rows = _read_margin_interest_daily_all()
+        cumulative = compute_cumulative_margin_interest(full_history, estimate_rows, today)
+        return [format_cumulative_line(cumulative)]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("margin interest cumulative view failed: %s", exc)
+        return [UNAVAILABLE_LINE]
 
 
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
@@ -2925,9 +3391,20 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
 
     def _row_line(r: tuple) -> str:
         sym, qty, avg, curr, mv, pnl = r
-        pct = ((curr / avg - 1) * 100) if avg else 0
         sign = "+" if pnl >= 0 else "−"
-        return f"   {sym:<6} {sign}${abs(pnl):>8,.0f}  ({pct:+.1f}%)"
+        # `avg` (avg_entry) or `curr` (current_price) can be NULL (broker
+        # race / stale snapshot, same class of gap as the unrealized_pnl
+        # NULL handled below). `avg` falsy used to render a fabricated
+        # "(+0.0%)" instead of saying the return isn't known, and a NULL
+        # `curr` with a real `avg` raised TypeError on `curr / avg`
+        # uncaught here — dropping the whole winners/losers block for
+        # every row, not just the one with the gap.
+        if avg is None or curr is None:
+            pct_text = "not available"
+        else:
+            pct = (curr / avg - 1) * 100
+            pct_text = f"{pct:+.1f}%"
+        return f"   {sym:<6} {sign}${abs(pnl):>8,.0f}  ({pct_text})"
 
     # r[5] is positions.unrealized_pnl. SQLite allows NULL on that
     # column (broker race / stale snapshot can leave it unset for a
@@ -2952,6 +3429,26 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
     `src.trader_feed._format_earnings`. This names each filing when the
     run recorded them (`result["filings"]`, 2026-09-18) and falls back to
     the bare counts for a result that predates that field."""
+    # 2026-09-24: a suspended run (`status: paid_analysis_suspended`) has no
+    # `filings` -- the LLM reader never ran -- but it may still carry the
+    # `filings_waiting` backlog computed before the circuit tripped. Without
+    # this branch the code below falls through to "analyzed:0 confirmed:0
+    # failed:0", which reads as "nothing happened" even when N filings are
+    # queued and waiting on the circuit to close.
+    if result.get("paid_analysis_suspended"):
+        waiting = [f for f in (result.get("filings_waiting") or []) if isinstance(f, dict)]
+        if waiting:
+            lines.append(
+                f"suspended: paid analysis is off, {len(waiting)} filing(s) waiting"
+            )
+            for row in waiting:
+                lines.append(
+                    f"  {row.get('symbol', '?')} {row.get('form_type', '')} filed "
+                    f"{row.get('filing_date', 'date not recorded')}: waiting"
+                )
+        else:
+            lines.append("suspended: paid analysis is off, no filings waiting")
+        return
     filings = [f for f in (result.get("filings") or []) if isinstance(f, dict)]
     if filings:
         for row in filings:
@@ -2967,42 +3464,12 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
     lines.append(f"analyzed: {analyzed}  confirmed: {confirmed}  failed: {failed}")
 
 
-def _append_daily_loss_halt_banner(lines: list[str], result: dict) -> None:
-    """Say the desk has halted, and whether anything is unprotected.
-
-    docs/WORK.md item 32 (2026-09-14). The breaker used to render as a list
-    of EMERGENCY orders, which is how the operator knew it had fired. A halt
-    places no orders, so with no banner an `intra_check` tick that broke its
-    own 30-minute silence would show nothing to explain why. The owner alert
-    is sent separately and independently — this is the session message not
-    being mute about the same event.
-    """
-    if not result.get("halted"):
-        return
-    lines.append("🛑 DAILY LOSS HALT — no new risk this session")
-    lines.append("nothing was sold; every position is kept")
-    unprotected = result.get("unprotected_at_halt") or []
-    if unprotected:
-        lines.append(
-            "⚠️ NOT verifiably stop-covered at the halt: "
-            + ", ".join(str(s) for s in unprotected[:8])
-        )
-    elif result.get("stop_coverage_verified"):
-        lines.append(
-            f"stop coverage verified on "
-            f"{len(result['stop_coverage_verified'])} position(s)"
-        )
-    if result.get("entry_orders_cancelled") is False:
-        lines.append("⚠️ resting-entry cancel FAILED — check open orders")
-
-
 def _append_intra_check_body(lines: list[str], result: dict) -> None:
     # Reaches here when a deterministic breach fired, OR (spec §11.1 guard 3)
     # when an otherwise-OK 30-minute tick found a stop-coverage gap — the
     # sweep's finding is the whole reason that tick broke silence, so it is
     # the first thing on the message.
     _append_coverage_gap_banner(lines, result)
-    _append_daily_loss_halt_banner(lines, result)
     # Operator wants the details of whatever triggered.
     emergency = result.get("orders") or result.get("emergency_orders") or []
     if emergency:
@@ -3077,15 +3544,6 @@ def _status_emoji(status: str) -> str:
     if ("error" in status or status.startswith("pm_")
             or status in (
                 "rejected", "failed", "paid_analysis_suspended",
-                # docs/WORK.md item 32 (2026-09-14). The daily-loss breaker
-                # HALTS the desk now instead of liquidating it, and it is
-                # classified with the kill switch rather than in the
-                # "emergency_sold" warning bucket above: the desk has stopped
-                # taking risk and is holding a book whose protection it has
-                # just had to verify. That needs the 🛑 SHAPE — shape rather
-                # than colour is the point, the owner is red-green colour
-                # blind (item 21b).
-                "daily_loss_halted",
                 # Guard 1 (2026-09-02): ops halted the desk with the
                 # kill-switch flag file. This is the one status that fires
                 # even on an intra_check tick, which is otherwise silent —

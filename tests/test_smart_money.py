@@ -330,10 +330,16 @@ def test_fetch_is_broad_and_only_large_external_purchase_gets_admission(tmp_path
     assert by_symbol["NVDA"].in_core_universe is True
 
 
-def test_quiet_immaterial_cache_returns_no_observations(tmp_path):
+def test_small_dollar_buy_now_survives_no_size_floor(tmp_path):
+    """Board item 52, resolved 2026-09-25: no published study supports
+    single-transaction dollar size as an insider-buy predictor, so the old
+    $100k/$250k floors were deleted rather than sourced. A $99,999 buy that
+    used to be silently dropped now survives like any other row."""
     provider = SECForm4Provider(data_dir=str(tmp_path))
     _write_rows(provider, [_insider(value=99_999)])
-    assert provider.fetch(["NVDA"]) == ([], None)
+    rows, error = provider.fetch(["NVDA"])
+    assert error is None
+    assert len(rows) == 1
 
 
 def test_independent_owner_cluster_survives_but_repeat_owner_does_not(tmp_path):
@@ -365,7 +371,15 @@ def test_two_owners_two_days_apart_form_a_cluster(tmp_path):
 
 
 def test_two_owners_three_days_apart_do_not_cluster(tmp_path):
-    """Boundary case: one day past the corrected 2-day window."""
+    """Boundary case: one day past the corrected 2-day window.
+
+    Both rows are $60,000, below the old $100k core floor, which used to be
+    the only way this pair could be dropped once clustering failed. Board
+    item 52 (resolved 2026-09-25) deleted that floor, so both rows now
+    survive on their own -- the boundary is no longer observable through row
+    count, only through the clustering that `cluster_survivors`'s row-
+    retention window still governs for a caller with a real floor (see
+    `CongressionalTradingProvider`, out of this item's scope)."""
     provider = SECForm4Provider(data_dir=str(tmp_path))
     three_days_apart = [
         _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
@@ -373,14 +387,25 @@ def test_two_owners_three_days_apart_do_not_cluster(tmp_path):
     ]
     _write_rows(provider, three_days_apart)
     rows, _ = provider.fetch(["NVDA"])
-    assert rows == []
+    assert len(rows) == 2
 
 
 def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
     """Same transactions as the boundary case above, with the old 14-day
     window restored explicitly. Demonstrates the bug: it incorrectly
     clustered trades 3 days apart, which the corrected 2-day window (and
-    the cited research) does not support."""
+    the cited research) does not support.
+
+    Both parts below now survive on row count alone regardless of window or
+    owner, because board item 52 (resolved 2026-09-25) deleted the $100k/
+    $250k dollar floors that used to be the only thing distinguishing a
+    correctly-excluded cluster from a materiality drop. The independent-vs-
+    repeat-owner cluster distinction itself is a `cluster_survivors`
+    property, unaffected by that deletion, but is no longer observable
+    through this provider's row count now that every row clears materiality
+    on its own; a caller that still carries a real floor (see
+    `CongressionalTradingProvider`) is where that distinction remains
+    testable end-to-end."""
     provider = SECForm4Provider(data_dir=str(tmp_path), cluster_window_days=14)
     three_days_apart = [
         _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
@@ -396,7 +421,7 @@ def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
     ]
     _write_rows(provider, repeated)
     rows, _ = provider.fetch(["NVDA"])
-    assert rows == []
+    assert len(rows) == 2
 
 
 def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, monkeypatch):
@@ -414,26 +439,6 @@ def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, mo
     assert provider.refresh()["new_observations"] == 0
     assert provider.session.get.call_count == 1
     assert "QAMC/1.0" in provider.session.get.call_args.kwargs["headers"]["User-Agent"]
-
-
-def test_peek_accessions_discovers_without_downloading_submissions(tmp_path, monkeypatch):
-    provider = SECForm4Provider(data_dir=str(tmp_path), max_filings_per_refresh=5)
-    provider.manifest_path.write_text(json.dumps({
-        "processed_accessions": ["0000000001-26-000001"],
-    }))
-    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: {"1045810": {"NVDA": "Nasdaq"}})
-    monkeypatch.setattr(provider, "_discover", lambda *_: [{
-        "accession": "0000000002-26-000001", "form": "4", "cik": "1045810",
-    }])
-    provider.session.get = Mock(side_effect=AssertionError("peek must not download"))
-
-    known = provider.known_accessions()
-    assert known == {"0000000001-26-000001"}
-    unscoped = provider.peek_accessions()
-    assert unscoped == known
-    peeked = provider.peek_accessions(symbols=["NVDA"])
-    assert peeked == {"0000000001-26-000001", "0000000002-26-000001"}
-    provider.session.get.assert_not_called()
 
 
 def test_analyst_rejects_direction_incompatible_stance(tmp_path):
@@ -669,3 +674,66 @@ def test_analyst_cache_is_bound_to_run_scoped_presented_symbols(tmp_path):
     assert error is None
     assert calls == [1, 1]
     assert result.tokens_used == 10
+
+
+def test_compact_symbol_surfaces_estimated_disclosure_dates_to_the_seat():
+    """Board item 170, DONE-WHEN #3: the seat must be able to tell a real
+    congressional filing date from congresswatch.us's trade+45d guess
+    wherever the lag it fed into reaches the prompt -- not just the
+    eligibility gate the fix already covers."""
+    real = _congress(lag=10, actor="Real Filer")
+    estimated = _congress(lag=45, actor="Guessed Filer").model_copy(
+        update={"disclosure_date_estimated": True}
+    )
+    compact = SmartMoneyAnalystAgent._compact_symbol("NVDA", [real, estimated])
+    assert compact["disclosure_date_estimated_count"] == 1
+
+    # Both observations fit under the representative-transaction cap, so
+    # each one's own estimated/real flag must be visible individually, not
+    # just as an aggregate count.
+    flags = {
+        row["disclosure_date_estimated"]
+        for row in compact["representative_transactions"]
+    }
+    assert flags == {True, False}
+
+
+# --- Board item 63: signal_weight now carries a DIRECTION channel so a
+# --- bearish/contra smart-money row cannot rank or size as a bullish buy. ---
+
+def test_signal_direction_channel_signs_by_direction():
+    """A buy is bullish (+1); a sale and non-directional codes carry no sign (0)."""
+    assert _insider(direction="buy").signal_direction == 1
+    assert _insider(direction="sell").signal_direction == 0
+    exchange = _insider(direction="buy").model_copy(update={"direction": "exchange"})
+    unknown = _insider(direction="buy").model_copy(update={"direction": "unknown"})
+    assert exchange.signal_direction == 0
+    assert unknown.signal_direction == 0
+
+
+def test_large_sale_does_not_rank_as_a_bullish_buy_of_equal_size():
+    """The item-63 bug: an equal-dollar sell used to tie/outrank a buy on the
+    value*weight term. Now the buy (bullish) ranks strictly first even when its
+    ticker sorts last, so direction — not spelling or magnitude — decides."""
+    buy = _insider(symbol="ZZZZ", direction="buy", value=1_000_000, accession="0000000001-26-000009")
+    sell = _insider(symbol="AAAA", direction="sell", value=1_000_000, accession="0000000001-26-000008")
+    buy_rank = SmartMoneyAnalystAgent._symbol_rank("ZZZZ", [buy])
+    sell_rank = SmartMoneyAnalystAgent._symbol_rank("AAAA", [sell])
+    assert buy_rank < sell_rank
+    # And at transaction granularity, on identical magnitude.
+    assert (
+        SmartMoneyAnalystAgent._transaction_rank(buy)
+        < SmartMoneyAnalystAgent._transaction_rank(sell)
+    )
+
+
+def test_bullish_buy_value_term_is_unchanged_by_the_direction_channel():
+    """Existing unambiguous signals (buys, +1) keep the exact ranking
+    contribution they had before the sign channel existed: -(value*weight)."""
+    buy = _insider(direction="buy", value=750_000)
+    assert buy.signal_weight == 1.0
+    # index 5 is the value-weighted term in _transaction_rank's tuple.
+    assert SmartMoneyAnalystAgent._transaction_rank(buy)[5] == -(750_000 * 1.0)
+    # The sale's contribution to that same term is neutralised to 0.
+    sell = _insider(direction="sell", value=750_000)
+    assert SmartMoneyAnalystAgent._transaction_rank(sell)[5] == 0

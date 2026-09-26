@@ -454,7 +454,6 @@ def run_backtest(
         max_cluster_risk_share_pct=config.risk.max_cluster_risk_share_pct,
         max_position_pct=config.risk.max_position_pct,
         min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
-        min_reward_risk_after_widening=config.risk.min_reward_risk_after_widening,
         # Spec §12.1 — a stop at a COMPUTED level is honoured whatever the
         # band says, down to a deterministic 1x ATR floor. Wired here so a
         # change to `config.risk.*` is the same experiment in the backtest
@@ -530,7 +529,22 @@ def run_backtest(
                 current_price=bar.close, current_stop=pos.stop,
                 reference_target=pos.target, bars=bars_since_entry, atr=atr_today,
                 qty=qty_sign,
+                # The ENTRY stop, frozen at fill — never the live `pos.stop` a
+                # prior trail already moved. Powers the Type A +1R breakeven
+                # ratchet and the +2R -> +1R second ratchet (item 142), the
+                # same way `_trail_open_positions` passes `initial_stop_loss`
+                # in the live pipeline. Without it both R-multiple ratchets
+                # cannot measure risk and stay silent.
+                initial_stop=pos.stop_initial,
             )
+            # CAVEAT (item 142): passing the frozen entry stop here means BOTH
+            # R-ratchets now fire in backtest whereas NONE fired before this
+            # change — so pre-this-change backtest numbers are NOT comparable to
+            # post-change ones. And this backtest is optimistically one-sided:
+            # a stop freshly locked to +1R this bar cannot stop out on the SAME
+            # bar it is set, so the second ratchet will look LESS scratchy here
+            # than it will live. Do NOT trust backtest scratch-rates to tune the
+            # R multiples (`RANGE_SECOND_RATCHET_TRIGGER_R` / `_LOCK_R`).
             if proposal is not None:
                 pos.stop = proposal.new_stop
 

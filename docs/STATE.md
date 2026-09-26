@@ -138,8 +138,9 @@ This file records what is accepted and true **now**. Git history preserves imple
 - **Phase 2a of the remediation spec is merged and deployed** — `c89e957`
   on branch `feat/risk-metrics-and-pm-correlation`. It folds in four
   `AGENT_ROLE_AUDIT.md` audit findings that preceded Phase 2's own sizing work:
-  the drawdown-halve is now deterministic (`src/risk/rules.py::apply_drawdown_scale`
-  + `drawdown_buy_cap` hard block, PM prompt's own halving deleted), the
+  the drawdown-halve was made deterministic (since RETIRED IN FULL on
+  2026-09-20 at the owner's instruction, with the rest of the account-level
+  loss alarms — docs/INCIDENT_HISTORY.md, board item 32), the
   correlation matrix is built before the Portfolio Manager decides and shown to
   it as measured clusters (`src/data/correlation.py::correlation_clusters`),
   portfolio heat / budget risk / open risk exist (`src/risk/metrics.py`) and
@@ -884,7 +885,17 @@ owner decision. The macro event calendar was built on 2026-08-31
 (`src/data/event_calendar.py`): FRED's free release-dates API supplies the forward
 schedule for CPI, Employment Situation (NFP), PPI, PCE, GDP, retail sales and
 jobless claims, threaded into both the macro analyst and the Risk Manager with a
-`MacroCoverage`-shaped coverage line. **FOMC meeting dates are covered as of
+`MacroCoverage`-shaped coverage line. Since 2026-09-23 the FRED schedules are
+FETCHED over `RELEASE_SCHEDULE_LOOKAHEAD_DAYS` (120 days, four monthly cadences)
+and FILTERED to the caller's `horizon_days`, which is unchanged: the fetch window
+used to be the horizon itself, so the monthly releases returned nothing for most
+of the month and the calendar recorded them as the source failure
+`no_scheduled_dates_published` — measured live on 2026-09-23, CPI, PPI and retail
+sales each returned 0 dates over 10 days and 3 over 120. A release whose schedule
+is published but whose next date sits past the horizon is now a SUCCESS, its next
+date carried on `EventCalendarCoverage.next_beyond_horizon` and rendered to the
+seats as scheduled-but-not-imminent; only an empty 120-day window is a failure.
+**FOMC meeting dates are covered as of
 2026-08-31** (same module, same block): FRED cannot supply them — release 101 reports
 as a daily release, so its date list is every calendar day — so the schedule comes
 from the Federal Reserve's own free calendar instead. `https://www.federalreserve.gov/
@@ -916,6 +927,14 @@ says the published schedule spans the whole horizon; every other case reads UNKN
 - Expanding `dev` permissions or reintroducing it into the normal workflow during stabilization without explicit authorization.
 - Forcing/manufacturing trades for validation.
 - Live-capital promotion without separate explicit authorization.
+
+Live-capital activation is mechanically gated, not merely prohibited in prose:
+`AlpacaConfig._enforce_paper_only` (`src/config.py`) will not build a non-paper
+config unless `config.LIVE_TRADING_AUTHORIZED` has been flipped in a reviewed
+change AND the live-capital pre-flight gate
+(`src/live_capital_preflight.py`, board item 150) reports every condition
+satisfied. The gate — not `docs/FUTURE.md` — is the source of truth for the
+pre-flight checklist.
 
 ## Handoff
 

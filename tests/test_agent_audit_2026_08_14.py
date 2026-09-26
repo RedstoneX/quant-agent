@@ -137,47 +137,19 @@ def test_f6_unknown_position_age_is_explicit_not_omitted() -> None:
     assert "held: unknown" in msg
 
 
-def test_f6_rm_sees_system_drawdown_state() -> None:
-    """RM had no access to the drawdown flag at all when this was written,
-    while its prompt made it the enforcer of the halving.
-
-    Audit §1.1 has since moved the halving into deterministic code
-    (`src.risk.rules.apply_drawdown_scale`), so RM is no longer the enforcer —
-    but it still needs the flag, now to read a scaled-down BUY as the engine's
-    work rather than as PM contradicting its own stated weight."""
-    msg = _rm_message(recent_performance={
-        "rolling_5d_pct": -4.1, "rolling_20d_pct": -2.0,
-        "in_drawdown": True, "trailing_days": 22,
-    })
-    assert "in_drawdown=true" in msg
-    assert "5d -4.1%" in msg and "20d -2.0%" in msg
-    assert "22 trailing sessions" in msg
-    assert "halved" in msg, (
-        "an in_drawdown run must tell RM that the engine already halved the BUYs"
-    )
-
-
 def test_f6_no_drawdown_data_reads_as_unauditable_not_as_no_drawdown() -> None:
     """Fail-closed in the reporting sense: a missing input must never be
     presented as a benign value. 'not provided' is a different claim from
     'in_drawdown=false' and RM must be able to tell them apart."""
     msg = _rm_message(recent_performance={})
     assert "System performance: not provided" in msg
-    # Wording changed when the halving became deterministic code (audit §1.1):
-    # RM no longer polices the rule, so the absent-input line reports unknown
-    # STATE rather than an unauditable rule. The claim under test is unchanged.
+    # Wording changed when the halving became deterministic code (audit §1.1)
+    # and again when the whole account-level loss alarm was retired
+    # (2026-09-20, board item 32): the absent-input line reports unknown
+    # STATE, and there is no flag left to render either way. The claim under
+    # test — absence is never presented as a benign value — is unchanged.
     assert "drawdown state unknown this run" in msg
-    assert "in_drawdown=true" not in msg
-    assert "in_drawdown=false" not in msg
-
-
-def test_f6_drawdown_false_does_not_emit_the_halve_warning() -> None:
-    msg = _rm_message(recent_performance={
-        "rolling_5d_pct": 1.2, "rolling_20d_pct": 3.4,
-        "in_drawdown": False, "trailing_days": 25,
-    })
-    assert "in_drawdown=false" in msg
-    assert "REQUIRES every new" not in msg
+    assert "rolling 5d" not in msg.lower().split("not provided")[0][-200:]
 
 
 def test_f6_account_section_survives_an_empty_book() -> None:
@@ -186,7 +158,7 @@ def test_f6_account_section_survives_an_empty_book() -> None:
     msg = _rm_message(
         positions=[],
         recent_performance={"rolling_5d_pct": None, "rolling_20d_pct": None,
-                            "in_drawdown": False, "trailing_days": 0},
+                            "trailing_days": 0},
     )
     assert "## Account" in msg
     assert "## Current Positions" in msg
@@ -194,9 +166,18 @@ def test_f6_account_section_survives_an_empty_book() -> None:
 
 def test_f6_rm_prompt_declares_the_new_inputs() -> None:
     """The audit's root cause was a prompt that named inputs the renderer
-    did not pass. Keep the two in sync in the other direction too."""
+    did not pass. Keep the two in sync in the other direction too.
+
+    2026-09-20: `in_drawdown` is no longer asserted here. The flag was
+    retired with the rest of the account-level loss alarms (board item 32),
+    and the only remaining mention of that word in the sheet is the sentence
+    saying it is gone — so asserting the identifier appears would have kept
+    this test green off its own tombstone. What the sheet must still declare
+    is the rolling returns the renderer does pass.
+    """
     text = (PROMPT_DIR / "risk_manager.md").read_text()
-    assert "in_drawdown" in text
+    assert "rolling_5d_pct" in text
+    assert "rolling_20d_pct" in text
     assert "held: Nd" in text
     # Renamed from "Drawdown-halve compliance" when audit §1.1 moved the
     # halving into deterministic code: RM is told the state, not made the
@@ -214,12 +195,15 @@ def test_f6_risk_stage_forwards_the_evidence_it_was_given() -> None:
 
     ctx = RunContext.start("morning")
     ctx.position_history = {"NVDA": {"days_held": 3}}
-    ctx.recent_performance = {"in_drawdown": True, "rolling_5d_pct": -5.0,
+    ctx.recent_performance = {"rolling_5d_pct": -5.0,
                               "rolling_20d_pct": -1.0, "trailing_days": 20}
 
     kwargs = _run_risk_stage_capturing_review(ctx)
     assert kwargs["position_history"] == {"NVDA": {"days_held": 3}}
-    assert kwargs["recent_performance"]["in_drawdown"] is True
+    # A field production actually builds, so this cannot pass on a value the
+    # test planted into a shape nothing emits (2026-09-20: `in_drawdown` was
+    # exactly that after board item 32 retired it).
+    assert kwargs["recent_performance"]["rolling_5d_pct"] == -5.0
 
 
 def test_f6_risk_stage_rebuilds_the_evidence_on_the_resume_lane() -> None:
@@ -333,7 +317,7 @@ def test_f5_pm_claims_come_after_the_primary_evidence() -> None:
     i_positions = msg.index("## Current Positions")
     i_macro = msg.index("## Macro Context")
     i_claims = msg.index("## PM Reasoning Chain")
-    i_engine = msg.index("## Hard Risk Rule Check Results")
+    i_engine = msg.index("## Engine Risk Check Results")
 
     assert i_trades < i_positions < i_macro < i_claims < i_engine, (
         "PM's self-justification must sit after the primary evidence and "
@@ -413,26 +397,27 @@ def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:
 
 
 @pytest.mark.parametrize("anchor", (
-    "**Veto is nuclear.**",
-    "≥ 5 separate `modifications`",
+    # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto. The
+    # old "**Veto is nuclear.**" and "≥ 5 separate `modifications`" anchors were
+    # REMOVED with the veto itself — the seat may only drop named NEW entries
+    # and shrink sizing. These anchors pin the new contract.
+    "You have NO veto. There is no whole-batch reject.",
+    "no `approved: false` lever",
     # "R/R discipline is non-negotiable" was an anchor here until
     # 2026-09-11. It was REMOVED deliberately, by owner decision
     # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
     # setup type was the largest measured cause of proposals that never
     # became trades, and it is meaningless on a trend trade with no
-    # overhead level. What replaces it is anchored below — the veto
-    # framing this test protects is otherwise untouched.
+    # overhead level. What replaces it is anchored below.
     "R/R discipline is by SETUP TYPE, not universal",
     "Err on the side of capital preservation",
 ))
 def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:
-    """INTENTIONALLY RETAINED. The audit flagged the veto framing as
-    near-forbidding disagreement. It is kept: a rejection kills the whole
-    plan and PM learns only a one-word `reason_category`, while
-    `modifications` are surgical and carry a reason per symbol. Loosening
-    the threshold changes trading behaviour and is exactly the kind of
-    change that needs paper-trading evidence, not a prompt edit. The
-    independence work above changes what RM KNOWS, never what it may DO.
+    """Owner ruling 2026-09-24 (final): the whole-batch veto is REMOVED. The
+    seat reduces risk only by dropping named NEW entries (`rejected_symbols`)
+    and shrinking (`scale_all_buys` / `modifications`); `approved=False` is a
+    recorded no-op. It can never block a protective exit or touch a holding.
+    These anchors pin that contract in the prompt.
     """
     assert anchor in (PROMPT_DIR / "risk_manager.md").read_text()
 
@@ -628,6 +613,37 @@ def test_f7b_cached_analyses_are_checked_too() -> None:
     assert _flag("trading at 28x forward earnings", source="cache") == [
         "trading at", "Nx earnings/sales",
     ]
+
+
+def test_f7b_the_disclosure_does_not_trip_its_own_detector() -> None:
+    """The redaction text contains "share price" and "market cap", two of the
+    detector's own patterns. Unguarded, every run after the first loaded the
+    redacted cache, matched on the desk's own boilerplate, redacted it to the
+    identical text and rewrote the identical file — measured at 106
+    detect/re-save pairs for two symbols over five days, not one of them a
+    real fabricated claim."""
+    from src.agents.earnings_analyst import _UNSOURCED_VALUATION_DISCLOSURE
+
+    assert _flag(_UNSOURCED_VALUATION_DISCLOSURE, source="cache") == []
+    assert _flag(f"  {_UNSOURCED_VALUATION_DISCLOSURE}  ") == []
+
+
+@pytest.mark.parametrize("wrap", (
+    lambda d: f"{d} The P/E of 34 is rich.",
+    lambda d: f"The P/E of 34 is rich. {d}",
+))
+def test_f7b_disclosure_marker_cannot_be_used_to_smuggle_a_claim(wrap) -> None:
+    """The exemption is exact equality, never a prefix or substring test: a
+    model that pastes the marker around an invented multiple must still be
+    caught, or the guard becomes the evasion."""
+    from src.agents.earnings_analyst import _UNSOURCED_VALUATION_DISCLOSURE
+
+    assert "P/E" in _flag(wrap(_UNSOURCED_VALUATION_DISCLOSURE))
+
+
+def test_f7b_real_claims_still_caught_alongside_the_exemption() -> None:
+    """The exemption must not weaken ordinary detection."""
+    assert _flag("trading at 28x forward earnings", source="cache") != []
 
 
 def test_f7b_detection_is_advisory_and_never_drops_the_analysis() -> None:

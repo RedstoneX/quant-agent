@@ -90,7 +90,14 @@ def test_a_plan_the_constructor_dropped_is_reported_not_silently_lost(
         "morning", {"status": "no_trades", "run_id": run, "orders": []}, 12.0,
     )
 
-    assert "BLOCKED / FAILED" in msg
+    # NOT TAKEN, not BLOCKED / FAILED (2026-09-23). The minimum trade size
+    # is one of the three cases the owner named when he said a normal
+    # operating state must not be reported as an error: the desk declined
+    # this on a standing rule, nothing broke, and the header says NO TRADE.
+    # What must NOT change is that the drop still reaches the message at
+    # all, with its reason — that is what this test was written for.
+    assert "<b>🚫 NOT TAKEN</b>" in msg
+    assert msg.splitlines()[0].endswith("· NO TRADE")
     assert "NVDA" in msg
     assert "Stopped by the desk before an order was placed" in msg
     assert "0.20% of the account" in msg
@@ -195,9 +202,16 @@ def test_an_order_that_never_filled_is_explained_in_words_not_a_status_token(
 def test_an_unrecognised_status_is_described_never_pasted_or_guessed_at():
     """Inventing a friendly meaning for a token nobody mapped would be
     inventing a trading fact. Saying there is no plain wording for it is
-    the honest answer."""
+    the honest answer.
+
+    2026-09-24: the raw token must still be KEPT, not dropped — the same
+    treatment `notifier.humanize_status` already gives an unmapped status
+    ("its own code for it, kept for the record, is ..."). Dropping it here
+    made an unmapped state unrecoverable from the message; the fix is to
+    label it as the desk's own code, never to paraphrase it as a fact.
+    """
     text = trader_feed._order_end_plain("some_new_alpaca_state")
-    assert "some_new_alpaca_state" not in text
+    assert "some_new_alpaca_state" in text
     assert "no plain wording" in text
 
 
@@ -205,6 +219,32 @@ def test_the_underlying_fault_text_is_kept_but_labelled_as_machine_output():
     text = trader_feed._machine_detail("KeyError: 'targets'")
     assert "KeyError: 'targets'" in text
     assert "Machine fault text" in text
+
+
+def test_an_unmapped_fill_state_keeps_its_raw_token_too():
+    """Same defect as `_order_end_plain` above, in the sibling helper shown
+    ALONGSIDE an order line: dropping the broker's own token for a state
+    nobody mapped made it unrecoverable from the message."""
+    text = trader_feed._fill_state_plain("some_new_alpaca_fill_state")
+    assert "some_new_alpaca_fill_state" in text
+    assert "not recorded in plain words" in text
+
+
+def test_a_resting_partially_filled_order_is_not_reported_as_failed():
+    """2026-09-24: `_trade_reached_broker` only recognised
+    filled/submitted/pending_submit as "reached the broker" — a live,
+    working `partially_filled` order (the remainder still resting) fell
+    into the same bucket as a genuine terminal failure, so
+    `_outcome_word` reported a false FAILED for an order that was in fact
+    live and protected."""
+    assert trader_feed._trade_reached_broker("partially_filled") is True
+    assert trader_feed._trade_reached_broker("accepted") is True
+    assert trader_feed._trade_reached_broker("new") is True
+    assert trader_feed._trade_reached_broker("held") is True
+    assert trader_feed._trade_reached_broker("pending_new") is True
+    # Genuine terminal failures must still be treated as not-reached.
+    assert trader_feed._trade_reached_broker("canceled") is False
+    assert trader_feed._trade_reached_broker("rejected") is False
 
 
 # --- defect 2: a header computed independently of the list beneath it ---

@@ -20,12 +20,14 @@ plumbing made it buy nothing.
    folded into the same total even though a short never draws on
    `available_cash` — that funding is waste by construction.
 
-2. TOKEN ORDERS. The execution-time cash clamp is the LAST resize, after
-   the constructor's and the risk engine's `min_order_usd` floors have both
-   run. With fractional sizing on it no longer floors to zero shares when
-   cash is short — a $3.11 residue buys 0.0311 shares and the order goes
-   out. §10.3: a position too small to pay for its own risk is not a
-   smaller trade, it is a worse one.
+2. TOKEN ORDERS. The execution-time cash clamp is the LAST resize. Fixed
+   2026-09-24: it used to refuse a resize under the flat $500
+   `min_order_usd` floor — an arbitrary number, not a broker minimum, and
+   Alpaca charges no stock commission — so a real, small residual trade was
+   refused as "too small to bother". With fractional sizing on, a $3.11
+   residue now buys 0.0311 shares and the order goes out, same as a whole-
+   share residue under the old floor now places its whole shares instead of
+   being refused.
 
 3. UNCONFIRMED PROCEEDS. `fund_buys` returns 0.0 when it cannot confirm the
    cash landed, but it has already refreshed `ctx` from the broker. The
@@ -61,7 +63,6 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False,
     pipeline._refresh_account_state.return_value = (
         {"cash": cash, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.config.cash_sweep.min_order_usd = min_order_usd
     pipeline.config.execution.fractional_enabled = fractional
     pipeline.config.execution.fractional_share_decimals = 4
@@ -241,14 +242,22 @@ def test_short_only_session_funds_nothing():
 
 
 # ---------------------------------------------------------------------------
-# Defect 2 — the cash clamp must respect the minimum notional.
+# Defect 2 — fixed 2026-09-24: the cash clamp used to refuse a resize under
+# the flat $500 `min_order_usd` floor. That floor was an arbitrary round
+# number (config/number_ledger.yaml), not a broker minimum, and Alpaca
+# charges no stock commission — so a real, small residual trade was being
+# refused on a false "too small to bother" basis. The clamp now places
+# whatever the raw cash actually funds, however small, and only refuses when
+# that is a genuine zero.
 # ---------------------------------------------------------------------------
 
 
-def test_fractional_clamp_refuses_a_token_order():
-    """$3.11 of raw cash buys 0.0311 shares under fractional sizing. Before
-    the floor was re-applied here, that order was SUBMITTED."""
+def test_fractional_clamp_places_a_token_order_not_refuses_it():
+    """$3.11 of raw cash buys 0.0311 shares under fractional sizing. That
+    is now SUBMITTED rather than refused — no commission, and fractional
+    sizing means a tiny order is not actually costly to hold."""
     pipeline = _pipeline(live_price=100.0, cash=3.11, fractional=True)
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
         entry_price=100.0, stop_loss=95.0, take_profit=115.0,
@@ -257,16 +266,14 @@ def test_fractional_clamp_refuses_a_token_order():
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert orders == []
-    pipeline.broker.submit_order.assert_not_called()
-    assert [s["reason"] for s in ctx.execution_skips] == ["below_min_notional"]
-    assert "3.11" in ctx.execution_skips[0]["detail"]
+    assert len(orders) == 1
+    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == pytest.approx(0.0311)
+    assert ctx.execution_skips == []
 
 
 def test_clamp_still_places_a_meaningful_partial_order():
-    """The floor refuses tokens, not partials. $750 clears the $500 minimum
-    and must still be placed — a partial funding fill preserving a smaller
-    real position is the behaviour the resize exists for."""
+    """A partial funding fill preserving a smaller real position is the
+    behaviour the resize exists for — unaffected by the floor's removal."""
     pipeline = _pipeline(live_price=100.0, cash=750.0, fractional=True)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx([TradeDecision(
@@ -282,10 +289,12 @@ def test_clamp_still_places_a_meaningful_partial_order():
     assert ctx.execution_skips == []
 
 
-def test_whole_share_clamp_also_respects_the_floor():
-    """The floor is not fractional-only. Four whole shares at $100 is $400,
-    under the $500 minimum, and must be refused rather than placed."""
+def test_whole_share_clamp_also_places_the_small_order():
+    """The removal is not fractional-only. Four whole shares at $100 is
+    $400 — well under the old $500 floor — and is now placed rather than
+    refused."""
     pipeline = _pipeline(live_price=100.0, cash=499.0, fractional=False)
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
         entry_price=100.0, stop_loss=95.0, take_profit=115.0,
@@ -294,9 +303,9 @@ def test_whole_share_clamp_also_respects_the_floor():
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert orders == []
-    pipeline.broker.submit_order.assert_not_called()
-    assert [s["reason"] for s in ctx.execution_skips] == ["below_min_notional"]
+    assert len(orders) == 1
+    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == 4
+    assert ctx.execution_skips == []
 
 
 def test_min_notional_floor_falls_back_to_500_not_zero():
@@ -318,11 +327,16 @@ def test_min_notional_floor_falls_back_to_500_not_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_unconfirmed_funding_does_not_submit_an_unfunded_buy():
+def test_unconfirmed_funding_is_governed_by_raw_cash_not_refused():
     """`fund_buys` returning 0.0 means the proceeds could not be confirmed.
-    The BUY loop must then be governed by raw cash — and $174.96 of raw cash
-    against a $10,000 approved order is a refusal, not a $174 position."""
+    The BUY loop must then be governed by raw cash — $174.96 of raw cash
+    against a $10,000 approved order sizes down to what that cash actually
+    buys (1.7496 shares). Fixed 2026-09-24: this used to be refused outright
+    as under the flat $500 floor; it is now placed at the raw-cash size
+    instead, since the resize itself (not the floor) is what keeps this
+    from becoming a $10,000 unfunded position."""
     pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True)
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     _install_sweeper(pipeline, freed=0.0)
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
@@ -332,15 +346,19 @@ def test_unconfirmed_funding_does_not_submit_an_unfunded_buy():
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert orders == []
-    pipeline.broker.submit_order.assert_not_called()
-    assert [s["reason"] for s in ctx.execution_skips] == ["below_min_notional"]
+    assert len(orders) == 1
+    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == pytest.approx(1.7496)
+    assert ctx.execution_skips == []
 
 
 def test_unconfirmed_funding_is_visible_not_silent():
     """The zero-confirmed path must leave a durable trace: a
-    `cash_sweep_released_zero` pipeline event AND a recorded skip."""
+    `cash_sweep_released_zero` pipeline event. Fixed 2026-09-24: the
+    resized buy is now placed rather than skipped, so the durable trace of
+    the resize itself is the `funding` / `resized` pipeline event, not a
+    skip."""
     pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True)
+    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     _install_sweeper(pipeline, freed=0.0)
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=10,
@@ -352,7 +370,8 @@ def test_unconfirmed_funding_is_visible_not_silent():
 
     payloads = " ".join(p for _kind, p in _events(pipeline))
     assert "cash_sweep_released_zero" in payloads
-    assert ctx.execution_skips, "the skip must be durable, not log-only"
+    assert "confirmed_cash_partially_funded_order" in payloads
+    assert ctx.execution_skips == []
 
 
 def test_unconfirmed_funding_adopts_the_refreshed_cash_reading():

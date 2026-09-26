@@ -28,6 +28,8 @@ from src.risk.rules import (
     EARNINGS_STANCE_MAX_AGE_DAYS,
     _gross_multiplier,
     book_exposure as _book_exposure,
+    own_bar_block_reason,
+    own_bar_opposition_reason,
     count_aligned_sources,
     count_opposing_sources,
     position_weight_pct,
@@ -36,7 +38,9 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.rotation import (
-    RotationOpportunity, RotationPrecheck, evaluate_rotation_opportunity,
+    RotationOpportunity, RotationPrecheck,
+    evaluate_rotation, funding_view_measured, holdings_below_entry_bar,
+    rotation_binding_constraints,
 )
 from src.trading_calendar import et_today
 from src.verdicts import RankedCandidate, rank_verdicts
@@ -52,12 +56,11 @@ SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
 # this exact string.
 CONFLICT_UNADJUDICATED_STATUS = "pm_conflict_unadjudicated"
 
-# 2026-09-01 (measured 2026-09-02) — greppable status keys for the sub-floor
-# catalyst gate, same naming convention as the two above. See
-# `_apply_subfloor_catalyst_rule` for what each one means. Logs and tests key
-# on these exact strings.
+# 2026-09-01 (measured 2026-09-02) — greppable status key for the sub-floor
+# catalyst gate, same naming convention as the one above. See
+# `_apply_subfloor_catalyst_rule` for what it means. Logs and tests key on
+# this exact string.
 SUBFLOOR_CATALYST_UNVERIFIED_STATUS = "pm_subfloor_catalyst_unverified"
-SUBFLOOR_SIZE_CAPPED_STATUS = "pm_subfloor_size_capped"
 
 #: One rendered `active_state_changes` row, as
 #: `TradingPipeline._build_active_state_changes` emits it:
@@ -639,7 +642,42 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             # resolve one symbol's sector identically (item 31, 2026-09-13).
             symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
+
+        # R7 — the 2026-09-25 owner conviction bar, applied ONCE here to the
+        # candidate_eligibility result and consumed by BOTH sides below: the
+        # PM prompt (ENTRY) and, through the same `blocked` set,
+        # `holdings_below_entry_bar` / rotation's `ineligible_hold` tier
+        # (STAYING). One definition, both sides. It rides on TOP of the R2-R6
+        # pre-decision gates rather than inside `candidate_eligibility`, so the
+        # audit shadow (`ops/model_policy/deterministic_selection.py`) still
+        # mirrors those gates exactly; R7 is a NEW governance overlay on seat
+        # AGREEMENT, separate from the §9.4 net-evidence floor and from the
+        # continuous ranking score. `_apply_conviction_bar` moves any ENTRY
+        # candidate that fails the bar out of `ranked` and into `blocked`, so the
+        # constructor's budget ordering (`last_candidate_ranking`) can never
+        # fund a name the bar refused. For a currently-HELD name the STAY side
+        # is OPPOSITION-ONLY (owner ruling 2026-09-25): it is culled into
+        # `blocked` only when a seat is actively opposed; a held name that fails
+        # the ENTRY bar on soft grounds (no technical read, neutral technical,
+        # support faded to neutral) is simply dropped from the ranked survivors
+        # with no cull reason — it earns its right to STAY.
+        _held_now = {
+            (p.symbol or "").strip().upper()
+            for p in positions if (p.symbol or "").strip()
+        }
+        ranked, blocked = self._apply_conviction_bar(
+            ranked=ranked, blocked=blocked, held_symbols=_held_now,
+            all_verdicts=self._collect_seat_verdicts(
+                analyses=analyses,
+                news_intel=news_intel,
+                macro_analysis=macro_analysis,
+                earnings_analyses=earnings_analyses or [],
+                smart_money_findings=smart_money_findings,
+                symbol_sectors=kwargs.get("symbol_sectors") or {},
+            ),
+        )
         self.last_candidate_ranking = list(ranked)
+
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # Phase 14 — opportunity-cost rotation. The ranking above orders
@@ -665,10 +703,35 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         # inputs that may have moved in between. Reset first so a stale
         # value from a previous session can never leak into this one.
         self.last_rotation_precheck = None
+        # 2026-09-23. The funding half of the rotation precondition, from
+        # the SAME `_entry_deployment_budget` figure the Margin Capacity
+        # section above is rendered from and execution sizes entries
+        # against — never a second computation of "is the book full".
+        # `margin_ladder_backed=False` means that computation could not
+        # resolve this session, and `None` then switches the funding test
+        # off rather than letting an unreadable input read as "there is
+        # room". See `src/rotation.py` for why this constraint, and not the
+        # risk budget alone, is what has bound this desk.
+        _entry_budget_usd = kwargs.get("margin_headroom_usd")
+        if not bool(kwargs.get("margin_ladder_backed", False)) or not isinstance(
+            _entry_budget_usd, (int, float),
+        ) or isinstance(_entry_budget_usd, bool):
+            _entry_budget_usd = None
+        _min_order_usd = kwargs.get("min_order_usd")
+        if not isinstance(_min_order_usd, (int, float)) or isinstance(
+            _min_order_usd, bool,
+        ):
+            _min_order_usd = None
         rotation_precheck = self.rotation_precheck(
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
+            entry_budget_usd=(
+                None if _entry_budget_usd is None else float(_entry_budget_usd)
+            ),
+            min_order_usd=(
+                None if _min_order_usd is None else float(_min_order_usd)
+            ),
         )
         self.last_rotation_precheck = rotation_precheck
         rotation_section = self._render_rotation_section(
@@ -677,6 +740,9 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             ceiling_pct=max_portfolio_risk_pct,
             precheck=rotation_precheck,
             execute_enabled=bool(kwargs.get("rotation_execute_enabled", False)),
+            ranked_margin_enabled=bool(
+                kwargs.get("rotation_ranked_margin_enabled", False),
+            ),
         )
 
         # L2 memory: each position line also gets entry context + Tech rating trajectory
@@ -1037,50 +1103,37 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                     "the ladder as unknown, not as zero."
                 )
 
-        # Recent system performance (drawdown awareness).
+        # Recent system performance, REPORTING ONLY. The `in_drawdown`  # retired-ok
+        # flag and its two thresholds used to live here and halved every new
+        # BUY; that brake was removed 2026-09-20 on the owner's instruction
+        # (retired item 32, docs/INCIDENT_HISTORY.md). These numbers now
+        # inform the seat and gate nothing.
         recent_perf = kwargs.get("recent_performance") or {}
         if recent_perf:
             r5 = recent_perf.get("rolling_5d_pct")
             r20 = recent_perf.get("rolling_20d_pct")
-            dd = recent_perf.get("in_drawdown")
             trailing = recent_perf.get("trailing_days") or 0
-            dd_marker = " ⚠️ SYSTEM IN DRAWDOWN" if dd else ""
-            # docs/WORK.md item 32: rendered from the thresholds actually in
-            # force (`_compute_recent_performance`), not a hardcoded
-            # "5d < -3% OR 20d < -8%" description. Since the 2026-09-11 basis
-            # change these MOVE EVERY SESSION — they are a multiple of the
-            # normal daily move of the book actually held, not a fixed
-            # percentage of equity — so any hand-typed copy here would be
-            # wrong within days rather than merely going stale eventually.
-            t5 = recent_perf.get("drawdown_5d_threshold_pct")
-            t20 = recent_perf.get("drawdown_20d_threshold_pct")
-            threshold_desc = (
-                f"5d < {t5}% OR 20d < {t20}%"
-                if t5 is not None and t20 is not None
-                else "unavailable"
-            )
-            # docs/WORK.md item 32 (2026-09-14). A window with too little
-            # equity history to evaluate used to render as "None%", which
-            # reads to a model as a number near zero — i.e. as "we are not
-            # in drawdown" when the truth is "this brake cannot see". The
-            # rolling windows need 6 and 21 recorded sessions respectively
-            # (`_compute_recent_performance` reads rows[5] / rows[20]), and
-            # rows are only written by an evening run, so a paused desk does
-            # not accrue them. Say so instead of printing a null.
+
+            # A window with too little equity history to evaluate used to
+            # render as "None%", which reads to a model as a number near
+            # zero. The rolling windows need 6 and 21 recorded sessions
+            # respectively (`_compute_recent_performance` reads rows[5] /
+            # rows[20]), and rows are only written by an evening run, so a
+            # paused desk does not accrue them. Say so instead of printing
+            # a null.
             def _window(value, needed: int) -> str:
                 if value is not None:
                     return f"{value}%"
                 return (
                     f"NOT YET MEASURABLE — needs {needed} recorded sessions, "
-                    f"{trailing} on record. This brake cannot fire until then; "
-                    f"do not read it as zero or as an all-clear."
+                    f"{trailing} on record. Do not read it as zero or as an "
+                    f"all-clear."
                 )
 
             perf_section = (
-                f"## Recent System Performance (drawdown check){dd_marker}\n"
+                f"## Recent System Performance\n"
                 f"- Trailing 5-day return: {_window(r5, 6)}\n"
                 f"- Trailing 20-day return: {_window(r20, 21)}\n"
-                f"- Drawdown threshold: {threshold_desc} flags in_drawdown\n"
                 f"- History length: {trailing} days recorded\n"
             )
         else:
@@ -1455,7 +1508,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
               `stop_wider_than_instrument_reach` or
-              `insufficient_history` (docs/WORK.md item 54, 2026-09-12).
+              `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
+              item 180 dropped the young-listing bar-count refusal).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM
               being shown a name that funnel has already refused. Absent
@@ -1779,6 +1833,95 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return ranked, blocked
 
     @staticmethod
+    def _apply_conviction_bar(
+        *,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
+        held_symbols: set[str],
+        all_verdicts: list[AnalystVerdict],
+    ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
+        """The 2026-09-25 owner conviction bar (R7), applied to the ranking.
+
+        A NEW governance overlay on top of `candidate_eligibility`'s R2-R6
+        pre-decision gates: the ROLE-BASED conviction bar
+        (`own_bar_block_reason`). A name is admitted only if the technical seat
+        confirms timing (a timing VETO, no positive weight), NO seat is opposed,
+        and at least one NON-technical seat took a supported directional side
+        (`_has_supported_directional_thesis` — not a genuine specificity or
+        falsifiability test; News and Smart-money always synthesise their
+        invalidation). Deliberately OUTSIDE
+        `candidate_eligibility` so the audit shadow
+        (`ops/model_policy/deterministic_selection.py`) keeps mirroring those
+        gates exactly.
+
+        ENTRY vs STAY — two verdicts from ONE bar (owner ruling 2026-09-25):
+
+          * ENTRY (a candidate NOT in `held_symbols`): full-strict. Any R7
+            failure — technical veto, opposition, OR a soft miss (no supported
+            directional thesis) — moves the name OUT of `ranked` and INTO
+            `blocked` under `CONVICTION_BAR_REASON_PREFIX`. Unchanged.
+          * STAY (a candidate IN `held_symbols`): OPPOSITION-ONLY. A held name
+            is culled into `blocked` (which rotation's `ineligible_hold` tier
+            reads) ONLY when a seat is ACTIVELY OPPOSED to the held direction
+            (`own_bar_opposition_reason` non-None). A held name that fails the
+            entry bar on SOFT grounds — no technical read this review, a
+            neutral/non-confirming technical read, or support that faded to
+            neutral — is dropped from the ranked survivors (it does not belong
+            in the fresh-entry budget order) but gets NO cull reason: it earns
+            its right to STAY. The price-thesis-break exit
+            (`src.risk.exit_guard`) handles genuine deterioration separately.
+
+        Supportive/opposed are read from the SEAT VERDICTS
+        (`AnalystVerdict`), one source of "which seat took which side" — a long
+        is supported by a bullish verdict, a short by a bearish one — so this
+        never introduces a second notion of "aligned".
+
+        SAFETY INVARIANT this relies on (not enforced by the type system): every
+        symbol in `ranked` is expected to already carry a technical verdict in
+        `by_symbol`, because ranking itself is derived from technical reads (see
+        `_render_candidate_ranking`: "no Technical reads this session -> nothing
+        to rank"). So the "absent technical read" branch is expected to never
+        fire for a real ranked name — a ranked name with no technical verdict at
+        all would mean that upstream invariant broke. It is logged loudly below
+        when it does; the name is still handled safely (an entry candidate is
+        refused, a held name drops from survivors without a spurious cull).
+        """
+        by_symbol: dict[str, list[AnalystVerdict]] = {}
+        for v in all_verdicts:
+            by_symbol.setdefault(v.symbol.upper(), []).append(v)
+        held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
+        blocked = {s: list(why) for s, why in blocked.items()}
+        survivors: list[RankedCandidate] = []
+        for c in ranked:
+            sym = c.symbol.upper()
+            sym_verdicts = by_symbol.get(sym, [])
+            if not any(v.seat == "technical" for v in sym_verdicts):
+                logger.warning(
+                    "R7 conviction bar: ranked candidate %s carries no "
+                    "technical verdict in by_symbol — the ranked-implies-"
+                    "technical invariant broke upstream; handling %s per the "
+                    "absent-technical branch (not a silent cull, not a crash)",
+                    sym, sym,
+                )
+            reason = own_bar_block_reason(
+                sym_verdicts, direction=c.direction,
+            )
+            if reason is None:
+                survivors.append(c)
+            elif sym in held:
+                # STAY: opposition-only. A soft miss drops the name from the
+                # entry budget order but never adds a cull reason.
+                opposition = own_bar_opposition_reason(
+                    sym_verdicts, direction=c.direction,
+                )
+                if opposition is not None:
+                    blocked.setdefault(sym, []).append(opposition)
+            else:
+                # ENTRY: full-strict.
+                blocked.setdefault(sym, []).append(reason)
+        return survivors, blocked
+
+    @staticmethod
     def _render_candidate_ranking(
         ranked: list[RankedCandidate], blocked: dict[str, list[str]],
     ) -> str:
@@ -1848,6 +1991,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         held_symbols: set[str],
         existing_risk_pct: dict[str, float] | None,
         ceiling_pct: float,
+        entry_budget_usd: float | None = None,
+        min_order_usd: float | None = None,
     ) -> RotationPrecheck:
         """Phase 14 — run the opportunity-cost comparison once and keep its
         inputs. `_render_rotation_section` renders this for the prompt;
@@ -1861,24 +2006,98 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         check is skipped rather than run against a fabricated "book is
         empty" view, the same fail-open posture `allocate_risk_budget`
         itself already requires of every caller.
+
+        `entry_budget_usd` is `_entry_deployment_budget`'s own figure — the
+        dollars EXECUTION will size this session's entries against, already
+        carrying the §11.2 gross ladder, settled cash and the min of the two
+        — and `min_order_usd` the §10.3 `cash_sweep.min_order_usd` floor
+        under the smallest order the desk will place. Together they are the
+        funding half of the precondition (2026-09-23; see
+        `src/rotation.py`'s docstring for the measurement that added it).
+        Both `None` means the funding view was not resolvable this session,
+        and the funding test is then simply absent — this agent never
+        derives either number itself, for the same reason the Margin
+        Capacity section does not.
         """
+        held_below = holdings_below_entry_bar(blocked, held_symbols)
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
+                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+                held_below_entry_bar=held_below,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
             ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
         ).headroom_pct
-        opportunity: RotationOpportunity | None = evaluate_rotation_opportunity(
+        outcome = evaluate_rotation(
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             headroom_pct=headroom_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
         )
+        opportunity: RotationOpportunity | None = outcome.opportunity
         return RotationPrecheck(
             opportunity=opportunity, headroom_pct=headroom_pct,
             ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            refusal=outcome.refusal,
+            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+            binding=(
+                () if outcome.refusal is None else outcome.refusal.binding
+            ) or rotation_binding_constraints(
+                headroom_pct=headroom_pct,
+                floor_pct=STARTER_POSITION_RISK_PCT,
+                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+            ),
+            held_below_entry_bar=held_below,
         )
+
+    @staticmethod
+    def _rotation_constraint_line(
+        precheck: RotationPrecheck, *, ceiling_pct: float,
+    ) -> str:
+        """The one sentence naming WHICH limit has the book pinned.
+
+        2026-09-23. The old wording said "capital is constrained" and then
+        quoted only the risk budget, because the risk budget was the only
+        thing the pre-check looked at. Now that the funding view can be the
+        binding one — and on this book it usually is, while the risk budget
+        almost never is — the sentence has to say which, or the model reads
+        a number that is not the one stopping it and plans around the wrong
+        limit. That mis-statement is the same class of defect as the
+        2026-09-17 CRM incident, where the prompt said no margin was
+        deployable while $11.4k of ladder headroom existed.
+        """
+        parts: list[str] = []
+        if "risk_budget" in precheck.binding:
+            parts.append(
+                f"only {precheck.headroom_pct:.2f}% risk headroom against "
+                f"the {ceiling_pct:.2f}% ceiling (existing book only, "
+                "before anything you propose today), under the "
+                f"{precheck.floor_pct:.2f}% minimum tradeable size"
+            )
+        if "funding" in precheck.binding:
+            budget = precheck.entry_budget_usd
+            floor = precheck.min_order_usd
+            parts.append(
+                f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
+                "ladder-and-cash budget execution sizes entries against), "
+                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "no new position can be funded at all without freeing "
+                "capital first"
+                if isinstance(budget, (int, float))
+                and isinstance(floor, (int, float))
+                else "the deployable budget will not fund a new order"
+            )
+        if not parts:
+            # Unreachable while callers check `precheck.binding` first; here
+            # so a future caller that does not gets a true sentence rather
+            # than an assertion of constraint that was never established.
+            return (
+                f"{precheck.headroom_pct:.2f}% risk headroom against the "
+                f"{ceiling_pct:.2f}% ceiling; no constraint is binding."
+            )
+        return "Capital is constrained — " + " and ".join(parts) + "."
 
     @classmethod
     def _render_rotation_section(
@@ -1891,6 +2110,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         ceiling_pct: float,
         precheck: RotationPrecheck | None = None,
         execute_enabled: bool = False,
+        #: Board item 39 — `execution.rotation_ranked_margin_enabled`, the
+        #: SECOND switch. `execute_enabled` alone still means the
+        #: categorical tier only, exactly as before.
+        ranked_margin_enabled: bool = False,
     ) -> str:
         """Phase 14 — the opportunity-cost comparison, surfaced as
         information. See `src/rotation.py` for the rule, the margin and the
@@ -1917,32 +2140,39 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             )
         headroom_pct = precheck.headroom_pct
         opportunity = precheck.opportunity
+        constraint_line = cls._rotation_constraint_line(
+            precheck, ceiling_pct=ceiling_pct,
+        )
         if opportunity is None:
-            if headroom_pct < STARTER_POSITION_RISK_PCT:
+            if precheck.binding:
                 return (
                     f"{header}\n"
-                    f"Capital is constrained — {headroom_pct:.2f}% risk "
-                    f"headroom left against the {ceiling_pct:.2f}% ceiling "
-                    "(existing book only, before anything you propose "
-                    f"today), under the {STARTER_POSITION_RISK_PCT:.2f}% "
-                    "minimum tradeable size — but no eligible new "
-                    "candidate outranks a held position by enough to "
-                    "recommend trimming one for the other. Nothing to "
-                    "surface."
+                    f"{constraint_line} But no eligible new candidate "
+                    "outranks a held position by enough to recommend "
+                    "trimming one for the other. Nothing to surface."
                 )
+            if funding_view_measured(
+                precheck.entry_budget_usd, precheck.min_order_usd,
+            ):
+                return (
+                    f"{header}\n"
+                    f"{headroom_pct:.2f}% risk headroom left against the "
+                    f"{ceiling_pct:.2f}% ceiling, and "
+                    f"${precheck.entry_budget_usd:,.2f} is still deployable "
+                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
+                    "minimum order — real room exists on every constraint, "
+                    "so there is nothing to rotate for."
+                )
+            # Adversary review 2026-09-23: do NOT tell a seat that can sell
+            # that room exists on a constraint that was never measured.
             return (
                 f"{header}\n"
                 f"{headroom_pct:.2f}% risk headroom left against the "
-                f"{ceiling_pct:.2f}% ceiling — real room exists, so there "
-                "is nothing to rotate for."
+                f"{ceiling_pct:.2f}% ceiling. The session's deployable-entry "
+                "budget could NOT be read, so the funding constraint was not "
+                "tested and this check covers the risk budget only."
             )
-        lines = [
-            header,
-            f"Capital is constrained — {headroom_pct:.2f}% risk headroom "
-            f"left against the {ceiling_pct:.2f}% ceiling (existing book "
-            "only, before anything you propose today), under the "
-            f"{STARTER_POSITION_RISK_PCT:.2f}% minimum tradeable size.",
-        ]
+        lines = [header, constraint_line]
         if opportunity.tier == "ineligible_hold":
             reasons = "; ".join(opportunity.reasons)
             lines.append(
@@ -1989,16 +2219,77 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "this gap is not an artefact of coverage. Had it not, "
                 "nothing would have been surfaced."
             )
-        lines.append(
-            "This is a comparison, not an instruction: it names the "
-            "weakest thing currently using the room and the strongest "
-            "thing there is no room for. Trimming or exiting "
-            f"{opportunity.held_symbol} to fund {opportunity.new_symbol} is "
-            "one reasonable call; doing nothing is another. Either way, an "
-            "edit to a held position needs the same substantive "
-            "justification any other exit does — this note is not one."
+        # Board item 39: the RANKED-MARGIN tier only, deliberately.
+        #
+        # "Doing nothing is another reasonable call" is not true once the
+        # desk can close the name itself, and two adjacent paragraphs
+        # claiming opposite things is a prompt that has rotted. That is
+        # equally true of the CATEGORICAL tier, which is live today — but
+        # rewording a live seat's prompt is a behaviour change on a path
+        # that is trading, it is not required by this item, and it belongs
+        # in a change a reviewer can judge on its own merits rather than
+        # as a footnote in a sequencing fix. The categorical text below is
+        # therefore byte-for-byte unchanged.
+        desk_may_act = (
+            ranked_margin_enabled and opportunity.tier == "ranked_margin"
         )
-        if execute_enabled and opportunity.tier == "ineligible_hold":
+        if desk_may_act:
+            lines.append(
+                "This names the weakest thing currently using the room and "
+                "the strongest thing there is no room for. Read the "
+                "paragraph below before you plan: on this comparison the "
+                "desk may close the held name ITSELF, so leaving it alone "
+                "is not one of the outcomes. An edit to a held position "
+                "still needs the same substantive justification any other "
+                "exit does — this note is not one."
+            )
+        else:
+            lines.append(
+                "This is a comparison, not an instruction: it names the "
+                "weakest thing currently using the room and the strongest "
+                "thing there is no room for. Trimming or exiting "
+                f"{opportunity.held_symbol} to fund "
+                f"{opportunity.new_symbol} is one reasonable call; doing "
+                "nothing is another. Either way, an edit to a held "
+                "position needs the same substantive justification any "
+                "other exit does — this note is not one."
+            )
+        if ranked_margin_enabled and opportunity.tier == "ranked_margin":
+            # Board item 39. The desk can now act on THIS tier too, behind
+            # its own second switch. The model must be told, or it sizes a
+            # plan as though no room is being freed — and the rotation's
+            # own arithmetic then depends on that plan. A prompt that is
+            # silent about what the desk will do on its own is wrong in the
+            # same way stale code is.
+            lines.append(
+                "AUTOMATIC ROTATION IS ENABLED for this ranked-margin case: "
+                f"if you include a BUY target for {opportunity.new_symbol} "
+                f"and do not yourself close {opportunity.held_symbol}, the "
+                f"desk will propose a full close of {opportunity.held_symbol}"
+                " on its own — but ONLY if its structural protection has "
+                "already broken under the holding-discipline check, it was "
+                "not bought today, nothing is in flight on it, AND the "
+                f"replacement buy of {opportunity.new_symbol} still clears "
+                "every gate that can be KNOWN before the sale (the "
+                "daily-loss limit, a usable price, a fresh entry, a "
+                "tradeable size, and the funding), measured against the "
+                "book as it would be AFTER the sale. Some refusals are not "
+                "knowable in advance — a stale quote at the moment of "
+                "submission, a broker rejection — and those are not "
+                "covered. If the buy would be refused on anything that IS "
+                "knowable, NEITHER leg happens and the holding stays. That "
+                "proposal goes through the Risk Manager like any other "
+                "exit.\n"
+                "Do NOT size your other BUYs against the room this would "
+                f"free. Size {opportunity.new_symbol} for the position you "
+                "want and size everything else against the book as it "
+                "stands. If the session's entries together ask for more "
+                "than the freed room can fund, the funding gate refuses "
+                "this replacement and BOTH legs are withdrawn — so "
+                "spending the same room twice does not get you a bigger "
+                "trade, it gets you no rotation."
+            )
+        elif execute_enabled and opportunity.tier == "ineligible_hold":
             # Phase 14b. Wording only — the act itself is decided in
             # `DecisionStage._apply_rotation_execution` from the desk's own
             # data, after this prompt returns.
@@ -2056,6 +2347,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                margin_ladder_backed: bool = False,
                margin_ladder_multiple: float | None = None,
                margin_ladder_rung: str | None = None,
+               # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
+               # smallest order this desk will place. Threaded rather than
+               # defaulted to a literal so the rotation pre-check tests the
+               # DEPLOYED floor, not a second copy of it. `None` switches
+               # the funding half of the rotation precondition off.
+               min_order_usd: float | None = None,
                symbol_sectors: dict[str, str] | None = None,
                session_type: str = "morning",
                allowed_buy_symbols: set[str] | None = None,
@@ -2082,6 +2379,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # a categorically-ineligible holding this session; the act
                # is decided in `DecisionStage`, never in this prompt.
                rotation_execute_enabled: bool = False,
+               rotation_ranked_margin_enabled: bool = False,
                # 2026-09-04 fix: the SAME real derived reward:risk
                # `PortfolioConstructor.construct_orders` gates on,
                # keyed by upper-case symbol — see `candidate_eligibility`
@@ -2138,6 +2436,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
+            min_order_usd=min_order_usd,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
             allowed_buy_symbols=allowed_buy_symbols or set(),
@@ -2150,6 +2449,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             existing_risk_pct=existing_risk_pct,
             max_portfolio_risk_pct=max_portfolio_risk_pct,
             rotation_execute_enabled=rotation_execute_enabled,
+            rotation_ranked_margin_enabled=rotation_ranked_margin_enabled,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
             accounting_challenge=accounting_challenge,

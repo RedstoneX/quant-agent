@@ -38,10 +38,19 @@ def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=110.0):
 
 
 def _pipeline():
+    # Item 165: `sessions_held` is now sourced from
+    # `broker.trading_sessions_held` (holiday-aware), not the pure
+    # `trading_calendar` weekday function. None of the windows these tests
+    # construct cross a market holiday, so delegating the mock to the real
+    # weekday counter reproduces the exact same numbers these tests already
+    # assert on, while keeping the pipeline wired the way production is.
+    from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
+
     p = TradingPipeline.__new__(TradingPipeline)
     p.db = MagicMock()
     p.broker = MagicMock()
     p.broker.get_current_stop_price.return_value = None
+    p.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     p._atr_for_symbol = MagicMock(return_value=2.0)
     return p
 
@@ -99,24 +108,34 @@ def test_pace_uses_the_horizon_pinned_at_entry():
     assert facts["expected_horizon_sessions"] == 12
 
 
-def test_pace_is_not_measurable_before_one_third_of_the_horizon():
-    """A thesis given 15 sessions cannot be behind schedule on day 2. Reading
-    it as such is how a healthy young position gets sold for 'not
-    progressing'."""
+def test_pace_is_measured_from_the_first_review_no_elapsed_floor():
+    """Board item 165 (owner ruling 2026-09-25): there is NO elapsed-time
+    floor before pace is judged. A position 1 session into a 15-session
+    horizon used to be withheld as `too_early`; it is now scored from the
+    live instrument like any other review. The early ratio is naturally
+    extreme (a tiny time_fraction), which the reviewer reads as context — the
+    prompt forbids treating a low early pace as a stall on its own."""
+    from datetime import date as _date
+    friday = _date(2026, 9, 11)
+    monday = _date(2026, 9, 14)
     facts = _facts(
         _pipeline(), _position(current_price=102.0),
-        _buy_row(days_ago=2, horizon=15),
+        _buy_row(entry_date=friday, horizon=15, target=140.0),
+        today=monday,
     )
-    assert facts["pace"] is None
-    assert facts["pace_status"] == "too_early"
+    assert facts["sessions_held"] == 1
+    # progress = (102-100)/(140-100)*100 = 5%; time_fraction = 1/15
+    # pace = 5 / (100/15) = 0.75 — a real number, surfaced immediately, never
+    # the removed `too_early` sentinel.
+    assert facts["pace_status"] == "measured"
+    assert facts["pace"] == pytest.approx(0.75)
 
 
-def test_pace_becomes_measurable_once_a_third_of_the_horizon_elapses():
-    """Exactly 5 TRADING SESSIONS (Mon 8/24 -> Mon 8/31, one weekend
-    crossed) of a 15-session horizon meets the one-third (5-session)
-    threshold. Pinned to explicit dates for the same reason as above —
-    `days_ago=5` calendar days across a weekend is only 3-4 sessions on
-    most real-world run dates, which would wrongly stay `too_early`."""
+def test_pace_is_progress_over_elapsed_horizon_fraction():
+    """5 TRADING SESSIONS (Mon 8/24 -> Mon 8/31, one weekend crossed) of a
+    15-session horizon at 50% progress → pace 1.5x. Pinned to explicit dates
+    because a `days_ago` count across a weekend is not a session count
+    (board item 91)."""
     from datetime import date as _date
     facts = _facts(
         _pipeline(), _position(current_price=120.0),
@@ -124,22 +143,18 @@ def test_pace_becomes_measurable_once_a_third_of_the_horizon_elapses():
         today=_date(2026, 8, 31),
     )
     assert facts["sessions_held"] == 5
-    assert facts["pace"] is not None
+    # progress = (120-100)/(140-100)*100 = 50%; time_fraction = 5/15
+    # pace = 50 / (100/3) = 1.5
     assert facts["pace_status"] == "measured"
+    assert facts["pace"] == pytest.approx(1.5)
 
 
 def test_pace_divides_sessions_by_sessions_a_weekend_does_not_move_it():
-    """Board item 91: `pace`'s `too_early`/`time_fraction` arithmetic read
-    the calendar-day `days_held` while `expected_horizon_sessions` is
-    denominated in SESSIONS — a `sessions_held` companion was computed
-    right above it and went unused. A Friday buy reviewed the following
-    Monday is 3 CALENDAR days but only 1 TRADING SESSION old; under the bug
-    that 1-session-old position (1/6 of a 6-session horizon, well under the
-    1/3 too_early floor) was reported as "measured" with pace 0.5x — a
-    false stalling signal on a position that has seen a single session of
-    real price action. This pins the fix: `too_early`/`pace` must be
-    computed from `sessions_held`, and the Friday->Monday weekend must not
-    move either one.
+    """Board item 91: `pace`'s `time_fraction` arithmetic must divide
+    SESSIONS by SESSIONS (`expected_horizon_sessions` is denominated in
+    sessions), not the calendar-day `days_held`. A Friday buy reviewed the
+    following Monday is 3 CALENDAR days but only 1 TRADING SESSION old; the
+    Friday->Monday weekend must not move pace.
     """
     from datetime import date as _date
     friday = _date(2026, 9, 11)
@@ -151,15 +166,18 @@ def test_pace_divides_sessions_by_sessions_a_weekend_does_not_move_it():
     )
     assert facts["days_held"] == 3
     assert facts["sessions_held"] == 1
-    # 1 of 6 sessions is under the 1/3 floor (2 sessions) -> too_early, not
-    # a measured (and falsely stalled-looking) pace.
-    assert facts["pace_status"] == "too_early"
-    assert facts["pace"] is None
+    # thesis_progress = (110-100)/(140-100)*100 = 25%; time_fraction =
+    # sessions_held/horizon = 1/6 -> pace = 25/(100/6) = 1.5. Under the old
+    # calendar-day bug this would instead have used days_held=3 (half a
+    # 6-session horizon), giving time_fraction=0.5 and pace=0.5 -- a
+    # materially slower-looking position purely because a weekend sat in the
+    # date range.
+    assert facts["pace_status"] == "measured"
+    assert facts["pace"] == pytest.approx(1.5)
 
-    # Same review, but a horizon short enough that 1 session clears the
-    # 1/3 floor (1 >= max(1, 3/3)) -- confirms the arithmetic is genuinely
-    # sessions-over-sessions, not just always "too_early" for a 3-day-old
-    # position.
+    # Shorter horizon, same review: 1 session of a 3-session horizon ->
+    # time_fraction 1/3, pace = 25/(100/3) = 0.75. Confirms the ratio scales
+    # with the pinned horizon rather than being fixed.
     facts2 = _facts(
         _pipeline(), _position(current_price=110.0),
         _buy_row(entry_date=friday, horizon=3, target=140.0),
@@ -167,12 +185,6 @@ def test_pace_divides_sessions_by_sessions_a_weekend_does_not_move_it():
     )
     assert facts2["sessions_held"] == 1
     assert facts2["pace_status"] == "measured"
-    # thesis_progress = (110-100)/(140-100)*100 = 25%; time_fraction =
-    # sessions_held/horizon = 1/3 -> pace = 25/(100/3) = 0.75. Under the old
-    # calendar-day bug this would instead have used days_held=3 (a full
-    # horizon's worth of calendar time against a 3-session horizon),
-    # giving time_fraction=1.0 and pace=0.25 -- a materially slower-looking
-    # position purely because a weekend sat in the date range.
     assert facts2["pace"] == pytest.approx(0.75)
 
 
@@ -188,6 +200,34 @@ def test_progress_and_pace_are_disabled_for_breakout_setups():
     assert facts["pace"] is None
     assert facts["pace_status"] == "n/a_breakout"
     assert facts["setup_type"] == "breakout"
+
+
+def test_measured_breakout_labelled_range_still_disables_progress_and_pace():
+    """Item 82 residue. Construction keys the breakout verdict off the analyst
+    label OR the MEASURED `structural_ceiling` (either sufficient). A trade the
+    analyst labelled "range" while the desk's own level computation found
+    nothing overhead (`structural_ceiling=False`, stored 0) IS a breakout by
+    construction's verdict, and the pace/progress read path — flagged as the
+    single largest P&L defect — must reach that SAME verdict from the pinned
+    row, not the label alone."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range")
+    row["structural_ceiling"] = 0  # measured: no overhead level
+    facts = _facts(_pipeline(), _position(current_price=120.0), row)
+    assert facts["thesis_progress_pct"] is None
+    assert facts["pace"] is None
+    assert facts["pace_status"] == "n/a_breakout"
+
+
+def test_measured_ceiling_range_row_keeps_progress_and_pace():
+    """The mirror: a "range" label whose measurement DID find a ceiling
+    (`structural_ceiling=True`, stored 1) is a genuine range trade — progress
+    and pace still apply, exactly as a NULL/legacy row falls back to the label
+    and does."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range")
+    row["structural_ceiling"] = 1  # measured: a ceiling exists
+    facts = _facts(_pipeline(), _position(current_price=120.0), row)
+    assert facts["pace_status"] == "measured"
+    assert facts["thesis_progress_pct"] == pytest.approx(50.0)
 
 
 def test_legacy_position_without_a_pinned_horizon_gets_no_pace_at_all():
@@ -230,8 +270,11 @@ def test_pipeline_does_not_feed_calibration_hold_time_into_the_review_path():
 
 
 def test_reviewer_renders_why_pace_is_absent_rather_than_omitting_it():
-    """A missing number that reads as 'nothing to see' is how a day-2 position
-    got called stalled."""
+    """A missing number that reads as 'nothing to see' is how a position got
+    called stalled. When pace is genuinely absent (no horizon pinned at
+    entry) the reviewer must say WHY, not omit it. The elapsed-time
+    `too_early` absence was removed with board item 165 — pace is now measured
+    from the first review whenever a horizon exists."""
     from src.agents.position_reviewer import PositionReviewerAgent
 
     with patch("anthropic.Anthropic"):
@@ -240,12 +283,12 @@ def test_reviewer_renders_why_pace_is_absent_rather_than_omitting_it():
         positions=[_position()], macro_summary={}, cash_balance=1000.0,
         total_value=100_000.0,
         position_facts={"AAA": {
-            "days_held": 2, "expected_horizon_sessions": 15,
-            "pace": None, "pace_status": "too_early",
+            "days_held": 9, "expected_horizon_sessions": None,
+            "pace": None, "pace_status": "unavailable_no_pinned_horizon",
         }},
     )
-    assert "not-yet-measurable" in msg
-    assert "NOT 'stalled'" in msg
+    assert "pace=unavailable" in msg
+    assert "no horizon pinned at entry" in msg
 
 
 def test_reviewer_prompt_documents_the_pinned_horizon_not_average_hold_time():
@@ -614,7 +657,9 @@ def test_trigger_vocabulary_covers_every_category_spec_38_sanctions():
         "macro regime shift to defensive today",
         "regime flip confirmed this morning",
         "macro flipped risk-off today",
-        "daily loss circuit breaker fired",
+        # "daily loss circuit breaker fired" left this list 2026-09-20 with
+        # the account-level loss alarm itself (WORK.md item 32); nothing
+        # computes that event now.
         "stopped out at the broker",
     ):
         assert _reason_cites_hard_trigger(reason) is True, reason

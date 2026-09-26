@@ -182,6 +182,16 @@ def level_zone_halfwidth(
 # geometry and confirmed against published measurement — do not "tighten" it.
 MIN_TOUCHES = 2
 
+#: Board item 148 (2026-09-25): this was an inline `/ 10.0` in the strength
+#: formula below, invisible to `src/number_sources.py`'s scanner (outside
+#: rule (e)'s [0.5, 2.0) factor band, per that module's own docstring). Named
+#: here so the ledger scanner sees it; value and behaviour are unchanged.
+#: Nothing measured 10.0 against any alternative — it sets how fast strength
+#: falls off with distance (at `distance_pct` == this value, distance has
+#: halved the raw touch count), and no source for that particular fall-off
+#: rate has been found.
+LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT = 10.0
+
 # No MAX_DISTANCE_PCT here. Until 2026-09-12 a level only counted if it sat
 # within a flat 40% of the current price — a number with no derivation that
 # did not scale: 40% on a utility that moves 1.2% a day is thirty-plus days
@@ -595,7 +605,9 @@ def find_structural_levels(
         # it is not a free upgrade sitting next to the simpler option — it is
         # a different and less defensible ranking. Distance is untouched:
         # nothing here measured it, so nothing here changes it.
-        strength = float(len(cluster)) / (1.0 + distance_pct / 10.0)
+        strength = float(len(cluster)) / (
+            1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
+        )
 
         level = Level(
             price=round(price, 2),
@@ -800,6 +812,19 @@ REFUSAL_PROJECTION_IMPLAUSIBLE = "projection_implausible"
 FAULT_NO_ENTRY = "entry_price_missing"
 FAULT_NO_VOLATILITY = "volatility_reading_missing"
 FAULT_NO_STRUCTURE = "price_history_unusable"
+#: SIZING faults (docs/WORK.md item 120). The share count divides the dollar
+#: allocation by a live price, so the price that sizes a new-name buy must be
+#: a real TODAY PRINT — never a prior-session last trade and never a quote
+#: MID. When the desk cannot obtain one, the name is refused as unmeasurable
+#: rather than sized on a bad price. Two distinct codes because "the feed
+#: returned nothing" and "the feed returned only a stale print" are different
+#: conditions the census counts separately — the same split
+#: `src/data/live_price.py` already draws between NO_PRICE_AT_ALL and
+#: ONLY_STALE. FAULT_NO_ENTRY is NOT reused for these: its string
+#: ("entry_price_missing") would misdescribe a name that has an analyst entry
+#: but no live print to size against.
+FAULT_NO_PRICE = "sizing_price_missing"
+FAULT_STALE_PRICE = "sizing_price_stale"
 #: Raised by the constructor, not here: the desk holds NO technical analysis
 #: for a symbol it was asked to size. Every input below is absent at once,
 #: so naming the first one ("no ATR") would misdescribe it.
@@ -824,16 +849,16 @@ COVERAGE_NO_BARS = "no_bars"                      # the feed returned nothing
 COVERAGE_UNUSABLE_BARS = "unusable_bars"          # bars arrived; fewer clean ones than MIN_SCAN_BARS
 COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, hand-built object)
 
-#: There is deliberately NO "insufficient_history" coverage state. A
-#: listing too YOUNG to measure is a trade REFUSAL, not a data fault, and
-#: it is named by the constructor before this derivation ever runs
-#: (`src/portfolio_constructor.py::_require_sufficient_history`, docs/
-#: WORK.md item 54: fewer completed sessions than the analyst's own
-#: 200-session window, `LONGEST_INDICATOR_WINDOW`). Every history shorter
-#: than `MIN_SCAN_BARS` is shorter than that window, so a separate
-#: short-history fault here could only ever fire when the session count
-#: was not recorded at all — and then `unusable_bars` says the true thing:
-#: the bars the desk holds cannot run the scan.
+#: There is deliberately NO "insufficient_history" coverage state. A short
+#: listing history is no longer a trade refusal on a bar count (the
+#: constructor's young-listing count gate was dropped, docs/WORK.md item 180,
+#: owner ruling 2026-09-25); a young name is judged on whether a protective
+#: stop is readable, and a name too young to read ANY stop from is refused by
+#: the constructor's stop-readability rule
+#: (`STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`), not here. When the scan
+#: has fewer clean bars than `MIN_SCAN_BARS` it simply finds no levels;
+#: `unusable_bars` already says the true thing — the bars the desk holds
+#: cannot run the scan.
 #:
 #: The coverage states under which an empty level list is a DATA fault. The
 #: honest reading of `unknown` is "cannot claim the chart was measured", so

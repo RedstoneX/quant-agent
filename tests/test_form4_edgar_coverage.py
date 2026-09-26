@@ -192,9 +192,13 @@ def test_a_cap_bound_scan_is_still_verified(tmp_path, monkeypatch):
     provider = _provider(tmp_path, lookback_days=3, max_filings_per_refresh=2)
     day = et_today().isoformat()
     hits = [_hit(_accession(i)) for i in range(1, 11)]
+    # No watched names: every hit here is on NVDA, and the cap bounds the
+    # MARKET-WIDE bucket, so a stream made entirely of the desk's own names
+    # would never reach it. That is by design as of 2026-09-23 — watched
+    # coverage is the drain's job — and it is not what this test is about.
     _found, _stats, coverage = _scan(provider, monkeypatch, {
         (day, 0): {"hits": {"hits": hits, "total": {"value": 10}}},
-    })
+    }, symbols=())
 
     assert "scan_cap_reached" in coverage["reasons"]
     assert "days_not_queried" in coverage["reasons"]
@@ -212,9 +216,10 @@ def test_a_day_the_budget_never_reached_is_not_counted_as_queried(
     exact silent-degradation shape this record exists to remove."""
     provider = _provider(tmp_path, lookback_days=9, max_filings_per_refresh=1)
     day = et_today().isoformat()
+    # `symbols=()` for the same reason as the cap test above.
     _found, _stats, coverage = _scan(provider, monkeypatch, {
         (day, 0): {"hits": {"hits": [_hit(_accession(1))], "total": {"value": 1}}},
-    })
+    }, symbols=())
     assert coverage["days_queried"] == 1
     assert coverage["days_in_window"] == 10
 

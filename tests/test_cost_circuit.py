@@ -2010,6 +2010,32 @@ def _age_latch(path: str, minutes: float) -> None:
         )
 
 
+def _freeze_et_day(monkeypatch) -> None:
+    """Pin `_et_day_and_utc_bounds` to one instant for the rest of the test.
+
+    Several self-clear tests derive "today" from the real wall clock more
+    than once in the same test -- once while building the latch, again
+    later via `status()` (which reseeds "today" and recomputes the
+    auto-reset window). Within a few minutes of the real ET midnight those
+    two real-clock reads can land on different ET days, which is exactly
+    the ~04:00 UTC flake this exists to remove. Freezing to noon ET on
+    today's real date -- safely mid-day, never a boundary -- makes every
+    later call return the identical day/bounds, mirroring the fixed-clock
+    pattern `test_day_quota_hold_recovers_once_on_next_et_day` already
+    uses. `_age_latch` still backdates `suspended_at` against SQLite's own
+    real clock on purpose: the cooldown check measures elapsed wall time
+    against that same clock, so only the ET-day bucketing needs pinning.
+    """
+    real_today = datetime.now(timezone.utc).astimezone(_ET).date()
+    safe_instant = datetime(
+        real_today.year, real_today.month, real_today.day, 12, 0, tzinfo=_ET,
+    )
+    frozen = _et_day_and_utc_bounds(safe_instant.astimezone(timezone.utc))
+    monkeypatch.setattr(
+        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: frozen,
+    )
+
+
 def _utc_stamp_on_et_day(et_day: str) -> str:
     """A SQLite-shaped UTC timestamp landing at noon ET on `et_day`.
 
@@ -2213,7 +2239,10 @@ def _latch_on_failed_call(path, notifier=None, config=None, run_id="run-latched"
     return circuit
 
 
-def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(tmp_path):
+def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(
+    tmp_path, monkeypatch,
+):
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
 
@@ -2238,6 +2267,90 @@ def test_transient_latch_self_clears_once_the_cooldown_has_elapsed(tmp_path):
     )
 
 
+def test_auto_clear_alerts_the_owner_on_the_same_surface_as_the_suspension(
+    tmp_path, monkeypatch,
+):
+    """Item 174: the suspension reaches Telegram, but the auto-expiry used to
+    write only an `auto_reset` DB event and a log line -- so the owner saw
+    'desk suspended' and never 'desk back live'. The auto-clear now sends the
+    same-surface owner alert, stating the desk resumed and why (auto-expiry),
+    while keeping the DB event and the log.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+
+    # The suspension WAS announced on Telegram; the resume was not, yet.
+    assert any("SUSPENDED" in m for m in notifier.messages)
+    assert [m for m in notifier.messages if "RESUMED" in m] == []
+
+    _age_latch(path, 16)
+    state = circuit.status()
+    assert state["suspended"] is False
+
+    resumes = [m for m in notifier.messages if "RESUMED" in m]
+    assert len(resumes) == 1
+    # It says WHAT resumed the desk (the forgiven trigger) and WHY (auto-expiry).
+    assert "failed_call_unknown_cost" in resumes[0]
+    assert "auto-expired" in resumes[0]
+
+    # The DB event the auto-clear always wrote is preserved, not replaced.
+    with sqlite3.connect(path) as conn:
+        auto_resets = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+        alerted = conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+    assert auto_resets == 1
+    assert alerted == 1  # marked sent
+
+    # A later boundary does NOT re-announce the same resume.
+    circuit.status()
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+
+def test_auto_clear_resume_alert_retries_after_a_telegram_outage(
+    tmp_path, monkeypatch,
+):
+    """A failed send leaves the resume alert PENDING (state 0), not lost, so
+    the next boundary tries again -- the durable-retry posture the quota
+    recovery alert already has, applied to item 174."""
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path, notifier=_Notifier())
+    _age_latch(path, 16)
+
+    # Swap in a notifier whose send() fails, THEN let the latch auto-clear.
+    class _Down:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, _message):
+            self.calls += 1
+            return False
+
+    down = _Down()
+    circuit.notifier = down
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert down.calls >= 1
+    with sqlite3.connect(path) as conn:
+        pending = conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0]
+    assert pending == 0  # not sent -> still pending for a later retry
+
+    # Telegram comes back; the pending resume is delivered on the next boundary.
+    good = _Notifier()
+    circuit.notifier = good
+    circuit.status()
+    assert len([m for m in good.messages if "RESUMED" in m]) == 1
+
+
 def test_transient_latch_does_not_clear_before_the_cooldown(tmp_path):
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
@@ -2259,7 +2372,10 @@ def test_transient_latch_does_not_clear_on_a_backwards_clock(tmp_path):
     assert circuit.status()["suspended"] is True
 
 
-def test_self_clear_erases_no_settled_spend_and_raises_no_cap(tmp_path):
+def test_self_clear_erases_no_settled_spend_and_raises_no_cap(
+    tmp_path, monkeypatch,
+):
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     notifier = _Notifier()
     config = _cooldown_config(daily_cost_limit_usd=20.0, session_cost_limit_usd=10.0)
@@ -2473,9 +2589,12 @@ def test_an_unknown_row_of_another_provenance_blocks_the_self_clear(tmp_path):
     assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
 
 
-def test_legacy_unknown_cost_from_failed_call_rows_self_clears(tmp_path):
+def test_legacy_unknown_cost_from_failed_call_rows_self_clears(
+    tmp_path, monkeypatch,
+):
     """The 2026-09-16 recurrence: the SAME defect surfaces under the
     downstream code once the day is inexact. It must expire the same way."""
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
     with sqlite3.connect(path) as conn:
@@ -2488,9 +2607,10 @@ def test_legacy_unknown_cost_from_failed_call_rows_self_clears(tmp_path):
     assert circuit.status()["suspended"] is False
 
 
-def test_the_daily_auto_clear_allowance_is_finite(tmp_path):
+def test_the_daily_auto_clear_allowance_is_finite(tmp_path, monkeypatch):
     """A fault that keeps recurring is not transient. Past the allowance the
     next occurrence latches durably and waits for a human."""
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     config = _cooldown_config(max_transient_latch_auto_clears_per_day=2)
     notifier = _Notifier()
@@ -2678,13 +2798,16 @@ def test_a_corrupt_failed_call_counter_refuses_instead_of_escalating(tmp_path):
     assert state["trigger_code"] == "failed_call_unknown_cost"
 
 
-def test_the_self_clear_leaves_the_session_row_as_the_record(tmp_path):
+def test_the_self_clear_leaves_the_session_row_as_the_record(
+    tmp_path, monkeypatch,
+):
     """Strictly weaker than the operator path, on purpose.
 
     An earlier draft flipped `call_failed` sessions back to `active` and
     marked them exact. That enforced nothing, and made the dashboard's
     per-run cost report a by-construction-unknown figure as exact.
     """
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
 
@@ -2739,7 +2862,9 @@ def test_the_cooldown_is_the_midpoint_of_one_paid_run_gap(tmp_path):
 # --- adversary round 2 (2026-09-23) ---------------------------------------
 
 
-def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
+def test_the_self_clear_leaves_another_days_failed_session_alone(
+    tmp_path, monkeypatch,
+):
     """Guards the deleted `llm_budget_sessions` write for real.
 
     The previous test for this could not: `_trip_locked` has already moved
@@ -2751,6 +2876,7 @@ def test_the_self_clear_leaves_another_days_failed_session_alone(tmp_path):
     `_canonical_run_cost` reports a definite dollar figure for a run once
     `costs_exact` flips to 1.
     """
+    _freeze_et_day(monkeypatch)
     path = _db_path(tmp_path)
     circuit = _latch_on_failed_call(path)
     day, _, _ = _et_day_and_utc_bounds()
@@ -2785,3 +2911,36 @@ def test_the_tick_spacing_this_module_pins_matches_the_scheduler(tmp_path):
     lo_min, hi_min = SESSION_WINDOWS["intra_check"]
     expected = len(range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES))
     assert len(trigger.triggers) == expected == 14
+
+
+def test_schema_migration_adds_recovery_alert_timestamp_on_an_old_db(tmp_path):
+    """An older DB missing recovery_alert_updated_at must migrate, not crash.
+
+    SQLite forbids a non-constant default on ALTER TABLE ADD COLUMN, so an
+    ADD COLUMN ... DEFAULT (datetime('now')) raised OperationalError on every
+    pre-existing DB, aborted ensure_cost_circuit_schema, and failed paid
+    analysis closed (which then fired a stray owner alert that broke unrelated
+    tests). This reproduces the migration path and asserts it succeeds. See
+    src/cost_circuit.py ensure_cost_circuit_schema for the constant-default fix.
+    """
+    from src.cost_circuit import ensure_cost_circuit_schema
+
+    conn = sqlite3.connect(str(tmp_path / "old.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_cost_circuit_schema(conn)
+    conn.commit()
+    # Simulate a DB created before the column existed.
+    conn.execute(
+        "ALTER TABLE llm_circuit_events DROP COLUMN recovery_alert_updated_at"
+    )
+    conn.commit()
+    cols_before = {r[1] for r in conn.execute("PRAGMA table_info(llm_circuit_events)")}
+    assert "recovery_alert_updated_at" not in cols_before
+
+    # The migration must re-add the column without raising.
+    ensure_cost_circuit_schema(conn)
+    conn.commit()
+
+    cols_after = {r[1] for r in conn.execute("PRAGMA table_info(llm_circuit_events)")}
+    assert "recovery_alert_updated_at" in cols_after
+    conn.close()

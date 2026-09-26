@@ -30,6 +30,22 @@ if [[ -f "${PROJECT_ROOT}/.env" ]]; then
     set +a
 fi
 
+# systemd-delivered broker credentials WIN over .env and are applied AFTER it,
+# exactly as run_if_et_window.sh does — .env carries the placeholder the
+# credential gateway substitutes on outbound REST, so sourcing it later would
+# put the stand-in back. Absent directory or absent file stays a supported
+# state: the gateway keeps REST working and the startup check says so.
+if [[ -n "${CREDENTIALS_DIRECTORY:-}" ]]; then
+    if [[ -r "${CREDENTIALS_DIRECTORY}/alpaca_api_key" ]]; then
+        ALPACA_API_KEY="$(<"${CREDENTIALS_DIRECTORY}/alpaca_api_key")"
+        export ALPACA_API_KEY
+    fi
+    if [[ -r "${CREDENTIALS_DIRECTORY}/alpaca_secret_key" ]]; then
+        ALPACA_SECRET_KEY="$(<"${CREDENTIALS_DIRECTORY}/alpaca_secret_key")"
+        export ALPACA_SECRET_KEY
+    fi
+fi
+
 # 300s is generous: the export is one portfolio_history call, one yfinance
 # SPY fetch, one Telegram upload. (Trading sessions use 1200s; not needed.)
 exec "$TIMEOUT" --kill-after=30 300 "$PYTHON" main.py --mode daily

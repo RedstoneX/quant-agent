@@ -574,13 +574,44 @@ export default function App() {
     }
   }
 
-  // Position-panel-specific: chart the symbol, open nothing. Clicking a
-  // holding answers "what is my position?", not "what did this candidate
-  // do in some run?", and no popup may cover the chart on a position
-  // click (cockpit trader rework, item 2/3 as corrected by the owner).
+  // Ticker-only handler, reused everywhere a symbol label itself is
+  // clicked (Orders, Trades, Missed, Search — and now the Positions/
+  // Holdings ticker too): chart the symbol, open nothing. This used to
+  // also be what the REST of a Positions row or Holdings pill did
+  // ("no popup may cover the chart on a position click", cockpit trader
+  // rework item 2/3) — the owner REVERSED that 2026-09-25: Positions and
+  // Holdings now match Orders, where the ticker charts and the row/pill
+  // body opens the detail popup. See inspectPositionSymbol below for the
+  // body-click handler.
   function chartPositionSymbol(symbol: string) {
     setChartSymbol(symbol);
     setMobilePane("chart");
+  }
+
+  // Positions/Holdings row-and-pill-body handler (everything except the
+  // ticker itself): charts the symbol, same as chartPositionSymbol above,
+  // then resolves the DETAIL popup by symbol rather than by broker order
+  // id (a position/holding has no order id of its own to key off, unlike
+  // inspectOrder). The most recent trade for the symbol carries the
+  // run_id the same candidate/trade detail modal Orders opens needs.
+  // Degrades gracefully — chart still updates — when there is no trade
+  // on file for the symbol (a manually-held or newly-admitted name) or
+  // the read fails, exactly as inspectOrder's own fallback does.
+  async function inspectPositionSymbol(symbol: string) {
+    setChartSymbol(symbol);
+    setMobilePane("chart");
+    try {
+      const { trades: bySymbol } = await api.trades({ symbol, limit: 1 });
+      const latest = bySymbol[0];
+      if (latest?.run_id) {
+        if (todaysRuns.some((run) => run.run_id === latest.run_id)) selectSession(latest.run_id);
+        modalActions.openCandidateDetail(latest.run_id, symbol);
+      }
+    } catch {
+      // Non-fatal: same as inspectOrder's catch below — the chart already
+      // updated above, so the click was not a no-op, it just has no
+      // detail to disclose.
+    }
   }
 
   function inspectTrade(trade: TradeItem) {
@@ -592,10 +623,32 @@ export default function App() {
     }
   }
 
-  function inspectOrder(order: OrderItem) {
-    const linkedTrade = trades.find((trade) => trade.broker_order_id === order.id);
-    if (linkedTrade) inspectTrade(linkedTrade);
-    else inspectSymbol(order.symbol);
+  async function inspectOrder(order: OrderItem) {
+    const cached = trades.find((trade) => trade.broker_order_id === order.id);
+    if (cached) {
+      inspectTrade(cached);
+      return;
+    }
+    // The order list (status=closed/all) reaches back further than the
+    // `trades` state above, which is capped at its own display limit for
+    // the Trades panel. A BUY whose fill has aged out of that cache used
+    // to silently fall through to inspectSymbol below, which only opens a
+    // popup for a symbol in TODAY's live candidate funnel — so any older
+    // filled buy opened nothing at all, indistinguishable from a
+    // SELL-STOP row's (expected) lack of detail. Look the trade up by
+    // symbol on demand before giving up on it.
+    try {
+      const { trades: bySymbol } = await api.trades({ symbol: order.symbol, limit: 20 });
+      const linkedTrade = bySymbol.find((trade) => trade.broker_order_id === order.id);
+      if (linkedTrade) {
+        inspectTrade(linkedTrade);
+        return;
+      }
+    } catch {
+      // Non-fatal: fall through to the symbol-only inspection below,
+      // same as when no linked trade exists at all (e.g. a resting stop).
+    }
+    inspectSymbol(order.symbol);
   }
 
   async function openJournalCandidate(dayRuns: RunSummary[], symbol: string) {
@@ -650,14 +703,18 @@ export default function App() {
                 portfolio abstractions (NLV card, exposure gauge, regime)
                 demoted below as compact, secondary chrome. Reuses the same
                 broker-marked positions state HeroBand/PositionsPanel
-                already render; a click charts the symbol in place, no
-                modal (item 2/3 — see chartPositionSymbol). Desktop folds
-                these into Dockview panels instead. */}
+                already render. Owner-reversed 2026-09-25 (was: "a click
+                charts the symbol in place, no modal" — item 2/3): the
+                ticker still only charts (chartPositionSymbol), but the
+                rest of each pill now opens the same detail modal Orders
+                opens, resolved by symbol (inspectPositionSymbol). Desktop
+                folds these into Dockview panels instead. */}
             <HoldingsStrip
               positions={positions}
               error={positionsError}
               updatedAt={positionsUpdatedAt}
               onSelectSymbol={chartPositionSymbol}
+              onInspectSymbol={inspectPositionSymbol}
               compact={chromeCompact}
             />
             <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
@@ -700,6 +757,7 @@ export default function App() {
               tradesLoading: !account, runs, runsError,
               runsLoading: runs.length === 0 && !runsError, health, healthError,
               onSelectPositionSymbol: chartPositionSymbol,
+              onInspectPositionSymbol: inspectPositionSymbol,
               onInspectOrder: inspectOrder, onInspectTrade: inspectTrade,
             }}>
               <CockpitWorkspaceProvider value={{
@@ -721,7 +779,7 @@ export default function App() {
             <>
               <PaneNav pane={mobilePane} onChange={setMobilePane} />
               <div className="p-3">
-                {mobilePane === "positions" && <PositionsPanel positions={positions} error={positionsError} loading={!account && !positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} />}
+                {mobilePane === "positions" && <PositionsPanel positions={positions} error={positionsError} loading={!account && !positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} onInspectSymbol={inspectPositionSymbol} />}
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
                 {mobilePane === "chart" && (
                   <div className="flex min-h-[520px] flex-col gap-1">

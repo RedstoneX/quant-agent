@@ -188,12 +188,11 @@ def _risk_limits_config() -> dict:
         return {
             "max_position_pct": risk.get("max_position_pct"),
             "max_total_position_pct": risk.get("max_total_position_pct"),
-            "max_daily_loss_pct": risk.get("max_daily_loss_pct"),
             "max_sector_pct": risk.get("max_sector_pct"),
         }
     except Exception as exc:
         logger.warning("could not read risk config: %s", exc)
-        return {"max_position_pct": None, "max_total_position_pct": None, "max_daily_loss_pct": None, "max_sector_pct": None}
+        return {"max_position_pct": None, "max_total_position_pct": None, "max_sector_pct": None}
 
 
 def _position_direction(symbol: str, sweep_symbol: str) -> str:

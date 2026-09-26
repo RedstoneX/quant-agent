@@ -832,7 +832,6 @@ def _stage_pipeline(db, cfg):
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     from src.execution.broker import AlpacaBroker
     pipeline.broker._TERMINAL_ORDER_STATES = AlpacaBroker._TERMINAL_ORDER_STATES
     pipeline.broker._ORDER_REPLACEABLE_STATES = AlpacaBroker._ORDER_REPLACEABLE_STATES

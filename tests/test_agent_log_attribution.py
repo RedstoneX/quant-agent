@@ -52,6 +52,7 @@ from src.models import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.session_clock import todays_session_stamp
 
 # A stand-in "actually answered" model — always distinct from the
 # "configured" model set on each test's mock_config so a passing assertion
@@ -146,7 +147,6 @@ def _mock_config():
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
     cfg.risk.max_total_position_pct = 90
-    cfg.risk.max_daily_loss_pct = 3
     cfg.risk.max_sector_pct = 40
     cfg.risk.require_stop_loss = True
     cfg.trading.universe = ["SPY"]
@@ -238,6 +238,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -381,6 +382,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -465,7 +467,6 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(

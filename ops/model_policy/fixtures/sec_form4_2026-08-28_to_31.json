@@ -26,8 +26,6 @@
    "lookback_days": 3,
    "max_filings_per_refresh": 1000,
    "max_observations": 40,
-   "min_transaction_value_usd": 100000,
-   "external_min_transaction_value_usd": 250000,
    "cluster_window_days": 2,
    "min_cluster_owners": 2,
    "insider_calendar_routine_years": 3,

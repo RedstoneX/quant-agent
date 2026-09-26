@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency surface
     TradingStream = None
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest,
+    StopOrderRequest,
     TakeProfitRequest, StopLossRequest, ReplaceOrderRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
@@ -1335,12 +1336,21 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 #
 # THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
 #
-#   * Three, because every failure worth retrying is transient — a 429 rate
+#   * Three, because a failure worth retrying is transient — a 429 rate
 #     limit, a 5xx, a dropped connection, an eventual-consistency blip
-#     between the fill and the order being placeable. Those clear in under a
-#     second. A failure that survives three attempts is a REJECTION (a bad
-#     price, an unsupported qty, a closed venue), and retrying a rejection
-#     forever just delays the owner alert that is the real remedy.
+#     between the fill and the order being placeable — and those clear in
+#     under a second. A REJECTION (a bad price, an unsupported qty, a
+#     closed venue) is not worth retrying at all: the broker's answer is
+#     Alpaca's own `APIError.status_code` 400/404/422, it will not change
+#     between attempt 1 and attempt 3, and burning the burst on a doomed
+#     resubmit just delays the owner alert that is the real remedy.
+#     Board item 129: this ceiling used to be a blind `except Exception`
+#     that retried a 422 exactly like a 429, so a genuine rejection paid
+#     the full three-attempt, ~2-second cost anyway before anyone was
+#     told. `_is_terminal_broker_rejection` now reads the status code that
+#     was always on the exception and short-circuits on it, so only a
+#     failure with no such code (or a 429/5xx) spends the retry burst; a
+#     genuine rejection is reported after its FIRST attempt.
 #   * ~2 seconds, because the owner's own standard for this feature is that
 #     "the gap is brief upon entry". A retry loop long enough to matter
 #     would itself become the exposure it was added to close. Escalating to
@@ -1384,6 +1394,64 @@ def _is_held_for_orders_error(exc: BaseException) -> bool:
     """
     text = str(exc).lower()
     return "held_for_orders" in text or "insufficient qty" in text
+
+
+def _is_terminal_broker_rejection(exc: BaseException) -> bool:
+    """True when the broker's OWN answer says retrying is pointless.
+
+    Board item 129: the retry burst below used to catch every exception
+    identically, so a deterministic rejection (bad price, unsupported qty,
+    a closed/unknown symbol — Alpaca's `APIError.status_code` 400/404/422,
+    same classification `get_asset_record` and `get_intraday_snapshots`
+    already use for exactly these codes) burned the full attempt budget
+    and backoff before alerting, exactly the "delays the owner alert"
+    outcome the retry ceiling was written to avoid. A 429/5xx/timeout/
+    dropped-connection failure has no such status (or a 429/5xx one) and
+    is genuinely worth another try, so only these codes short-circuit.
+    """
+    status_code = getattr(exc, "status_code", None)
+    return status_code in (400, 404, 422)
+
+
+def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
+    """True when the broker refused a stop-MARKET specifically because the
+    order TYPE / TIME-IN-FORCE combination is not supported — the one
+    rejection that must degrade to a stop-LIMIT rather than to no stop.
+
+    Owner ratified 2026-09-25: protective stops are stop-MARKET (a guaranteed
+    exit — an elected stop fills instead of resting unfilled past a limit).
+    Every combo this desk submits (whole-share GTC, fractional DAY) is a
+    plain stop order and should be accepted (STOP/DAY was proven accepted by
+    the 2026-09-01 live probe); this classifier exists ONLY so a position is
+    never left unprotected if some combo turns out refused — a market-stop
+    refusal degrades to a stop-limit, never to no stop.
+
+    Deliberately NARROW so it cannot swallow an unrelated rejection:
+
+      * a held_for_orders / insufficient-qty refusal is NOT this — it is
+        handled by the retry / existing-stop path and must propagate;
+      * a garbage stop price is short-circuited before submit;
+      * only a 400/422 whose message names the order TYPE / CLASS or the
+        TIME-IN-FORCE as the problem qualifies.
+
+    A false positive here is harmless anyway: the stop-limit fallback submit
+    is UNGUARDED, so a rejection that was not really a type/tif problem still
+    surfaces as an exception from that second attempt — never swallowed,
+    only retried once as a stop-limit.
+    """
+    if _is_held_for_orders_error(exc):
+        return False
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in (400, 422):
+        return False
+    text = str(exc).lower()
+    type_terms = (
+        "order type", "order_type", "order class", "order_class",
+        "time_in_force", "time in force",
+        "not supported", "unsupported",
+        "not permitted", "not allowed", "invalid order",
+    )
+    return any(term in text for term in type_terms)
 
 
 def _split_protective_qty(qty) -> tuple[float, float]:
@@ -1838,6 +1906,53 @@ class AlpacaBroker:
                 continue
         return out
 
+    def get_all_account_activities(self, page_size: int = 100) -> list[dict]:
+        """The account's FULL activity ledger — every `JNLC` deposit/
+        withdrawal, `FILL`, `FEE`, `WH` withholding, `CFEE`, `DIV`, `INT`,
+        etc., for the life of the account. Unlike
+        `get_margin_interest_activities`, no `activity_type` filter — this
+        is the raw feed the margin-interest HISTORICAL BACKFILL replays to
+        reconstruct a daily cash balance (`src.margin_interest.
+        reconstruct_daily_cash_balances`), since Alpaca has no historical
+        cash or positions endpoint at all.
+
+        Same low-level `TradingClient.get()` REST passthrough as
+        `get_margin_interest_activities` (no typed SDK wrapper for this
+        endpoint), paged forward with Alpaca's own `page_token` cursor
+        (ascending by `id`, its documented order) until a short page ends
+        the list. Returns raw dicts, unfiltered and unnormalized — the
+        caller picks whichever fields it needs per activity type, since
+        different types carry different shapes (a `FILL` has `price`/
+        `qty`/`side`; a `JNLC`/`FEE`/`WH` has `net_amount`).
+
+        Never raises — a broker read failure here must not be able to
+        break a caller; it degrades to whatever was fetched before the
+        failure (empty list, on a first-page failure).
+        """
+        activities: list[dict] = []
+        page_token: str | None = None
+        try:
+            while True:
+                params: dict = {"direction": "asc", "page_size": page_size}
+                if page_token:
+                    params["page_token"] = page_token
+                page = self.client.get("/account/activities", params)
+                if not isinstance(page, list) or not page:
+                    break
+                activities.extend(a for a in page if isinstance(a, dict))
+                if len(page) < page_size:
+                    break
+                last_id = page[-1].get("id")
+                if not last_id:
+                    break
+                page_token = last_id
+        except Exception as exc:
+            logger.warning(
+                "get_all_account_activities failed after %d rows: %s",
+                len(activities), exc,
+            )
+        return activities
+
     def get_transient_equity_eligibility(self, symbol: str) -> dict:
         """Fail-closed broker eligibility for an out-of-universe candidate.
 
@@ -2177,6 +2292,49 @@ class AlpacaBroker:
             return False
         self._trading_day_cache[target_date] = result
         return result
+
+    def trading_sessions_held(self, start: date, end: date) -> int:
+        """Holiday-aware companion to `trading_calendar.trading_sessions_held`.
+
+        Same semantics — trading sessions strictly AFTER `start` up to and
+        including `end` — but backed by Alpaca's real market calendar
+        instead of a Mon-Fri weekday heuristic, so a market holiday inside
+        the range (Thanksgiving, July 4, Christmas, Good Friday, etc.) is
+        correctly excluded instead of silently counted as a session.
+
+        Item 165: `trading_calendar.trading_sessions_held` documents this
+        exact gap (a holiday-crossing week overstates the count by one per
+        holiday) as an accepted CHEAP approximation for callers with no
+        broker connection. Callers that hold a broker instance — this one —
+        should prefer this method instead.
+
+        Falls back to the weekday approximation on a calendar-query failure
+        (transient API hiccup) rather than raising, matching the existing
+        `is_trading_day` failure posture of degrading, not aborting.
+
+        Returns 0 if `end` is not after `start`.
+        """
+        if end <= start:
+            return 0
+        from datetime import timedelta as _td
+
+        from alpaca.trading.requests import GetCalendarRequest
+
+        query_start = start + _td(days=1)
+        try:
+            calendar = self.client.get_calendar(
+                GetCalendarRequest(start=query_start, end=end)
+            ) or []
+            return len(calendar)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_sessions_held: calendar query failed (%s -> %s); "
+                "falling back to weekday count: %s", start, end, exc,
+            )
+            from src.trading_calendar import (
+                trading_sessions_held as _weekday_sessions_held,
+            )
+            return _weekday_sessions_held(start, end)
 
     def is_last_trading_day_of_quarter(self, on_date: date | None = None) -> bool:
         """True when `on_date` (default today-ET) is the last OPEN session
@@ -3036,13 +3194,77 @@ class AlpacaBroker:
         SOLD, so the default is unchanged; the coverage reconciler is the
         one caller that passes `side="buy"` to check a short.
 
-        Returns ``(ok, specs)``. ``ok`` is kept for call-site symmetry
-        with cancel_protective_stops; a pure read can't "fail to clear"
-        so it is always True (a listing API error is swallowed by
-        _list_open_protective_stop_orders and surfaces as no stops, exactly
-        as in the pre-split behaviour).
+        Returns ``(ok, specs)``. ``ok`` is FALSE when the broker's own
+        order listing failed — board item 172, and this used to be the
+        single most dangerous lie on the read path.
+
+        It was documented as "always True", because a listing API error was
+        swallowed by `_list_open_protective_stop_orders` and surfaced as an
+        empty list. An empty list means "this position has no protective
+        stop", so a broker outage was reported to the desk as a CONFIRMED
+        NAKED POSITION — and the coverage reconciler then repaired against
+        it, placing a full-size stop on top of a live stop it could not
+        see. Both the strongest possible false statement about loss
+        protection and a duplicate-protection write, from one swallowed
+        exception.
+
+        Callers that ignore `ok` are no worse off than before: `specs` is
+        still empty in that case. Callers that read it can tell "there is
+        no stop" from "I could not ask", which is the whole distinction
+        item 172 exists for.
+
+        NOT true of every caller, and the first version of this docstring
+        said it was. `TradingPipeline._cancel_stops_with_write_ahead` reads
+        `ok` and skips the SELL on False, so making this return False where
+        it previously always returned True changed the EXIT path as well as
+        the read path — five exit call sites, none of them reviewed when
+        that change was made. The test pinning that skip
+        (`test_cancel_stops_with_write_ahead_skips_on_snapshot_failure`,
+        added 2026-05-16) pinned unreachable code for four months, because
+        until board item 172 `ok` could not be False [measured from
+        `git log -S`, 2026-09-23]. Nobody chose that behaviour; it was
+        inherited. What it does now is decided at that call site and
+        documented there.
+
+        THE READ IS RETRIED before it reports UNKNOWN. The listers have had
+        no retry at all: one exception and the answer was "I cannot ask",
+        which now costs a skipped exit. The desk's own derived retry shape
+        for the stop path — `_STOP_PLACEMENT_MAX_ATTEMPTS` attempts with
+        `_STOP_PLACEMENT_BACKOFF_S` backoff — is justified on the grounds
+        that "every failure worth retrying is transient: a 429, a 5xx, a
+        dropped connection". That argument is STRONGER for a read than for
+        the write it was written for: a retried read cannot double-place
+        anything. Same constants, so there is no new number here.
         """
-        stops = self._list_open_protective_stop_orders(symbol, side=side)
+        errors: list = []
+        stops: list = []
+        for attempt in range(_STOP_PLACEMENT_MAX_ATTEMPTS):
+            errors = []
+            stops = self._list_open_protective_stop_orders(
+                symbol, side=side, errors=errors,
+            )
+            if not errors:
+                break
+            if attempt + 1 < _STOP_PLACEMENT_MAX_ATTEMPTS:
+                delay = _STOP_PLACEMENT_BACKOFF_S[
+                    min(attempt, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                ]
+                logger.warning(
+                    "snapshot_protective_stops: listing %s's protective "
+                    "stops failed (%s) — retrying in %.1fs (attempt %d of "
+                    "%d).",
+                    symbol, "; ".join(errors), delay,
+                    attempt + 2, _STOP_PLACEMENT_MAX_ATTEMPTS,
+                )
+                time.sleep(delay)
+        if errors:
+            logger.error(
+                "snapshot_protective_stops: could not READ %s's protective "
+                "stops after %d attempts (%s) — reporting UNKNOWN, not "
+                "'no stop'.",
+                symbol, _STOP_PLACEMENT_MAX_ATTEMPTS, "; ".join(errors),
+            )
+            return False, []
         if not stops:
             return True, []
         specs: list[dict] = []
@@ -3163,6 +3385,66 @@ class AlpacaBroker:
             return False, []
         return True, specs
 
+    def cancel_stray_protective_stops(
+        self, symbol: str, *, side: str = "sell",
+    ) -> int:
+        """Cancel every protective stop still resting on a symbol that is
+        now FLAT. Returns the count cancelled.
+
+        Board item 127(b), owner ruling 2026-09-25: a forced/emergency exit
+        fires IMMEDIATELY and never waits on stop-work, so a concurrent
+        stop-repair can re-add a protective stop inside the cancel-then-sell
+        window. Once the exit takes the position to zero shares that stop is
+        a stray — it protects nothing, the reprotect path never sees it (it
+        was placed AFTER the pre-sell snapshot, so it is not in the sell's
+        ``cancelled_specs``), and ``_reconcile_stop_coverage`` skips flat
+        symbols outright — so nothing else would ever clear it, and a stop
+        left resting on zero shares can later elect into an unintended
+        short. This is the cheap cleanup the ruling assumes in place of the
+        rejected lock-wait.
+
+        Unlike ``cancel_snapshotted_stops`` there is NO rollback: the
+        position is flat, so there is nothing to protect and a "restore"
+        would only re-place the very stray order being removed. Best-effort
+        and side-correct (``side="buy"`` finds the buy-stops that had
+        protected a short); a cancel that raises is logged and never blocks
+        the others, and the whole thing degrades to a no-op — the exit has
+        already succeeded and must not be undone by a housekeeping error.
+        """
+        try:
+            ok, specs = self.snapshot_protective_stops(symbol, side=side)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cancel_stray_protective_stops: could not list %s-stops for "
+                "now-flat %s: %s — a stray stop may still rest; the operator "
+                "should confirm it is gone", side, symbol, exc,
+            )
+            return 0
+        if not ok or not specs:
+            return 0
+        cancelled = 0
+        for spec in specs:
+            sid = spec.get("id")
+            if not sid:
+                continue
+            try:
+                self.client.cancel_order_by_id(sid)
+                cancelled += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "cancel_stray_protective_stops: cancel of stray %s-stop "
+                    "%s on now-flat %s failed: %s — a stop may still rest on "
+                    "a flat position; the operator should clear it by hand",
+                    side, sid, symbol, exc,
+                )
+        if cancelled:
+            logger.info(
+                "Cancelled %d stray protective %s-stop(s) on now-flat %s "
+                "(item 127(b): a repair re-added protection inside the "
+                "cancel-then-sell window)", cancelled, side, symbol,
+            )
+        return cancelled
+
     def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
         """Cancel open entry orders on EITHER side — BUY-to-open-long and
         SELL-to-open-short — while preserving protective stop legs on
@@ -3217,7 +3499,9 @@ class AlpacaBroker:
             logger.warning("Failed to cancel open entry orders: %s", exc)
             return 0
 
-    def list_open_entry_order_ids(self, symbol: str) -> list[str]:
+    def list_open_entry_order_ids(
+        self, symbol: str, *, side: str | None = None,
+    ) -> list[str]:
         """Ids of working non-stop BUY/SELL orders for `symbol`.
 
         The discriminator matches `cancel_open_entry_orders`: any *stop*
@@ -3226,7 +3510,37 @@ class AlpacaBroker:
         confirm leftover DAY adds are gone before it rearms a protective
         sell (a working BUY plus a new SELL stop is the wash-trade block
         the scale-in sequence exists to walk around).
+
+        `side`, when given ("buy" / "sell"), returns only that side. The
+        short scale-in wash-trade guard passes ``side="buy"`` to find any
+        FOREIGN working BUY (a resting cover-limit / take-profit) that would
+        collide with its SELL add — protective buy-stops are stop orders and
+        are already excluded here, so a returned BUY is never the protection.
+        Default None keeps every existing caller's both-sides behaviour.
+
+        Returns [] on an API failure (fail-OPEN) — the leftover-entry drain
+        check treats that the same as "none working". A caller that must
+        tell "confirmed empty" from "could not read" — the wash-trade guard,
+        which cancels protection on the answer — uses
+        `list_open_entry_orders_checked` instead.
         """
+        _ok, ids = self.list_open_entry_orders_checked(symbol, side=side)
+        return ids
+
+    def list_open_entry_orders_checked(
+        self, symbol: str, *, side: str | None = None,
+    ) -> tuple[bool, list[str]]:
+        """`(ok, ids)` for working non-stop orders — same discriminator as
+        `list_open_entry_order_ids`, but ``ok`` is FALSE when the broker's
+        order listing itself FAILED (vs a genuine empty list, ``(True, [])``).
+
+        The short scale-in wash-trade guard must FAIL CLOSED: it is about to
+        cancel a protective buy-stop and submit a SELL add, and it may not do
+        that on an unverified assumption that Alpaca will bounce a self-cross
+        (paper may not enforce it). ``ok=False`` lets it refuse rather than
+        guess "no foreign buy" from a swallowed API error.
+        """
+        want_side = str(side).lower() if side is not None else None
         try:
             from alpaca.trading.requests import GetOrdersRequest
 
@@ -3239,9 +3553,9 @@ class AlpacaBroker:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "list_open_entry_order_ids failed for %s: %s", symbol, exc,
+                "list_open_entry_orders_checked failed for %s: %s", symbol, exc,
             )
-            return []
+            return False, []
         ids: list[str] = []
         for order in orders or []:
             order_id = getattr(order, "id", None)
@@ -3253,8 +3567,10 @@ class AlpacaBroker:
                 continue
             if "stop" in order_type:
                 continue
+            if want_side is not None and order_side != want_side:
+                continue
             ids.append(str(order_id))
-        return ids
+        return True, ids
 
     def open_buy_notional(self) -> float | None:
         """Dollar notional of all OPEN BUY orders, or None when the query fails.
@@ -3374,7 +3690,8 @@ class AlpacaBroker:
         process itself submitted or remembers.
 
         2026-08-28 ONDS/CCJ: both positions were closed by their broker-
-        resident protective stop (a GTC stop-limit order placed by
+        resident protective stop (a GTC stop-MARKET order — stop-limit only
+        on the unsupported-combo fallback — placed by
         `place_entry_protection` / `_repair_stop_coverage` /
         `shift_stops_down`), and none of those paths ever write the STOP
         ORDER ITSELF into `trades` — only every system-DECIDED exit (SELL /
@@ -4376,7 +4693,8 @@ class AlpacaBroker:
                         ),
                     }
 
-        # Protective stop for a BUY is placed as a SEPARATE GTC stop-limit
+        # Protective stop for a BUY is placed as a SEPARATE GTC stop-MARKET
+        # (guaranteed exit; stop-limit only on the unsupported-combo fallback)
         # AFTER the entry fills — NOT as an OTO leg.
         #
         # WHY (2026-07-16 audit, CRITICAL): `StopLossRequest` carries no
@@ -4452,11 +4770,19 @@ class AlpacaBroker:
             "pending_stop_price": stop_loss_price if use_stop else None,
         }
 
+    # SCOPE (owner ratified 2026-09-25): primary PROTECTIVE stops are now
+    # stop-MARKET (guaranteed exit), so this buffer NO LONGER governs the
+    # protective stop the desk normally places. It governs only (a) the
+    # stop-LIMIT FALLBACK taken when the broker refuses a stop-market for an
+    # unsupported type/tif combo, and (b) the force-de-lever must-fill SELL.
+    #
     # 3% beyond the stop: a stop-MARKET fills at whatever the book has on a
     # gap (10%+ worse than the stop); a stop-limit caps the worst-case fill.
     # The buffer must be wide enough that routine volatility clears it
-    # ("prioritize fill over price"). Trade-off: on gaps beyond 3% the limit
-    # won't fill and the position stays open until a session can act.
+    # ("prioritize fill over price"). Trade-off on those fallback/de-lever
+    # legs: on gaps beyond 3% the limit won't fill and the position stays
+    # open until a session can act — which is exactly why the primary
+    # protective stop is now market and not subject to this trade-off.
     #
     # "Beyond", not "below": a long's protective order is a SELL stop, so
     # its limit sits 3% BELOW the trigger (a SELL needs its floor under the
@@ -4733,7 +5059,8 @@ class AlpacaBroker:
         held_qty_before: float = 0.0,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
-        protective stop-limit for the ACTUAL filled qty.
+        protective stop (stop-MARKET, guaranteed exit) for the ACTUAL filled
+        qty.
 
         If the entry is STILL WORKING after the wait (slow tape, wide limit),
         the unfilled remainder is CANCELLED first — audit round 2: the 15s
@@ -5057,6 +5384,21 @@ class AlpacaBroker:
                     "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
                     symbol, qty, stop_price, exc,
                 )
+                if _is_terminal_broker_rejection(exc):
+                    # Board item 129: a 400/404/422 will fail identically on
+                    # every retry — it is not a blip, it is the broker's
+                    # answer. Burning the rest of the burst on a doomed
+                    # resubmit only delays the alert this ceiling exists to
+                    # deliver promptly; stop now instead.
+                    logger.error(
+                        "protective stop [%s] for %s got a terminal broker "
+                        "rejection (status %s) on attempt %d/%d — this will "
+                        "not change on retry, escalating now instead of "
+                        "spending the rest of the budget.",
+                        leg, symbol, getattr(exc, "status_code", None),
+                        attempt, attempts,
+                    )
+                    break
                 if attempt < attempts:
                     delay = _STOP_PLACEMENT_BACKOFF_S[
                         min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
@@ -5080,7 +5422,7 @@ class AlpacaBroker:
                 )
             else:
                 logger.info(
-                    "entry protection: [%s] %s stop-limit placed for %s "
+                    "entry protection: [%s] %s protective stop placed for %s "
                     "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
                 )
             return order
@@ -5236,7 +5578,9 @@ class AlpacaBroker:
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status))}
 
-    def _list_open_stop_orders_by_side(self, symbol: str) -> tuple[list, list]:
+    def _list_open_stop_orders_by_side(
+        self, symbol: str, *, errors: list | None = None,
+    ) -> tuple[list, list]:
         """Single order-book fetch for `symbol`, split into (sell_stops, buy_stops).
 
         A long's protective stop is a SELL stop; a short's is a BUY stop.
@@ -5259,6 +5603,9 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            # Board item 172 — same contract as the sell-side lister above.
+            if errors is not None:
+                errors.append(f"open-order listing failed: {exc}")
             return [], []
 
         sell_orders: list = []
@@ -5276,7 +5623,9 @@ class AlpacaBroker:
                 buy_orders.append(order)
         return sell_orders, buy_orders
 
-    def _list_open_protective_stop_orders(self, symbol: str, *, side: str = "sell") -> list:
+    def _list_open_protective_stop_orders(
+        self, symbol: str, *, side: str = "sell", errors: list | None = None,
+    ) -> list:
         """List open stop orders on `side` for `symbol`.
 
         `side="sell"` (default) finds the stops protecting a long — the only
@@ -5289,11 +5638,22 @@ class AlpacaBroker:
         protected short as NAKED and try to "repair" over it).
         """
         if side.lower() == "buy":
-            _, buy_orders = self._list_open_stop_orders_by_side(symbol)
+            _, buy_orders = self._list_open_stop_orders_by_side(
+                symbol, errors=errors,
+            )
             return buy_orders
-        return self._list_open_sell_stop_orders(symbol)
+        return self._list_open_sell_stop_orders(symbol, errors=errors)
 
-    def _list_open_sell_stop_orders(self, symbol: str) -> list:
+    def _list_open_sell_stop_orders(self, symbol: str, *, errors: list | None = None) -> list:
+        """Board item 172: `errors`, when given, receives the listing
+        failure instead of it being swallowed into an empty list.
+
+        The empty-list return is UNCHANGED for every caller that does not
+        pass `errors`, because `replace_stop_loss` and its tests depend on
+        it. What changes is that a caller who needs to tell "no stops" from
+        "could not ask" can now do so — and `snapshot_protective_stops` is
+        exactly that caller.
+        """
         try:
             from alpaca.trading.requests import GetOrdersRequest
 
@@ -5306,6 +5666,8 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            if errors is not None:
+                errors.append(f"open-order listing failed: {exc}")
             return []
 
         stop_orders = []
@@ -5350,11 +5712,26 @@ class AlpacaBroker:
         *,
         side: str = "sell",
     ) -> dict:
-        """Submit a GTC stop-limit order. `side` is the STOP ORDER's own
+        """Submit a protective stop. `side` is the STOP ORDER's own
         side — "sell" (default) protects a long and fires as price falls;
         "buy" protects a short and fires as price rises. Defaults to "sell"
-        so every pre-shorts call site (none of which pass `side`) submits
-        byte-identical orders to before.
+        so every pre-shorts call site (none of which pass `side`) keeps its
+        behaviour.
+
+        PRIMARY: a stop-MARKET (`StopOrderRequest`) — owner ratified
+        2026-09-25 for a GUARANTEED exit. An elected market stop fills at the
+        next print instead of resting unfilled past a limit on a gap, which
+        is the exposure the stop exists to close. `limit_price` is therefore
+        IGNORED on the primary order (a market stop has no limit).
+
+        SAFETY FALLBACK: if the broker refuses the stop-MARKET for an
+        unsupported order-type/tif combination
+        (`_is_unsupported_stop_market_rejection`), this degrades to the
+        original stop-LIMIT for the SAME leg so the position is never left
+        unprotected — a market-stop refusal becomes a stop-limit, never no
+        stop. Any OTHER rejection propagates unchanged. `STOP_LIMIT_BUFFER_PCT`
+        and `limit_price` govern ONLY this fallback now (and the separate
+        force-de-lever must-fill SELL), not the primary protective stop.
 
         When `limit_price` is not supplied, the fallback buffer must sit on
         the correct side of the trigger too: a SELL's limit belongs BELOW
@@ -5432,6 +5809,10 @@ class AlpacaBroker:
                 "coverage sweep.", symbol, qty,
             )
         stop_price_q = _quantize_price(stop_price)
+        # The limit is computed EAGERLY but used ONLY by the stop-limit
+        # fallback below — the primary protective order is a stop-MARKET and
+        # carries no limit. Same buffer/side rule the fallback and the
+        # force-de-lever must-fill SELL use.
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
         else:
@@ -5440,15 +5821,44 @@ class AlpacaBroker:
                 else (1 - self.STOP_LIMIT_BUFFER_PCT)
             )
             limit_price_q = _quantize_price(stop_price * buffer_mult)
-        req = StopLimitOrderRequest(
+        # PRIMARY: stop-MARKET (guaranteed exit) — owner ratified 2026-09-25.
+        market_req = StopOrderRequest(
             symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=order_side,
             time_in_force=time_in_force,
             stop_price=stop_price_q,
-            limit_price=limit_price_q,
         )
-        order = self.client.submit_order(req)
+        try:
+            order = self.client.submit_order(market_req)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_unsupported_stop_market_rejection(exc):
+                # NOT a type/tif refusal — held_for_orders, buying-power,
+                # symbol, rate-limit, 5xx, etc. must propagate unchanged so
+                # the retry / existing-stop / escalation paths above see the
+                # real cause. The fallback must never swallow these.
+                raise
+            # SAFETY FALLBACK: the broker refused the stop-MARKET for an
+            # unsupported order-type/tif combo. Degrade to the ORIGINAL
+            # stop-LIMIT for this same leg so the position is NEVER left
+            # unprotected. This second submit is UNGUARDED: if it too is
+            # rejected, that exception surfaces to the caller — a naked
+            # position is never reported as covered.
+            logger.warning(
+                "protective stop-MARKET refused for %s (qty=%s, stop $%.4f) as "
+                "an unsupported order-type/tif combo (%s) — falling back to a "
+                "stop-LIMIT (limit $%s) so the position stays protected.",
+                symbol, qty, stop_price_q, exc, limit_price_q,
+            )
+            limit_req = StopLimitOrderRequest(
+                symbol=_alpaca_symbol(symbol),
+                qty=qty,
+                side=order_side,
+                time_in_force=time_in_force,
+                stop_price=stop_price_q,
+                limit_price=limit_price_q,
+            )
+            order = self.client.submit_order(limit_req)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),

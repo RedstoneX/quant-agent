@@ -86,8 +86,21 @@ def _fmt_thesis_health(context: dict) -> str:
         pnl_str = f"{pnl:+.1f}%" if pnl is not None else "n/a"
         entry_px = c.get("entry_price") or 0
         cur_px = c.get("current_price") or 0
+        # Item 165: this figure feeds the model's pace judgement in
+        # thesis_health_review, so it must read in TRADING SESSIONS, not raw
+        # calendar days — a weekend/holiday adds calendar days and zero
+        # sessions, which made a good position look "too slow" and could
+        # exit it early. Prefer the weekend/holiday-aware `sessions_held`; if
+        # it is unavailable (legacy row / calendar hiccup) show calendar days
+        # but LABEL them, so a calendar figure is never misread as sessions.
+        sessions = c.get("sessions_held")
         days = c.get("days_held")
-        days_str = f"{days}d held" if days is not None else "n/a"
+        if sessions is not None:
+            held_str = f"{sessions} session{'' if sessions == 1 else 's'} held"
+        elif days is not None:
+            held_str = f"{days} calendar days held"
+        else:
+            held_str = "holding time n/a"
         entry_reason = (c.get("entry_reasoning") or "(no thesis captured)")[:220]
 
         tech = c.get("tech_trajectory") or []
@@ -158,7 +171,7 @@ def _fmt_thesis_health(context: dict) -> str:
             deep_section = "\n" + "\n".join(deep_lines)
 
         lines.append(
-            f"### {sym} (entry ${entry_px:.2f} → ${cur_px:.2f} {pnl_str}, {days_str}, sector {c.get('sector') or '?'})\n"
+            f"### {sym} (entry ${entry_px:.2f} → ${cur_px:.2f} {pnl_str}, {held_str}, sector {c.get('sector') or '?'})\n"
             f"  Entry thesis: {entry_reason}\n"
             f"  Tech trajectory (newest → oldest): {tech_str}\n"
             f"  News (8w): {news_str}\n"

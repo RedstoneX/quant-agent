@@ -6,9 +6,18 @@ watches — it was the desk's own unread backlog. `_discover` broke on
 `max_filings_per_refresh` inside the freshest day slice, so watched filings
 sat unread behind filings from companies the desk does not trade, and
 `peek_accessions` treated a market-wide cache ticker as relevant.
+
+2026-09-23: the fix for that shipped an exit condition — `len(priority) >=
+cap` whenever watched names were supplied — that production could never
+reach, so `_discover` ran until the refresh deadline and the market-wide
+read loop raised on an expired one. The watched-first guarantee this file
+was written for now belongs to the watched-name drain (#539); what stays
+here is the ORDERING, the reachable cap, and the alarm for a market-wide
+pass that reads nothing at all.
 """
 
 import json
+from datetime import timedelta
 from unittest.mock import Mock
 
 from src.data.congressional_trading import CombinedSmartMoneyProvider
@@ -44,11 +53,21 @@ def _provider(tmp_path, **kwargs):
     return provider
 
 
-def test_watched_filing_is_discovered_even_when_the_cap_binds_on_other_names(
+def test_watched_filings_already_found_are_emitted_first_when_the_cap_binds(
     tmp_path, monkeypatch,
 ):
-    """The defect, reproduced: a full day slice of filings on names the desk
-    does not trade must not push its own name out of the budget."""
+    """Watched-first ORDERING, which is all `priority_ciks` still buys.
+
+    Until 2026-09-23 this test asserted more: that the scan kept going past
+    a full market-wide bucket so a watched filing later in the stream could
+    displace a non-watched one. That guarantee moved to the watched-name
+    drain (#539), which asks each watched issuer directly on its own
+    budget — and buying it here cost `_discover` its only reachable exit
+    condition, which is the regression this file's sibling test covers.
+    What `_discover` still owes the desk is that whatever watched filings it
+    DID find are handed back first, so the submission downloads that follow
+    are spent on the desk's own names before anything else.
+    """
     provider = _provider(tmp_path, max_filings_per_refresh=2, lookback_days=1)
     listed = {
         "1045810": {"NVDA": "Nasdaq"},
@@ -60,14 +79,14 @@ def test_watched_filing_is_discovered_even_when_the_cap_binds_on_other_names(
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    # Three unwatched filings come back FIRST, then the watched one — the
+    # One unwatched filing, then the watched one, then more unwatched — the
     # order EFTS returns them in is not ours to choose.
     monkeypatch.setattr(provider, "_get", _efts({
         (day0, 0): [
             _hit("0000000001-26-000001", "9000001"),
+            _hit("0000000004-26-000001", "1045810"),
             _hit("0000000002-26-000001", "9000002"),
             _hit("0000000003-26-000001", "9000003"),
-            _hit("0000000004-26-000001", "1045810"),
         ],
     }))
 
@@ -76,15 +95,15 @@ def test_watched_filing_is_discovered_even_when_the_cap_binds_on_other_names(
     found = provider._discover(listed, float("inf"), set(), priority, stats)
 
     assert len(found) == 2, found
-    # The watched filing is present AND first, so the submission downloads
-    # that follow are spent on it before anything else.
+    # The watched filing is FIRST, ahead of the unwatched one that arrived
+    # before it.
     assert found[0]["accession"] == "0000000004-26-000001"
     assert found[0]["cik"] == "1045810"
     # Non-watched filings are reordered, never dropped: external candidate
     # nomination still needs them.
     assert any(f["cik"] == "9000001" for f in found)
     # The residue is measured, not guessed.
-    assert stats["candidates"] == 4
+    assert stats["candidates"] == 3
     assert stats["watched_candidates"] == 1
     assert stats["cap_reached"] is True
 
@@ -112,28 +131,6 @@ def test_no_watched_symbols_leaves_discovery_exactly_as_it_was(
     ]
 
 
-def test_peek_is_scoped_to_watched_names_not_the_market_wide_cache(
-    tmp_path, monkeypatch,
-):
-    """A filing on a cached-but-unwatched ticker is not a change to
-    remembered research. `refresh` caches the whole listed market, so
-    unioning the cache in made the relevant set market-wide."""
-    provider = _provider(tmp_path, max_filings_per_refresh=5, lookback_days=1)
-    provider.observations_path.write_text(json.dumps([
-        {"symbol": "ZZZA", "accession_number": "0000000001-26-000001"},
-    ]))
-    listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
-    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
-    monkeypatch.setattr(provider, "_discover", lambda *_: [
-        {"accession": "0000000009-26-000001", "form": "4", "cik": "9000001"},
-    ])
-
-    peeked = provider.peek_accessions(symbols=["NVDA"])
-
-    assert "0000000009-26-000001" not in peeked
-    assert peeked == {"0000000001-26-000001"}
-
-
 def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch):
     provider = _provider(tmp_path, max_filings_per_refresh=1, lookback_days=1)
     listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
@@ -143,9 +140,9 @@ def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch
     day0 = et_today().isoformat()
     monkeypatch.setattr(provider, "_get", _efts({
         (day0, 0): [
+            _hit("0000000003-26-000001", "1045810"),
             _hit("0000000001-26-000001", "9000001"),
             _hit("0000000002-26-000001", "9000001"),
-            _hit("0000000003-26-000001", "1045810"),
         ],
     }))
     # Submission download fails: the backlog must still be counted, because
@@ -159,11 +156,14 @@ def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch
     result = provider.refresh(["NVDA"])
 
     assert result["processed_filings"] == 0
-    assert result["pending_filings"] == 3
+    # Two candidates were SEEN before the market-wide bucket filled: the
+    # watched one and the first unwatched one. The third is behind the cap,
+    # which is the cap doing its job.
+    assert result["pending_filings"] == 2
     assert result["watched_pending_filings"] == 1
     assert result["discovery_cap_reached"] is True
     manifest = json.loads(provider.manifest_path.read_text())
-    assert manifest["pending_filings"] == 3
+    assert manifest["pending_filings"] == 2
     assert manifest["watched_pending_filings"] == 1
     assert manifest["discovery_cap_reached"] is True
 
@@ -762,3 +762,202 @@ def test_drain_budget_fits_inside_the_job_that_runs_it():
     field = SmartMoneyConfig.model_fields["watched_drain_deadline_s"]
     le = next(m.le for m in field.metadata if hasattr(m, "le"))
     assert le == timeout - startup_s - 180 - after_refresh_max_s
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23: the exit condition that could not be reached
+# ---------------------------------------------------------------------------
+#
+# PR #513 (2026-09-18) made `_discover` stop on `len(priority) >= cap`
+# whenever watched names were supplied. `priority` only ever holds the ~82
+# watched issuers' filings, who file 13-31 a day, so with a cap of 1,000 it
+# could never be reached — and production always supplies watched names.
+# The only terminator left was `refresh_deadline_s`, so discovery spent the
+# whole 180 s paginating EDGAR and the read loop then raised on an expired
+# deadline. Market-wide reads: 1,000/run on 2026-09-15..18, then 0, 31 and
+# 13 on 2026-09-21..23 — and those 31 and 13 were the watched drain's
+# [measured: production log].
+
+
+def test_discovery_stops_on_the_cap_when_watched_names_are_supplied(
+    tmp_path, monkeypatch,
+):
+    """The regression itself: supplying watched names must not remove the
+    scan's only reachable exit condition."""
+    provider = _provider(tmp_path, max_filings_per_refresh=3, lookback_days=30)
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    listed.update({f"90000{i:02d}": {f"ZZ{i:02d}": "NYSE"} for i in range(1, 40)})
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+
+    # Every day in the window is full of market-wide filings, as the real
+    # stream is, and one watched filing sits on the freshest day — so the
+    # watched bucket is non-empty but can never reach the cap.
+    pages = {}
+    for days_ago in range(31):
+        day = (et_today() - timedelta(days=days_ago)).isoformat()
+        page = [
+            _hit(f"{days_ago:04d}00000{i}-26-000001", f"90000{i:02d}")
+            for i in range(1, 6)
+        ]
+        if days_ago == 0:
+            page.insert(0, _hit("0000000004-26-000001", "1045810"))
+        pages[(day, 0)] = page
+    monkeypatch.setattr(provider, "_get", _efts(pages))
+
+    stats: dict = {}
+    priority = provider._ciks_for_symbols(listed, ["NVDA"])
+    # A deadline that never expires, so the ONLY way out is the cap. Before
+    # the fix this call did not return.
+    found = provider._discover(listed, float("inf"), set(), priority, stats)
+
+    assert stats["cap_reached"] is True
+    assert stats["deadline_hit"] is False
+    # One day slice was enough to fill the budget; the scan did not walk the
+    # whole window.
+    assert stats["edgar_days_queried"] == 1
+    assert stats["edgar_days_in_window"] == 31
+    assert len(found) == 3
+    # Ordering is untouched: the watched filing is still handed back first.
+    assert found[0]["accession"] == "0000000004-26-000001"
+
+
+def test_watched_names_are_still_read_by_the_drain_when_the_cap_binds_at_once(
+    tmp_path, monkeypatch,
+):
+    """Watched-name behaviour is unchanged. The market-wide bucket fills on
+    the first page and the scan stops, and the watched filing is read anyway
+    — by the drain (#539), which asks the issuer directly on its own budget.
+    """
+    provider = _provider(tmp_path, max_filings_per_refresh=1, lookback_days=1)
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+
+    day0 = et_today().isoformat()
+    monkeypatch.setattr(provider, "_get", _efts({
+        (day0, 0): [
+            _hit("0000000001-26-000001", "9000001"),
+            _hit("0000000002-26-000001", "9000001"),
+            _hit("0000000004-26-000001", "1045810"),
+        ],
+    }))
+    monkeypatch.setattr(
+        provider, "watched_form4_index",
+        lambda ciks, deadline: (
+            {"1045810": [("0000000004-26-000001", day0)]}, [],
+        ),
+    )
+    reads: list[str] = []
+
+    def _submission(filing, deadline):
+        reads.append(filing["accession"])
+        raise RuntimeError("body not under test")
+
+    monkeypatch.setattr(provider, "_submission", _submission)
+
+    result = provider.refresh(["NVDA"])
+
+    # The market-wide pass never saw the watched filing — the cap bound
+    # first — and the drain read it regardless.
+    assert "0000000004-26-000001" in reads
+    assert result["watched_drain_ran"] is True
+
+
+# ---------------------------------------------------------------------------
+# the alarm: a market-wide pass that reads NOTHING must say so
+# ---------------------------------------------------------------------------
+
+
+def _blind_refresh(tmp_path, monkeypatch, *, submissions_fail: bool):
+    provider = _provider(tmp_path, max_filings_per_refresh=5, lookback_days=1)
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+
+    day0 = et_today().isoformat()
+    monkeypatch.setattr(provider, "_get", _efts({
+        (day0, 0): [
+            _hit("0000000001-26-000001", "9000001"),
+            _hit("0000000002-26-000001", "9000001"),
+        ],
+    }))
+    monkeypatch.setattr(
+        provider, "watched_form4_index", lambda ciks, deadline: ({}, []),
+    )
+    if submissions_fail:
+        monkeypatch.setattr(
+            provider, "_submission",
+            Mock(side_effect=RuntimeError("submission unavailable")),
+        )
+    else:
+        monkeypatch.setattr(
+            provider, "_submission",
+            lambda filing, deadline: ("no parseable body", "url"),
+        )
+        monkeypatch.setattr(
+            provider, "_parse_submission",
+            lambda body, *, source_url, listed: [],
+        )
+    return provider, provider.refresh(["NVDA"])
+
+
+def test_a_market_wide_pass_that_reads_nothing_reports_itself_blind(
+    tmp_path, monkeypatch,
+):
+    """The five-session silence, closed. Zero market-wide reads with unread
+    candidates outstanding is its own recorded fact, on the result and in
+    the manifest, and it survives into `form4_coverage` for the morning seat
+    to read without the network."""
+    provider, result = _blind_refresh(tmp_path, monkeypatch, submissions_fail=True)
+
+    assert result["market_wide_read"] == 0
+    assert result["pending_filings"] > 0
+    assert result["market_wide_blind"] is True
+    manifest = json.loads(provider.manifest_path.read_text())
+    assert manifest["market_wide_blind"] is True
+    assert provider.form4_coverage()["market_wide_blind"] is True
+
+
+def test_a_market_wide_pass_that_reads_normally_is_not_blind(
+    tmp_path, monkeypatch,
+):
+    """The other half, and the one that decides whether this alarm is worth
+    having: an ordinary pass must never fire it."""
+    provider, result = _blind_refresh(tmp_path, monkeypatch, submissions_fail=False)
+
+    assert result["market_wide_read"] == 2
+    assert result["market_wide_blind"] is False
+    assert provider.form4_coverage()["market_wide_blind"] is False
+
+
+def test_a_quiet_day_with_nothing_unread_is_not_blind(tmp_path, monkeypatch):
+    """Zero read because there was nothing to read is a fact, not a fault —
+    the same rule board item 126 makes for a quiet EDGAR day."""
+    provider = _provider(tmp_path, max_filings_per_refresh=5, lookback_days=1)
+    listed = {"9000001": {"ZZZA": "NYSE"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    monkeypatch.setattr(provider, "_get", _efts({}))
+    monkeypatch.setattr(
+        provider, "watched_form4_index", lambda ciks, deadline: ({}, []),
+    )
+
+    result = provider.refresh(["ZZZA"])
+
+    assert result["market_wide_read"] == 0
+    assert result["pending_filings"] == 0
+    assert result["market_wide_blind"] is False
+
+
+def test_blindness_from_an_earlier_pass_is_not_reported_as_todays(
+    tmp_path, monkeypatch,
+):
+    """Coverage is a statement about the pass that ran today. A record left
+    by an earlier one must not page again — the same ageing rule the EDGAR
+    coverage record already follows."""
+    provider, _result = _blind_refresh(tmp_path, monkeypatch, submissions_fail=True)
+    manifest = json.loads(provider.manifest_path.read_text())
+    manifest["coverage_as_of"] = "2026-01-02"
+    provider.manifest_path.write_text(json.dumps(manifest))
+
+    assert provider.form4_coverage()["market_wide_blind"] is False

@@ -37,15 +37,10 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.constants import (
-    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-)
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
-    GROSS_LADDER_ALERT_PCT,
     GrossCeiling,
-    PortfolioVolEstimate,
     RiskRuleEngine,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
@@ -53,7 +48,6 @@ from src.risk.rules import (
     peak_to_trough_pct,
     position_weight_pct,
     resolve_gross_ceiling,
-    vol_relative_drawdown_threshold_pct,
 )
 from src.execution.broker import (
     AlpacaBroker,
@@ -145,6 +139,22 @@ def _optional_risk_number(value) -> float | None:
     return float(value) if value > 0 else None
 
 
+def _finite_float_or_none(value) -> float | None:
+    """Coerce a broker fill field to a finite float, or None.
+
+    Rejects None, bool, non-numeric types (a MagicMock exposes ``__float__``
+    but is NOT an int/float instance — same defensive posture as
+    ``_optional_risk_number``), and NaN/inf, so a non-numeric value can never
+    reach a DB bind. ``update_trade_fill``'s ``fill_price`` column is nullable,
+    so a None price is a safe "unknown, backfill later" that the next
+    reconciliation pass replaces with the broker's numeric average.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    f = float(value)
+    return f if math.isfinite(f) else None
+
+
 def _risk_number(value, default: float) -> float:
     """`_optional_risk_number` with a documented fallback, for settings that
     always need a concrete number (§10.3's minimum order size)."""
@@ -177,60 +187,12 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
     return threaded
 
 
-def _daily_loss_limit_for_alert(engine, risk_config) -> float | None:
-    """The daily circuit-breaker limit actually in force, for operator alerts.
-
-    docs/WORK.md item 32 (owner call 2026-09-11). Prefers the engine's
-    `daily_loss_limit_pct` — the volatility-relative threshold when the
-    account has enough of its own history to measure one — and falls back to
-    the configured fixed percentage, then to None. Never raises: this feeds
-    a notification, and a broken read must not take a session alert down.
-    """
-    for source, attribute in (
-        (engine, "daily_loss_limit_pct"),
-        (risk_config, "effective_max_daily_loss_pct"),
-    ):
-        if source is None:
-            continue
-        try:
-            value = getattr(source, attribute, None)
-        except Exception:  # noqa: BLE001
-            continue
-        resolved = _optional_risk_number(value)
-        if resolved is not None:
-            return resolved
-    return None
-
-
-HARD_BLOCK_RULES = {
-    "max_daily_loss_pct",
-    "max_total_position_pct",
-    "max_position_pct",
-    "require_stop_loss",
-    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
-    # a hard block and is deliberately absent from this set. It is now the
-    # diversification TARGET — breaching it emits an ADVISORY violation the
-    # AI Risk Manager and the audit trail see, while the constructor shrinks
-    # the order for crowding instead of the pipeline dropping it. The hard
-    # gate moved to `max_sector_hard_pct` below, which fires only past the
-    # absolute ceiling or on an order that never went through that sizing.
-    # Removing it from here is the whole of "concentration is a dial, not a
-    # gate" at the pipeline level; putting it back reinstates the veto.
-    "max_sector_hard_pct",
-    "cash_only",
-    # Audit §1.1: the drawdown-halve rule used to live only in the PM and RM
-    # prompts, where "no deterministic code enforces this" was stated outright.
-    # It is a hard gate now. `apply_drawdown_scale` halves BUYs before this
-    # filter runs, so a violation here means a BUY reached the engine unscaled.
-    "drawdown_buy_cap",
-    # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
-    # value plus absolute short market value — may not exceed the ladder-
-    # resolved multiple of equity. There was NO gross-exposure ceiling in
-    # this codebase before: `max_portfolio_risk_pct` bounds capital at risk
-    # and `max_total_position_pct` bounds NET exposure, where a hedge
-    # cancels a long. Adding this hard block is a tightening.
-    "max_gross_exposure",
-}
+# `HARD_BLOCK_RULES` now lives in `src/risk/rules.py`, beside the engine that
+# emits the rule names, so the RISK SEAT'S RENDERER can classify an entry
+# without importing the pipeline (which imports the seat — a cycle). Re-
+# exported here because this is the name every caller and test already
+# imports, and moving the import site would be churn with no benefit.
+from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
@@ -287,10 +249,18 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "regime flipped",
     "risk-off",
     "risk off",
-    # Deterministic risk management
-    "daily loss",
-    "daily-loss",
-    "circuit breaker",
+    # "daily loss" / "daily-loss" / "circuit breaker" were REMOVED
+    # 2026-09-20 (WORK.md item 32), for the same reason and by the same
+    # precedent as the correlation phrases below: the owner deleted the
+    # entire account-level loss alarm, so no part of the desk computes a
+    # daily-loss or circuit-breaker EVENT any more and the claim is not
+    # checkable against anything. Leaving them accepted would have been
+    # strictly worse than never having had them: `cites_external_information`
+    # waves a SELL/REDUCE/COVER past the noise-band and ratchet clamps when
+    # the reason cites one, so a seat writing "circuit breaker" would have
+    # bought itself a clamp bypass with an unverifiable phrase. There is no
+    # exchange-halt (LULD) detection in this codebase either, so the
+    # generous reading of "circuit breaker" has nothing behind it.
     # "correlation breach" / "correlation cluster breach" were REMOVED
     # 2026-09-13 (WORK.md item 44). They were the only accepted triggers with
     # nothing behind them: no part of the desk computes a correlation-breach
@@ -299,8 +269,10 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     # operational definition with a stated window and threshold was searched
     # for and not found (see docs/INCIDENT_HISTORY.md). Every other keyword
     # here names something the desk records: a news row, an earnings row, a
-    # macro regime read, a broker fill, a deterministic circuit breaker.
-    # This one named nothing, so it passed on the wording alone. Do NOT
+    # macro regime read, a broker fill. (This sentence used to end "a
+    # deterministic circuit breaker" — that one went the same way on
+    # 2026-09-20, see above.) The correlation phrase named nothing, so it
+    # passed on the wording alone. Do NOT
     # re-add it without a verifier that can answer "did that happen today?".
     # Protection already fired
     "stop hit",
@@ -483,24 +455,6 @@ def _market_is_open_now(broker) -> bool:
     return True
 
 
-def _limit_is_vol_relative(risk_engine) -> bool:
-    """Is the daily-loss limit currently the HELD BOOK's volatility-relative
-    one, rather than a fixed percentage of the account?
-
-    docs/WORK.md item 32 — decides which day-change number `daily_loss_
-    numerator` compares. Read defensively: an engine that cannot answer (an
-    older stub, a Mock in a fixture) is treated as fixed-percentage, which
-    is the pre-2026-09-14 behaviour and the more-negative numerator on any
-    day with realized losses.
-    """
-    from src.risk.rules import RiskRuleEngine
-    try:
-        basis = risk_engine.daily_loss_limit_basis()
-    except Exception:  # noqa: BLE001
-        return False
-    return basis == RiskRuleEngine.VOL_RELATIVE_BASIS
-
-
 def _price_is_through_stop(price: float, stop_price: float, *, is_short: bool) -> bool:
     """Has the tape passed a protective stop's trigger?
 
@@ -628,28 +582,8 @@ def build_risk_config(config) -> RiskConfig:
     return RiskConfig(
             max_position_pct=config.risk.max_position_pct,
             max_total_position_pct=config.risk.max_total_position_pct,
-            max_daily_loss_pct=config.risk.max_daily_loss_pct,
-            # docs/WORK.md item 32: `effective_max_daily_loss_pct` derives
-            # from these two when `max_daily_loss_pct` above is left unset,
-            # so both must be threaded through here too or a future config
-            # with an unset max_daily_loss_pct would silently derive against
-            # this dataclass's bare defaults instead of the real settings.
-            # `_risk_number` guards against the MagicMock-coerces-to-1.0
-            # posture the comment above `max_sector_hard_pct` describes.
             max_position_risk_pct=_risk_number(
                 getattr(config.risk, "max_position_risk_pct", None), 5.0,
-            ),
-            daily_loss_risk_multiple=_risk_number(
-                getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
-            ),
-            # docs/WORK.md item 32 (owner call 2026-09-11): how many
-            # multiples of the HELD BOOK's own normal daily move trip the
-            # daily breaker. Threaded for the same reason as the two above —
-            # an unthreaded value would silently derive against this model's
-            # bare default rather than real settings.
-            drawdown_vol_sensitivity=_risk_number(
-                getattr(config.risk, "drawdown_vol_sensitivity", None),
-                DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
             ),
             max_sector_pct=config.risk.max_sector_pct,
             # Spec §10.3 — the absolute ceiling behind the sector dial.
@@ -793,9 +727,6 @@ def build_constructor_config(config, risk_engine_config):
                 else None
             ),
             min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
-            min_reward_risk_after_widening=_risk_setting(
-                "min_reward_risk_after_widening", 1.5,
-            ),
             # Spec §12.1 — a stop sitting at a level the system COMPUTED is
             # honoured whatever the band says, down to a deterministic 1x ATR
             # floor. Same "wire from the ratified setting, not the
@@ -847,6 +778,35 @@ def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
     if congress_enabled:
         return "SEC Form 4 + congressional"
     return "SEC Form 4 only (congressional cross-check switched off)"
+
+
+def _reconciled_exit_action(order_type: str | None) -> str:
+    """Map a broker fill's order_type to the HONEST action to record for an
+    exit the reconciler recovered (item 173(a)).
+
+    `_reconcile_stop_out_fills` writes back exits the broker made that the
+    ledger never saw. It used to label every one STOP_OUT — a protective
+    stop — even when the broker fill was an ordinary market/limit sell.
+    That misattributes owner-facing realized-P&L cause. The broker already
+    reports each fill's order_type (`AlpacaBroker.list_filled_sell_orders`);
+    this decides the action from it and NEVER guesses STOP_OUT:
+
+      - a genuine stop / stop-limit / trailing-stop  -> STOP_OUT
+      - a market or limit sell                       -> SELL
+      - anything missing or unrecognised             -> RECONCILED_EXIT
+        (an honest 'the broker closed this, cause unattributed' marker —
+        never a protective stop the broker record can't substantiate)
+    """
+    ot = (order_type or "").strip().lower()
+    if not ot:
+        return "RECONCILED_EXIT"
+    # stop / stop_limit / trailing_stop all name a broker-resident protective
+    # stop; substring match tolerates enum spellings like "OrderType.STOP".
+    if "stop" in ot or "trailing" in ot:
+        return "STOP_OUT"
+    if ot in ("market", "limit") or ot.endswith(".market") or ot.endswith(".limit"):
+        return "SELL"
+    return "RECONCILED_EXIT"
 
 
 class TradingPipeline:
@@ -921,6 +881,14 @@ class TradingPipeline:
         # provider_keys and this construction site can never pick different
         # credentials for the same configured fallback.
         _fallback_api_key = _key_for(config.llm.fallback_model, config.llm.fallback_provider)
+        # Route 3 credential — a genuinely DIFFERENT model (see
+        # config.llm.tertiary_model). Resolved through the same closure for
+        # the same reason. Empty when route 3 is switched off, which
+        # BaseAgent._tertiary_reachable reads as "no third rung".
+        _tertiary_api_key = (
+            _key_for(config.llm.tertiary_model, config.llm.tertiary_provider)
+            if (config.llm.tertiary_model or "").strip() else ""
+        )
 
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
@@ -929,10 +897,17 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.tech_analyst_provider,
             provider_order=config.llm.get_provider_order("tech_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
             structured_output=config.llm.structured_output,
+            # The standing sheet states this seat's history depth back to it.
+            # Passed from the SAME config object `market.get_ohlcv` is called
+            # with, so the brief and the fetch cannot disagree (board item 168).
+            lookback_days=config.trading.lookback_days,
         )
         self.portfolio_manager = PortfolioManagerAgent(
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
@@ -941,6 +916,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -963,6 +941,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -974,19 +955,7 @@ class TradingPipeline:
             # settings file other than the one this process is running on.
             risk_config=config.risk,
         )
-        self.risk_engine = RiskRuleEngine(
-            build_risk_config(config),
-        # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
-        # circuit breaker measure a loss against the normal daily move of
-        # the book actually held — from its holdings' real market price
-        # history — rather than a frozen percentage of equity, and NOT
-        # against the account's own (ramp-contaminated, malfunction-era)
-        # equity curve. Read lazily, at each check, because the breaker
-        # fires from six separate places in this file and the book changes
-        # intraday. Returns None-safe values; a failing read falls back to
-        # the fixed percentage.
-            portfolio_vol_provider=self.held_book_daily_vol_pct,
-        )
+        self.risk_engine = RiskRuleEngine(build_risk_config(config))
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
@@ -994,6 +963,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.position_reviewer_provider,
             provider_order=config.llm.get_provider_order("position_reviewer"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1006,6 +978,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.evening_analyst_provider,
             provider_order=config.llm.get_provider_order("evening_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1018,6 +993,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.news_analyst_provider,
             provider_order=config.llm.get_provider_order("news_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1030,6 +1008,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1059,6 +1040,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.earnings_analyst_provider,
             provider_order=config.llm.get_provider_order("earnings_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1071,6 +1055,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1088,10 +1075,6 @@ class TradingPipeline:
             lookback_days=config.smart_money.lookback_days,
             max_filings_per_refresh=config.smart_money.max_filings_per_refresh,
             max_observations=config.smart_money.max_observations,
-            min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
-            external_min_transaction_value_usd=(
-                config.smart_money.external_min_transaction_value_usd
-            ),
             cluster_window_days=config.smart_money.cluster_window_days,
             min_cluster_owners=config.smart_money.min_cluster_owners,
             insider_calendar_routine_years=config.smart_money.insider_calendar_routine_years,
@@ -1123,10 +1106,12 @@ class TradingPipeline:
                     config.smart_money.congress_assumed_max_disclosure_lag_days
                 ),
                 lookback_days=config.smart_money.congress_lookback_days,
-                min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
-                external_min_transaction_value_usd=(
-                    config.smart_money.external_min_transaction_value_usd
-                ),
+                # Board item 52 deleted the shared insider-Form4 dollar
+                # floors from `SmartMoneyConfig`; that item is scoped to
+                # Form 4 only, so this congressional-trading gate is left
+                # unchanged by taking `CongressionalTradingProvider`'s own
+                # default floors (same $100k/$250k values) instead of the
+                # now-deleted config fields.
                 cluster_window_days=config.smart_money.cluster_window_days,
                 min_cluster_owners=config.smart_money.min_cluster_owners,
                 max_observations=config.smart_money.max_observations,
@@ -1144,6 +1129,9 @@ class TradingPipeline:
             fallback_api_key=_fallback_api_key,
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
+            tertiary_api_key=_tertiary_api_key,
+            tertiary_provider=config.llm.tertiary_provider,
+            tertiary_model=config.llm.tertiary_model,
             provider=config.llm.meta_reflector_provider,
             provider_order=config.llm.get_provider_order("meta_reflector"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1473,74 +1461,6 @@ class TradingPipeline:
     # numbers for the two directions.
     _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
 
-    #: Session status when the daily-loss breaker trips. **Replaces
-    #: "emergency_sold" for that breaker only** (2026-09-14, docs/WORK.md
-    #: item 32). The breaker no longer sells anything: it stops the desk
-    #: taking new risk and verifies that what is held is protected. The
-    #: string changed with the behaviour on purpose — a payload that still
-    #: said "emergency_sold" while nothing had been sold would be the kind of
-    #: record this desk has been burned by. `_force_delever` and the §11.2
-    #: gross-exposure ladder still sell, still tag their rows
-    #: FORCE_DELEVER, and are untouched by this.
-    DAILY_LOSS_HALT_STATUS = "daily_loss_halted"
-    #: The durable, per-symbol, machine-readable reason a held name records
-    #: when the halt refuses further risk on it. Not a drop of a target and
-    #: not a resize — see `_halt_on_daily_loss_breach`.
-    DAILY_LOSS_HALT_REASON = "daily_loss_halt"
-
-    def _daily_loss_breach(self, account, positions):
-        """`(violation_or_None, baseline, pnl_compared, basis)` for the daily
-        circuit breaker — ONE place that decides what number is compared.
-
-        **The defect this closes** (2026-09-14, docs/WORK.md item 32): the
-        breaker's threshold is measured from the HELD BOOK's own realized
-        volatility, and the loss tested against it was
-        `total_value - last_equity` — the whole account's day change,
-        including realized losses on positions already closed today,
-        commissions and spread. Numerator and denominator did not measure the
-        same object, so the breaker could trip (or not) on movement the
-        threshold never modelled. Both sides now read the held book, with the
-        cash park excluded from each of them.
-
-        `basis` is recorded, never inferred later: ``"held_book"`` when every
-        non-park holding exposed a finite intraday change, ``"account"`` when
-        any did not. The account fallback is the more negative number on any
-        day with realized losses, so it trips SOONER — fail toward not
-        trading. It is also used when a book is held but its intraday change
-        reads as exactly flat, because a broker that omits the field reports
-        precisely that and there is no way to tell the two apart from here;
-        a flat read on a held book is therefore not trusted to suppress a
-        breach the account-wide number would raise.
-        """
-        from src.risk.rules import daily_loss_numerator
-
-        total_value = account["portfolio_value"] if isinstance(
-            account, dict,
-        ) else getattr(account, "portfolio_value", None)
-        last_equity = (
-            account.get("last_equity", total_value) if isinstance(account, dict)
-            else getattr(account, "last_equity", total_value)
-        )
-        try:
-            baseline = float(last_equity)
-            account_pnl = float(total_value) - baseline
-        except (TypeError, ValueError):
-            # Unreadable snapshot — `check_daily_loss` owns the non-finite
-            # path and logs the bypass; hand it through unchanged.
-            return (
-                self.risk_engine.check_daily_loss(float("nan"), float("nan")),
-                float("nan"), float("nan"), "unreadable",
-            )
-        pnl, basis = daily_loss_numerator(
-            account_pnl, positions,
-            vol_relative=_limit_is_vol_relative(self.risk_engine),
-            cash_park_symbol=self._sweep_symbol(),
-        )
-        return (
-            self.risk_engine.check_daily_loss(baseline, pnl),
-            baseline, pnl, basis,
-        )
-
     def _total_pnl_since_reset(
         self, total_value: float,
     ) -> tuple[float | None, float | None, str | None]:
@@ -1589,374 +1509,12 @@ class TradingPipeline:
         since_date = str(earliest.get("date") or "") or None
         return total_pnl, total_return_pct, since_date
 
-    def _verify_stop_coverage_at_halt(self, positions) -> list[dict]:
-        """Per-symbol stop-coverage truth, read from the broker, for a halt.
-
-        **This is the precondition of the halt, not a report attached to
-        it.** Halting instead of liquidating is only safe if the
-        per-position stops are genuinely live at the broker, and the desk's
-        own records cannot answer *whether a stop exists*. Coverage qty is
-        read from the broker. The archive's `trades.stop_loss` is written
-        back on every in-code replace/trail/repair/rearm/ex-div, and a
-        session reconcile reports when that number still disagrees with the
-        broker (an out-of-band move leaves no write-back row). That is the
-        LEVEL. This method still asks the BROKER for coverage, because a
-        stop that was cancelled and not replaced is a missing order, not a
-        stale price — which is exactly what the 2026-09-14 broker audit
-        found for the Visa and Disney *illusion* of an unfired stop (WORK.md
-        items 35 and 69, both closed as archive-stale; the write-back that
-        would have prevented those filings is item 71). Two live reasons
-        the answer can genuinely be "no" remain: a stop can be moved by a
-        maintenance action outside this code, and a sub-share remainder
-        provably cannot hold an overnight stop at this broker.
-
-        Three outcomes per holding, and the third is the one that exists
-        because of that archive:
-
-          ``covered``     open protective stops at least equal the held qty.
-          ``uncovered``   they do not — with the shortfall named by
-                          `_classify_coverage_gap`, the same classifier the
-                          session coverage audit uses, so an expected
-                          overnight sub-share lapse is not reported as a
-                          naked position.
-          ``unverified``  the broker could not be asked. **Never treated as
-                          covered.** `_reconcile_stop_coverage` `continue`s
-                          past this case and the symbol vanishes from its
-                          gap list; a halt that inherited that would
-                          silently assume protection exists.
-
-        The cash park is excluded — it is deliberately stopless
-        cash-equivalent, the same exemption the session audit makes.
-        """
-        out: list[dict] = []
-        park = (self._sweep_symbol() or "").strip().upper()
-        for p in positions or ():
-            symbol = str(getattr(p, "symbol", "") or "").strip().upper()
-            if not symbol or (park and symbol == park):
-                continue
-            try:
-                qty = float(getattr(p, "qty", 0) or 0)
-            except (TypeError, ValueError):
-                qty = 0.0
-            if qty == 0:
-                continue
-            is_short = qty < 0
-            held = abs(qty)
-            try:
-                _ok, specs = self.broker.snapshot_protective_stops(
-                    symbol, side=("buy" if is_short else "sell"),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.critical(
-                    "HALT COVERAGE CHECK UNREADABLE: %s — the broker could "
-                    "not be asked whether a protective stop is live (%s). "
-                    "Reported as UNVERIFIED, never as covered.", symbol, exc,
-                )
-                out.append({
-                    "symbol": symbol, "held_qty": held, "covered_qty": None,
-                    "state": "unverified", "detail": str(exc)[:200],
-                })
-                continue
-            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
-            if covered + 1e-6 >= held:
-                out.append({
-                    "symbol": symbol, "held_qty": held,
-                    "covered_qty": covered, "state": "covered",
-                })
-                continue
-            coverage, frac_uncovered = _classify_coverage_gap(
-                held=held, covered=covered,
-            )
-            out.append({
-                "symbol": symbol, "held_qty": held, "covered_qty": covered,
-                "state": "uncovered", "coverage": coverage,
-                "uncovered_qty": (
-                    frac_uncovered if coverage == "fractional" else held - covered
-                ),
-                "unprotected_value": _position_notional(
-                    p,
-                    frac_uncovered if coverage == "fractional"
-                    else held - covered,
-                ),
-            })
-        return out
-
-    @staticmethod
-    def _halt_coverage_shortfalls(coverage: list[dict]) -> list[dict]:
-        """The entries a halt must SHOUT about, not merely record.
-
-        A holding whose protection could not be verified, or whose durable
-        whole-share stop is missing or mis-sized. An expected overnight
-        sub-share lapse (`'fractional'`) is excluded for the same reason the
-        session audit excludes it — the durable leg is intact and the
-        remainder's DAY stop is gone by broker design every night; reporting
-        it as a naked position is how a banner gets tuned out. Its exposure
-        is still carried in the halt payload as a number.
-        """
-        return [
-            c for c in coverage
-            if c.get("state") == "unverified"
-            or (c.get("state") == "uncovered"
-                and c.get("coverage") in ("none", "partial"))
-        ]
-
-    def _halt_on_daily_loss_breach(
-        self, positions, loss_violation, run_id: str, *,
-        where: str, basis: str = "held_book", ctx=None,
-    ) -> dict:
-        """**Stop taking risk. Do not sell anything.** The daily-loss
-        circuit breaker's whole response, replacing the force-liquidation of
-        the entire book (2026-09-14, docs/WORK.md item 32).
-
-        WHY THE LIQUIDATION IS GONE. It submitted LIMIT orders 1% through the
-        market (`_EMERGENCY_LIMIT_CUSHION_PCT`), then called
-        `_finalize_pending_protections`, which restores the original stops on
-        any leg that did not fill. On a correlated gap — the only day a
-        whole-book dump could be argued for — a limit 1% through does not
-        fill, so the sequence was: cancel every protective stop, fail to
-        sell, put the stops back. An unprotected window, and nothing
-        achieved. On an ordinary day it filled fine, which is to say it
-        worked only when it was not needed. It also never once fired in
-        production: zero EMERGENCY_SELL/EMERGENCY_COVER rows in the archive
-        across 13 days of P&L whose worst day was -0.46% against a
-        reconstructed trip point near -0.70% of equity.
-
-        And the proportionate response already exists. `_enforce_gross_ceiling`
-        runs in the session preamble, trims only the EXCESS down to a
-        drawdown-scaled ceiling, and works with margin on. (`_force_delever`
-        is not it — it returns `[]` whenever `allow_margin` is true, which it
-        has been since 2026-09-02.) Nor is this breaker the defence against a
-        broker-initiated liquidation: at `max_gross_exposure_x: 2.0` against a
-        25% maintenance requirement the book can fall 33.3% before a margin
-        call, which is a week, not a day.
-
-        WHAT IT DOES INSTEAD, in order:
-
-          1. Reconcile fills, so every judgement below is made against
-             broker truth rather than a stale 'submitted' row.
-          2. Cancel every resting entry order. A working DAY entry limit is a
-             standing intention to add risk; refusing new risk has to mean
-             pending intentions too. Best-effort, and a failure is reported
-             in the alert rather than swallowed.
-          3. Run the session stop-coverage audit, which repairs a
-             recoverable long in place.
-          4. VERIFY coverage per held position against the broker
-             (`_verify_stop_coverage_at_halt`) — the precondition, see there.
-          5. File a durable, per-symbol, machine-readable refusal for every
-             holding, carrying its verified coverage state.
-          6. Alert the owner, escalating hard when any coverage is short or
-             unverifiable.
-
-        NOTHING HERE CLOSES, RESIZES OR ZEROES A POSITION, and nothing here
-        places an order except the coverage audit's stop REPAIR, which can
-        only ADD protection. A held name is refused, not sold; its target is
-        dropped, never set to zero (a 0% target reads as "sell it" on this
-        desk).
-
-        WHEN A POSITION HAS NO LIVE STOP AT THE MOMENT OF HALT: the halt
-        still halts — it must, because the alternative response was the
-        broken liquidation — but it does NOT halt quietly. The audit in step
-        3 first tries to re-place the stop from the level recorded on the
-        position's own BUY. If that fails, or if the broker could not be
-        asked at all, the symbol lands in `_halt_coverage_shortfalls`, the
-        owner alert leads with it by name and held quantity, and the returned
-        payload carries `stop_coverage_verified` plus
-        `unprotected_at_halt` so the feed, Mission Control and the evening
-        probe all see it. The desk does not sell the position to protect it:
-        selling on a breach day is exactly the behaviour being removed, and a
-        naked position is an operator escalation, not an excuse to fire the
-        mechanism that did not work.
-        """
-        held = list(positions or ())
-        logger.critical(
-            "DAILY LOSS HALT (%s): %s — refusing NEW RISK for the rest of "
-            "the session. %d position(s) are being kept and verified, not "
-            "sold (loss basis: %s).",
-            where, loss_violation.message, len(held), basis,
-        )
-        # 1. Broker truth before any judgement.
-        try:
-            self._reconcile_fills()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("daily-loss halt: fill reconcile failed: %s", exc)
-        # 2. Resting entry orders are standing intentions to add risk.
-        entries_cancelled = True
-        try:
-            self.broker.cancel_open_entry_orders()
-        except Exception as exc:  # noqa: BLE001
-            entries_cancelled = False
-            logger.error(
-                "DAILY LOSS HALT: could not cancel resting entry orders (%s) "
-                "— a working entry limit can still add risk during the halt. "
-                "Escalated to the owner.", exc,
-            )
-        # 3. The audit, which repairs a recoverable long in place.
-        try:
-            coverage_gaps = self._reconcile_stop_coverage()
-        except Exception as exc:  # noqa: BLE001
-            logger.error("daily-loss halt: coverage audit failed: %s", exc)
-            coverage_gaps = []
-        # 4. Verify, per position, against the broker.
-        coverage = self._verify_stop_coverage_at_halt(held)
-        shortfalls = self._halt_coverage_shortfalls(coverage)
-        # 5. Durable per-symbol refusal.
-        self._record_daily_loss_halt_refusals(
-            coverage, loss_violation, run_id=run_id, where=where, ctx=ctx,
-        )
-        # 6. Alert.
-        self._alert_owner_daily_loss_halt(
-            loss_violation, coverage, shortfalls, held,
-            where=where, basis=basis, entries_cancelled=entries_cancelled,
-        )
-        return {
-            "status": self.DAILY_LOSS_HALT_STATUS,
-            "halted": True,
-            "halt_reason": self.DAILY_LOSS_HALT_REASON,
-            "halt_where": where,
-            "daily_loss_basis": basis,
-            "positions": len(held),
-            # Explicitly empty and explicitly present: a reader must be able
-            # to see that the breaker placed no orders, rather than infer it
-            # from a missing key. A call site that already holds the session's
-            # own earlier orders (deterministic trails, say) overwrites this
-            # key so the feed still renders them; `halted` / `halt_reason`
-            # remain the record that the BREAKER sold nothing, and the
-            # invariant that this method never appends an order is tested.
-            "orders": [],
-            "stop_coverage_gaps": coverage_gaps,
-            "stop_coverage_verified": coverage,
-            "unprotected_at_halt": [
-                str(c.get("symbol")) for c in shortfalls if c.get("symbol")
-            ],
-            "entry_orders_cancelled": entries_cancelled,
-            "run_id": run_id,
-        }
-
-    def _record_daily_loss_halt_refusals(
-        self, coverage: list[dict], loss_violation, *,
-        run_id: str, where: str, ctx=None,
-    ) -> None:
-        """One durable, machine-readable row per held symbol. Never raises.
-
-        The desk's rule is that anything refused leaves a per-symbol reason a
-        machine can read, not a sentence in a log file. A halt refuses every
-        held name further risk, so every held name gets a row — carrying its
-        verified coverage state, which is the fact an operator will actually
-        need afterwards.
-        """
-        from src.pipeline_stages import _persist_evidence
-        import json as _json
-
-        decision_id = getattr(ctx, "decision_id", None)
-        for entry in coverage or ():
-            symbol = entry.get("symbol")
-            if not symbol:
-                continue
-            try:
-                _persist_evidence(
-                    self.db, run_id=run_id, agent_name="pipeline",
-                    kind="pipeline_event", scope="symbol", symbol=symbol,
-                    decision_id=decision_id,
-                    evidence_json=_json.dumps({
-                        "stage": "daily_loss_halt",
-                        "outcome": "no_new_risk",
-                        "reason": self.DAILY_LOSS_HALT_REASON,
-                        "where": where,
-                        "detail": loss_violation.message,
-                        "stop_coverage": entry.get("state"),
-                        "coverage_shortfall": entry.get("coverage"),
-                        "held_qty": entry.get("held_qty"),
-                        "covered_qty": entry.get("covered_qty"),
-                    }, sort_keys=True),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "daily-loss halt: could not record the refusal reason "
-                    "for %s: %s", symbol, exc,
-                )
-
-    def _alert_owner_daily_loss_halt(
-        self, loss_violation, coverage: list[dict], shortfalls: list[dict],
-        positions, *, where: str, basis: str, entries_cancelled: bool,
-    ) -> None:
-        """Push the halt to the owner. Never raises.
-
-        Two different messages on purpose. A halt with every position
-        verifiably protected is a serious but orderly event. A halt with a
-        position that has no live stop, or one the broker could not be asked
-        about, is the state that ends a desk — it leads the message, by name,
-        and is never folded into the same sentence as the orderly case.
-        """
-        try:
-            from src import notifier as _notifier
-
-            lines = [
-                "🛑 DAILY LOSS HALT — NO NEW RISK THIS SESSION",
-                f"{loss_violation.message}",
-                f"Tripped at: {where}. Loss measured on: "
-                f"{'the held book' if basis == 'held_book' else 'the whole account'}.",
-                "",
-                "Nothing was sold. Every position is being KEPT. Resting "
-                "entry orders were "
-                + ("cancelled." if entries_cancelled
-                   else "NOT cancelled — the cancel failed, see below."),
-            ]
-            if shortfalls:
-                lines += [
-                    "",
-                    f"⚠️ {len(shortfalls)} POSITION(S) ARE NOT VERIFIABLY "
-                    "PROTECTED RIGHT NOW. A halt assumes the per-position "
-                    "stops are live at the broker. For these, that is not "
-                    "established:",
-                ]
-                for c in shortfalls:
-                    if c.get("state") == "unverified":
-                        lines.append(
-                            f"  {c.get('symbol')}: held {c.get('held_qty')} — "
-                            "the broker could NOT be asked whether a stop is "
-                            "live. Not the same as 'no stop'; it means "
-                            "unknown."
-                        )
-                    else:
-                        lines.append(
-                            f"  {c.get('symbol')}: held {c.get('held_qty')}, "
-                            f"covered {c.get('covered_qty')} "
-                            f"({c.get('coverage')}) — "
-                            f"${float(c.get('unprotected_value') or 0):.2f} "
-                            "unprotected."
-                        )
-                lines.append(
-                    "The desk did NOT sell these to protect them — selling on "
-                    "a breach day is the behaviour that was removed. Place a "
-                    "stop manually or flatten, by hand."
-                )
-            else:
-                covered = [c for c in coverage if c.get("state") == "covered"]
-                lines += [
-                    "",
-                    f"Stop coverage verified at the broker on all "
-                    f"{len(covered)} position(s).",
-                ]
-            if not entries_cancelled:
-                lines += [
-                    "",
-                    "⚠️ The resting-entry cancel FAILED. A working entry "
-                    "limit can still add risk while the desk is halted — "
-                    "check open orders by hand.",
-                ]
-            _notifier.send_owner_alert(
-                "\n".join(lines),
-                symbols=[
-                    str(c.get("symbol")) for c in shortfalls if c.get("symbol")
-                ],
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("daily-loss halt owner alert failed: %s", exc)
 
     @staticmethod
     def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
-        """Direction-aware sizing for a FORCED close — circuit breaker,
-        risk-breach liquidation, operator kill. NOT the normal decision
+        """Direction-aware sizing for a FORCED close — the §11.2
+        de-levering ladder's forced trim, or an operator kill. NOT the
+        normal decision
         path: SELL/REDUCE decisions and the portfolio constructor keep
         refusing a negative qty exactly as before (see _full_sell_qty /
         _reduce_sell_qty and the Stage 1 guard in portfolio_constructor.py
@@ -1973,7 +1531,7 @@ class TradingPipeline:
         short doesn't fail safe — a SELL aimed at a position that's
         actually already short would ADD to the short (sell more of a
         symbol you don't hold long), doubling the very exposure the
-        circuit breaker exists to shed. Refusing and logging loudly beats
+        forced close exists to shed. Refusing and logging loudly beats
         guessing every time; the caller is responsible for the loud log,
         this just refuses to hand back an answer to guess with.
         """
@@ -2241,17 +1799,18 @@ class TradingPipeline:
         horizon: a purchase disclosed more trading sessions ago than
         `risk.max_target_horizon_sessions` is older than the longest move
         the desk will claim a target for, so it cannot be the reason to
-        open a new name now. Sessions are counted with the same weekday
-        counter the desk's horizon arithmetic uses.
+        open a new name now. Sessions are counted with the broker's
+        holiday-aware calendar (item 165) — the plain weekday counter
+        overstates the count by one per market holiday crossed, which
+        skews this gate toward admitting names it should be rejecting.
         """
-        from src.trading_calendar import trading_sessions_held
         from src.util.time import et_today
 
         disclosed = getattr(observation, "disclosure_date", None)
         if not isinstance(disclosed, date):
             return False
         horizon = int(self.config.risk.max_target_horizon_sessions)
-        return trading_sessions_held(disclosed, et_today()) <= horizon
+        return self.broker.trading_sessions_held(disclosed, et_today()) <= horizon
 
     def _admit_screened_universe_symbols(self, positions=None) -> tuple[set[str], dict[str, dict]]:
         """This session's share of the screened universe (screen on only).
@@ -2514,17 +2073,13 @@ class TradingPipeline:
         decisions: list[TradeDecision],
         positions,
         total_value: float,
-        daily_pnl: float,
-        baseline: float | None = None,
         invested_target_pct: float | None = None,
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
-        in_drawdown: bool = False,
         # Spec §11.2. The ladder-resolved gross-exposure ceiling for this
         # session. None falls back to the configured cap inside the engine —
         # a caller that forgets it still gets a ceiling, never none.
-        gross_ceiling=None,
-    ) -> tuple[list[TradeDecision], list, list[str]]:
+        gross_ceiling=None,) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
         blocked_reasons: list[str] = []
@@ -2637,23 +2192,19 @@ class TradingPipeline:
                 decision=decision,
                 positions=positions,
                 total_value=total_value,
-                daily_pnl=daily_pnl,
                 pending_investment=pending_investment,
                 pending_sector_investment=pending_sector_investment,
                 pending_symbol_investment=pending_symbol_investment,
-                baseline=baseline,
                 correlation_matrix=correlation_matrix,
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
-                in_drawdown=in_drawdown,
                 # Spec §11.2 — the execution half of the gross ceiling. The
                 # sweep vehicle has already been split out of `positions`
                 # above, so `cash_park_symbol` here is belt-and-braces for
                 # any future caller that has not.
                 gross_ceiling=gross_ceiling,
                 pending_gross_investment=pending_gross_investment,
-                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),
-            )
+                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),)
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
                 messages = [v.message for v in hard_violations]
@@ -2949,23 +2500,30 @@ class TradingPipeline:
                 ):
                     continue
 
-                # Guard 1 — an exit's allocation must never be silently
-                # zeroed through a "modification". This is checked BEFORE
-                # the candidate is even built: a valid-but-zero
-                # allocation_pct would sail straight through Pydantic.
+                # Guard 1 — the seat may NEVER shrink a protective exit.
+                # Owner ruling 2026-09-24 (final): the risk seat can never
+                # block OR reduce a protective exit (SELL/REDUCE/COVER). It
+                # used to revert only an edit that drove the exit's
+                # allocation_pct to <= 0 (a silent cancel); an edit from
+                # 100% -> 50% sailed through and cut how much the desk sold to
+                # reduce risk. Now ANY downward allocation_pct edit on an exit
+                # is reverted — the exit keeps its intended size. An UPWARD
+                # edit (selling more) is left alone; it only reduces risk. This
+                # is checked BEFORE the candidate is built: a valid smaller
+                # allocation_pct would otherwise sail straight through Pydantic.
                 if (
-                    decision.action in ("SELL", "COVER")
+                    decision.action in ("SELL", "REDUCE", "COVER")
                     and mod.field == "allocation_pct"
                     and decision.allocation_pct > 0
-                    and float(mod.new_value) <= 0
+                    and float(mod.new_value) < decision.allocation_pct
                 ):
                     reason = (
-                        f"RM modification would zero {mod.symbol}'s exit "
+                        f"RM modification would REDUCE {mod.symbol}'s exit "
                         f"allocation_pct ({decision.allocation_pct:.2f} -> "
-                        f"{mod.new_value:.2f}), silently cancelling a "
-                        f"{decision.action}. Reverted — an exit is not "
-                        f"skipped by edit; a real refusal belongs in "
-                        f"rejected_symbols. RM reason given: {mod.reason!r}"
+                        f"{mod.new_value:.2f}), shrinking a {decision.action} the "
+                        f"desk is using to reduce risk. Reverted — the seat may "
+                        f"never block or reduce a protective exit; it stays at "
+                        f"its intended size. RM reason given: {mod.reason!r}"
                     )
                     logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
                     rejected_mods.append({
@@ -3071,6 +2629,47 @@ class TradingPipeline:
                         })
                         break
 
+                # Guard 3 (board item 134) — a `stop_loss` or `entry_price`
+                # edit on a BUY/SHORT must be reconciled back to the position
+                # SIZE. The constructor sized the position for the ORIGINAL
+                # stop distance: `shares = equity*risk_pct / |entry - stop|`,
+                # so `allocation_pct` and the stop distance are two halves of
+                # one granted dollar-risk budget. Guards 1b/2 and
+                # `_revert_entry_size_increases` police `allocation_pct` and
+                # the stop's noise band, but NOTHING recomputed the size after
+                # a stop/entry edit — so widening the stop (larger
+                # |entry - stop|) while `allocation_pct` stayed fixed shipped a
+                # position whose real dollar risk (shares x new stop distance)
+                # EXCEEDED the granted budget, unflagged. This reconciles the
+                # size so a wider stop shrinks the position and can never
+                # enlarge dollar risk beyond what the pre-edit ticket carried
+                # (desk doctrine: "wider stop -> smaller position, never larger
+                # dollar risk"). A TIGHTER stop is deliberately NOT allowed to
+                # auto-enlarge the position — the seat's remit is to be more
+                # protective, and every sibling guard here fails toward the
+                # smaller size — so the reconciliation takes the SMALLER of the
+                # original and the recomputed allocation.
+                if decision.action in ("BUY", "SHORT") and mod.field in (
+                    "stop_loss", "entry_price",
+                ):
+                    reconciled_alloc = self._reconcile_size_to_risk_budget(
+                        decision, updated_decision,
+                    )
+                    if (
+                        reconciled_alloc is not None
+                        and reconciled_alloc < updated_decision.allocation_pct
+                    ):
+                        logger.info(
+                            "Risk mod size reconciled for %s: %s edit widened "
+                            "risk-per-share, allocation_pct %.2f -> %.2f to hold "
+                            "dollar risk within the granted budget",
+                            mod.symbol, mod.field,
+                            updated_decision.allocation_pct, reconciled_alloc,
+                        )
+                        updated_decision = updated_decision.model_copy(
+                            update={"allocation_pct": reconciled_alloc},
+                        )
+
                 logger.info(
                     "Risk mod applied: %s.%s %.4f -> %.4f (%s)",
                     mod.symbol, mod.field, mod.original_value, mod.new_value, mod.reason,
@@ -3156,6 +2755,85 @@ class TradingPipeline:
                 f"constructor enforces. RM reason given: {mod.reason!r}"
             )
         return None
+
+    @staticmethod
+    def _reconcile_size_to_risk_budget(
+        original: TradeDecision,
+        modified: TradeDecision,
+    ) -> float | None:
+        """The `allocation_pct` that keeps `modified`'s dollar risk at or below
+        the dollar risk the pre-edit `original` ticket carried, or None when it
+        cannot be measured.
+
+        Board item 134. The constructor sizes a position so the number of
+        shares put its stop distance's worth of loss at exactly the granted
+        risk budget: `shares = equity*risk_pct / |entry - stop|`, and
+        downstream execution spends the resulting `allocation_pct` as
+        `qty = equity * allocation_pct/100 / entry`. Substituting, the fraction
+        of equity a ticket risks is
+
+            dollar_risk / equity = allocation_pct/100 * |entry - stop| / entry
+
+        — it depends only on the ticket's own fields, not on the book value.
+        So the pre-edit ticket's own risk fraction is the budget to preserve
+        (it is already the constructor's granted risk after every single-name,
+        portfolio and sector clamp, so it never over-states what was granted).
+        Solving that identity for the allocation that reproduces the SAME
+        fraction under the edited entry/stop gives the reconciled size:
+
+            reconciled = original_alloc * (|e0 - s0|/e0) / (|e1 - s1|/e1)
+
+        The short-side gap-risk haircut the constructor applies to
+        risk-per-share cancels in this ratio, so shorts need no special case.
+        Returns the reconciled allocation only; the caller takes the smaller of
+        it and the current allocation so a tighter stop can never auto-enlarge
+        the position. None when either ticket is geometrically degenerate
+        (non-finite or non-positive entry, or a zero pre/post risk-per-share),
+        in which case the caller leaves the size untouched.
+
+        Precision of the preserved budget:
+
+        - For a STOP edit the reconciliation is EXACT: the entry is unchanged,
+          so `allocation_pct` and stop distance are the only moving parts and
+          the identity holds against whatever entry execution ultimately sizes
+          off.
+        - For an ENTRY edit it is exact ONLY when execution's sizing
+          denominator equals the edited entry. Execution actually sizes off
+          `sizing_price = max(today_print, entry)` for a long / `min(...)` for
+          a short (`_place_buy_with_sizing` in `pipeline_stages.py`), so under
+          market drift the denominator differs and the preserved budget is
+          APPROXIMATE. It is bounded on the high side by the execution-time 5%
+          `_qty_by_risk_budget` ceiling and this reconciliation only ever
+          REDUCES the allocation, so the approximation can under-risk but never
+          over-risk.
+
+        Scope: this guarantee covers the RM EDIT only. An execution-time ATR
+        stop-widen applied AFTER this stage is reconciled solely against that
+        same 5% `_qty_by_risk_budget` ceiling (pre-existing behaviour, not
+        introduced here) — this method does not and cannot re-run for it.
+        """
+        e0, s0 = original.entry_price, original.stop_loss
+        e1, s1 = modified.entry_price, modified.stop_loss
+        alloc0 = original.allocation_pct
+        rps0 = abs(e0 - s0)
+        rps1 = abs(e1 - s1)
+        values = (e0, e1, rps0, rps1, alloc0)
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+            return None
+        if e0 <= 0 or e1 <= 0 or rps0 <= 0 or rps1 <= 0:
+            return None
+        original_risk_fraction = alloc0 * (rps0 / e0)
+        new_risk_per_alloc = rps1 / e1
+        reconciled = original_risk_fraction / new_risk_per_alloc
+        if reconciled >= alloc0:
+            # A tighter stop (or unchanged risk-per-share) — never auto-enlarge;
+            # keep the ticket's own already-valid size untouched.
+            return alloc0
+        # FLOOR to 2 dp rather than round: rounding could nudge the size back UP
+        # a hundredth of a percent and, with it, dollar risk a hair over the
+        # pre-edit budget. Flooring guarantees the reconciled size never exceeds
+        # the exact budget-preserving allocation.
+        return math.floor(reconciled * 100) / 100
 
     @staticmethod
     def _has_actionable_signal_fn(
@@ -3498,6 +3176,21 @@ class TradingPipeline:
         # row as "no stop at all" or "stop mis-sized", and this is neither —
         # the stop is present and correctly sized, it simply did not fill.
         elected_unfilled: list[dict] = []
+        # Positions whose protective stops could NOT BE READ at the broker
+        # (board item 172). Kept in their own list and appended to `gaps`
+        # only at the very end, after every classifier, repair attempt and
+        # escalation filter has run over the measured rows — so an unknown
+        # can never be repaired against a guessed level, counted into the
+        # overnight dollar total, or reclassified as a fractional lapse.
+        unreadable: list[dict] = []
+        # Symbols whose coverage gap this pass actually CLOSED. A red alarm
+        # that later resolves has to say so: before this, "COULD NOT PUT THE
+        # PROTECTIVE STOP BACK" was the owner's last word on a position the
+        # desk itself re-covered fifteen minutes later, and he was left with
+        # an instruction to place a stop by hand that already existed
+        # (2026-09-23, RSG). Collected here and retracted once at the end
+        # rather than one Telegram per symbol per sweep.
+        repaired_symbols: list[str] = []
         longs_checked = 0
         shorts_checked = 0
         sweeper = self._sweeper()
@@ -3532,27 +3225,100 @@ class TradingPipeline:
                 shorts_checked += 1
             else:
                 longs_checked += 1
+            held = abs(qty)
+            # ---- CANNOT BE ASKED, board item 172 --------------------------
+            # This used to `continue` on a warning, which dropped the symbol
+            # out of `gaps` entirely — so a position whose stops the broker
+            # refused to describe was reported to nobody and read downstream
+            # exactly like a position confirmed covered. Removing the
+            # account-level halt made per-position stops the desk's only
+            # loss protection, which makes "I could not check this one" the
+            # single most important thing this sweep can find and the one
+            # thing it was silent about.
+            #
+            # Recorded as its own condition and the sweep carries on to the
+            # next symbol: a read failure on one name says nothing about any
+            # other, and aborting would hide the rest of the book behind it.
             try:
-                _ok, specs = self.broker.snapshot_protective_stops(
+                ok, specs = self.broker.snapshot_protective_stops(
                     symbol, side=("buy" if is_short else "sell"),
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "coverage reconcile: snapshot failed for %s: %s", symbol, exc,
-                )
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": f"snapshot_protective_stops raised: {exc}",
+                })
                 continue
-            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
-            held = abs(qty)
+            # `ok=False` is the COMMON read failure and the reason this
+            # whole item exists: the broker's order listing swallows its own
+            # exception, so a snapshot that raises is the rare case and a
+            # snapshot that comes back False-with-nothing is the usual one.
+            # Before it was honoured here, an outage read as 'none' — a
+            # confirmed naked position — and was repaired against.
+            if not ok:
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": (
+                        "the broker's open-order listing failed, so whether "
+                        "a protective stop exists could not be established"
+                    ),
+                })
+                continue
+            if specs is not None and not isinstance(specs, list):
+                # Not iterable in the loop below, and `for s in (specs or [])`
+                # would raise straight out of this method and take the whole
+                # sweep — every other position included — with it.
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": (
+                        f"protective-stop snapshot in an unusable shape: "
+                        f"{type(specs).__name__}"
+                    ),
+                })
+                continue
+            # A stop order whose quantity cannot be parsed is a stop nobody
+            # can size, and neither possible guess is safe: counting it as
+            # zero invents a gap, skipping it invents coverage. Left
+            # unparsed, the old `sum(...)` raised straight out of this whole
+            # method and took the entire sweep — every other position
+            # included — with it.
+            covered = 0.0
+            unparsable = ""
+            for s in (specs or []):
+                try:
+                    covered += float(s.get("qty", 0) or 0)
+                except (TypeError, ValueError, AttributeError) as exc:
+                    unparsable = f"protective stop in an unreadable shape: {exc}"
+                    break
+            if unparsable:
+                unreadable.append({
+                    "symbol": symbol, "held_qty": qty,
+                    "covered_qty": None, "coverage": "unreadable",
+                    "repaired": False, "is_short": is_short,
+                    "read_error": unparsable,
+                })
+                continue
             # ---- ELECTED BUT UNFILLED -------------------------------------
             # Runs for EVERY held position, including the ones this sweep is
             # about to call perfectly covered — which is the entire point.
-            # The desk's protective stops rest at the broker as stop-LIMIT
-            # orders (see `StopLimitOrderRequest` / `STOP_LIMIT_BUFFER_PCT`).
-            # On a gap past the limit the stop is ELECTED and does not fill,
-            # and the order stays `status=OPEN`, so `specs` above still
-            # counts its shares as covered and this sweep — correctly by its
-            # own logic — does nothing about it, indefinitely. The shares are
-            # not protected: an unfilled order is not an exit.
+            # The desk's protective stops now rest as stop-MARKET orders
+            # (owner ratified 2026-09-25), which FILL when elected — so this
+            # state should no longer arise for them. It CAN still arise for
+            # the stop-LIMIT fallback (taken only when the broker refuses a
+            # stop-market for an unsupported type/tif combo — see
+            # `_submit_stop_limit_order` / `STOP_LIMIT_BUFFER_PCT`): on a gap
+            # past that limit the stop is ELECTED and does not fill, the
+            # order stays `status=OPEN`, so `specs` above still counts its
+            # shares as covered and this sweep — correctly by its own logic —
+            # does nothing about it, indefinitely. The shares are not
+            # protected: an unfilled order is not an exit. Kept as the
+            # backstop for exactly that residual case.
             #
             # Detected only while the market is OPEN, reusing the one
             # `market_open` read this pass already took: with the tape shut
@@ -3592,6 +3358,54 @@ class TradingPipeline:
                 # a DAY order submitted into a shut market is a rejection at
                 # best and a surprise queued order at worst.
                 if coverage == "fractional" and not market_open:
+                    # WHERE THE QUIET STATE ENDS. The ratified overnight
+                    # lapse is a sub-share DAY stop that WAS placed and
+                    # expired at 16:00 by design. A remainder that spent the
+                    # whole session waiting for its name's first print and
+                    # never got a stop at all is not that, and filing it as
+                    # that would turn the bell-adjacent silence into a
+                    # suppression: nothing would ever have told the owner.
+                    # This is the pass that can honestly say the session's
+                    # repair path is exhausted, so this is the pass that
+                    # pages.
+                    try:
+                        from src.coverage_watchdog import (
+                            session_awaiting_print_symbols,
+                        )
+
+                        never_covered = (
+                            symbol.strip().upper()
+                            in session_awaiting_print_symbols()
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "coverage sweep: could not read today's "
+                            "awaiting-print names (%s) — treating %s as the "
+                            "ordinary overnight lapse.", exc, symbol,
+                        )
+                        never_covered = False
+                    if never_covered:
+                        gap["coverage"] = "partial" if covered > 1e-6 else "none"
+                        gap["uncovered_qty"] = frac_uncovered
+                        gap["unprotected_value"] = _position_notional(
+                            p, frac_uncovered,
+                        )
+                        gap["repaired"] = False
+                        gap["is_short"] = is_short
+                        gap["session_repair_failed"] = True
+                        gap["never_printed_today"] = True
+                        logger.error(
+                            "FRACTIONAL STOP NEVER RE-PLACED THIS SESSION: "
+                            "%s held=%.4f, %.4f covered — the name produced "
+                            "no confirmed trade print all session, so the "
+                            "repair could never price a stop, and the "
+                            "sub-share remainder has now been uncovered "
+                            "since the previous close. This is NOT the "
+                            "expected overnight lapse and it alerts.",
+                            symbol, qty, covered,
+                        )
+                        gaps.append(gap)
+                        continue
                     gap["coverage"] = "fractional_overnight"
                     gap["uncovered_qty"] = frac_uncovered
                     gap["unprotected_value"] = _position_notional(
@@ -3631,6 +3445,7 @@ class TradingPipeline:
                         # — it is the design's daily heartbeat.
                         gap["coverage"] = "fractional_replaced"
                         gap["uncovered_qty"] = 0.0
+                        repaired_symbols.append(symbol)
                         logger.info(
                             "FRACTIONAL DAY STOP RE-PLACED: %s — the sub-share "
                             "remainder is covered again for this session.",
@@ -3656,13 +3471,78 @@ class TradingPipeline:
                         # RSG sat uncovered during the session and the owner
                         # was never told. The session that OBSERVED it now
                         # sends it.
-                        gap["session_repair_failed"] = True
                         gap["is_short"] = is_short
-                        logger.error(
-                            "FRACTIONAL STOP RE-PLACEMENT FAILED for %s during "
-                            "session hours (held=%.4f, covered=%.4f) — this is "
-                            "case (b) and it alerts.", symbol, qty, covered,
-                        )
+                        # WHICH SWEEP IS ENTITLED TO PAGE. Not this one, if
+                        # the refusal is the tape's rather than the desk's.
+                        # Measured across the whole retained production log,
+                        # every `no_trade_print_today` refusal fired inside
+                        # 45 seconds of the opening bell and every one was
+                        # resolved in the same session, five of them by the
+                        # very next sweep — so the first attempt paged before
+                        # the mechanism that fixes it had had its turn, and
+                        # the owner was sent to place a stop by hand that the
+                        # desk placed itself fifteen minutes later. The
+                        # classifier and its derivation live in one place
+                        # (`src.coverage_watchdog.page_now_for_refusal`),
+                        # shared with the standalone sweep, and a position
+                        # with NO coverage left is never deferred by it.
+                        try:
+                            from src.coverage_watchdog import (
+                                awaiting_first_print, note_awaiting_first_print,
+                            )
+
+                            waiting = awaiting_first_print(
+                                refusal_code=str(
+                                    gap.get("repair_refusal_code") or ""
+                                ),
+                                still_covered=covered > 1e-6,
+                                market_open=True,
+                            )
+                            if waiting:
+                                note_awaiting_first_print(symbol)
+                        except Exception as exc:  # noqa: BLE001
+                            # An unreadable marker file errs towards telling
+                            # the owner, the same way the claim does.
+                            logger.warning(
+                                "coverage sweep: could not classify the "
+                                "stop-repair refusal for %s (%s) — paging.",
+                                symbol, exc,
+                            )
+                            waiting = False
+                        page_now = not waiting
+                        gap["session_repair_failed"] = page_now
+                        if page_now:
+                            logger.error(
+                                "FRACTIONAL STOP RE-PLACEMENT FAILED for %s "
+                                "during session hours (held=%.4f, "
+                                "covered=%.4f) — this is case (b) and it "
+                                "alerts.", symbol, qty, covered,
+                            )
+                        else:
+                            # NOT a new `coverage` word. The gap stays
+                            # 'partial' and keeps its ⚠️ STOP MIS-SIZED line
+                            # in the session feed and the evening banner:
+                            # the position really is under-protected and the
+                            # owner should still SEE it. The only thing this
+                            # state changes is whether it INTERRUPTS him,
+                            # which is the defect. Reclassifying it would
+                            # have meant registering a fifth coverage word
+                            # in `src/notifier.py` and `src/trader_feed.py`
+                            # and would have hidden a real shortfall to fix
+                            # an alerting bug.
+                            gap["awaiting_first_print"] = True
+                            logger.warning(
+                                "FRACTIONAL STOP AWAITING FIRST PRINT: %s "
+                                "(held=%.4f, covered=%.4f): %s. The repair "
+                                "was attempted and will be attempted again "
+                                "on every pass; the whole-share leg is still "
+                                "standing watch. Not an owner page while the "
+                                "session can still resolve it — the pass "
+                                "that finds the market shut with this still "
+                                "true is the one that pages.",
+                                symbol, qty, covered,
+                                gap.get("repair_refusal") or "no reason given",
+                            )
                     gaps.append(gap)
                     continue
                 # ---- case (c) and every pre-existing condition ----
@@ -3688,11 +3568,24 @@ class TradingPipeline:
                     symbol, held - covered, is_short=is_short, outcome=gap,
                     resting_stops=list(specs or []),
                 )
+                if gap["repaired"]:
+                    repaired_symbols.append(symbol)
                 gaps.append(gap)
-        if (longs_checked or shorts_checked) and not gaps:
+        if (longs_checked or shorts_checked) and not gaps and not unreadable:
             logger.info(
                 "Stop-coverage reconcile: all %d long / %d short position(s) "
                 "adequately stop-covered", longs_checked, shorts_checked,
+            )
+        elif unreadable and not gaps:
+            # Board item 172. The clean line above says every position is
+            # covered. A pass that could not read one is not entitled to
+            # say that about the book, only about the part it could read.
+            logger.error(
+                "Stop-coverage reconcile: %d of %d position(s) UNREADABLE "
+                "(%s) — every position that COULD be read is adequately "
+                "stop-covered; the rest is unknown.",
+                len(unreadable), longs_checked + shorts_checked,
+                ", ".join(str(g.get("symbol")) for g in unreadable),
             )
         # Spec §11.1 hybrid fractional stops, observability half. Total the
         # deliberate overnight exposure into ONE line the owner can read at a
@@ -3755,6 +3648,30 @@ class TradingPipeline:
         ]
         if session_failures:
             self._alert_owner_session_repair_failed(session_failures)
+        # Sent AFTER the escalations above, and last for a reason: a symbol
+        # this pass both repaired and then found short again must end on the
+        # alarm, not on the retraction.
+        if repaired_symbols:
+            try:
+                from src.coverage_watchdog import clear_awaiting_first_print
+
+                # The gap is closed, so the name is no longer waiting on a
+                # print and must not be reported after the close as though
+                # it had waited all session.
+                clear_awaiting_first_print(repaired_symbols)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "coverage sweep: could not clear the awaiting-print "
+                    "marker for %s: %s", ", ".join(repaired_symbols), exc,
+                )
+            self._alert_owner_repair_resolved(repaired_symbols)
+        # Board item 172. Appended AFTER every filter above has been built
+        # from `gaps`, so an unreadable row cannot reach the naked list, the
+        # session-failure list, the overnight dollar total or a repair — all
+        # of which require a measured shortfall this row does not have.
+        if unreadable:
+            self._alert_owner_unreadable_stop(unreadable)
+            gaps.extend(unreadable)
         try:
             from src.execution.stop_records import (
                 reconcile_recorded_stop_levels, report_stop_level_mismatches,
@@ -3791,6 +3708,9 @@ class TradingPipeline:
         This is the state `STOP_LIMIT_BUFFER_PCT`'s own comment describes
         ("on gaps beyond 3% the limit won't fill and the position stays open
         until a session can act") and which nothing could previously see.
+        Primary protective stops are now stop-MARKET and fill when elected,
+        so this only fires for the stop-limit fallback leg — kept as its
+        backstop.
 
         DETECTS ONLY. Nothing here sells, cancels, replaces or re-prices
         anything — an exit decision on an unfilled stop is an owner-level
@@ -4021,6 +3941,50 @@ class TradingPipeline:
             logger.error("session stop-repair owner alert failed: %s", exc)
 
     @staticmethod
+    def _alert_owner_repair_resolved(symbols: list[str]) -> None:
+        """Tell the owner a red stop-placement alarm he was sent today has
+        CLEARED. Never raises.
+
+        THE HALF THAT WAS MISSING. On 2026-09-23 the desk paged at 13:30:45
+        — "COULD NOT PUT THE PROTECTIVE STOP BACK ... Those shares have
+        nothing standing watch over them right now ... Place the missing
+        stop by hand" — and put the stop back itself at 13:45:45. Nothing
+        retracted it. The alarm was true for fifteen minutes and false for
+        the rest of the day, and the owner's standing instruction was to go
+        and do by hand a thing that was already done. An alarm that cannot
+        clear is worse than one that never fired, because the next one is
+        read as a stale one.
+
+        Sent through `send_owner_alert`, the same path the alarm itself
+        used, because a retraction that arrives somewhere else is not a
+        retraction. Gated on `claim_repair_resolution_notice`, which returns
+        only names the owner was ACTUALLY paged about today and has not
+        already been told about: a position that never alerted produces no
+        notice, so the ordinary daily re-placement of every fractional
+        remainder — which happens to every such position every morning —
+        stays silent.
+
+        Deliberately does NOT release the placement-failure claim. That
+        claim is what makes "Each position is reported at most once per
+        trading day" true, and releasing it would let a name that fails,
+        succeeds and fails again send two messages a cycle.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_repair_resolution_notice, repair_resolution_text,
+            )
+
+            fresh = claim_repair_resolution_notice(symbols)
+            if not fresh:
+                return
+            _notifier.send_owner_alert(
+                repair_resolution_text(fresh), symbols=sorted(fresh),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("stop-repair resolution notice failed: %s", exc)
+
+    @staticmethod
     def _alert_owner_no_stop(naked: list[dict]) -> None:
         """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
         try:
@@ -4039,7 +4003,15 @@ class TradingPipeline:
                 for g in naked
             )
             _notifier.send_owner_alert(
-                "🔴 NO STOP AT ALL\n"
+                # Item 21b: shape, not colour — the owner is red-green
+                # colour blind, so severity is carried by HOW MANY marks
+                # there are, not which one. This alert used a single 🔴
+                # while the unreadable-stop alert added alongside it uses
+                # 🛑🛑, which ranked the strictly worse condition (there is
+                # NOTHING standing watch) below the weaker one (we could not
+                # find out whether anything is). Three marks here, matching
+                # the top tier `src/notifier.py` already renders.
+                "🛑🛑🛑 NO STOP AT ALL\n"
                 f"{len(naked)} position(s) are open at the broker with ZERO "
                 "protective-stop coverage, and the automatic repair could not "
                 "restore one. This is not a mis-sized stop — there is nothing "
@@ -4050,6 +4022,116 @@ class TradingPipeline:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_unreadable_stop(rows: list[dict]) -> None:
+        """Page the owner, BY SYMBOL, about positions whose protective stops
+        could not be READ at the broker. Board item 172. Never raises.
+
+        Same path a missing stop uses (`notifier.send_owner_alert` with the
+        symbols attached), because it is the same question — does this
+        position have loss protection — with the answer "unknown" instead of
+        "no". Removing the account-level loss alarm made per-position stops
+        the only protection the desk has, so an unanswerable question about
+        one of them is worth the owner's attention, not a log line.
+
+        Deduped per symbol per trading day on the SAME state file and the
+        SAME claim discipline as the placement-failure and elected-unfilled
+        alerts, and shared with the standalone coverage watchdog: this sweep
+        runs at every session entry and the watchdog every thirty minutes,
+        both can find the identical condition, and `send_owner_alert` has no
+        throttle of its own. Whichever process sees the symbol first is the
+        one that tells him.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                UnreadableStop, claim_unreadable_stop_alert,
+                unreadable_stop_text,
+            )
+
+            by_symbol = {
+                str(r.get("symbol", "")).strip().upper(): r for r in rows
+                if str(r.get("symbol", "")).strip()
+            }
+            fresh = claim_unreadable_stop_alert(list(by_symbol))
+            if not fresh:
+                return
+            described = []
+            for sym in fresh:
+                row = by_symbol.get(sym, {})
+                try:
+                    held = abs(float(row.get("held_qty") or 0))
+                except (TypeError, ValueError):
+                    held = 0.0
+                described.append(UnreadableStop(
+                    symbol=sym, held_qty=held,
+                    reason=str(row.get("read_error") or "reason not recorded"),
+                    is_short=bool(row.get("is_short")),
+                ))
+            delivered = _notifier.send_owner_alert(
+                unreadable_stop_text(described), symbols=fresh,
+            )
+            if not delivered:
+                # The claim was already recorded, so these symbols are now
+                # silent for the rest of the trading day. Releasing the
+                # claim would trade one lost message for a page on every
+                # 30-minute tick, so the delivery failure is made loud in
+                # the journal instead of being a discarded return value.
+                logger.error(
+                    "UNREADABLE-STOP ALERT NOT DELIVERED for %s — the "
+                    "finding stands and is claimed for today; read it here.",
+                    ", ".join(fresh),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("unreadable-stop owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_exit_declined(symbol: str, *, side: str, why: str) -> None:
+        """Page the owner, BY SYMBOL, about an exit the desk decided on and
+        then did not place. Never raises.
+
+        The skip itself is old behaviour made reachable by board item 172:
+        `snapshot_protective_stops` could not return `ok=False` before it,
+        so the branch that consumes it had never executed in production.
+        What is new is that it no longer disappears. Every one of the five
+        upstream call sites does `if sale is None: continue`, with no trade
+        row, no session-result field and no message — so the desk could
+        decide to leave a position, fail, and report a quiet day. One of
+        those call sites is the gross-exposure de-levering ladder, which
+        after the account-level halt's removal is one of the few remaining
+        account-wide protections; silently trimming less than it reports is
+        the failure this closes.
+
+        Same notifier path, same claim discipline and the same
+        once-per-symbol-per-trading-day bound as the unreadable-stop alert,
+        on its own state key so neither condition can silence the other.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_exit_declined_alert, exit_declined_text,
+            )
+
+            name = str(symbol or "").strip().upper()
+            if not name:
+                return
+            if not claim_exit_declined_alert([name]):
+                return
+            delivered = _notifier.send_owner_alert(
+                exit_declined_text(name, side=side, why=why), symbols=[name],
+            )
+            if not delivered:
+                # The claim is already recorded, so this symbol is silent
+                # for the rest of the day. Same trade-off the unreadable
+                # alert documents: releasing it would page on every tick.
+                logger.error(
+                    "EXIT-DECLINED ALERT NOT DELIVERED for %s (%s %s) — the "
+                    "finding stands and is claimed for today; read it here.",
+                    name, side.upper(), why,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("exit-declined owner alert failed: %s", exc)
 
     def _wire_protective_stop_block_recorder(self) -> None:
         """The broker holds no database, so a protective stop its kill
@@ -4159,11 +4241,12 @@ class TradingPipeline:
         *,
         symbol: str,
         qty: float,
-        limit_price: float,
+        limit_price: float | None,
         reference_price: float,
         position_qty_before_sell: float,
         label: str,
         side: str = "sell",
+        escalate_to_market_on_reject: bool = False,
     ) -> tuple[dict, dict] | None:
         """Head half of the SELL/COVER discipline: clear protective stops
         (write-ahead) → submit the order → guarantee stops are restored if
@@ -4228,10 +4311,54 @@ class TradingPipeline:
             symbol, position_qty_before_sell, **stop_side_kwargs,
         )
         if not ok:
-            logger.warning(
-                "%s: skipping %s — protective-stop clear failed (broker would "
-                "reject the %s on held_for_orders)", label, symbol, side.upper(),
-            )
+            # WHY THE DESK STILL DECLINES THE EXIT, and why it is no longer
+            # silent about it.
+            #
+            # Rejection is the MEASURED outcome of selling into a resting
+            # protective stop on this desk: 2026-04-25, AMZN, a REDUCE
+            # rejected with the trail stop holding all 51 shares. An
+            # OVERSOLD or reversed position is evidenced by nothing — no
+            # entry in `docs/INCIDENT_HISTORY.md`, none in the git log, and
+            # Alpaca's documented model is reservation then rejection
+            # (`Position.qty_available` is "total shares minus open orders
+            # / locked"). But that documentation covers longs; nothing
+            # fetched covers a BUY-to-cover against a resting BUY stop, and
+            # `docs/OUTCOME.md` makes broker protections fail CLOSED. An
+            # unbounded, unmeasured harm on one side beats a bounded,
+            # measured one on the other, so the desk declines.
+            #
+            # What was actually wrong was never the decline — it was that
+            # the decline was silent and that this line asserted ONE cause
+            # for two different states. The listing failing means nobody
+            # knows whether a stop is resting; the cancel rolling back
+            # means one verifiably is. Only the second supports the
+            # held_for_orders claim, and this said it for both.
+            refusal = getattr(self, "_last_stop_clear_refusal", "") or "unknown"
+            if refusal == "cancel_rolled_back":
+                why = (
+                    "its protective stop could not be cancelled and was "
+                    "rolled back, so the stop is still resting and the "
+                    "broker would reject the "
+                    f"{side.upper()} on held_for_orders"
+                )
+            elif refusal == "unreadable":
+                why = (
+                    "the broker's open-order listing failed after retries, "
+                    "so whether a protective stop is resting on these "
+                    "shares is UNKNOWN — the desk will not submit an exit "
+                    "against a picture of the broker it could not read"
+                )
+            else:
+                why = "the protective-stop clear failed for a reason it did not record"
+            logger.warning("%s: skipping %s — %s", label, symbol, why)
+            # A skipped exit reaches the owner BY SYMBOL, on the same path
+            # and the same once-per-symbol-per-day claim as the unreadable
+            # stop itself. Five call sites upstream do `if sale is None:
+            # continue`, so without this the desk decides not to leave a
+            # position and nobody is told — and after the account-level
+            # halt was removed, one of those call sites is the de-levering
+            # ladder, which would then trim less than it reports.
+            self._alert_owner_exit_declined(symbol, side=side, why=why)
             return None
         try:
             order = self.broker.submit_order(
@@ -4250,12 +4377,55 @@ class TradingPipeline:
                 )
             return None
         if not self._order_accepted(order, symbol, side):
-            # Broker rejected — restore the stops we just cancelled.
-            if stop_specs:
-                self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+            # A MUST-FILL emergency de-lever cannot afford to skip a name here.
+            # A wide-spread live quote (e.g. a LULD halt-reopen or a thin /
+            # inverse name in a fast market) can make the marketable limit
+            # deviate >20% from the mid, so the broker's own fat-finger guard
+            # returns `rejected_outlier`. Skipping the name would re-open
+            # exactly the over-ceiling / uncleared-deficit miss the de-lever
+            # exists to kill. So the de-lever callers pass
+            # `escalate_to_market_on_reject=True`: on a NON-accept of the
+            # marketable LIMIT, escalate once to a MARKET order — the
+            # guaranteed fill, which carries no limit and so skips the guard.
+            # Every other caller keeps the prior skip-on-reject behaviour
+            # (default False). The stops are still cancelled and the rejected
+            # order did not fill, so the position is intact; submit the market
+            # order against the SAME cancelled stops (no restore in between)
+            # and let finalize rebuild coverage on its fill, exactly as for the
+            # limit.
+            if escalate_to_market_on_reject and limit_price is not None:
+                rejected_status = (
+                    order.get("status") if isinstance(order, dict) else order
                 )
-            return None
+                logger.warning(
+                    "%s: marketable-limit exit for %s was not accepted (%s) — "
+                    "escalating to a MARKET order (guaranteed fill).",
+                    label, symbol, rejected_status,
+                )
+                try:
+                    order = self.broker.submit_order(
+                        symbol=symbol, qty=qty, side=side,
+                        limit_price=None, reference_price=reference_price,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "%s: MARKET escalation submit failed for %s: %s",
+                        label, symbol, exc,
+                    )
+                    if stop_specs:
+                        self.broker._restore_stop_orders(
+                            symbol, stop_specs, check_idempotency=False,
+                            **stop_side_kwargs,
+                        )
+                    return None
+            if not self._order_accepted(order, symbol, side):
+                # Broker rejected (no escalation, or the market order itself was
+                # not accepted) — restore the stops we just cancelled.
+                if stop_specs:
+                    self.broker._restore_stop_orders(
+                        symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+                    )
+                return None
         # audit F5: tag the order dict so the notifier's intervention banner +
         # inline action labels fire (broker.submit_order returns no 'action').
         if isinstance(order, dict):
@@ -4530,6 +4700,7 @@ class TradingPipeline:
                     "— concurrent path fully exited; skipping restore",
                     order_word, symbol,
                 )
+                self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
                 return True, []
             if current_qty is not None:
                 total_spec_qty = sum(float(s.get("qty", 0) or 0) for s in cancelled_specs)
@@ -4616,6 +4787,7 @@ class TradingPipeline:
                 "position=0 — concurrent path fully exited; skipping reprotect",
                 symbol, computed_residual,
             )
+            self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
             return True, []
         if current_qty is not None and current_qty + 1e-6 < computed_residual:
             logger.warning(
@@ -4627,6 +4799,16 @@ class TradingPipeline:
         else:
             actual_residual = computed_residual
         if actual_residual <= 0:
+            # Full exit — no residual to re-protect. NO stray-stop cleanup
+            # here, deliberately (item 127(b) must fail CLOSED): the only
+            # broker-CONFIRMED flat (`current_qty == 0`) already returned
+            # above and did the cleanup there. Reaching this line means
+            # `current_qty` is either None — the position read FAILED, so we
+            # cannot confirm flat — or > 0 — the broker still reports shares
+            # (a concurrent re-entry / scale-in) while cached math says
+            # residual<=0. Cancelling a stop in either case would strip
+            # protection off live-or-unconfirmed shares. Leave the stop
+            # standing, exactly as main did.
             return True, []  # full exit — no residual to re-protect
 
         if not self._reprotect_residual_after_partial_sell(
@@ -4656,6 +4838,30 @@ class TradingPipeline:
                 )
             return False, list(cancelled_specs)
         return True, []
+
+    def _cancel_stray_stops_on_flat(self, symbol: str, *, side: str = "sell") -> None:
+        """Clear any protective stop left resting on a symbol this SELL/COVER
+        just took FLAT.
+
+        Board item 127(b), owner ruling 2026-09-25: a forced/emergency exit
+        must fire immediately and never wait on stop-work, so a concurrent
+        stop-repair can re-add a protective stop inside the cancel-then-sell
+        window. That stop is not in this finalize's ``cancelled_specs`` (it
+        was placed after the pre-sell snapshot), the reprotect path skips it
+        on a full exit, and ``_reconcile_stop_coverage`` never inspects a
+        flat symbol — so it would rest forever and could later elect into an
+        unintended short. This is the cheap cleanup that replaces the
+        rejected lock-wait: no lock, no timeout, no new number, best-effort,
+        and never fatal to the exit that already succeeded.
+        """
+        try:
+            self.broker.cancel_stray_protective_stops(symbol, side=side)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "stray-stop cleanup after full exit of %s failed: %s — a "
+                "protective stop may still rest on the flat position; the "
+                "operator should confirm it is gone", symbol, exc,
+            )
 
     def _write_ahead_protection_restore(
         self,
@@ -4747,6 +4953,14 @@ class TradingPipeline:
         snapshot_kwargs = {} if side == "sell" else {"side": side}
         ok, specs = self.broker.snapshot_protective_stops(symbol, **snapshot_kwargs)
         if not ok:
+            # STATE ONE of the two `ok=False` means: the broker's order
+            # listing failed (already retried inside the snapshot), so
+            # whether a stop is resting is UNKNOWN. Distinguished from
+            # state two below, because the two states support different
+            # statements and the log line used to make the same one for
+            # both. Stamped so the caller can say only what is established
+            # and can page the owner by symbol.
+            self._last_stop_clear_refusal = "unreadable"
             return False, [], None
         if not specs:
             return True, [], None
@@ -4768,7 +4982,14 @@ class TradingPipeline:
                         "rollback for %s: %s (drain will idempotently "
                         "no-op it)", wal_row_id, symbol, exc,
                     )
+            # STATE TWO: the cancel failed and was ROLLED BACK. The stops
+            # are verified resting, so "the broker would reject the SELL on
+            # held_for_orders" is an evidenced statement here — measured
+            # live 2026-04-25 on AMZN, where a REDUCE was rejected with the
+            # trail stop holding all 51 shares.
+            self._last_stop_clear_refusal = "cancel_rolled_back"
             return False, [], None
+        self._last_stop_clear_refusal = ""
         return True, specs, wal_row_id
 
     def _restore_after_unconfirmed_sell(
@@ -5581,6 +5802,14 @@ class TradingPipeline:
         recent_sells) filter on fill_status so a limit order that never crossed
         doesn't pollute PM memory or calibration stats.
 
+        A `partially_filled` (or any non-terminal working) order whose broker
+        snapshot already shows shares filled has its ACTUAL filled qty/avg
+        price recorded while it stays 'submitted', so downstream position /
+        cash / calibration see the executed portion immediately instead of
+        waiting for a terminal status that may never arrive (item 102). The
+        absolute cumulative snapshot is written each pass, so a later partial
+        or terminal pass never double-counts the same shares.
+
         Scoped to a single run_id when ctx is provided — we don't want to
         retroactively flip stale submissions from previous days. Alpaca
         purges order history after a few days; unreconciled-and-unreachable
@@ -5679,8 +5908,50 @@ class TradingPipeline:
                     )
                 else:
                     logger.warning("Reconciled %s: did NOT fill (status=%s)", order_id, status)
-            # Non-terminal statuses (new, accepted, partially_filled) stay
-            # 'submitted' for the next reconciliation pass to pick up.
+            elif str(status).lower() == "partially_filled":
+                # A genuine partial: the broker reports shares filled on an
+                # order that is still working. RECORD the actually-filled
+                # qty/avg price now so position, cash and calibration see
+                # reality — but KEEP fill_status 'submitted' so
+                # get_unreconciled_orders re-picks the row and the eventual
+                # terminal transition still lands (item 102). We write the
+                # broker's ABSOLUTE cumulative snapshot (filled_qty /
+                # filled_avg_price), never a delta, so re-seeing the same
+                # partial, a growing partial, or the final terminal 'filled'
+                # can never double-count the same shares: every downstream
+                # consumer reads the row's absolute fill_qty once, and
+                # realized_pnl is recomputed from scratch on each write.
+                #
+                # Match the status string EXACTLY (not "any non-terminal")
+                # so an unstubbed / garbage broker snapshot can't be misread
+                # as a partial. Both numeric fields are coerced to a finite
+                # float or None before they touch the DB: fill_price is a
+                # nullable column, so a broker that reports filled_qty before
+                # a numeric avg price records the qty with a null price now
+                # and backfills the price on a later pass (the row stays
+                # 'submitted'). Never bind a non-numeric value.
+                partial = _finite_float_or_none(fill_qty)
+                price = _finite_float_or_none(fill_price)
+                if partial is not None and partial > 0:
+                    prev = _finite_float_or_none(row.get("fill_qty")) or 0.0
+                    self.db.update_trade_fill(
+                        broker_order_id=order_id, fill_status="submitted",
+                        fill_qty=partial,
+                        fill_price=price,
+                    )
+                    # Only emit lifecycle evidence / log on a genuine INCREASE
+                    # in filled shares, so repeated partial passes over an
+                    # unchanged fill don't spam PM memory with duplicate events.
+                    if partial > prev + 1e-9:
+                        _record_broker_event(row, status, partial, price)
+                        logger.info(
+                            "Reconciled %s: partial fill recorded "
+                            "(status=%s, qty=%s, avg=%s); order stays open "
+                            "for the remainder",
+                            order_id, status, partial, price,
+                        )
+            # Any other non-terminal status (new, accepted, pending_new, ...)
+            # has nothing filled yet: stay 'submitted' for the next pass.
 
     def _reconcile_orphan_pending_submits(self) -> int:
         """Resolve BUY write-ahead orphans (audit F4).
@@ -6043,12 +6314,18 @@ class TradingPipeline:
 
             recorded = 0
             for fill in new_fills:
+                # item 173(a): record the action the broker fill actually was,
+                # never a blanket STOP_OUT. The broker reports each fill's
+                # order_type; a market/limit sell must not be attributed to a
+                # protective stop, and a fill whose type doesn't prove it was a
+                # stop is recorded as an unattributed reconciled exit.
+                action = _reconciled_exit_action(fill.get("order_type"))
                 try:
                     row_id, created = self.db.insert_stop_out_trade(
                         symbol=symbol, qty=fill["qty"], price=fill["price"],
                         broker_order_id=fill["id"],
                         filled_at=self._parse_broker_fill_timestamp(fill.get("filled_at")),
-                        run_id=run_id,
+                        run_id=run_id, action=action,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
@@ -6070,11 +6347,11 @@ class TradingPipeline:
                         realized = r.get("realized_pnl")
                         break
                 logger.warning(
-                    "STOP-OUT RECORDED: %s %s sh @ $%.4f (order %s, "
-                    "realized_pnl=%s) — broker-initiated protective-stop "
-                    "fill written back to the ledger by the stop-out "
-                    "reconciler", symbol, self._format_qty(fill["qty"]),
-                    fill["price"], fill["id"],
+                    "EXIT RECORDED (%s): %s %s sh @ $%.4f (order %s, "
+                    "type=%s, realized_pnl=%s) — broker-initiated exit "
+                    "written back to the ledger by the reconciler",
+                    action, symbol, self._format_qty(fill["qty"]),
+                    fill["price"], fill["id"], fill.get("order_type") or "unknown",
                     "unknown" if realized is None else f"${realized:.2f}",
                 )
                 if realized is None:
@@ -6096,6 +6373,92 @@ class TradingPipeline:
                 "broker_qty": held, "matched": True, "recorded": recorded,
             })
         return results
+
+    def _surface_reconcile_outcomes(
+        self,
+        reco_results: list[dict] | None = None,
+        drained_count: int | None = None,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        """Route dropped reconciler return values to the owner feed.
+
+        Item 101: both `_reconcile_stop_out_fills` (returns a per-symbol list
+        of what it wrote back) and `_drain_pending_protection_restores`
+        (returns a count of re-protected naked positions) do their write-back
+        silently — every call site discarded the return value, so a
+        broker-side stop-out reached the owner NOWHERE and a re-protection
+        was equally invisible. This is the single surfacing point the call
+        sites feed those return values into.
+
+        Does NOT change the reconciliation logic: it only reads what already
+        happened and pages the owner through the SAME `send_owner_alert` path
+        the unexplained-gap branch already uses (`alert_records_disagree_
+        with_broker`). A recorded stop-out is a real forced-loss exit, so per
+        the alert-design rule it gets its own standalone message rather than a
+        bundled session line.
+
+        Never raises — a surfacing fault must not break the trading path it
+        reports on, matching `send_owner_alert`'s own contract.
+        """
+        try:
+            from src.notifier import (
+                alert_positions_reprotected,
+                alert_stop_out_recorded,
+            )
+
+            if drained_count:
+                try:
+                    alert_positions_reprotected(int(drained_count))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "reconcile surfacing: re-protection alert failed: %s", exc,
+                    )
+
+            for res in reco_results or []:
+                if not (res.get("matched") and res.get("recorded")):
+                    continue
+                symbol = res.get("symbol")
+                if not symbol:
+                    continue
+                # Pull the rows this pass just wrote so the page carries the
+                # WHY (qty / price / realized P&L) rather than only a count.
+                # `insert_stop_out_trade` stamps each row with action
+                # 'STOP_OUT' and this run_id, so filtering on both isolates
+                # exactly what THIS pass recorded for THIS symbol — never an
+                # older stop-out from a previous session/run.
+                try:
+                    rows = self.db.get_trades(symbol=symbol, limit=50)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "reconcile surfacing: trade lookup failed for %s: %s "
+                        "— stop-out recorded but not surfaced this pass",
+                        symbol, exc,
+                    )
+                    continue
+                surfaced = 0
+                for r in rows:
+                    if surfaced >= int(res.get("recorded") or 0):
+                        break
+                    if r.get("action") != "STOP_OUT":
+                        continue
+                    if run_id is not None and r.get("run_id") != run_id:
+                        continue
+                    try:
+                        alert_stop_out_recorded(
+                            symbol=symbol,
+                            qty=r.get("fill_qty", r.get("qty")),
+                            price=r.get("fill_price", r.get("price")),
+                            realized_pnl=r.get("realized_pnl"),
+                        )
+                        surfaced += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "reconcile surfacing: stop-out alert failed for "
+                            "%s: %s", symbol, exc,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconcile surfacing failed (non-fatal): %s", exc)
 
     def _build_position_history(self, positions) -> dict[str, dict]:
         """L2 memory: for each held symbol, entry context + Tech rating trajectory.
@@ -7155,9 +7518,15 @@ class TradingPipeline:
     # most likely to be uncomfortable.
     # TAKE_PROFIT stays for HISTORICAL rows: the auto trim that wrote it was
     # deleted 2026-09-12 and nothing writes the label any more.
+    # RECONCILED_EXIT (item 173(a)): a recovered broker exit whose order_type
+    # could not be proven a protective stop. Before 173(a) every recovered
+    # exit was labelled STOP_OUT and thus audited here; keeping it out would
+    # drop real closed exits from decision-quality auditing — exactly the
+    # "did the market force us out before a bounce" question this audit
+    # exists to answer.
     _EXIT_AUDIT_ACTIONS = (
         "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
-        "STOP_OUT",
+        "STOP_OUT", "RECONCILED_EXIT",
     )
 
     def _build_post_exit_reality(
@@ -7481,7 +7850,9 @@ class TradingPipeline:
         thesis_health_review step.
 
         For each held symbol, gather:
-          - Entry context (date, price, days_held, original thesis text)
+          - Entry context (date, price, days_held, sessions_held,
+            original thesis text) — `sessions_held` is the weekend/holiday-aware
+            trading-session count the reviewer reads for pace (item 165)
           - Tech rating trajectory (last 4 ratings as a list)
           - News mentions count + 2 latest headlines (8-week window)
           - Most recent earnings sentiment + key_thesis
@@ -7516,6 +7887,16 @@ class TradingPipeline:
             entry_date: str | None = None
             entry_reasoning = ""
             days_held: int | None = None
+            # Item 165: the reviewer judges PACE ("too slow" → exit early) off
+            # holding time, so holding time here must be in TRADING SESSIONS,
+            # not calendar days. A weekend or market holiday adds calendar days
+            # and zero sessions, so a calendar-day count made a good position
+            # look slower than it is and could trigger a real-money early exit.
+            # `sessions_held` is the weekend/holiday-aware count the reviewer
+            # prompt reads for pace, computed with the SAME helper the
+            # morning/midday facts path uses (`broker.trading_sessions_held`,
+            # backed by Alpaca's real market calendar) — no parallel method.
+            sessions_held: int | None = None
             try:
                 buy_row = self.db.get_symbol_last_buy(sym)
             except Exception:
@@ -7528,8 +7909,17 @@ class TradingPipeline:
                         from datetime import date as _d
                         entry_d = _d.fromisoformat(ts)
                         days_held = max(0, (et_today() - entry_d).days)
+                        sessions_held = self.broker.trading_sessions_held(
+                            entry_d, et_today(),
+                        )
                     except (ValueError, TypeError):
                         days_held = None
+                        sessions_held = None
+                    except Exception:
+                        # Calendar/broker hiccup: degrade this one field to
+                        # None rather than dropping the whole thesis-health
+                        # row, matching the graceful-degradation contract above.
+                        sessions_held = None
                 entry_reasoning = (buy_row.get("reasoning") or "")[:300]
 
             # P&L% — the one definition (`src.risk.metrics.unrealized_pnl_pct`),
@@ -7590,6 +7980,7 @@ class TradingPipeline:
                 "entry_date": entry_date,
                 "entry_reasoning": entry_reasoning,
                 "days_held": days_held,
+                "sessions_held": sessions_held,
                 "entry_price": p.avg_entry,
                 "current_price": p.current_price,
                 "pnl_pct": pnl_pct,
@@ -7959,7 +8350,9 @@ class TradingPipeline:
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
                 # beside it — today `stop_wider_than_instrument_reach`
-                # or `insufficient_history`, item 54). Kept apart from
+                # or `no_structural_stop_and_no_volatility_reading`; the
+                # young-listing bar-count refusal was dropped, item 180).
+                # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.
                 elif (data.get("stage") == "deterministic_gate"
@@ -8628,6 +9021,25 @@ class TradingPipeline:
             return cached
         try:
             from src.data.correlation import build_correlation_matrix
+            # THE CORRELATION WINDOW (board item 148), recorded honestly.
+            # The bars that feed this matrix span `trading.lookback_days`
+            # (deployed 1800 ≈ 5 trading years, config/settings.yaml) — the
+            # SAME history fetched for MA200 and every other indicator, reused
+            # here rather than chosen for correlation. It has NO correlation-
+            # specific derivation: settings.yaml records the 320→1800 raise as
+            # "purely for structure" (deterministic support/resistance), and
+            # `build_correlation_matrix` needs only 20 overlapping daily returns
+            # (`df.corr(min_periods=20)`) over pairwise-complete observations, so
+            # the extra ~1,780 bars add older returns that may straddle regime
+            # changes rather than sharpen a cluster estimate. The window moved
+            # 120d → 5y silently on the switch to `trading.lookback_days`; this
+            # comment is the reason that was never recorded — it is INHERITED
+            # from the structural-level fetch, not justified for clustering.
+            # It is not a ledgered number: `trading.lookback_days` carries no
+            # numeric default (`Field(ge=1)` in src/config.py), so it is not a
+            # definition site the number-ledger scanner can attach an entry to;
+            # the 0.7 cutoff beside it (CLUSTER_CORRELATION_THRESHOLD) IS
+            # ledgered arbitrary.
             pool_bars = dict(ctx.symbols_bars)
             for p in positions:
                 if p.symbol not in pool_bars:
@@ -8852,7 +9264,6 @@ class TradingPipeline:
         # System perf
         f.rolling_5d_pct = recent_performance.get("rolling_5d_pct")
         f.rolling_20d_pct = recent_performance.get("rolling_20d_pct")
-        f.in_drawdown = bool(recent_performance.get("in_drawdown"))
 
         # RC3: deployment gap vs the invested target as a hard fact in PM's
         # face. The target is the owner's fixed fully-invested mandate
@@ -9039,29 +9450,23 @@ class TradingPipeline:
         return "\n".join(lines)
 
     def _compute_recent_performance(self, current_equity: float) -> dict:
-        """Rolling 5-day and 20-day returns from db.daily_pnl, + drawdown flag.
+        """Rolling 5-day and 20-day returns from db.daily_pnl, plus the
+        §11.2 peak-to-trough drawdown that drives the de-levering ladder.
 
-        Used to tell PM 'we've been losing — size down' regardless of what the market
-        is doing. Independent of VIX / macro regime (which reflect market, not us).
+        Used to tell PM "we have been losing" regardless of what the market
+        is doing. Independent of VIX / macro regime (which reflect market,
+        not us).
 
-        The two thresholds MOVE EVERY SESSION since the 2026-09-11 basis
-        change (docs/WORK.md item 32): they are a multiple of the realized
-        daily volatility of THE BOOK CURRENTLY HELD, reconstructed from the
-        real market price history of its actual holdings at their actual
-        weights, not a fixed percentage of equity.
-        `held_book_daily_vol_pct` carries the yardstick they came from, and
-        is None when nothing is measurable (an all-cash book, or holdings
-        without enough price history) and the fixed-percentage fallback is
-        governing.
-
-        The ROLLING RETURNS are still the account's own — that is what the
-        brake is judging. Only the YARDSTICK moved off the equity curve.
+        **The rolling returns are REPORTING ONLY.** They used to carry an
+        `in_drawdown` flag, and two thresholds behind it, that halved every  # retired-ok
+        new BUY and SHORT. That brake was removed 2026-09-20 on the owner's
+        instruction along with the daily-loss halt (retired item 32,
+        docs/INCIDENT_HISTORY.md); nothing automatic reads these two numbers
+        any more. `peak_to_trough_pct` is a different measure and still
+        drives the ladder.
 
         Returns e.g. {'rolling_5d_pct': -2.3, 'rolling_20d_pct': -6.1,
-                      'in_drawdown': True, 'trailing_days': 18,
-                      'held_book_daily_vol_pct': 0.94,
-                      'drawdown_5d_threshold_pct': -6.3,
-                      'drawdown_20d_threshold_pct': -12.6}
+                      'trailing_days': 18, 'peak_to_trough_pct': -4.4}
         """
         try:
             rows = self.db.get_daily_pnl(limit=25)
@@ -9071,10 +9476,8 @@ class TradingPipeline:
         if not rows:
             return {
                 "rolling_5d_pct": None, "rolling_20d_pct": None,
-                "in_drawdown": False, "trailing_days": 0,
+                "trailing_days": 0,
                 "peak_to_trough_pct": None,
-                "drawdown_5d_threshold_pct": self.config.risk.drawdown_5d_threshold_pct,
-                "drawdown_20d_threshold_pct": self.config.risk.drawdown_20d_threshold_pct,
             }
 
         def _pct_change(start_idx: int) -> float | None:
@@ -9090,71 +9493,11 @@ class TradingPipeline:
         rolling_5d = _pct_change(5)
         rolling_20d = _pct_change(20)
 
-        # docs/WORK.md item 32 (owner call 2026-09-11). These thresholds are
-        # no longer a fixed percentage of equity at all — they are a multiple
-        # of the realized daily volatility of THE BOOK CURRENTLY HELD,
-        # measured from the real market price history of its actual holdings
-        # at their actual weights, scaled to each window by sqrt(time). A
-        # fixed percentage is only correct for the volatility regime it was
-        # chosen in, and markets are not stationary; the owner refused a
-        # recalibration of the fixed number for exactly that reason.
-        #
-        # The yardstick is NOT this account's own equity curve. That was the
-        # first implementation and the owner rejected it: the post-reset
-        # account spends its first sessions ramping from all-cash, a
-        # mostly-cash account barely moves, and the measurement would have
-        # been artificially low — setting the alarms artificially tight so
-        # they fire on normal behaviour once the book is deployed. See
-        # `src/risk/rules.py::measure_portfolio_daily_vol`.
-        #
-        # `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct` (the
-        # risk-unit-derived fixed percentages) survive as the fallback for
-        # when there is genuinely NOTHING to measure — an all-cash book, or
-        # holdings with too little price history. See
-        # `RiskConfig.drawdown_vol_sensitivity` for the sensitivity and,
-        # honestly, for what about it is and is not research-grounded.
-        daily_vol = self.held_book_daily_vol_pct()
-        sensitivity = _risk_number(
-            getattr(self.config.risk, "drawdown_vol_sensitivity", None),
-            DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-        )
-        threshold_5d = vol_relative_drawdown_threshold_pct(
-            daily_vol_pct=daily_vol, window_sessions=5,
-            sensitivity=sensitivity,
-            fallback_pct=self.config.risk.drawdown_5d_threshold_pct,
-        )
-        # The 20-day window is capped at `GROSS_LADDER_ALERT_PCT`, preserving
-        # the 2026-09-04 bug-2 fix: this brake must never again be asleep
-        # past the point the §11.2 de-levering ladder halves the book and
-        # alerts the owner. The cap is why the 20-day threshold is tighter
-        # than sqrt(time) alone would put it.
-        threshold_20d = vol_relative_drawdown_threshold_pct(
-            daily_vol_pct=daily_vol, window_sessions=20,
-            sensitivity=sensitivity,
-            fallback_pct=self.config.risk.drawdown_20d_threshold_pct,
-            cap_pct=GROSS_LADDER_ALERT_PCT,
-        )
-        # Keep the severity ORDER coherent in a high-volatility regime: once
-        # the 20-day cap binds, an uncapped 5-day threshold could end up
-        # DEEPER than the 20-day one, i.e. a shorter window tolerating a
-        # bigger loss than a longer one. Clamped to the 20-day threshold so
-        # |1d| <= |5d| <= |20d| <= |ladder alert| always holds.
-        if threshold_5d < threshold_20d:
-            threshold_5d = threshold_20d
-
-        in_drawdown = False
-        if rolling_5d is not None and rolling_5d < threshold_5d:
-            in_drawdown = True
-        if rolling_20d is not None and rolling_20d < threshold_20d:
-            in_drawdown = True
-
         # Spec §11.2: peak-to-trough drawdown, which drives the de-levering
-        # ladder's gross-exposure ceiling. A SEPARATE measure from
-        # `in_drawdown` above, on purpose — that one asks "has our recent
-        # edge degraded, so halve new BUYs" over a rolling window; this one
-        # asks "how far are we off the high-water mark, so how much may the
-        # book own". A longer window is read because a high-water mark over
-        # 25 sessions is not a high-water mark.
+        # ladder's gross-exposure ceiling. It asks "how far are we off the
+        # high-water mark, so how much may the book own". A longer window is
+        # read because a high-water mark over 25 sessions is not a
+        # high-water mark.
         try:
             hwm_rows = self.db.get_daily_pnl(limit=252)
         except Exception as e:  # noqa: BLE001
@@ -9170,151 +9513,10 @@ class TradingPipeline:
         return {
             "rolling_5d_pct": rolling_5d,
             "rolling_20d_pct": rolling_20d,
-            "in_drawdown": in_drawdown,
-            # docs/WORK.md item 32: carried through so prompt-facing text
-            # (e.g. PortfolioManagerAgent) can render the REAL, currently
-            # configured thresholds instead of a hardcoded description that
-            # would go stale the moment these are rescaled again.
-            "drawdown_5d_threshold_pct": threshold_5d,
-            "drawdown_20d_threshold_pct": threshold_20d,
-            # docs/WORK.md item 32: the yardstick itself, surfaced so an
-            # operator (and Mission Control) can see WHY a threshold sits
-            # where it does. None means "nothing measurable — the
-            # fixed-percentage fallback is governing". This is the normal
-            # daily move of the HELD BOOK, so it is already net of how
-            # deployed the book is: a third-deployed book reports roughly a
-            # third of the move the same basket fully deployed would.
-            "held_book_daily_vol_pct": (
-                None if daily_vol is None else round(daily_vol, 3)
-            ),
             "trailing_days": len(rows),
             "peak_to_trough_pct": peak_to_trough,
         }
 
-    def measure_held_book_daily_vol(self):
-        """`PortfolioVolEstimate` for the book the desk is holding right now.
-
-        docs/WORK.md item 32 (owner call 2026-09-11). The single place the
-        drawdown alarms' volatility yardstick is produced. Gathers what only
-        the pipeline can reach — the live position list, live equity, and
-        real market price history for those exact symbols — and hands it to
-        `src/risk/rules.py::measure_portfolio_daily_vol`, which owns the
-        arithmetic. The volatility DEFINITION therefore lives in exactly one
-        place rather than being re-implemented per caller, which is how this
-        desk ended up with two unreconciled drawdown measures in the first
-        place.
-
-        Price history comes from `self.market.get_ohlcv` — the same market
-        feed (yfinance, with the Alpaca fallback already wired in
-        `set_fallback_bars`) that technical analysis, the correlation matrix
-        and the ATR reads all use. No second price path is introduced.
-
-        Never raises. Any failure returns an estimate whose `daily_vol_pct`
-        is None, which means "fall back to the fixed percentage" — a broken
-        read must never disable the circuit breaker.
-        """
-        from src.risk.rules import (
-            measure_portfolio_daily_vol,
-            normalized_holding_weights,
-        )
-        try:
-            account, positions, _ = self._refresh_account_state()
-            equity = float(
-                getattr(account, "portfolio_value", None)
-                or getattr(account, "equity", None)
-                or 0.0
-            )
-            # 2026-09-14, docs/WORK.md item 32: the cash park is excluded
-            # here, exactly as `gross_exposure` already excludes it. Parked
-            # cash was 78% of the gross weight this yardstick was measured
-            # over on the archived book, which made the breaker's denominator
-            # neither the risk book nor the account.
-            weights = normalized_holding_weights(
-                positions, equity, cash_park_symbol=self._sweep_symbol(),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Could not read the held book for the volatility-relative "
-                "drawdown alarms; they fall back to their fixed-percentage "
-                "thresholds: %s", exc,
-            )
-            return PortfolioVolEstimate(None, reason="held book unreadable")
-        if not weights:
-            return measure_portfolio_daily_vol({}, {})
-
-        # Session-scoped memo. The daily circuit breaker fires from six
-        # separate places in this file, and each measurement is one market
-        # fetch per holding — without this the same number would be bought
-        # six times a session.
-        #
-        # Keyed on the TRADING DATE and on the holdings with their weights
-        # (to 4dp), so an intraday change in the book re-measures rather
-        # than serving a stale yardstick, AND a new session can never serve
-        # yesterday's. The date half is not decorative: `src/scheduler.py`
-        # holds ONE `TradingPipeline` for the life of the process, so this
-        # memo outlives a session. Without the date, a book whose weights
-        # happen to round to the same 4dp on two consecutive days would be
-        # priced today against yesterday's volatility — a silently stale
-        # yardstick under all three loss alarms. This comment previously
-        # CLAIMED a bar-date component the key did not have (docs/WORK.md
-        # item 32, 2026-09-14); the code now does what it said.
-        from src.trading_calendar import et_now
-        try:
-            measured_on = et_now().date().isoformat()
-        except Exception as exc:  # noqa: BLE001
-            # A clock/timezone failure must never serve a stale number: fall
-            # through with a key that can never match a previous call, so the
-            # measurement is simply redone.
-            logger.warning(
-                "Held-book volatility memo: could not read the trading date "
-                "(%s) — re-measuring rather than reusing a cached yardstick.",
-                exc,
-            )
-            # A fresh object each time: it can never equal a stored key, so
-            # the memo misses and the measurement is redone.
-            measured_on = object()
-        key = (
-            measured_on,
-            tuple(sorted((sym, round(w, 4)) for sym, w in weights.items())),
-        )
-        cached = getattr(self, "_held_book_vol_memo", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-
-        bars_by_symbol = {}
-        for symbol in weights:
-            try:
-                bars_by_symbol[symbol] = self.market.get_ohlcv(
-                    symbol, self.config.trading.lookback_days,
-                ) or []
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Price history fetch failed for %s while measuring the "
-                    "held book's volatility: %s", symbol, exc,
-                )
-                bars_by_symbol[symbol] = []
-
-        estimate = measure_portfolio_daily_vol(weights, bars_by_symbol)
-        self._held_book_vol_memo = (key, estimate)
-        return estimate
-
-    def held_book_daily_vol_pct(self) -> float | None:
-        """The held book's realized daily volatility in percent, or None.
-
-        docs/WORK.md item 32. Wired into `RiskRuleEngine` as
-        `portfolio_vol_provider`; also the yardstick
-        `_compute_recent_performance` reports and derives its two
-        rolling-return brakes from, so all three loss alarms read ONE
-        measurement rather than each making their own.
-        """
-        try:
-            return self.measure_held_book_daily_vol().daily_vol_pct
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Held-book volatility measurement failed (%s) — the drawdown "
-                "alarms fall back to their fixed-percentage thresholds.", exc,
-            )
-            return None
 
     def _refresh_account_state(self):
         account = self.broker.get_account()
@@ -9579,57 +9781,6 @@ class TradingPipeline:
     # individually by constructing a ctx, populating the needed fields,
     # and calling the method directly.
     # ---------------------------------------------------------------
-
-    def _check_late_breach_and_halt(
-        self, run_id: str, where: str, ctx=None,
-    ) -> dict | None:
-        """Refresh broker state and HALT if the daily-loss limit was crossed
-        mid-session. Renamed with the behaviour change — it no longer
-        liquidates; see `_halt_on_daily_loss_breach`.
-
-        Used by morning at the post-research checkpoint and (potentially)
-        by other long-running phases to close the gap between the
-        pre-research circuit breaker (#45) and the pre-execution recheck
-        (#48). On a slow-OpenAI day research can take 5-10 min — plenty
-        of time for the tape to gap through the limit while morning is
-        still computing.
-
-        Returns the halt response dict on breach, None to proceed. ``where``
-        is a short tag for the log message (post-research / post-decision /
-        etc).
-        """
-        try:
-            account = self.broker.get_account()
-            positions = self.broker.get_positions()
-        except Exception as exc:
-            logger.warning(
-                "Late-breach check (%s): broker query failed: %s — "
-                "proceeding without recheck", where, exc,
-            )
-            return None
-
-        loss_violation, _baseline, _pnl, basis = self._daily_loss_breach(
-            account, positions,
-        )
-        if not (loss_violation and positions):
-            return None
-
-        return self._halt_on_daily_loss_breach(
-            positions, loss_violation, run_id,
-            where=f"morning late-breach ({where})", basis=basis, ctx=ctx,
-        )
-
-    # `_midday_emergency_liquidate` was DELETED 2026-09-14 (retired-ok; docs/WORK.md
-    # item 32). It force-closed the entire book on a daily-loss breach with
-    # LIMIT orders 1% through the market and then restored the original
-    # stops on any leg that did not fill — so on a correlated gap, the one
-    # day a whole-book dump could be argued for, it cancelled every
-    # protective stop, failed to sell, and put the stops back. It never
-    # fired in production. `_halt_on_daily_loss_breach` replaces it: the
-    # breaker now refuses new risk and VERIFIES the stops it is relying on,
-    # and the proportionate leverage response stays where it already was,
-    # in `_enforce_gross_ceiling`. The EMERGENCY_SELL / EMERGENCY_COVER
-    # action tags remain recognised everywhere for historical rows.
 
     def _symbols_already_trimmed_today(self) -> set[str]:
         """Symbols that received a sell-side action earlier today (ET).
@@ -10077,18 +10228,30 @@ class TradingPipeline:
 
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
-        atr = ma_20 = ma_50 = ma_200 = close_price = bar_date = None
+        atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
+        # The completed trading sessions strictly before today's close, most
+        # recent first, taken from THIS position's own daily bars — the
+        # authoritative trading calendar (weekends/holidays already removed).
+        # The exit guard uses it to enforce that only CONSECUTIVE prior sessions
+        # count toward break confirmation (a gap resets — #3).
+        prior_session_dates: list[str] = []
         try:
             bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
             if bars:
                 from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
-                last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                sorted_bars = sorted(bars, key=lambda b: b.date)
+                last_bar = sorted_bars[-1]
                 close_price = float(last_bar.close)
                 bar_date = str(last_bar.date)
+                prior_session_dates = [
+                    str(b.date) for b in reversed(sorted_bars) if str(b.date) < bar_date
+                ]
                 indicators = compute_indicators(symbol, bars)
                 atr = indicators.atr_14
                 ma_20, ma_50, ma_200 = indicators.ma_20, indicators.ma_50, indicators.ma_200
+                ma_200_prior = indicators.ma_200_prior
+                adx = indicators.adx_14
                 supports, resistances = find_structural_levels(bars)
                 all_levels = (*supports, *resistances)
                 computed_levels = sorted(lv.price for lv in all_levels)
@@ -10106,12 +10269,16 @@ class TradingPipeline:
         # it's filed under.
         effective_bar_date = bar_date or str(et_today())
 
-        break_seen_prior_close = False
+        # Read the per-session break RECORDS for this position (most recent
+        # first), so the exit guard can reconstruct the CONSECUTIVE-confirming-
+        # close streak with adjacency (#3) and margin-consistency (#4). The
+        # exclude_run_id guard keeps several same-session cycles reading one
+        # close from double-counting it.
+        prior_break_records: list = []
         try:
-            prior = self.db.get_prior_holding_protection_break(
-                [symbol], today_bar_date=effective_bar_date, exclude_run_id=run_id,
+            prior_break_records = self.db.get_recent_holding_protection_breaks(
+                symbol, before_bar_date=effective_bar_date, exclude_run_id=run_id,
             )
-            break_seen_prior_close = bool(prior.get(symbol.upper(), False))
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: prior-close read failed for %s "
@@ -10144,15 +10311,17 @@ class TradingPipeline:
             # the zones being matched against, so the tolerance cannot be
             # anything else. docs/WORK.md item 46.
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
-            break_seen_prior_close=break_seen_prior_close,
+            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,
+            adx=adx,
+            prior_break_records=prior_break_records,
+            prior_session_dates=prior_session_dates,
         )
 
         try:
             if persist:
                 self.db.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
-                    bar_date=effective_bar_date,
+                    bar_date=effective_bar_date, close=close_price,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -10161,7 +10330,102 @@ class TradingPipeline:
                 "start unconfirmed for it", symbol, e,
             )
 
+        # VOICE THE WHY (owner mandate 2026-09-24). When this gate reaches a
+        # DECISIVE break outcome — a confirmed break that clears the desk to
+        # exit, or a break held through pending confirmation — push the plain-
+        # language reason to BOTH owner surfaces via the mechanisms the desk
+        # already uses for exactly this: `notifier.send_owner_alert` for the
+        # Telegram alert, and a durable `specialist_evidence` row (which the
+        # board journal / Mission Control read) for the dashboard. Only on a
+        # persisting read (a real exit-decision or rotation-eligibility read,
+        # not a purely advisory replay) and deduplicated per run+symbol so the
+        # several pipeline cycles in one session reading the same close do not
+        # re-alert. Best-effort by construction — a voicing failure never
+        # affects the protection verdict itself.
+        if persist and check.owner_reason:
+            self._voice_structural_protection_break(
+                symbol=symbol, run_id=run_id, check=check,
+            )
+
         return check
+
+    def _voice_structural_protection_break(
+        self, *, symbol: str, run_id: str, check,
+    ) -> None:
+        """Push a decisive structural-protection break's plain-language reason
+        to BOTH owner surfaces (Telegram + board journal). Never raises.
+
+        Reuses the desk's established durable-reason trail rather than adding a
+        new one: the same `notifier.send_owner_alert` standalone-alert path
+        `_alert_holding_discipline_block` uses for Telegram, and a
+        `specialist_evidence` row (the same table the board journal and
+        Mission Control forensic views read) for the dashboard. Deduplicated
+        per (run, symbol, basis) via a run-scoped set.
+
+        SILENT-ACTION GUARD (#5): the dedup slot is consumed only AFTER at least
+        one surface write (board OR Telegram) SUCCEEDS. If BOTH fail, the slot is
+        left free so a later cycle retries — the desk must never act on a break
+        without the why reaching at least one surface.
+        """
+        from src.risk.exit_guard import render_owner_break_message
+
+        message = render_owner_break_message(symbol, check)
+        if not message:
+            return
+        symbol_u = (symbol or "").strip().upper()
+        dedup_key = (run_id, symbol_u, check.basis)
+        seen = getattr(self, "_voiced_structural_breaks", None)
+        if seen is None:
+            seen = set()
+            self._voiced_structural_breaks = seen
+        if dedup_key in seen:
+            return
+
+        any_surface_ok = False
+
+        # Board / dashboard: a durable, machine-readable row carrying the SAME
+        # sentence, on the specialist_evidence table the journal reads.
+        try:
+            self.db.insert_specialist_evidence(
+                run_id=run_id, agent_name="risk_manager",
+                kind="structural_break_trend_context", scope="symbol",
+                symbol=symbol_u,
+                evidence_json=_json.dumps({
+                    "protected": bool(check.protected),
+                    "basis": check.basis,
+                    "trend_context": check.trend_context,
+                    "confirming_closes_needed": check.confirming_closes_needed,
+                    "confirming_closes_seen": check.confirming_closes_seen,
+                    "owner_reason": message,
+                }),
+            )
+            any_surface_ok = True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "structural protection: board reason write failed for %s "
+                "(%s) — Telegram send still attempted", symbol_u, e,
+            )
+
+        # Telegram: the same standalone owner-alert path the holding-discipline
+        # block uses. `send_owner_alert` does NOT raise on a failed send — it
+        # RETURNS False — so a surface only counts as reached when the return is
+        # truthy (and, as a backstop, when it does not raise).
+        try:
+            from src import notifier as _notifier
+
+            ok = _notifier.send_owner_alert(message, symbols=[symbol_u])
+            any_surface_ok |= bool(ok)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "structural protection: owner alert send failed for %s (%s)",
+                symbol_u, e,
+            )
+
+        # Consume the dedup slot only if the why reached at least one surface;
+        # otherwise leave it free so a later cycle retries rather than the desk
+        # acting silently.
+        if any_surface_ok:
+            seen.add(dedup_key)
 
     def _substantiate_exit_triggers(self, review, *, ctx, run_id: str,
                                     review_kwargs: dict):
@@ -10630,7 +10894,9 @@ class TradingPipeline:
 
     def _trail_tightened_recently(self, symbol: str, calendar_days: int = 4) -> bool:
         """True when a non-canceled TRAIL_STOP for `symbol` landed within the
-        last `calendar_days` days (~2 trading days across a weekend).
+        last `calendar_days` days (a 4-calendar-day window is ~2-4 trading
+        sessions depending on weekday: ~2 late in the week, ~4 from a
+        Monday).
 
         RC1 forensics (2026-07-16): the reviewer's ≥1.02×old_stop min-bump
         rule means every ACCEPTED trail tightens ≥2%; per-session trailing
@@ -10757,9 +11023,21 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
 
+            # Item 82: the MEASURED half of the breakout verdict, pinned at
+            # entry alongside `setup_type` (stored 0/1/NULL). Present → this
+            # path reaches construction's OWN verdict so a measured breakout
+            # the analyst mislabelled "range" is trailed as Type B, not Type
+            # A; NULL (legacy row, or a pre-item-82 entry) → `is_trend_trade`
+            # inside `evaluate_trailing_stop` falls back to the label alone,
+            # exactly the pre-item-82 `!= "breakout"` behaviour. Read the
+            # SAME way the pace/progress path does (#652).
+            _sc_raw = (buy or {}).get("structural_ceiling")
+            structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
+
             evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
+                structural_ceiling=structural_ceiling,
                 entry=position.avg_entry,
                 current_price=position.current_price,
                 current_stop=current_stop,
@@ -11423,8 +11701,10 @@ class TradingPipeline:
             # on day zero, never given a single day's normal range to breathe.
             #
             # Triggers originating outside the tape — earnings, news, regime,
-            # sector, correlation, circuit breaker, a fired stop — bypass this
-            # entirely. An earnings miss is an earnings miss whether the stock
+            # sector, a fired stop — bypass this entirely. ("correlation" and
+            # "circuit breaker" were in this sentence until they were removed
+            # from the accepted list, 2026-09-13 and 2026-09-20; neither
+            # bypasses anything now.) An earnings miss is an earnings miss whether the stock
             # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
             # before acting on information sells the bottom instead of the top.
             if act in ("SELL", "REDUCE", "COVER"):
@@ -11724,19 +12004,62 @@ class TradingPipeline:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
+                    # Minimum-ratchet floor: a raise must clear the live stop
+                    # by at least MIN_RATCHET_PCT. The position_reviewer prompt
+                    # presents `new_stop_price >= old_stop_price × 1.02` as a
+                    # hard schema rule, but until this landed nothing here
+                    # enforced it, so an under-2% bump reached the broker —
+                    # paying cancel/replace churn for negligible protection.
+                    # Single-sourced from src.risk.trailing.MIN_RATCHET_PCT (the
+                    # same ledgered constant the deterministic trail already
+                    # uses; ledger status: arbitrary). Unlike the RC1 clamps
+                    # below, this floor is NOT bypassable by a hard trigger —
+                    # the prompt states it as an unconditional minimum, and a
+                    # sub-floor raise is churn regardless of the reason.
+                    # A rejection here keeps the existing (valid, looser) stop
+                    # in place: protection is never removed, only left as-is.
+                    # Old stop is broker truth; if it is missing/unreadable the
+                    # floor cannot be computed, so this establishes protection
+                    # rather than blocking it (the RC1 clamps still apply).
+                    try:
+                        raw_old_stop = self.broker.get_current_stop_price(symbol)
+                        old_stop = (
+                            float(raw_old_stop) if raw_old_stop is not None else None
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "Midday: TRAIL_STOP %s — live stop unreadable "
+                            "(%s); min-ratchet floor not applied", symbol, e,
+                        )
+                        old_stop = None
+                    if old_stop is not None and old_stop > 0:
+                        from src.risk.trailing import MIN_RATCHET_PCT
+                        min_new_stop = old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)
+                        if new_stop < min_new_stop:
+                            logger.warning(
+                                "Midday: TRAIL_STOP %s skipped — new_stop "
+                                "$%.2f is below the %.0f%% minimum-ratchet "
+                                "floor over the live stop $%.2f (floor $%.2f); "
+                                "sub-floor raise is churn. Old stop kept.",
+                                symbol, new_stop, MIN_RATCHET_PCT, old_stop,
+                                min_new_stop,
+                            )
+                            continue
                     # RC1 exit-quality clamps (2026-07-16 forensics: 5 trail
                     # fills missed avg +30.7% post-exit; LLY was whipsawed
                     # twice identically). A hard-trigger citation in the
                     # reason bypasses both — mirroring the SELL/REDUCE gate.
                     if not _reason_cites_hard_trigger(action_item.get("reason", "")):
                         # (a) Ratchet cooldown: at most one accepted tighten
-                        # per ~2 trading days per symbol.
+                        # per 4-calendar-day window per symbol (~2-4 trading
+                        # sessions depending on weekday).
                         if self._trail_tightened_recently(symbol):
                             logger.warning(
                                 "Midday: TRAIL_STOP %s skipped — a trail was "
-                                "already tightened within the last 2 trading "
-                                "days (ratchet cooldown; cite a hard trigger "
-                                "to bypass)", symbol,
+                                "already tightened within the last 4 calendar "
+                                "days (~2-4 trading sessions depending on "
+                                "weekday; ratchet cooldown; cite a hard "
+                                "trigger to bypass)", symbol,
                             )
                             continue
                         # (b) Noise-band clamp: a stop inside 1.25×ATR14 of
@@ -11850,27 +12173,105 @@ class TradingPipeline:
                 )
         return orders
 
+    def _live_delever_price(
+        self, symbol: str, side: str,
+    ) -> tuple[float | None, float | None]:
+        """Price a MUST-FILL emergency de-lever off the LIVE quote at submit
+        time, never off a fixed % of a possibly-stale mark.
+
+        The emergency de-lever exists to shed exposure NOW when the book is
+        over its gross ceiling (or the cash-only account is on margin); it
+        must fill regardless of how far a name has gapped. A fixed-% limit off
+        a stale `current_price` is the wrong mechanism: on an 8/10/20% gap the
+        limit rests ABOVE the falling market and the book stays over its
+        ceiling exactly when it must come down (docs/WORK.md item 118); inside
+        normal noise the same % is oversized. So this reads the CURRENT bid/ask
+        and prices a MARKETABLE limit that crosses it:
+
+          * SELL  -> a limit AT the live BID. A sell limit at/below the bid is
+                     immediately marketable and fills at the bid however far
+                     the name gapped, because the gap is already IN the quote.
+          * COVER -> a limit AT the live ASK (the buy-side mirror).
+
+        The returned reference price is the live MID, so the broker's
+        fat-finger guard (`OUTLIER_MAX_DEVIATION`) sees a ~zero deviation
+        between the limit and the reference and passes the order however far
+        the live quote has moved from yesterday's mark — the guard is
+        measuring the limit against a STALE mark today, which is what would
+        reject a legitimately gapped fill.
+
+        Returns ``(None, reference_or_None)`` when no usable live quote exists
+        (missing/zero/non-finite bid-or-ask, or a broker/data failure) so the
+        caller submits a MARKET order — the guaranteed fill, and the correct
+        fallback when there is no live price to cross. No new % constant is
+        introduced on either branch: the price is the live quote or the market
+        itself.
+        """
+        bid = ask = None
+        try:
+            quote = self.broker.get_latest_quote(symbol) or {}
+            raw_bid = quote.get("bid_price")
+            raw_ask = quote.get("ask_price")
+            if raw_bid is not None:
+                b = float(raw_bid)
+                bid = b if math.isfinite(b) and b > 0 else None
+            if raw_ask is not None:
+                a = float(raw_ask)
+                ask = a if math.isfinite(a) and a > 0 else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "de-lever: live quote unusable for %s (%s) — falling back to a "
+                "MARKET order, the guaranteed fill", symbol, exc,
+            )
+            bid = ask = None
+        if bid is not None and ask is not None:
+            mid: float | None = (bid + ask) / 2
+        elif bid is not None:
+            mid = bid
+        elif ask is not None:
+            mid = ask
+        else:
+            mid = None
+        # COVER is a BUY (side='buy'); cross the ASK. Everything else is a
+        # SELL; cross the BID. A missing side of the book -> None -> MARKET.
+        limit = ask if side == "buy" else bid
+        return limit, mid
+
     def _force_delever(self, ctx: RunContext) -> list[dict]:
-        """Safety net for `allow_margin=False` accounts.
+        """Safety net for `allow_margin=False` accounts: clear the measured
+        cash deficit deterministically, without waiting on an LLM.
 
         When cash is meaningfully negative at session start we do NOT trust
-        the LLM to pick which positions to cut — we force-sell biggest-loser
-        first (most negative unrealized P&L, largest size as tiebreaker)
-        until projected cash is ≥ 0. This runs BEFORE any decision / review
-        stage, so the rest of the session operates on a clean, cash-only
-        snapshot.
+        the LLM to pick which positions to cut — we force-sell worst-
+        performing first (most negative unrealized P&L, largest size as
+        tiebreaker), hedges last, until projected cash is ≥ 0. This runs
+        BEFORE any decision / review stage, so the rest of the session
+        operates on a clean, cash-only snapshot.
+
+        The ordering is a biggest-loser-first P&L rule (owner-ratified), NOT
+        a risk measure: the goal is to CLEAR THE MEASURED CASH DEFICIT, and
+        cutting the worst performers first is simply how the desk chooses
+        what to give up to do it. The only risk-shaped rule in the sort is
+        keeping inverse-ETF hedges in the last tier (see the ordering block
+        below), so raising the cash does not strip directional protection off
+        the longs that remain.
 
         Rationale: the DE-LEVER MANDATE in the PM / midday prompts is
         advisory — if the LLM emits only HOLDs, margin sits. Users who opt
         in to `allow_margin=False` want structural enforcement, not an LLM
         nudge. Speed and safety > LLM judgment here.
 
-        Sell limit uses a 1% below-market buffer
-        (`_EMERGENCY_LIMIT_CUSHION_PCT`) because we prioritize fill over
-        price when clearing an unintended margin position. Note the contrast
-        with the deleted daily-loss liquidator (docs/WORK.md item 32): this
-        path clears a MEASURED cash deficit of known size, not a whole book
-        on a gap day, and it is reached only when `allow_margin` is false.
+        The sell is priced off the LIVE quote at submit time, not a fixed % of
+        a possibly-stale mark: a marketable limit AT the live bid (crosses the
+        spread, so it fills however far the name has gapped — the gap is in the
+        quote), and a MARKET order when no live quote is available (the
+        guaranteed fill). We prioritize fill over price when clearing an
+        unintended margin position (docs/WORK.md item 118): a fixed % of a
+        stale price rests ABOVE the falling market on a gap day and leaves the
+        deficit uncleared. See `_live_delever_price`. Note the contrast with
+        the deleted daily-loss liquidator (docs/WORK.md item 32): this path
+        clears a MEASURED cash deficit of known size, not a whole book on a gap
+        day, and it is reached only when `allow_margin` is false.
 
         Returns the submitted orders list (empty when no de-lever is needed).
         ctx.cash / positions / total_value are refreshed from broker after
@@ -11905,6 +12306,12 @@ class TradingPipeline:
                 "to sell — account stuck on margin until cash arrives externally",
                 ctx.cash, deficit,
             )
+            # Loud, not silent: no long to sell IS a residual miss (the sibling
+            # of the gross-ceiling path's incompleteness alert) — the account
+            # stays on margin, so page the owner rather than only logging.
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=0.0, failed_symbols=[],
+            )
             return []
 
         # Two-tier ordering: prefer longs over inverse-ETF hedges before
@@ -11915,10 +12322,12 @@ class TradingPipeline:
         # ignores direction can pick a hedge in any market where the long
         # book is profitable (the hedge tends to lose precisely when the
         # rest is winning). Selling the hedge first leaves the remaining
-        # longs naked, AMPLIFYING directional exposure — the opposite of
-        # what cash-only de-lever is trying to do (which is "shrink risk
-        # to fit cash"). Cash-flow-wise both raise cash equally, but
-        # risk-wise they're opposite.
+        # longs naked, AMPLIFYING directional exposure. This sweep's job is
+        # to clear the measured cash deficit, and a hedge raises that cash
+        # just as well as a long does — so the ONLY reason to order the two
+        # is to avoid stripping directional protection off the book while
+        # doing it. Cash-flow-wise both raise cash equally; hedges sort last
+        # so the deficit is cleared without gratuitously un-hedging the book.
         #
         # Tier key (lower = sells earlier):
         #  -1 → cash-sweep vehicle (parked T-bills ARE cash — always the
@@ -11945,6 +12354,7 @@ class TradingPipeline:
 
         orders: list[dict] = []
         projected_proceeds = 0.0
+        failed_symbols: list[str] = []
         for p in targets:
             if projected_proceeds >= deficit:
                 break
@@ -11964,7 +12374,16 @@ class TradingPipeline:
                 qty = self._full_sell_qty(p.qty)
             if qty is None or qty <= 0:
                 continue
-            sell_limit = round(p.current_price * 0.99, 2)
+            # Price the must-fill exit off the LIVE quote at submit time: a
+            # marketable limit AT the live bid, or a MARKET order (limit=None)
+            # when no live quote is available. See `_live_delever_price`. The
+            # reference is the live mid so the broker's fat-finger guard passes
+            # a legitimately gapped fill; it falls back to the mark only when
+            # there is no quote, in which case the order is a MARKET order the
+            # guard skips anyway.
+            sell_limit, quote_ref = self._live_delever_price(p.symbol, "sell")
+            exec_ref = quote_ref if quote_ref is not None else p.current_price
+            limit_str = f"${sell_limit:.2f}" if sell_limit is not None else "market"
             # The sweep vehicle's exit is recorded as SWEEP_SELL, not
             # FORCE_DELEVER (audit round 2): action names are the sweep's
             # ledger-isolation mechanism — a FORCE_DELEVER row on SGOV leaks
@@ -11972,10 +12391,16 @@ class TradingPipeline:
             # trading decision.
             sale = self._submit_protected_sell(
                 symbol=p.symbol, qty=qty, limit_price=sell_limit,
-                reference_price=p.current_price, position_qty_before_sell=p.qty,
+                reference_price=exec_ref, position_qty_before_sell=p.qty,
                 label="SWEEP_SELL" if is_sweep else "FORCE_DELEVER",
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
+                # Even the MARKET escalation could not place (stop-clear failed,
+                # or the market order itself was rejected). This name is a real
+                # residual miss — record it so the sweep is reported incomplete
+                # below rather than silently skipped.
+                failed_symbols.append(p.symbol)
                 continue
             order, prot = sale
             try:
@@ -11987,13 +12412,18 @@ class TradingPipeline:
                 # position to cover a deficit the in-flight order had already
                 # covered — liquidating real holdings over a bookkeeping
                 # failure (2026-07-16 audit).
-                # Conservative estimate: market × 0.99 (matches our limit).
-                projected_proceeds += p.market_value * 0.99
+                # Conservative proceeds estimate for the break-early guard:
+                # mark × 0.97, i.e. assume the marketable fill lands up to 3%
+                # below the mark (the same must-fill slippage the desk's
+                # STOP_LIMIT_BUFFER_PCT budgets for a gapping exit). Under-
+                # counting proceeds is the safe error here — it never stops the
+                # sweep one position too early and leaves a residual deficit.
+                projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
-                    "FORCE DE-LEVER SELL %s qty=%s @ limit=$%.2f "
+                    "FORCE DE-LEVER SELL %s qty=%s @ limit=%s "
                     "(unrealized_pnl=$%.2f, mkt_value=$%.2f)",
-                    p.symbol, self._format_qty(qty), sell_limit,
+                    p.symbol, self._format_qty(qty), limit_str,
                     p.unrealized_pnl, p.market_value,
                 )
                 self.db.insert_trade(
@@ -12043,7 +12473,48 @@ class TradingPipeline:
         except Exception as e:
             logger.error("FORCE DE-LEVER: broker refresh failed: %s", e)
 
+        # Report parity with the gross-ceiling path's
+        # `_alert_owner_delever_incomplete`: if the sweep could not raise
+        # enough to cover the deficit (projected proceeds fell short) or a name
+        # could not be sold even at market, the account is still on margin and
+        # the owner must hear it — never a silent skip.
+        if failed_symbols or projected_proceeds < deficit:
+            self._alert_owner_force_delever_incomplete(
+                deficit=deficit, projected_proceeds=projected_proceeds,
+                failed_symbols=failed_symbols,
+            )
+
         return orders
+
+    def _alert_owner_force_delever_incomplete(
+        self, *, deficit: float, projected_proceeds: float,
+        failed_symbols: list[str],
+    ) -> None:
+        """Page the owner when the cash-only forced de-lever could NOT clear
+        the margin deficit — the sibling of `_alert_owner_delever_incomplete`
+        for the `allow_margin=False` sweep path. Never raises.
+
+        Without this a genuinely unfillable name here (a market order the broker
+        rejected, a stop-clear that failed, or simply not enough sellable value)
+        would leave the account on margin with only a log line nobody reads. It
+        is reporting-only: it changes no order, no sizing and no sequencing.
+        """
+        try:
+            from src import notifier as _notifier
+
+            shortfall = max(0.0, deficit - projected_proceeds)
+            names = ", ".join(sorted(failed_symbols)) if failed_symbols else "—"
+            msg = (
+                f"FORCE DE-LEVER INCOMPLETE: the cash-only sweep could not "
+                f"clear the ${deficit:,.2f} margin deficit (still ~"
+                f"${shortfall:,.2f} short). Names that could not be sold even "
+                f"at a MARKET order: {names}. The account remains on margin "
+                f"until this is resolved."
+            )
+            logger.error(msg)
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("force de-lever incomplete owner alert failed: %s", exc)
 
     # --- Spec §11.2 — the gross-exposure ceiling and the de-levering ladder
 
@@ -12082,7 +12553,7 @@ class TradingPipeline:
         # That branch is correct for a genuinely fresh account with no
         # equity curve yet (see `resolve_gross_ceiling`'s docstring). Alpaca
         # has been observed to return NaN portfolio_value during market-open
-        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring), and
+        # glitches, and
         # holding the loosest cap on exactly that kind of broken-snapshot
         # day is the failure this guard closes: halting new risk (the
         # ladder's own floor rung) is safer than assuming zero drawdown.
@@ -12243,9 +12714,27 @@ class TradingPipeline:
                 qty = self._full_sell_qty(held_qty)
             if qty is None or qty <= 0:
                 continue
-            # Same 1%-through-the-market buffer `_force_delever` uses: when
-            # clearing unintended leverage, fill beats price. A COVER is a
-            # BUY, so it pays UP through the market rather than down.
+            # Price the trim off the LIVE quote at submit time, not a fixed %
+            # of a possibly-stale mark. This is emergency risk reduction: the
+            # book already exceeds its gross ceiling and the whole point of the
+            # trim is to shed that exposure NOW, regardless of how far a name
+            # has gapped. A fixed % of a stale price rests ABOVE the falling
+            # market on a gap day — precisely the conditions that trigger the
+            # ladder — leaving the book OVER its ceiling exactly when it must
+            # come down (docs/WORK.md item 118).
+            #
+            # `_live_delever_price` reads the CURRENT bid/ask and returns a
+            # MARKETABLE limit that crosses it — a SELL at the live bid, a
+            # COVER (BUY) at the live ask — so the order fills at ANY gap size,
+            # because the gap is already IN the quote. When no live quote is
+            # available it returns a limit of None, and the order becomes a
+            # MARKET order: the guaranteed fill, and the correct fallback when
+            # there is no live price to cross. No new % constant is introduced
+            # on either branch, and the must-fill requirement (fill NOW over a
+            # few bps of price) is met without resting on a stale reference.
+            # The reference passed to the broker is the live mid, so the
+            # fat-finger guard passes a legitimately gapped fill instead of
+            # rejecting it for deviating from yesterday's mark.
             #
             # `FORCE_DELEVER` is already an EITHER-SIDE exit action in the
             # ledger (`_EITHER_SIDE_EXIT_ACTIONS`, src/storage/db.py) — "a
@@ -12253,15 +12742,18 @@ class TradingPipeline:
             # open" — so the same label correctly retires a short chain
             # without inventing a second action name.
             is_cover = trim.action == "COVER"
-            limit_price = round(
-                position.current_price * (1.01 if is_cover else 0.99), 2,
+            side = "buy" if is_cover else "sell"
+            limit_price, quote_ref = self._live_delever_price(trim.symbol, side)
+            exec_ref = (
+                quote_ref if quote_ref is not None else position.current_price
             )
             sale = self._submit_protected_sell(
                 symbol=trim.symbol, qty=qty, limit_price=limit_price,
-                reference_price=position.current_price,
+                reference_price=exec_ref,
                 position_qty_before_sell=abs(position.qty),
                 label="FORCE_DELEVER",
-                side="buy" if is_cover else "sell",
+                side=side,
+                escalate_to_market_on_reject=True,
             )
             if sale is None:
                 continue
@@ -12269,8 +12761,9 @@ class TradingPipeline:
             pending_protections.append(protection)
             orders.append(order)
             logger.info(
-                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=$%.2f (%s)",
-                trim.action, trim.symbol, self._format_qty(qty), limit_price,
+                "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=%s (%s)",
+                trim.action, trim.symbol, self._format_qty(qty),
+                (f"${limit_price:.2f}" if limit_price is not None else "market"),
                 ceiling.reason,
             )
             try:
@@ -12393,7 +12886,7 @@ class TradingPipeline:
             )
 
     def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
-        """Flag it when the gross-exposure de-lever did not work.
+        """Flag AND page the owner when the gross-exposure de-lever did not work.
 
         `_enforce_gross_ceiling` already logs a warning the moment it
         *decides* to trim. What nothing checked before this is the OUTCOME:
@@ -12414,20 +12907,75 @@ class TradingPipeline:
         numbers come from the same post-refresh `_resolve_gross_ceiling`
         call used for the ordinary leverage line, and the check is skipped
         (not defaulted to False) when either is unmeasurable.
+
+        Item 112: promoted from a one-line session bullet to a STANDALONE
+        `send_owner_alert`, mirroring the sibling
+        `_alert_owner_force_delever_incomplete` — a book left over its
+        ceiling after the ladder ran is the same class of unattended
+        margin risk. The page is guarded by a STATE CHANGE: it fires only on
+        the transition INTO still-over (prior recorded state was cleared or
+        absent), so a book that sits over the ceiling for days does not page
+        every session. The flag, the log line and the shortfall evidence
+        record are unchanged — they still happen every session it is over;
+        only the owner PAGE is edge-triggered. No "keep selling" behaviour is
+        added here (owner-escalated, out of scope), and no global throttle is
+        added to `send_owner_alert`.
         """
         leverage = ctx.leverage or {}
         gross_x = leverage.get("gross_x")
         ceiling_x = leverage.get("ceiling_x")
         if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+            # Unmeasurable this session — record no state, so it neither pages
+            # nor resets the transition edge for the next real measurement.
             return
-        if gross_x <= ceiling_x:
+        still_over = gross_x > ceiling_x
+
+        # Read the prior session's recorded state BEFORE writing this one, so
+        # the read sees only earlier sessions (transition detection). Both the
+        # read and the write are best-effort: a persistence hiccup must not
+        # break the de-lever path, and on a failed read we fall back to paging
+        # (fail loud, never silence a real over-ceiling book).
+        run_id = getattr(ctx, "run_id", None)
+        was_over: bool | None
+        try:
+            was_over = self.db.get_last_delever_over_ceiling(exclude_run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state read failed: %s", exc)
+            was_over = None
+        try:
+            self.db.save_delever_ceiling_state(
+                run_id=run_id or "", over_ceiling=still_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delever ceiling-state write failed: %s", exc)
+
+        if not still_over:
             return
+
         leverage["delever_incomplete"] = True
         logger.warning(
             "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
             "— gross exposure %.2fx equity vs a %.2fx ceiling.",
             gross_x, ceiling_x,
         )
+
+        if was_over:
+            # Already paged when the book first crossed into still-over; do not
+            # repeat every session while it stays there.
+            return
+
+        try:
+            from src import notifier as _notifier
+
+            msg = (
+                f"GROSS-EXPOSURE DE-LEVER INCOMPLETE: after de-levering, gross "
+                f"exposure is still {gross_x:.2f}x equity against a "
+                f"{ceiling_x:.2f}x ceiling. The book remains over its ceiling "
+                f"until this is resolved."
+            )
+            _notifier.send_owner_alert(msg)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("de-lever incomplete owner alert failed: %s", exc)
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
@@ -12548,14 +13096,29 @@ class TradingPipeline:
 
     @staticmethod
     def _paid_suspended_payload(
-        run_id: str, *, orders: list[dict] | None = None, error: BaseException | None = None,
+        run_id: str,
+        *,
+        orders: list[dict] | None = None,
+        error: BaseException | None = None,
+        filings_waiting: list[dict] | None = None,
     ) -> dict:
+        # `filings_waiting` (2026-09-24): when the cost circuit trips after
+        # `run_earnings_preprocess` has already computed which filings were
+        # queued for the LLM reader, that backlog was silently dropped here
+        # -- the suspended payload carried no earnings keys at all, so
+        # `_append_earnings_body` rendered "analyzed:0 confirmed:0
+        # failed:0" for a run that actually found N new filings. Passing it
+        # through lets the owner-facing message say "suspended, N filing(s)
+        # waiting" instead of implying nothing happened.
+        waiting = list(filings_waiting or [])
         return {
             "status": "paid_analysis_suspended",
             "run_id": run_id,
             "orders": list(orders or []),
             "error": str(error or "mandatory cost circuit is open"),
             "paid_analysis_suspended": True,
+            "filings_waiting": waiting,
+            "filings_waiting_count": len(waiting),
             "preserved": [
                 "broker_resident_protection",
                 "order_fill_reconciliation",
@@ -12574,26 +13137,24 @@ class TradingPipeline:
         orders: list[dict] | None = None,
         extra: dict | None = None,
     ) -> dict:
-        """Recheck deterministic loss protection before a suspension return."""
+        """The suspension return payload.
+
+        It used to re-run an account-level loss check first. That
+        whole mechanism was removed 2026-09-20 on owner instruction
+        (docs/INCIDENT_HISTORY.md, retired item 32): per-position stops are
+        the desk's loss protection now, and they live at the broker rather
+        than depending on this process reaching this line.
+
+        KNOWN RESIDUE, deliberately not chased in that change: `session`
+        and `where` are now unused here, and the name still says "after
+        late safety" when there is no late safety check left. Eleven call
+        sites pass both. Renaming the method and dropping two keyword
+        arguments across all eleven is churn with no behavioural effect, so
+        it was left for whoever next touches this path — it is recorded
+        here rather than silently tolerated.
+        """
 
         existing_orders = list(orders or [])
-        halt = self._check_late_breach_and_halt(run_id, where)
-        if halt is not None:
-            if session == "morning":
-                # A halt supersedes any PM checkpoint written before the
-                # breaker opened (for example while entering RM). Never allow
-                # that pre-halt plan to resume after a reset.
-                from src import decision_checkpoint as _dc
-                _dc.mark_consumed("morning")
-                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-            # The halt itself placed no orders; these are the session's own,
-            # carried through so the feed still renders them.
-            halt["orders"] = existing_orders + list(halt.get("orders") or [])
-            halt["paid_analysis_suspended"] = True
-            halt["suspension_error"] = str(error)
-            if extra:
-                halt.update(extra)
-            return halt
         payload = self._paid_suspended_payload(
             run_id, orders=existing_orders, error=error,
         )
@@ -12816,7 +13377,9 @@ class TradingPipeline:
         problem costs the audit record, never the morning push.
         """
         self._last_evidence_freshness = None
+        self._last_account_snapshot = None
         result = self._run_morning_body()
+        self._attach_pnl(result)
         self._attach_evidence_freshness(result)
         self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
@@ -12852,6 +13415,77 @@ class TradingPipeline:
         status = getattr(self, "_last_decision_data_status", None)
         if isinstance(status, dict) and status and "data_status" not in result:
             result["data_status"] = dict(status)
+
+    def _record_account_snapshot(self, total_value, last_equity) -> None:
+        """Remember the account read this session already made, so the P&L
+        block can be built from it on EVERY return path.
+
+        The session takes exactly one broker account snapshot and then may
+        leave by any of a dozen returns (no_trades, pm_agent_failure,
+        paid_analysis_suspended, executed, ...). Before 2026-09-23 only the
+        position-review and intra-check happy paths bothered to carry the
+        P&L keys out, so the morning message the owner actually reads said
+        "not available" while the same message printed the book it had just
+        read. Recording the snapshot here, and attaching in the wrapper,
+        makes the figure a property of "the account was read", not of which
+        exit the run happened to take.
+        """
+        try:
+            self._last_account_snapshot = (
+                float(total_value), float(last_equity),
+            )
+        except (TypeError, ValueError):
+            self._last_account_snapshot = None
+
+    def _attach_pnl(self, result) -> None:
+        """Fill the owner-facing P&L keys from this run's own account read.
+
+        SAME basis and SAME source as the path that already worked — the
+        broker's day-over-day change against `last_equity`, and
+        `_total_pnl_since_reset` for the dated baseline (see
+        `trader_feed._pnl_section_lines` for why "total" is dated). No
+        second way to compute P&L is introduced here, and nothing is
+        computed where the account was not read: a run with no snapshot
+        sets the REASON instead, so the message can say something true.
+
+        Never overwrites a figure a body already set, and never raises — a
+        P&L fault must not cost the push.
+        """
+        if not isinstance(result, dict):
+            return
+        keys = (
+            "daily_pnl", "daily_return_pct",
+            "total_pnl", "total_return_pct", "total_pnl_since",
+        )
+        if any(k in result for k in keys):
+            return
+        snapshot = getattr(self, "_last_account_snapshot", None)
+        if not snapshot:
+            result.setdefault(
+                "pnl_unavailable_reason", "ended_before_account_read",
+            )
+            return
+        try:
+            total_value, last_equity = snapshot
+            if last_equity > 0:
+                daily_pnl = total_value - last_equity
+                result["daily_pnl"] = daily_pnl
+                result["daily_return_pct"] = daily_pnl / last_equity * 100
+            total_pnl, total_return_pct, total_pnl_since = (
+                self._total_pnl_since_reset(total_value)
+            )
+            if total_pnl is not None:
+                result["total_pnl"] = total_pnl
+                result["total_return_pct"] = total_return_pct
+                result["total_pnl_since"] = total_pnl_since
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning("P&L attach failed (non-fatal): %s", exc)
+        if not any(k in result for k in keys):
+            # The account WAS read; what is missing is a usable prior close
+            # (and no dated baseline row exists either). Say that, rather
+            # than claiming an account read that demonstrably happened did
+            # not.
+            result.setdefault("pnl_unavailable_reason", "no_prior_close")
 
     def _persist_session_report(self, mode: str, result: dict) -> None:
         """Write a morning/midday/close result dict verbatim, keyed by
@@ -12912,7 +13546,7 @@ class TradingPipeline:
             # sessions where finalize had to bail (lingering SELL didn't
             # converge, or broker API hiccup). Each drained row brings a
             # symbol's stop coverage back in line with broker reality.
-            self._drain_pending_protection_restores()
+            drained = self._drain_pending_protection_restores()
             self._drain_pending_repegs()
             # audit F4: resolve BUY write-ahead orphans from a prior
             # crashed session before this run touches positions/cash.
@@ -12922,10 +13556,22 @@ class TradingPipeline:
             # first — the position has been closed for hours by the time
             # this runs, and every other session entry point runs this same
             # check again in case morning's own attempt failed.
+            #
+            # Item 173(2): unlike intra/evening, this site is NOT reordered to
+            # run `_reconcile_fills` first. Morning's `_reconcile_fills` lives
+            # in the method-end `finally:` block, reconciling THIS session's
+            # own just-submitted orders after execution — there are no stale
+            # 'submitted' SELLs from earlier today for it to resolve here, so
+            # the false-gap page the reorder prevents cannot arise at morning,
+            # and moving it ahead would strand this session's fills.
+            reco = None
             try:
-                self._reconcile_stop_out_fills(run_id)
+                reco = self._reconcile_stop_out_fills(run_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("morning stop-out reconcile failed (non-fatal): %s", exc)
+            # Item 101: surface a broker-made stop-out / re-protection to the
+            # owner — the write-backs above are otherwise silent.
+            self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
             # 0. Cancel stale entry orders from previous sessions, but preserve live protective exits.
             self.broker.cancel_open_entry_orders()
@@ -12953,6 +13599,9 @@ class TradingPipeline:
             ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
             ctx.total_value = total_value
             ctx.last_equity = last_equity
+            # The owner's P&L block is built from THIS read, whichever of
+            # the body's return paths the run leaves by (see `_attach_pnl`).
+            self._record_account_snapshot(total_value, last_equity)
             logger.info(
                 "Account: $%.2f total, $%.2f cash (deployable $%.2f), %d positions (last close $%.2f)",
                 total_value, cash, ctx.deployable_cash, len(positions), last_equity)
@@ -12981,26 +13630,6 @@ class TradingPipeline:
             # book we just read, before the long research window.
             self._sync_positions_from_broker(positions)
 
-            # Hard circuit breaker before any LLM/research work. If the account
-            # opens through the daily-loss limit, the deterministic response
-            # must not depend on PM/RM producing a tradeable plan later in the
-            # run. That response is a HALT, not a liquidation — docs/WORK.md
-            # item 32, see `_halt_on_daily_loss_breach`.
-            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-                account, positions,
-            )
-            if loss_violation and positions:
-                halt = self._halt_on_daily_loss_breach(
-                    positions, loss_violation, run_id,
-                    where="morning pre-research", basis=loss_basis, ctx=ctx,
-                )
-                # Any same-day plan is superseded by the halt — a stale
-                # unconsumed checkpoint must not resume, and the dead-man
-                # probe must not read this as a killed morning.
-                from src import decision_checkpoint as _dc
-                _dc.mark_consumed("morning")
-                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                return halt
 
             # All broker-resident and deterministic safety work above runs
             # even while the paid-analysis circuit is latched. Only now, at
@@ -13079,20 +13708,6 @@ class TradingPipeline:
                     )
                 analyses = ctx.analyses
 
-                # Late-breach check: research can take 5-10 min on slow OpenAI
-                # days. The pre-research circuit breaker (#45) caught open-gap
-                # losses; this catches the case where the tape crosses the
-                # daily-loss limit DURING research and the morning would
-                # otherwise bail to no_data/no_trades, leaving the breach for
-                # the next intra tick (30 min away). Mirror the pre-research
-                # bypass: deterministic HALT, no LLM dependency.
-                late_breach = self._check_late_breach_and_halt(
-                    run_id, "post-research", ctx=ctx,
-                )
-                if late_breach is not None:
-                    _dc.mark_consumed("morning")
-                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                    return late_breach
 
                 if not analyses:
                     logger.warning("No analyses produced, skipping trading")
@@ -13129,22 +13744,6 @@ class TradingPipeline:
                 # instead of a wasted research+PM spend.
                 _dc.write(ctx)
 
-                # Second late-breach check: PM is itself a multi-second LLM
-                # call (memory layers + Constructor sizing). The post-research
-                # check (#60) caught breaches during research but a parse-fail
-                # or empty-plan exit at this point would still skip the
-                # deterministic halt until the next intra tick. Codex
-                # r8 #1 caught this gap — same fix as #60, just one stage
-                # later in the pipeline.
-                late_breach = self._check_late_breach_and_halt(
-                    run_id, "post-decision", ctx=ctx,
-                )
-                if late_breach is not None:
-                    # The just-written checkpoint is superseded by the halt —
-                    # never resume it.
-                    _dc.mark_consumed("morning")
-                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
-                    return late_breach
 
             if not portfolio_decision:
                 failure_status = ctx.analysis_failure_status or "pm_agent_failure"
@@ -13405,23 +14004,26 @@ class TradingPipeline:
 
             # days_held — from BUY timestamp; fall back to None.
             #
-            # sessions_held is the weekend-aware companion count (Mon-Fri
-            # only, see `trading_calendar.trading_sessions_held`) — the
-            # noise-band scaling below needs TRADING SESSIONS, not calendar
-            # days, per the 2026-09-04 audit follow-up.
+            # sessions_held is the holiday-aware companion count (item 165:
+            # the broker's real market calendar via `broker.trading_sessions_held`,
+            # not the plain Mon-Fri weekday counter in
+            # `trading_calendar.trading_sessions_held`, which overstates by
+            # one session per market holiday crossed) — the noise-band
+            # scaling below needs TRADING SESSIONS, not calendar days, per
+            # the 2026-09-04 audit follow-up.
             days_held = None
             sessions_held = None
             buy_ts = (buy or {}).get("timestamp")
             if buy_ts:
                 try:
-                    from src.trading_calendar import to_et, trading_sessions_held
+                    from src.trading_calendar import to_et
                     from datetime import datetime as _dt
                     dt = _dt.fromisoformat(buy_ts.replace("Z", "+00:00")) if "T" in buy_ts \
                         else _dt.strptime(buy_ts, "%Y-%m-%d %H:%M:%S")
                     entry_date = to_et(dt).date()
                     days_held = (et_today() - entry_date).days
                     days_held = max(0, days_held)
-                    sessions_held = trading_sessions_held(entry_date, et_today())
+                    sessions_held = self.broker.trading_sessions_held(entry_date, et_today())
                 except Exception:
                     days_held = None
                     sessions_held = None
@@ -13437,6 +14039,15 @@ class TradingPipeline:
             except (TypeError, ValueError):
                 pinned_horizon = None
             setup_type = (buy or {}).get("setup_type") or None
+            # Item 82: the MEASURED half of the SAME verdict, pinned at entry
+            # alongside `setup_type` (stored 0/1/NULL). Present → this path
+            # reaches construction's OWN breakout verdict, not a label-only
+            # approximation of it; NULL (legacy row, or a pre-item-82 entry)
+            # → `is_trend_trade` falls back to the label alone, exactly as
+            # this code did before the column existed. See
+            # `src.risk.constants.is_trend_trade`.
+            _sc_raw = (buy or {}).get("structural_ceiling")
+            structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
 
             # Progress: 0 at entry, 100 at target, >100 beyond target.
             #
@@ -13445,12 +14056,14 @@ class TradingPipeline:
             # is no overhead structure for price to progress TOWARD, so
             # "progress" against it measures nothing and "pace" against that
             # nothing is worse. Breakouts are managed by trailing instead
-            # (spec Phase 3.7). `setup_type` is pinned at entry alongside the
-            # horizon.
+            # (spec Phase 3.7). The breakout verdict is pinned at entry: the
+            # analyst's `setup_type` OR the constructor's measured
+            # `structural_ceiling` — either sufficient, see `is_trend_trade`.
+            from src.risk.constants import is_trend_trade
             progress_pct = None
             pace = None
             pace_status = "unavailable"
-            if setup_type == "breakout":
+            if is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
                 pace_status = "n/a_breakout"
             else:
                 if progress_target and entry and progress_target != entry:
@@ -13478,15 +14091,17 @@ class TradingPipeline:
                 # is the same weekend-aware count the noise-band scaling above
                 # already uses (`trading_calendar.trading_sessions_held`) —
                 # no new number, just the one already computed above.
+                # Board item 165 (owner ruling 2026-09-25): there is NO
+                # elapsed-time floor before pace is judged. The old
+                # `sessions_held < max(1, pinned_horizon / 3)` "too_early" gate
+                # was a made-up clock stacked on a guessed horizon; the desk
+                # reassesses every review from the live instrument, so pace is
+                # computed and surfaced from the first review whenever the
+                # inputs exist. Early pace is naturally extreme (a tiny
+                # time_fraction), which the reviewer reads as context — it is
+                # never on its own a reason to exit (see the prompt).
                 if progress_pct is None or not pinned_horizon or sessions_held is None:
                     pace_status = "unavailable_no_pinned_horizon"
-                elif sessions_held < max(1, pinned_horizon / 3):
-                    # Below one third of the pinned horizon the metric is
-                    # mathematically meaningless — a thesis given 15 sessions
-                    # cannot be "behind schedule" on session 2, and reading it
-                    # as such is exactly how a day-5 position gets sold for
-                    # "not progressing".
-                    pace_status = "too_early"
                 else:
                     time_fraction = sessions_held / pinned_horizon
                     if time_fraction > 0:
@@ -13747,7 +14362,9 @@ class TradingPipeline:
         """
         if session_type not in ("midday", "close"):
             raise ValueError(f"run_position_review: unknown session_type {session_type!r}")
+        self._last_account_snapshot = None
         result = self._run_position_review_body(session_type)
+        self._attach_pnl(result)
         self._persist_session_report(session_type, result)
         return result
 
@@ -13812,7 +14429,7 @@ class TradingPipeline:
         # If morning bailed on a finalize and the SELL has since become
         # terminal, recover stop coverage NOW rather than waiting for
         # next-morning's drain — codex r8 #2.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit (independent of the WAL).
@@ -13823,13 +14440,25 @@ class TradingPipeline:
         # every trading day, so this is the most frequent chance to catch a
         # stop that fired since the last pass and write it back before the
         # reviewer builds its "what happened today" picture.
+        #
+        # Item 173(2): unlike intra/evening, this site is NOT reordered to run
+        # `_reconcile_fills` first. This session's only `_reconcile_fills` is
+        # conditional and runs later — after `_force_delever` /
+        # `_enforce_gross_ceiling` — SOLELY to flip THIS session's own
+        # FORCE_DELEVER rows so the reviewer can see them; it is not the
+        # unscoped stale-'submitted' sweep intra/evening run. Moving it ahead
+        # of the ceiling logic would reconcile rows that don't exist yet, so
+        # the reorder does not apply here.
+        reco = None
         try:
-            self._reconcile_stop_out_fills(run_id)
+            reco = self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "%s stop-out reconcile failed (non-fatal): %s",
                 session_type, exc,
             )
+        # Item 101: surface a broker-made stop-out / re-protection to owner.
+        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
         # 1. Sync positions (snapshot into ctx)
         account = self.broker.get_account()
@@ -13837,6 +14466,9 @@ class TradingPipeline:
         cash = account["cash"]
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
+        # Carries the P&L block out of the paid-suspension return paths too,
+        # which read the account and then reported "not available".
+        self._record_account_snapshot(total_value, last_equity)
         ctx.account = account
         ctx.positions = positions
         ctx.cash = cash
@@ -13880,32 +14512,6 @@ class TradingPipeline:
             self._total_pnl_since_reset(total_value)
         )
 
-        # Hard circuit breaker: if the session is already through the daily-loss
-        # limit, bypass all LLM/news/earnings work and HALT (docs/WORK.md item
-        # 32 — the force-liquidation this used to do is deleted). Keeps the
-        # deterministic safety path alive even when the reviewer
-        # model/provider is unavailable.
-        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-            ctx.account, positions,
-        )
-        if loss_violation and positions:
-            logger.warning(
-                "%s risk alert before LLM review: %s — bypassing reviewer and "
-                "halting new risk", session_type.capitalize(),
-                loss_violation.message,
-            )
-            halt = self._halt_on_daily_loss_breach(
-                positions, loss_violation, run_id,
-                where=f"{session_type} pre-review", basis=loss_basis, ctx=ctx,
-            )
-            halt["session"] = session_type
-            halt["review"] = None
-            halt["daily_pnl"] = daily_pnl
-            halt["daily_return_pct"] = daily_return_pct
-            halt["total_pnl"] = total_pnl
-            halt["total_return_pct"] = total_return_pct
-            halt["total_pnl_since"] = total_pnl_since
-            return halt
 
         # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
         # used to sit here: sell 15% of any position once its unrealised
@@ -14270,122 +14876,69 @@ class TradingPipeline:
                 review, ctx=ctx, run_id=run_id, review_kwargs=review_kwargs,
             )
 
-            # Risk check: if the daily loss limit is breached, HALT — refuse
-            # further risk and verify the stops. Else dispatch the LLM's
-            # per-position action list. (docs/WORK.md item 32: this used to
-            # force-sell the whole book.)
-            #
-            # Refresh FIRST, then measure: the locals here date from BEFORE
-            # the LLM review (minutes of crash tape ago), and the loss
-            # numerator is now read off the held positions themselves, so a
-            # stale position list would be a stale measurement. Falls back to
-            # the pre-review snapshot if the refresh fails — a breach must
-            # still be judged, on the best truth available.
-            fresh_account = ctx.account
+            # Refresh the broker book before dispatching the LLM's
+            # per-position action list: the locals here date from BEFORE the
+            # review (minutes of tape ago). Falls back to the pre-review
+            # snapshot if the refresh fails.
             try:
-                fresh_account = self.broker.get_account() or ctx.account
                 fresh_positions = self.broker.get_positions()
                 if fresh_positions:
                     positions = fresh_positions
             except Exception as e:  # noqa: BLE001
-                logger.warning("post-review breach check: refresh failed "
+                logger.warning("post-review position refresh failed "
                                "(using pre-review snapshot): %s", e)
-            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-                fresh_account, positions,
+            # Phase 3.7 — deterministic trailing FIRST, before the LLM's
+            # discretionary TRAIL_STOP is considered. Arithmetic does not
+            # need a language model's permission, and a winner's stop
+            # should not depend on one remembering to propose a move.
+            orders.extend(
+                self._apply_deterministic_trails(review_positions, run_id=run_id)
             )
-            if loss_violation:
-                # Review fix, still load-bearing: this branch previously FELL
-                # THROUGH to the park bookend — the system would buy SGOV with
-                # ~all equity on a breach day and the next intra tick would
-                # act on the fresh SGOV lot. Mirror the pre-review breaker:
-                # return, never park.
-                halt = self._halt_on_daily_loss_breach(
-                    positions, loss_violation, run_id,
-                    where=f"{session_type} post-review", basis=loss_basis,
-                    ctx=ctx,
-                )
-                halt["session"] = session_type
-                halt["review"] = review.model_dump() if review else None
-                # Best-available truth at halt time: the just-refreshed
-                # account snapshot above, not the pre-review one this
-                # function otherwise carries as `total_value`/`daily_pnl`.
-                fresh_total_value = (
-                    fresh_account.get("portfolio_value", total_value)
-                    if isinstance(fresh_account, dict) else total_value
-                )
-                fresh_last_equity = (
-                    fresh_account.get("last_equity", fresh_total_value)
-                    if isinstance(fresh_account, dict) else last_equity
-                )
-                halt["daily_pnl"] = (
-                    (fresh_total_value - fresh_last_equity) if fresh_last_equity else 0.0
-                )
-                halt["daily_return_pct"] = (
-                    (halt["daily_pnl"] / fresh_last_equity * 100) if fresh_last_equity else 0.0
-                )
-                (halt["total_pnl"], halt["total_return_pct"],
-                 halt["total_pnl_since"]) = self._total_pnl_since_reset(fresh_total_value)
-                # The session's own earlier orders (deterministic trails and
-                # the like) are preserved for the feed. The halt itself
-                # placed none — `halted` / `halt_reason` are the record of
-                # that, and the invariant is tested.
-                halt["orders"] = list(orders)
-                # Spec §11.2 — gross exposure and its ceiling.
-                halt["leverage"] = dict(ctx.leverage)
-                return halt
-            else:
-                # Phase 3.7 — deterministic trailing FIRST, before the LLM's
-                # discretionary TRAIL_STOP is considered. Arithmetic does not
-                # need a language model's permission, and a winner's stop
-                # should not depend on one remembering to propose a move.
-                orders.extend(
-                    self._apply_deterministic_trails(review_positions, run_id=run_id)
-                )
 
-                # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
-                # as well as entries. Until this landed the entire sell side
-                # skipped the veto layer the buy side has always had.
-                risk_vetoed, _exit_verdict = self._risk_review_exits(
+            # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
+            # as well as entries. Until this landed the entire sell side
+            # skipped the veto layer the buy side has always had.
+            risk_vetoed, _exit_verdict = self._risk_review_exits(
+                review, review_positions, run_id=run_id,
+                total_value=total_value, macro_summary=macro_summary,
+                position_facts=position_facts,
+                # This loop fetched all of these before the position
+                # reviewer ran; until 2026-09-13 none of them reached the
+                # AI Risk seat, which was then asked to audit the exits
+                # against news and drawdown state it had never been shown.
+                news_intel=session_news,
+                earnings_analyses=session_earnings,
+                cash=review_cash,
+                reserve_balance=reserve_balance,
+                recent_performance=recent_performance,
+            )
+            orders.extend(self._midday_execute_llm_actions(
+                review_positions, review, run_id,
+                already_trimmed_today=already_trimmed_today,
+                metric_deltas=metric_deltas,
+                risk_vetoed_symbols=risk_vetoed,
+                position_facts=position_facts,
+            ))
+
+            # Take-profit revision flags, adjudicated LAST — after every
+            # exit decision this session makes. A re-derived target
+            # therefore cannot reach this session's exits even in
+            # principle; and because progress/pace are measured against
+            # the PINNED entry target, it cannot reach a later session's
+            # exit-guard veto either. Places no orders: nothing here
+            # exits anything, and the trailing stop remains the only
+            # automatic exit (PR #321).
+            try:
+                target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,
-                    total_value=total_value, macro_summary=macro_summary,
-                    position_facts=position_facts,
-                    # This loop fetched all of these before the position
-                    # reviewer ran; until 2026-09-13 none of them reached the
-                    # AI Risk seat, which was then asked to audit the exits
-                    # against news and drawdown state it had never been shown.
-                    news_intel=session_news,
-                    earnings_analyses=session_earnings,
-                    cash=review_cash,
-                    reserve_balance=reserve_balance,
-                    recent_performance=recent_performance,
+                    seat="position_reviewer",
                 )
-                orders.extend(self._midday_execute_llm_actions(
-                    review_positions, review, run_id,
-                    already_trimmed_today=already_trimmed_today,
-                    metric_deltas=metric_deltas,
-                    risk_vetoed_symbols=risk_vetoed,
-                    position_facts=position_facts,
-                ))
-
-                # Take-profit revision flags, adjudicated LAST — after every
-                # exit decision this session makes. A re-derived target
-                # therefore cannot reach this session's exits even in
-                # principle; and because progress/pace are measured against
-                # the PINNED entry target, it cannot reach a later session's
-                # exit-guard veto either. Places no orders: nothing here
-                # exits anything, and the trailing stop remains the only
-                # automatic exit (PR #321).
-                try:
-                    target_revisions = self._adjudicate_target_revision_flags(
-                        review, review_positions, run_id=run_id,
-                        seat="position_reviewer",
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "target revision sweep failed (non-fatal, no target "
-                        "was changed): %s", exc,
-                    )
-                    target_revisions = []
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "target revision sweep failed (non-fatal, no target "
+                    "was changed): %s", exc,
+                )
+                target_revisions = []
 
             # Snapshot AFTER the review so the next session compares against
             # what this one actually saw. Written even when the review failed:
@@ -14446,6 +14999,21 @@ class TradingPipeline:
         }
 
     def run_earnings_preprocess(self) -> dict:
+        """Pre-market earnings analysis, plus the one true sentence its
+        P&L block can say.
+
+        This mode runs before the open and makes no broker account read at
+        all, so its message genuinely has no figure. It says so explicitly
+        rather than letting the renderer guess from absent keys — the guess
+        is what produced the false "built without an account read" line on
+        trading sessions that HAD read the account (2026-09-23).
+        """
+        result = self._run_earnings_preprocess_body()
+        if isinstance(result, dict):
+            result.setdefault("pnl_unavailable_reason", "no_account_read")
+        return result
+
+    def _run_earnings_preprocess_body(self) -> dict:
         """Pre-market earnings analysis — the ONLY place that calls the LLM
         for 10-Q/10-K filings.
 
@@ -14476,9 +15044,13 @@ class TradingPipeline:
         # an unprotected position would ride the open-gap with no stop —
         # matches the drain pattern used in run_morning / run_position_review
         # / run_intra_check / run_evening.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
+        # Item 101: this pre-market session runs no stop-out reconcile, but a
+        # naked position it re-protects is a live-risk event the owner should
+        # still hear about — surface the drain count on its own.
+        self._surface_reconcile_outcomes(drained_count=drained, run_id=run_id)
 
         # Refresh the credentialless SEC Form 4 cache before any paid-analysis
         # gate. This deterministic source work remains available while the
@@ -14569,8 +15141,13 @@ class TradingPipeline:
             results = self.earnings_analyst.analyze_reports(new_reports)
         except PaidAnalysisSuspended as exc:
             # No filing failure is recorded: the filing remains new and will
-            # be eligible after an operator resets the circuit.
-            payload = self._paid_suspended_payload(run_id, error=exc)
+            # be eligible after an operator resets the circuit. Attach the
+            # already-computed `filings_waiting` backlog so the notifier
+            # renders "suspended, N filing(s) waiting" instead of the bare
+            # counts, which read as "nothing happened" for a real backlog.
+            payload = self._paid_suspended_payload(
+                run_id, error=exc, filings_waiting=filings_waiting,
+            )
             payload["smart_money_refresh"] = smart_money_refresh
             return payload
         except Exception as e:
@@ -14706,10 +15283,12 @@ class TradingPipeline:
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
         self._last_evidence_freshness = None
+        self._last_account_snapshot = None
         self._intra_preamble_deferred = ""
         result = self._run_intra_check_body()
         if isinstance(result, dict) and self._intra_preamble_deferred:
             result["preamble_deferred"] = self._intra_preamble_deferred
+        self._attach_pnl(result)
         self._attach_evidence_freshness(result)
         self._persist_intra_check_report(result)
         return result
@@ -14730,18 +15309,19 @@ class TradingPipeline:
             )
 
     def _run_intra_check_body(self) -> dict:
-        """Lightweight intra-session circuit-breaker check (no LLM calls).
+        """Lightweight intra-session maintenance tick (no LLM calls).
 
-        Scheduled between morning and midday (typically 12:00 ET) to catch a
-        flash crash that would otherwise accumulate unchecked through the
-        busiest trading hour. Only one rule: daily P&L vs loss limit. If
-        breached, HALT the desk — see `_halt_on_daily_loss_breach`. It
-        reconciles fills, cancels resting entry orders, verifies stop
-        coverage per held position AT THE BROKER, files a durable per-symbol
-        refusal reason and alerts the owner. It closes, resizes and zeroes
-        nothing: the whole-book liquidation this used to describe was
-        deleted on 2026-09-14 (item 32). Runs in ~5 seconds; OK for a
-        30-minute cadence if the user wants even tighter coverage.
+        Scheduled between morning and midday (typically 12:00 ET). It
+        reconciles fills, repairs stop coverage on anything found
+        unprotected, reports the session snapshot, and runs the bounded
+        intraday opportunity scan.
+
+        **It no longer carries an account-level loss breaker.** That whole
+        mechanism — a daily P&L vs loss-limit test that halted the desk —
+        was removed 2026-09-20 on the owner's instruction (retired item 32,
+        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
+        living at the broker, which does not depend on this tick running.
+        Runs in ~5 seconds.
         """
         ctx = RunContext.start("intra_check")
         run_id = ctx.run_id
@@ -14768,8 +15348,12 @@ class TradingPipeline:
         # A live session runs this same preamble itself near the start of its
         # own run, and it may be in the middle of cancelling stops to sell; a
         # stop added here in that window is the worst pairing item 127 names.
-        # Deferring skips only this tick's preamble: the loss check below
-        # still runs every tick, and the next tick re-reads the broker.
+        # Deferring skips only this tick's preamble, and the next tick
+        # re-reads the broker. This used to add "the loss check below still
+        # runs every tick" as the rest of the safety argument; there is no
+        # loss check any more (2026-09-20, retired item 32), so the
+        # argument for deferring now rests entirely on the next tick
+        # re-reading. Board item 127 is open on that exposure.
         coverage_gaps: list[dict] = []
         preamble_deferred = ""
         with self._intraday_scan_process_lock() as preamble_lock:
@@ -14792,14 +15376,14 @@ class TradingPipeline:
             if preamble_deferred:
                 logger.warning(
                     "Intra check: broker-writing preamble DEFERRED this tick — "
-                    "%s. No drain, repair, release or reconcile ran; the loss "
-                    "check still runs.", preamble_deferred,
+                    "%s. No drain, repair, release or reconcile ran; the next "
+                    "tick re-reads the broker.", preamble_deferred,
                 )
             else:
                 # Drain orphaned protection-restore intents — intra runs every
                 # 30 min so this is the most frequent recovery opportunity for
                 # bails that landed during morning. Codex r8 #2.
-                self._drain_pending_protection_restores()
+                drained = self._drain_pending_protection_restores()
                 self._drain_pending_repegs()
                 # Broker-truth coverage audit + auto-repair every tick (audit round
                 # 2): an entry that fills after place_entry_protection's wait, or a
@@ -14818,19 +15402,9 @@ class TradingPipeline:
                 # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
                 self._release_retired_cash_park(run_id)
                 self._reconcile_orphan_pending_submits()  # audit F4
-                # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
-                # every ~30 min, so this is the tightest window this reconciler
-                # runs on — a stop that fires mid-session is written back within
-                # one tick instead of sitting unrecorded until the next scheduled
-                # session hours later.
-                try:
-                    self._reconcile_stop_out_fills(run_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
-
                 # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
                 # table still read 'submitted' half an hour later. The stop-coverage
-                # and stop-out reconcilers just above only watch protective/broker-
+                # and stop-out reconcilers below only watch protective/broker-
                 # initiated exits — neither one asks the broker about the fate of an
                 # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
                 # 'submitted' in the trades table). `run_morning` and the midday/
@@ -14844,10 +15418,36 @@ class TradingPipeline:
                 # (`broker.get_order_fill_info`), never the socket. Unscoped
                 # (no run_id) so a still-'submitted' row from ANY earlier session
                 # today is picked up, not just ones this tick itself created.
+                #
+                # Item 173(2): this runs BEFORE the stop-out reconcile below,
+                # not after. A SELL this pipeline submitted but hasn't yet
+                # reconciled leaves the ledger believing the position is still
+                # open (get_symbols_with_open_ledger_qty ignores 'submitted'
+                # rows) while the broker has already reduced it — a positive
+                # gap. The stop-out reconciler can't explain that gap either,
+                # because the submitted SELL's broker_order_id is already in
+                # get_known_broker_order_ids, so its fill is filtered out of
+                # new_fills — and it pages a false CRITICAL "records disagree
+                # with broker". Reconciling fills first flips that SELL to
+                # executed, the gap closes, and the stop-out check stays quiet.
                 try:
                     self._reconcile_fills()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+                # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
+                # every ~30 min, so this is the tightest window this reconciler
+                # runs on — a stop that fires mid-session is written back within
+                # one tick instead of sitting unrecorded until the next scheduled
+                # session hours later.
+                reco = None
+                try:
+                    reco = self._reconcile_stop_out_fills(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+                # Item 101: surface a broker-made stop-out / re-protection to
+                # owner — intra is the tightest cadence, so this is where a
+                # mid-session stop-out reaches him fastest.
+                self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
         self._intra_preamble_deferred = preamble_deferred
 
@@ -14862,6 +15462,7 @@ class TradingPipeline:
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
         daily_pnl = total_value - last_equity
+        self._record_account_snapshot(total_value, last_equity)
         ctx.account = account
         ctx.positions = positions
         ctx.cash = account["cash"]
@@ -14879,88 +15480,55 @@ class TradingPipeline:
             total_value, last_equity, daily_pnl, daily_return_pct, len(positions),
         )
 
-        # `daily_pnl` above stays the ACCOUNT's day change — that is what the
-        # snapshot log, the dashboard and this payload report, and it is not
-        # changing. The BREACH TEST reads the held book instead, so that it
-        # is measured against the same object its threshold is built from
-        # (docs/WORK.md item 32, `_daily_loss_breach`).
-        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
-            account, positions,
-        )
-        if not loss_violation or not positions:
-            result = {
-                "status": "ok",
-                "daily_pnl": daily_pnl,
-                "daily_return_pct": daily_return_pct,
-                "total_pnl": total_pnl,
-                "total_return_pct": total_return_pct,
-                "total_pnl_since": total_pnl_since,
-                "positions": len(positions),
+        result = {
+            "status": "ok",
+            "daily_pnl": daily_pnl,
+            "daily_return_pct": daily_return_pct,
+            "total_pnl": total_pnl,
+            "total_return_pct": total_return_pct,
+            "total_pnl_since": total_pnl_since,
+            "positions": len(positions),
+            "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
+        }
+        # 2026-08-19 intraday opportunity-discovery fix: bounded new-
+        # opportunity scan.
+        try:
+            scan_result = self._run_intraday_opportunity_scan(ctx)
+        except PaidAnalysisSuspended as exc:
+            scan_result = {
+                "status": "paid_analysis_suspended",
                 "run_id": run_id,
-                "stop_coverage_gaps": coverage_gaps,
+                "error": str(exc),
+                "suspended": "intraday opportunity discovery only",
+                "preserved": "fill reconciliation and stop-coverage repair",
             }
-            # 2026-08-19 intraday opportunity-discovery fix: bounded new-
-            # opportunity scan, gated additionally on `not loss_violation`
-            # (belt-and-suspenders) — a daily-loss breach must never add
-            # new risk, whether or not there happened to be a position to
-            # force-close in the branch above.
-            if not loss_violation:
-                try:
-                    scan_result = self._run_intraday_opportunity_scan(ctx)
-                except PaidAnalysisSuspended as exc:
-                    scan_result = {
-                        "status": "paid_analysis_suspended",
-                        "run_id": run_id,
-                        "error": str(exc),
-                        "suspended": "intraday opportunity discovery only",
-                        "preserved": "intraday deterministic loss protection",
-                    }
-                except Exception as e:  # noqa: BLE001 — never let the scan
-                    # turn a routine intra_check tick into a failed run.
-                    # Operator-honesty fix: a crash used to set scan_result to
-                    # None, which is exactly what a healthy "ran, nothing to
-                    # do" tick also produces — no `intraday_scan` key, session
-                    # status stays "ok". The Telegram feed and the rehearsal
-                    # rig were both blind to the difference. Attaching a
-                    # dict (mirroring the `paid_analysis_suspended` shape
-                    # above) makes the crash visible through the same nested
-                    # path, while the tick itself still completes normally —
-                    # the deterministic loss check above already ran and is
-                    # unaffected by anything below it.
-                    logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
-                    scan_result = {
-                        "status": "intraday_scan_crashed",
-                        "run_id": run_id,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                        "preserved": "intraday deterministic loss protection",
-                    }
-                if scan_result is not None:
-                    result["intraday_scan"] = scan_result
-                    if scan_result.get("status") == "intraday_executed":
-                        # Scan went through ExecutionStage; refresh the
-                        # local table from broker truth (the start-of-tick
-                        # snapshot above is now stale).
-                        self._sync_positions_from_broker()
-            return result
-
-        # docs/WORK.md item 32 (2026-09-14): this was a near-verbatim copy of
-        # `_midday_emergency_liquidate` (retired-ok) — the same 1%-through-the-market LIMIT
-        # orders, the same `_finalize_pending_protections` restore on no-fill.
-        # Both are gone. The intra breaker now HALTS: it cancels resting
-        # entries, verifies that every held position really is stop-covered
-        # at the broker, files a per-symbol refusal, and alerts. It sells
-        # nothing. See `_halt_on_daily_loss_breach`.
-        halt = self._halt_on_daily_loss_breach(
-            positions, loss_violation, run_id,
-            where="intra_check", basis=loss_basis, ctx=ctx,
-        )
-        halt["daily_pnl"] = daily_pnl
-        halt["daily_return_pct"] = daily_return_pct
-        halt["total_pnl"] = total_pnl
-        halt["total_return_pct"] = total_return_pct
-        halt["total_pnl_since"] = total_pnl_since
-        return halt
+        except Exception as e:  # noqa: BLE001 — never let the scan
+            # turn a routine intra_check tick into a failed run.
+            # Operator-honesty fix: a crash used to set scan_result to
+            # None, which is exactly what a healthy "ran, nothing to
+            # do" tick also produces — no `intraday_scan` key, session
+            # status stays "ok". The Telegram feed and the rehearsal
+            # rig were both blind to the difference. Attaching a
+            # dict (mirroring the `paid_analysis_suspended` shape
+            # above) makes the crash visible through the same nested
+            # path, while the tick itself still completes normally.
+            logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
+            scan_result = {
+                "status": "intraday_scan_crashed",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "preserved": "fill reconciliation and stop-coverage repair",
+            }
+        if scan_result is not None:
+            result["intraday_scan"] = scan_result
+            if scan_result.get("status") == "intraday_executed":
+                # Scan went through ExecutionStage; refresh the
+                # local table from broker truth (the start-of-tick
+                # snapshot above is now stale).
+                self._sync_positions_from_broker()
+        return result
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
         """True when the explicit evaluation ledger says this symbol ran.
@@ -15052,17 +15620,41 @@ class TradingPipeline:
         """Wait for morning/midday/close to finish rather than skip the tick.
 
         Returns True when paid discovery must still be skipped (lock still
-        held at window end, or owner file unreadable). Returns False when
-        the slot is free.
+        held at window end, morning was the session waited on — see below —
+        or the owner file unreadable). Returns False when the slot is free.
+
+        Morning shares the 09:30 ``SESSION_WINDOWS`` start with this
+        ``intra_check`` fire, so waiting for morning then running paid
+        discovery on the SAME tick is still the 09:30 open, not a real
+        INTRADAY look (item 121 — measured leftover at 09:37). Sets
+        ``self._paid_scan_waited_for = "morning"`` in that case so the
+        caller skips this tick instead of scanning; the first true paid
+        INTRADAY look is the next existing half-hour fire, which sees
+        morning's lock already released and runs immediately with no
+        invented offset. Midday/close are a different cadence than this
+        fire, so waiting for either and then scanning on release is still
+        correct.
         """
         import time as _time
 
         first = True
         self._paid_scan_waited = False
+        self._paid_scan_waited_for = None
+        last_blocking = None
         while True:
             blocking = self._blocking_owner_session()
             if blocking is None:
                 if not first:
+                    if last_blocking == "morning":
+                        self._paid_scan_waited_for = "morning"
+                        logger.info(
+                            "Intraday scan: morning released the owner lock; "
+                            "this fire shares the 09:30 open with morning, "
+                            "so paid discovery stays skipped this tick — "
+                            "the next existing half-hour fire is the first "
+                            "true INTRADAY look",
+                        )
+                        return True
                     self._paid_scan_waited = True
                     logger.info(
                         "Intraday scan: other session released the owner lock; "
@@ -15070,6 +15662,7 @@ class TradingPipeline:
                         "waiting for the next 30-minute fire",
                     )
                 return False
+            last_blocking = blocking
             if blocking == "unreadable":
                 logger.warning(
                     "Intraday scan: could not validate active-session owner — "
@@ -15232,6 +15825,9 @@ class TradingPipeline:
             `_intraday_scan_process_lock`) or a morning/midday/close
             wrapper that still holds the owner lock at the end of this
             tick's wait (`_await_paid_scan_slot`).
+          - "intraday_scan_open_overlap": morning released the owner lock
+            on this same 09:30-shared tick — still the open, not a real
+            INTRADAY look (item 121; see `_intraday_open_overlap_skip`).
           - "intraday_scan_no_opportunity": the scan ran and found nothing
             worth escalating (see `_intraday_opportunity_scan_body`'s
             early-return points).
@@ -15699,32 +16295,6 @@ class TradingPipeline:
             "reason": "freshness probe returned no verdict",
         }
 
-    def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
-        """Currently visible Form 4 accessions for names we watch."""
-        provider = getattr(self, "smart_money_provider", None)
-        peek = getattr(provider, "peek_form4_accessions", None)
-        if not callable(peek):
-            peek = getattr(provider, "peek_accessions", None)
-        if not callable(peek):
-            return set()
-        if symbols is None:
-            symbols = self._watched_research_symbols(ctx=ctx)
-        try:
-            try:
-                found = peek(symbols)
-            except TypeError:
-                found = peek()
-            return {str(a).strip() for a in (found or []) if str(a).strip()}
-        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
-            # No live caller since PR #529 (the decision tick uses
-            # `_form4_freshness`). Still: a swallowed failure here returned
-            # "nothing new" with no trace at all. Say so.
-            logger.warning(
-                "Form 4 accession peek failed, returning no accessions: %s: %s",
-                type(exc).__name__, exc,
-            )
-            return set()
-
     def _form4_known_accessions(self) -> set[str]:
         """Accessions already processed or cached. No network."""
         out: set[str] = set()
@@ -15855,6 +16425,66 @@ class TradingPipeline:
             return CarryForward(None, verdict.status, same_session=same_session)
         return CarryForward(payload, verdict.status, same_session=same_session)
 
+    def _latest_news_read_today(self) -> dict | None:
+        """Today's news report, INCLUDING an answer a paid heal bought.
+
+        The scheduled sessions write `data/news/<ET day>/full_report.json`.
+        A paid heal does not, and must not: four readers walk that file
+        ACROSS days — `NewsStore.recent_state_changes` and the three
+        missed-ops/thesis scans in this module — so overwriting it would
+        push a heal's baseline-less `state_changes` into a multi-week
+        catalyst memory and delete the morning's from it. A file written for
+        a cross-day window is the wrong place to put a within-day refresh.
+
+        So the file stays the base, and the freshest PAID read of the day is
+        layered over it from `specialist_evidence`, which is already written
+        for every news answer (heal and scheduled alike) and is already
+        ET-day scoped. Nothing is written here.
+
+        LIFETIME, because this is the whole question: unchanged. Both
+        sources are bounded by the same ET trading day, and what expires the
+        result is still `evidence_kind.news_reuse` — the next material wire,
+        or the session ending. No clock, no N-minute refresh, no new number.
+        What changes is only WHICH of today's paid reads the desk finds.
+
+        Per-symbol coverage the newer read was never asked about is kept
+        (`seat_heal.merge_carried_stock_news`). Returns the file alone when
+        there is no newer row, when it will not parse, or when the store is
+        unreachable — a sick forensic table must never cost the desk the
+        news it already has on disk.
+        """
+        report = self.news_store.load_daily_report()
+        fetch = getattr(getattr(self, "db", None), "latest_news_analysis_today", None)
+        if not callable(fetch):
+            return report
+        try:
+            raw = fetch()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: latest news answer read failed: %s", e)
+            return report
+        if not raw:
+            return report
+        try:
+            import json as _json
+            from src.models import NewsIntelligenceReport
+            from src.seat_heal import merge_carried_stock_news
+            fresher = _json.loads(raw)
+            if not isinstance(fresher, dict):
+                return report
+            # Must still be a real report. A row that cannot parse is not
+            # allowed to demote a file that can — that would turn an
+            # `expired` seat into a LOST one, which is strictly worse.
+            NewsIntelligenceReport(**fresher)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Intraday scan: stored news answer would not parse; using "
+                "the day's report file: %s", e,
+            )
+            return report
+        if not report:
+            return fresher
+        return merge_carried_stock_news(fresher, report)
+
     def _carry_forward_news(self, ctx: RunContext | None = None) -> CarryForward:
         """This session's news intelligence, re-validated from its stored dump.
 
@@ -15875,7 +16505,7 @@ class TradingPipeline:
         """
         from src.evidence_kind import news_reuse
         try:
-            report = self.news_store.load_daily_report()
+            report = self._latest_news_read_today()
             if not report:
                 return CarryForward(None, "carry_forward_empty", same_session=False)
             from src.models import NewsIntelligenceReport
@@ -15883,9 +16513,11 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=False)
-        # load_daily_report only opens today's dated directory. A successful
-        # load is therefore same-session; there is no undated news snapshot
-        # on this path. Empty/failed above cannot claim it.
+        # Both sources `_latest_news_read_today` can return are bounded by
+        # the SAME ET trading day — the dated report directory and the
+        # ET-day evidence-row filter — so a successful load is same-session
+        # either way; there is no undated news snapshot on this path.
+        # Empty/failed above cannot claim it.
         wire_moved = self._news_has_newer_material_wire(payload)
         verdict = news_reuse(
             payload,
@@ -16080,6 +16712,170 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.error("seat heal: owner alert failed: %s", e)
 
+    def _persist_heal_call(self, ctx: RunContext, seat: str, agent_name: str,
+                            analysis, call_result) -> None:
+        """Record a PAID heal exactly the way an ordinary paid call is recorded.
+
+        Two rows, both of them the EXISTING path, neither of them new:
+
+          * `agent_logs` — the model, the tokens, the cost, the raw answer and
+            the prompt that produced it. Written under the seat's ORDINARY
+            agent name and marked as a heal in `input_summary`, which is the
+            convention the desk's two other paid re-asks already follow (the
+            exit-trigger re-ask logs `position_reviewer`, the candidate-
+            accounting re-ask logs `portfolio_manager`). A separate agent name
+            would hide the spend from every per-seat query that exists today,
+            which is a different corruption, not less of one. News keeps its
+            `_{session}` suffix because that IS its ordinary name.
+          * `specialist_evidence(kind="analysis")` — the model's answer as
+            structured evidence, the same row `RiskStage` writes for an
+            ordinary news or macro read.
+
+        Never raises: a forensic-write failure must not undo a heal that
+        succeeded, the same rule `_persist_evidence` and the two re-ask log
+        writes above already follow.
+        """
+        from src.pipeline_stages import _persist_evidence
+        session = getattr(ctx, "session", None) or "intra_check"
+        # `news_analyst_{session}` is the ordinary name for the news seat
+        # (`_run_news_analysis`); macro logs flat. Match each, don't invent.
+        log_name = f"{agent_name}_{session}" if seat == "news" else agent_name
+        if call_result is None:
+            # An analyst that returned an answer but no call record. Nothing
+            # to bill and nothing to quote — say so rather than writing a row
+            # of zeroes that would read as a free call.
+            logger.warning(
+                "seat heal: %s returned no call result; cost and raw answer "
+                "for this paid retry cannot be recorded", seat,
+            )
+        else:
+            try:
+                self.db.insert_agent_log(
+                    agent_name=log_name, run_id=ctx.run_id,
+                    input_summary=f"seat heal re-ask | {seat} | session={session}",
+                    input_message=getattr(call_result, "user_message", "") or "",
+                    output_summary=f"seat heal refreshed {seat}",
+                    full_response=getattr(call_result, "raw_text", "") or "",
+                    model=getattr(call_result, "model", "") or "",
+                    tokens_used=getattr(call_result, "tokens_used", 0) or 0,
+                    input_tokens=getattr(call_result, "input_tokens", None),
+                    output_tokens=getattr(call_result, "output_tokens", None),
+                    cost_usd=getattr(call_result, "cost_usd", None),
+                    **agent_log_kwargs(call_result),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("seat heal: paid-call log write failed: %s", e)
+        try:
+            dump = getattr(analysis, "model_dump_json", None)
+            if callable(dump):
+                evidence_json = dump()
+            else:
+                import json as _json
+                evidence_json = _json.dumps(analysis, sort_keys=True, default=str)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: could not serialise %s answer: %s", seat, e)
+            return
+        _persist_evidence(
+            self.db, run_id=ctx.run_id, agent_name=agent_name,
+            kind="analysis", scope="run", evidence_json=evidence_json,
+        )
+
+    def _persist_healed_macro_store(self, ctx: RunContext, payload: dict) -> None:
+        """Write a paid macro heal's answer back to the macro store.
+
+        THE MACRO HALF OF THE SAME DEFECT the news heal already fixed.
+        `_persist_heal_call` keeps the forensic rows (`agent_logs`,
+        `specialist_evidence`); this keeps the WORKING macro state. Without it
+        the paid read only ever reached `ctx.macro_analysis` for this one
+        tick's PM, then vanished: `_carry_forward_macro` re-reads
+        `macro_store.load_last_state()` every tick, and the evening
+        thesis-health read and the 7-day regime history read the same store,
+        so the stale morning snapshot — not the fresher regime the desk PAID
+        for — was what every later reader saw. That is the KEEP WHAT COSTS
+        MONEY class of defect, on the macro seat instead of the news seat.
+
+        Persisted the SAME way the scheduled morning read persists
+        (`MorningResearchStage`): `save_last_state(payload, series_prints)`,
+        with the FRED fingerprint the heal call actually saw so a later tick's
+        expiry compares against real prints rather than re-expiring blind. A
+        summary with no prints simply stores none — `_macro_series_prints_
+        changed` treats an absent fingerprint as "no change", never as churn.
+
+        Never raises — a store-write failure must not undo a paid heal that
+        succeeded, the same rule `_persist_heal_call` and
+        `_cover_healed_news_wire` already follow.
+        """
+        store = getattr(self, "macro_store", None)
+        save = getattr(store, "save_last_state", None)
+        if not callable(save) or not isinstance(payload, dict):
+            return
+        try:
+            from src.data.macro_store import series_prints_from_summary
+            prints = series_prints_from_summary(
+                getattr(ctx, "macro_summary", None) or {},
+                freshness=getattr(getattr(self, "macro", None), "_run_freshness", None),
+            )
+            save(payload, series_prints=prints)
+            logger.info(
+                "seat heal: persisted the paid macro read to the macro store "
+                "(regime=%s)", payload.get("regime"),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: macro store-write failed: %s", e)
+
+    def _cover_healed_news_wire(self, ctx: RunContext) -> None:
+        """Record the wire a paid news heal just read, so it stops expiring.
+
+        THE SECOND HALF OF THE SAME DEFECT. `_persist_heal_call` keeps the
+        ANSWER; this keeps the QUESTION. Without it the answer alone changes
+        nothing, because `_news_has_newer_material_wire` compares live RSS
+        titles against `covered_news_headlines(report)` — the analyst's own
+        REWRITTEN headlines — union today's `raw_headlines.json`. Those two
+        strings are not the same ID (`NewsStore.load_raw_headlines` says so
+        outright), so a healed report is compared against titles it never
+        claimed to contain, the same wire reads as newly moved on the next
+        tick, and the seat expires again 30 minutes after the desk bought it.
+
+        Only headlines the model was ACTUALLY SHOWN are recorded — measured
+        off the prompt text, not the fetch (`seat_heal.wire_titles_shown_to_
+        model`). A title the peek fetched but the prompt truncated away is
+        left uncovered on purpose: it must still be able to expire the seat.
+        That is the difference between recording research and buying silence.
+
+        Appends, never replaces: overwriting would drop the morning's
+        per-symbol titles and re-arm the very compare this is quieting.
+        Never raises — a coverage write must not undo a paid heal.
+        """
+        from src.seat_heal import wire_titles_shown_to_model
+        try:
+            items = list(getattr(self, "_last_news_peek_items", None) or [])
+            titles: list[str] = []
+            for item in items:
+                title = getattr(item, "title", None)
+                if title is None and isinstance(item, dict):
+                    title = item.get("title") or item.get("headline")
+                text = str(title or "").strip()
+                if text:
+                    titles.append(text)
+            shown = wire_titles_shown_to_model(
+                titles, getattr(ctx, "heal_news_text", "") or "",
+            )
+            if not shown:
+                return
+            append = getattr(
+                getattr(self, "news_store", None), "append_raw_headlines", None,
+            )
+            if not callable(append):
+                return
+            added = append([{"title": t, "source": "seat_heal", "summary": ""}
+                            for t in shown])
+            logger.info(
+                "seat heal: recorded %d of %d peeked wire titles as read by "
+                "the paid news re-ask", added, len(titles),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: wire-coverage write failed: %s", e)
+
     def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
         """One paid retry for a LOST or EXPIRED seat, once per ET day.
 
@@ -16223,7 +17019,7 @@ class TradingPipeline:
         ctx.heal_paid_retries = record_paid_retry(retries, seat)
         try:
             if seat == "macro":
-                analysis, _raw = analyze(ctx.macro_summary)
+                analysis, call_result = analyze(ctx.macro_summary)
             else:
                 # Pass this run's session. The analyst's session guidance
                 # defaults to MORNING ("treat today as a fresh book... this
@@ -16233,7 +17029,7 @@ class TradingPipeline:
                 # arguments stay at their defaults: a heal re-ask genuinely
                 # has no universe or prior-session baseline to offer, and
                 # inventing one would be worse than admitting it.
-                analysis, _raw = analyze(
+                analysis, call_result = analyze(
                     getattr(ctx, "heal_news_text", ""),
                     session=getattr(ctx, "session", None) or "intra_check",
                 )
@@ -16262,6 +17058,20 @@ class TradingPipeline:
             ctx.macro_analysis = payload
         elif seat == "news":
             ctx.news_intel = analysis
+        # KEEP WHAT COSTS MONEY. Until 2026-09-23 this function spent real
+        # dollars on a research call and then kept neither the answer nor the
+        # price: `call_result` was discarded as `_raw`, no `agent_logs` row
+        # was written, and `HealResult.to_evidence()` omits `payload`. All 8
+        # paid heals in production (2026-09-18, news seat) left the desk with
+        # a row saying "paid_retry / usable" and nothing else — no model, no
+        # tokens, no cost, not one word the model actually said. The owner's
+        # own per-session cost line sums `agent_logs.cost_usd` by `run_id`
+        # (`src/notifier.py`), so those eight calls read as free.
+        self._persist_heal_call(ctx, seat, agent_name, analysis, call_result)
+        if seat == "news":
+            self._cover_healed_news_wire(ctx)
+        elif seat == "macro":
+            self._persist_healed_macro_store(ctx, payload)
         status = dict(ctx.data_status or {})
         status[seat] = "ok"
         ctx.data_status = status
@@ -16461,6 +17271,39 @@ class TradingPipeline:
             "movers": list(movers),
         }
 
+    def _intraday_open_overlap_skip(self, ctx: RunContext, movers: list[str]) -> dict:
+        """Morning released the lock on this same 09:30-shared tick.
+
+        Not a lock contention (morning is no longer holding it) and not a
+        real INTRADAY opportunity — running paid discovery here would be
+        the measured 09:37 leftover (item 121): the SAME open, sold to the
+        owner a second time under a different label. Skip; the next
+        existing half-hour fire, which sees no lock at all, runs normally.
+        """
+        named = ",".join(movers) if movers else "none"
+        reason = (
+            "paid discovery skipped: this fire shares the 09:30 open with "
+            f"morning; movers={named}"
+        )
+        logger.info("Intraday scan: %s", reason)
+        for symbol in movers:
+            try:
+                _record_pipeline_event(
+                    self, ctx, symbol, "opportunity", "skipped",
+                    "intraday_scan_open_overlap", detail=reason,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Intraday scan: could not persist skip reason for %s",
+                    symbol, exc_info=True,
+                )
+        return {
+            "status": "intraday_scan_open_overlap",
+            "run_id": ctx.run_id,
+            "reason": reason,
+            "movers": list(movers),
+        }
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -16483,12 +17326,18 @@ class TradingPipeline:
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
-        for the full rationale).         "intraday_scan_lock_contended" when
+        for the full rationale). "intraday_scan_open_overlap" when morning
+        released the owner lock on this same 09:30-shared tick (item 121 —
+        still the open, not INTRADAY); "intraday_scan_lock_contended" when
         `_await_paid_scan_slot` cannot free the owner lock before this
         tick's calendar window ends; "intraday_scan_no_opportunity" for
         every other early return (no
         snapshots, no qualifying moves, no ledgerable symbols, no usable
-        bars, no usable tech analysis). Past that point, a real result dict
+        bars). A tech seat that is fully LOST (every submitted symbol
+        failed, or the batch call raised) is NOT folded into that status —
+        item 20 (board) — it is classified `data_status["tech"]="failed"`
+        and routed through the same evidence-gate skip + unsuppressible
+        alert morning uses. Past that point, a real result dict
         mirroring the shape callers of run_morning already expect
         (status/orders/run_id). Best-effort: any failure degrades to a
         status dict, never raises (the caller also wraps this
@@ -16508,6 +17357,8 @@ class TradingPipeline:
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
         mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         if self._await_paid_scan_slot(ctx.run_id):
+            if getattr(self, "_paid_scan_waited_for", None) == "morning":
+                return self._intraday_open_overlap_skip(ctx, mover_names)
             return self._intraday_paid_scan_skip(ctx, mover_names)
         # The 09:30/13:00 wait must not size against the pre-fill snapshot
         # taken before morning finished. Refresh after the lock releases.
@@ -16650,14 +17501,28 @@ class TradingPipeline:
                 len(_missing) + len(_stale), _missing[:10], _stale[:10],
             )
         self._require_paid_analysis("intraday_tech_analyst")
-        analyses_map, ta_result = self.tech_analyst.analyze_batch(
-            symbols_data,
-            prior_ratings=prior_ratings,
-            valuations={},
-            intraday_context=intraday_context,
-            prior_macro_regime=prior_macro_state.get("regime"),
-            prior_macro_outlook=prior_macro_state.get("equity_outlook"),
-        )
+        try:
+            analyses_map, ta_result = self.tech_analyst.analyze_batch(
+                symbols_data,
+                prior_ratings=prior_ratings,
+                valuations={},
+                intraday_context=intraday_context,
+                prior_macro_regime=prior_macro_state.get("regime"),
+                prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+            )
+        except PaidAnalysisSuspended:
+            raise
+        except Exception as e:  # noqa: BLE001 — mirrors morning's tech
+            # try/except (pipeline_stages.py): a bare call here had no
+            # guard at all, so a batch-level raise (provider outage,
+            # unparseable response) crashed the whole intraday tick
+            # instead of being recorded as a LOST tech seat like every
+            # other failure mode this scan already handles.
+            logger.error(
+                "Intraday scan: tech_analyst.analyze_batch raised: %s. "
+                "Tech seat LOST this tick.", e,
+            )
+            analyses_map, ta_result = {}, None
         # analyses_map carries every candidate symbol as a key (2026-08-19
         # Tech batch-response symbol-loss fix) — None marks a symbol
         # tech_analyst could not resolve even after its own bounded retry.
@@ -16718,9 +17583,13 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("Intraday scan: tech store update failed: %s", e)
 
-        if not analyses:
-            logger.info("Intraday scan: tech_analyst returned no usable analyses this tick")
-            return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+        # Item 20 (board): deliberately no early "no analyses" return here.
+        # `symbols_data` was already confirmed non-empty above, so zero
+        # usable analyses at this point is a LOST tech seat, not a quiet
+        # tick — it must fall through to the shared `data_status`/gate path
+        # below (classification just before `ctx.data_status`), not return
+        # "intraday_scan_no_opportunity" indistinguishably from a real
+        # empty candidate set.
 
         # Same shared chain morning uses — no separate PM/RM/gate logic.
         #
@@ -16744,8 +17613,23 @@ class TradingPipeline:
         carried_news = self._carry_forward_news(ctx)
         carried_earnings = self._carry_forward_earnings(ctx)
         carried_insider = self._carry_forward_insider(ctx)
+        # Item 20 (board): three-way, matching morning's classification.
+        # `symbols_data` was non-empty going in, so `analyses` empty here
+        # means every submitted symbol failed (or the batch call raised,
+        # caught above) — a LOST seat, not an ordinary quiet tick. A
+        # partial batch (some resolved) stays REPORTED, exactly as before —
+        # this must not start blocking intraday trading on one bad symbol.
+        if analyses:
+            tech_status = "partial" if failed_count else "ok"
+        else:
+            tech_status = "failed"
+            logger.error(
+                "Intraday scan: tech seat LOST — %d/%d submitted symbol(s) "
+                "resolved to a usable analysis this tick",
+                len(analyses), len(analyses_map),
+            )
         ctx.data_status = {
-            "tech": "partial" if failed_count else "ok",
+            "tech": tech_status,
             # Status comes from the kind+event helpers, not from payload
             # truthiness. Same-session GOOD reuse is `carried_from_morning`
             # (PR #430). Cross-day GOOD macro is `remembered`. Empty/failed
@@ -16868,20 +17752,38 @@ class TradingPipeline:
         # the trading day ends. If close-session bailed and the SELL has
         # since gone terminal, recover coverage now rather than carrying
         # a naked position overnight. Codex r8 #2.
-        self._drain_pending_protection_restores()
+        drained = self._drain_pending_protection_restores()
         self._drain_pending_repegs()
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit — last check before carrying positions
         # overnight (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Sweep submitted orders so canceled/expired orders do not get
+        # narrated as real trades, and partial terminal fills are reflected
+        # in the trade list before the evening prompt is built.
+        #
+        # Item 173(2): this runs BEFORE the stop-out reconcile below, not
+        # after. A SELL this session submitted but hasn't yet reconciled
+        # leaves the ledger believing the position is still open
+        # (get_symbols_with_open_ledger_qty ignores 'submitted' rows) while
+        # the broker has already reduced it — a positive gap the stop-out
+        # reconciler can't explain, because the submitted SELL's
+        # broker_order_id is already in get_known_broker_order_ids so its
+        # fill is filtered out of new_fills, and it pages a false CRITICAL
+        # "records disagree with broker". Reconciling fills first flips that
+        # SELL to executed, the gap closes, and the stop-out check stays quiet.
+        self._reconcile_fills()
         # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — last chance before
         # the daily P&L snapshot below is computed, so a same-day stop-out
         # is reflected in tonight's report rather than showing up as an
         # unexplained gap the next time someone looks at realized_pnl.
+        reco = None
         try:
-            self._reconcile_stop_out_fills(run_id)
+            reco = self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("evening stop-out reconcile failed (non-fatal): %s", exc)
+        # Item 101: surface a broker-made stop-out / re-protection to owner.
+        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
         # 1. Record daily PnL — use Alpaca's last_equity (previous trading-day close)
         # as the baseline. This correctly handles weekends/holidays (Alpaca updates
@@ -16930,10 +17832,6 @@ class TradingPipeline:
             logger.warning("evening: risk-capital heat build failed: %s", e)
             risk_capital_dollars = None
 
-        # Sweep submitted orders before building the evening prompt so
-        # canceled/expired orders do not get narrated as real trades, and
-        # partial terminal fills are reflected in the trade list.
-        self._reconcile_fills()
 
         # Phase 4 #5: daily_pnl write is deferred to the atomic
         # save_evening_snapshot() below, along with insights. Doing both in
@@ -17425,19 +18323,9 @@ class TradingPipeline:
             "analysis": analysis.model_dump() if analysis else None,
             "run_id": run_id,
             "auto_meta": meta_result,
-            # Observability: surface a silently-missing session + the loss cap
-            # so the notifier can raise deterministic escalation (not just LLM).
+            # Observability: surface a silently-missing session so the
+            # notifier can raise deterministic escalation (not just LLM).
             "missing_sessions": missing_sessions,
-            # docs/WORK.md item 32: the limit ACTUALLY IN FORCE, read off
-            # the engine rather than the config, so the operator alert shows
-            # the volatility-relative threshold when one is measurable and
-            # the fixed-percentage fallback when it is not. Reading the
-            # config field here would have quietly reported the fallback
-            # every day regardless.
-            "max_daily_loss_pct": _daily_loss_limit_for_alert(
-                getattr(self, "risk_engine", None),
-                getattr(self.config, "risk", None),
-            ),
             "stop_coverage_gaps": coverage_gaps,
             # True 4pm-to-4pm headline P&L (None → notifier falls back to the
             # real-time total_value/daily_pnl figures).
@@ -17515,8 +18403,10 @@ class TradingPipeline:
                     # is merely TIGHT (an ordinary session could reach it)
                     # and a stop that has already been BLOWN THROUGH without
                     # filling (nothing is standing watch over those shares).
-                    # The second is the state the whole stop-limit buffer
-                    # trade-off produces on a gap, and it now reads as
+                    # The second is the state the stop-limit buffer trade-off
+                    # produces on a gap — now only reachable on the stop-limit
+                    # FALLBACK leg, since primary protective stops are
+                    # stop-market and fill when elected — and it now reads as
                     # itself. The distance is reported as a positive number
                     # of dollars PAST the trigger, which is a different
                     # quantity from `gap` and carries a different name.
@@ -17600,8 +18490,8 @@ class TradingPipeline:
         # kill, so 13 straight days of morning deaths passed this check and
         # the 🔴 banner never fired. Two sharper probes:
         if "morning" not in missing and "run" in present:
-            # A legit PM-less completion (no_data / daily_loss_halted)
-            # records a status marker — skip both probes for it.
+            # A legit PM-less completion (no_data, say) records a status
+            # marker — skip both probes for it.
             try:
                 from src import decision_checkpoint as _dc0
                 legit_early_exit = _dc0.read_status("morning") is not None

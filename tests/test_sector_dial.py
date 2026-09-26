@@ -210,27 +210,61 @@ def test_the_absolute_ceiling_still_refuses():
     assert _build(sector_held_pct=75.0) == []
 
 
-def test_a_trade_scaled_under_the_minimum_order_is_refused_not_placed_tiny():
-    """A position shrunk to near-nothing still pays full commission, still
-    consumes a slot, still needs a stop and still needs watching. It cannot
-    pay for its own risk, so the honest answer is no trade."""
-    # 59.5% crowding leaves an allowance of ~0.0125% of equity — about $12.
+def test_a_trade_scaled_small_by_crowding_is_taken_not_refused():
+    """Fixed 2026-09-24 (real incident): a genuine ~$295 / 2.95%-of-equity
+    MRVL trade was refused as "under the $500 minimum order ... pays full
+    commission" — Alpaca charges no stock commission, and the $500 was an
+    arbitrary round number, not a broker minimum. A sector-crowded trade
+    that shrinks to a tiny sliver is now taken at that size rather than
+    refused outright."""
+    # 59.5% crowding leaves an allowance of ~0.0125% of equity — about $12,
+    # far below the old $500 floor.
     decisions = _build(sector_held_pct=59.5, target_weight_pct=8.0)
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].symbol == "NVDA"
 
 
-def test_the_minimum_order_floor_is_the_existing_threshold_not_a_new_one():
-    """§10.3 reuses `cash_sweep.min_order_usd` rather than inventing a second
-    notion of "too small to bother"; raising it must move the refusal."""
+def test_a_295_dollar_2_95_pct_of_equity_trade_is_not_dropped_as_too_small():
+    """Regression for the actual reported incident: a genuine ~$295 order on
+    a ~$10,000 book (2.95% of equity) was refused by this exact code path as
+    "under the $500 minimum order". Built at the same $10,000 scale and
+    crowding level that produces that ~2.95%-of-equity size, and asserts the
+    order still ships."""
+    equity = 10_000.0
+    with patch("src.execution.broker._get_sector", return_value="Technology"):
+        decisions = PortfolioConstructor(ConstructorConfig(
+            max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=500.0,
+        )).construct_orders(
+            targets=[TargetPosition(
+                symbol="MRVL", target_weight_pct=8.0,
+                conviction="high", thesis="best setup on the board",
+            )],
+            positions=[_held("AAPL", equity * 59.5 / 100)],
+            analyses=[_analysis("MRVL", entry=100, stop=95, target=140)],
+            total_value=equity, price_map={"MRVL": 100.0},
+        )
+    assert len(decisions) == 1, "a small, real order must not be dropped as too small"
+    d = decisions[0]
+    notional = equity * d.allocation_pct / 100
+    assert notional < 500.0, "this regression is only meaningful under the old $500 floor"
+    assert "commission" not in d.reasoning.lower()
+
+
+def test_min_order_usd_no_longer_moves_the_sector_crowding_refusal():
+    """`min_order_usd` used to gate this path (reusing `cash_sweep.min_order_usd`
+    rather than inventing a second notion of "too small to bother"); since the
+    2026-09-24 fix it no longer does — raising or lowering it must NOT change
+    whether a sector-crowded trade is taken."""
     generous = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=1.0,
     ))
     strict = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=5_000.0,
     ))
-    # 55% crowding leaves 1.25% of equity = $1,250: over $1, under $5,000.
+    # 55% crowding leaves 1.25% of equity = $1,250: over $1, and now also
+    # taken even though it is under the "strict" $5,000 config.
     assert _build(55.0, constructor=generous) != []
-    assert _build(55.0, constructor=strict) == []
+    assert _build(55.0, constructor=strict) != []
 
 
 def test_the_hard_ceiling_is_configurable():
@@ -435,7 +469,7 @@ def test_the_pair_trade_stays_legal_long_the_leader_short_the_laggard():
 def _engine(**overrides) -> RiskRuleEngine:
     kwargs = dict(
         max_position_pct=30.0, max_total_position_pct=90.0,
-        max_daily_loss_pct=3.0, max_sector_pct=SOFT,
+        max_sector_pct=SOFT,
         max_sector_hard_pct=HARD, require_stop_loss=True,
     )
     kwargs.update(overrides)
@@ -463,8 +497,7 @@ def test_the_diversification_target_is_advisory_not_a_hard_block():
         violations = _engine().check(
             _buy("NVDA", 10.0),
             positions=[_held("AAPL", EQUITY * 0.45)],
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
     rules = [v.rule for v in violations]
     # Still REPORTED — the book being over its target is real information.
     assert "max_sector_pct" in rules
@@ -481,8 +514,7 @@ def test_the_engine_hard_blocks_past_the_absolute_ceiling():
         violations = _engine().check(
             _buy("NVDA", 25.0),
             positions=[_held("AAPL", EQUITY * 0.55)],
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
     hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
     assert [v.rule for v in hard] == ["max_sector_hard_pct"]
     assert "60%" in hard[0].message
@@ -503,8 +535,7 @@ def test_a_constructor_sized_order_is_never_blocked_by_the_engine():
         with patch("src.execution.broker._get_sector", return_value="Technology"):
             violations = _engine().check(
                 decisions[0], positions=positions,
-                total_value=EQUITY, daily_pnl=0.0,
-            )
+                total_value=EQUITY,)
         hard = [v.rule for v in violations if v.rule in HARD_BLOCK_RULES]
         assert not hard, (
             f"sector at {held}%: constructor sized {decisions[0].allocation_pct}% "
@@ -535,7 +566,7 @@ def test_a_hard_ceiling_below_the_target_is_rejected_as_config():
     back to gate behaviour silently."""
     with pytest.raises(ValueError, match="max_sector_hard_pct"):
         RiskConfig(
-            max_position_pct=20, max_total_position_pct=90, max_daily_loss_pct=3,
+            max_position_pct=20, max_total_position_pct=90,
             max_sector_pct=40, max_sector_hard_pct=30, require_stop_loss=True,
         )
 
@@ -544,7 +575,7 @@ def test_an_unset_ceiling_derives_from_the_target():
     """So an operator who moves the diversification target moves the ceiling
     with it instead of leaving the two inconsistent."""
     cfg = RiskConfig(
-        max_position_pct=20, max_total_position_pct=90, max_daily_loss_pct=3,
+        max_position_pct=20, max_total_position_pct=90,
         max_sector_pct=40, require_stop_loss=True,
     )
     assert cfg.sector_hard_ceiling_pct == 60.0
@@ -571,9 +602,8 @@ def test_correlation_cluster_behaviour_is_unchanged():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = _engine().check(
             _buy("NVDA", 10.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-            correlation_matrix=corr, max_correlated_cluster_pct=50.0,
-        )
+            total_value=EQUITY,
+            correlation_matrix=corr, max_correlated_cluster_pct=50.0,)
     cluster = [v for v in violations if v.rule == "correlation_cluster"]
     assert len(cluster) == 1, "the cluster check must still fire"
     assert cluster[0].limit == 50.0
@@ -586,9 +616,8 @@ def test_correlation_cluster_behaviour_is_unchanged():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = _engine(max_sector_pct=99.0, max_sector_hard_pct=100.0).check(
             _buy("NVDA", 10.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-            correlation_matrix=corr, max_correlated_cluster_pct=50.0,
-        )
+            total_value=EQUITY,
+            correlation_matrix=corr, max_correlated_cluster_pct=50.0,)
     assert [v.rule for v in violations] == ["correlation_cluster"]
 
 
@@ -600,8 +629,7 @@ def test_the_per_trade_and_single_name_ceilings_are_unchanged():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = _engine(max_position_pct=20.0).check(
             _buy("NVDA", 25.0), positions=[],
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
     assert "max_position_pct" in [v.rule for v in violations]
     assert "max_position_pct" in HARD_BLOCK_RULES
 
@@ -649,8 +677,7 @@ def test_exits_are_untouched_by_the_dial():
         with patch("src.execution.broker._get_sector", return_value="Technology"):
             violations = _engine().check(
                 decision, positions=[_held("AAPL", EQUITY * 0.9)],
-                total_value=EQUITY, daily_pnl=0.0,
-            )
+                total_value=EQUITY,)
         assert violations == [], f"{action} must never be sector-gated"
 
 
@@ -686,8 +713,7 @@ def test_a_held_short_no_longer_shrinks_its_sectors_measured_long_exposure():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = _engine().check(
             _buy("NVDA", 15.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
 
     advisory = next(v for v in violations if v.rule == "max_sector_pct")
     assert advisory.value == pytest.approx(65.0), (
@@ -707,12 +733,10 @@ def test_each_side_is_measured_against_the_limit_independently():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         long_violations = _engine().check(
             _buy("NVDA", 5.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
         short_violations = _engine().check(
             _short("AMD", 5.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
 
     # Long side: 50 + 5 = 55, over the 40 target (advisory), inside 60.
     long_advisory = next(v for v in long_violations if v.rule == "max_sector_pct")
@@ -728,9 +752,8 @@ def test_a_pending_short_does_not_consume_the_long_budget():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = _engine().check(
             _buy("NVDA", 20.0), positions=[],
-            total_value=EQUITY, daily_pnl=0.0,
-            pending_sector_investment={("Technology", "short"): EQUITY * 0.5},
-        )
+            total_value=EQUITY,
+            pending_sector_investment={("Technology", "short"): EQUITY * 0.5},)
     assert [v.rule for v in violations] == [], (
         "a pending short is not long-side crowding"
     )
@@ -753,14 +776,12 @@ def test_the_gate_lets_the_pair_trade_through():
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         long_leg = engine.check(
-            _buy("NVDA", 35.0), positions=[], total_value=EQUITY, daily_pnl=0.0,
-        )
+            _buy("NVDA", 35.0), positions=[], total_value=EQUITY,)
         short_leg = engine.check(
             _short("INTC", 35.0),
             positions=[_held("NVDA", EQUITY * 0.35, sector="Technology")],
-            total_value=EQUITY, daily_pnl=0.0,
-            pending_sector_investment={("Technology", "long"): EQUITY * 0.35},
-        )
+            total_value=EQUITY,
+            pending_sector_investment={("Technology", "long"): EQUITY * 0.35},)
     assert [v.rule for v in long_leg] == []
     assert [v.rule for v in short_leg] == [], (
         "the long leg must not consume the short leg's budget — this is the "
@@ -813,8 +834,7 @@ def test_gate_pm_facts_and_projection_report_the_same_sector_exposure():
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         gate = _engine(max_sector_pct=1.0, max_sector_hard_pct=100.0).check(
             _buy("NVDA", 0.0), positions=positions,
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
     gate_long_tech = next(v for v in gate if v.rule == "max_sector_pct").value
     assert gate_long_tech == pytest.approx(expected[("Technology", "long")])
 
@@ -888,7 +908,7 @@ def test_the_derived_ceiling_is_capped_at_90_not_15x_the_target():
     def _cfg(target: float) -> RiskConfig:
         return RiskConfig(
             max_position_pct=20, max_total_position_pct=90,
-            max_daily_loss_pct=3, max_sector_pct=target, require_stop_loss=True,
+            max_sector_pct=target, require_stop_loss=True,
         )
     assert _cfg(40).sector_hard_ceiling_pct == 60.0    # unchanged
     assert _cfg(75).sector_hard_ceiling_pct == 90.0    # capped, not 112.5
@@ -929,8 +949,7 @@ def test_the_engine_hard_blocks_past_90_at_the_production_numbers():
         violations = engine.check(
             _buy("NVDA", 10.0),
             positions=[_held("AAPL", EQUITY * 0.85, sector="Technology")],
-            total_value=EQUITY, daily_pnl=0.0,
-        )
+            total_value=EQUITY,)
     hard = [v for v in violations if v.rule == "max_sector_hard_pct"]
     assert hard, "95% long in one sector must be hard-blocked"
     assert hard[0].rule in HARD_BLOCK_RULES
@@ -974,10 +993,13 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     the illustrative 20% sector drawdown ("costs 15% of equity"), which was
     a second copy of `risk.max_sector_pct` plus a number derived from it.
     Both are now rendered/derived in the prose, so this asserts the
-    RELATIONSHIP against the live config instead of the literals: the cost
-    of a 20% drawdown at the rendered sector weight must still exceed the
-    breaker's fixed rung, which is the thing the paragraph is telling the
-    seat.
+    RELATIONSHIP against the live config instead of the literals.
+
+    CHANGED AGAIN 2026-09-20. The comparison used to be against the
+    daily-loss circuit breaker's fixed rung; that breaker was removed
+    entirely on the owner's instruction (retired item 32), so the cost is
+    now compared against the per-trade risk unit, which is what the
+    paragraph names.
     """
     from pathlib import Path
 
@@ -989,9 +1011,9 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     raw = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
 
     # The figure is rendered, never typed.
-    assert "risk.effective_max_daily_loss_pct" in placeholders_in(raw), (
-        "the PM sheet must RENDER the daily-loss figure from the live config, "
-        "not hand-type it — see src/agents/prompt_limits.py"
+    assert "risk.max_position_risk_pct" in placeholders_in(raw), (
+        "the PM sheet must RENDER the per-trade risk unit from the live "
+        "config, not hand-type it — see src/agents/prompt_limits.py"
     )
 
     # The sector weight is rendered too, never typed — the paragraph states
@@ -1007,21 +1029,21 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
 
     # The relationship the paragraph asserts must survive the live numbers:
     # a 20% drawdown on a sector carrying `max_sector_pct` of equity costs
-    # a fifth of that weight, and the paragraph tells the seat that lands
-    # above the breaker's fixed rung.
-    breaker = cfg.effective_max_daily_loss_pct
+    # a fifth of that weight, and the paragraph tells the seat that is
+    # several times the per-trade risk unit.
+    risk_unit = cfg.max_position_risk_pct
     sector_cost = cfg.max_sector_pct * 0.20
-    assert sector_cost > breaker, (
+    assert sector_cost > risk_unit, (
         f"the sheet says a 20% sector drawdown at the sector weight "
         f"({cfg.max_sector_pct}%) costs a fifth of it ({sector_cost}% of "
-        f"equity), a multiple of the breaker's fixed rung — but that rung "
-        f"is now {breaker}%, so the stated relationship is stale. Fix the "
-        f"sentence, not this test."
+        f"equity), many times the {risk_unit}% per-trade risk unit — but "
+        f"the stated relationship no longer holds. Fix the sentence, not "
+        f"this test."
     )
-    assert f"{breaker:g}%" in prompt
+    assert f"{risk_unit:g}%" in prompt
     assert f"{cfg.max_sector_pct:g}%" in prompt
-    assert "15% daily-loss circuit breaker" not in prompt, (
-        "stale pre-bug-1 breaker figure left in the PM prompt"
+    assert "daily-loss circuit breaker" not in prompt, (
+        "the retired account-level breaker is still described in the PM prompt"
     )
     assert "not a hedge" in prompt, (
         "the PM must also be told long and short sector budgets are separate"

@@ -1,6 +1,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock, AsyncMock
+from tests.session_clock import todays_session_stamp
 from src.pipeline import TradingPipeline
 from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
@@ -32,6 +33,19 @@ def _news_stub():
         state_changes=[], stock_news={},
         pm_briefing="stub", market_sentiment="neutral", confidence="medium",
     )
+
+
+def _today_snapshot(price: float) -> dict:
+    """A `get_intraday_snapshots` payload with a real print from TODAY.
+
+    Item 120: sizing a new-name BUY now goes through
+    `src.data.live_price.resolve_live_price`, which requires a fresh today
+    print (or today's forming session bar) rather than the bare
+    `get_latest_price` mock these fixtures used to rely on. Stamped via
+    `tests.session_clock.todays_session_stamp` so it resolves as today's
+    print at any hour the suite runs, not only 09:30-16:00 ET.
+    """
+    return {"last_price": price, "last_trade_at": todays_session_stamp()}
 
 
 def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
@@ -189,7 +203,6 @@ def mock_config():
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
     cfg.risk.max_total_position_pct = 90
-    cfg.risk.max_daily_loss_pct = 3
     cfg.risk.max_sector_pct = 40
     cfg.risk.require_stop_loss = True
     cfg.trading.universe = ["SPY", "QQQ"]
@@ -291,6 +304,7 @@ def test_pipeline_morning_run_buy(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -422,6 +436,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -595,6 +610,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(100.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -702,10 +718,18 @@ def test_pipeline_risk_rejected(
     ), _mock_agent_result())
     mock_pm_cls.return_value = mock_pm
 
-    # Risk Manager REJECTS
+    # Risk Manager refuses the (only) proposed new entry.
     mock_rm = MagicMock()
+    # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto —
+    # approved=False alone no longer stops anything. The way the seat removes a
+    # trade is by naming it in rejected_symbols. Here SPY is the only proposed
+    # entry, so dropping it leaves nothing to execute (per-symbol drops summing
+    # to empty), and no order is submitted.
     mock_rm.review.return_value = (RiskVerdict(
-        approved=False, modifications=[], reasoning="Too risky",
+        approved=False, modifications=[],
+        rejected_symbols=[{"symbol": "SPY", "reason": "thesis fails on the primary data"}],
+        reason_category="signal_fidelity",
+        reasoning="SPY refused on its own merits",
         reasoning_chain=_risk_rc(),
     ), _mock_agent_result())
     mock_rm_cls.return_value = mock_rm
@@ -721,6 +745,7 @@ def test_pipeline_risk_rejected(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker_cls.return_value = mock_broker
@@ -805,7 +830,6 @@ def test_pipeline_morning_early_return_still_reconciles_fills():
     pipeline.morning_research_stage = MagicMock()
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -815,53 +839,6 @@ def test_pipeline_morning_early_return_still_reconciles_fills():
     result = pipeline.run_morning()
 
     assert result["status"] == "no_data"
-    pipeline._reconcile_fills.assert_called_once()
-
-
-def test_pipeline_morning_bypasses_research_when_daily_loss_breached():
-    """Morning must enforce the same deterministic loss circuit breaker before
-    any LLM/research path can fail or return no actionable decisions."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.broker.is_trading_day.return_value = True
-    pipeline.broker.cancel_open_entry_orders.return_value = None
-    position = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0, sector="ETF",
-    )
-    pipeline.broker.get_account.return_value = {
-        "cash": 1000.0,
-        "portfolio_value": 9600.0,
-        "last_equity": 10000.0,
-    }
-    pipeline.broker.get_positions.return_value = [position]
-    pipeline.morning_research_stage = MagicMock()
-    pipeline.cost_circuit = MagicMock()
-    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
-    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
-        "paid path must not be reached before emergency protection"
-    )
-    pipeline.risk_engine = MagicMock()
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-    pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._halt_on_daily_loss_breach = MagicMock(return_value={
-        "status": "daily_loss_halted", "halted": True, "orders": [],
-        "run_id": "r",
-    })
-    pipeline._reconcile_fills = MagicMock()
-
-    result = pipeline.run_morning()
-
-    # docs/WORK.md item 32: the breaker halts, it does not liquidate.
-    assert result["status"] == "daily_loss_halted"
-    assert result["orders"] == []
-    call = pipeline._halt_on_daily_loss_breach.call_args
-    assert call.args[0] == [position]
-    assert call.args[1] is loss_violation
-    pipeline.broker.submit_order.assert_not_called()
-    pipeline.morning_research_stage.run.assert_not_called()
-    pipeline.cost_circuit.activate_session.assert_called_once()
-    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
     pipeline._reconcile_fills.assert_called_once()
 
 
@@ -888,59 +865,12 @@ def test_pipeline_midday_preserves_protective_orders():
     # Circuit-breaker probe runs on every position_review tick. No breach in
     # this scenario — return None so execution flows into the normal path.
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     result = pipeline.run_midday()
 
     assert result["status"] == "reviewed"
     pipeline.broker.cancel_open_orders.assert_not_called()
     pipeline.broker.cancel_open_entry_orders.assert_not_called()
-
-
-def test_pipeline_midday_bypasses_reviewer_when_daily_loss_breached():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.broker.is_trading_day.return_value = True
-    position = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0, sector="ETF",
-    )
-    pipeline.broker.get_account.return_value = {
-        "cash": 1000.0,
-        "portfolio_value": 9600.0,
-        "last_equity": 10000.0,
-    }
-    pipeline.broker.get_positions.return_value = [position]
-    pipeline.db = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-    pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._halt_on_daily_loss_breach = MagicMock(return_value={
-        "status": "daily_loss_halted", "halted": True, "orders": [],
-        "run_id": "r",
-    })
-    pipeline.position_reviewer = MagicMock()
-    pipeline._reconcile_fills = MagicMock()
-    pipeline.cost_circuit = MagicMock()
-    pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
-    pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
-        "paid path must not precede the deterministic halt"
-    )
-
-    result = pipeline.run_midday()
-
-    # docs/WORK.md item 32: the breaker halts, it does not liquidate.
-    assert result["status"] == "daily_loss_halted"
-    assert result["orders"] == []
-    assert result["session"] == "midday"
-    assert result["review"] is None
-    call = pipeline._halt_on_daily_loss_breach.call_args
-    assert call.args[0] == [position]
-    assert call.args[1] is loss_violation
-    pipeline.broker.submit_order.assert_not_called()
-    pipeline.position_reviewer.review.assert_not_called()
-    pipeline.cost_circuit.activate_session.assert_called_once()
-    pipeline.cost_circuit.require_paid_analysis.assert_not_called()
 
 
 @pytest.mark.parametrize("session_type", ["midday", "close"])
@@ -955,7 +885,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline.broker.get_positions.return_value = []
     pipeline.db = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._drain_pending_protection_restores = MagicMock()
     pipeline._reconcile_orphan_pending_submits = MagicMock()
     pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
@@ -964,7 +893,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._force_delever = MagicMock(return_value=[forced])
     pipeline._handle_ex_dividends = MagicMock(return_value=[exdiv])
     pipeline._reconcile_fills = MagicMock()
-    pipeline._check_late_breach_and_halt = MagicMock(return_value=None)
     pipeline._run_news_update = MagicMock()
     pipeline._load_earnings_analyses = MagicMock()
     pipeline.position_reviewer = MagicMock()
@@ -986,7 +914,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._run_news_update.assert_not_called()
     pipeline._load_earnings_analyses.assert_not_called()
     pipeline.position_reviewer.review.assert_not_called()
-    pipeline._check_late_breach_and_halt.assert_called_once()
 
 
 def test_total_pnl_since_reset_uses_earliest_row_prior_equity(tmp_path):
@@ -1028,87 +955,6 @@ def test_total_pnl_since_reset_no_baseline_is_none_not_zero(tmp_path):
 
     assert pipeline._total_pnl_since_reset(9900.00) == (None, None, None)
     db.close()
-
-
-def test_halt_reconciles_fills_before_judging_coverage(tmp_path):
-    """The dedupe/staleness reasoning that used to protect the liquidator
-    still applies to the halt, for a different reason: DB rows can be stale
-    (an order the broker has since cancelled or expired still reads
-    'submitted'), and the halt's coverage verdict and its per-symbol
-    refusal records are both written against that record. Reconcile first,
-    judge second.
-
-    Uses a real DB so the reconcile actually runs, rather than asserting
-    that a mock was called."""
-    from src.storage.db import Database
-
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    db.insert_trade(
-        symbol="AMZN", action="SELL", qty=51.0, price=230.0,
-        reasoning="prior tick — broker has since cancelled",
-        run_id="run-old", broker_order_id="alpaca-stale", fill_status="submitted",
-    )
-
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": None, "filled_avg_price": None,
-    }
-    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
-    pipeline.broker.snapshot_protective_stops.return_value = (True, [{"qty": 51.0}])
-
-    pos = Position(
-        symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0,
-        unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical",
-    )
-    pipeline._halt_on_daily_loss_breach(
-        [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-        "run-now", where="intra_check",
-    )
-
-    rows = db.execute(
-        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-stale'"
-    ).fetchall()
-    assert rows[0]["fill_status"] == "canceled"
-    # And, as always: nothing was sold.
-    pipeline.broker.submit_order.assert_not_called()
-    db.close()
-
-
-def test_halt_renders_through_the_real_notifier_and_says_nothing_was_sold():
-    """audit F5's descendant. The old breaker was visible to the operator
-    only as a list of EMERGENCY orders; a halt places none, so without its
-    own banner an intra tick that broke its 30-minute silence would show
-    nothing explaining why. Drive the REAL notifier with the REAL halt
-    payload."""
-    from src.notifier import format_session_result
-
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline._reconcile_fills = MagicMock()
-    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
-    pipeline.broker.snapshot_protective_stops.return_value = (True, [{"qty": 0.0}])
-
-    pos = Position(
-        symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0,
-        unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical",
-    )
-    with patch("src.notifier.send_owner_alert"):
-        halt = pipeline._halt_on_daily_loss_breach(
-            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-            "run-now", where="intra_check",
-        )
-
-    msg = format_session_result("intra_check", halt, 12.0)
-    assert "DAILY LOSS HALT" in msg
-    assert "nothing was sold" in msg
-    assert "AMZN" in msg          # named as not verifiably covered
-    assert "EMERGENCY orders" not in msg
 
 
 def test_reprotect_residual_is_idempotent_against_existing_broker_stop():
@@ -1287,10 +1133,21 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     _mock_stage_seam(pipeline, specs=[
         {"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}
     ])
+    # Board item 178: ExecutionStage now re-reads the account before the
+    # SELL loop too, so this fixture must reflect a fresh snapshot that
+    # STILL holds JPM — otherwise the SELL never fires and the "no residual
+    # to protect" assertion below would pass for the wrong reason (no SELL
+    # at all, rather than a full SELL leaving no residual).
     pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 100_500.0}, [], {},
+        {"cash": 60_000.0, "portfolio_value": 100_500.0},
+        [
+            Position(
+                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
+                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            ),
+        ],
+        {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
     pipeline._full_sell_qty = lambda q: q
@@ -1704,7 +1561,6 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
     }
     pipeline.broker._restore_stop_orders.return_value = (1, [])  # full success
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None  # no breach
 
     pipeline.run_intra_check()
 
@@ -2367,251 +2223,6 @@ def _halt_ready(pipeline, *, covered_qty=None):
     return pipeline
 
 
-def test_late_breach_check_returns_none_when_no_breach():
-    """No breach → helper returns None so the caller proceeds with its
-    normal flow (no_data return / decision_stage / etc)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.broker.get_account.return_value = {
-        "portfolio_value": 100_500.0, "last_equity": 100_000.0, "cash": 5000.0,
-    }
-    pipeline.broker.get_positions.return_value = [
-        Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=510.0,
-                 market_value=5100.0, unrealized_pnl=100.0, sector="ETF"),
-    ]
-    pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None  # no breach
-    pipeline._halt_on_daily_loss_breach = MagicMock()
-
-    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
-
-    assert out is None
-    pipeline._halt_on_daily_loss_breach.assert_not_called()
-
-
-def test_late_breach_check_halts_on_breach_and_sells_nothing():
-    """If the tape crossed daily-loss during research (5-10 min on slow
-    OpenAI days), the helper must NOT wait for the next intra tick — it
-    halts inline so morning bails to `daily_loss_halted` instead of
-    no_data/no_trades.
-
-    docs/WORK.md item 32: this used to force-liquidate the whole book with
-    LIMIT orders 1% through the market and then restore the stops on any
-    leg that failed to fill. It halts instead, and the assertion that
-    matters most is the negative one — nothing is sold."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    # 4% drawdown materialised during research
-    pipeline.broker.get_account.return_value = {
-        "portfolio_value": 96_000.0, "last_equity": 100_000.0, "cash": 5000.0,
-    }
-    pos = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0,
-        unrealized_intraday_pnl=-4000.0, sector="ETF",
-    )
-    pipeline.broker.get_positions.return_value = [pos]
-    pipeline.risk_engine = MagicMock()
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-    pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    _halt_ready(pipeline)
-
-    out = pipeline._check_late_breach_and_halt("run-late", "post-research")
-
-    assert out["status"] == "daily_loss_halted"
-    assert out["halted"] is True
-    assert out["orders"] == []
-    assert out["run_id"] == "run-late"
-    assert out["unprotected_at_halt"] == []
-    pipeline.broker.submit_order.assert_not_called()
-    pipeline.broker.cancel_open_entry_orders.assert_called_once_with()
-
-
-def test_late_breach_check_swallows_broker_error_and_proceeds():
-    """If the broker query fails (transient), don't crash the pipeline —
-    the next intra tick will catch any breach. Helper returns None,
-    caller proceeds with its normal early-return path."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.broker.get_account.side_effect = RuntimeError("Alpaca 503")
-    pipeline.risk_engine = MagicMock()
-    pipeline._halt_on_daily_loss_breach = MagicMock()
-
-    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
-
-    assert out is None
-    pipeline.risk_engine.check_daily_loss.assert_not_called()
-    pipeline._halt_on_daily_loss_breach.assert_not_called()
-
-
-def test_late_breach_check_skips_halt_when_no_positions():
-    """Even if check_daily_loss returns a violation, with no positions
-    there is nothing held to protect and no new risk on the books to
-    refuse — the helper returns None rather than raising a halt over an
-    empty account."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.broker.get_account.return_value = {
-        "portfolio_value": 96_000.0, "last_equity": 100_000.0, "cash": 96_000.0,
-    }
-    pipeline.broker.get_positions.return_value = []
-    pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = MagicMock(message="x")
-    pipeline._halt_on_daily_loss_breach = MagicMock()
-
-    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
-
-    assert out is None  # nothing to act on
-    pipeline._halt_on_daily_loss_breach.assert_not_called()
-
-
-def test_halt_never_closes_resizes_or_zeroes_any_position():
-    """The invariant of docs/WORK.md item 32, stated as a test.
-
-    The old breaker's whole job was to close every position. Whatever else
-    the halt does, it must never place a closing, reducing or zeroing order
-    — long or short, pending fill or not. This is deliberately asserted at
-    the broker seam rather than on a return value, so a future refactor that
-    re-introduces selling through some other helper still trips it."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline._submit_protected_sell = MagicMock()
-    positions = [
-        Position(symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-                 market_value=11730.0, unrealized_pnl=-510.0,
-                 unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical"),
-        # A SHORT: the deleted liquidator bought these back to cover.
-        Position(symbol="TSLA", qty=-8.0, avg_entry=300.0, current_price=320.0,
-                 market_value=-2560.0, unrealized_pnl=-160.0,
-                 unrealized_intraday_pnl=-160.0, sector="Consumer Cyclical"),
-    ]
-    _halt_ready(pipeline)
-
-    out = pipeline._halt_on_daily_loss_breach(
-        positions, MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-        "run-halt", where="intra_check",
-    )
-
-    pipeline.broker.submit_order.assert_not_called()
-    pipeline._submit_protected_sell.assert_not_called()
-    pipeline.broker.close_position.assert_not_called()
-    assert out["orders"] == []
-    assert out["positions"] == 2
-
-
-def test_halt_shouts_when_a_position_has_no_live_stop():
-    """The precondition. A halt is only safe if the per-position stops are
-    genuinely live at the broker, and the desk's own stored record cannot
-    answer that: `trades.stop_loss` is written once at entry and never
-    updated when a stop is replaced (the 2026-09-14 broker audit, WORK.md
-    items 35 and 69). So coverage is read from the broker, and an uncovered
-    position must reach the owner BY NAME, and must not be sold to make the
-    problem go away."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    _halt_ready(pipeline, covered_qty=0.0)   # nothing covered at the broker
-    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-                   market_value=4800.0, unrealized_pnl=-200.0,
-                   unrealized_intraday_pnl=-200.0, sector="ETF")
-
-    with patch("src.notifier.send_owner_alert") as alert:
-        out = pipeline._halt_on_daily_loss_breach(
-            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-            "run-halt", where="intra_check",
-        )
-
-    assert out["unprotected_at_halt"] == ["SPY"]
-    assert out["stop_coverage_verified"][0]["state"] == "uncovered"
-    assert out["stop_coverage_verified"][0]["coverage"] == "none"
-    alert.assert_called_once()
-    body = alert.call_args.args[0]
-    assert "SPY" in body
-    assert "NOT VERIFIABLY" in body.upper()
-    # ... and it still did not sell it.
-    pipeline.broker.submit_order.assert_not_called()
-
-
-def test_halt_reports_unreadable_coverage_as_unverified_never_as_covered():
-    """`_reconcile_stop_coverage` `continue`s past a symbol whose stops it
-    could not read, so that symbol simply vanishes from its gap list. A halt
-    that inherited that would silently assume protection exists — which is
-    exactly the assumption this whole change is not allowed to make."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    _halt_ready(pipeline)
-    pipeline.broker.snapshot_protective_stops.side_effect = RuntimeError("Alpaca 503")
-    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-                   market_value=4800.0, unrealized_pnl=-200.0,
-                   unrealized_intraday_pnl=-200.0, sector="ETF")
-
-    with patch("src.notifier.send_owner_alert") as alert:
-        out = pipeline._halt_on_daily_loss_breach(
-            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-            "run-halt", where="intra_check",
-        )
-
-    assert out["stop_coverage_verified"][0]["state"] == "unverified"
-    assert out["unprotected_at_halt"] == ["SPY"]
-    alert.assert_called_once()
-
-
-def test_halt_files_a_durable_machine_readable_reason_per_held_symbol():
-    """Anything refused leaves a durable, per-symbol, machine-readable
-    reason. A halt refuses every held name further risk, so every held name
-    gets a row — with its verified coverage state on it."""
-    import json
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    _halt_ready(pipeline)
-    positions = [
-        Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-                 market_value=4800.0, unrealized_pnl=-200.0,
-                 unrealized_intraday_pnl=-200.0, sector="ETF"),
-        Position(symbol="AMZN", qty=5.0, avg_entry=240.0, current_price=230.0,
-                 market_value=1150.0, unrealized_pnl=-50.0,
-                 unrealized_intraday_pnl=-50.0, sector="Consumer Cyclical"),
-    ]
-
-    with patch("src.pipeline_stages._persist_evidence") as persisted:
-        pipeline._halt_on_daily_loss_breach(
-            positions, MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-            "run-halt", where="intra_check",
-        )
-
-    filed = {
-        c.kwargs["symbol"]: json.loads(c.kwargs["evidence_json"])
-        for c in persisted.call_args_list
-    }
-    assert set(filed) == {"SPY", "AMZN"}
-    for payload in filed.values():
-        assert payload["stage"] == "daily_loss_halt"
-        assert payload["outcome"] == "no_new_risk"
-        assert payload["reason"] == "daily_loss_halt"
-        assert payload["stop_coverage"] == "covered"
-
-
-def test_halt_reports_a_failed_entry_cancel_rather_than_swallowing_it():
-    """A working entry limit can still add risk while the desk is halted.
-    The cancel is best-effort by necessity, but the failure has to be a
-    reported fact, not a swallowed one."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    _halt_ready(pipeline)
-    pipeline.broker.cancel_open_entry_orders.side_effect = RuntimeError("Alpaca 503")
-    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-                   market_value=4800.0, unrealized_pnl=-200.0,
-                   unrealized_intraday_pnl=-200.0, sector="ETF")
-
-    with patch("src.notifier.send_owner_alert") as alert:
-        out = pipeline._halt_on_daily_loss_breach(
-            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
-            "run-halt", where="intra_check",
-        )
-
-    assert out["entry_orders_cancelled"] is False
-    assert "cancel FAILED" in alert.call_args.args[0]
-
-
 def test_pipeline_init_propagates_allow_margin_to_risk_engine():
     """Codex r11 P2: TradingPipeline.__init__ rebuilds RiskConfig for the
     deterministic engine. Previously it omitted allow_margin → engine
@@ -2628,7 +2239,6 @@ def test_pipeline_init_propagates_allow_margin_to_risk_engine():
     mock_config = MagicMock()
     mock_config.risk.max_position_pct = 15.0
     mock_config.risk.max_total_position_pct = 90.0
-    mock_config.risk.max_daily_loss_pct = 3.0
     mock_config.risk.max_sector_pct = 40.0
     mock_config.risk.require_stop_loss = True
     mock_config.risk.allow_margin = True  # ← the load-bearing field
@@ -2717,7 +2327,6 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
@@ -2768,7 +2377,6 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
@@ -2868,7 +2476,6 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
@@ -2987,20 +2594,27 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
-    # 4 account snapshots: (1) initial pre-research, (2) post-research
-    # late-breach check (#60), (3) post-decision late-breach check
-    # (codex r8 #1), (4) post-sell refresh. ExecutionStage's pre-BUY
-    # recheck (#48) only re-refreshes when there were no sells —
-    # this test has sells, so step 4's refresh is reused. last_equity
-    # == value everywhere so check_daily_loss never trips.
+    mock_broker.get_intraday_snapshots.return_value = {"QQQ": _today_snapshot(100.0)}
+    # 3 account snapshots: (1) initial pre-research, (2) board item 178's
+    # ExecutionStage pre-SELL/COVER refresh (nothing has traded yet, so the
+    # book is unchanged from (1)), (3) post-sell refresh. The two
+    # late-breach account reads that used to sit between (1) and the old
+    # (2) went with the account-level loss breaker on 2026-09-20 (retired
+    # item 32). ExecutionStage's pre-BUY refresh only fires when there were
+    # no sells — this test has sells, so the post-sell refresh is reused for
+    # BUY sizing.
     mock_broker.get_account.side_effect = [
-        {"cash": 500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
         {"cash": 500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
         {"cash": 500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
         {"cash": 3500.0, "portfolio_value": 10000.0, "last_equity": 10000.0},
     ]
     mock_broker.get_positions.side_effect = [
-        # First entry feeds the session-entry broker-truth coverage reconciler.
+        # First entry feeds the session-entry broker-truth coverage
+        # reconciler. Unchanged: item 178's new pre-SELL/COVER refresh
+        # lands inside this same 5-call sequence (still pre-sale, so it
+        # reads the same SPY position the run-open snapshot already
+        # returned) — the existing 5 entries already cover it exactly, one
+        # of which previously went unused.
         [spy_position], [spy_position], [spy_position], [spy_position], [],
     ]
     mock_broker.wait_for_order_terminal.return_value = "filled"
@@ -3332,7 +2946,6 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
@@ -3386,7 +2999,6 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
@@ -3525,7 +3137,7 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=20, max_total_position_pct=90,
-        max_daily_loss_pct=3, max_sector_pct=40,
+        max_sector_pct=40,
         allow_margin=False, require_stop_loss=True,
     ))
 
@@ -3548,12 +3160,9 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
         decisions=[sell, buy],
         positions=[nan_position],
         total_value=10000.0,
-        daily_pnl=0.0,
-        baseline=10000.0,
         cash=500.0,
         invested_target_pct=None,
-        correlation_matrix={},
-    )
+        correlation_matrix={},)
     # SELL with NaN market_value is dropped from the pre-sum, so
     # effective_cash = 500 + 0 = 500 (not NaN). The BUY for $1000
     # (10% of $10k) exceeds 500 cash → cash_only rule blocks the BUY.
@@ -4194,7 +3803,6 @@ def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
     pipeline._reconcile_fills = MagicMock()
     pipeline._sync_positions_from_broker = MagicMock()
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -4262,7 +3870,6 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
         "status": "filled", "filled_qty": "5.0", "filled_avg_price": "549.11",
     }
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     result = pipeline.run_intra_check()
 
@@ -4331,7 +3938,6 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
 
     pipeline.broker.get_order_fill_info.side_effect = _fill_info
     pipeline.risk_engine = MagicMock()
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     result = pipeline.run_intra_check()
 

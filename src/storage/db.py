@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import sqlite3
 import threading
 import uuid
@@ -98,6 +99,13 @@ _SHORT_EXIT_PREFIXES: tuple[str, ...] = ("COVER", "PARTIAL_COVER")
 #: position is open, and the trades row records no side of its own.
 _EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset({
     "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
+    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
+    # back but whose order_type it could NOT prove was a protective stop —
+    # an honest "the broker closed this, cause unattributed" marker, never
+    # a STOP_OUT it can't stand behind. It retires a real position exactly
+    # like a filled STOP_OUT, so it belongs to the exit-side chain here for
+    # position_id assignment and calibration to count it as a closed lot.
+    "RECONCILED_EXIT",
 })
 
 #: Kept as the flat union for every caller that only asks "is this row on the
@@ -384,6 +392,12 @@ def _categorize_exit_reason(
     act = (action or "").upper()
     if act == "STOP_OUT":
         return "broker_stop_fill"
+    if act == "RECONCILED_EXIT":
+        # A recovered broker exit whose order_type could not be proven to be
+        # a protective stop (item 173(a)): a distinct, honest category so
+        # owner-facing attribution never files it under a stop it can't
+        # substantiate, and never silently under an ordinary decided sale.
+        return "reconciled_unattributed_exit"
     if act == "TRAIL_STOP":
         row = {"fill_status": fill_status, "fill_qty": fill_qty}
         return "broker_stop_fill" if _is_filled_trail_stop(row, act) else None
@@ -653,6 +667,32 @@ class Database:
                 daily_pnl REAL NOT NULL,
                 daily_return_pct REAL NOT NULL,
                 equity_close REAL,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            -- One row per trading day the margin-interest tracker actually
+            -- ran (owner ask, 2026-09-24: a cumulative this-week/month/
+            -- all-time view replacing the old per-day/per-year figures).
+            -- `period_usd` is what that night's carry cost (already
+            -- multiplied by `days_charged` for a weekend/holiday carry —
+            -- see `src.margin_interest.MarginInterestEstimate.period_usd`);
+            -- `debit_balance`/`rate_pct`/`days_charged` are kept alongside
+            -- for audit, not for re-derivation. `source` is 'estimate'
+            -- (our own daily-accrual formula; paper trading has never
+            -- posted a real INT activity as of 2026-09-24) or
+            -- 'broker_actual' if that ever changes. This table is the ONLY
+            -- historical record of the desk's overnight debit balance —
+            -- `daily_pnl` never stored cash/debit — so an accurate
+            -- ESTIMATE-path "all-time" total can only ever cover days from
+            -- here forward; see `src.margin_interest.bucket_estimate_rows`.
+            CREATE TABLE IF NOT EXISTS margin_interest_daily (
+                date TEXT PRIMARY KEY,
+                debit_balance REAL NOT NULL,
+                rate_pct REAL NOT NULL,
+                daily_usd REAL NOT NULL,
+                days_charged INTEGER NOT NULL DEFAULT 1,
+                period_usd REAL NOT NULL,
+                source TEXT NOT NULL DEFAULT 'estimate',
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -992,6 +1032,20 @@ class Database:
             "trades", "expected_horizon_sessions", "expected_horizon_sessions INTEGER",
         )
         _ensure_column("trades", "setup_type", "setup_type TEXT")
+        # Item 82 (2026-09-25): the MEASURED half of construction's own
+        # breakout verdict, pinned at ENTRY alongside `setup_type` above.
+        # `setup_type` is only the analyst's raw label; construction's real
+        # verdict is `reward_risk_floor_applies(setup_type,
+        # structural_ceiling=...)` — True (breakout, no ratio, no progress/
+        # pace) whenever EITHER the label says "breakout" OR this is False.
+        # `False` = the desk's own level computation found nothing overhead in
+        # the trade's direction (`derivation.level_used is None`); `True` = a
+        # ceiling was found. Stored as 0/1. NULL on every legacy row and on any
+        # non-entry / legacy caller that never pins it — readers fall back to
+        # the label alone (the conservative side), exactly as before this
+        # column existed. See `TradeDecision.structural_ceiling` in models.py
+        # and `src.risk.constants.is_trend_trade`.
+        _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1355,7 +1409,8 @@ class Database:
                      requested_risk_pct: float | None = None,
                      allocated_risk_pct: float | None = None,
                      decision_model: str | None = None,
-                     thesis_invalid_if: str | None = None) -> int:
+                     thesis_invalid_if: str | None = None,
+                     structural_ceiling: bool | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -1385,7 +1440,18 @@ class Database:
         `TradeDecision.thesis_invalid_if` in models.py. None for every
         non-entry row, every legacy caller, and any entry whose target
         stated no falsifier condition.
+
+        `structural_ceiling` (item 82) is the MEASURED half of construction's
+        breakout verdict, pinned at ENTRY (BUY/SHORT) only — see
+        `TradeDecision.structural_ceiling` in models.py. Stored as 0/1; None
+        for every non-entry row and every legacy caller, so readers fall back
+        to `setup_type` alone (the conservative side).
         """
+        # 0/1 for storage, None stays NULL — see the column's migration note.
+        structural_ceiling_stored = (
+            None if structural_ceiling is None else int(bool(structural_ceiling))
+        )
+
         def _do():
             position_id = self._resolve_new_row_position_id(
                 symbol, action, qty=qty, fill_status=fill_status, fill_qty=None,
@@ -1413,14 +1479,14 @@ class Database:
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
                 "decision_id_status, thesis_invalid_if, initial_stop_loss, "
-                "initial_take_profit) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "initial_take_profit, structural_ceiling) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
                  decision_link_status, thesis_invalid_if, initial_stop_loss,
-                 initial_take_profit),
+                 initial_take_profit, structural_ceiling_stored),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -1781,12 +1847,17 @@ class Database:
         can price, yet its shares really did leave the book. See
         `_trail_stop_reduced_position` for why that is not drift.
 
-        STILL SIGNED FROM THE ACTION NAME, and wrong on the short side:
-        a COVER family action, and a FILLED buy-to-cover TRAIL_STOP,
-        subtract from a short instead of retiring it (a SHORT 36 covered
-        in full reads -72, not 0) [measured 2026-09-23]. Pre-existing and
-        unchanged here; the caller reads any negative as a short and skips
-        it, so nothing acts on the number today. Carried as item 173(c).
+        SIGNED BY POSITION SIDE, corrected on the short side (item 173(c),
+        2026-09-25). Both short-retiring routes now sign +1: a COVER-family
+        action (COVER / EMERGENCY_COVER / PARTIAL_COVER) is a buy-to-cover by
+        name, and a FILLED TRAIL_STOP resting on a short is a buy-to-cover
+        read from the running net (its side is not in its name). Before this,
+        every non-BUY row signed -1, so a SHORT 36 covered in full read -72,
+        not 0 whether it came as a COVER or as a filled buy-to-cover
+        TRAIL_STOP [measured 2026-09-23]. The caller
+        `_reconcile_stop_out_fills` is LONG-only and skips any negative, so
+        no live behaviour changed today; the ledger's own belief is simply
+        now correct for the day shorts are enabled.
         """
         with self._lock:
             rows = self.conn.execute(
@@ -1805,9 +1876,32 @@ class Database:
             qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
             if qty <= 0:
                 continue
-            sign = 1.0 if action in ("BUY", "SWEEP_BUY") else -1.0
             symbol = row["symbol"]
-            net[symbol] = net.get(symbol, 0.0) + sign * qty
+            running = net.get(symbol, 0.0)
+            # Item 173(c): sign a share-moving row by the SIDE of the
+            # position it acts on, not by a hard-coded BUY-vs-everything-else
+            # split. A COVER-family action is a BUY-to-cover: it RETIRES a
+            # short toward zero, so it ADDS shares (+1). The old rule signed
+            # every non-BUY row -1, so a SHORT 36 covered in full read -72,
+            # not 0 [measured 2026-09-23]. Normalise PARTIAL_COVER(50%) ->
+            # PARTIAL_COVER first, exactly as `_symbols_already_trimmed_today`
+            # does. A FILLED TRAIL_STOP carries no side in its name — it is a
+            # long's protective SELL or a short's protective BUY-to-cover
+            # depending on the position it guards — so read that side from the
+            # running net for this symbol (rows are id-ordered, so the entry
+            # always precedes its stop): a stop resting on a short is a
+            # buy-to-cover and ADDS. Everything else — SELL / REDUCE /
+            # STOP_OUT / SWEEP_SELL / a long's fired TRAIL_STOP, and SHORT
+            # (a sell-to-open) — subtracts.
+            base_action = action.split("(", 1)[0].strip()
+            if base_action in ("BUY", "SWEEP_BUY",
+                               "COVER", "EMERGENCY_COVER", "PARTIAL_COVER"):
+                sign = 1.0
+            elif base_action == "TRAIL_STOP" and running < -1e-9:
+                sign = 1.0  # fired protective stop on a SHORT = buy-to-cover
+            else:
+                sign = -1.0
+            net[symbol] = running + sign * qty
         return net
 
     def get_known_broker_order_ids(self, symbol: str) -> set[str]:
@@ -1865,6 +1959,14 @@ class Database:
         unmatched exit; `_reconcile_stop_out_fills` flags that case rather
         than silently accepting an unpriced row).
 
+        `action` (item 173(a)): the caller sets this from the broker fill's
+        own order_type — STOP_OUT only when the broker order really was a
+        protective stop, SELL for a market/limit exit, and RECONCILED_EXIT
+        when the type does not prove it was a stop. It defaults to STOP_OUT
+        only for backward compatibility with callers that pass none; the
+        reconciler always passes it explicitly so a recovered exit is never
+        labelled a protective stop the broker record can't substantiate.
+
         Returns `(row_id, created)`. `created=False` means the order was
         already recorded — the existing row's id is returned so a caller
         never needs a second lookup to stay idempotent-safe.
@@ -1892,12 +1994,32 @@ class Database:
             if existing is not None:
                 return existing["id"], False
             ts = filled_at or self._sqlite_utc_timestamp(datetime.now(UTC))
-            reasoning_final = reasoning or (
-                "Broker-initiated protective-stop fill — the system "
-                "never submitted this order as a decision; written "
-                "back by the stop-out reconciler (2026-08-28 "
-                "ONDS/CCJ gap; see ReconciliationConfig)."
-            )
+            act_norm = (action or "").upper()
+            if reasoning:
+                reasoning_final = reasoning
+            elif act_norm == "STOP_OUT":
+                reasoning_final = (
+                    "Broker-initiated protective-stop fill — the system "
+                    "never submitted this order as a decision; written "
+                    "back by the stop-out reconciler (2026-08-28 "
+                    "ONDS/CCJ gap; see ReconciliationConfig)."
+                )
+            elif act_norm == "RECONCILED_EXIT":
+                # item 173(a): the reconciler proved a broker exit happened but
+                # NOT that it was a protective stop — say exactly that, never a
+                # cause it can't stand behind.
+                reasoning_final = (
+                    "Broker-initiated exit the ledger never saw; the broker's "
+                    "order type did not identify it as a protective stop, so it "
+                    "is recorded as an unattributed reconciled exit rather than "
+                    "a STOP_OUT (item 173(a); see ReconciliationConfig)."
+                )
+            else:
+                reasoning_final = (
+                    f"Broker-initiated {act_norm or 'exit'} the ledger never "
+                    "saw; written back by the exit reconciler (item 173(a); "
+                    "see ReconciliationConfig)."
+                )
             position_id = self._resolve_new_row_position_id(
                 symbol, action, qty=qty, fill_status="filled", fill_qty=qty,
                 timestamp=ts,
@@ -2030,14 +2152,26 @@ class Database:
         for terminal status, and if now terminal, the persisted specs
         drive a fresh finalize attempt.
 
-        `side` (Stage 3, shorts): "buy" for a long position (its
-        protective stop is a SELL, restored below entry) or "sell" for a
-        short (its protective stop is a BUY, restored above entry) — the
-        REAL side of the position this row protects, known at write time
-        by whoever is closing it. NULL only for a row written before this
-        column existed; the drain path treats NULL exactly as the
-        long-assuming fallback it always used (see
+        `side` is the PROTECTIVE-STOP / closing-order side, which coincide:
+        "sell" (default) for a LONG (its protective stop is a SELL below
+        entry, and a long is closed by selling) and "buy" for a SHORT (its
+        protective stop is a BUY above entry, and a short is closed by
+        covering). This is the REAL side, known at write time by whoever is
+        closing the position, and is read back by
+        `TradingPipeline._resolve_wal_row_side` under exactly this
+        convention. (An earlier version of this docstring stated the
+        mapping backwards — long→"buy", short→"sell" — which never matched
+        the writers or the reader; corrected here.) NULL only for a row
+        written before this column existed; the drain path treats NULL as
+        the long-assuming fallback (see
         `TradingPipeline._derive_close_side_for_drain`).
+
+        SCALE-IN rows (sell_order_id == `scale_in.WAL_SCALE_IN_SENTINEL`)
+        follow the IDENTICAL convention, but they are dispatched to
+        `scale_in.drain_scale_in_row` by their sentinel BEFORE any generic
+        side reader runs, and that drain classifies long/short from the SIGN
+        of `position_qty_before_sell` rather than this column — so a scale-in
+        row is never interpreted with a generic reader's meaning either way.
         """
         def _do():
             cur = self.conn.execute(
@@ -2441,6 +2575,56 @@ class Database:
             if payload.get("paid_retry") is True:
                 count += 1
         return count
+
+    def latest_news_analysis_today(
+        self, *, trading_day: date | None = None,
+    ) -> str | None:
+        """The newest news-seat answer the desk PAID for today (ET), as JSON.
+
+        Why this exists, 2026-09-23. The intraday carry-forward reads the
+        news seat from `data/news/<ET day>/full_report.json`, which only the
+        three scheduled sessions ever write. A paid heal
+        (`TradingPipeline._try_one_paid_research_retry`) writes its answer to
+        `specialist_evidence` and nowhere else, so every later tick re-loaded
+        the SUPERSEDED morning file, re-expired the seat, and — since the
+        per-ET-day cap landed — then refused to buy it again. The desk paid
+        for a fresher read at 10:00 and ran the rest of the day with the
+        news seat unset. Production: 8 paid news heals on 2026-09-18, each
+        ~30 minutes apart, every one discarded by the next tick.
+
+        The row this reads is not heal-specific and deliberately so: the
+        ordinary morning/midday/evening reads write the SAME
+        `agent_name='news_analyst', kind='analysis', scope='run'` row
+        (`src/pipeline_stages.py`). "Newest such row today" therefore means
+        "the freshest paid news read the desk holds", which is a property of
+        the evidence, not of how it was bought. On a tick with no heal it
+        returns the same content the file holds, so the caller's merge is a
+        no-op.
+
+        The ET-day bound is the SAME bound the dated report directory
+        already has — no clock and no new lifetime; see
+        `src.evidence_kind.news_reuse`, which still decides expiry.
+
+        Returns None — not "" — when there is no such row or the read fails,
+        so the caller falls back to the file rather than treating a sick
+        forensic store as "the desk has no news".
+        """
+        start, end = self._et_day_utc_bounds(trading_day)
+        try:
+            with self._lock:
+                row = self.conn.execute(
+                    "SELECT evidence_json FROM specialist_evidence "
+                    "WHERE kind = 'analysis' AND agent_name = 'news_analyst' "
+                    "AND scope = 'run' AND timestamp >= ? AND timestamp < ? "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (start, end),
+                ).fetchone()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("latest_news_analysis_today failed: %s", e)
+            return None
+        if not row or not row[0]:
+            return None
+        return str(row[0])
 
     # --- Conviction ledger (spec §9.5) -----------------------------------
     #
@@ -2876,17 +3060,29 @@ class Database:
 
     def save_holding_protection_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        close: float | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
-        still be broken before treating the break as confirmed."""
+        still be broken before treating the break as confirmed.
+
+        `close` is that session's closing price, persisted so a later read can
+        re-test whether it cleared the break margin IN FORCE under the current
+        trend regime (the margin-consistency guard #4 in
+        `src.risk.exit_guard`), rather than trusting a stale broken flag."""
+        payload: dict = {"raw_broken": bool(raw_broken), "bar_date": str(bar_date)}
+        try:
+            if close is not None:
+                cf = float(close)
+                if math.isfinite(cf):
+                    payload["close"] = cf
+        except (TypeError, ValueError):
+            pass
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.HOLDING_PROTECTION_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
-            evidence_json=json.dumps({
-                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
-            }),
+            evidence_json=json.dumps(payload),
         )
 
     def get_prior_holding_protection_break(
@@ -2909,6 +3105,109 @@ class Database:
             symbols, kind=self.HOLDING_PROTECTION_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
         )
+
+    def get_recent_holding_protection_breaks(
+        self, symbol: str, *, before_bar_date: str,
+        exclude_run_id: str | None = None, limit: int = 30,
+    ) -> list[dict]:
+        """The recent per-session holding-protection break records for one
+        `symbol`, dated STRICTLY BEFORE `before_bar_date`, most-recent first and
+        DEDUPED to one record per `bar_date` (the latest write for that session
+        wins). Each record is `{"bar_date", "raw_broken", "close"}` (close may be
+        absent on a legacy row).
+
+        The exit guard reconstructs the CONSECUTIVE-confirming-close streak from
+        these, so it can enforce adjacency (a gap session resets — #3) and
+        margin-consistency (a prior close counts only if it cleared the margin
+        now in force — #4). Returning the raw records rather than a precomputed
+        count keeps this method free of the trend/margin policy, which lives in
+        `src.risk.exit_guard`."""
+        sym = str(symbol).strip().upper()
+        if not sym:
+            return []
+        sql = (
+            "SELECT evidence_json FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol=?"
+        )
+        params: list = [self.HOLDING_PROTECTION_BREAK_KIND, sym]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        out: list[dict] = []
+        seen_dates: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(dict(row).get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            bar_date = str(payload.get("bar_date") or "")
+            if not bar_date or bar_date >= str(before_bar_date):
+                continue
+            if bar_date in seen_dates:
+                continue
+            seen_dates.add(bar_date)
+            rec = {"bar_date": bar_date, "raw_broken": bool(payload.get("raw_broken"))}
+            if payload.get("close") is not None:
+                rec["close"] = payload.get("close")
+            out.append(rec)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
+    # --- Gross-exposure de-lever ceiling state (docs/WORK.md item 112) ---
+    #
+    # One boolean per de-lever session: did the book finish STILL over its
+    # ceiling? Persisted so the owner page fires only on the transition INTO
+    # that state, not every session a chronically-over book runs the ladder.
+    # On `specialist_evidence` like every other cross-session flag here — no
+    # new table.
+    DELEVER_CEILING_STATE_KIND = "delever_ceiling_state"
+
+    def save_delever_ceiling_state(
+        self, *, run_id: str, over_ceiling: bool,
+    ) -> int:
+        """Record whether this session's gross-exposure de-lever finished with
+        the book still over its ceiling.
+
+        Written on EVERY session that runs the ceiling enforcement, for both
+        outcomes, so the next session can tell a fresh transition into
+        still-over apart from a book that has sat over the ceiling for days.
+        Observability/state only — no order, sizing or sequencing reads it."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="pipeline",
+            kind=self.DELEVER_CEILING_STATE_KIND, scope="run",
+            evidence_json=json.dumps({"over_ceiling": bool(over_ceiling)}),
+        )
+
+    def get_last_delever_over_ceiling(
+        self, *, exclude_run_id: str | None = None,
+    ) -> bool | None:
+        """The most recent recorded de-lever ceiling state — True (still over),
+        False (cleared), or None when there is no prior record.
+
+        None and False both mean 'not currently in the still-over state', so a
+        transition into still-over pages in either case. `exclude_run_id` drops
+        rows from the current run, so a read-before-write in the same session
+        sees only PRIOR sessions."""
+        sql = "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
+        params: list = [self.DELEVER_CEILING_STATE_KIND]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 1"
+        with self._lock:
+            row = self.conn.execute(sql, tuple(params)).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(dict(row).get("evidence_json") or "{}")
+        except (TypeError, ValueError):
+            return None
+        val = payload.get("over_ceiling")
+        return val if isinstance(val, bool) else None
 
     # --- Take-profit revision record (`src.risk.target_revision`) -------
     #
@@ -3443,6 +3742,100 @@ class Database:
                 (date, total_value, daily_pnl, daily_return_pct, equity_close),
             )
             self.conn.commit()
+
+    def insert_margin_interest_daily(
+        self, date: str, debit_balance: float, rate_pct: float, daily_usd: float,
+        days_charged: int, period_usd: float, source: str = "estimate",
+    ) -> None:
+        """One row per trading day the margin-interest tracker ran — the
+        only historical record of the desk's overnight debit balance (see
+        the table's own comment in `initialize()`). A same-day re-run
+        replaces its own row (`ON CONFLICT(date) DO UPDATE`), same
+        convention as `insert_daily_pnl`."""
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO margin_interest_daily
+                   (date, debit_balance, rate_pct, daily_usd, days_charged,
+                    period_usd, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(date) DO UPDATE SET
+                     debit_balance=excluded.debit_balance,
+                     rate_pct=excluded.rate_pct,
+                     daily_usd=excluded.daily_usd,
+                     days_charged=excluded.days_charged,
+                     period_usd=excluded.period_usd,
+                     source=excluded.source""",
+                (date, debit_balance, rate_pct, daily_usd, days_charged,
+                 period_usd, source),
+            )
+            self.conn.commit()
+
+    def backfill_margin_interest_daily(
+        self, rows: list, dry_run: bool = True,
+    ) -> dict:
+        """Write reconstructed HISTORICAL `margin_interest_daily` rows —
+        owner ask 2026-09-24: no historical daily debit balance was ever
+        persisted before #637, so the "all-time" cumulative view can only
+        see days since that PR merged. `rows` is a list of
+        `src.margin_interest.BackfilledDayEstimate` (or anything with the
+        same attributes); see that module for how they were reconstructed
+        (replayed from the broker's own activity ledger — there is no
+        historical cash/positions endpoint to read this from directly).
+
+        SAFE TO RE-RUN: a date already holding a row from the LIVE tracker
+        (`source` `'estimate'` or `'broker_actual'`, written by
+        `notifier._persist_margin_interest_daily` every morning) is left
+        alone — a backfilled reconstruction must never overwrite a day the
+        live tracker actually measured, no matter how many times this
+        runs. A date already holding a PRIOR backfill row (`source`
+        `'estimate_backfill'`) is safely re-upserted with this run's
+        (possibly refined) figures, same idempotency contract as
+        `insert_margin_interest_daily`'s own `ON CONFLICT`. A brand-new
+        date is inserted.
+
+        `dry_run=True` (the default) computes and returns counts without
+        writing anything — same posture as `backfill_position_ids`/
+        `scripts/backfill_position_ids.py`. Returns
+        `{"inserted": n, "skipped_live_row": n, "total": n}`.
+        """
+        inserted = 0
+        skipped_live_row = 0
+        with self._lock:
+            for row in rows:
+                d = row.trading_day.isoformat() if hasattr(row.trading_day, "isoformat") else str(row.trading_day)
+                existing = self.conn.execute(
+                    "SELECT source FROM margin_interest_daily WHERE date = ?",
+                    (d,),
+                ).fetchone()
+                if existing is not None and existing[0] != "estimate_backfill":
+                    skipped_live_row += 1
+                    continue
+                inserted += 1
+                if dry_run:
+                    continue
+                self.conn.execute(
+                    """INSERT INTO margin_interest_daily
+                       (date, debit_balance, rate_pct, daily_usd, days_charged,
+                        period_usd, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(date) DO UPDATE SET
+                         debit_balance=excluded.debit_balance,
+                         rate_pct=excluded.rate_pct,
+                         daily_usd=excluded.daily_usd,
+                         days_charged=excluded.days_charged,
+                         period_usd=excluded.period_usd,
+                         source=excluded.source
+                       WHERE margin_interest_daily.source = 'estimate_backfill'""",
+                    (d, row.debit_balance, row.rate_pct, row.daily_usd,
+                     row.days_charged, row.period_usd, row.source),
+                )
+            if not dry_run:
+                self.conn.commit()
+        return {
+            "inserted": inserted,
+            "skipped_live_row": skipped_live_row,
+            "total": len(rows),
+        }
 
     def backfill_equity_close(self, date: str, equity_close: float) -> bool:
         """Fill in a still-NULL equity_close on an existing daily_pnl row.
@@ -4247,8 +4640,14 @@ class Database:
                 })
             elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
                   or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
-                             "REDUCE", "TAKE_PROFIT", "STOP_OUT")
+                             "REDUCE", "TAKE_PROFIT", "STOP_OUT",
+                             "RECONCILED_EXIT")
                   or _is_filled_trail_stop(row, act)):
+                # RECONCILED_EXIT (item 173(a)) is, like STOP_OUT, written by
+                # _reconcile_stop_out_fills ONLY after the broker confirmed the
+                # fill — every such row that exists is a realized close, so it
+                # must retire a lot here or it leaves a phantom open lot exactly
+                # like the 2026-07-16 TRAIL_STOP omission.
                 # STOP_OUT (added 2026-08-28, ONDS/CCJ) is written by
                 # _reconcile_stop_out_fills ONLY once the broker has already
                 # confirmed the fill — unlike TRAIL_STOP, which is written

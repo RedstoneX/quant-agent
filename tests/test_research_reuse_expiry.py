@@ -66,6 +66,7 @@ class _NewsStore:
 
 def _bind_reuse(obj):
     obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
+    obj._latest_news_read_today = TradingPipeline._latest_news_read_today.__get__(obj)
     obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
     obj._carry_forward_insider = TradingPipeline._carry_forward_insider.__get__(obj)
     obj._macro_regime_or_print_changed = (
@@ -87,9 +88,6 @@ def _bind_reuse(obj):
         TradingPipeline._watched_research_symbols.__get__(obj)
     )
     obj._peek_news_headlines = TradingPipeline._peek_news_headlines.__get__(obj)
-    obj._peek_new_form4_accessions = (
-        TradingPipeline._peek_new_form4_accessions.__get__(obj)
-    )
     obj._form4_freshness = TradingPipeline._form4_freshness.__get__(obj)
     obj._insider_same_session = TradingPipeline._insider_same_session.__get__(obj)
     obj._specialist_insider_as_of = (
@@ -108,7 +106,6 @@ def _bind_reuse(obj):
 def test_research_reuse_peeks_exist_on_the_pipeline():
     """The getattr call sites used to resolve to None. They must be real."""
     assert callable(getattr(TradingPipeline, "_peek_news_headlines", None))
-    assert callable(getattr(TradingPipeline, "_peek_new_form4_accessions", None))
     assert callable(getattr(TradingPipeline, "_load_remembered_insider_findings", None))
 
 

@@ -145,40 +145,16 @@ STARTER_POSITION_RISK_PCT = 0.5
 """The smallest position this desk will hold, as % of equity at risk.
 
 Not a new number: it is `RiskConfig.min_position_risk_pct`, the floor
-`allocate_risk_budget` already denies requests under. Anything smaller pays
-full commission and full attention for an immaterial payoff, so a request
-rationed below it is refused rather than shrunk — which is exactly why it is
-also the right cap for a sub-floor catalyst trade: the smallest size the desk
-can express without the idea being denied outright.
+`allocate_risk_budget` already denies requests under. Anything smaller still
+consumes a book slot and needs its own stop and ongoing attention for an
+immaterial payoff, and its spread/slippage cost is a large share of the whole
+position (Alpaca charges no stock commission — this is not a commission
+floor), so a request rationed below it is refused rather than shrunk — which
+is exactly why it is also the right cap for a sub-floor catalyst trade: the
+smallest size the desk can express without the idea being denied outright.
 
 Consumers (must stay aligned — if you edit one, verify the others):
   - `RiskConfig.min_position_risk_pct`            (the budget floor)
   - `PortfolioManagerAgent.decide`                (the sub-floor cap default)
 """
-
-DEFAULT_DRAWDOWN_VOL_SENSITIVITY = 3.0
-"""How many multiples of the held book's own normal daily move trip a loss
-alarm, before sqrt(time) window scaling. docs/WORK.md item 32.
-
-PROVISIONAL AND REVERSIBLE — an owner risk-appetite decision made
-2026-09-11, NOT a researched or validated number. There is no citable
-industry-standard multiple for this; it was specifically researched and does
-not exist. It replaced an earlier 6.7, which existed only so behaviour would
-not jump when the alarms' basis changed, and which measurement then showed
-meant the daily breaker fired only on a ~6.7-sigma session — a crash-grade
-event, i.e. effectively dormant. 3.0 is roughly a 3% daily loss on a book
-whose normal session is ~1%: a rough day, not a crash.
-
-The sqrt(time) scaling this multiplies IS research-grounded and cited
-(Van Hemert/Ganz/Harvey, "Drawdowns", JPM 2020). The multiple is not. Keep
-that distinction in anything written about it.
-
-Consumers (must stay aligned — if you edit one, verify the others):
-  - `RiskConfig.drawdown_vol_sensitivity`         (the model default + full
-                                                   reasoning)
-  - `config/settings.yaml` (`risk.drawdown_vol_sensitivity`)
-  - `TradingPipeline._build_agents` / `_compute_recent_performance`
-    (the fallback used when settings cannot be read)
-"""
-
 

@@ -9,6 +9,15 @@ from src.models import OHLCV, TechnicalIndicators
 #: context block cannot end up on different periods.
 ATR_PERIOD = 14
 
+#: Wilder's original lookback for the Average Directional Index, exactly as
+#: published in J. Welles Wilder, New Concepts in Technical Trading Systems
+#: (1978), and the period every chart package means by "ADX(14)". Named
+#: rather than repeated (same reason as `ATR_PERIOD`) so the indicator path
+#: and the exit guard's trend-context read can never end up on different
+#: periods. The strong-trend threshold read against it
+#: (`src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD`, 25) is Wilder's too.
+ADX_PERIOD = 14
+
 
 def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
     """Wilder's average true range over `bars` — THE one implementation.
@@ -56,9 +65,12 @@ def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
 #: briefed with (`config/settings.yaml` `lookback_days` was raised for it in
 #: the 2026-07-16 audit, which treated its absence as the analyst judging
 #: trend blind). Named here, not chosen here: it is the same 200 the
-#: `rolling(200)` below has always used. `PortfolioConstructor` reads it as
-#: the bar count under which an instrument is too YOUNG to be measured
-#: (docs/WORK.md item 54).
+#: `rolling(200)` below has always used -- a conventional published trend
+#: reference. It is NO LONGER a trade-governing gate: the constructor's
+#: young-listing bar-count refusal that also read this constant was dropped
+#: on the owner's ruling (docs/WORK.md item 180, 2026-09-25); a young name is
+#: now judged on whether a protective stop is readable from whatever bars
+#: exist, not on this count. `ma_200` simply stays None under 200 sessions.
 LONGEST_INDICATOR_WINDOW = 200
 
 
@@ -77,9 +89,14 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
     if len(df) >= 50:
         result.ma_50 = round(float(df["close"].rolling(50).mean().iloc[-1]), 2)
     if len(df) >= LONGEST_INDICATOR_WINDOW:
-        result.ma_200 = round(
-            float(df["close"].rolling(LONGEST_INDICATOR_WINDOW).mean().iloc[-1]), 2,
-        )
+        _ma200 = df["close"].rolling(LONGEST_INDICATOR_WINDOW).mean()
+        result.ma_200 = round(float(_ma200.iloc[-1]), 2)
+        # The 200-MA one completed session earlier, so the exit guard can read
+        # the 200-MA SLOPE (rising vs falling) for its trend-scaled break
+        # regime (owner mandate 2026-09-24). Same rolling window as ma_200; None
+        # until there is one extra bar to look back on.
+        if len(df) >= LONGEST_INDICATOR_WINDOW + 1:
+            result.ma_200_prior = round(float(_ma200.iloc[-2]), 2)
 
     # RSI
     if len(df) >= 15:
@@ -100,6 +117,26 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
             result.macd_signal = round(float(signal_val), 4)
         if pd.notna(hist_val):
             result.macd_hist = round(float(hist_val), 4)
+
+    # ADX (+DI / -DI) — Wilder's directional system, same block pattern as
+    # MACD above. ADX warms up over roughly two lookbacks (the recursive
+    # smoothing is applied twice: once to the directional movement, once to
+    # the DX), so it is only computed once there are enough bars for `ta` to
+    # return a finite reading; a NaN warm-up value is left as None rather
+    # than shipped as a spurious 0.0.
+    if len(df) >= 2 * ADX_PERIOD:
+        adx_ind = ta.trend.ADXIndicator(
+            df["high"], df["low"], df["close"], window=ADX_PERIOD,
+        )
+        adx_val = adx_ind.adx().iloc[-1]
+        di_plus_val = adx_ind.adx_pos().iloc[-1]
+        di_minus_val = adx_ind.adx_neg().iloc[-1]
+        if pd.notna(adx_val):
+            result.adx_14 = round(float(adx_val), 2)
+        if pd.notna(di_plus_val):
+            result.di_plus_14 = round(float(di_plus_val), 2)
+        if pd.notna(di_minus_val):
+            result.di_minus_14 = round(float(di_minus_val), 2)
 
     # Bollinger Bands
     if len(df) >= 20:

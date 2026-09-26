@@ -656,6 +656,40 @@ def test_tech_returning_non_json_is_classified():
     assert family is not None and family.key == "seat_answer_unreadable"
 
 
+# --- 2026-09-25: the news seat's own final-failure lines (item 152) ---
+#
+# `NewsAnalystAgent.analyze()` previously spelled its exhausted-retry
+# validation failure "News analysis failed parse after one heal retry" —
+# missing "to" — which the `seat_answer_unreadable` pattern (`failed to
+# parse`) never matched, so that line fell through unclassified exactly like
+# the technical seat's capitalised "Failed to parse" did before #538. Fixed
+# alongside adding the same one paid heal retry to the whole-answer
+# non-JSON path, which previously had none at all.
+
+
+def test_news_seat_final_validation_failure_is_classified():
+    record = L.LogRecord(
+        datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
+        "ERROR",
+        "src.agents.news_analyst",
+        "News analysis failed to parse after one heal retry: 1 validation "
+        "error for NewsIntelligenceReport",
+    )
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "seat_answer_unreadable"
+
+
+def test_news_seat_final_non_json_failure_is_classified():
+    record = L.LogRecord(
+        datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
+        "ERROR",
+        "src.agents.news_analyst",
+        "News analyst returned non-JSON response after one heal retry",
+    )
+    family = L.classify(record.message, record.level)
+    assert family is not None and family.key == "seat_answer_unreadable"
+
+
 def test_tech_request_sizing_fallback_is_handled_not_invisible():
     """`Tech batch: could not size the request set; falling back to fixed
     N-symbol chunks. Analysis is unaffected...` — the source's own words say

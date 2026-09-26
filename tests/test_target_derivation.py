@@ -194,8 +194,9 @@ class TestRefusals:
         history the desk failed to obtain. So this declines as a DATA FAULT
         (`fault` set, `refusal` empty), still with no price and still
         carrying the model's guess as evidence only. (A listing merely too
-        YOUNG is a different thing — a named refusal the constructor makes
-        before this runs; see `_require_sufficient_history`.)"""
+        YOUNG is no longer refused on a bar count — board item 180 dropped
+        that gate; a young name too bar-starved to read any stop from is
+        refused later by the constructor's stop-readability rule.)"""
         bars = _bars([100.0] * 4)
         supports, resistances = find_structural_levels(bars)
         assert (supports, resistances) == ([], [])
@@ -791,9 +792,7 @@ class TestSLB:
         The derivation itself is what this class exists for and is unchanged
         — the target still comes from the computed shelf, not the model's
         guess, and the divergence is still measured."""
-        constructor = PortfolioConstructor(ConstructorConfig(
-            min_reward_risk_after_widening=self.FLOOR,
-        ))
+        constructor = PortfolioConstructor(ConstructorConfig())
         # Structural stop deliberately inside the noise band, so widening
         # fires and the reward:risk gate is reached.
         #

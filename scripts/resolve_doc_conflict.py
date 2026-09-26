@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import importlib.util
 import re
 import subprocess
@@ -77,12 +78,26 @@ CONFLICT_MARKERS = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
 
 
 class Refusal(Exception):
-    """The merge cannot be completed safely and no file may be written.
+    """The merge cannot be completed safely and no RESOLVED file may be written.
 
     Every raise carries a plain-English reason and, where two versions of the
     same thing exist, both of them — so the human resolving it can see which
     is which instead of being told only that something went wrong.
+
+    A refusal is not the end of the driver's obligations. See
+    `write_refusal_artefact`: refusing used to mean leaving the file git had
+    already initialised to the OURS copy, which is valid markdown carrying no
+    marker and missing everything that existed only on the other side. That
+    is the same silent-revert shape this whole module exists to prevent, and
+    it cost three near-misses in one night.
     """
+
+    #: Set when the resolver got far enough to produce merged text before a
+    #: post-condition refused it (the byte cap is the common case). The text is
+    #: never written to the document — it goes in the sidecar reason file, so
+    #: the human keeps the partial progress without an unmarked file landing in
+    #: the worktree.
+    merged_text: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +309,67 @@ def render_sections(sections: list[Section]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def same_text(a: str, b: str) -> bool:
+    """Are these two chunks the same PROSE, ignoring differences no reader can
+    see?
+
+    Byte equality was the test everywhere in this module, and it made the tool
+    unusable in the one situation it is for. Two branches that made the SAME
+    edit — the normal outcome of two agents writing up the same finding, or of
+    one branch cherry-picking the other's paragraph — differ by a trailing
+    space or one blank line about half the time, because editors and agents
+    disagree about trailing newlines. Byte equality called that a NUMBER
+    COLLISION, told the human to renumber an item that needed no renumbering,
+    and forced a full hand rebuild of the file.
+
+    Normalisation is used ONLY for this comparison, never for output: whatever
+    is written out is one side's bytes exactly as that side wrote them. So a
+    false "same" here costs at worst one side's whitespace preference, and
+    cannot reorder, drop or reflow anything.
+
+    Ignored: trailing whitespace on every line, runs of blank lines collapsed
+    to one, and leading/trailing blank lines. NOT ignored: leading indentation
+    (markdown makes it a code block) and single-versus-absent blank lines
+    inside a paragraph are preserved in the output; they just do not by
+    themselves make two chunks "different".
+    """
+    return _normalise(a) == _normalise(b)
+
+
+def _normalise(text: str) -> str:
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    out: list[str] = []
+    for ln in lines:
+        if not ln and out and not out[-1]:
+            continue  # collapse a run of blank lines
+        out.append(ln)
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out)
+
+
+def _precise_difference(ours: str, theirs: str) -> str:
+    """A line diff of two colliding blocks, plus both blocks in full.
+
+    The refusal used to print two whole blocks and nothing else, which for a
+    long board item means reading two near-identical paragraphs and spotting
+    the difference by eye. The diff comes first because it is the part that
+    answers "is this a real collision or did I rebase badly"; the full texts
+    stay because the human also has to rewrite one of them.
+    """
+    diff = list(difflib.unified_diff(
+        ours.splitlines(keepends=True), theirs.splitlines(keepends=True),
+        fromfile="ours", tofile="theirs", n=1,
+    ))
+    parts = ["--- what actually differs (ours -> theirs) ---"]
+    parts.append("".join(diff).rstrip() or "(nothing but whitespace)")
+    parts.append(f"--- ours, in full ---\n{ours}")
+    parts.append(f"--- theirs, in full ---\n{theirs}")
+    return "\n".join(parts)
+
+
 def merge_text(base: str, ours: str, theirs: str, what: str) -> str:
     """Three-way merge of one prose chunk.
 
@@ -301,12 +377,15 @@ def merge_text(base: str, ours: str, theirs: str, what: str) -> str:
     to different things is a genuine editorial conflict and stops for a human —
     after one attempt at git's own line-level merge, which resolves the common
     case of two edits to different paragraphs.
+
+    "Unchanged" and "the same" are judged by `same_text`, not by bytes: a
+    whitespace-only difference is not an editorial disagreement.
     """
-    if ours == theirs:
+    if same_text(ours, theirs):
         return ours
-    if ours == base:
+    if same_text(ours, base):
         return theirs
-    if theirs == base:
+    if same_text(theirs, base):
         return ours
     merged, clean = _git_merge_file(base, ours, theirs)
     if clean:
@@ -319,17 +398,27 @@ def merge_text(base: str, ours: str, theirs: str, what: str) -> str:
     )
 
 
-def _git_merge_file(base: str, ours: str, theirs: str) -> tuple[str, bool]:
+def _git_merge_file(base: str, ours: str, theirs: str,
+                    labels: tuple[str, str, str] | None = None
+                    ) -> tuple[str, bool]:
+    """git's own line-level three-way merge. Returns (text, was_clean).
+
+    `labels` names the three sides in any conflict markers produced. Without
+    it git labels them with the temp-file paths it was handed, which is fine
+    for the internal callers that throw a dirty result away and useless for
+    the one caller whose output a human reads.
+    """
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
         (d / "base").write_text(base)
         (d / "ours").write_text(ours)
         (d / "theirs").write_text(theirs)
-        proc = subprocess.run(
-            ["git", "merge-file", "-p", "--diff3",
-             str(d / "ours"), str(d / "base"), str(d / "theirs")],
-            capture_output=True, text=True,
-        )
+        cmd = ["git", "merge-file", "-p", "--diff3"]
+        if labels:
+            for lab in labels:
+                cmd += ["-L", lab]
+        cmd += [str(d / "ours"), str(d / "base"), str(d / "theirs")]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
         return proc.stdout, proc.returncode == 0
 
 
@@ -352,19 +441,23 @@ def merge_keyed(base: dict, ours: dict, theirs: dict,
                 "side. This document is append-only: entries are never removed."
             )
         if in_o and in_t:
-            if ours[k] == theirs[k]:
+            if same_text(ours[k], theirs[k]):
                 merged[k] = ours[k]
-            elif in_b and ours[k] == base[k]:
+            elif in_b and same_text(ours[k], base[k]):
                 merged[k] = theirs[k]
-            elif in_b and theirs[k] == base[k]:
+            elif in_b and same_text(theirs[k], base[k]):
                 merged[k] = ours[k]
             else:
                 raise Refusal(
                     f"NUMBER COLLISION on {what} {k!r}: the two sides carry "
-                    "DIFFERENT text under the same identifier. That is a "
-                    "renumber, never a delete, and this tool will not pick "
-                    "one silently.\n"
-                    f"--- ours ---\n{ours[k]}\n--- theirs ---\n{theirs[k]}\n"
+                    "DIFFERENT text under the same identifier, and the "
+                    "difference is not whitespace. This tool will not pick "
+                    "one silently, and it will not renumber either: an item "
+                    "number is quoted from docs/BOARD_NOTES.md, from "
+                    "docs/INCIDENT_HISTORY.md, from the retired-numbers line "
+                    "and from PR titles, so renumbering one here would break "
+                    "every reference to it somewhere this tool cannot see.\n"
+                    f"{_precise_difference(ours[k], theirs[k])}\n"
                     "Renumber one of them by hand (see the retired-numbers "
                     "line for the next free number) and re-run the merge."
                 )
@@ -520,7 +613,14 @@ def resolve_work(base: str, ours: str, theirs: str) -> str:
         expected[s_o.key] = set(merged_items)
 
     text = render_sections(out)
-    _assert_work_postconditions(text, base, ours, theirs, expected)
+    try:
+        _assert_work_postconditions(text, base, ours, theirs, expected)
+    except Refusal as exc:
+        # The item merge itself completed; a post-condition (usually the byte
+        # cap) refused the result. Carry it so the sidecar can show the human
+        # the work rather than making them redo it by hand.
+        exc.merged_text = text
+        raise
     return text
 
 
@@ -796,7 +896,64 @@ def _entry_date(key: str) -> dt.date:
     return dt.date.fromisoformat(m.group(1)) if m else dt.date.min
 
 
+def _newest_first_slot(order: list[str], date: dt.date) -> int:
+    """The highest index at which an entry of `date` can sit without anything
+    older than it being above it.
+
+    Not a binary search, deliberately: `order` is NOT sorted (the committed log
+    has 21 out-of-order adjacent pairs that predate this tool and must not be
+    rewritten by a merge), so bisect would land in an arbitrary place. A linear
+    scan for the first entry that is not newer gives the same answer for a
+    sorted list and a defined, top-most answer for an unsorted one.
+    """
+    for i, k in enumerate(order):
+        if _entry_date(k) <= date:
+            return i
+    return len(order)
+
+
+#: A dated entry heading written with the WRONG number of hashes. `docs/WORK.md`
+#: item 93 records that 12 such headings already sit on main; this tool cannot
+#: see them, which is exactly the problem — an entry it cannot see is not
+#: placed, it just stays wherever the text happened to be. Appended at the
+#: bottom, as "append, never trim" invites, a same-day entry written this way
+#: sits at the BOTTOM of a newest-first log and the merge reports success
+#: [reproduced 2026-09-23]. That is the most likely mechanism behind the
+#: ordering complaint that started this work.
+_MISWRITTEN_ENTRY_RE = re.compile(r"^(#{1,2}|#{4,6})\s+\d{4}-\d{2}-\d{2}\b", re.M)
+
+
+def _new_miswritten_entries(base: str, side: str) -> list[str]:
+    """Dated headings a SIDE introduces that `parse_history` cannot see.
+
+    Deliberately scoped to NEW ones. The 12 already on main are pre-existing
+    rot filed as item 93 and are not this tool's to fix or to block on; a
+    branch inventing a thirteenth is a fresh mistake that this merge would
+    silently misfile, and that is worth stopping for.
+    """
+    base_lines = {ln for ln in base.splitlines()
+                  if _MISWRITTEN_ENTRY_RE.match(ln)}
+    return [ln for ln in side.splitlines()
+            if _MISWRITTEN_ENTRY_RE.match(ln) and ln not in base_lines]
+
+
 def resolve_history(base: str, ours: str, theirs: str) -> str:
+    for label, side in (("ours", ours), ("theirs", theirs)):
+        bad = _new_miswritten_entries(base, side)
+        if bad:
+            raise Refusal(
+                f"{label} adds {len(bad)} dated incident heading(s) that this "
+                "tool cannot see as entries, because an entry heading is "
+                "exactly three hashes and an ISO date:\n  "
+                + "\n  ".join(bad)
+                + "\n\nAn entry this parser cannot see is never PLACED — it "
+                "stays wherever the text happens to sit, which for one "
+                "appended at the end means the bottom of a newest-first log, "
+                "with the merge reporting success. Rewrite the heading as "
+                "`### YYYY-MM-DD — title` and re-run. (The headings already "
+                "on main with the wrong shape are docs/WORK.md item 93 and "
+                "are deliberately not blocked here.)"
+            )
     b_pre, b_e, b_order = parse_history(base)
     o_pre, o_e, o_order = parse_history(ours)
     t_pre, t_e, t_order = parse_history(theirs)
@@ -805,18 +962,36 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
                                   what="incident entry", append_only=True)
 
     # Newest first, and NOTHING already in the log moves. The committed file
-    # is not perfectly date-sorted (fifteen adjacent pairs are out of order as
-    # of 2026-09-14), so globally re-sorting it would rewrite years of history
-    # as a side effect of one merge. Entries that were already there keep the
-    # base's order exactly; only the new ones are placed, at the top, newest
-    # first among themselves. Two sides cannot be ranked against each other, so
-    # a same-date tie goes to ours — the same way every time, never arbitrarily.
+    # is not perfectly date-sorted (21 adjacent pairs are out of order as of
+    # 2026-09-23), so globally re-sorting it would rewrite years of history as
+    # a side effect of one merge. Entries that were already there keep the
+    # base's order exactly; only the new ones are placed. Two sides cannot be
+    # ranked against each other, so a same-date tie goes to ours — the same
+    # way every time, never arbitrarily.
+    #
+    # WHERE a new entry goes used to be "the top, unconditionally". That is
+    # right for the ordinary case (an entry written today, above yesterday's)
+    # and wrong for the case the desk actually does hit: a BACKFILLED entry,
+    # written today about something that happened days ago. The log's own
+    # first rule is "Newest first", and blind prepending put a 2026-09-20
+    # backfill above three 2026-09-23 entries — a violation of the one
+    # ordering rule the file states about itself, caused by the merge rather
+    # than by whoever wrote the entry. Each new entry is now placed at the
+    # HIGHEST position where nothing above it is older than it is, which is
+    # the top in the ordinary case and the right slot in the backfill case,
+    # and which still never moves an entry that was already there.
     retained = [k for k in b_order if k in entries]
     new_ours = [k for k in o_order if k in entries and k not in b_e]
     new_theirs = [k for k in t_order if k in entries and k not in b_e
                   and k not in new_ours]
     fresh = sorted(new_ours + new_theirs, key=_entry_date, reverse=True)
-    order = fresh + retained
+    #
+    # Placed oldest-first so that same-date entries end up in `fresh`'s own
+    # order (ours above theirs): each insertion goes ABOVE the equal-dated
+    # entry placed before it.
+    order = list(retained)
+    for k in reversed(fresh):
+        order.insert(_newest_first_slot(order, _entry_date(k)), k)
 
     text = pre + "".join(entries[k] for k in order)
     _assert_no_conflict_markers(text, "docs/INCIDENT_HISTORY.md")
@@ -838,9 +1013,25 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
     fresh_dates = [_entry_date(k) for k in got_order if k not in b_e]
     if fresh_dates != sorted(fresh_dates, reverse=True):
         raise Refusal(
-            "The entries this merge adds are not newest-first, which is the "
-            "one ordering rule the file states about itself."
+            "The entries this merge adds are not newest-first among "
+            "themselves, which is the one ordering rule the file states "
+            "about itself."
         )
+    # And each added entry against the entries already there: nothing older
+    # than a new entry may sit above it. Asserted separately because the
+    # check above only compares the new entries with each other, which is
+    # what let a backfilled entry be hoisted over three newer ones.
+    for i, k in enumerate(got_order):
+        if k in b_e:
+            continue
+        above = [a for a in got_order[:i] if _entry_date(a) < _entry_date(k)]
+        if above:
+            raise Refusal(
+                f"The merge placed the new entry {k!r} below "
+                f"{len(above)} older entr{'y' if len(above) == 1 else 'ies'} "
+                f"(oldest above it: {above[0]!r}). The log's own first rule "
+                "is newest-first."
+            )
     for side_entries in (o_e, t_e):
         for k in side_entries:
             if k not in got_entries:
@@ -849,6 +1040,163 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
                     "merged file. This log is append-only."
                 )
     return text
+
+
+# ---------------------------------------------------------------------------
+# What a refusal leaves on disk
+# ---------------------------------------------------------------------------
+#
+# This section is the fix for the worst of the four defects reported on
+# 2026-09-23. Git's merge-driver contract is that %A is BOTH the "ours" input
+# and the file git reads the result out of. A driver that exits non-zero
+# without touching %A therefore leaves the OURS copy sitting in the worktree:
+# valid markdown, no conflict marker, and missing everything that existed only
+# on the other side. `git status` says `UU`, but nothing in the FILE says so,
+# and `git checkout --conflict=diff3` does not recover the markers because it
+# re-invokes the driver, which refuses again [reproduced 2026-09-23].
+#
+# Both this module's own wrapper and `tests/test_git_merge_driver_docs.py`
+# asserted that leaving %A alone "is what makes git's own conflict machinery
+# take over". That is false: the machinery marks the INDEX, it does not write
+# markers into the file. The belief was tested-in, which is why three agents
+# hit it in one night and one nearly committed a silent revert of other
+# people's board entries.
+#
+# Rules this artefact keeps, in priority order:
+#   1. Losing content is IMPOSSIBLE, not unlikely — every non-blank line
+#      present on either side is verified present in what gets written, and if
+#      the check fails the whole of the missing side is appended verbatim.
+#   2. The file ALWAYS carries at least one conflict marker, even when git's
+#      line-level merge came back clean, so it is self-announcing to a human,
+#      to `tests/test_no_conflict_markers_in_docs.py`, and to the resolver's
+#      own `_assert_no_conflict_markers`. A markerless file that git calls
+#      conflicted is the ambiguity being removed; it is not reintroduced here.
+#   3. Conflict regions are MINIMAL (git's own `--diff3`), never a whole-file
+#      both-sides dump. A dump of `docs/INCIDENT_HISTORY.md` would be ~3MB of
+#      three near-identical texts, which is not a file anyone resolves; and
+#      `docs/WORK.md` has 1,232 bytes of single-change growth budget at its
+#      current size, so a tripled file is unusable [measured 2026-09-23].
+#   4. NO PROSE goes into the document. `status_board`'s item regex is
+#      `^\*\*(\d+)\.` with no comment stripping, so a refusal note quoting a
+#      colliding item block would be parsed as live board items; and a human
+#      who deletes the markers and commits leaves the prose behind with every
+#      tripwire gone. Every line of the banner starts with a marker, so
+#      removing the markers removes the whole banner. The reason goes to
+#      stderr and to a sidecar file next to the document.
+
+#: Written beside the document on a refusal, e.g. `docs/WORK.md.merge-refusal`.
+#: Gitignored (`.gitignore`: `*.merge-refusal`) so it cannot be committed as
+#: board content, which is the trap that keeping the reason inside the document
+#: would have set.
+REFUSAL_SIDECAR_SUFFIX = ".merge-refusal"
+
+_REFUSAL_BANNER = (
+    "<<<<<<< MERGE REFUSED — this file is NOT resolved; see {sidecar}\n"
+    "||||||| the resolver could not merge it safely and stopped deliberately\n"
+    "=======\n"
+    ">>>>>>> MERGE REFUSED — resolve every region below, then delete these 4 lines\n"
+    "\n"
+)
+
+
+def build_refusal_artefact(base: str, ours: str, theirs: str,
+                           sidecar_name: str, doc_name: str = "this document"
+                           ) -> str:
+    """The text a refusal leaves in the document. See the section comment."""
+    merged, _clean = _git_merge_file(
+        base, ours, theirs,
+        labels=(f"ours (this branch's {doc_name})",
+                f"merge base ({doc_name})",
+                f"theirs (the incoming {doc_name})"),
+    )
+    text = _REFUSAL_BANNER.format(sidecar=sidecar_name) + merged
+
+    # Rule 1, mechanically. `git merge-file` is not supposed to drop a line,
+    # but "not supposed to" is what the last three data-loss incidents had in
+    # common, so it is checked rather than trusted.
+    missing = _lines_lost(text, ours, theirs)
+    if missing:
+        text += (
+            f"<<<<<<< CONTENT NOT ACCOUNTED FOR — {len(missing)} line(s) of the "
+            "two sides did not survive git's line merge\n"
+            "||||||| both sides follow in full; nothing below has been merged\n"
+            "=======\n"
+            + ours
+            + ">>>>>>> --- the other side follows ---\n"
+            + theirs
+            + ">>>>>>> CONTENT NOT ACCOUNTED FOR — end of the unmerged copies\n"
+        )
+    return text
+
+
+def _lines_lost(text: str, ours: str, theirs: str) -> list[str]:
+    """Non-blank lines present on either side and absent from `text`.
+
+    Counted, not just set-tested: a line that appears three times on one side
+    and once in the result has lost two copies, and for a document whose
+    entries are paragraphs of prose that is a real loss.
+    """
+    from collections import Counter
+
+    have = Counter(ln.rstrip() for ln in text.splitlines() if ln.strip())
+    lost: list[str] = []
+    for side in (ours, theirs):
+        want = Counter(ln.rstrip() for ln in side.splitlines() if ln.strip())
+        for ln, n in want.items():
+            if have[ln] < n:
+                lost.extend([ln] * (n - have[ln]))
+    return lost
+
+
+def write_refusal_artefact(out: Path, base: str, ours: str, theirs: str,
+                           reason: str, merged_text: str | None,
+                           tree_path: str | None = None,
+                           root: Path | None = None) -> None:
+    """Leave an obviously-unresolved document at `out`, and the reason beside
+    it. Never called on a success path.
+
+    `out` is where the text must land, which under a real merge is the private
+    temp file git handed us as %A. `tree_path` is what the document is CALLED
+    (%P). The sidecar and the banner use the name, never the temp path: a
+    banner reading `.merge_file_yZ7qDq.merge-refusal` and a reason file written
+    into a directory the human is not looking at is the same as no reason at
+    all.
+    """
+    name = tree_path or out.name
+    # Relative to the CURRENT DIRECTORY, not to this script's own repo root:
+    # git runs a merge driver from the top of the worktree being merged, and
+    # that worktree is not necessarily the one this script was loaded from
+    # (the desk runs several worktrees off one clone at once). Getting this
+    # wrong writes the reason into a directory nobody is looking at.
+    sidecar = ((root or Path.cwd()) / (tree_path + REFUSAL_SIDECAR_SUFFIX)
+               if tree_path
+               else out.with_name(out.name + REFUSAL_SIDECAR_SUFFIX))
+    out.write_text(build_refusal_artefact(
+        base, ours, theirs,
+        (tree_path + REFUSAL_SIDECAR_SUFFIX) if tree_path else sidecar.name,
+        name))
+    note = [
+        "MERGE REFUSED — scripts/resolve_doc_conflict.py could not resolve",
+        f"{name} and has left it with conflict markers on purpose.",
+        "",
+        reason,
+        "",
+        "This file is gitignored. Delete it once the merge is resolved.",
+    ]
+    if merged_text is not None:
+        note += [
+            "",
+            "=" * 72,
+            "The resolver DID produce a merged document before a post-condition",
+            "refused it, so the item-level work is not lost. It is reproduced",
+            "below for reference. It is deliberately NOT what was written to",
+            f"{name}: an unmarked file that git calls conflicted is the",
+            "exact ambiguity this change removes.",
+            "=" * 72,
+            "",
+            merged_text,
+        ]
+    sidecar.write_text("\n".join(note) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -894,7 +1242,20 @@ def _from_index(apply: bool) -> int:
                 "cannot be told from an addition, which is the whole defect "
                 "this tool exists to fix."
             )
-        merged[path] = RESOLVERS[KIND_BY_PATH[path]](base, ours, theirs)
+        try:
+            merged[path] = RESOLVERS[KIND_BY_PATH[path]](base, ours, theirs)
+        except Refusal as exc:
+            # Same obligation as the merge-driver path: git has already put the
+            # OURS copy in the worktree, so a refusal that writes nothing leaves
+            # a markerless file missing the other side's content. `--dry-run`
+            # is the one exception — it promises to write nothing at all.
+            if apply:
+                write_refusal_artefact(REPO_ROOT / path, base, ours, theirs,
+                                       str(exc), exc.merged_text,
+                                       tree_path=path, root=REPO_ROOT)
+                print(f"left {path} UNRESOLVED, with conflict markers",
+                      file=sys.stderr)
+            raise
 
     work = merged.get("docs/WORK.md")
     notes = merged.get("docs/BOARD_NOTES.md")
@@ -905,7 +1266,22 @@ def _from_index(apply: bool) -> int:
         p = REPO_ROOT / "docs" / "BOARD_NOTES.md"
         notes = p.read_text() if p.exists() else None
     if work is not None and notes is not None:
-        assert_notes_agree_with_work(work, notes)
+        try:
+            assert_notes_agree_with_work(work, notes)
+        except Refusal as exc:
+            # A cross-document refusal: both merged files are individually
+            # fine and together they orphan a note. Every path this call
+            # resolved must be left visibly unresolved, or the ones that
+            # merged cleanly get committed as if the pair had been agreed.
+            if apply:
+                for path in merged:
+                    b, o, t = (_stage(path, 1), _stage(path, 2), _stage(path, 3))
+                    write_refusal_artefact(REPO_ROOT / path, b or "", o or "",
+                                           t or "", str(exc), merged[path],
+                                           tree_path=path, root=REPO_ROOT)
+                    print(f"left {path} UNRESOLVED, with conflict markers",
+                          file=sys.stderr)
+            raise
 
     for path, text in merged.items():
         if apply:
@@ -928,6 +1304,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ours")
     ap.add_argument("--theirs")
     ap.add_argument("--out")
+    ap.add_argument("--tree-path",
+                    help="what the document is CALLED in the tree (git's %P). "
+                         "Only used when a refusal has to name the document "
+                         "and place its reason file, because --out under a "
+                         "real merge is a private temp file whose name means "
+                         "nothing to the human reading the banner.")
     args = ap.parse_args(argv)
 
     try:
@@ -936,11 +1318,25 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.kind and args.base and args.ours and args.theirs):
             ap.error("--kind, --base, --ours and --theirs are all required "
                      "without --from-index")
-        text = RESOLVERS[args.kind](
-            Path(args.base).read_text(),
-            Path(args.ours).read_text(),
-            Path(args.theirs).read_text(),
-        )
+        base = Path(args.base).read_text()
+        ours = Path(args.ours).read_text()
+        theirs = Path(args.theirs).read_text()
+        try:
+            text = RESOLVERS[args.kind](base, ours, theirs)
+        except Refusal as exc:
+            if args.out:
+                # The merge-driver path. Git reads its result out of --out (%A),
+                # which it has already filled with the OURS copy, so refusing
+                # without writing here is what silently reverted the other
+                # side. See "What a refusal leaves on disk" above.
+                write_refusal_artefact(Path(args.out), base, ours, theirs,
+                                       str(exc), exc.merged_text,
+                                       tree_path=args.tree_path)
+                named = args.tree_path or args.out
+                print(f"left {named} UNRESOLVED, with conflict markers, and "
+                      f"the reason in {named}{REFUSAL_SIDECAR_SUFFIX}",
+                      file=sys.stderr)
+            raise
         if args.out:
             Path(args.out).write_text(text)
             print(f"wrote {args.out} ({len(text.encode()):,} bytes)")

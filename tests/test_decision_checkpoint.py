@@ -139,7 +139,6 @@ def _resume_pipeline():
     }
     p.broker.get_positions.return_value = []
     p.risk_engine = MagicMock()
-    p.risk_engine.check_daily_loss.return_value = None
     p.morning_research_stage = MagicMock()
     p.risk_stage = MagicMock()
     p.risk_stage.run.return_value = None          # RM approved, proceed

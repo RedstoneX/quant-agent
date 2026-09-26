@@ -118,6 +118,26 @@ flags:
     decided: "2026-09-12"
     source: "commit 03f865402 (#318); config/settings.yaml:286"
 
+  - id: src.config.ExecutionConfig.rotation_ranked_margin_enabled
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Board item 39, attempt 3. The sequencing defect this tier had - a
+      rotation SELL firing ahead of a replacement BUY that a downstream gate
+      then refuses, leaving the desk sold out of a position with nothing
+      bought - is closed by a projected post-sale gate plus a clearance
+      object the sale cannot be built without. The tier is still OFF, and
+      NOT because the switch is being left untouched out of caution: item
+      39(a) is unresolved. The margin that decides when this tier fires,
+      ROTATION_MARGIN_PCT, is recorded in config/number_ledger.yaml as
+      `arbitrary`, and turning this on would make an unmeasured number the
+      sole reason for selling a position whose thesis is intact. The
+      sequencing work is a prerequisite for that decision, not a substitute
+      for it. This flag turns on when 39(a) is answered, and not before.
+    decided: "2026-09-20"
+    source: "board item 39; config/settings.yaml (execution section)"
+
   - id: src.config.ExecutionConfig.fractional_enabled
     effective_value: true
     code_default: true
@@ -159,7 +179,11 @@ flags:
     effective_value: true
     code_default: null
     intentional: false
-    reason: "reason not recorded"
+    reason: >-
+      Per-stock protective stops are the sole loss-protection mechanism after
+      the account-level loss-halt was deleted (board item 32, owner ruling
+      2026-09-20). Requiring a stop on every position prevents the desk from
+      holding unprotected downside.
     decided: null
     source: null
 

@@ -1,15 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { AccountResponse, MarginInterestEstimate } from "../api/client";
+import { AccountResponse, MarginInterestCumulative, MarginInterestEstimate } from "../api/client";
 import { MarginInterestStrip } from "./MarginInterestPanel";
 
 afterEach(() => {
   cleanup();
 });
-
-const ESTIMATE_LABEL =
-  "ESTIMATE — paper trading's handling of margin interest is unconfirmed; not an observed broker charge";
 
 function account(margin: MarginInterestEstimate | null): AccountResponse {
   return {
@@ -18,6 +15,9 @@ function account(margin: MarginInterestEstimate | null): AccountResponse {
     last_equity: 10000,
     daily_pnl: 0,
     daily_pnl_pct: 0,
+    total_pnl: null,
+    total_pnl_pct: null,
+    total_pnl_since: null,
     paper: true,
     history: [],
     liquidity: null,
@@ -28,69 +28,128 @@ function account(margin: MarginInterestEstimate | null): AccountResponse {
   };
 }
 
+function mi(cumulative: MarginInterestCumulative | null): MarginInterestEstimate {
+  return {
+    debit_balance: 5729,
+    rate_pct: 6.25,
+    daily_usd: 0.99,
+    annual_usd: 358,
+    label: null,
+    broker_check_note: null,
+    days_charged: 1,
+    period_usd: 0.99,
+    error: null,
+    cumulative,
+  };
+}
+
 describe("MarginInterestStrip", () => {
-  it("renders the explicit zero state instead of nothing", () => {
-    // THE POINT OF THIS COMPONENT. /account has returned this object since
-    // 2026-09-01 and no component read it, so the cockpit displayed the
-    // figure zero times in 17 days. Owner decision 2026-09-18: "every day,
-    // even if it's zero, that way I know it's still working" — an absent
-    // figure and a dead tracker are indistinguishable to a reader.
+  it("renders the cumulative buckets — this week, current month, prior months, all-time", () => {
+    // Owner ask 2026-09-24: this week / current month / up to 5 more
+    // recent nonzero months / all-time, replacing the old per-day figure.
     render(
       <MarginInterestStrip
-        account={account({
-          debit_balance: 0,
-          rate_pct: 6.25,
-          daily_usd: 0,
-          annual_usd: 0,
-          label: null,
-          broker_check_note: null,
-          error: null,
-        })}
+        account={account(mi({
+          this_week_usd: 3.48,
+          current_month_usd: 12.34,
+          current_month_label: "September 2026",
+          prior_months: [{ label: "August 2026", usd: 27.5 }],
+          all_time_usd: 39.84,
+          all_time_since: "2026-08-01",
+          is_estimate: true,
+          source: "estimate",
+        }))}
       />,
     );
     expect(screen.getByLabelText("Margin interest")).toBeTruthy();
-    expect(screen.getByText("$0.00")).toBeTruthy();
-    expect(screen.getByText(/Nothing borrowed overnight/)).toBeTruthy();
-    expect(screen.getByText("6.25%")).toBeTruthy();
-    // A certain zero is NOT an estimate — nothing borrowed costs nothing at
-    // any rate. The label is reserved for the figure that is genuinely a
-    // projection, so it keeps biting where it has to.
+    expect(screen.getByText("$3.48")).toBeTruthy();
+    expect(screen.getByText("$12.34")).toBeTruthy();
+    expect(screen.getByText("$27.50")).toBeTruthy();
+    expect(screen.getByText("$39.84")).toBeTruthy();
+    expect(screen.getByText("August 2026")).toBeTruthy();
+    expect(screen.getByText(/since 2026-08-01/)).toBeTruthy();
+    // The estimate marker is the SMALL tag, never the old caveat paragraph.
+    expect(screen.getAllByText("est.").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/paper trading's handling of margin interest is unconfirmed/)).toBeNull();
+  });
+
+  it("never removed the per-day/per-year figures — they no longer render at all", () => {
+    render(
+      <MarginInterestStrip
+        account={account(mi({
+          this_week_usd: 1,
+          current_month_usd: 1,
+          current_month_label: "September 2026",
+          prior_months: [],
+          all_time_usd: 1,
+          all_time_since: "2026-09-24",
+          is_estimate: true,
+          source: "estimate",
+        }))}
+      />,
+    );
+    expect(screen.queryByText(/day$/)).toBeNull();
+    expect(screen.queryByText(/\/yr/)).toBeNull();
     expect(screen.queryByText("ESTIMATE")).toBeNull();
   });
 
-  it("renders every required figure for a carried debit balance, with the ESTIMATE label VISIBLE", () => {
+  it("carries no est. tag when every dollar is broker-confirmed", () => {
     render(
       <MarginInterestStrip
-        account={account({
-          debit_balance: 5729,
-          rate_pct: 6.25,
-          daily_usd: 0.99,
-          annual_usd: 358,
-          label: ESTIMATE_LABEL,
-          broker_check_note: "no INT activity on the account",
-          error: null,
-        })}
+        account={account(mi({
+          this_week_usd: 1.5,
+          current_month_usd: 1.5,
+          current_month_label: "September 2026",
+          prior_months: [],
+          all_time_usd: 24.5,
+          all_time_since: "2026-01-01",
+          is_estimate: false,
+          source: "broker_actual",
+        }))}
       />,
     );
-    // The five things the owner asked to see: daily, annualised, the
-    // balance it is charged on, the rate, and that it is an ESTIMATE.
-    expect(screen.getByText("$0.99")).toBeTruthy();
-    expect(screen.getByText("$358")).toBeTruthy();
-    expect(screen.getByText("$5.7k")).toBeTruthy();
-    expect(screen.getByText("6.25%")).toBeTruthy();
-    // Standing desk rule: an estimate is never presented as a measurement,
-    // and a label a reader has to hover to find has already failed at that.
-    // Asserted as rendered TEXT, which a title-attribute tooltip would not
-    // satisfy — that is the regression this pins.
-    expect(screen.getByText("ESTIMATE")).toBeTruthy();
-    expect(screen.getByText(ESTIMATE_LABEL)).toBeTruthy();
-    expect(screen.getByText(/Broker check: no INT activity/)).toBeTruthy();
+    expect(screen.queryByText("est.")).toBeNull();
+  });
+
+  it("shows a certain zero without an est. tag", () => {
+    render(
+      <MarginInterestStrip
+        account={account(mi({
+          this_week_usd: 0,
+          current_month_usd: 0,
+          current_month_label: "September 2026",
+          prior_months: [],
+          all_time_usd: 0,
+          all_time_since: "2026-09-24",
+          is_estimate: true,
+          source: "estimate",
+        }))}
+      />,
+    );
+    expect(screen.getAllByText("$0.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText("est.")).toBeNull();
+  });
+
+  it("says 'no data yet' as its own honest state, not a fabricated zero", () => {
+    render(
+      <MarginInterestStrip
+        account={account(mi({
+          this_week_usd: 0,
+          current_month_usd: 0,
+          current_month_label: "September 2026",
+          prior_months: [],
+          all_time_usd: 0,
+          all_time_since: "2026-09-24",
+          is_estimate: true,
+          source: "no_data",
+        }))}
+      />,
+    );
+    expect(screen.getByText(/no data yet/)).toBeTruthy();
+    expect(screen.queryByText("$0.00")).toBeNull();
   });
 
   it("says a fault is a fault and never renders it as a zero", () => {
-    // "not available" and "$0.00" are different claims about the world.
-    // Printing the reassuring one over a broken read is the exact failure
-    // the owner asked to be able to see.
     render(
       <MarginInterestStrip
         account={account({
@@ -100,7 +159,10 @@ describe("MarginInterestStrip", () => {
           annual_usd: null,
           label: null,
           broker_check_note: null,
+          days_charged: null,
+          period_usd: null,
           error: "no borrowing rate is configured",
+          cumulative: null,
         })}
       />,
     );

@@ -123,6 +123,12 @@ def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path
     earnings_analyst.analyze_reports.assert_not_called()
     earnings_provider.record_failure.assert_not_called()
     earnings_provider.confirm_filing.assert_not_called()
+    # 2026-09-24: the backlog computed just before the suspended circuit
+    # call must survive onto the suspended payload — dropping it made a
+    # real backlog of new filings render as "nothing happened".
+    assert result["filings_waiting_count"] == 1
+    assert result["filings_waiting"][0]["symbol"] == "NVDA"
+    assert result["filings_waiting"][0]["outcome"] == "waiting"
 
 
 def test_preprocess_skips_when_market_closed(tmp_path):

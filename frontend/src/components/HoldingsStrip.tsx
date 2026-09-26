@@ -35,20 +35,55 @@ export function unrealizedPct(position: PositionItem): number | null {
   return ((position.unrealized_pnl || 0) / basis) * 100;
 }
 
-function HoldingChip({ position, onSelect }: { position: PositionItem; onSelect?: (symbol: string) => void }) {
+/* Split click surface, matching OrdersPanel/PositionsPanel (owner-reversed
+ * 2026-09-25 — see HoldingsStrip's own onSelectSymbol/onInspectSymbol prop
+ * docs below): the ticker is its own `<button>` with stopPropagation,
+ * chart-only, underline-on-hover. Everything else in the pill (qty/entry,
+ * price/P&L) is the REST of the pill's click surface and opens the detail
+ * popup — so the outer element can no longer be a single `<button>` (a
+ * `<button>` cannot nest another interactive `<button>`); it is a
+ * `role="button"` div with the same keyboard handling DataTable's
+ * clickable rows use (Enter/Space), so keyboard users lose nothing.
+ * `group` drives the chevron's hover color off the OUTER element's
+ * hover, same token pairing as DataTable's row chevron. */
+function HoldingChip({
+  position,
+  onSelect,
+  onInspect,
+}: {
+  position: PositionItem;
+  onSelect?: (symbol: string) => void;
+  onInspect?: (symbol: string) => void;
+}) {
   const cash = position.is_cash_equivalent;
   const pct = unrealizedPct(position);
   return (
-    <button
-      type="button"
-      onClick={() => onSelect?.(position.symbol)}
-      aria-label={`Chart ${position.symbol}`}
-      className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
-        cash ? "border-border bg-panel-inset opacity-80" : "border-border bg-panel-alt hover:border-accent"
-      }`}
+    <div
+      role={onInspect ? "button" : undefined}
+      tabIndex={onInspect ? 0 : undefined}
+      onClick={() => onInspect?.(position.symbol)}
+      onKeyDown={(event) => {
+        if (!onInspect || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        onInspect(position.symbol);
+      }}
+      aria-label={`${position.symbol} detail`}
+      className={`group flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+        onInspect ? "cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/60" : ""
+      } ${cash ? "border-border bg-panel-inset opacity-80" : "border-border bg-panel-alt hover:border-accent"}`}
     >
       <span className="flex flex-col">
-        <span className={`font-bold leading-tight ${cash ? "text-dim" : "text-accent"}`}>{position.symbol}</span>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect?.(position.symbol);
+          }}
+          aria-label={`Chart ${position.symbol}`}
+          className={`text-left font-bold leading-tight hover:underline ${cash ? "text-dim" : "text-accent"}`}
+        >
+          {position.symbol}
+        </button>
         <span className="font-mono text-[length:var(--fs-micro)] leading-tight text-dim">
           {fmtNum(position.qty)} @ {fmtMoney(position.avg_entry)}
         </span>
@@ -66,7 +101,15 @@ function HoldingChip({ position, onSelect }: { position: PositionItem; onSelect?
           </span>
         )}
       </span>
-    </button>
+      {onInspect && (
+        // Small right-edge caret, same "clicking this opens detail" cue
+        // as DataTable's showRowChevron, sized down to fit the pill
+        // rather than a table cell.
+        <span aria-hidden="true" className="shrink-0 text-dim transition-colors group-hover:text-ink">
+          ›
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -75,13 +118,20 @@ export function HoldingsStrip({
   error,
   updatedAt,
   onSelectSymbol,
+  onInspectSymbol,
   compact = false,
   variant = "page",
 }: {
   positions: PositionItem[];
   error?: string | null;
   updatedAt?: Date | null;
+  /** Ticker-only: charts the symbol, never opens a popup. */
   onSelectSymbol?: (symbol: string) => void;
+  /** Rest-of-pill: opens the same candidate/trade detail modal Orders
+   * opens, resolved by symbol (App.tsx's inspectPositionSymbol).
+   * Owner-reversed 2026-09-25 — the whole pill used to only chart,
+   * matching onSelectSymbol above. */
+  onInspectSymbol?: (symbol: string) => void;
   /* iPad/phone header: one summary line until expanded. Desktop Dockview
    * uses variant="panel" and always shows the wrap grid — the panel itself
    * is what the operator resizes. */
@@ -144,7 +194,7 @@ export function HoldingsStrip({
         ) : (
           <div className="holdings-wrap mt-1">
             {holdingsOrder(positions).map((position) => (
-              <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
+              <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} onInspect={onInspectSymbol} />
             ))}
           </div>
         ))}

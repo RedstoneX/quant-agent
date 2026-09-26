@@ -153,9 +153,13 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -max(_ROLE_RANK[row.economic_role] for row in observations),
             -max(_SIGNAL_CLASS_RANK[row.signal_class] for row in observations),
             -max(_FRESHNESS_RANK[row.freshness] for row in observations),
-            # Value is weighted by class, so a symbol whose only large trades
-            # are routine cannot outrank a smaller genuinely opportunistic one.
+            # Value is weighted by class AND signed by direction (board
+            # item 63): a bearish/contra row contributes 0, never a positive as
+            # if it were a bullish buy of the same dollar value, so a symbol
+            # whose only large trades are sales cannot outrank one with genuine
+            # buying, and a routine buy still cannot outrank an opportunistic one.
             -sum((row.transaction_value_usd or 0) * row.signal_weight
+                 * row.signal_direction
                  for row in observations),
             -len({row.actor_cik or row.actor for row in observations}),
             min(row.disclosure_age_days for row in observations),
@@ -170,7 +174,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -_ROLE_RANK[observation.economic_role],
             -_SIGNAL_CLASS_RANK[observation.signal_class],
             -_FRESHNESS_RANK[observation.freshness],
-            -(observation.transaction_value_usd or 0) * observation.signal_weight,
+            # Direction-signed (board item 63): a contra/bearish row scores 0,
+            # not a positive that would rank it alongside a bullish buy.
+            -(observation.transaction_value_usd or 0) * observation.signal_weight
+            * observation.signal_direction,
             observation.disclosure_age_days,
             -observation.transaction_date.toordinal(),
             observation.actor_cik or observation.actor,
@@ -253,6 +260,15 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 min(row.lag_days for row in observations),
                 max(row.lag_days for row in observations),
             ],
+            # Board item 170: `lag_days` alone cannot tell the seat whether a
+            # disclosure date was actually filed or only guessed at the
+            # 45-day statutory ceiling (congresswatch.us carries no real
+            # filing date). Surfaced here so the seat never reads a lag
+            # figure as a measured, on-time disclosure when it is really an
+            # estimate the eligibility gate already refuses to credit.
+            "disclosure_date_estimated_count": sum(
+                row.disclosure_date_estimated for row in observations
+            ),
             "disclosure_age_days_range": [
                 min(row.disclosure_age_days for row in observations),
                 max(row.disclosure_age_days for row in observations),
@@ -313,6 +329,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
                     (row.accepted_at or row.known_at).isoformat()
                     if row.accepted_at or row.known_at else None
                 ),
+                # Board item 170: whether `accepted_at`/the lag this row
+                # contributes is a real filing date or congresswatch.us's
+                # trade+45d guess (never a measurement of timeliness).
+                "disclosure_date_estimated": row.disclosure_date_estimated,
                 "transaction_value_usd": row.transaction_value_usd,
                 "post_transaction_shares": row.post_transaction_shares,
                 # Size relative to the insider's own holding. Reported, not

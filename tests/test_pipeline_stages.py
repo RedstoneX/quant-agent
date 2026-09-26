@@ -185,66 +185,76 @@ def _sell(symbol):
     )
 
 
-def test_apply_scale_all_buys_zero_drops_every_buy():
-    """scale_all_buys=0.0 is the documented full-BUY veto. The pre-fix
-    `or 1.0` collapsed 0.0 to 1.0 because Python truthiness, silently
-    disabling the veto. Pin: zero passes through and zeros every BUY,
-    while HOLD and SELL pass unchanged."""
+def test_scale_advisory_zero_does_not_change_or_drop_any_entry():
+    """Board items 134 + 162 (owner ruling 2026-09-25). scale_all_buys is
+    ADVISORY on entries: even 0.0 — the old full-entry-side veto — now changes
+    NO allocation_pct and drops NO trade. Every entry survives at its original
+    size; the concern is recorded, not applied."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
         approved=True, scale_all_buys=0.0,
         reasoning_chain=_risk_rc(),
-        reasoning="risk-off — kill all BUYs",
+        reasoning="risk-off — exposure concern",
     )
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.0, "0.0 must propagate, not collapse to 1.0"
-    actions = [d.action for d in scaled]
-    assert "BUY" not in actions, f"every BUY must be dropped; got {actions}"
-    assert "HOLD" in actions and "SELL" in actions
+    # Nothing dropped, nothing resized.
+    assert [(d.symbol, d.action, d.allocation_pct) for d in out] == [
+        ("SPY", "BUY", 10.0), ("QQQ", "BUY", 8.0),
+        ("MSFT", "HOLD", 0.0), ("NVDA", "SELL", 100.0),
+    ]
+    # Both entries flagged for the advisory record; exits not flagged.
+    assert sorted(advised) == [("QQQ", 8.0), ("SPY", 10.0)]
 
 
-def test_apply_scale_all_buys_partial_scales_buy_allocations():
-    """0 < scale < 1 reduces BUY allocations proportionally, keeps HOLD/SELL."""
+def test_scale_advisory_partial_records_entries_but_does_not_resize():
+    """0 < scale < 1 flags every BUY/SHORT for the advisory record but leaves
+    allocations untouched; HOLD/SELL are neither resized nor flagged."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
-    verdict = RiskVerdict(approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(), reasoning="trim")
-    decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT")]
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(), reasoning="trim",
+    )
+    decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT")]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.5
-    by_sym = {d.symbol: d for d in scaled}
-    assert by_sym["SPY"].allocation_pct == 5.0
-    assert by_sym["QQQ"].allocation_pct == 4.0
+    by_sym = {d.symbol: d for d in out}
+    assert by_sym["SPY"].allocation_pct == 10.0
+    assert by_sym["XLU"].allocation_pct == 8.0
     assert by_sym["MSFT"].action == "HOLD"
+    assert sorted(advised) == [("SPY", 10.0), ("XLU", 8.0)]
 
 
-def test_apply_scale_all_buys_one_is_no_op():
-    """scale=1.0 (default) leaves decisions untouched."""
+def test_scale_advisory_one_is_no_op_and_flags_nothing():
+    """scale=1.0 (default) leaves decisions untouched and flags nothing."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(approved=True, scale_all_buys=1.0, reasoning_chain=_risk_rc(), reasoning="ok")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8)]
 
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 1.0
-    assert [(d.symbol, d.allocation_pct) for d in scaled] == [
+    assert advised == []
+    assert [(d.symbol, d.allocation_pct) for d in out] == [
         ("SPY", 10.0), ("QQQ", 8.0),
     ]
 
 
-def test_apply_scale_all_buys_handles_missing_attribute_as_one():
+def test_scale_advisory_handles_missing_attribute_as_one():
     """If a verdict somehow lacks scale_all_buys (legacy or partial parse),
-    treat as 1.0 (no scaling) — not as None propagating to a TypeError."""
-    from src.pipeline_stages import _apply_scale_all_buys
+    treat as 1.0 (no concern) — not as None propagating to a TypeError."""
+    from src.pipeline_stages import _record_scale_advisory
 
     class LegacyVerdict:
         approved = True
@@ -252,10 +262,11 @@ def test_apply_scale_all_buys_handles_missing_attribute_as_one():
         modifications = []
 
     decisions = [_buy("SPY", 10)]
-    scaled, scale, _dropped = _apply_scale_all_buys(decisions, LegacyVerdict())
+    out, scale, advised = _record_scale_advisory(decisions, LegacyVerdict())
 
     assert scale == 1.0
-    assert len(scaled) == 1
+    assert advised == []
+    assert len(out) == 1 and out[0].allocation_pct == 10.0
 
 
 
@@ -279,7 +290,6 @@ def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -323,7 +333,6 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -353,87 +362,6 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
     pipeline.broker.submit_order.assert_called_once()
 
 
-def test_execution_stage_blocks_buys_when_daily_loss_breached_during_run():
-    """The initial morning circuit breaker (#45) runs before LLM/research
-    — but the LLM window is 5-10 min on a slow OpenAI day, plenty of room
-    for the tape to gap through the daily-loss limit while PM/RM is
-    thinking. With intra_check exempt from the session lock (#46), this
-    race is now real: morning's stale snapshot says we can BUY while
-    intra is firing emergency sells off the live state.
-
-    Fix is a re-check before the BUY loop: refresh portfolio_value,
-    re-run risk_engine.check_daily_loss against ctx.last_equity, and
-    drop BUYs if the breach materialised mid-run. SELLs that already
-    fired through this session are kept (they reduce exposure, never
-    add)."""
-    from src.models import PortfolioDecision, Position, TradeDecision
-    from src.pipeline_context import RunContext
-
-    pipeline = MagicMock()
-    pipeline.broker.get_latest_price.return_value = 100.0
-    _mock_stop_seam(pipeline.broker)
-    _mock_stage_seam(pipeline)
-    # SELL submits cleanly first.
-    pipeline.broker.submit_order.return_value = {
-        "id": "sell-1", "status": "accepted", "symbol": "JPM",
-    }
-    pipeline.broker.wait_for_order_terminal.return_value = "filled"
-    # After the SELL, refresh shows total_value crashed through the limit.
-    pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 96_500.0},  # -3.5% from last_equity
-        [],
-        {},
-    )
-    loss_violation = MagicMock(message="Daily loss 3.5% exceeds max 3%")
-    pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._order_accepted.return_value = True
-    pipeline._format_qty = lambda q: str(q)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline.db = MagicMock()
-
-    ctx = RunContext.start("morning")
-    ctx.cash = 30_000.0
-    ctx.total_value = 100_000.0
-    ctx.last_equity = 100_000.0
-    ctx.positions = [
-        Position(
-            symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-            market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
-        ),
-    ]
-    ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        decisions=[
-            TradeDecision(
-                action="SELL", symbol="JPM", allocation_pct=100,
-                entry_price=300.0, stop_loss=280.0, take_profit=350.0,
-                reasoning="thesis broken",
-            ),
-            TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=99.0, stop_loss=92.0, take_profit=110.0,
-                reasoning="dip buy that should be blocked by re-check",
-            ),
-        ],
-        portfolio_view="test",
-    )
-    ctx.symbols_bars = {}
-
-    stage = ExecutionStage(pipeline=pipeline)
-    orders = stage.run(ctx)
-
-    # SELL went through (it fired BEFORE the re-check), BUY blocked.
-    submit_calls = pipeline.broker.submit_order.call_args_list
-    sides = [c.kwargs.get("side") for c in submit_calls]
-    assert "sell" in sides, f"SELL must have fired before the re-check; got {sides}"
-    assert "buy" not in sides, (
-        f"BUY must be blocked by daily-loss re-check; got submit_calls={submit_calls}"
-    )
-    pipeline.risk_engine.check_daily_loss.assert_called_with(
-        100_000.0, 96_500.0 - 100_000.0,
-    )
-
-
 def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     """Morning SELL path: when finalize can't rebuild coverage (returns
     ok=False, having persisted the recovery intent), the shared helper logs a
@@ -455,10 +383,21 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
         "id": "sell-9", "status": "accepted", "symbol": "JPM",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    # Board item 178: ExecutionStage now re-reads the account before the
+    # SELL loop too, so this fixture must reflect a fresh snapshot that
+    # STILL holds JPM (this test isn't exercising the staleness fix itself
+    # — that's pinned separately — it needs the SELL to actually reach the
+    # broker so the finalize-failure path under test can run).
     pipeline._refresh_account_state.return_value = (
-        {"cash": 60_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 60_000.0, "portfolio_value": 100_000.0},
+        [
+            Position(
+                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
+                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            ),
+        ],
+        {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
     pipeline._full_sell_qty = lambda q: q
@@ -503,9 +442,150 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     ), f"expected a finalize-failure warning; got {[r.getMessage() for r in caplog.records]}"
 
 
-def test_execution_stage_allows_buys_when_daily_loss_not_breached_after_refresh():
-    """Sanity check: if the re-check shows no breach, BUYs proceed normally.
-    The re-check must not become a permanent BUY block on every morning."""
+def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot():
+    """Board item 178. `ctx.positions` is the run-OPEN broker snapshot,
+    taken before Research/Decision/Risk ran; if the position was reduced
+    mid-run (e.g. a stop filled) that snapshot is stale by the time this
+    stage submits an ordinary SELL. Pin that the fix re-reads the account
+    before sizing: the SELL must use the FRESH (lower) qty and the FRESH
+    price for its limit, not the stale run-open ones."""
+    from src.models import PortfolioDecision, Position
+    from src.pipeline_context import RunContext
+
+    pipeline = MagicMock()
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    pipeline.broker.submit_order.return_value = {
+        "id": "sell-1", "status": "accepted", "symbol": "JPM",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    pipeline._order_accepted.return_value = True
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._full_sell_qty = lambda q: q
+    pipeline.db = MagicMock()
+
+    # Fresh broker read (mid-run): only 40 shares remain (down from the
+    # run-open 100) and the price has moved to $340.
+    fresh_position = Position(
+        symbol="JPM", qty=40.0, avg_entry=250.0, current_price=340.0,
+        market_value=13_600.0, unrealized_pnl=3_600.0, sector="Financial",
+    )
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 20_000.0, "portfolio_value": 60_000.0},
+        [fresh_position],
+        {"JPM": 340.0},
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 10_000.0
+    ctx.total_value = 50_000.0
+    ctx.last_equity = 50_000.0
+    # Stale run-open snapshot: 100 shares @ $300.
+    ctx.positions = [
+        Position(
+            symbol="JPM", qty=100.0, avg_entry=250.0, current_price=300.0,
+            market_value=30_000.0, unrealized_pnl=5_000.0, sector="Financial",
+        ),
+    ]
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=[_sell("JPM")], portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+
+    stage = ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    pipeline._refresh_account_state.assert_called()
+    pipeline.broker.submit_order.assert_called_once()
+    call_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert call_kwargs["qty"] == 40.0, (
+        f"SELL sized off the stale run-open qty (100) instead of the fresh "
+        f"read (40): got {call_kwargs['qty']}"
+    )
+    assert call_kwargs["limit_price"] == round(340.0 * 0.995, 2), (
+        f"SELL limit priced off the stale run-open price ($300) instead of "
+        f"the fresh read ($340): got {call_kwargs['limit_price']}"
+    )
+
+
+def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot():
+    """Same defect, COVER side: a short reduced mid-run (partial buy-to-cover
+    already filled elsewhere, or a stop) must be covered off the fresh qty
+    and price, not the run-open snapshot."""
+    from src.models import PortfolioDecision, Position, TradeDecision
+    from src.pipeline_context import RunContext
+
+    pipeline = MagicMock()
+    _mock_stop_seam(pipeline.broker)
+    _mock_stage_seam(pipeline)
+    pipeline.broker.submit_order.return_value = {
+        "id": "cover-1", "status": "accepted", "symbol": "TSLA",
+    }
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    pipeline._order_accepted.return_value = True
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._full_sell_qty = lambda q: q
+    pipeline.db = MagicMock()
+
+    # Fresh broker read (mid-run): the short shrank from -50 to -20 shares,
+    # and the price moved to $210.
+    fresh_position = Position(
+        symbol="TSLA", qty=-20.0, avg_entry=200.0, current_price=210.0,
+        market_value=-4_200.0, unrealized_pnl=-200.0, sector="Consumer Cyclical",
+    )
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 20_000.0, "portfolio_value": 60_000.0},
+        [fresh_position],
+        {"TSLA": 210.0},
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 10_000.0
+    ctx.total_value = 50_000.0
+    ctx.last_equity = 50_000.0
+    # Stale run-open snapshot: -50 shares @ $200.
+    ctx.positions = [
+        Position(
+            symbol="TSLA", qty=-50.0, avg_entry=200.0, current_price=200.0,
+            market_value=-10_000.0, unrealized_pnl=0.0, sector="Consumer Cyclical",
+        ),
+    ]
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(),
+        decisions=[
+            TradeDecision(
+                action="COVER", symbol="TSLA", allocation_pct=100.0,
+                entry_price=200.0, stop_loss=220.0, take_profit=180.0,
+                reasoning="cover",
+            ),
+        ],
+        portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+
+    stage = ExecutionStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    pipeline._refresh_account_state.assert_called()
+    pipeline.broker.submit_order.assert_called_once()
+    call_kwargs = pipeline.broker.submit_order.call_args.kwargs
+    assert call_kwargs["qty"] == 20.0, (
+        f"COVER sized off the stale run-open qty (50) instead of the fresh "
+        f"read (20): got {call_kwargs['qty']}"
+    )
+    assert call_kwargs["limit_price"] == round(210.0 * 1.005, 2), (
+        f"COVER limit priced off the stale run-open price ($200) instead of "
+        f"the fresh read ($210): got {call_kwargs['limit_price']}"
+    )
+
+
+def test_execution_stage_submits_buys_after_the_account_state_refresh():
+    """Renamed 2026-09-20 (retired item 32). This was
+    `..._allows_buys_when_daily_loss_not_breached_after_refresh` and its
+    docstring described a pre-BUY daily-loss re-check that no longer exists,
+    so it read as guarding a condition it could not reach. The refresh it
+    exercises is still real and still runs; what it pins is that a BUY
+    reaches the broker after it."""
     from src.models import PortfolioDecision, TradeDecision
     from src.pipeline_context import RunContext
 
@@ -515,13 +595,11 @@ def test_execution_stage_allows_buys_when_daily_loss_not_breached_after_refresh(
     pipeline.broker.submit_order.return_value = {
         "id": "buy-1", "status": "accepted", "symbol": "SPY",
     }
-    # No sells fired, so refresh runs from inside the re-check branch.
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_500.0},  # +0.5%, no breach
+        {"cash": 50_000.0, "portfolio_value": 100_500.0},
         [],
         {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
 
@@ -564,7 +642,6 @@ def test_execution_stage_skips_buy_when_entry_price_above_market_by_more_than_5p
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
     )
-    pipeline.risk_engine.check_daily_loss.return_value = None
 
     ctx = RunContext.start("morning")
     ctx.cash = 50_000.0
@@ -725,58 +802,6 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
     assert kwargs["run_id"] == ctx.run_id
     assert kwargs["decision_id"] == ctx.decision_id
     assert "exceed max 20%" in kwargs["full_response"]
-
-
-def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
-    """2026-09-03 audit finding #3: the pre-RM hard-risk filter call passes
-    `in_drawdown`, but the post-modifications re-filter call previously
-    dropped it (defaulting to False) — the same drawdown state briefly
-    became invisible to the gate a second time in the same run, for no
-    reason tied to anything RM did. Assert the post-RM call now receives
-    the same `in_drawdown` value the pre-RM call computed."""
-    from src.models import PortfolioDecision, RiskVerdict
-
-    first_pass_decisions = [_buy("AAPL", 10)]
-    pipeline = _risk_stage_pipeline(first_pass_decisions)
-    pipeline._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
-
-    verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
-        modifications=[{
-            "symbol": "AAPL", "field": "allocation_pct",
-            "original_value": 10, "new_value": 5, "reason": "trim sizing",
-        }],
-    )
-    rm_result = MagicMock()
-    rm_result.used_fallback = False
-    pipeline.risk_manager = MagicMock()
-    pipeline.risk_manager.review.return_value = (verdict, rm_result)
-
-    pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=[
-            (first_pass_decisions, [], []),
-            (first_pass_decisions, [], []),
-        ],
-    )
-
-    ctx = RunContext.start("morning")
-    ctx.decision_id = f"{ctx.run_id}-dec-000009"
-    ctx.total_value = 100_000.0
-    ctx.last_equity = 100_000.0
-    ctx.cash = 50_000.0
-    ctx.recent_performance = {"in_drawdown": True}
-    ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=first_pass_decisions, portfolio_view="test",
-    )
-
-    stage = RiskStage(pipeline=pipeline)
-    stage.run(ctx)
-
-    assert pipeline._filter_hard_risk_decisions.call_count == 2
-    pre_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[0].kwargs
-    post_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[1].kwargs
-    assert pre_rm_kwargs["in_drawdown"] is True
-    assert post_rm_kwargs["in_drawdown"] is True
 
 
 def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
@@ -1067,6 +1092,167 @@ def test_risk_stage_invested_target_holds_when_guidance_missing():
     assert ctx.invested_target_pct == 100.0
 
 
+# ---------------------------------------------------------------------------
+# Parse loss reconciled against the book (2026-09-21 META incident)
+# ---------------------------------------------------------------------------
+
+
+def _parse_loss_violations(drops, decisions=None, positions=None):
+    """Run RiskStage to the RM call with `drops` recorded in the GLOBAL
+    parse telemetry, and return the parse-loss advisories it built.
+
+    Deliberately end-to-end through `RiskStage.run`: the whole point of the
+    fix is that the reconciliation happens where the book is held, so a test
+    that called the helper directly would not prove the risk stage passes it
+    the right book.
+    """
+    from src.models import PortfolioDecision, RiskVerdict, parse_telemetry
+
+    decisions = decisions if decisions is not None else [_buy("MRVL", 5)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_supported_symbols = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), []),
+    )
+    pipeline._clamp_queued_earnings_buys = MagicMock(
+        side_effect=lambda d, *a, **kw: list(d),
+    )
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), [], []),
+    )
+    pipeline._apply_risk_modifications = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), []),
+    )
+    pipeline._ensure_correlation_matrix = MagicMock(return_value={})
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="ok",
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    ctx = RunContext.start("intra_check")
+    ctx.decision_id = f"{ctx.run_id}-dec-000099"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.positions = list(positions or [])
+    ctx.data_status = {"tech": "ok"}
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    parse_telemetry.reset()
+    try:
+        for model, key in drops:
+            parse_telemetry.record_dropped_item(model, key)
+        RiskStage(pipeline=pipeline).run(ctx)
+    finally:
+        parse_telemetry.reset()
+
+    pipeline.risk_manager.review.assert_called_once()
+    violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
+    return {v.rule: v for v in violations
+            if v.rule.startswith("analysis_parse_loss")}
+
+
+def _held(symbol):
+    from src.models import Position
+    return Position(
+        symbol=symbol, qty=10, avg_entry=100.0, current_price=101.0,
+        market_value=1010.0, unrealized_pnl=10.0, sector="Technology",
+    )
+
+
+def test_a_recovered_parse_drop_is_a_cost_note_not_a_missing_coverage_claim():
+    """2026-09-21 intra_check: META was held with stops at 14:15:45, its row
+    dropped at 14:16:35, META was re-analysed and re-sized by the constructor
+    at 14:17:31, and the risk stage still told the Risk Manager it was
+    "discarded at parse ... and absent from the book below". It was in the
+    book. The RM called the environment degraded on that sentence."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "META")],
+        decisions=[_buy("META", 5)],
+        positions=[_held("META")],
+    )
+    assert "analysis_parse_loss" not in found, (
+        "a symbol sitting in the book is not a parse LOSS; got "
+        f"{found.get('analysis_parse_loss')!r}"
+    )
+    note = found.get("analysis_parse_loss_recovered")
+    assert note is not None, "the paid round-trip must still be reported"
+    assert "META" in note.message
+    assert "absent" not in note.message.lower(), note.message
+    assert "RECOVERED" in note.message
+
+
+def test_a_genuinely_lost_symbol_keeps_the_violation_and_its_wording():
+    """The falsifiable clause survives for the case where it is true."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "NVDA")],
+        decisions=[_buy("MRVL", 5)],
+        positions=[],
+    )
+    assert "analysis_parse_loss_recovered" not in found
+    lost = found.get("analysis_parse_loss")
+    assert lost is not None
+    assert "NVDA" in lost.message
+    assert "are absent from the book below" in lost.message
+    assert lost.value == 1.0
+
+
+def test_an_unidentified_drop_is_always_treated_as_lost():
+    """`"?"` is a row whose own symbol could not be read — it can never be
+    matched against the book, and one entry may aggregate several malformed
+    rows, so it cannot be PROVEN recovered and must not be."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "?")],
+        decisions=[_buy("MRVL", 5)],
+        positions=[_held("MRVL")],
+    )
+    assert "analysis_parse_loss_recovered" not in found, (
+        "an unidentified row must never be reported as recovered"
+    )
+    lost = found.get("analysis_parse_loss")
+    assert lost is not None
+    assert "TechAnalysisResult:?" in lost.message
+    assert "could not be read" in lost.message
+
+
+def test_both_categories_render_together_when_both_occur():
+    """A run with one recovered and one lost drop reports both, separately."""
+    found = _parse_loss_violations(
+        [("TechAnalysisResult", "META"), ("TechAnalysisResult", "NVDA")],
+        decisions=[_buy("META", 5)],
+        positions=[],
+    )
+    lost = found.get("analysis_parse_loss")
+    note = found.get("analysis_parse_loss_recovered")
+    assert lost is not None and note is not None
+    assert "NVDA" in lost.message and "META" not in lost.message
+    assert "META" in note.message and "NVDA" not in note.message
+    assert "absent" not in note.message.lower()
+
+
+def test_reconciliation_never_mutates_the_global_parse_counter():
+    """Five research seats share one global `parse_telemetry` and the tech
+    seat runs twice per morning run, so the risk stage may only READ it.
+    Nothing here un-records a drop."""
+    from src.models import parse_telemetry
+    from src.pipeline_stages import _parse_loss_advisories, _reconcile_parse_loss
+
+    parse_telemetry.reset()
+    try:
+        parse_telemetry.record_dropped_item("TechAnalysisResult", "META")
+        before = parse_telemetry.dropped_snapshot()
+        _reconcile_parse_loss(parse_telemetry.dropped_snapshot(), {"META"})
+        _parse_loss_advisories(parse_telemetry.dropped_snapshot(), {"META"})
+        assert parse_telemetry.dropped_snapshot() == before
+        assert parse_telemetry.total_dropped() == 1
+    finally:
+        parse_telemetry.reset()
+
+
 def test_risk_parse_failure_is_agent_failure_not_rejection():
     """No validated RiskVerdict means the agent failed; it did not veto."""
     from src.agents.base import AgentResult
@@ -1300,12 +1486,13 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
 
 
 def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
-    """The sub-floor catalyst gate must run on the SAME two numbers the
-    deterministic risk layer downstream uses — the floor the constructor will
-    actually enforce, and the size `allocate_risk_budget` will actually grant.
-    Re-defaulting them inside the agent would let a settings.yaml override
-    move one and not the other (2026-09-02)."""
+    """`rr_floor` has no settings key any more (board item 81 — the inert
+    `min_reward_risk_after_widening` key was removed) so it always threads
+    as the historical `REWARD_RISK_FLOOR` constant. `starter_risk_pct` is
+    still read off the deterministic risk layer's own config, so a
+    settings.yaml override moves it (2026-09-02)."""
     from src.pipeline import TradingPipeline
+    from src.risk.constants import REWARD_RISK_FLOOR
 
     p = TradingPipeline.__new__(TradingPipeline)
     p.db = MagicMock()
@@ -1327,8 +1514,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     p._ensure_correlation_matrix = MagicMock(return_value={})
     p.config = MagicMock()
     p.config.risk.allow_margin = False
-    # Deliberately NOT the defaults, so a hardcoded number cannot pass.
-    p.config.risk.min_reward_risk_after_widening = 1.9
+    # Deliberately NOT the default, so a hardcoded number cannot pass.
     p.config.risk.min_position_risk_pct = 0.3
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
@@ -1352,7 +1538,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     DecisionStage(pipeline=p).run(ctx)
 
     kwargs = p.portfolio_manager.decide.call_args.kwargs
-    assert kwargs["rr_floor"] == 1.9
+    assert kwargs["rr_floor"] == REWARD_RISK_FLOOR
     assert kwargs["starter_risk_pct"] == 0.3
 
 
@@ -1865,6 +2051,39 @@ def test_morning_smart_money_is_partial_while_watched_names_are_unread():
     complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
                 "read_through": 82, "unread": [], "edgar": dict(verified)}
     assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
+
+
+def test_morning_smart_money_market_wide_blind_is_its_own_word():
+    """2026-09-23. Between 2026-09-18 and 2026-09-23 the market-wide Form 4
+    pass read ZERO filings on every run and the seat reported `partial` —
+    which is also what it reports on any ordinary residue, so five sessions
+    of total external-insider blindness were indistinguishable from a normal
+    morning. The state gets its own word, so the standing DATA QUALITY ALERT
+    can say what actually happened.
+    """
+    verified = {"known": True, "verified": True, "reasons": [],
+                "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
+                "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
+    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
+                "read_through": 82, "unread": [], "edgar": dict(verified)}
+
+    blind = {**complete, "market_wide_blind": True, "market_wide_read": 0,
+             "market_wide_pending": 21217}
+    assert _smart_money_morning_stage(blind, []).data_status["smart_money"] == \
+        "market_wide_blind"
+
+    # It wins over `partial` — a blind pass with unread watched names is
+    # still blind, and `partial` is the quieter of the two.
+    blind_and_unread = {**blind, "read_through": 60, "unread": ["WMT"]}
+    assert _smart_money_morning_stage(
+        blind_and_unread, [],
+    ).data_status["smart_money"] == "market_wide_blind"
+
+    # And a pass that read normally is untouched.
+    assert _smart_money_morning_stage(
+        {**complete, "market_wide_blind": False, "market_wide_read": 1000,
+         "market_wide_pending": 21217}, [],
+    ).data_status["smart_money"] == "ok"
 
 
 def test_morning_smart_money_is_partial_when_edgar_coverage_is_unverified():
@@ -3236,7 +3455,8 @@ def test_check_levels_coverage_alerts_orange_at_the_degraded_boundary():
     """Exactly half of resolved symbols come back empty: above the coarse
     50% tripwire but not total. Must alert, and must NOT use the RED/total
     header — the message should read as serious-but-partial, matching the
-    existing 🔴 NO STOP AT ALL / 🟠 STOP PARTIALLY COVERS severity split."""
+    existing NO STOP AT ALL / STOP PARTIALLY COVERS severity split (marks are
+    counted, not coloured — item 21b)."""
     from src.pipeline_stages import _check_levels_coverage
 
     ctx = _coverage_ctx(universe=10, bars_missing=0)
@@ -3711,15 +3931,14 @@ def test_item135_buy_guard_is_unchanged_by_the_sweep():
     assert len(rejected) == 1, f"exactly one refusal, not two; got {rejected}"
 
 
-def test_item136_scale_all_buys_reports_every_entry_it_drops():
-    """Board item 136. The 0.0 lever DROPS each entry rather than zeroing it
-    — which is correct and stays, because a zero allocation reads as SKIP at
-    execution. What was missing is any trace: the drop emitted a logger line
-    only, and the decision is gone from the list before `RiskStage.run`'s
-    per-decision event loop, so `scale_all_buys=0.0` deleted the entire entry
-    side with no pipeline event for any symbol."""
+def test_item134_scale_advisory_records_every_entry_without_dropping_it():
+    """Board items 134 + 162 (owner ruling 2026-09-25). scale_all_buys is now
+    ADVISORY on entries: it drops NOTHING (contrast the old item-136 drop it
+    replaces) and resizes NOTHING, but it still flags every BUY/SHORT so the
+    caller can file the per-symbol advisory record that carries the concern +
+    reason to the desk. Exits are never flagged."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
         approved=True, scale_all_buys=0.0,
@@ -3727,26 +3946,159 @@ def test_item136_scale_all_buys_reports_every_entry_it_drops():
     )
     decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale, dropped = _apply_scale_all_buys(decisions, verdict)
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
 
     assert scale == 0.0
-    assert [d.action for d in scaled] == ["HOLD", "SELL"]
-    assert sorted(dropped) == [("SPY", 10.0), ("XLU", 8.0)], (
-        f"every dropped entry must be reported with its pre-scale size; "
-        f"got {dropped}"
+    # Nothing dropped — every decision survives, including both entries.
+    assert [d.action for d in out] == ["BUY", "SHORT", "HOLD", "SELL"]
+    assert [d.allocation_pct for d in out] == [10.0, 8.0, 0.0, 100.0]
+    assert sorted(advised) == [("SPY", 10.0), ("XLU", 8.0)], (
+        f"every flagged entry must be recorded with its size; got {advised}"
     )
 
 
-def test_item136_no_drops_reported_when_the_lever_is_not_pulled():
-    """Control. A scale that removes nothing reports nothing."""
+def test_item134_nothing_flagged_when_scale_is_one():
+    """Control. scale == 1.0 (no concern) flags nothing and resizes nothing."""
     from src.models import RiskVerdict
-    from src.pipeline_stages import _apply_scale_all_buys
+    from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.5,
-        reasoning_chain=_risk_rc(), reasoning="trim",
+        approved=True, scale_all_buys=1.0,
+        reasoning_chain=_risk_rc(), reasoning="ok",
     )
-    scaled, scale, dropped = _apply_scale_all_buys([_buy("SPY", 10)], verdict)
+    out, scale, advised = _record_scale_advisory([_buy("SPY", 10)], verdict)
 
-    assert scaled[0].allocation_pct == 5.0
-    assert dropped == []
+    assert out[0].allocation_pct == 10.0
+    assert advised == []
+
+
+def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
+    """Board items 134 + 162, end-to-end through `RiskStage.run`. A verdict with
+    scale_all_buys < 1.0 must (a) leave every entry's allocation_pct unchanged
+    and drop nothing, and (b) surface the seat's exposure concern + its reason
+    as a durable `scale_advisory` pipeline event per entry."""
+    import src.pipeline_stages as ps
+    from src.pipeline_stages import RiskStage
+    from src.pipeline import TradingPipeline
+    from src.models import (
+        PortfolioDecision, ReasoningChain, RiskVerdict, RiskReasoningChain,
+    )
+
+    events: list = []
+    monkeypatch.setattr(
+        ps, "_record_pipeline_event",
+        lambda pipeline, ctx, sym, kind, outcome, reason, **kw: events.append(
+            {"symbol": sym, "kind": kind, "outcome": outcome,
+             "reason": reason, "kw": kw}
+        ),
+    )
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.market = MagicMock()
+    p.market.get_ohlcv.return_value = []
+    p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
+    p._clamp_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
+    # Hard filter is a pass-through HERE so we can isolate the scale behaviour;
+    # a separate test proves the real hard filter still binds.
+    p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
+    p.risk_manager = MagicMock()
+    p.risk_manager.review.return_value = (
+        RiskVerdict(
+            approved=True, modifications=[],
+            scale_all_buys=0.5,
+            reasoning="Aggregate exposure looks stretched for the regime.",
+            reason_category="oversized",
+            reasoning_chain=RiskReasoningChain(
+                rr_audit="x", signal_fidelity="x", correlation_check="x",
+                event_risk="x", sizing_sanity="x", overall="x",
+            ),
+        ),
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0),
+    )
+    p.db = MagicMock()
+    p.config = MagicMock()
+    p.config.llm.risk_manager_model = "test-model"
+    p.config.trading.lookback_days = 120
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.deployable_cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="x", news_check="x", earnings_check="x",
+            signal_conflicts="x", sizing_logic="x",
+            portfolio_balance="x", cash_target="x",
+        ),
+        decisions=[_buy("SPY", 10.0), _short("XLU", 8.0)],
+        portfolio_view="v",
+    )
+    ctx.symbols_bars = {}
+    ctx.data_status = {}
+
+    RiskStage(pipeline=p).run(ctx)
+
+    # (a) sizes untouched, nothing dropped.
+    final = {(d.symbol, d.action): d.allocation_pct
+             for d in ctx.portfolio_decision.decisions}
+    assert final == {("SPY", "BUY"): 10.0, ("XLU", "SHORT"): 8.0}
+
+    # (b) the concern + reason are surfaced as scale_advisory events.
+    advisories = [e for e in events if e["outcome"] == "scale_advisory"]
+    assert {e["symbol"] for e in advisories} == {"SPY", "XLU"}
+    for e in advisories:
+        assert "scale_all_buys=0.50" in e["reason"]
+        assert "ADVISORY ONLY" in e["reason"]
+        assert "Aggregate exposure looks stretched" in e["reason"]
+    # And no scale-driven DROP event exists any more.
+    assert not [e for e in events if e["outcome"] == "scaled_out"]
+
+
+def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
+    """Board items 134 + 162. Because scale_all_buys no longer shrinks entries,
+    the hard aggregate limit is the ONLY thing standing between an over-cap plan
+    and execution — and it must still bind. Prove the advisory pass leaves the
+    over-cap plan intact, then the real hard filter blocks it."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_stages import _record_scale_advisory
+    from src.risk.rules import RiskRuleEngine
+    from src.config import RiskConfig
+    from src.models import RiskVerdict, TradeDecision
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(),
+        reasoning="too aggressive", reason_category="oversized",
+    )
+    # Two same-direction longs summing to 60% net, over a 50% hard total cap.
+    decisions = [
+        TradeDecision(action="BUY", symbol="SPY", allocation_pct=30,
+                      entry_price=500, stop_loss=480, take_profit=530,
+                      reasoning="core"),
+        TradeDecision(action="BUY", symbol="QQQ", allocation_pct=30,
+                      entry_price=400, stop_loss=380, take_profit=430,
+                      reasoning="also core"),
+    ]
+
+    # Advisory pass changes NOTHING — the plan is still over the cap.
+    out, scale, advised = _record_scale_advisory(decisions, verdict)
+    assert [(d.symbol, d.allocation_pct) for d in out] == [
+        ("SPY", 30.0), ("QQQ", 30.0)]
+    assert sorted(advised) == [("QQQ", 30.0), ("SPY", 30.0)]
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
+        max_position_pct=40, max_total_position_pct=50,
+        max_sector_pct=90, require_stop_loss=True,
+    ))
+    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+        "src.execution.broker._get_sector", return_value="Broad"
+    ):
+        allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+            out, positions=[], total_value=100000,)
+
+    # The hard cap still binds: the second long is blocked.
+    assert [d.symbol for d in allowed] == ["SPY"]
+    assert any("Net exposure" in r for r in blocked)
