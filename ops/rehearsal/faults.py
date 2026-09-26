@@ -100,6 +100,23 @@ ServerError = _fault(
     "ServerError", 503,
     "HTTP 503. Retryable. An upstream outage rather than a per-seat limit.",
 )
+MidStreamServerError = _fault(
+    "MidStreamServerError", 503,
+    "HTTP 503 reported from INSIDE an already-started response stream. "
+    "Retryable, and -- unlike the pre-generation 503 above -- NOT provably "
+    "free: tokens may already have been billed before the stream broke, so "
+    "the cost circuit books it ambiguous and hard-latches "
+    "`failed_call_unknown_cost`. This is the only 503 shape that reaches the "
+    "transient-latch self-clear (item 174); `server_error` cannot, because a "
+    "pre-generation 503 costs nothing and never latches.",
+)
+#: Marks the kinds that must surface as a mid-stream failure. `check()` chains
+#: a REAL `src.agents.base.LLMStreamErrorChunk` onto the raise rather than
+#: renaming anything, because `src.cost_circuit._is_mid_stream_failure`
+#: recognises that class by name while walking the cause chain -- exactly as
+#: it does for the genuine article. Spoofing the name would make the rehearsal
+#: agree with a classifier it was no longer actually exercising.
+_MID_STREAM_KINDS = frozenset({"server_error_mid_stream"})
 Timeout = _fault(
     "Timeout", None,
     "No status code. Retryable via _is_retryable's catch-all for unclassified "
@@ -119,6 +136,7 @@ InsufficientBalance = _fault(
 KINDS: dict[str, type] = {
     "rate_limit": RateLimited,
     "server_error": ServerError,
+    "server_error_mid_stream": MidStreamServerError,
     "timeout": Timeout,
     "auth": AuthFailure,
     "insufficient_balance": InsufficientBalance,
@@ -235,6 +253,18 @@ class ProviderFaultInjector:
                 # thread's fault can land in that list between the raise and
                 # the handler.
                 fault.record = record
+                if spec.kind in _MID_STREAM_KINDS:
+                    # Imported here, not at module import: `src.agents.base`
+                    # pulls in the whole agent stack, and this module is
+                    # imported by the CLI argument parser.
+                    from src.agents.base import LLMStreamErrorChunk
+
+                    raise fault from LLMStreamErrorChunk(
+                        f"injected mid-stream 503 chunk on attempt {seen} "
+                        f"for {agent_name}",
+                        status_code=503,
+                        error_type="rehearsal_injected_mid_stream",
+                    )
                 raise fault
 
     def summary(self) -> list[str]:

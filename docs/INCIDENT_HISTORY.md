@@ -2031,6 +2031,33 @@ on the board as item 174 — a suspension reaches the owner on Telegram but a
 self-clear does not, so he can still be left believing the desk is down
 when it is back.
 
+**Closed 2026-09-25/26 in two passes, with one finding worth keeping.** The
+first pass gave the self-clear the same Telegram surface, claim/retry state
+machine and DB audit trail the suspension has. The second pass found that
+the resume alert was not PAIRED to a suspension alert: when the "SUSPENDED"
+send fails (a Telegram outage at latch time), the auto-clear wipes
+`suspended` and `alert_state` on its way out, so that suspension alert can
+never be delivered — and firing "RESUMED" anyway hands the owner a recovery
+for an incident he was never told about. The auto-clear now captures the
+suspension's own alert state at the last instant it is knowable, and a
+resume for an undelivered suspension is resolved as unpaired rather than
+sent. From the owner's side, an outage that ends before he hears about it
+is correctly zero messages, not one dangling "back live".
+
+**The harness could not reach this path at all, and now can.** `ops/rehearsal`
+could inject a 503 (`server_error`), but a pre-generation 503 is provably
+free and by design never latches, so no rehearsal could ever produce an
+`auto_reset`. The only 503 shape that latches is one reported from inside a
+started stream, so a `server_error_mid_stream` kind was added; it chains a
+real `LLMStreamErrorChunk` onto the raise rather than renaming anything, so
+the production classifier is the thing being exercised. A morning rehearsal
+with that fault reproduced the whole sequence end to end offline: the latch,
+the suspension alert, the auto-expiry, and the paired resume alert — three
+alerts raised and captured instead of sent, with production byte-identical
+afterwards. **Production has still had ZERO real `auto_reset` events**, so
+the cooldown (15 min) and the daily allowance (19) remain unmeasured against
+a real occurrence; that is what keeps item 174 open.
+
 ---
 
 ### 2026-09-20 — the same seat was also told its indicators rest on four months of history when they rest on five years
