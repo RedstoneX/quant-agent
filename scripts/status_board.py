@@ -1669,11 +1669,80 @@ _BOARD_STILL_OPEN_WORDS = (
     + ("OPEN", "STILL OPEN")
 )
 
+#: The SECOND, independent way `find_finished_items_still_on_board` decides
+#: an item is finished: its own `DONE WHEN:` checkboxes, not its headline
+#: prose. Found on the real board 2026-09-26: ten items were fully
+#: ticked under their own `DONE WHEN` block while their headline still read
+#: as open work, because nothing ever read the boxes -- the exact failure
+#: this whole check exists to prevent, just reached through the door the
+#: headline-only reading left open.
+#:
+#: `docs/WORK.md` uses exactly two marks in practice -- `- [ ]` (open) and
+#: `- [x]` (checked), always lower-case `x` [checked against the current
+#: file, 2026-09-26: 26 open boxes, 23 checked, no `[X]`, no other bullet
+#: character, no emoji tick]. Upper-case `[X]` is still accepted here since
+#: nothing stops an author typing it later; it would be a stricter parser,
+#: not a looser one, to reject a mark nobody has used only because nobody
+#: has used it yet.
+_DONE_WHEN_CHECKBOX_RE = re.compile(r"\[( |x|X)\]")
+
+#: The literal marker an item's own body may write to say its `DONE WHEN`
+#: block can be fully ticked and the item STILL cannot close, because
+#: closing it needs an event the desk cannot manufacture -- a real fill, a
+#: real provider fault, or real capital moving -- not more work. Item 86 is
+#: the one real example on the board today ("item stays OPEN until a live
+#: attempt proves it"), but that is one sentence written for that one item,
+#: not a convention the rest of the board repeats: nothing else on the
+#: board uses "OPEN until a live" or any close variant of it [checked
+#: against the current file, 2026-09-26], so there is no existing wording
+#: to key off. This marker is the mechanical replacement going forward --
+#: an item that needs the exemption should say so in exactly these words --
+#: rather than teaching the checker to special-case item 86's one sentence
+#: as if it were a pattern. It does not retroactively apply to item 86
+#: (its box is unchecked anyway, so it never reaches the checkbox check;
+#: see the module note above `_BOARD_FINISHED_WORDS` for its headline-side
+#: handling, unchanged here).
+_LIVE_EVENT_BLOCKED_RE = re.compile(r"BLOCKED ON A LIVE EVENT", re.IGNORECASE)
+
+
+def _done_when_checkbox_marks(raw_body: str) -> list[str]:
+    """Every checkbox mark inside this item's own `DONE WHEN:` block, in the
+    order written, empty when the item carries no such block at all.
+
+    `raw_body` is one item's OWN body (already isolated per-item by
+    `_parse_numbered_items` before this ever runs), markdown-stripped and
+    joined onto one line, so a `DONE WHEN` marker found inside it can only
+    belong to this item, never a neighbour's. Only text AFTER that marker is
+    scanned, so an ordinary body sentence written before it can contain a
+    literal `[` (a citation, a code fragment) without being mistaken for a
+    criterion.
+    """
+    idx = raw_body.find("DONE WHEN")
+    if idx == -1:
+        return []
+    return _DONE_WHEN_CHECKBOX_RE.findall(raw_body[idx:])
+
+
+def _all_done_when_boxes_checked(raw_body: str) -> bool:
+    """True only when the item HAS a `DONE WHEN` block AND every box in it
+    is ticked.
+
+    An item with no block at all is never "all checked" here -- that is a
+    separate, already-known gap (22 open items on the real board carry no
+    `DONE WHEN` block at all [checked 2026-09-26]) and solving it is not
+    this function's job; it can only be judged finished by the headline
+    half of `find_finished_items_still_on_board`, same as before this
+    function existed.
+    """
+    marks = _done_when_checkbox_marks(raw_body)
+    return bool(marks) and all(m.lower() == "x" for m in marks)
+
 
 def find_finished_items_still_on_board(
         work_md: Path, board_notes: Path) -> list[str]:
-    """Board items that declare themselves finished in their own status text
-    but are still sitting in `docs/WORK.md`.
+    """Board items that declare themselves finished -- in their own status
+    text OR in their own `DONE WHEN` checkboxes -- but are still sitting in
+    `docs/WORK.md`.
 
     `docs/WORK.md` opens with the owner's own rule: it holds only open work.
     Finished work belongs in `docs/INCIDENT_HISTORY.md`, with its
@@ -1688,14 +1757,26 @@ def find_finished_items_still_on_board(
     parser and the same `status_tail` (only the status half of the headline,
     cross-references to OTHER items' PRs stripped, negations honoured) the
     render path already relies on -- rather than a second parser that could
-    disagree with it. An item counts as "declares itself finished" only
-    when:
+    disagree with it. An item is flagged when EITHER of two independent
+    readings says it is finished:
 
-      * its `status_tail` hits one of `_BOARD_FINISHED_WORDS`, AND
-      * `status_tail` hits none of `_BOARD_STILL_OPEN_WORDS` -- which is
-        what keeps a partially-fixed item with a listed follow-on, a
-        deferred owner decision, or an item whose own words are "OPEN" from
-        firing.
+      * HEADLINE: its `status_tail` hits one of `_BOARD_FINISHED_WORDS`, and
+        hits none of `_BOARD_STILL_OPEN_WORDS` -- which is what keeps a
+        partially-fixed item with a listed follow-on, a deferred owner
+        decision, or an item whose own words are "OPEN" from firing. This
+        is the original reading and is unchanged.
+      * CHECKBOXES (added 2026-09-26): the item carries a `DONE WHEN` block
+        and every box in it is ticked (`_all_done_when_boxes_checked`),
+        regardless of what the headline prose says -- this is the half that
+        was missing, and the reason ten items sat open with every one of
+        their own done-criteria met before this change. An item with no
+        `DONE WHEN` block at all cannot trip this half (see
+        `_all_done_when_boxes_checked`'s docstring); an item whose body
+        contains the literal marker `BLOCKED ON A LIVE EVENT`
+        (`_LIVE_EVENT_BLOCKED_RE`) is exempted from it too, because a fully
+        ticked block does not mean the item can close when what remains is
+        an event the desk cannot manufacture -- see the note above
+        `_LIVE_EVENT_BLOCKED_RE`.
 
     `board_notes` is `docs/BOARD_NOTES.md`'s path; it is loaded only so the
     lookup-by-`ref` prose attaches the same way the renderer attaches it --
@@ -1704,8 +1785,9 @@ def find_finished_items_still_on_board(
     owner-facing writeup, not a second place a status could be declared.
 
     Returns plain-English strings, empty when nothing is flagged. Each
-    string names the item and spells out every step of the retirement
-    procedure, because whoever trips this will not otherwise know it.
+    string names the item, says WHICH reading tripped it, and spells out
+    every step of the retirement procedure, because whoever trips this will
+    not otherwise know it.
     """
     notes = load_board_notes(board_notes)
     flagged: list[str] = []
@@ -1715,16 +1797,33 @@ def find_finished_items_still_on_board(
             if item.done:
                 continue
             tail = item.status_tail
-            if any(w in tail for w in _CLOSURE_NEGATIONS):
+            headline_finished = False
+            if not any(w in tail for w in _CLOSURE_NEGATIONS):
+                scan = _strip_cross_references(tail)
+                if (_closure_hit(scan, _BOARD_FINISHED_WORDS)
+                        and not _closure_hit(scan, _BOARD_STILL_OPEN_WORDS)):
+                    headline_finished = True
+            checkbox_finished = (
+                _all_done_when_boxes_checked(item.raw_body)
+                and not _LIVE_EVENT_BLOCKED_RE.search(item.headline)
+                and not _LIVE_EVENT_BLOCKED_RE.search(item.raw_body)
+            )
+            if not headline_finished and not checkbox_finished:
                 continue
-            scan = _strip_cross_references(tail)
-            if not _closure_hit(scan, _BOARD_FINISHED_WORDS):
-                continue
-            if _closure_hit(scan, _BOARD_STILL_OPEN_WORDS):
-                continue
+            if headline_finished and checkbox_finished:
+                reason = (
+                    "declares itself finished "
+                    f"({item.headline[:120]!r}) AND every box in its own "
+                    "DONE WHEN block is ticked")
+            elif checkbox_finished:
+                reason = (
+                    "every box in its own DONE WHEN block is ticked, even "
+                    "though its headline status does not say so "
+                    f"({item.headline[:120]!r})")
+            else:
+                reason = f"declares itself finished ({item.headline[:120]!r})"
             flagged.append(
-                f"{item.ref} declares itself finished "
-                f"({item.headline[:120]!r}) but is still on the board. "
+                f"{item.ref} {reason} but is still on the board. "
                 "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
                 "opening with one plain-language line), then delete its "
                 "docs/WORK.md block AND its matching '## " + item.ref +
