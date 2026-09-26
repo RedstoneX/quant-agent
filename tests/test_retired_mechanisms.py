@@ -29,8 +29,8 @@ import pytest
 import yaml
 
 from src.retired_mechanisms import (
-    OPT_OUT_MARKER, REGISTRY_PATH, RegistryError, load_registry,
-    resurrected_symbols, scan,
+    OPT_OUT_MARKER, REGISTRY_PATH, RegistryError, described_gaps,
+    load_described, load_registry, resurrected_symbols, scan,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -303,3 +303,197 @@ def test_a_trailing_marker_exempts_a_string_literal_line(tmp_path):
     )
     findings = scan(root)
     assert [f.line for f in findings] == [3], [str(f) for f in findings]
+
+
+# ---------------------------------------------------------------------------
+# 4. The TRIGGER — `described:`, the half that makes a retirement get recorded
+# ---------------------------------------------------------------------------
+#
+# Everything above only runs once somebody has written a `retired:` entry.
+# Board item 99(d) asks for the check AT THE DELETION SITE, and a convention
+# is not a check. These tests pin the trigger: a live symbol that prompt text
+# describes cannot be deleted or renamed while the build stays green.
+#
+# The three live entries shipped with this section point at Python-assembled
+# agent strings and at no markdown, on purpose: both confirmed drift cases on
+# this desk were strings built at run time, so a prompt-file-only gate would
+# have missed both.
+
+_DESCRIBED_REGISTRY = yaml.safe_dump({
+    "retired": [{
+        "name": "daily-loss whole-book liquidation",
+        "retired": "2026-09-14",
+        "why": "Replaced by a halt that closes nothing.",
+        "symbols": ["_midday_emergency_liquidate"],
+        "phrases": ["emergency sell-all"],
+        "allowed_in": [],
+    }],
+    "described": [{
+        "name": "sweep-vehicle liquidation before a BUY",
+        "why": "The seat is told parked cash is sold before any BUY runs.",
+        "symbols": [{"file": "src/execution/cash_sweep.py",
+                     "symbol": "CashSweeper.fund_buys"}],
+        "described_in": [{
+            "file": "src/agents/position_reviewer.py",
+            "contains": ["auto-liquidated before any BUY executes"],
+        }],
+    }],
+})
+
+_LIVE_SWEEP = textwrap.dedent('''
+    class CashSweeper:
+        def fund_buys(self, ctx, planned):
+            return 0.0
+''')
+
+_RENAMED_SWEEP = textwrap.dedent('''
+    class CashSweeper:
+        def raise_cash_for_buys(self, ctx, planned):
+            return 0.0
+''')
+
+_DESCRIBING_AGENT = textwrap.dedent('''
+    def build_user_message(reserve):
+        return (
+            f"(of which ${reserve} is sweep-parked and "
+            f"auto-liquidated before any BUY executes)"
+        )
+''')
+
+_SILENT_AGENT = textwrap.dedent('''
+    def build_user_message(reserve):
+        return f"(of which ${reserve} is sweep-parked)"
+''')
+
+
+def _described_tree(tmp_path: Path, *, sweep: str | None, agent: str) -> Path:
+    root = tmp_path / "repo"
+    (root / "config" / "prompts").mkdir(parents=True)
+    (root / "src" / "agents").mkdir(parents=True)
+    (root / "src" / "execution").mkdir(parents=True)
+    (root / "config" / "retired_mechanisms.yaml").write_text(_DESCRIBED_REGISTRY)
+    (root / "src" / "agents" / "position_reviewer.py").write_text(agent)
+    if sweep is not None:
+        (root / "src" / "execution" / "cash_sweep.py").write_text(sweep)
+    return root
+
+
+def test_the_live_described_registry_holds_and_is_not_empty():
+    """The shipped entries resolve: every symbol is defined and every
+    description is still where the registry says it is."""
+    entries = load_described(REGISTRY_PATH)
+    assert entries, "an empty `described:` section triggers nothing"
+    assert not described_gaps(REPO_ROOT)
+
+
+def test_the_described_surface_covers_python_assembled_strings():
+    """The flagged blind spot. Both confirmed drift cases lived in strings
+    Python builds at run time; a gate anchored only on `config/prompts/*.md`
+    would have missed both, so at least one shipped entry must point at a
+    `.py` file."""
+    anchored = {
+        a.file
+        for e in load_described(REGISTRY_PATH)
+        for a in e.described_in
+    }
+    assert any(f.startswith("src/") and f.endswith(".py") for f in anchored), (
+        "no described entry anchors a Python-assembled agent string; the "
+        "two known drift instances were exactly that and would be invisible"
+    )
+
+
+def test_a_clean_tree_reports_no_gap(tmp_path):
+    """Without this, a check that resolves nothing also passes."""
+    root = _described_tree(tmp_path, sweep=_LIVE_SWEEP, agent=_DESCRIBING_AGENT)
+    assert described_gaps(root) == []
+
+
+def test_renaming_a_described_symbol_fails_the_build(tmp_path):
+    """The deletion site. A rename is a deletion as far as the prose is
+    concerned, and it must go red where the rename happens."""
+    root = _described_tree(tmp_path, sweep=_RENAMED_SWEEP, agent=_DESCRIBING_AGENT)
+    gaps = described_gaps(root)
+    assert len(gaps) == 1
+    assert "no longer defines" in gaps[0]
+    assert "CashSweeper.fund_buys" in gaps[0]
+    # The message must hand the reader the next move, or it is just noise.
+    assert "`retired:` section" in gaps[0]
+    assert "position_reviewer.py" in gaps[0]
+
+
+def test_deleting_the_whole_module_fails_the_build(tmp_path):
+    root = _described_tree(tmp_path, sweep=None, agent=_DESCRIBING_AGENT)
+    gaps = described_gaps(root)
+    assert len(gaps) == 1
+    assert "is gone" in gaps[0]
+
+
+def test_a_description_that_vanishes_fails_the_build(tmp_path):
+    """The pointer rots the other way too: the code stays, the sentence is
+    rewritten away, and the registry now guards nothing."""
+    root = _described_tree(tmp_path, sweep=_LIVE_SWEEP, agent=_SILENT_AGENT)
+    gaps = described_gaps(root)
+    assert len(gaps) == 1
+    assert "no longer contains" in gaps[0]
+
+
+def test_a_symbol_cannot_be_live_and_retired_at_once(tmp_path):
+    """A registry that contradicts itself must not pass. Forgetting to drop
+    the `described:` entry when retiring the mechanism is the likeliest
+    mistake this section invites, so it is refused rather than ignored."""
+    body = yaml.safe_dump({
+        "retired": [{
+            "name": "gone", "retired": "2026-09-14", "why": "y",
+            "symbols": ["fund_buys"], "phrases": ["emergency sell-all"],
+            "allowed_in": [],
+        }],
+        "described": [{
+            "name": "still here", "why": "y",
+            "symbols": [{"file": "src/execution/cash_sweep.py",
+                         "symbol": "CashSweeper.fund_buys"}],
+            "described_in": [{"file": "src/agents/position_reviewer.py",
+                              "contains": ["auto-liquidated before any BUY"]}],
+        }],
+    })
+    with pytest.raises(RegistryError, match="contradicts itself"):
+        load_described(_write_registry(tmp_path, body))
+
+
+def test_a_short_needle_is_refused(tmp_path):
+    """Same reason a short phrase is refused above: a needle that can match
+    by accident is the noise that gets a check switched off."""
+    body = yaml.safe_dump({
+        "retired": [{
+            "name": "x", "retired": "2026-09-14", "why": "y",
+            "phrases": ["emergency sell-all"], "allowed_in": [],
+        }],
+        "described": [{
+            "name": "y", "why": "y",
+            "symbols": [{"file": "src/x.py", "symbol": "f"}],
+            "described_in": [{"file": "src/x.py", "contains": ["is sold"]}],
+        }],
+    })
+    with pytest.raises(RegistryError, match="too short"):
+        load_described(_write_registry(tmp_path, body))
+
+
+def test_a_described_entry_with_no_symbol_is_refused(tmp_path):
+    body = yaml.safe_dump({
+        "retired": [{
+            "name": "x", "retired": "2026-09-14", "why": "y",
+            "phrases": ["emergency sell-all"], "allowed_in": [],
+        }],
+        "described": [{
+            "name": "y", "why": "y", "symbols": [],
+            "described_in": [{"file": "src/x.py",
+                              "contains": ["auto-liquidated before any BUY"]}],
+        }],
+    })
+    with pytest.raises(RegistryError, match="names no live symbol"):
+        load_described(_write_registry(tmp_path, body))
+
+
+def test_an_absent_described_section_is_legal(tmp_path):
+    """The section is additive: a registry written before it existed must
+    still load, or this change would break the check it extends."""
+    assert load_described(_write_registry(tmp_path, _REGISTRY)) == []
