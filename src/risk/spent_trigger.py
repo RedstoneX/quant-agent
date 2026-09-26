@@ -21,15 +21,27 @@ when one of these HARD triggers fires — ... Bearish earnings filing
 analysis posted today". The filing that drove the midday cut is still
 posted today at the close, so the permission was self-satisfying.
 
-**Frequency, measured.** Zero. Every executed sell-side row in both live
-databases (`/home/qamc/quant-agent/data/quant_agent.db`, 2026-09-02 →
-2026-09-25, and its pre-reset predecessor, 2026-08-14 → 2026-09-02) was
-read read-only on 2026-09-26: eleven sell-side rows in total and not one
-symbol-day carrying two of them. The 2026-05-04 AMZN double cut the
-board cites is the SOFT-signal shape ("concentration drift; valuation
-stretched"), which the 2026-08-27 phrase gate already closed. So this
-closes a live, demonstrable hole in the code that has not yet cost money
-— which is the moment to close it, not a reason to leave it.
+**Frequency, measured.** Zero — with a denominator worth stating. Every
+executed sell-side row in both live databases
+(`/home/qamc/quant-agent/data/quant_agent.db`, 2026-09-02 → 2026-09-25,
+and its pre-reset predecessor, 2026-08-14 → 2026-09-02) was read
+read-only on 2026-09-26: eleven sell-side rows in total and not one
+symbol-day carrying two of them. But only THREE of those carried a named
+`exit_trigger` at all — the field is newer than most of the history —
+and one of those three executed. So "the general double-cut shape has
+not occurred" is measured; "this mechanism's own behaviour is safe" is
+NOT measured, in either direction. Nothing is known either way about how
+often a second cut would cite the same record, and this docstring is not
+entitled to imply otherwise.
+
+The 2026-05-04 AMZN double cut the board cites predates both databases
+and cannot be checked against either; the repo does not even agree with
+itself about its reason (`QAMC_REMEDIATION_SPEC.md` records "concentration
+drift; valuation stretched", the executor comment records `TARGET_BREACH`).
+It is repo hearsay, recorded here as unverifiable rather than asserted as
+one wording. If it happened as described it is the SOFT-signal shape the
+2026-08-27 phrase gate already closed, which is a different route from
+this one.
 
 Where the line is drawn, and why it carries no number
 -----------------------------------------------------
@@ -53,15 +65,57 @@ magnitude of anything:
   by the seat's own testimony and executes normally. That is the
   "genuinely worse reading" half, and it is preserved deliberately.
 * A second cut on the same trigger that cites nothing nameable beyond
-  the trigger's own phrase is spent too. It asserts no new record, so
-  by construction it cannot be reading one — this reuses
-  `exit_trigger._evidence_is_substantiation` rather than inventing a
-  second, weaker idea of what evidence is.
+  the trigger's own phrase is NOT spent — it is `unidentifiable`, which
+  is recorded and allowed through. See "Why empty evidence is not spent".
 
 Every branch is an identity test over text the desk already stores. No
 cooldown period, no similarity score, no count, no window — a threshold
 of any kind here would be exactly the invented number the desk forbids,
 and there is no published or measured basis for one.
+
+**What spends a trigger: a cut that actually reduced the position.** Not
+a submission. The acted record carries the broker order id and is
+believed only when today's trade row for that order passes
+`TradingPipeline._trade_executed_or_pending` — the SAME contract the
+sibling gate `_symbols_already_trimmed_today` uses, deliberately reused
+rather than re-decided here, so the two gates cannot hold opposite views
+of what a real fill is. A rejected, cancelled or expired zero-fill cut
+therefore spends nothing and the name is fair game again, which is that
+sibling's stated posture in its own words. This matters more than it
+looks: the reviewer's sell is a limit half a percent under a possibly
+stale mark, which this codebase's own de-lever docstring already names as
+the wrong mechanism on a gapping name — so the non-fill is most likely on
+exactly the bad-news gap-down day this feature governs. An acted record
+whose order cannot be matched to an executed row is dropped, not
+believed; uncertainty here must never cost a protective exit.
+
+**Why empty evidence is not spent.** A second cut naming the same trigger
+with no citable evidence is `unidentifiable`, not `spent`: it is recorded
+and it goes through. An earlier draft blocked it, and that put this layer
+in direct contradiction with the layer immediately upstream on the same
+path — `exit_trigger.check_exit_trigger`, which writes `dropped=False` for
+every unsubstantiated exit and states why: being stranded in a losing
+position is strictly worse than an uncheckable claim passing. Two layers
+on one path cannot disagree about the identical input. It was also
+perverse in practice, because the seat could escape by answering
+`cannot_substantiate`, which the prompt blesses as never penalised — so
+only the seat that named the TRUE trigger tersely was punished. The
+honest reading is the plain one: with no record named, this layer cannot
+show the cut rests on the record already acted on, so it has no completed
+"no" to give.
+
+**The limit of the identity test, stated plainly.** This enforcement is
+only as strong as the seat's own consistency in citing a record. Against
+real production strings the same event was cited two different ways
+inside a single run, and appending "(confirmed)" to a citation is enough
+to read as a different record. So the block is evadable — by accident as
+easily as on purpose — and the escape hatch is available in exactly the
+same proportion, which is the honest way round: a seat that genuinely
+found a new record is never trapped. Closing that gap would cost a
+similarity threshold, i.e. an invented number, and that trade is refused.
+What is bought instead is that the repeat is no longer AUTHORISED, the
+spent records are shown to the seat verbatim, and every second cut is
+durably recorded either way so the evening grade can see it.
 
 The seat is not asked to guess what is spent: `position_reviewer` is
 shown each spent trigger and its evidence verbatim, and told to cite a
@@ -86,8 +140,8 @@ Everything else is spendable, including `THESIS_INVALID`: a named
 same satisfied condition is precisely the one-event-two-cuts shape.
 
 Failure posture: OPEN, matching `exit_refusal.UNCERTAINTY_FAIL`. If the
-acted-trigger record cannot be read, this layer produces no judgment and
-the exit proceeds — stranding the desk in a losing position is worse
+acted-trigger record cannot be read, or an acted row cannot be matched to
+an executed trade, this layer produces no judgment and the exit proceeds — stranding the desk in a losing position is worse
 than an uncheckable repeat passing (owner-ratified 2026-08-27).
 """
 
@@ -111,11 +165,13 @@ __all__ = [
     "ACTED_TRIGGER_KIND",
     "CODE_TRIGGER_ALREADY_SPENT",
     "CODE_TRIGGER_SUPERSEDED",
+    "CODE_TRIGGER_UNIDENTIFIABLE",
     "NON_SPENDABLE_TRIGGERS",
     "SPENT_LAYER",
     "ActedTrigger",
     "SpentTriggerCheck",
     "evidence_fingerprint",
+    "keep_executed_acted_triggers",
     "is_spendable",
     "spent_trigger_check",
     "acted_trigger_payload",
@@ -138,6 +194,11 @@ CODE_TRIGGER_ALREADY_SPENT = "trigger_already_spent"
 #: different record executes, and says so durably, so the evening grade
 #: can audit whether the "new" record was genuinely new.
 CODE_TRIGGER_SUPERSEDED = "trigger_superseded_by_new_evidence"
+
+#: NOT a refusal (dropped=False). A second same-trigger cut that cites no
+#: record at all: this layer cannot show it is the same one, and the
+#: upstream substantiation layer already owns that input and lets it pass.
+CODE_TRIGGER_UNIDENTIFIABLE = "trigger_record_unidentifiable"
 
 #: See the module docstring. A stop firing is a price fact; declining to
 #: substantiate is not a trigger. Everything else is spendable.
@@ -184,12 +245,17 @@ class ActedTrigger:
     fingerprint: str
     action: str = ""
     run_id: str = ""
+    #: The broker order this cut was submitted as. A trigger is spent only
+    #: once this order is known to have executed — see the module
+    #: docstring. Empty means unverifiable, which is never treated as spent.
+    broker_order_id: str = ""
 
     def to_json(self) -> str:
         return json.dumps({
             "symbol": self.symbol, "trigger": self.trigger,
             "evidence": self.evidence, "fingerprint": self.fingerprint,
             "action": self.action, "run_id": self.run_id,
+            "broker_order_id": self.broker_order_id,
         })
 
 
@@ -200,12 +266,18 @@ class SpentTriggerCheck:
     ``spent``           — refuse and record (`dropped=True`).
     ``new_evidence``    — execute, and record that it was a second cut on
                           a different record (`dropped=False`).
+    ``unidentifiable``  — a second cut on the same trigger that names no
+                          record. Execute and record (`dropped=False`);
+                          this layer cannot show it is the same one, and
+                          the upstream substantiation layer already owns
+                          that input. See the module docstring.
     ``not_applicable``  — nothing to say: not an exit, not a spendable
                           trigger, or no prior cut on this trigger today.
     ``uncertain``       — the record could not be read. Fails OPEN.
     """
 
-    verdict: Literal["spent", "new_evidence", "not_applicable", "uncertain"]
+    verdict: Literal["spent", "new_evidence", "unidentifiable",
+                     "not_applicable", "uncertain"]
     detail: str = ""
     prior: ActedTrigger | None = None
     code: str = ""
@@ -216,7 +288,8 @@ class SpentTriggerCheck:
 
 
 def acted_trigger_payload(*, symbol: str, trigger: object, evidence: object,
-                          action: str, run_id: str) -> ActedTrigger | None:
+                          action: str, run_id: str,
+                          broker_order_id: str = "") -> ActedTrigger | None:
     """The record to persist after a sell-side order is submitted.
 
     None when the action carried no spendable trigger — there is then
@@ -230,7 +303,7 @@ def acted_trigger_payload(*, symbol: str, trigger: object, evidence: object,
     return ActedTrigger(
         symbol=(symbol or "").upper(), trigger=t.value, evidence=text[:500],
         fingerprint=evidence_fingerprint(text, t), action=action or "",
-        run_id=run_id or "",
+        run_id=run_id or "", broker_order_id=str(broker_order_id or ""),
     )
 
 
@@ -247,10 +320,42 @@ def parse_acted_triggers(rows: Any) -> list[ActedTrigger]:
                 fingerprint=str(d.get("fingerprint") or ""),
                 action=str(d.get("action") or ""),
                 run_id=str(d.get("run_id") or ""),
+                broker_order_id=str(d.get("broker_order_id") or ""),
             ))
         except Exception:  # noqa: BLE001 — one bad row is not a judgment
             continue
     return out
+
+
+def keep_executed_acted_triggers(
+    acted: list[ActedTrigger] | None,
+    *,
+    executed_order_ids: set[str] | None,
+) -> list[ActedTrigger] | None:
+    """Believe only the cuts that actually reduced the position.
+
+    The acted record is written when the order is SUBMITTED, because that
+    is the only moment the trigger and its evidence are in hand. A
+    submission is not a sale: a limit half a percent under a stale mark on
+    a gapping name is rejected, cancelled or left unfilled precisely on the
+    bad-news day this layer governs, and a trigger spent by a cut that sold
+    nothing would refuse the close cut on a name the desk still holds.
+
+    `executed_order_ids` is supplied by the caller from the SAME contract
+    the sibling same-day-trim gate uses
+    (`TradingPipeline._trade_executed_or_pending` over today's trade rows),
+    so there is one opinion about what a real fill is, not two. `None`
+    means the caller could not find out: that is uncertainty and the whole
+    check is stood down (returns None → the layer fails OPEN), never
+    silently treated as "nothing is spent" or "everything is".
+
+    A record with no order id, or one whose order is not in the executed
+    set, is dropped: unverifiable must never cost a protective exit.
+    """
+    if acted is None or executed_order_ids is None:
+        return None
+    return [r for r in acted
+            if r.broker_order_id and r.broker_order_id in executed_order_ids]
 
 
 def spent_trigger_check(*, action: object, symbol: str, trigger: object,
@@ -293,13 +398,14 @@ def spent_trigger_check(*, action: object, symbol: str, trigger: object,
     if not fp:
         earlier = prior[0]
         return SpentTriggerCheck(
-            "spent",
+            "unidentifiable",
             (f"{sym} was already cut today on {t.value} "
              f"({earlier.action or 'sell-side'}, evidence: "
              f"{earlier.evidence[:160]!r}) and this second cut cites no "
-             f"record beyond the trigger's own name, so it reads the same "
-             f"event twice"),
-            prior=earlier, code=CODE_TRIGGER_ALREADY_SPENT,
+             f"record beyond the trigger's own name — this layer cannot "
+             f"show it is the same record, so it is recorded and allowed, "
+             f"matching the unsubstantiated-exit posture upstream"),
+            prior=earlier, code=CODE_TRIGGER_UNIDENTIFIABLE,
         )
     match = next((r for r in prior if r.fingerprint and r.fingerprint == fp), None)
     if match is not None:

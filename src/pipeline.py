@@ -11658,13 +11658,28 @@ class TradingPipeline:
         # either. `None` means the read failed: that is uncertainty and the
         # layer fails OPEN (src/risk/spent_trigger.py).
         from src.risk.spent_trigger import (
-            SPENT_LAYER, acted_trigger_payload, parse_acted_triggers,
-            spent_trigger_check,
+            SPENT_LAYER, acted_trigger_payload, keep_executed_acted_triggers,
+            parse_acted_triggers, spent_trigger_check,
         )
         try:
             _raw_acted = self.db.get_acted_exit_triggers_today()
             acted_today = (
                 None if _raw_acted is None else parse_acted_triggers(_raw_acted)
+            )
+            # A trigger is spent by a cut that actually REDUCED the position,
+            # never by one merely submitted. The executed set is built from
+            # the same `_trade_executed_or_pending` contract the sibling
+            # same-day-trim gate uses, so the two gates cannot hold opposite
+            # views of what a real fill is: a rejected / cancelled / expired
+            # zero-fill cut spends nothing and the name is fair game again.
+            _executed_order_ids: set[str] | None = {
+                str(r.get("broker_order_id"))
+                for r in (self.db.get_trades(today_only=True, limit=200) or [])
+                if r.get("broker_order_id")
+                and self._trade_executed_or_pending(r)
+            }
+            acted_today = keep_executed_acted_triggers(
+                acted_today, executed_order_ids=_executed_order_ids,
             )
         except Exception as _e:  # noqa: BLE001 — a failed read is uncertainty
             logger.warning(
@@ -12033,14 +12048,17 @@ class TradingPipeline:
                     detail=spent.detail[:400], layer=SPENT_LAYER,
                 )
                 continue
-            elif spent.verdict == "new_evidence":
-                # Allowed, NOT silent: a second cut on a different record is
-                # exactly the "genuinely worse reading" this item preserves,
-                # and the evening grade must be able to audit whether it was.
+            elif spent.verdict in ("new_evidence", "unidentifiable"):
+                # Allowed, NOT silent. `new_evidence` is the "genuinely worse
+                # reading" this item preserves; `unidentifiable` is a second
+                # cut naming no record, which this layer cannot prove is the
+                # same one and which the upstream substantiation layer
+                # already lets through — the two must not disagree about the
+                # identical input. Both are recorded for the evening grade.
                 logger.warning(
                     "Position reviewer: %s %s is a second cut on the same "
-                    "trigger but a DIFFERENT record — allowed. %s",
-                    act, symbol, spent.detail,
+                    "trigger — allowed (%s). %s",
+                    act, symbol, spent.verdict, spent.detail,
                 )
                 self._record_exit_refusal(
                     symbol=symbol, run_id=run_id, action=act,
@@ -12252,15 +12270,20 @@ class TradingPipeline:
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                 )
-                # Board item 74 — spend the trigger. Written AFTER the order
-                # is away, so a cut that never reached the broker never
-                # consumes the trigger that would authorise the retry. The
-                # in-process list is appended too: a later action in THIS
-                # same pass sees it without a second DB read.
+                # Board item 74 — record what authorised this cut. Written
+                # at SUBMIT, the only moment the trigger and its evidence
+                # are in hand; it does not by itself spend the trigger. The
+                # reader believes this row only once the order is known to
+                # have executed (see `keep_executed_acted_triggers`), so a
+                # rejected or unfilled cut spends nothing. The in-process
+                # list is appended too: a later action in THIS same pass
+                # sees it without a second DB read, and inside one pass the
+                # order is as live as it will get.
                 _acted = acted_trigger_payload(
                     symbol=symbol, trigger=action_item.get("exit_trigger"),
                     evidence=action_item.get("trigger_evidence"),
                     action=act, run_id=run_id,
+                    broker_order_id=str(order.get("id") or ""),
                 )
                 if _acted is not None:
                     try:
@@ -14909,13 +14932,25 @@ class TradingPipeline:
             # nothing is spent.
             try:
                 from src.risk.spent_trigger import (
-                    format_spent_triggers_block, parse_acted_triggers,
+                    format_spent_triggers_block, keep_executed_acted_triggers,
+                    parse_acted_triggers,
                 )
                 _acted_rows = self.db.get_acted_exit_triggers_today()
+                # Same fill verification the executor applies, so the seat is
+                # never told a trigger is spent by a cut that sold nothing.
+                _executed_ids = {
+                    str(r.get("broker_order_id"))
+                    for r in (self.db.get_trades(today_only=True, limit=200) or [])
+                    if r.get("broker_order_id")
+                    and self._trade_executed_or_pending(r)
+                }
+                _acted = keep_executed_acted_triggers(
+                    None if _acted_rows is None else parse_acted_triggers(_acted_rows),
+                    executed_order_ids=_executed_ids,
+                )
                 spent_triggers_block = (
-                    "" if _acted_rows is None else format_spent_triggers_block(
-                        parse_acted_triggers(_acted_rows),
-                        {p.symbol for p in review_positions},
+                    "" if _acted is None else format_spent_triggers_block(
+                        _acted, {p.symbol for p in review_positions},
                     )
                 )
             except Exception as _e:  # noqa: BLE001
