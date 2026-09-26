@@ -41,6 +41,8 @@ from src.api.schemas import (
     TradeItem,
 )
 from src.models import (
+    ANALYSIS_DROP_KIND,
+    DROP_CODE_UNSPECIFIED,
     EarningsAnalysis,
     MacroAnalysis,
     NewsIntelligenceReport,
@@ -340,6 +342,19 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
         skip_reason = skip.get("reason") if isinstance(skip, dict) else None
         skip_detail = skip.get("detail") if isinstance(skip, dict) else None
 
+        # Board item 158: why the desk could not read this name's analysis.
+        # `.get(...) or DEFAULT` on the code, not `.get(key, DEFAULT)` — rows
+        # written before the code existed have no key AND rows written with an
+        # empty one both have to read as `unspecified`.
+        drop_row = _find(rows, "pipeline", ANALYSIS_DROP_KIND)
+        drop = _parse_evidence(drop_row) if drop_row else None
+        if isinstance(drop, dict):
+            drop_code = str(drop.get("reason_code") or DROP_CODE_UNSPECIFIED)
+            drop_reason = drop.get("reason") or None
+            drop_recovered = bool(drop.get("recovered"))
+        else:
+            drop_code = drop_reason = drop_recovered = None
+
         symbol_trades = trades_by_symbol.get(sym, [])
         trade = symbol_trades[-1] if symbol_trades else None
         executed = any(db_reads.is_executed_trade(t) for t in symbol_trades)
@@ -372,6 +387,9 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
             pipeline_events=events,
             execution_skip_reason=skip_reason,
             execution_skip_detail=skip_detail,
+            analysis_drop_code=drop_code,
+            analysis_drop_reason=drop_reason,
+            analysis_drop_recovered=drop_recovered,
         ))
 
     pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)

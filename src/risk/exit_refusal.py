@@ -37,7 +37,8 @@ phrase gate — which is the case the 2026-08-27 ratification described
 (a thesis-invalidated position that named the invalidation).
 
 This module does not change sale-block appetite. It does not move
-`NOISE_BAND_ATR_MULTIPLE` or `absolute_min_stop_atr_multiple` (item 70).
+`NOISE_BAND_ATR_MULTIPLE`, `BREAK_CONFIRMATION_ATR_MULTIPLE` or
+`absolute_min_stop_atr_multiple` (item 70).
 It records every drop, every uncertainty fail-open, and (since board item
 164, 2026-09-19) every AI Risk approval, as append-only per-symbol
 specialist evidence so a later upsert on the cooldown ledger cannot erase

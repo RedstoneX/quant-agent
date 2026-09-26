@@ -53,6 +53,7 @@ __all__ = [
     "adverse_move_is_noise",
     "noise_band_atr",
     "NOISE_BAND_ATR_MULTIPLE",
+    "BREAK_CONFIRMATION_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
     "check_thesis_invalid_if",
     "TRUSTED_MACRO_STATUSES",
@@ -473,13 +474,39 @@ def veto_contradicted_exit(
 #: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
 
+#: BOARD ITEM 70, THE SPLIT (2026-09-26). Until this date ONE literal `1.0`
+#: did TWO different jobs in the exit path: the noise band above (how far an
+#: adverse move must travel from ENTRY before it stops being ordinary daily
+#: wobble) and the BREAK MARGIN below (how far a daily CLOSE must sit beyond a
+#: structural LEVEL before that level counts as broken). They are not the same
+#: quantity — different reference points, different units in the literature,
+#: and nothing ties their magnitudes — so a shared constant made each one
+#: impossible to source without moving the other. They are now two names.
+#:
+#: NO BEHAVIOUR CHANGES IN THIS SPLIT. Both are 1.0 today, exactly as before;
+#: the split exists so each can be answered on its own evidence. Neither value
+#: was retuned, which item 70 explicitly forbids in the same pass.
+#:
+#: WHAT THE RESEARCH FOUND for THIS one (docs/INCIDENT_HISTORY.md, 2026-09-26).
+#: The published literature answers "how far beyond a level is a real break" in
+#: PERCENT and level-dependently, never in ATRs: Edwards & Magee use ~3% for a
+#: major level and ~1% for a short-term one; Bulkowski's answer is essentially
+#: "a decisive close", i.e. zero distance, with confirmation carried by the
+#: close count and the throwback behaviour instead. There is therefore NO
+#: published ATR basis for this quantity at all — it is not merely unsourced,
+#: it is unidentifiable in the units it is expressed in. The confirmation RULE
+#: around it IS sourced (`TREND_CONFIRMING_CLOSES`, Edwards & Magee's two
+#: consecutive closes); only this margin is not. Kept at 1.0 and kept
+#: `arbitrary` in config/number_ledger.yaml rather than dressed up as sourced.
+BREAK_CONFIRMATION_ATR_MULTIPLE = 1.0
+
 # ---------------------------------------------------------------------------
 # TREND-SCALED break confirmation
 # (owner mandate 2026-09-24; citation-backed spec — named TA authorities)
 # ---------------------------------------------------------------------------
 #
 # A support/resistance break is confirmed by a decisive CLOSE beyond the level
-# by the noise band (`NOISE_BAND_ATR_MULTIPLE`, 1.0 ATR — the SAME margin for
+# by the break margin (`BREAK_CONFIRMATION_ATR_MULTIPLE`, 1.0 ATR — the SAME margin for
 # every regime, never a second ATR multiple), held over TWO consecutive closes
 # with a reclaim in between resetting (the ratified spring floor). The owner
 # mandate (2026-09-24) makes the desk MORE PATIENT only where a break is most
@@ -504,9 +531,10 @@ NOISE_BAND_ATR_MULTIPLE = 1.0
 # regime. The 25 threshold and the 14-session ADX period GATE behaviour, so they
 # are trade-governing and sourced to Wilder (1978).
 #
-# This block does NOT touch board item 70 (a separate frozen-number item about
-# the underived 1.0 noise band); the margin here IS that same noise band, left
-# alone.
+# Board item 70, 2026-09-26: this margin used to BE the noise-band constant.
+# It is now its own name, `BREAK_CONFIRMATION_ATR_MULTIPLE`, at the same 1.0
+# value and with no behaviour change — see that constant for why the published
+# literature gives this quantity no ATR basis at all.
 
 #: Consecutive confirmed daily closes beyond the level required to treat ANY
 #: break as real. SOURCED: the two-consecutive-day close filter in Edwards &
@@ -599,8 +627,8 @@ def classify_trend_context(
 def _break_confirmation_settings(trend_context: str) -> tuple[int, bool]:
     """Map a regime label to `(confirming_closes_needed, requires_prior_low)`.
 
-    The break MARGIN is ALWAYS `NOISE_BAND_ATR_MULTIPLE` (1.0 ATR) — there is
-    no second, wider ATR multiple. Both regimes use the same two-close floor;
+    The break MARGIN is ALWAYS `BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0 ATR) —
+    there is no second, wider ATR multiple. Both regimes use the same two-close floor;
     the strong-with-trend regime adds the prior-swing-low structural condition,
     never a larger close count. There is no single-close path.
 
@@ -1810,7 +1838,7 @@ def check_structural_protection(
     rising-200/50>200 up-structure) additionally requires the prior structural
     swing-low to also break before lifting protection. There is NO single-close
     path — nothing exits faster than the two-close floor. The break MARGIN is
-    ALWAYS `NOISE_BAND_ATR_MULTIPLE` (1.0 ATR) — the regime changes only whether
+    ALWAYS `BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0 ATR) — the regime changes only whether
     the prior-low condition applies, never the margin or the close count. The
     decisive outcomes (a confirmed break, or a break held pending confirmation)
     fill `owner_reason` with a plain-language sentence for the owner surfaces.
@@ -1861,10 +1889,12 @@ def check_structural_protection(
     `holding_discipline_false_claim`, all lift protection immediately,
     unaffected by this gate.
 
-    The margin for "beyond the level" reuses `NOISE_BAND_ATR_MULTIPLE`
-    (already 1.0, already ratified for "is an adverse move real") rather
-    than the level-zone tolerance used to MATCH a level to a stop's
-    placement — no third constant is introduced for this. The two are not
+    The margin for "beyond the level" is `BREAK_CONFIRMATION_ATR_MULTIPLE`
+    (1.0), NOT the level-zone tolerance used to MATCH a level to a stop's
+    placement. Until 2026-09-26 it shared the noise-band constant and this
+    docstring called that 1.0 "already ratified" — it never was, on either
+    job (board item 70); the two jobs now have two names and two ledger
+    entries, both still open. The two are not
     even the same kind of quantity: matching is an identity question about
     a zone defined as a percentage of price, breaking is a question about
     whether a move exceeded the name's own noise, which is an ATR
@@ -1874,7 +1904,7 @@ def check_structural_protection(
     # Trend regime — classify ONCE up front so the thesis and structural-level
     # branches below share the same read. `needed_closes` and whether the prior
     # structural swing-low must also break come from the sourced regime; the
-    # break margin is always `NOISE_BAND_ATR_MULTIPLE`.
+    # break margin is always `BREAK_CONFIRMATION_ATR_MULTIPLE`.
     trend_context = classify_trend_context(
         is_short=is_short, current_price=current_price,
         ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior, adx=adx,
@@ -1976,12 +2006,12 @@ def check_structural_protection(
             # Deciding whether that level has since BROKEN is a different
             # question — it is about whether an adverse move is real, which
             # IS a volatility question — so it uses a wider, decisive
-            # ATR-based margin, `NOISE_BAND_ATR_MULTIPLE` (see this
+            # ATR-based margin, `BREAK_CONFIRMATION_ATR_MULTIPLE` (see this
             # function's docstring). Two questions, two units, on purpose.
-            # The break margin is ALWAYS the noise band (owner mandate
+            # The break margin is ALWAYS that constant (owner mandate
             # 2026-09-24, trend-scaled exit): the regime changes how many closes
             # and the prior-low condition, NEVER the margin.
-            break_margin = NOISE_BAND_ATR_MULTIPLE * atr_f
+            break_margin = BREAK_CONFIRMATION_ATR_MULTIPLE * atr_f
             # MARGIN-CONSISTENCY GUARD (#4). Now that this branch's break margin
             # is known, recompute the prior streak counting a prior close only
             # if it cleared THIS margin — a close that only cleared a looser

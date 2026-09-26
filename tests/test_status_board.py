@@ -1458,6 +1458,66 @@ def test_an_unparseable_board_reports_nothing_here(tmp_path):
     assert sb.find_near_duplicate_open_items(p) == []
 
 
+# ---------------------------------------------------------------------------
+# the explicit override marker -- a genuinely deliberate near-neighbour whose
+# TITLES happen to land above the ratio must still be filable, the same way
+# the live board already declares item 138/118 and 183/138 distinct in prose.
+# The marker must NAME the item it claims distinctness from; a bare "not a
+# duplicate" claim with no number does not suppress anything.
+# ---------------------------------------------------------------------------
+
+def test_near_neighbour_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Item 1 is a NEAR-NEIGHBOUR and does NOT cover this — it "
+        "asks a different question about the same buffers.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_distinct_from_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 1, which tracks a different family of "
+        "buffers entirely.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_marker_naming_the_wrong_item_does_not_suppress(tmp_path):
+    """The override must name the ACTUAL other item in the flagged pair, not
+    just claim distinctness from something. A marker pointing at an unrelated
+    item number must not let a real duplicate through."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 99, an item that does not even exist "
+        "here.\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+
+
+def test_a_bare_not_a_duplicate_claim_with_no_item_number_does_not_suppress():
+    """A marker with no number attached is not accountable to anything and
+    must not be honoured -- otherwise any flagged pair could opt out by
+    writing "not a duplicate" with nothing behind it."""
+    assert sb._explicit_distinct_targets(
+        "This is not a duplicate, it is a near-neighbour of something else."
+    ) == set()
+
+
 
 def test_a_partial_or_pending_closure_is_not_flagged():
     """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
@@ -1591,16 +1651,142 @@ def test_a_missing_backlog_flags_nothing_for_the_finished_check(tmp_path):
         tmp_path / "nope.md", notes) == []
 
 
-def test_the_real_backlog_has_no_finished_item_still_on_the_board():
-    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture. This is
-    the check itself: it must find nothing once the cleanup pass in this
-    same change has moved out every item its own words call finished."""
+# ---------------------------------------------------------------------------
+# the checkbox half, added 2026-09-26: `find_finished_items_still_on_board`
+# used to read ONLY an item's headline prose. Ten items sat open on the real
+# board with every one of their own `DONE WHEN` boxes ticked — the exact
+# failure this check exists to prevent, reached through the door the
+# headline-only reading left open. See `_all_done_when_boxes_checked` and
+# the docstring of `find_finished_items_still_on_board` itself.
+# ---------------------------------------------------------------------------
+
+def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — OPEN, filed 2026-09-04.** Some engineering "
+        "notes about it.\n\n"
+        "DONE WHEN:\n"
+        "  - [x] the fix ships\n"
+        "  - [x] a test proves it\n"
+        "detail: docs/BOARD_NOTES.md (item 9)\n"
+    )
+    notes = _board_notes(tmp_path)
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert len(flagged) == 1
+    assert "item 9" in flagged[0]
+    assert "DONE WHEN" in flagged[0]
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+                 "retired"):
+        assert step in flagged[0]
+
+
+def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
+        tmp_path):
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — OPEN, filed 2026-09-04.** Some notes.\n\n"
+        "DONE WHEN:\n"
+        "  - [x] the fix ships\n"
+        "  - [ ] a test proves it\n"
+        "detail: docs/BOARD_NOTES.md (item 9)\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_an_item_with_no_done_when_block_does_not_trip_the_checkbox_check(
+        tmp_path):
+    """A separate, already-known gap (22 open items on the real board carry
+    no DONE WHEN block at all) — not this function's job to flag or fix."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — OPEN, filed 2026-09-04.** Some notes with no "
+        "criteria block at all.\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
+        tmp_path):
+    """The genuine exception the board relies on: every listed criterion is
+    met, but closing the item still needs a real fill, a real provider
+    fault or real capital moving — none of which a check can manufacture.
+    No consistent existing wording covers this on the real board today (see
+    `_LIVE_EVENT_BLOCKED_RE`'s docstring), so this is the new explicit
+    marker rather than an existing convention."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — cause found and fix SHIPPED, item stays OPEN "
+        "until a live attempt proves it. BLOCKED ON A LIVE EVENT.**\n\n"
+        "DONE WHEN:\n"
+        "  - [x] the fix ships\n"
+        "  - [x] a test proves it\n"
+        "detail: docs/BOARD_NOTES.md (item 9)\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+#: Items on the REAL board, as of this change, whose own `DONE WHEN`
+#: checkboxes are all ticked while the item is still open — the ten this
+#: check found on its first real run (see the docstring of
+#: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
+#: pre-existing rot, not a target: retiring one of these items (writing it
+#: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
+#: `docs/BOARD_NOTES.md` blocks, the normal procedure) makes it disappear
+#: from the live check's output, and this set may SHRINK to match without
+#: anyone treating that as a test failure to chase down — update it in the
+#: same change that retires the item. It must never GROW silently: a NEW
+#: item joining the live check's output that is not already named here
+#: means a new item quietly finished without being moved, which is exactly
+#: the failure this whole check exists to catch, so that case still fails
+#: CI. (Item 170 has an open retirement PR, #737, at the time this set was
+#: written; it is included here because it was still open when this change
+#: was authored, and is expected to drop out of the live check, not out of
+#: this pin, the day that PR lands — a future run of this test after that
+#: merge will simply have one fewer overlap, which is fine.)
+_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = frozenset({
+    "item 125", "item 138", "item 139", "item 148", "item 152",
+    "item 154", "item 165", "item 170", "item 179", "item 180",
+})
+
+_REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
+
+
+def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
+    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture.
+
+    Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
+    already-measured backlog rot pinned in
+    `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` (ten items whose own DONE
+    WHEN boxes are all ticked while still open — real, pre-existing, and
+    not something this test's own change may fix by editing docs/WORK.md,
+    since that would collide with other sessions concurrently retiring
+    items in their own worktrees). What it still enforces: no item OUTSIDE
+    that known set may be flagged — a new one appearing there is a fresh
+    instance of exactly the failure this check exists to catch, and must
+    still fail CI.
+    """
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
     flagged = sb.find_finished_items_still_on_board(work, notes)
-    assert not flagged, (
-        "docs/WORK.md has item(s) that declare themselves finished in their "
-        "own status but are still on the board:\n  " + "\n  ".join(flagged)
+    flagged_refs = set()
+    for f in flagged:
+        m = _REF_PREFIX_RE.match(f)
+        assert m, f"unrecognised flagged-item shape: {f!r}"
+        flagged_refs.add(m.group(1))
+    unexpected = flagged_refs - _KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26
+    assert not unexpected, (
+        "docs/WORK.md has NEW item(s) that declare themselves finished "
+        "(in headline or DONE WHEN checkboxes) but are still on the "
+        "board, beyond the already-known set pinned in "
+        "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26:\n  "
+        + "\n  ".join(sorted(unexpected))
     )
 
 
@@ -3843,3 +4029,43 @@ def test_ordinary_words_containing_a_class_token_survive(title, expect):
 ])
 def test_an_inline_classification_label_is_still_stripped(title, expect):
     assert sb._tidy_title(title) == expect
+
+
+# ---------------------------------------------------------------------------
+# The retired line takes numbers, not reasons
+# ---------------------------------------------------------------------------
+
+_RETIRED_REASON_SENTENCE = re.compile(
+    r"(?<=\. )\*?\*?Items? \d+[^.]{0,400}?\bretired\b", re.S)
+
+
+def test_the_retired_line_carries_no_per_item_reason():
+    """A retirement adds its NUMBER here and its REASON to the history file.
+
+    This is a merge property, not a style rule. `docs/INCIDENT_HISTORY.md` is
+    append-only and the doc merge driver reconciles it entry by entry, so any
+    number of closures can record themselves at once. The retired-numbers line
+    is one physical line: the driver merges the two NUMBER LISTS as a union and
+    never conflicts on them, but the prose around them goes through
+    `merge_text`, which refuses when both sides edited it
+    (`scripts/resolve_doc_conflict.py`). While every retirement appended its
+    reason here, two closures in flight could never both land — measured
+    2026-09-26, with eight retirement PRs open and serialising on this one line
+    while the work itself had been done in parallel. The line had reached 8,965
+    characters of re-narration of what the history file already said.
+
+    The surviving prose is the part that is NOT a per-item reason: which
+    numbers never existed, which schemes are separate, where a residue lives.
+    """
+    line = next(
+        (l for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()
+         if l.startswith("**Retired item numbers")), "")
+    assert line, "the retired-item-numbers line is missing from docs/WORK.md"
+    offenders = _RETIRED_REASON_SENTENCE.findall(line)
+    assert not offenders, (
+        "the retired-item-numbers line has grown a per-item reason again:\n"
+        + "\n".join(f"  - {o[:120]}..." for o in offenders)
+        + "\n\nPut the reason in docs/INCIDENT_HISTORY.md as its own dated "
+          "### entry and leave only the number here. Every retirement that "
+          "writes prose on this line blocks every other retirement in flight."
+    )

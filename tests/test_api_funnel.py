@@ -297,3 +297,93 @@ def test_funnel_surfaces_execution_skip_reason(client, unfunded_skip_db):
     assert cand["executed"] is False
     assert cand["execution_skip_reason"] == "insufficient_cash"
     assert "145.11" in cand["execution_skip_detail"]
+
+
+DROPPED_RUN_ID = "run-dropped001"
+
+
+@pytest.fixture
+def analysis_drop_db(tmp_path, monkeypatch):
+    """Board item 158: the technical seat could not read two names.
+
+    NVDA's row was not valid JSON and never came back; META's failed schema
+    validation but a retry put it in the book. A third row is the shape the
+    ORIGINAL item-158 fix wrote — a reason and no `reason_code` at all — so
+    the surface is exercised against a record already on disk.
+    """
+    db_path = tmp_path / "dropped.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_specialist_evidence(
+        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
+        scope="symbol", symbol="NVDA",
+        evidence_json=json.dumps({
+            "stage": "analysis", "outcome": "dropped",
+            "model": "TechAnalysisResult", "reason_code": "malformed_row",
+            "reason": "malformed: Expecting ',' delimiter",
+            "count": 1, "recovered": False,
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
+        scope="symbol", symbol="META",
+        evidence_json=json.dumps({
+            "stage": "analysis", "outcome": "recovered",
+            "model": "TechAnalysisResult", "reason_code": "schema_invalid",
+            "reason": "failed validation on rating",
+            "count": 1, "recovered": True,
+        }),
+    )
+    db.insert_specialist_evidence(
+        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
+        scope="symbol", symbol="ORCL",
+        evidence_json=json.dumps({  # pre-158-code row: no reason_code key
+            "stage": "analysis", "outcome": "dropped",
+            "model": "TechAnalysisResult",
+            "reason": "malformed: unterminated string",
+            "count": 1, "recovered": False,
+        }),
+    )
+    db.close()
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
+    return db_path
+
+
+def test_funnel_answers_why_a_dropped_name_is_not_here(client, analysis_drop_db):
+    """The owner-facing funnel must say why a name has nothing behind it.
+
+    Without this the dropped symbol appears as a candidate with every other
+    field empty, indistinguishable from a name no seat liked.
+    """
+    r = client.get(f"/runs/{DROPPED_RUN_ID}/funnel")
+    assert r.status_code == 200
+    by_symbol = {c["symbol"]: c for c in r.json()["candidates"]}
+
+    nvda = by_symbol["NVDA"]
+    assert nvda["analysis_drop_code"] == "malformed_row"
+    assert "Expecting" in nvda["analysis_drop_reason"]
+    assert nvda["analysis_drop_recovered"] is False
+    assert nvda["reached_pm_target"] is False
+
+    meta = by_symbol["META"]
+    assert meta["analysis_drop_code"] == "schema_invalid"
+    assert meta["analysis_drop_recovered"] is True
+
+
+def test_funnel_reads_a_pre_code_drop_row_as_unspecified(client, analysis_drop_db):
+    """Backward compatibility: a row written before the code existed still
+    reads, with the prose intact and the code defaulted — never a 500."""
+    r = client.get(f"/runs/{DROPPED_RUN_ID}/funnel")
+    assert r.status_code == 200
+    orcl = {c["symbol"]: c for c in r.json()["candidates"]}["ORCL"]
+    assert orcl["analysis_drop_code"] == "unspecified"
+    assert orcl["analysis_drop_reason"] == "malformed: unterminated string"
+
+
+def test_funnel_kept_candidate_carries_no_drop_fields(client, seeded_evidence_db):
+    """A stock that was NOT dropped must say nothing about a drop."""
+    cand = client.get(f"/runs/{EXECUTED_RUN_ID}/funnel").json()["candidates"][0]
+    assert cand["symbol"] == "AAPL"
+    assert cand["analysis_drop_code"] is None
+    assert cand["analysis_drop_reason"] is None
+    assert cand["analysis_drop_recovered"] is None
