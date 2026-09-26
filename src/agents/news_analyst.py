@@ -511,7 +511,29 @@ Analyze all the above and produce your intelligence report as JSON."""
         # TechAnalyst.analyze_batch isolate-failures-by-symbol discipline.
         parsed = self._drop_invalid_state_changes(parsed)
         parsed = self._drop_invalid_stock_news(parsed)
+        # HEAL FIRST, DROP ONLY AS FALLBACK (docs/OUTCOME.md order). An
+        # unreadable top-level field is a reason to ask the seat AGAIN, not
+        # a reason to give up on the field: the desk has already paid for
+        # the wire text and the prompt, and a second ask may well come back
+        # with a legal word. Only when that paid re-ask has been spent and
+        # the value is STILL unreadable does the field get dropped to save
+        # the rest of the report. Dropping first would have spent the one
+        # paid heal retry that shipped the day before (#695) on exactly the
+        # five failures this change targets, buying a permanent absence
+        # with a re-ask the desk never made.
         parsed, unreadable_fields = self._drop_invalid_market_sentiment(parsed)
+        if unreadable_fields and not _retry_used:
+            logger.warning(
+                "News analyst: unreadable top-level field(s) %s; one paid "
+                "heal retry before dropping anything",
+                ", ".join(f"{k}={v!r}" for k, v in sorted(unreadable_fields.items())),
+            )
+            return self.analyze(
+                news_text, universe=universe, stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative, session=session,
+                prior_session_report=prior_session_report,
+                news_coverage=news_coverage, _retry_used=True,
+            )
         try:
             report = NewsIntelligenceReport(**parsed)
         except Exception as e:
@@ -590,6 +612,10 @@ Analyze all the above and produce your intelligence report as JSON."""
         "neutral", and inventing a verdict the seat never gave is worse than
         having none — the field reads ABSENT and the raw word is returned so
         the report can carry WHY it is absent. Returns (parsed, unreadable).
+
+        This is the FALLBACK, not the first response: `analyze()` spends the
+        one paid heal retry on an unreadable value first and only keeps this
+        drop when the re-ask comes back unreadable too.
         """
         unreadable: dict[str, str] = {}
         if "market_sentiment" not in parsed:
@@ -612,9 +638,8 @@ Analyze all the above and produce your intelligence report as JSON."""
             parsed["market_sentiment"] = raw.strip().lower()
             return parsed, unreadable
         logger.warning(
-            "News analyst: dropping unreadable market_sentiment %r — the "
-            "seat's sentiment reads ABSENT, not neutral; the rest of the "
-            "report is kept", raw,
+            "News analyst: market_sentiment %r is not a word the desk can "
+            "read — the seat's sentiment reads ABSENT, not neutral", raw,
         )
         parsed = dict(parsed)
         parsed.pop("market_sentiment")

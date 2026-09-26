@@ -3832,6 +3832,41 @@ class NewsIntelligenceReport(LLMOutputModel):
     # from a stored answer without the log line that is gone after rotation.
     unreadable_fields: Annotated[dict[str, str], SkipJsonSchema()] = {}
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        """Keep the WIRE ask exactly as strong as it was before item 152.
+
+        Making `market_sentiment` optional in Python is what lets a single
+        unreadable word be dropped instead of discarding a paid report — but
+        it also, by default, turns the sent schema's plain enum into
+        `anyOf[enum, null]` and drops the field out of `required`. That
+        would be a real loosening of what the desk ASKS FOR, on top of the
+        tolerance it adds to what it ACCEPTS, and only the second one is
+        intended. So the generated schema is put back: bare enum, still
+        required. Python stays tolerant; the model is still told the field
+        is mandatory and still told the only three legal words.
+
+        (The news answer cannot use `strict: true` at all — `stock_news` is
+        a ticker-keyed free-form map, which strict mode cannot express; see
+        `_response_format_for` in `src/agents/base.py` and the 2026-09-14
+        rejection recorded there. That is why this field is quarantined
+        after the fact rather than prevented at source the way the technical
+        seat's wrapper-object schema prevents its own, and it is a property
+        of the answer's SHAPE, not something this change can fix.)
+        """
+        schema = handler(core_schema)
+        props = schema.get("properties")
+        if isinstance(props, dict) and "market_sentiment" in props:
+            props["market_sentiment"] = {
+                "type": "string",
+                "enum": ["bullish", "bearish", "neutral"],
+                "title": "Market Sentiment",
+            }
+            required = schema.setdefault("required", [])
+            if "market_sentiment" not in required:
+                required.append("market_sentiment")
+        return schema
+
     def format_market_sentiment(self) -> str:
         """The sentiment word, or an explicit ABSENT marker — never a blank.
 

@@ -1288,9 +1288,11 @@ def test_news_analyst_salvages_report_when_market_sentiment_unreadable(
     """Board item 152, measured on the retained production logs: 5 of the 7
     reproducible news-seat parse failures are `market_sentiment` carrying a
     word outside the three legal ones ("mixed" x4, "mixed-to-bearish" x1),
-    and every one of them threw away an otherwise-complete report. The
-    report must now survive with that one field dropped — and it must NOT
-    cost the paid heal retry, because there is nothing to re-ask for."""
+    and every one of them threw away an otherwise-complete report.
+
+    The seat is asked AGAIN first — the drop is the fallback, not the first
+    response — and only when the re-ask is unreadable too does the report
+    survive with that one field absent."""
     import src.agents.news_analyst as news_analyst_mod
 
     failure_dir = tmp_path / "parse_failures"
@@ -1331,8 +1333,9 @@ def test_news_analyst_salvages_report_when_market_sentiment_unreadable(
     # The unreadable field is ABSENT and says why — never coerced.
     assert report.market_sentiment is None
     assert report.unreadable_fields == {"market_sentiment": "mixed"}
-    # No second paid call, and no failure dump: nothing was lost wholesale.
-    assert mock_client.messages.create.call_count == 1
+    # The one paid heal retry WAS spent before giving up on the field.
+    assert mock_client.messages.create.call_count == 2
+    # No failure dump: nothing was lost wholesale.
     assert not failure_dir.exists() or not list(failure_dir.glob("*.json"))
 
 
@@ -1410,3 +1413,73 @@ def test_drop_invalid_market_sentiment_keeps_every_legal_word():
     )
     assert parsed["market_sentiment"] == "bullish"
     assert unreadable == {}
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_heals_unreadable_sentiment_before_dropping_it(
+    mock_cls, tmp_path, monkeypatch,
+):
+    """The decisive ordering. An unreadable top-level field must cost the
+    seat a second ask FIRST — the desk has already paid for the wire text
+    and the prompt, and a re-ask may come back with a legal word. Dropping
+    first would buy a permanent absence with a re-ask never made."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    monkeypatch.setattr(
+        news_analyst_mod, "PARSE_FAILURE_DIR", tmp_path / "parse_failures",
+    )
+
+    def _payload(sentiment):
+        return json.dumps({
+            "macro_narrative": {
+                "last_updated": "2026-08-25", "era_themes": ["AI capex"],
+                "current_regime": "risk-on",
+            },
+            "pm_briefing": "Defensive rotation into discount retail.",
+            "market_sentiment": sentiment,
+            "confidence": "medium",
+            "state_changes": [],
+            "stock_news": {},
+        })
+
+    def _resp(text):
+        r = MagicMock()
+        r.content = [MagicMock(text=text)]
+        r.usage.input_tokens = 500
+        r.usage.output_tokens = 20
+        return r
+
+    mock_client = MagicMock()
+    # First ask: the real production value. Second ask: a legal word.
+    mock_client.messages.create.side_effect = [
+        _resp(_payload("mixed")), _resp(_payload("bearish")),
+    ]
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(news_text="Some headlines", session="morning")
+
+    assert mock_client.messages.create.call_count == 2
+    # The heal recovered a real answer: nothing is absent and nothing is
+    # recorded as unreadable.
+    assert report is not None
+    assert report.market_sentiment == "bearish"
+    assert report.unreadable_fields == {}
+
+
+def test_news_wire_schema_still_demands_the_sentiment_enum():
+    """Item 152 loosened what the desk ACCEPTS, not what it ASKS FOR.
+
+    Making the field optional in Python would, by default, send the model
+    `anyOf[enum, null]` and drop it out of `required` — weakening the ask on
+    top of adding the tolerance. The sent schema must be unchanged: bare
+    three-word enum, still mandatory.
+    """
+    from src.agents.base import _response_format_for
+    from src.models import NewsIntelligenceReport
+
+    schema = _response_format_for(NewsIntelligenceReport)["json_schema"]["schema"]
+    field = schema["properties"]["market_sentiment"]
+    assert field["enum"] == ["bullish", "bearish", "neutral"]
+    assert "anyOf" not in field
+    assert "market_sentiment" in schema["required"]
