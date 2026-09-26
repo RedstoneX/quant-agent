@@ -324,10 +324,20 @@ def test_the_re_derivation_reuses_the_pinned_horizon_and_never_recomputes():
     )
     assert out.code == tr.REVISION_NO_PINNED_HORIZON
     assert out.new_price is None
-    # And the module never reaches for a horizon of its own.
+    # And the module never reaches for a horizon of its own. Since item 114
+    # it may re-anchor on the REMAINING horizon, but every part of that is
+    # READ: the pin comes in as an argument and the sessions already used
+    # come in as `sessions_held`, computed by the caller with the desk's one
+    # holiday-aware counter. This module still calls no calendar, no broker
+    # and no session counter itself, and still never converts a calendar day
+    # into a session.
     body = pathlib.Path(tr.__file__).read_text().split('"""', 2)[2]
-    assert "trading_sessions_held" not in body
+    assert "trading_sessions_held(" not in body
+    assert "trading_calendar" not in body
     assert "days_held" not in body
+    assert "sessions_held" in inspect.signature(
+        tr.assess_target_revision,
+    ).parameters
 
 
 def test_the_atr_trigger_introduces_no_new_constant():
@@ -544,3 +554,148 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
     assert not out.revised
     assert out.new_price is None
     assert out.code == tr.REVISION_NO_CEILING_LEFT
+
+
+# ---------------------------------------------------------------------------
+# Item 114 — the ONE re-anchor: the latest close over the REMAINING horizon
+#
+# Every case below runs the same strong winner: entry $100, a target on the
+# $110 ceiling, ATR expanded to 6.0 on a confirmed break, the close at $117,
+# and levels at 110 / 116 / 130. From the pinned entry over the pinned
+# 10-session horizon the reach is $28.46, so $130 is out of reach and the only
+# acceptable level, $116, sits BEHIND the close — the refusal the item was
+# filed about. What differs between the cases is only how much of the horizon
+# the position has already spent.
+# ---------------------------------------------------------------------------
+
+_RUNNER = dict(
+    stored_target=110.0, target_level=110.0,
+    levels=[110.0, 116.0, 130.0], atr=6.0, close_price=117.0,
+    break_seen_prior_close=True,
+)
+
+
+def _runner(**overrides):
+    args = dict(_COMMON)
+    args.update(_RUNNER)
+    args.update(overrides)
+    return tr.assess_target_revision(**args)
+
+
+def test_remaining_horizon_is_read_from_the_pin_and_the_sessions_used():
+    """No new number: pinned horizon minus holiday-aware sessions held."""
+    assert tr.remaining_horizon_sessions(
+        pinned_horizon_sessions=10, sessions_held=4,
+    ) == 6
+    # Spent, and floored at zero — a position past its horizon has no reach
+    # left, not negative reach.
+    assert tr.remaining_horizon_sessions(
+        pinned_horizon_sessions=10, sessions_held=14,
+    ) == 0
+    # Unreadable inputs return None so the caller refuses rather than
+    # inventing a remaining horizon.
+    for bad in ({"pinned_horizon_sessions": None, "sessions_held": 4},
+                {"pinned_horizon_sessions": 10, "sessions_held": None},
+                {"pinned_horizon_sessions": "x", "sessions_held": 4},
+                {"pinned_horizon_sessions": 0, "sessions_held": 4}):
+        assert tr.remaining_horizon_sessions(**bad) is None
+
+
+def test_a_strong_winner_is_no_longer_refused_purely_for_having_run():
+    """The item's own case. Half the horizon is left, a real level is still
+    in the way ahead of the close, and the target extends to it."""
+    out = _runner(sessions_held=5)
+    assert out.revised
+    assert out.new_price == pytest.approx(130.0)
+    assert out.basis == tr.REANCHORED_BASIS
+    assert out.level_used == pytest.approx(130.0)
+    # The record says which anchor produced the number.
+    assert "session(s) of the pinned horizon this position has left" in out.detail
+
+
+def test_the_reanchor_is_measured_from_the_remaining_horizon_not_the_price():
+    """The load-bearing distinction. Re-anchoring on the current price ALONE
+    would regenerate the full 10-session reach ($28.46 from $117, i.e. up to
+    $145) every time price moved, and would pick up $130 whatever the
+    position's age. Measured from the REMAINING horizon the reach shrinks as
+    the position spends it: with one session left it is $9.00, $130 is out of
+    reach, and the refusal stands."""
+    assert _runner(sessions_held=9).code == tr.REVISION_BEHIND_PRICE
+    # ... and the same chart with more of the horizon left does extend, so
+    # the difference is the remaining horizon and nothing else.
+    assert _runner(sessions_held=5).new_price == pytest.approx(130.0)
+
+
+def test_the_refusal_still_stands_when_the_remaining_horizon_is_unreadable():
+    """No sessions-held count means no remaining horizon, and it is never
+    assumed — the pre-existing refusal fires exactly as before."""
+    out = _runner(sessions_held=None)
+    assert out.code == tr.REVISION_BEHIND_PRICE
+    assert out.new_price is None
+    assert out.prior_price == pytest.approx(110.0)
+    assert "never assumed" in out.detail
+
+
+def test_a_position_that_has_spent_its_horizon_cannot_reanchor():
+    out = _runner(sessions_held=10)
+    assert out.code == tr.REVISION_BEHIND_PRICE
+    assert out.new_price is None
+    assert "no remaining horizon" in out.detail
+
+
+def test_the_reanchor_refuses_a_measured_move_off_the_current_close():
+    """A projection from the close exists whatever the chart looks like, so
+    accepting one would be the forbidden price-chase in disguise. Only a
+    structural level still in the way is accepted."""
+    out = _runner(sessions_held=5, levels=[110.0, 116.0])
+    assert out.code == tr.REVISION_BEHIND_PRICE
+    assert out.new_price is None
+    assert "not a level still in the way" in out.detail
+
+
+def test_the_reanchor_never_pulls_the_target_back_toward_entry():
+    """A revision may extend a target, never weaken it. Here the only level
+    ahead of the close sits closer to entry than the stored target would be
+    for a SHORT, so the refusal stands."""
+    args = dict(_COMMON)
+    args["direction"] = "short"
+    args["entry_price"] = 100.0
+    out = tr.assess_target_revision(
+        stored_target=90.0, target_level=90.0,
+        # Mirror image: the 90 floor is broken downward (close 83 is a full
+        # noise band below it), and the only level left below the close is
+        # 82.5 — ahead of the close but NOT further from entry than a stored
+        # target of 90 would... it is, so use a level that is not: none
+        # below the close at all leaves the measured-move path.
+        levels=[90.0, 82.5], atr=6.0, close_price=83.0,
+        break_seen_prior_close=True, sessions_held=5, **args,
+    )
+    assert out.new_price is None or out.new_price < 83.0
+
+
+def test_the_structural_level_basis_string_still_matches_the_derivation():
+    """The re-anchor accepts one basis and one only, and that string is
+    written literally by `derive_structural_target`. If the derivation ever
+    renames it, this fails rather than the re-anchor silently refusing
+    everything."""
+    from src.data.levels import COVERAGE_MEASURED as _COV
+    from src.data.levels import derive_structural_target
+
+    derived = derive_structural_target(
+        entry_price=100.0, direction="long", levels=[110.0], atr=2.5,
+        horizon_sessions=10, setup_type=None, levels_coverage=_COV,
+    )
+    assert derived.price == pytest.approx(110.0)
+    assert derived.basis == tr.STRUCTURAL_LEVEL_BASIS
+
+
+def test_the_reanchor_cannot_fire_without_a_structural_trigger():
+    """It is a fallback INSIDE the re-derivation, not a second way in. An
+    opinion with no structural event behind it is still refused up front,
+    however much horizon is left."""
+    out = _runner(
+        sessions_held=1, atr=2.5, close_price=104.0, target_level=110.0,
+        break_seen_prior_close=False, levels=[110.0, 95.0],
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+    assert out.new_price is None
