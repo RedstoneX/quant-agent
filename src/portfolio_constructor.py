@@ -1006,6 +1006,7 @@ class PortfolioConstructor:
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
         stale_sources: dict[str, frozenset[str]] | None = None,
+        non_corroborating_sources: dict[str, frozenset[str]] | None = None,
         gross_ceiling=None,
         ranking: Sequence[str] | None = None,
         live_stops: dict[str, float] | None = None,
@@ -1057,9 +1058,22 @@ class PortfolioConstructor:
         entries that are real coverage but too old to earn size, from
         `PortfolioManagerAgent.stale_evidence_sources` (the same pure function
         the PM's own prompt used, recomputed by the caller from identical
-        inputs). Removed from the agreement tally only, so it can lower a
+        inputs). Removed from BOTH sides of the agreement tally (a stance too
+        stale to corroborate is too stale to dissent), so it can lower a
         ceiling and never raise one. Omitted, nothing is gated — a caller with
         no freshness view must not invent one, exactly as above.
+
+        `non_corroborating_sources`: board item 109. {symbol: {source}} —
+        today only a macro stance broadcast onto a name whose sector the
+        macro read never mentioned, from
+        `PortfolioManagerAgent.broadcast_macro_sources`. A DIFFERENT fact
+        from staleness, kept in a DIFFERENT parameter because it has a
+        different consequence: it is removed from the ALIGNED side only, so
+        it can never manufacture agreement and can never drop a dissent the
+        desk should hear. Merging the two mappings would raise the net on
+        any name a broad bearish read opposed, admitting trades that are
+        refused today — and would file "too stale" as the durable reason for
+        a stance that is perfectly current. Omitted, nothing is gated.
 
         `gross_ceiling`: spec §11.2. The de-levering ladder's resolved
         `GrossCeiling` for this session — the standing cap, stepped down by
@@ -1122,6 +1136,7 @@ class PortfolioConstructor:
             regime=regime,
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
             ranking=ranking,
             live_stops=live_stops,
         )
@@ -1408,6 +1423,7 @@ class PortfolioConstructor:
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
         stale_sources: dict[str, frozenset[str]] | None = None,
+        non_corroborating_sources: dict[str, frozenset[str]] | None = None,
         ranking: Sequence[str] | None = None,
         live_stops: dict[str, float] | None = None,
     ) -> dict[str, RiskPlan]:
@@ -1555,8 +1571,18 @@ class PortfolioConstructor:
                 # only ever pull the net DOWN, never up. One gate, both sides: a
                 # stance too stale to corroborate is too stale to dissent.
                 ignored = (stale_sources or {}).get(sym.upper())
+                # Item 109: a broadcast macro stance comes off the ALIGNED
+                # side only. It cannot corroborate a name the macro read
+                # never looked at; it can still dissent.
+                non_corroborating = (
+                    non_corroborating_sources or {}
+                ).get(sym.upper())
+                aligned_ignored = (
+                    frozenset(ignored or ()) | frozenset(non_corroborating or ())
+                )
                 agreement_count = count_aligned_sources(
-                    sym, sources, target.direction, ignored_sources=ignored,
+                    sym, sources, target.direction,
+                    ignored_sources=aligned_ignored,
                 )
                 opposing_count = count_opposing_sources(
                     sym, sources, target.direction, ignored_sources=ignored,
@@ -1571,6 +1597,7 @@ class PortfolioConstructor:
                 # would charge the same dissenter twice.
                 source_score = signed_source_score(
                     sym, sources, target.direction, ignored_sources=ignored,
+                    non_corroborating_sources=non_corroborating,
                 )
                 # 2026-09-14: agreement is a REFUSAL, not a ceiling. Net at
                 # or below zero drops the target; anything above it imposes
@@ -1585,6 +1612,10 @@ class PortfolioConstructor:
                     if agreement_refuses_trade(source_score)
                     else SizeOverride.sized(float("inf"))
                 )
+                # Two gates, two REASONS. One merged line filed "too stale"
+                # against a broadcast macro stance that is perfectly current
+                # — a wrong, persistent, machine-readable reason on the path
+                # that drops a candidate. Each is now logged as what it is.
                 if ignored:
                     gated = sorted(s for s in ignored if s in sources)
                     if gated:
@@ -1593,6 +1624,18 @@ class PortfolioConstructor:
                             "stale to count toward agreement (%d aligned "
                             "after the freshness gate)",
                             sym, ", ".join(gated), agreement_count,
+                        )
+                if non_corroborating:
+                    broad = sorted(s for s in non_corroborating if s in sources)
+                    if broad:
+                        logger.info(
+                            "Constructor: %s — %s stance(s) present and "
+                            "current, but market-wide rather than a read on "
+                            "this name's sector, so they cannot count FOR "
+                            "the trade (they still count against one they "
+                            "oppose); %d aligned, %d opposed",
+                            sym, ", ".join(broad), agreement_count,
+                            opposing_count,
                         )
                 logger.info(
                     "Constructor: %s agreement %d aligned / %d opposed = "
