@@ -51,6 +51,13 @@ HEAL_CAP_BLOCKED = "cap_blocked"
 #: heal's own per-day allowance, and it is recorded rather than only logged
 #: because a decision not to spend is still a decision about money.
 HEAL_DAY_CAP = "day_cap"
+#: The heal never ran at all — no replayable message survived, or the
+#: caller's one retry was already spent. Distinct from HEAL_FAILED (the
+#: seat WAS re-asked and still could not answer) and from HEAL_CAP_BLOCKED
+#: (the spend circuit refused). Board item 78: a refusal that says "still
+#: empty after heal and one paid retry" is UNTRUE when the retry was never
+#: attempted, so the three cases must be nameable apart.
+HEAL_NOT_ATTEMPTED = "not_attempted"
 
 # Reverse of SECTOR_STANCE_TO_DIRECTION for restoring the live model shape
 # from MacroStore's {sector: bullish|neutral|bearish} snapshot. Not an
