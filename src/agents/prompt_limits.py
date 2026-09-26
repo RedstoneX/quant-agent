@@ -51,9 +51,70 @@ PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-
 #: rendered by `src/agents/tech_analyst.py` instead (a code constant, not a
 #: settings key, and that seat is the only one allowed to halt the desk — the
 #: raise below would be a halt). Sending it through here without first adding a
-#: `tech` namespace raises `PromptPlaceholderError` at agent construction. Board
-#: item 107(c) proposes widening the rendering mechanism; this is the trap in it.
+#: `tech` namespace raises `PromptPlaceholderError` at agent construction. Item
+#: 107(c) widened the mechanism's COVERAGE (`audit_prompt_coverage` now checks
+#: all ten sheets) without widening what it substitutes: `tech` is declared in
+#: `PROMPT_NAMESPACES` as another renderer's business, and this is still the
+#: trap if anyone routes that sheet through `LiveLimitPrompt`.
 RISK_NAMESPACE = "risk"
+
+#: A second namespace, added for board item 107. It resolves NAMED CONSTANTS
+#: in `src.risk.metrics` rather than settings fields, because the numbers it
+#: carries have no settings key — the drift flag's weight and P&L
+#: thresholds. Naming them here is what lets the prose that describes the
+#: flag render from the same pair the flag is computed from, closing the
+#: "three homes" half of item 107.
+#:
+#: This namespace is NOT a place to park a number so that it looks
+#: governed. Every entry must be a module-level constant that real code
+#: reads at run time; a value that only a prompt ever uses belongs in
+#: settings or nowhere (item 107(b)).
+FLAGS_NAMESPACE = "flags"
+
+
+def _flags_values() -> dict[str, float]:
+    """Imported lazily: `src.risk.metrics` must not import this module back."""
+    from src.risk import metrics
+
+    return {
+        "drift_weight_pct": metrics.DRIFT_WEIGHT_PCT,
+        "drift_pnl_pct": metrics.DRIFT_PNL_PCT,
+    }
+
+
+#: Every prompt sheet on disk, and what is responsible for its placeholders.
+#: Item 107(c): the rendering mechanism reached 2 of 10 sheets and nothing
+#: said what covered the other eight, so a sheet could be added carrying a
+#: placeholder nobody substitutes and the desk would ship `{{...}}` to a
+#: paid model. `audit_prompt_coverage` refuses an unlisted sheet, so the ten
+#: are covered by name and an eleventh cannot appear unregistered.
+#:
+#: The value is the set of namespaces that sheet is allowed to use. An
+#: EMPTY set means "this sheet carries no placeholders at all" and is
+#: enforced as such — it is coverage, not an exemption.
+#:
+#: `tech` is declared for the tech sheet alone and is deliberately NOT
+#: resolvable here: `src/agents/tech_analyst.py` renders those three from a
+#: code constant and from the run's own lookback, and routing that sheet
+#: through `render_prompt_limits` would raise at construction on the one
+#: seat allowed to halt the desk. The audit knows the difference between
+#: "resolved here" and "resolved by a named other renderer".
+PROMPT_NAMESPACES: dict[str, frozenset[str]] = {
+    "earnings_analyst.md": frozenset(),
+    "evening_analyst.md": frozenset(),
+    "macro_analyst.md": frozenset(),
+    "meta_reflector.md": frozenset(),
+    "news_analyst.md": frozenset(),
+    "portfolio_manager.md": frozenset({"risk", "flags"}),
+    "position_reviewer.md": frozenset({"flags"}),
+    "risk_manager.md": frozenset({"risk"}),
+    "smart_money_analyst.md": frozenset(),
+    "tech_analyst.md": frozenset({"tech"}),
+}
+
+#: Namespaces this module can substitute itself. `tech` is absent on purpose
+#: — see `PROMPT_NAMESPACES`.
+RESOLVED_HERE = frozenset({RISK_NAMESPACE, FLAGS_NAMESPACE})
 
 #: Computed properties of `RiskConfig` that are legitimate placeholder
 #: targets. Each is a DERIVATION of the model's own fields (see
@@ -101,10 +162,21 @@ def resolve_placeholder(key: str, risk_config: Any) -> str:
     field, or a value that is not a number — never returns a fallback.
     """
     namespace, _, field = key.partition(".")
+    if namespace == FLAGS_NAMESPACE:
+        values = _flags_values()
+        if field not in values:
+            raise PromptPlaceholderError(
+                f"placeholder {{{{{key}}}}} names no constant: {field!r} is "
+                f"not one of the named flag thresholds "
+                f"({', '.join(sorted(values))}). Add the constant to "
+                f"src/risk/metrics.py and register it — do not type the "
+                f"number into the prompt.",
+            )
+        return _format_number(values[field])
     if namespace != RISK_NAMESPACE:
         raise PromptPlaceholderError(
             f"unknown placeholder namespace {namespace!r} in {{{{{key}}}}} — "
-            f"only {RISK_NAMESPACE!r} resolves",
+            f"only {sorted(RESOLVED_HERE)} resolve here",
         )
     declared = set(getattr(type(risk_config), "model_fields", {}) or {})
     if field not in declared and field not in RISK_COMPUTED_PROPERTIES:
@@ -236,3 +308,80 @@ class LiveLimitPrompt:
         it against a candidate config without building an agent.
         """
         _ = self.system_prompt
+
+
+# ---------------------------------------------------------------------------
+# Coverage: all ten sheets, not the two that happened to be wired up.
+# ---------------------------------------------------------------------------
+
+PROMPT_DIR = Path(__file__).resolve().parents[2] / "config" / "prompts"
+
+
+def audit_prompt_coverage(
+    prompt_dir: Path | str | None = None,
+    risk_config: Any = None,
+) -> list[str]:
+    """Every way the ten standing sheets can carry an unrendered number.
+
+    Empty list is a pass. Returns strings rather than raising because this
+    is a BUILD-TIME check run by a test over the whole directory, and a
+    caller wants all the problems at once, not the first.
+
+    Four failures are reported, and each one has happened or nearly has:
+
+    1. A sheet on disk that is not in `PROMPT_NAMESPACES`. Nothing else in
+       the repo enumerates the sheets, so an eleventh could be added and
+       inherit no coverage at all. This is the check that makes "all ten"
+       true tomorrow as well as today.
+    2. A registered sheet that no longer exists — a rename that left the
+       registry pointing at nothing, which would otherwise read as a pass.
+    3. A placeholder whose namespace that sheet is not registered for. This
+       is the `{{tech.*}}` trap: `PLACEHOLDER_RE` matches it, the risk
+       renderer cannot resolve it, and the failure lands at agent
+       construction on a live morning instead of in CI.
+    4. A placeholder in a namespace THIS module resolves that does not
+       actually resolve — a typo, a renamed setting, a deleted constant.
+       Checked against the live config when one is supplied, which is how a
+       settings rename gets caught before it halts the desk.
+    """
+    directory = Path(prompt_dir) if prompt_dir is not None else PROMPT_DIR
+    problems: list[str] = []
+    on_disk = {p.name for p in sorted(directory.glob("*.md"))}
+
+    for name in sorted(on_disk - set(PROMPT_NAMESPACES)):
+        problems.append(
+            f"{name}: prompt sheet is not registered in PROMPT_NAMESPACES, so "
+            f"nothing states which renderer is responsible for its numbers. "
+            f"Register it (an empty set means 'carries no placeholders' and "
+            f"is enforced).",
+        )
+    for name in sorted(set(PROMPT_NAMESPACES) - on_disk):
+        problems.append(
+            f"{name}: registered in PROMPT_NAMESPACES but no such file in "
+            f"{directory} — a rename left the coverage registry pointing at "
+            f"nothing, which would otherwise read as a pass.",
+        )
+
+    for name in sorted(on_disk & set(PROMPT_NAMESPACES)):
+        allowed = PROMPT_NAMESPACES[name]
+        text = (directory / name).read_text()
+        for key in sorted(placeholders_in(text)):
+            namespace = key.partition(".")[0]
+            if namespace not in allowed:
+                problems.append(
+                    f"{name}: placeholder {{{{{key}}}}} uses namespace "
+                    f"{namespace!r}, which this sheet is not registered for "
+                    f"(registered: {sorted(allowed) or 'none'}). Either the "
+                    f"sheet's renderer must be taught it, or the number does "
+                    f"not belong in the sheet.",
+                )
+                continue
+            if namespace not in RESOLVED_HERE:
+                continue  # another named renderer's business
+            if namespace == RISK_NAMESPACE and risk_config is None:
+                continue  # nothing to resolve against; (3) still checked
+            try:
+                resolve_placeholder(key, risk_config)
+            except PromptPlaceholderError as exc:
+                problems.append(f"{name}: {exc}")
+    return problems

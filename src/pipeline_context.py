@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.models import parse_telemetry
+from src.risk.metrics import DRIFT_PNL_PCT, DRIFT_WEIGHT_PCT
 
 if TYPE_CHECKING:
     from src.data.event_calendar import EventCalendarCoverage, FOMCCoverage
@@ -372,7 +373,9 @@ class PMFacts:
     positions_under_5d: int = 0
     positions_5_to_15d: int = 0
     positions_over_15d: int = 0
-    positions_drift_flagged: int = 0  # weight > 12% + P&L > 10%
+    #: Count of holdings flagged by `src.risk.metrics.drift_flag` —
+    #: thresholds DRIFT_WEIGHT_PCT / DRIFT_PNL_PCT, one definition (item 107).
+    positions_drift_flagged: int = 0
 
     # Signal freshness (from TA output)
     tech_signals_count: int = 0
@@ -481,7 +484,7 @@ class PMFacts:
 ### Book State (current)
 - invested={self.invested_pct:.1f}% (capital at work, unsigned) · net direction={self.net_exposure_pct:+.1f}% (leverage-aware; negative = net short) · cash={self.cash_pct:.1f}% · positions={self.position_count}
 - age buckets: <5d={self.positions_under_5d} · 5-15d={self.positions_5_to_15d} · >15d={self.positions_over_15d}
-- drift-flagged (weight>12% + P&L>10%): {self.positions_drift_flagged}
+- drift-flagged (weight>{DRIFT_WEIGHT_PCT:g}% + P&L>{DRIFT_PNL_PCT:g}%): {self.positions_drift_flagged}
 - sector weights — LONG side (top 8, gross % of equity):
 {long_sector_lines}
 - sector weights — SHORT side (top 8, gross % of equity):

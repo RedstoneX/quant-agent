@@ -206,14 +206,15 @@ DONE WHEN:
   - [ ] no further automatic selling is added in the same pass — changing what a failed de-lever DOES is a ladder change and needs its own item and its own adversary run
 detail: docs/BOARD_NOTES.md (item 112)
 
-**107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17.
+**107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
 
 DONE WHEN:
-  - [ ] (a) prompt-described behaviours are registered so a behaviour that CHANGES, not only one deleted, gets scanned — nothing is registered today, so the shipped check is blind to the whole class
-  - [ ] (b) the PM's prompt-only sizing arithmetic (bases 3.0/1.75/0.75, the +0.25 reward:risk bonus, the ±0.20/±0.10 evening tilt, the 0.5 stale halving at age ≥8d) and the technical seat's "3+ aligned signals", 1-3/4-7/8+ freshness tiers and forward-PE 40/60 + P/S 15/25 levels are each sourced, derived or deleted
-  - [ ] the reviewer's `weight_pct > 12%` escalation and the `DRIFT` flag's matching 12 stop being bare inline literals with three homes — named or moved to settings, so the rendering mechanism can reach them at all
-  - [ ] (c) every prompt number that has a settings key is rendered by `prompt_limits.py`, which covers 2 of 10 prompt files today; anything with no settings key falls to (b)
-  - [ ] SHARED CRITERIA with item 99: (b) here is 99(a), and (c) here is 99(g). They are one requirement seen from two audits — tick them together rather than doing the work twice.
+  - [x] (a) a behaviour that CHANGES without being deleted forces the prose describing it to be re-read — `src/prompt_bindings.py` + `config/prompt_bindings.yaml` pin code and prompt prose to each other by digest and fail the build when one side moves; the deletion-site check was checked for first and left alone
+  - [x] (c) all ten standing sheets are covered by the rendering check, an unregistered sheet is refused, and a placeholder no renderer can resolve fails in CI instead of at agent construction on a live morning
+  - [x] the 12/10 drift pair has one definition (`src.risk.metrics.DRIFT_WEIGHT_PCT` / `DRIFT_PNL_PCT`), both sheets render it, and the one remaining literal site is named in the test so the count can only go down — `src/pipeline.py:_build_position_facts`, not editable in that pass
+  - [ ] the last literal drift-threshold site in `src/pipeline.py` uses the named constant
+  - [ ] (b) the trade-picking sheet's prompt-only sizing arithmetic (bases 3.0/1.75/0.75 and their ranges, the 0.25 reward:risk bonus, the 0.5 stale halving at age >=8d, the +/-0.5pp shade) and the technical sheet's prompt-only levels ("3+ aligned signals", the 1-3/4-7/8+ freshness tiers, forward-PE 40/60 and P/S 15/25) are each sourced or taken OUT of the path — verified 2026-09-26 that no code computes any of them and none is in the number ledger. The +/-0.20/+/-0.10 evening tilt this item listed was already gone from the formula (2026-09-17); its dangling mention was removed 2026-09-26
+  - [ ] the 12/10 drift pair and the two prompt-only sets above carry a `config/number_ledger.yaml` entry with a source, or the open question and what the desk pays meanwhile
 detail: docs/BOARD_NOTES.md (item 107)
 
 **109. (a) RULED AND BUILT 2026-09-26; (c) still open — the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17.** Part (b) was removed as fixed (PR #489, verified on main 2026-09-18). Part (a) was ruled by the OWNER on 2026-09-25, not by the orchestrator: macro stays a per-name input weighted by the strength the reading itself states, the weighting is sign-symmetric, and no seat may admit a name alone. Built 2026-09-26 — a macro stance broadcast onto a name whose sector the read never mentioned no longer counts in the agreement tally in either direction, a sector-specific stance counts in full, and macro alone is refused at the conviction bar. Write-up in `docs/INCIDENT_HISTORY.md` (2026-09-26).

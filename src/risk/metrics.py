@@ -103,6 +103,44 @@ def unrealized_pnl_pct(position) -> float | None:
     return pnl / cost * 100
 
 
+#: THE DRIFT FLAG'S TWO THRESHOLDS — one definition, board item 107.
+#:
+#: A holding is "drifted" when its weight has grown past `DRIFT_WEIGHT_PCT`
+#: percent of the book AND the position is up more than `DRIFT_PNL_PCT`
+#: percent: concentration that arrived by winning rather than by being
+#: bought that size. The flag is INFORMATIONAL — it decorates the position
+#: lines the Portfolio Manager and the Position Reviewer are shown, and
+#: nothing in Python trims on it.
+#:
+#: BEFORE THIS CONSTANT the pair `12` / `10` was typed as bare inline
+#: literals at three code sites (`src/pipeline.py:_build_position_facts`,
+#: `src/agents/portfolio_manager.py:_fmt_position`, and the label string in
+#: `src/agents/position_reviewer.py:build_user_message`) and again in four
+#: places of prompt prose, with no settings key and no named constant — so
+#: the rendering mechanism in `src/agents/prompt_limits.py` could reach
+#: none of them and a change to one home left the other six lying.
+#:
+#: NEITHER NUMBER IS SOURCED. Naming them does not ratify them: they are
+#: still hand-chosen, they are not in `config/number_ledger.yaml`, and
+#: board item 107 records that. What this constant fixes is the *count of
+#: homes*, not the provenance. Do not read the existence of a named
+#: constant as evidence that somebody derived it.
+DRIFT_WEIGHT_PCT = 12.0
+DRIFT_PNL_PCT = 10.0
+
+
+def drift_flag(weight_pct: float | None, pnl_pct: float | None) -> bool:
+    """True when a holding is concentrated AND that concentration is profit.
+
+    `None` on either input means "unknowable", which is not a flag either
+    way — never a silent zero. See `unrealized_pnl_pct` for why a short's
+    P&L percent can legitimately be `None`.
+    """
+    if weight_pct is None or pnl_pct is None:
+        return False
+    return weight_pct > DRIFT_WEIGHT_PCT and pnl_pct > DRIFT_PNL_PCT
+
+
 def r_multiple(
     current_price: float,
     entry: float,
