@@ -1279,3 +1279,134 @@ def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monk
         )
 
     assert any("parse-failure" in rec.message for rec in caplog.records)
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_salvages_report_when_market_sentiment_unreadable(
+    mock_cls, tmp_path, monkeypatch,
+):
+    """Board item 152, measured on the retained production logs: 5 of the 7
+    reproducible news-seat parse failures are `market_sentiment` carrying a
+    word outside the three legal ones ("mixed" x4, "mixed-to-bearish" x1),
+    and every one of them threw away an otherwise-complete report. The
+    report must now survive with that one field dropped — and it must NOT
+    cost the paid heal retry, because there is nothing to re-ask for."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    failure_dir = tmp_path / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
+
+    payload = {
+        "macro_narrative": {
+            "last_updated": "2026-08-25", "era_themes": ["AI capex"],
+            "current_regime": "risk-on",
+        },
+        "pm_briefing": "Defensive rotation into discount retail.",
+        "market_sentiment": "mixed",          # the real production value
+        "confidence": "medium",
+        "state_changes": [],
+        "stock_news": {"DG": [{
+            "headline": "HSBC upgrade", "sentiment": "bullish",
+            "conviction": "medium",
+            "impact_summary": "Upgraded on defensive demand.",
+        }]},
+    }
+    response_text = json.dumps(payload)
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_text)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 20
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(news_text="Some headlines", session="morning")
+
+    # The rest of the paid answer survived.
+    assert report is not None
+    assert report.pm_briefing == "Defensive rotation into discount retail."
+    assert "DG" in report.stock_news
+    # The unreadable field is ABSENT and says why — never coerced.
+    assert report.market_sentiment is None
+    assert report.unreadable_fields == {"market_sentiment": "mixed"}
+    # No second paid call, and no failure dump: nothing was lost wholesale.
+    assert mock_client.messages.create.call_count == 1
+    assert not failure_dir.exists() or not list(failure_dir.glob("*.json"))
+
+
+def test_unreadable_market_sentiment_reads_absent_never_neutral():
+    """The seat that failed must be VISIBLY absent. A blank, or the word
+    'neutral', would read to the next seat as a verdict this seat never
+    gave — the exact silent degradation board item 152 exists to stop."""
+    from src.models import MacroNarrative, NewsIntelligenceReport
+
+    report = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-08-21", era_themes=["AI capex"],
+            current_regime="risk-on",
+        ),
+        pm_briefing="Quiet tape.", confidence="medium",
+    )
+    report.unreadable_fields = {"market_sentiment": "mixed-to-bearish"}
+
+    rendered = report.format_market_sentiment()
+    assert rendered.startswith("ABSENT")
+    assert "mixed-to-bearish" in rendered
+    assert "NOT neutral" in rendered
+    assert rendered.strip()  # never a blank
+
+    # And the legal case is untouched.
+    report.market_sentiment = "bearish"
+    assert report.format_market_sentiment() == "bearish"
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_unsalvageable_answer_records_affected_names(
+    mock_cls, tmp_path, monkeypatch,
+):
+    """Board item 152: when nothing can be salvaged, the forensic dump must
+    name the stocks that lose this seat, so a later reader can tell WHY the
+    seat is absent for them without the (rotated-away) log line."""
+    import src.agents.news_analyst as news_analyst_mod
+
+    failure_dir = tmp_path / "parse_failures"
+    monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="I need more context...")]
+    mock_response.usage.input_tokens = 100
+    mock_response.usage.output_tokens = 10
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(
+        news_text="Some headlines", session="morning",
+        stock_mentions={"nvda": ["a headline"], "DG": ["another"]},
+    )
+
+    assert report is None
+    files = list(failure_dir.glob("news_analyst_morning_*.json"))
+    assert len(files) == 1
+    dumped = json.loads(files[0].read_text())
+    assert dumped["affected_symbols"] == ["DG", "NVDA"]
+
+
+def test_drop_invalid_market_sentiment_keeps_every_legal_word():
+    """Control: the three legal verdicts must pass through untouched, and a
+    case/whitespace variant is normalised rather than thrown away."""
+    for word in ("bullish", "bearish", "neutral"):
+        parsed, unreadable = NewsAnalystAgent._drop_invalid_market_sentiment(
+            {"market_sentiment": word},
+        )
+        assert parsed["market_sentiment"] == word
+        assert unreadable == {}
+
+    parsed, unreadable = NewsAnalystAgent._drop_invalid_market_sentiment(
+        {"market_sentiment": " Bullish "},
+    )
+    assert parsed["market_sentiment"] == "bullish"
+    assert unreadable == {}

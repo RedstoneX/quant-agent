@@ -4,6 +4,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from typing import get_args
 
 from pydantic import ValidationError
 
@@ -39,7 +40,8 @@ PARSE_FAILURE_DIR = Path(__file__).parent.parent.parent / "data" / "parse_failur
 
 
 def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
-                            parsed: object, error: str) -> None:
+                            parsed: object, error: str,
+                            affected_symbols: list[str] | None = None) -> None:
     """Best-effort dump of a parse/validation failure's raw evidence.
 
     NEVER raises. This is purely a forensic-display gap fix (mirrors
@@ -56,6 +58,12 @@ def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
     was well-formed but the wrong shape" — the exact ambiguity that made
     the 2026-09-02 four-missing-fields failure undiagnosable from the log
     line alone.
+
+    `affected_symbols` (board item 152) names the stocks that lose this seat
+    because of this failure — the symbols the seat was shown real headline
+    text for. Recorded here so the dump answers "which names are now missing
+    their news seat, and why" on its own, rather than leaving a later reader
+    to reconstruct it from a rotated log line and a count.
     """
     try:
         PARSE_FAILURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,6 +77,7 @@ def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
             "error": error,
             "raw_text": raw_text,
             "parsed": parsed,
+            "affected_symbols": sorted(affected_symbols or []),
         }
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(payload, indent=2, default=str))
@@ -222,7 +231,11 @@ class NewsAnalystAgent(BaseAgent):
         # rather than rebuild from scratch.
         if prior_session_report and session != "morning":
             prior_briefing = (prior_session_report.get("pm_briefing") or "")[:500]
-            prior_sentiment = prior_session_report.get("market_sentiment", "?")
+            # `or "?"` not `.get(..., "?")`: since board item 152 the stored
+            # key can be present and null (the prior session's own sentiment
+            # was unreadable and dropped), which would otherwise render the
+            # literal "None" into the prompt as if it were a verdict.
+            prior_sentiment = prior_session_report.get("market_sentiment") or "?"
             prior_state_changes = prior_session_report.get("state_changes") or []
             sc_lines = [
                 f"- [{sc.get('conviction','?').upper()}] {sc.get('event','')}: "
@@ -479,6 +492,7 @@ Analyze all the above and produce your intelligence report as JSON."""
                 _persist_parse_failure(
                     agent_name=self.name, session=session, raw_text=result.raw_text,
                     parsed=None, error="non-JSON response (parse_json() returned None)",
+                    affected_symbols=self._affected_symbols(stock_mentions, universe),
                 )
                 return None, result
             logger.warning("News analyst returned non-JSON response; one paid heal retry")
@@ -497,6 +511,7 @@ Analyze all the above and produce your intelligence report as JSON."""
         # TechAnalyst.analyze_batch isolate-failures-by-symbol discipline.
         parsed = self._drop_invalid_state_changes(parsed)
         parsed = self._drop_invalid_stock_news(parsed)
+        parsed, unreadable_fields = self._drop_invalid_market_sentiment(parsed)
         try:
             report = NewsIntelligenceReport(**parsed)
         except Exception as e:
@@ -510,6 +525,7 @@ Analyze all the above and produce your intelligence report as JSON."""
                 _persist_parse_failure(
                     agent_name=self.name, session=session, raw_text=result.raw_text,
                     parsed=parsed, error=str(e),
+                    affected_symbols=self._affected_symbols(stock_mentions, universe),
                 )
                 return None, result
             logger.warning("News analysis failed to parse (%s); one paid heal retry", e)
@@ -519,6 +535,7 @@ Analyze all the above and produce your intelligence report as JSON."""
                 prior_session_report=prior_session_report,
                 news_coverage=news_coverage, _retry_used=True,
             )
+        report.unreadable_fields = unreadable_fields
         report = self._filter_hallucinated_state_changes(
             report, news_text, prior_session_report=prior_session_report,
         )
@@ -537,6 +554,72 @@ Analyze all the above and produce your intelligence report as JSON."""
                 filled.setdefault(sym, [])
             report.stock_news = filled
         return report, result
+
+    @staticmethod
+    def _affected_symbols(stock_mentions: dict | None,
+                          universe: list[str] | None) -> list[str]:
+        """Which stocks lose this seat when the whole answer is unreadable.
+
+        Board item 152. `stock_mentions` is the deterministic, pre-LLM
+        word-boundary match over real wire text (`NewsDataProvider.
+        tag_symbol_mentions`), so its keys are exactly the names the seat was
+        shown real headline content for — the ones whose news seat is now
+        absent. Falls back to the requested universe when the caller passed no
+        mentions map, which is still the honest "asked about" set; returns []
+        when neither is known rather than guessing.
+        """
+        if stock_mentions:
+            return sorted({str(s).strip().upper() for s in stock_mentions if str(s).strip()})
+        return sorted({str(s).strip().upper() for s in (universe or []) if str(s).strip()})
+
+    @staticmethod
+    def _drop_invalid_market_sentiment(parsed: dict) -> tuple[dict, dict[str, str]]:
+        """Drop an out-of-vocabulary `market_sentiment` instead of losing the report.
+
+        Board item 152, measured. `market_sentiment` is a three-word Literal
+        and it is the field the seat actually gets wrong: 5 of the 7
+        reproducible news-seat parse failures in the retained production logs
+        are this one field ("mixed" x4 on 2026-08-25/27/27/28,
+        "mixed-to-bearish" on 2026-08-21), and each one discarded a whole
+        otherwise-valid report. Same shape as
+        `_drop_invalid_state_changes` / `_drop_invalid_stock_news` and as the
+        technical seat's row-by-row salvage (#538): drop the unreadable unit,
+        keep everything else.
+
+        The dropped value is NOT mapped onto a legal one. "mixed" is not
+        "neutral", and inventing a verdict the seat never gave is worse than
+        having none — the field reads ABSENT and the raw word is returned so
+        the report can carry WHY it is absent. Returns (parsed, unreadable).
+        """
+        unreadable: dict[str, str] = {}
+        if "market_sentiment" not in parsed:
+            return parsed, unreadable
+        raw = parsed.get("market_sentiment")
+        if raw is None:
+            return parsed, unreadable
+        # Read the legal words off the model itself so this can never drift
+        # from the declaration. The annotation is `Literal[...] | None`, so
+        # flatten one level and keep the string members.
+        legal = tuple(
+            member
+            for arg in get_args(
+                NewsIntelligenceReport.model_fields["market_sentiment"].annotation,
+            )
+            for member in get_args(arg)
+            if isinstance(member, str)
+        )
+        if isinstance(raw, str) and raw.strip().lower() in legal:
+            parsed["market_sentiment"] = raw.strip().lower()
+            return parsed, unreadable
+        logger.warning(
+            "News analyst: dropping unreadable market_sentiment %r — the "
+            "seat's sentiment reads ABSENT, not neutral; the rest of the "
+            "report is kept", raw,
+        )
+        parsed = dict(parsed)
+        parsed.pop("market_sentiment")
+        unreadable["market_sentiment"] = str(raw)
+        return parsed, unreadable
 
     @staticmethod
     def _find_dropped_news_symbols(

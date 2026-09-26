@@ -4102,3 +4102,89 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
     # The hard cap still binds: the second long is blocked.
     assert [d.symbol for d in allowed] == ["SPY"]
     assert any("Net exposure" in r for r in blocked)
+
+
+def test_morning_research_stage_news_unreadable_field_marks_status_field_unreadable():
+    """Board item 152, salvage half. The seat answered and the answer is
+    usable, but `analyze()` had to drop a top-level field it sent in a word
+    the desk cannot read (measured in production: `market_sentiment` =
+    "mixed"). That report is neither clean nor lost, and reading it as "ok"
+    would hide a field the next seat is about to make a decision without."""
+    report = _minimal_news_report(confidence="high")
+    report.market_sentiment = None
+    report.unreadable_fields = {"market_sentiment": "mixed"}
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "field_unreadable"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_dropped_symbol_outranks_unreadable_field():
+    """A per-STOCK loss is the worse fact and keeps the single slot."""
+    report = _minimal_news_report(confidence="high")
+    report.market_sentiment = None
+    report.unreadable_fields = {"market_sentiment": "mixed"}
+    report.dropped_news_symbols = ["AMD"]
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+
+    assert stage.run(ctx).data_status["news"] == "symbol_dropped"
+
+
+def test_morning_research_stage_news_parse_error_files_a_record_per_affected_stock():
+    """Board item 152, unsalvageable half. When the news answer cannot be
+    read at all, the loss must be durable and machine-readable PER STOCK —
+    not a log line that dies at the next rotation plus a count. One
+    `analysis_drop` row per name the seat was asked about, each carrying the
+    reason, through the same writer the technical seat's row drops use."""
+    from src.pipeline_stages import ANALYSIS_DROP_KIND
+
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (None, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.admitted_symbols = {"AAPL", "MSFT"}
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "parse_error"
+    drop_calls = [
+        c for c in stage.db.insert_specialist_evidence.call_args_list
+        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+    ]
+    assert {c.kwargs["symbol"] for c in drop_calls} == {"AAPL", "MSFT"}
+    for call in drop_calls:
+        payload = json.loads(call.kwargs["evidence_json"])
+        assert payload["model"] == "NewsIntelligenceReport"
+        assert payload["outcome"] == "dropped"
+        assert "unreadable" in payload["reason"]
+        # The record must say the seat is ABSENT, never that it is neutral.
+        assert "not neutral" in payload["reason"]
+
+
+def test_morning_research_stage_news_clean_answer_files_no_drop_records():
+    """Control: a readable answer must file nothing."""
+    from src.pipeline_stages import ANALYSIS_DROP_KIND
+
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(
+        lambda run_id, session: (_minimal_news_report(confidence="high"), coverage),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.admitted_symbols = {"AAPL"}
+    stage.run(ctx)
+
+    assert not [
+        c for c in stage.db.insert_specialist_evidence.call_args_list
+        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+    ]

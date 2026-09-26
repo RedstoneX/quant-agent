@@ -3576,7 +3576,21 @@ class NewsIntelligenceReport(LLMOutputModel):
     state_changes: list[StateChange] = []
     stock_news: dict[str, list[StockNewsItem]] = {}
     pm_briefing: str
-    market_sentiment: Literal["bullish", "bearish", "neutral"]
+    # OPTIONAL SINCE 2026-09-26 (board item 152) — and `None` here means
+    # ABSENT, never "neutral". Measured against the retained production logs:
+    # 5 of the 7 reproducible news-seat parse failures were this one field
+    # carrying a word outside the three legal ones ("mixed" x4,
+    # "mixed-to-bearish" x1), and each of those threw away an otherwise
+    # well-formed report — macro_narrative, pm_briefing, every state change
+    # and every per-symbol headline — over a single enum. `analyze()` now
+    # drops the unreadable value (NewsAnalystAgent._drop_invalid_market_
+    # sentiment) and keeps the rest, exactly as it already does per
+    # state-change and per stock-news item. Coercing "mixed" to "neutral"
+    # was deliberately NOT done: "mixed" is not neutral, and a fabricated
+    # verdict that reads like a real one is the failure this item exists to
+    # stop. Every renderer must therefore print an explicit UNREADABLE
+    # marker on None, never a blank and never a default word.
+    market_sentiment: Literal["bullish", "bearish", "neutral"] | None = None
     confidence: Literal["high", "medium", "low"]
     # Phase 9 (§9.1): a genuine catalyst News wants Technical to look at,
     # even when the symbol never tripped the tech prefilter. Default []
@@ -3601,6 +3615,39 @@ class NewsIntelligenceReport(LLMOutputModel):
     # shown an output slot inviting it to nominate its own coverage gaps,
     # and `analyze()` overwrote whatever it said one line after parsing.
     dropped_news_symbols: Annotated[list[str], SkipJsonSchema()] = []
+    # Board item 152. Field name -> the raw, unreadable value the seat sent,
+    # for every top-level field `analyze()` had to drop to salvage the rest
+    # of the report. Never asked of the model (`SkipJsonSchema`), filled by
+    # `NewsAnalystAgent._drop_invalid_market_sentiment`. Travels with the
+    # report into `specialist_evidence` (kind `analysis`, the stage persists
+    # `model_dump_json()`), so a later reader can tell WHY a field is absent
+    # from a stored answer without the log line that is gone after rotation.
+    unreadable_fields: Annotated[dict[str, str], SkipJsonSchema()] = {}
+
+    def format_market_sentiment(self) -> str:
+        """The sentiment word, or an explicit ABSENT marker — never a blank.
+
+        Board item 152. `market_sentiment` can be `None` because the seat sent
+        a word outside the three legal ones and `analyze()` dropped it to save
+        the rest of the report. Every prompt and display must then say so in
+        words: a bare empty string, or the word "neutral", would read to the
+        next seat as a real verdict the seat never gave. Single helper so all
+        four renderers (PM, risk, position reviewer, evening) say the same
+        thing and none can drift back to interpolating the raw field.
+        """
+        if self.market_sentiment:
+            return self.market_sentiment
+        raw = self.unreadable_fields.get("market_sentiment")
+        if raw:
+            return (
+                f"ABSENT — the seat answered {raw!r}, which is not one of "
+                "bullish/bearish/neutral, so it was dropped. Treat the news "
+                "seat as having given NO sentiment; it is NOT neutral"
+            )
+        return (
+            "ABSENT — the seat gave no sentiment. Treat it as having given "
+            "NO sentiment; it is NOT neutral"
+        )
 
     def format_dropped_symbols_block(self) -> str:
         """Prompt text naming symbols shown real headlines but omitted from
