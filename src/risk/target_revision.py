@@ -53,6 +53,46 @@ rather than storing a target behind the price. In practice the structural
 break that legitimises a revision arrives with an ATR expansion, which
 widens the reach enough to reach the next level.
 
+THE ONE RE-ANCHOR, AND WHY IT IS NOT "THE CURRENT PRICE" (item 114)
+-------------------------------------------------------------------
+That refusal is the EXPECTED outcome for the desk's strongest winners, not
+an edge case: the further a position travels, the more certain it becomes
+that every level still within one horizon's reach OF ENTRY sits behind the
+price. A rule whose refusal rate rises with how right the desk was is not a
+safety property.
+
+So the entry-anchored derivation gets exactly ONE fallback, and only after
+it has already refused with `REVISION_BEHIND_PRICE`: re-derive once more
+with the reach anchored on the LATEST COMPLETED CLOSE over the REMAINING
+horizon — `remaining_horizon_sessions` = the pinned horizon minus the
+trading sessions the position has already used. Both numbers already exist
+and are already used elsewhere on this desk (`trades.
+expected_horizon_sessions` pinned at BUY, and the holiday-aware
+`broker.trading_sessions_held` that `exit_guard`'s noise band and the
+reviewer's own facts already read), so nothing here is invented.
+
+It is the remaining horizon that makes this a measurement rather than a
+chase. Re-anchoring on the current price ALONE — the thing this item
+forbids — gives a target that is always reachable, because the reach is
+regenerated in full every time price moves. Here the reach SHRINKS with
+every session the position spends: a position five sessions into a ten
+session horizon may reach half as far as it could at entry, and one whose
+horizon is spent may not re-anchor at all. The target therefore cannot be
+pushed indefinitely by the price move.
+
+Three further conditions keep it honest, all of them refusals back to
+`REVISION_BEHIND_PRICE` when unmet:
+
+* the remaining horizon must be READ, not assumed. No pinned horizon or no
+  sessions-held count means no re-anchor — never a default.
+* the re-anchored target must land on a STRUCTURAL LEVEL still in the way.
+  The measured-move fallback is explicitly not accepted here, because
+  "close + k * ATR" IS the current price wearing a hat: it exists whatever
+  the chart looks like. If the chart holds no level ahead within the
+  remaining reach, the refusal stands and the position is on its stop.
+* the re-anchored target must sit FURTHER FROM ENTRY than the stored one.
+  A revision may extend a target; it may never pull it back toward entry.
+
 WHAT LEGITIMISES ONE
 --------------------
 A structural event, never a price move and never a judgement. Two, and no
@@ -128,7 +168,10 @@ __all__ = [
     "REVISION_NO_CEILING_LEFT",
     "REVISION_BEHIND_PRICE",
     "REVISION_NO_CHANGE",
+    "REANCHORED_BASIS",
+    "STRUCTURAL_LEVEL_BASIS",
     "TargetRevisionOutcome",
+    "remaining_horizon_sessions",
     "level_backing_target",
     "levels_still_in_the_way",
     "target_level_broken",
@@ -186,6 +229,20 @@ REVISION_BEHIND_PRICE = "REFUSAL_DERIVED_TARGET_BEHIND_PRICE"
 #: same price. Recorded so the flag is never a blank.
 REVISION_NO_CHANGE = "NO_CHANGE_ON_REDERIVATION"
 
+#: `TargetDerivation.basis` when the derivation picked a real structural
+#: level rather than projecting a measured move. Mirrored from
+#: `src.data.levels.derive_structural_target`, which writes the string
+#: literally; `tests/test_target_revision.py` asserts the two still agree,
+#: because the re-anchor below accepts ONLY this basis.
+STRUCTURAL_LEVEL_BASIS = "structural_level"
+
+#: The basis recorded when a target was re-derived with the reach anchored
+#: on the latest completed close over the REMAINING horizon, after the
+#: entry-anchored derivation had already refused as behind price. Distinct
+#: from the plain `structural_level` on purpose: the record must say which
+#: anchor produced the number, and a reader must be able to count these.
+REANCHORED_BASIS = "structural_level_reanchored_on_remaining_horizon"
+
 
 @dataclass(frozen=True)
 class TargetRevisionOutcome:
@@ -218,6 +275,39 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if math.isfinite(out) else None
+
+
+def remaining_horizon_sessions(
+    *, pinned_horizon_sessions: int | None, sessions_held: int | None,
+) -> int | None:
+    """How much of its pinned horizon this position has LEFT, in sessions.
+
+    Both inputs are READ, never derived here and never defaulted:
+
+    * `pinned_horizon_sessions` is `trades.expected_horizon_sessions`,
+      written once at BUY and never recomputed.
+    * `sessions_held` is the holiday-aware count of TRADING sessions since
+      entry — `AlpacaBroker.trading_sessions_held` (item 165), the same
+      count `exit_guard`'s noise band and the reviewer's position facts
+      already use. Never a calendar-day count.
+
+    Returns None when either input is unreadable, so a caller can refuse
+    rather than invent a remaining horizon; returns 0 — a real answer, not
+    a missing one — when the position has used its whole horizon or more.
+    A negative result is impossible: a position past its horizon has no
+    reach left, it does not have negative reach.
+    """
+    try:
+        pinned = int(pinned_horizon_sessions)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    try:
+        used = int(sessions_held)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if pinned <= 0 or used < 0:
+        return None
+    return max(0, pinned - used)
 
 
 def level_backing_target(
@@ -395,6 +485,7 @@ def assess_target_revision(
     close_price: float | None,
     levels_coverage: str = COVERAGE_UNKNOWN,
     break_seen_prior_close: bool = False,
+    sessions_held: int | None = None,
     min_target_atr_multiple: float = MIN_TARGET_ATR_MULTIPLE,
     breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
     max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
@@ -586,6 +677,96 @@ def assess_target_revision(
     # owner decisions on it — this module deliberately does not touch them.
     ahead = new_price < close if is_short else new_price > close
     if not ahead:
+        # THE ONE RE-ANCHOR (item 114). See the module docstring: the
+        # entry-anchored reach has just produced a target the price has
+        # passed, which is the EXPECTED outcome for a strong winner. Try
+        # once more with the reach anchored on the latest completed close
+        # over the REMAINING horizon — never on the close alone, and never
+        # on a measured move.
+        remaining = remaining_horizon_sessions(
+            pinned_horizon_sessions=horizon, sessions_held=sessions_held,
+        )
+        reanchor_note = ""
+        if remaining is None:
+            reanchor_note = (
+                "; the remaining horizon could not be read (no holiday-aware "
+                "sessions-held count for this position), and it is never "
+                "assumed, so no re-anchored derivation was attempted"
+            )
+        elif remaining <= 0:
+            reanchor_note = (
+                f"; this position has used all {horizon} of its pinned "
+                f"horizon's sessions, so there is no remaining horizon to "
+                f"re-anchor the reach on and it is managed by its stop"
+            )
+        else:
+            redo: TargetDerivation = derive_structural_target(
+                entry_price=close,
+                direction=direction,
+                levels=surviving,
+                atr=vol,
+                horizon_sessions=remaining,
+                setup_type=setup_type,
+                model_target=None,
+                min_target_atr_multiple=min_target_atr_multiple,
+                breakout_projection_atr_multiple=breakout_projection_atr_multiple,
+                max_reach_atr_multiple=max_reach_atr_multiple,
+                max_horizon_sessions=max_horizon_sessions,
+                levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
+            )
+            re_price = _finite(redo.price)
+            if re_price is None:
+                reanchor_note = (
+                    f"; re-anchored on the ${close:,.2f} close over the "
+                    f"{remaining} session(s) of horizon this position has "
+                    f"left, today's bars still yield no target: "
+                    f"{redo.detail}"
+                )
+            elif redo.basis != STRUCTURAL_LEVEL_BASIS:
+                # A measured move from the current close is the current
+                # price wearing a hat — it exists whatever the chart looks
+                # like, so accepting it here would be the disguised
+                # price-chase this item forbids.
+                reanchor_note = (
+                    f"; the only thing re-anchoring on the ${close:,.2f} "
+                    f"close over the remaining {remaining} session(s) "
+                    f"produces is a {redo.basis} projection, not a level "
+                    f"still in the way — a target measured off the current "
+                    f"price with no structure behind it is not a target"
+                )
+            else:
+                re_ahead = (
+                    re_price < close if is_short else re_price > close
+                )
+                further = (
+                    re_price < target if is_short else re_price > target
+                )
+                if re_ahead and further:
+                    return TargetRevisionOutcome(
+                        symbol=sym, code=trigger, trigger=trigger,
+                        new_price=round(re_price, 2), prior_price=target,
+                        basis=REANCHORED_BASIS,
+                        level_used=redo.level_used,
+                        detail=(
+                            f"{trigger}: nothing within one pinned "
+                            f"{horizon}-session reach of the ${entry:,.2f} "
+                            f"entry is still ahead of the ${close:,.2f} "
+                            f"close, so the reach was re-anchored on that "
+                            f"close over the {remaining} session(s) of the "
+                            f"pinned horizon this position has left — "
+                            f"${target:,.2f} -> ${re_price:,.2f} on a "
+                            f"structural level still in the way. "
+                            f"{redo.detail}"
+                        ),
+                    )
+                reanchor_note = (
+                    f"; re-anchored on the ${close:,.2f} close over the "
+                    f"remaining {remaining} session(s) the nearest level "
+                    f"still in the way is ${re_price:,.2f}, which is not "
+                    f"both ahead of that close and further from entry than "
+                    f"the stored target — a revision may extend a target, "
+                    f"never pull it back toward entry"
+                )
         return TargetRevisionOutcome(
             symbol=sym, code=REVISION_BEHIND_PRICE,
             refusal=REVISION_BEHIND_PRICE, trigger=trigger,
@@ -596,7 +777,7 @@ def assess_target_revision(
                 f"pinned ${entry:,.2f} entry over the pinned {horizon}-session "
                 f"horizon is ${new_price:,.2f}, which the latest close of "
                 f"${close:,.2f} has already passed — the stored "
-                f"${target:,.2f} stands"
+                f"${target:,.2f} stands{reanchor_note}"
             ),
         )
     if round(new_price, 2) == round(target, 2):
