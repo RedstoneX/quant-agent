@@ -36,7 +36,6 @@ from src.data.levels import (
     FAULT_NO_PRICE,
     TargetDerivation,
     derive_structural_target,
-    horizon_reach,
     level_zone_halfwidth,
     touch_probability,
 )
@@ -269,30 +268,32 @@ STOP_RULE_SIGNAL_BAR = "stop_placed_past_signal_bar"
 #: missing ATR is never a reason to skip protection.
 STOP_RULE_STRUCTURAL_NO_ATR = "stop_read_from_structure_no_atr"
 STOP_RULE_PRIOR_BAR_NO_ATR = "stop_read_from_prior_bar_no_atr"
-#: 2026-09-12 (second ruling of the day — see docs/WORK.md item 54). The
-#: stop this trade REQUIRES is wider than the instrument can plausibly
-#: travel inside the trade's own horizon. The published constraint on a
-#: stop is its WIDTH, not whether a level exists under it — Kristjan
-#: Kullamägi, in his own words: "stop should not be wider than the ATR or
-#: ADR of the stock" (https://qullamaggie.com/my-3-timeless-setups-that-
-#: have-made-me-tens-of-millions/). What is adopted is the SHAPE — width
-#: measured in the stock's own volatility units, refused past a cap — and
-#: NOT his unit, for a reason that is arithmetic, not taste: this desk's
-#: own fallback for an unbacked stop is the 2.5 x ATR noise band
-#: (`ConstructorConfig.min_stop_atr_multiple`, a doctrine-grounded
-#: convention for a days-to-weeks hold; his rule is for an entry timed
-#: intraday with the stop under the day's low), so at his 1 x daily range
-#: the fallback would refuse itself. Nor can the band be the cap: the
-#: ratified sizing rule (§2.1, `_plan_risk_targets`) answers a wide stop
-#: with a SMALLER position, never a refusal, and is pinned by tests. The
-#: only instrument-read width the desk already has that sits past both is
-#: `horizon_reach` — ATR x sqrt(horizon) x the same reach multiple the
-#: target derivation and the level scan use. A stop beyond it cannot be
-#: hit inside the trade, so the risk-based size computed from it is
-#: fiction. Substitution stated plainly: the desk computes ATR(14), not
-#: ADR; ATR includes the overnight gap and runs a little wider than ADR on
-#: the same stock. The width test is on WHATEVER stop would ship — an
-#: honoured level, the absolute floor, the band, or the signal bar.
+#: RETIRED as a live refusal (board item 56, route (c), 2026-09-26). This
+#: named the stop-WIDTH gate: whatever placed the stop, a width past
+#: `horizon_reach` (ATR x sqrt(horizon) x a 1.5 multiple nothing derived)
+#: refused the trade outright. It is DELETED, and the deletion is measured,
+#: not argued: across 648 sized stops recorded in production between
+#: 2026-09-13 and 2026-09-26 (`quant_agent.log`, the touch-probability
+#: reading below) it refused ZERO trades, and the widest stop it ever saw
+#: sat at 1.29 x ATR x sqrt(H) against its 1.5 cap. It could not have fired
+#: on the desk's own fallback stop at any horizon of three sessions or more
+#: (2.5 ATR vs 1.5 x sqrt(3) = 2.60 ATR), and every horizon the desk has
+#: ever stated was 6 sessions or longer. What it claimed to protect --
+#: "a size computed off a distance price will not travel is fiction" -- is
+#: already answered, in the direction published practice prescribes, by the
+#: ratified sizing invariant (§2.1, `_plan_risk_targets`: same dollars of
+#: risk, wider stop, fewer shares) and, at the extreme, by
+#: `STOP_REFUSAL_SIZED_TO_ZERO`. The threshold it needed was never read off
+#: anything: no published work fixes the touch probability below which a
+#: stop stops being a stop. The READING survives the gate and is stamped on
+#: every sized stop (`src.data.levels.touch_probability`), because that is
+#: the evidence that could one day answer the question.
+#:
+#: Kept defined as a greppable key: it appears in pre-deletion production
+#: records and in docs/INCIDENT_HISTORY.md, and the blocked-proposal census
+#: (`scripts/blocked_proposals_census.py`) must still be able to name it.
+#: NOTHING EMITS IT ANY MORE, and `tests/test_stop_width_gate.py` fails if
+#: anything starts to.
 STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: RETIRED as a constructor refusal (board item 180, owner ruling 2026-09-25).
 #: This named the young-listing refusal that fired on a bar COUNT: fewer
@@ -782,10 +783,11 @@ class ConstructorConfig:
     min_target_atr_multiple: float = 1.0
     breakout_projection_atr_multiple: float = 1.0
     max_target_reach_atr_multiple: float = 1.5
-    # The stop-WIDTH refusal threshold (item 56, 2026-09-13). Was the line
-    # above until today; same value, separate knob, because estimating a
-    # target and refusing a trade are two jobs and neither derived the 1.5.
-    max_stop_width_reach_atr_multiple: float = 1.5
+    # NO `max_stop_width_reach_atr_multiple` HERE ANY MORE -- the stop-width
+    # refusal was deleted 2026-09-26 (board item 56, route (c)); see
+    # `STOP_REFUSAL_WIDER_THAN_REACH` above for the measurement that settled
+    # it. `max_target_reach_atr_multiple` on the line above is a DIFFERENT
+    # number doing the target-estimation job and is unchanged.
     max_target_horizon_sessions: int = 60
     # The model's target is not thrown away — it becomes evidence. Above this
     # absolute percentage gap between the computed target and the model's
@@ -2577,11 +2579,12 @@ class PortfolioConstructor:
         at the wider of the noise band and the signal bar's far edge, both
         read from the instrument; (2) a missing stop is placed the same way
         rather than refused; (3) whatever placed the stop, a width past the
-        instrument's own reach over the trade's horizon (`horizon_reach`)
-        is REFUSED by code (`STOP_REFUSAL_WIDER_THAN_REACH`) — the only
-        place this function refuses on distance. Under the cap, width is
-        answered by `_plan_risk_targets` sizing down (§2.1), never by
-        refusal; `STOP_RULE_OUTSIDE_BAND` still keeps a wide typed stop.
+        instrument's own reach over the trade's horizon was REFUSED by code
+        (`STOP_REFUSAL_WIDER_THAN_REACH`). **That refusal was DELETED on
+        2026-09-26 (board item 56, route (c)) after refusing nothing in 648
+        recorded sized stops** — this function no longer refuses on distance
+        at all. Width is answered by `_plan_risk_targets` sizing down
+        (§2.1); `STOP_RULE_OUTSIDE_BAND` still keeps a wide typed stop.
 
         **2026-09-02 — the reward:risk floor now runs on EVERY path, not
         only when this function moved the stop.** It previously lived
@@ -2932,43 +2935,33 @@ class PortfolioConstructor:
                     )
 
         # -------------------------------------------------------------
-        # The WIDTH gate (item 54, 2026-09-12): whatever placed the stop,
-        # it must sit within the instrument's own REACH over this trade's
-        # horizon.
+        # The stop-width READING (item 56, 2026-09-13). NOT a gate.
         # -------------------------------------------------------------
-        # Kullamägi's constraint in SHAPE — the stop's width is measured in
-        # the stock's own volatility units and refused past a cap — and
-        # deliberately not his unit. See STOP_REFUSAL_WIDER_THAN_REACH for
-        # why neither his 1 x daily range nor the desk's 2.5 x ATR band can
-        # be the cap on this desk. The cap is `horizon_reach`: ATR x
-        # sqrt(horizon) x the reach multiple the target derivation and the
-        # level scan already use — the furthest price plausibly travels
-        # inside the trade. A stop past it cannot be hit inside the trade,
-        # so it is not a stop, and the risk-based size computed from it
-        # is fiction. Under the cap, width is answered by `_plan_risk_
-        # targets` sizing down — the ratified §2.1 invariant — never here.
-        # No horizon means no reach and no gate: `_derive_target` has
-        # already refused such a trade by name on both live paths, so this
-        # only ever passes a hand-built shim (the backtest engine).
+        # There USED to be a refusal here: a stop wider than
+        # `horizon_reach` (ATR x sqrt(horizon) x 1.5) was turned away as
+        # "a stop price cannot reach". It was deleted on 2026-09-26 (board
+        # item 56, route (c)) and the reasoning is at
+        # `STOP_REFUSAL_WIDER_THAN_REACH` above: in 648 recorded sized
+        # stops it refused nothing, it could not fire on the desk's own
+        # fallback stop at any horizon it has ever been given, and the
+        # threshold it turned on was a multiple nobody could source.
+        # A wide stop is answered by `_plan_risk_targets` sizing down --
+        # the ratified spec 2.1 invariant, and what published practice
+        # prescribes -- never by a refusal here.
+        #
+        # What survives is the READING, and it is the whole point: the
+        # probability this stop is TOUCHED inside the trade's own horizon.
+        # Reflection principle + the range-to-sigma identity, both
+        # published, no chosen constant -- `levels.touch_probability`
+        # carries the citations. Recorded on EVERY stop the desk sizes,
+        # because "how unlikely must a touch be before a stop is not a
+        # stop" is still an open question and this is the evidence that
+        # would answer it.
         if atr is not None:
             stated_horizon = getattr(
                 analysis, "expected_horizon_sessions", None,
             )
-            reach = horizon_reach(
-                atr, stated_horizon,
-                max_reach_atr_multiple=(
-                    self.cfg.max_stop_width_reach_atr_multiple
-                ),
-                max_horizon_sessions=self.cfg.max_target_horizon_sessions,
-            )
             width = abs(entry_price - honoured)
-            # The READING (item 56, 2026-09-13): what this width actually
-            # means, as the probability the stop is touched inside the
-            # horizon. Reflection principle + the range-to-sigma identity,
-            # both published, no chosen constant — `levels.touch_probability`
-            # carries the citations. Recorded on EVERY stop, passing or
-            # refused, because the threshold is still open and this is the
-            # measurement that would settle it.
             p_touch = touch_probability(
                 width / atr,
                 min(
@@ -2976,38 +2969,13 @@ class PortfolioConstructor:
                     max(1, int(self.cfg.max_target_horizon_sessions)),
                 ),
             )
-            touch_note = (
-                f" Reading: a stop this far out is touched inside the "
-                f"horizon with probability {p_touch:.1%} "
-                f"(reflection principle; see docs/WORK.md item 56 — the "
-                f"desk has no derivation for where that probability becomes "
-                f"too low, and this multiple is convention)."
-                if p_touch is not None else ""
-            )
-            if reach is not None and width > reach and not math.isclose(
-                width, reach, rel_tol=1e-9,
-            ):
-                self._note_refusal(
-                    symbol, direction, STOP_REFUSAL_WIDER_THAN_REACH,
-                    f"the stop this trade needs sits ${honoured:,.2f} "
-                    f"[{rule}], {width / atr:.2f} x ATR {side_word} the "
-                    f"${entry_price:,.2f} entry — past the ${reach:,.2f} "
-                    f"({reach / atr:.2f} x ATR) the instrument can plausibly "
-                    f"travel inside this trade's "
-                    f"{stated_horizon}-"
-                    f"session horizon. A stop price cannot reach is not a "
-                    f"stop, and the size computed from it would be fiction "
-                    f"(Kullamägi's width rule in shape, the desk's own reach "
-                    f"as the unit).{touch_note}",
-                )
-                return None
             if p_touch is not None:
                 logger.info(
                     "Constructor: %s stop width %.2f x ATR over a "
                     "%s-session horizon — touch probability %.1f%% "
-                    "(item 56 reading; gate at %.2f x ATR x sqrt(H)).",
+                    "(item 56 reading; no width refusal exists — a wide "
+                    "stop is answered by a smaller position).",
                     symbol, width / atr, stated_horizon, 100 * p_touch,
-                    self.cfg.max_stop_width_reach_atr_multiple,
                 )
 
         # -------------------------------------------------------------

@@ -540,20 +540,6 @@ numbers:
     cost_while_unanswered: >-
       Ratified is not sourced: the desk's largest routine exposure rests on a
       round number.
-  - id: src.config.RiskConfig.max_stop_width_reach_atr_multiple
-    value: 1.5
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The reach caps, split out of one number -- board item 56 owns the
-      question and records that the split made them CONSISTENT without making
-      either RIGHT.
-    open_question: >-
-      How far, in sqrt(session)-scaled ATRs, can a stop sit from entry and
-      still be a stop the instrument can plausibly reach?
-    cost_while_unanswered: >-
-      A reachable stop is refused, or an unreachable one is accepted and the
-      position is sized off a distance price will not travel.
   - id: src.config.RiskConfig.max_target_horizon_sessions
     value: 60
     status: arbitrary
@@ -668,15 +654,47 @@ numbers:
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
       (src/config.py:961-965). The direction is reasoned; the 1.5 magnitude is
-      not measured against any gap distribution. CORRECTION 2026-09-18: the
+      not measured against any gap distribution.
+      ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
+      no citation: a short's loss above its stop is unbounded while a long's
+      below its stop is bounded by zero, which is arithmetic, not an
+      empirical claim. The MAGNITUDE is not sourceable, and the literature
+      that looks like it should settle it measures a different quantity, so
+      it is NOT adopted. (a) The positive-skewness-of-individual-stocks and
+      skewness-pricing work is an ASSET-PRICING result about expected returns
+      to lottery-like stocks; it says nothing about the size of an overnight
+      gap against a short. (b) The empirical overnight-gap asymmetry studies
+      are INDEX-level and do not even agree in sign: one index shows the
+      larger median gap on the downside, while the DJIA shows the larger
+      median gap on the UPSIDE but strongly negative skew, i.e. the fatter
+      tail running against LONGS. Neither yields "a short's gap risk is 1.5x
+      a long's" for single names, and importing either would be citing a
+      number that measures something else.
+      The honest route is MEASUREMENT, and it is blocked on data rather than
+      on thinking. The quantity wanted is the ratio of the adverse-tail
+      up-gap to the adverse-tail down-gap — (open_t - close_t-1) / close_t-1
+      taken at a matched tail percentile — over the names this desk actually
+      shorts. This repo cannot compute it today: the desk's database holds no
+      OHLCV/bar table (verified 2026-09-26), bars are fetched live each
+      session and discarded, so there is no stored gap history to measure and
+      no recorded short universe to measure it over. That is a data build,
+      and it would NOT be backtesting: it measures a distribution, not an
+      outcome. NO VALUE PICKED.
+      CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
     open_question: >-
-      By how much does overnight gap risk on a short actually exceed a long's,
-      measured on the gap distribution of the names this desk shorts?
+      Unchanged in substance, now with its blocker named: by how much does
+      overnight gap risk on a short exceed a long's, measured at a matched
+      adverse tail percentile on the gap distribution of the names this desk
+      shorts? Answerable only after a stored-bar build, since no bar table
+      exists. Until then it is OWNER APPETITE, and the question to route is:
+      how much smaller do you want a short to open than a long carrying the
+      same stated risk, given the loss above the stop is unbounded? Today's
+      1.5 means a short opens at two-thirds the size.
     cost_while_unanswered: >-
-      Shorts are sized by a haircut whose direction is reasoned and whose
-      magnitude is not measured.
+      Shorts are sized by a haircut whose direction is arithmetic and whose
+      magnitude is neither sourced nor measured.
   - id: src.config.RiskConfig.target_divergence_warn_pct
     value: 25
     status: arbitrary
@@ -1156,9 +1174,46 @@ numbers:
       Called "the traditional finance cutoff" at the definition site with no
       citation (2026-09-14 verification). It decides which names count as one
       cluster, and therefore what max_cluster_risk_share_pct applies to.
+      ITEM 186 PASS 2026-09-26 — RESEARCHED, NOT SOURCEABLE, and the claim at
+      the definition site is corrected in the same commit because it was
+      untrue. There is no "traditional finance cutoff" for correlation-cluster
+      membership. The mainstream portfolio-clustering literature does not
+      threshold a correlation at all: it clusters hierarchically on a
+      correlation DISTANCE (Mantegna's correlation-based hierarchical
+      clustering and minimum spanning tree, and the risk-parity work built on
+      it), producing clusters with no cutoff to choose. Where thresholded
+      correlation NETWORKS are used instead, published cutoffs span roughly
+      0.3 to 0.8 and are selected for the network density a given study
+      wants, not from theory; correlation-network work reports 0.7 both as a
+      point where network structure changes abruptly and as a point where
+      noise starts to dominate the surviving edges — a description of what
+      0.7 does, not an endorsement of it. Adopting any of those numbers would
+      mean adopting a figure that measures a different quantity (the network
+      topology of some study's universe) than this desk's use (which of MY
+      held names are one bet).
+      The old open question below was also the wrong question and is
+      replaced: "above what correlation do two of this desk's names actually
+      FAIL together" is a question about past outcomes, and fitting a
+      threshold to realised joint losses is barred by the desk's own
+      no-fitting doctrine.
+      NO VALUE PICKED. The literature gives a RANGE and nothing inside it,
+      which is precisely the case the doctrine reserves for owner-ratified
+      appetite — and the owner has already flagged it once: the 40% cluster
+      share was ratified 2026-09-25 with the explicit caveat that the cluster
+      DEFINITION was "unsourced and NOT ratified here".
     open_question: >-
-      Above what pairwise correlation do two of THIS desk's names actually
-      fail together, measured on its own holdings?
+      OWNER APPETITE, routed and not answered: at what pairwise |correlation|
+      do you want two names treated as ONE bet for risk rationing? Lower
+      (0.5-0.6) merges more names into a cluster and rations harder, refusing
+      ideas as duplicates; higher (0.8) splits themes apart and lets a
+      crowded book pass. The mechanism amplifies whatever is picked, so this
+      matters more than the number looks: clustering here is TRANSITIVE, so
+      A~B and B~C puts A, B and C in one cluster even when A and C are
+      unrelated, and a lower cutoff grows clusters faster than the number
+      alone suggests. If you would rather not set a number at all, the
+      alternative is structural — replace the cutoff with distance-based
+      hierarchical clustering, which has no threshold to choose. That is a
+      build, not a value.
     cost_while_unanswered: >-
       Risk rationing across correlated clusters - the mechanism that stops one
       theme taking the whole budget - keys off this one number.
@@ -1884,20 +1939,6 @@ numbers:
     cost_while_unanswered: >-
       A diversification-shaped number on a desk whose mandate explicitly
       rejects diversification as a goal.
-  - id: src.portfolio_constructor.ConstructorConfig.max_stop_width_reach_atr_multiple
-    value: 1.5
-    status: derived
-    site: src/portfolio_constructor.py
-    derived_from: src.config.RiskConfig.max_stop_width_reach_atr_multiple
-    base_value: 1.5
-    note: >-
-      Mirror of src.config.RiskConfig.max_stop_width_reach_atr_multiple, the
-      deployed value. Recorded as `derived` rather than as a second arbitrary
-      number: it is ONE number with two definition sites, so counting it twice
-      would inflate the arbitrary total the same way this ledger's first
-      version claimed the 0.50% floor existed in one place while listing it in
-      two. Base-drift now fails the build if the pair stops agreeing, which
-      nothing previously checked.
   - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived
@@ -2652,20 +2693,35 @@ numbers:
       change. It is ratified as owner CHURN-appetite: a chosen
       "is this move worth an order" threshold, not a derived or measured
       number.
+      ITEM 185 PASS 2026-09-26 — the premise of the old open question is
+      WRONG and is corrected below. It said live capital would eventually
+      supply the commission, spread and replace cost that settles this. It
+      will not: US-listed equity orders at this desk's broker are
+      commission-free (Alpaca's published brokerage fee schedule and its own
+      commission/clearing-fee support page), and REPLACING a resting
+      protective stop crosses no spread and prints no fill, so the replace
+      costs nothing monetary whether the account is paper or live. There is
+      therefore no future measurement of "the cost of one more stop
+      replacement" that could derive 2.0, because the quantity the old
+      question wanted to measure is approximately zero. The real cost of
+      churn here is operational — order rate limits, the replace-latency
+      window in which the position is briefly unprotected, and alert noise —
+      not per-order fees. That leaves the number exactly where the
+      2026-09-25 adversary ruling put it: a chosen churn-appetite threshold,
+      ratified, neither sourceable nor measurable.
     open_question: >-
-      This is a COST question, not a market-structure one: is a given stop
-      move worth the commission, spread and broker replace cost it triggers?
-      Paper fills cannot settle it — paper has no live commission/spread/
-      replace-latency cost, so no paper measurement can show what the
-      threshold should be. Revisit only once live capital produces real
-      cost data. Separately, flag for reconsideration at that point whether
+      RATIFIED — no value question remains. One structural question is left,
+      and it is about redundancy, not magnitude: whether
       this gate is REDUNDANT given the two other clamps already on the same
       TRAIL_STOP path: the ~2-4-session ratchet cooldown
       (`_trail_tightened_recently`, 4 calendar days) and the 1.25x-ATR14
       noise-band clamp — three churn-limiting gates stacked on one action
-      may be doing overlapping work.
+      may be doing overlapping work. That is answerable from the desk's own
+      TRAIL_STOP refusal logs — which gate refused each trail — without any
+      new number and without owner input.
     cost_while_unanswered: >-
-      Either the desk churns stop orders, or a genuine ratchet is skipped.
+      A genuine ratchet may be skipped by whichever of the three stacked
+      gates binds first, with no record of which one it was.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     value: 1.25
     status: arbitrary
@@ -4436,10 +4492,39 @@ numbers:
       (src/pipeline_stages.py:5679) passes nothing, so this default is the
       live cap. The PM prompt asks for the same 5.0 in prose; that is the same
       number restated, not a source.
+      ITEM 186 PASS 2026-09-26 — RESEARCHED, and the near-miss is written
+      down so that nobody adopts it later. The published quantity sitting
+      closest is the average one-day ABSOLUTE earnings-announcement return,
+      about 5.07% per firm in the asset-pricing-on-earnings-announcement-days
+      literature. It is NOT this number and must never be cited as its
+      source: 5.07% is the size of a MOVE, while 5.0 here is a share of the
+      BOOK. The two agreeing to two digits is a coincidence of units, and
+      adopting it would be exactly the "cited figure measures a different
+      quantity" error.
+      The derivation from the desk's own envelope was tried and does not
+      produce 5 either. The per-trade envelope `max_position_risk_pct` is 5%
+      of equity at risk if the stop is hit, but a gap through a stop on an
+      unread filing is precisely the case the stop does not cover, so the
+      bound is weight x move <= tolerable loss. Run forward with the
+      published ~5.07% move, a 5% loss tolerance would permit a weight near
+      100%: the per-trade envelope does not bind here at all and cannot be
+      this cap's parent.
+      Run BACKWARD it is informative, as arithmetic on this repo's own live
+      numbers rather than as a source: today's 5% cap times a ~5.07% move
+      implies the desk accepts roughly 0.25% of equity of unprotected
+      overnight exposure on a name nobody has read — about HALF
+      `min_position_risk_pct` (0.5%), the smallest risk this desk will open a
+      position for at all. So the cap is conservative on the desk's own
+      scale. That is a cross-check, not a source. NO VALUE PICKED.
     open_question: >-
-      How large does an unread just-filed 10-Q/10-K move this desk's names
-      overnight, measured, and what weight keeps that move inside the per-
-      trade risk envelope?
+      OWNER APPETITE, and it is a loss tolerance rather than a weight: how
+      much of total equity may the desk lose overnight on ONE name whose
+      just-filed 10-Q or 10-K nobody has read, accepting that the protective
+      stop does not hold through a gap? Set that tolerance L and this cap
+      stops being a chosen number — it reads L divided by the expected
+      absolute earnings-day move, and L = 0.25% reproduces today's 5% cap.
+      The move term can be sourced (~5.07% published) or later measured per
+      name; only L is yours.
     cost_while_unanswered: >-
       A name with an unread filing is capped at 5% of the book whatever its
       stop distance, so the cap is either looser or tighter than the risk
@@ -4506,13 +4591,47 @@ numbers:
       ATR/price volatility ceiling (0.5 / min_stop_atr_multiple), which screens
       real names out. So the number can reach a trade decision and the debt
       stands.
+      ITEM 185 PASS 2026-09-26 — CATEGORY, stated rather than forced into
+      one: at its own site this is a SANITY BOUND on model output (does this
+      look like a digit typed in the wrong place), not a trading number. It
+      is not read off the instrument, it expresses no risk appetite, and no
+      trading literature bears on it. It is trade-governing only through the
+      screen row derived from it, which is the whole reason it is still
+      counted here.
+      Its old open question is now ANSWERED, from this repo rather than from
+      outside it: the widest stop the desk's own rules can legitimately
+      produce is 3.00 x ATR14 under price. `PortfolioConstructor` scales
+      `min_stop_atr_multiple` (2.5) by setup and regime; the reachable range
+      is [2.1375, 3.00] and the widest case is a breakout (1.00) on a
+      risk-off tape (1.20). A legitimate stop therefore falls below half of
+      price exactly when ATR14/price exceeds 1/6 = 16.67%.
+      DEFECT FOUND, NOT FIXED HERE — pre-existing, reported to the owner
+      rather than self-authorised: `src.universe_screen.
+      STOP_SANITY_FLOOR_FRACTION` divides by `min_stop_atr_multiple` (2.5),
+      giving a 20% ATR/price ceiling, but the widest REACHABLE multiple is
+      3.00, not 2.5. Names with ATR14/price between 16.67% and 20% pass the
+      screen while their widest legitimate stop would be refused by this
+      guard as a typo, so the screen's stated "fails by construction"
+      rationale does not hold across that band. The fix is to divide by the
+      widest reachable multiple rather than the base one; that tightens a
+      live screen and is the owner's call, not this pass's.
+      What remains is a genuine CIRCULARITY, and it is why no value is
+      picked: the floor fraction and the screen's volatility ceiling each
+      derive from the other (floor = 1 - widest_multiple x ceiling; ceiling
+      = floor / multiple). One of the two must be chosen independently;
+      nothing external fixes either.
     open_question: >-
-      What is the widest stop, as a fraction of price, the desk's own stop
-      rules could ever legitimately produce, so the sanity floor can be read
-      from that rather than set at a half?
+      OWNER APPETITE, and one number settles both ends: what is the highest
+      ATR14/price a name may carry and still be allowed into this desk's
+      universe? Set that ceiling C and this floor stops being a choice — it
+      reads 1 - 3.00 x C. C = 16.67% reproduces today's 0.5; C = 20%, the
+      screen's current effective ceiling, would make it 0.40. Until C is set
+      independently, picking either end only relocates the arbitrary number
+      to the other end.
     cost_while_unanswered: >-
-      A genuine very wide stop is refused as a typo, or a typo just above the
-      line is accepted as a protective stop.
+      Across the 16.67-20% ATR/price band a name is admitted by the screen
+      and then has its widest legitimate stop refused as a typo, leaving the
+      old, less protective stop in place.
   - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
     value: 1.25
     status: derived

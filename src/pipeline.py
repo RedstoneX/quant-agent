@@ -750,9 +750,6 @@ def build_constructor_config(config, risk_engine_config):
             max_target_reach_atr_multiple=_risk_setting(
                 "max_target_reach_atr_multiple", 1.5,
             ),
-            max_stop_width_reach_atr_multiple=_risk_setting(
-                "max_stop_width_reach_atr_multiple", 1.5,
-            ),
             max_target_horizon_sessions=int(
                 _risk_setting("max_target_horizon_sessions", 60),
             ),
@@ -8345,9 +8342,11 @@ class TradingPipeline:
                 # 2026-09-12: a refusal the constructor recorded AS DATA
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
-                # beside it — today `stop_wider_than_instrument_reach`
-                # or `no_structural_stop_and_no_volatility_reading`; the
-                # young-listing bar-count refusal was dropped, item 180).
+                # beside it — today `no_structural_stop_and_no_
+                # volatility_reading`; the young-listing bar-count refusal
+                # was dropped, item 180, and the stop-WIDTH refusal
+                # `stop_wider_than_instrument_reach` was deleted 2026-09-26,
+                # item 56, after refusing nothing in 648 sized stops).
                 # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.

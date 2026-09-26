@@ -724,9 +724,17 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     # was deleted from settings.yaml AND from `RiskConfig` (zero-reader dead
     # code — it refused nothing and capped nothing), so it can no longer
     # appear in this "present in settings.yaml but not threaded" list at all.
-    assert len(omitted) == 12, (
+    # 12 -> 11 on 2026-09-26, board item 56 (route (c)): the same thing
+    # happened to `max_stop_width_reach_atr_multiple`. The stop-WIDTH refusal
+    # it thresholded was deleted after refusing zero of 648 recorded sized
+    # stops, and no published work fixes the touch probability below which a
+    # stop stops being a stop, so the key is gone from settings.yaml and from
+    # `RiskConfig` and a stale settings file carrying it now raises. Its
+    # sibling `max_target_reach_atr_multiple` is a different number, is still
+    # omitted here for the original reason, and is unchanged.
+    assert len(omitted) == 11, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 12 — if that grew, thread "
+        f"settings present in settings.yaml, not 11 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 
