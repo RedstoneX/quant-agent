@@ -1,0 +1,26 @@
+# Fires the stale-worktree prune EVERY DAY at 04:10 ET.
+[Unit]
+Description=quant-agent stale session-worktree prune — daily 04:10 ET
+
+[Timer]
+# 04:10 ET is deliberately OFF-HOURS: this is the one maintenance sweep that
+# WRITES (it removes worktrees), so it is kept well clear of the 08:4x/08:5x
+# read-only checks and hours before the 09:30 morning session. Nothing else
+# runs at 04:10, so a `git worktree remove` cannot race a live session's use
+# of its own worktree — and even if it did, remove without --force refuses a
+# dirty or unmerged worktree, so an in-use one is kept, not clobbered.
+#
+# EVERY DAY, not Mon-Fri, matching the other maintenance timers: sessions are
+# spun up on weekends too, and the 7-day idle floor means a worktree is only
+# ever eligible long after its session ended. Daily just clears eligible ones
+# promptly instead of letting a week's worth pile up.
+#
+# systemd resolves the IANA zone, so this stays 04:10 New York across DST.
+OnCalendar=*-*-* 04:10 America/New_York
+# Run a missed firing on boot (server was down at 04:10).
+Persistent=true
+# The sweep does not care about the exact minute.
+AccuracySec=5m
+
+[Install]
+WantedBy=timers.target

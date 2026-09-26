@@ -688,6 +688,17 @@ export interface CandidateFunnelItem {
   // executed" even when a specific reason existed).
   execution_skip_reason: string | null;
   execution_skip_detail: string | null;
+  // Why the desk could not READ this candidate's analysis, one stage earlier
+  // than the execution skip above — quoted from the persisted `analysis_drop`
+  // evidence row (board item 158). `analysis_drop_code` is a stable enum
+  // ("malformed_row" | "schema_invalid" | "unspecified"), safe to switch on;
+  // `analysis_drop_reason` is the human detail and is the thing to show.
+  // `analysis_drop_recovered` true means a retry put the name back in the
+  // book anyway — a cost note, not missing coverage. Optional: absent on
+  // every candidate that was never dropped, and on older backends.
+  analysis_drop_code?: string | null;
+  analysis_drop_reason?: string | null;
+  analysis_drop_recovered?: boolean | null;
 }
 
 export interface RunFunnelResponse {

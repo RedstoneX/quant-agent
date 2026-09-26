@@ -8,7 +8,7 @@
 
 **STANDING PRINCIPLE — MISSING DATA IS A DEFECT IN THE PRODUCING STEP (owner 2026-09-17).** Find why a required field is blank and fix that step so it actually produces the data. Never invent. Never make skip/drop/ignore-and-continue the product. A drop-the-name quarantine is temporary. Item 78 is the current instance; the rule is not limited to it. Fuller statement: `docs/OUTCOME.md`.
 
-**This file holds only open work.** Finished work is written up in `docs/INCIDENT_HISTORY.md` (append-only, each entry opening with one plain-language line) and then deleted here, together with its `## item N` block in `docs/BOARD_NOTES.md` and its number added to the retired line. `tests/test_status_board.py` fails if this file passes 100,000 bytes, if one change grows it by more than the shrinking growth budget its current fullness allows (owner ruling 2026-09-17: recording a genuine new defect must not be blocked just because nothing is finished yet to prune — see `work_md_growth_budget` in `scripts/status_board.py`), if a self-declared-finished item is left sitting on the board, or if it loses an item number without retiring it. Ratified architecture decisions go in `docs/QAMC_REMEDIATION_SPEC.md` as a numbered phase, not here.
+**This file holds only open work.** Finished work is written up in `docs/INCIDENT_HISTORY.md` (append-only, each entry opening with one plain-language line) and then deleted here, together with its `## item N` block in `docs/BOARD_NOTES.md` and its NUMBER — the number alone, never a reason — added to the retired line. `tests/test_status_board.py` fails if this file passes 100,000 bytes, if one change grows it by more than the shrinking growth budget its current fullness allows (owner ruling 2026-09-17: recording a genuine new defect must not be blocked just because nothing is finished yet to prune — see `work_md_growth_budget` in `scripts/status_board.py`), if a self-declared-finished item is left sitting on the board, or if it loses an item number without retiring it. Ratified architecture decisions go in `docs/QAMC_REMEDIATION_SPEC.md` as a numbered phase, not here.
 
 ## DECISIONS PENDING — CI FAILS WHEN ONE GOES OVERDUE
 
@@ -62,48 +62,121 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 **Top of the backlog. Work the PRIORITY ORDER above; do not reorder from intuition.** The original census items (ranks 1-8) are all retired and written up; the measured census that ranked them is in `docs/INCIDENT_HISTORY.md`.
 
 **17. Backup alert channel — OWNER DECISION, deferred, no due date.** No channel exists beyond Telegram, so an alert that cannot reach Telegram reaches nobody.
+
+DONE WHEN:
+  - [ ] OWNER'S CALL — his own 2026-09-03 deferral, no due date: a second alert channel is new scope and, for anything but plain email, a new paid dependency, so nobody proposes it and it closes only when he raises it
+  - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
 detail: docs/BOARD_NOTES.md (item 17)
 
 **18. 70% of the PM's prompt was earnings-filing prose — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), and these three follow-ons are all that is left. Closed detail: `docs/INCIDENT_HISTORY.md` (items 18a-18e).** (a) The BUY-eligibility section reorder — BLOCKED: it needs a paid benchmark the owner has forbidden unless he asks.
+
+DONE WHEN:
+  - [ ] (a) BLOCKED and cannot close by building — the BUY-eligibility section reorder needs a paid benchmark run the owner has forbidden unless he asks (same blocker as items 76 and 77)
+  - [ ] (b) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether reward:risk (today a within-tier tiebreak) and net evidence (unused) join the ratified composite score — the item's own note says this is NOT an owner call; per-seat sizing weights stay refused either way
+  - [ ] (c) the OpenRouter key carries a provider-side spend cap, or its absence is recorded as accepted — outside this repo, so it closes on an observation in the provider console, not on a test
 detail: docs/BOARD_NOTES.md (item 18)
 
 **19. The model's consistency is an ASSET — three uses. Do not start these before item 18.** Measured: 5 blinded runs, two arms, quality identical to four decimal places.
+
+DONE WHEN:
+  - [ ] (a) a repeat-run check exists that proves a pipeline change actually reached the model — identical inputs, and the answer moves only when the pipeline did
+  - [ ] (b) the no-variance measurement is recorded against the desk's own blinded/unblinded five-run pairs BEFORE any paid repeat is dropped, or a recorded decision that repeats stay
+  - [ ] (c) the stable famous-name bias is subtracted arithmetically inside the ratified weighted composite, or recorded as not worth doing — three prompt-wording fixes already measured no-change, so a fourth wording attempt does not tick this
 detail: docs/BOARD_NOTES.md (item 19)
 
 **20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; the COUNTING half is all that is left, and it is his, not an agent's. Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded.
+
+DONE WHEN:
+  - [ ] OWNER'S CALL — the counting half: either his ratified minimum number of usable per-seat reads, or his ruling that partial coverage never gates a decision. Nothing published gives that number and fitting one to the desk's own history is forbidden, so no agent may pick it and a placeholder never ships. This is his own 2026-09-02 ruling that the bar is a risk judgement.
+  - [ ] OWNER'S CALL — whether the intraday scan's hard-coded technical `data_status` (`src/pipeline.py`) should be able to report LOST at all. Today the only blocking seat can never be lost there; that follows from his own `evidence_gate.BLOCKING_SEATS` mandate, so an agent may not widen the gate or add a second blocking seat to work around it.
 detail: docs/BOARD_NOTES.md (item 20)
 
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
+
+DONE WHEN:
+  - [ ] Tsinaslanidis §4.5's own bounce test (how often price entering a band leaves the way it came, against randomly drawn bands) is RUN on this desk's own universe and bars, sweeping cluster tolerance 0.5/1/2/3/5% and pivot window 3/5/10/25, and the result is recorded in `docs/RESEARCH_FINDINGS.md` — a reading, not a fit
+  - [ ] on that reading: either one pivot window and one tolerance are single-sourced in code (today 3 in one module and 5 in another) with that measurement as their `config/number_ledger.yaml` source, or — if the effect is flat across the sweep — the percentage tolerance is replaced by the span of the pivot bars themselves, which needs no constant at all
+  - [ ] the two-touch minimum is left exactly as it is: sourced (Tsinaslanidis 2012, 733 US stocks / 20 years) and pinned by a test
 detail: docs/BOARD_NOTES.md (item 55)
 
 **56. Is a stop too wide, and read off what? The THRESHOLD is still unread. OPEN, narrowed 2026-09-14.** At what probability of being touched inside the trade's own horizon does a stop stop being a stop?
+
+DONE WHEN:
+  - [ ] one of three routes lands, and only one is needed: a published measurement of the touch probability below which a stop stops being a stop, cited in `docs/RESEARCH_FINDINGS.md`; or the gate is re-expressed with no threshold at all (refuse when the stop's touch probability is below the target's reach probability on the same instrument); or the width gate is DELETED on the recorded ground that sizing already answers a wide stop with a smaller position
+  - [ ] whichever lands, the two 1.5 multiples and the 1.67% touch-probability constant leave `status: arbitrary` in `config/number_ledger.yaml`, or cease to exist with the gate
+  - [ ] the per-trade recorded stop-touch probability the desk now stamps on every sized trade is the evidence used, not a fresh benchmark run
 detail: docs/BOARD_NOTES.md (item 56)
 
 **63. `signal_weight` cannot say "pay attention, and the sign is the other way" — OPEN (structure shipped, magnitude calibration still open), carried out of item 52.** One scalar in [0,1] is both the ranking key and the dollar multiplier, with no direction. **STRUCTURE FIX 2026-09-25:** a derived `SmartMoneyObservation.signal_direction` channel now carries the sign (buy +1, sale/exchange/unknown 0), and both deterministic ranking keys in the smart-money analyst multiply value*weight by it, so a contra/bearish sale can no longer rank or size as a bullish buy of equal magnitude; buys keep their exact former contribution. The desk is long-only on smart-money admission (admission requires direction=="buy"), so a sale is safely neutralised, never counted as bullish. **open_question (owner-appetite/research):** the magnitude→sign boundary that would let a large sale (Scott & Xu's sourced >50%-of-holdings band, already on the row as `holdings_fraction_band`) score bearish (-1) versus a small sale's mild-positive — no published SIGNED scoring scheme exists; ruled out pending a source or enough own outcome data. Do NOT pick that number.
+
+DONE WHEN:
+  - [ ] the magnitude→sign boundary is settled by EVIDENCE, not appetite: either a published SIGNED insider-sale scoring scheme is cited and `SmartMoneyObservation.signal_direction` returns -1 off the already-reported `holdings_fraction_band` (Scott & Xu's sourced >50%-of-holdings band), or the desk's own resolved smart-money outcomes are numerous enough to read a separation from
+  - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/BOARD_NOTES.md (item 63)
 
 **64. The backtest still rations the risk budget alphabetically when the budget binds — OPEN.** Live spends down the ranked verdicts; this engine has none, so equal asks are served by ticker spelling. **Ruled out, with reasons: `docs/INCIDENT_HISTORY.md`, 2026-09-16**, notably ranking by the engine's own reward:risk, which would silently change who gets capital.
+
+DONE WHEN:
+  - [ ] either the backtest ranks its candidates by the LIVE desk's own ranking rule, or a recorded decision in `docs/INCIDENT_HISTORY.md` states that this engine cannot evaluate rationing at all because it cannot replay the live verdicts. Not an owner call: the no-fitting doctrine already forbids inventing a stand-in score (including the engine's own reward:risk, ruled out 2026-09-16), so those two are the only outcomes left.
+  - [ ] whichever way it goes, every backtest result keeps printing how many of its days the risk ceiling bound and that the tie-break is alphabetical, so the numbers can never be read as evidence about how the live desk picks among trades
+  - [ ] this item is NOT closed as a ranking fix while the tie-break is still ticker spelling
 detail: docs/BOARD_NOTES.md (item 64)
 
 **65. Four of the five analyst seats have no strength scale of their own — OPEN, opened 2026-09-13.** Only Technical states a lean; news, macro, smart_money and earnings report no stated strength and rank on weighted conviction alone.
+
+DONE WHEN:
+  - [ ] either news, macro, smart_money and earnings each emit a per-call strength they must state and justify (the way Technical publishes buy vs strong-buy), or a recorded decision in `docs/INCIDENT_HISTORY.md` that direction plus confidence is genuinely all those four can say. Not an owner call: this is a prompt-output change under already-agreed doctrine, and the no-arbitrary-numbers rule already forbids every alternative.
+  - [ ] nothing derives a strength from a field a seat already reports (double-counted conviction, deleted 2026-09-13), borrows Technical's rung, or fits one from history — and any own-data reading waits for the conviction ledger to hold 20 resolved calls per seat
+  - [ ] the four seats stay in the ranking throughout; dropping them is not an answer
 detail: docs/BOARD_NOTES.md (item 65)
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14.** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
+
+DONE WHEN:
+  - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or a named derivation, recorded in `config/number_ledger.yaml` with that source
+  - [ ] the absolute minimum stop multiple carries its OWN independent source or derivation, as a separate ledger entry: the two may not be collapsed into one shared constant just because the digits both read 1.0
+  - [ ] the measured over-refusal is re-measured after whichever change lands, against the same recorded exits (today: 7 of 8 discretionary exits the reviewer approved were blocked as "too small a move")
+  - [ ] neither value is retuned to make sales easier or harder in the same pass — how readily the desk should block a sale at all is the owner's appetite and is NOT this item
 detail: docs/BOARD_NOTES.md (item 70)
 
 **74. One piece of news can cut the same holding twice in a day, and whether that is a fault is a design question — OPEN, filed 2026-09-14.** A midday REDUCE on a hard trigger can repeat at the close on the same trigger; the pipeline only warns, and the position-reviewer prompt explicitly allows it.
+
+DONE WHEN:
+  - [ ] a decision is recorded — by the orchestrator after an adversary run, per the 2026-09-18 ruling that this class does not wait on the owner — on whether a hard trigger is spent once it has been acted on for that symbol that day
+  - [ ] if it is NOT spent: what separates a genuinely worse reading of the same filing from a repeat of the same reading is named and ENFORCED in the exit-claim check, not left as a log warning plus a permissive line in the position-reviewer prompt
+  - [ ] the frequency is measured against the desk's own recorded same-day REDUCE pairs — it is unmeasured today, and the 2026-05-04 AMZN double cut is the only named instance
 detail: docs/BOARD_NOTES.md (item 74)
 
 **75. The desk has no automatic profit-taking: its target never reaches the broker, a trim for profit is not an allowed exit reason, and the trail sits too loose — OPEN, filed 2026-09-14 after an owner question on ORCL.**
+
+DONE WHEN:
+  - [ ] each open position's target is drawn on the Mission Control chart (the owner's own request)
+  - [ ] four exit rules are tracked on every trade WITHOUT placing orders — sell all at target; sell half and trail the rest; target tightens the trail instead of selling; today's desk — with the rules fixed before anyone looks at the results and no tuning afterwards
+  - [ ] a ruling is recorded on whether a target plus a CONFIRMED breakdown may exit, and if so profit-taking becomes an allowed SELL reason and a chart breakdown can unlock an exit (today only the news seat emits state changes)
+  - [ ] trail tightness is read off the instrument or a cited source; the six trail constants are item 90's half two and item 185's tranche — do not re-derive them here
+  - [ ] an 8-K results release is visible to the exit path (invisible today)
+  - [ ] nothing here ships alone and nothing is fitted to ORCL — one number changed by itself is the patch this item exists to prevent
 detail: docs/BOARD_NOTES.md (item 75)
 
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
+
+DONE WHEN:
+  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as items 77 and 18(a); one authorisation would release all three.
+  - [ ] it is not reopened as a prompt-size problem
 detail: docs/BOARD_NOTES.md (item 76)
 
 **77. Model selection: the PM seat is the next open question. Pointer, 2026-09-14.** Detail: `docs/architecture/MODEL_ROUTING_POLICY.md`.
+
+DONE WHEN:
+  - [ ] BLOCKED and cannot close by building — the PM seat's model question IS the `DECIDE BY 2026-10-31` line at the top of this file, and the owner's 2026-09-13 ruling is that nobody proposes that run or its spend to him; he raises it or it does not happen. Same blocker as items 76 and 18(a).
+  - [ ] it closes with that pending-decision line and is not answered twice
 detail: docs/BOARD_NOTES.md (item 77)
 
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
+
+DONE WHEN:
+  - [ ] the never-blank path is live: a falsifier blanked by a later wipe is healed back from the sentence the model already wrote, the seat is re-asked once (paid), and a still-blank name is REFUSED before the book — never invented, and never with skip-and-continue as the product
+  - [ ] LIVE-BLOCKED, the way item 86 is: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py`) is deleted only once a real live session records the seats filling the box, and the item stays OPEN until a live session proves it
 detail: docs/BOARD_NOTES.md (item 78)
 
 **86. The live-fill `trade_updates` websocket has never once authenticated — cause found and fix SHIPPED 2026-09-18 (#517), item stays OPEN until a live attempt proves it.** 1,017 failures across three days, zero successes [measured 2026-09-18].
@@ -113,12 +186,33 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 86)
 
 **90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails.
+
+DONE WHEN:
+  - [ ] half two: every `status: arbitrary` row in `config/number_ledger.yaml` is sourced, measured, owner-ratified as appetite, or reformulated away, and `MAX_ARBITRARY_ENTRIES` — an EQUALITY, not a ceiling — reaches zero
+  - [ ] SHARED CRITERION: that is word-for-word the single criterion items 182, 183, 185 and 186 carry, because those four are this item's half two split into tranches. Item 90 ticks when they all do; do not re-derive a constant here that belongs to one of them.
+  - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
 **95. DELEGATED TO THE ORCHESTRATOR — may the portfolio manager plan against borrowed money? Filed 2026-09-17, ownership moved 2026-09-18. Detail: `docs/BOARD_NOTES.md` ("item 95").** Borrowing costs ~6.25% a year on the overnight debit balance [measured], so the leveraged part of the book must beat 6.25%, not zero.
+
+DONE WHEN:
+  - [ ] prerequisite (3) is answered: whether any de-levering ladder rung has ever been exercised, real or rehearsed. (1) and (2) are already answered — paper trading did NOT charge the interest [measured 2026-09-18, one overnight debit of -$915.83, zero `INT` activity rows; one night, not proof], and the ladder's equity series is INCOMPLETE.
+  - [ ] the ladder's lost `daily_pnl.total_value` rows are repaired or the loss is recorded as permanent, because the ladder today measures roughly -1.3% peak-to-trough where the real figure is about -2.7% [measured 2026-09-18 against the 2026-08-28 backup]
+  - [ ] the portfolio manager is actually SHOWN the account's borrowing capacity — the item's own separate defect, and a precondition for the question meaning anything
+  - [ ] a decision is recorded, by the orchestrator after an adversary run (the 2026-09-18 ruling already moved this off the owner), on whether the PM may PLAN against borrowed money, stating the ~6.25%/yr hurdle the leveraged part of the book must beat
 detail: docs/BOARD_NOTES.md (item 95)
 
 **99. Analyst-seat prompt audit and enforcement gap — TIER 2, filed 2026-09-18; not yet placed in the owner's priority order. Detail: `docs/BOARD_NOTES.md` ("item 99").** **(d) Enforcement: build the check at the DELETION site** — when a mechanism is removed, grep its symbol name across every prompt and every Python-assembled agent string.
+
+DONE WHEN:
+  - [ ] (a) the ~55 numbers that exist only as prompt prose and the ~20 unsourced market-structure claims are each sourced, rendered from the code value, or deleted
+  - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
+  - [ ] (c) the dead-weight prose — roughly a third of the PM's sheet, a quarter of the risk manager's and a quarter of the position reviewer's — is stripped, with load-bearing recitation kept (the reviewer's trigger vocabulary is the named case: a seat that does not know the words drops every exit silently)
+  - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
+  - [ ] (f) "2+ oversized → cut every BUY 25%" stops being unenforced prose — enforced, sourced or deleted, same class as (a)
+  - [ ] (g) every prompt sentence stating a code- or config-controlled fact is either rendered from that value or pinned by a drift test, per item 168's pattern — the deletion-site grep alone catches neither item 98 nor item 168, which were value drift
+  - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
+  - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
 detail: docs/BOARD_NOTES.md (item 99)
 
 **170. `congresswatch.us` rows have no filing date, so the desk estimates one at trade+45d — filed 2026-09-20 from item 126's review.** That estimate feeds `SmartMoneyFinding`'s `lag_days <= 45` test, which then cannot fail on an estimated row by construction. **Measured:** real-date rows show median 60-day lag [2026-09-19]; estimated rows read as best-behaved instead.
@@ -139,16 +233,36 @@ detail: docs/BOARD_NOTES.md (item 173)
 
 **112. A de-lever that leaves the book over its ceiling now writes a durable record — TIER 1, filed 2026-09-18 out of the item 87 audit, RECORD SHIPPED 2026-09-19; the alert decision stays open.** `_enforce_gross_ceiling` used to only log a warning; a run-scoped `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) is now written whenever a de-lever finishes over ceiling, carrying gross/equity before and after and each order's outcome.
 
-NO CRITERIA: whether a failed de-lever should also alert or act is, by this audit's own framing, a live-selling-path decision for the owner, not a self-authorised patch.
+DONE WHEN:
+  - [ ] a de-lever pass that finishes with the book still over its gross ceiling reaches the owner in its OWN Telegram message, severity carried in text. Not an owner decision: his standing alert-design rule (2026-09-02, recorded at the top of this file) already says every failure alerts in its own message, and a de-lever that fails to get the book under its limit is a failure. The `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) already exists, so only the delivery half is left.
+  - [ ] no further automatic selling is added in the same pass — changing what a failed de-lever DOES is a ladder change and needs its own item and its own adversary run
 detail: docs/BOARD_NOTES.md (item 112)
 
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17.
+
+DONE WHEN:
+  - [ ] (a) prompt-described behaviours are registered so a behaviour that CHANGES, not only one deleted, gets scanned — nothing is registered today, so the shipped check is blind to the whole class
+  - [ ] (b) the PM's prompt-only sizing arithmetic (bases 3.0/1.75/0.75, the +0.25 reward:risk bonus, the ±0.20/±0.10 evening tilt, the 0.5 stale halving at age ≥8d) and the technical seat's "3+ aligned signals", 1-3/4-7/8+ freshness tiers and forward-PE 40/60 + P/S 15/25 levels are each sourced, derived or deleted
+  - [ ] the reviewer's `weight_pct > 12%` escalation and the `DRIFT` flag's matching 12 stop being bare inline literals with three homes — named or moved to settings, so the rendering mechanism can reach them at all
+  - [ ] (c) every prompt number that has a settings key is rendered by `prompt_limits.py`, which covers 2 of 10 prompt files today; anything with no settings key falls to (b)
+  - [ ] SHARED CRITERIA with item 99: (b) here is 99(a), and (c) here is 99(g). They are one requirement seen from two audits — tick them together rather than doing the work twice.
 detail: docs/BOARD_NOTES.md (item 107)
 
 **109. One mandate question and the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17. Prompts corrected; NO gate touched.** Part (b) was removed as fixed (PR #489, verified on main 2026-09-18).
+
+DONE WHEN:
+  - [ ] (a) a decision is recorded on whether macro counts as a per-name seat in the agreement gate, then ONE of `count_aligned_sources` and the PM's sheet is changed to match the other. Not the owner's: the 2026-09-18 delegation ruling recorded at the top of this file moved this exact item to the orchestrator-after-an-adversary-run, and the item is already listed there.
+  - [ ] whichever side wins is justified from the PM prompt's own provenance rule, NOT from `docs/OUTCOME.md`, which says nothing on this beyond a cash-deployment line — that miscitation has already been made twice
+  - [ ] (c) the dead-weight recitation (~35% of the PM's sheet, ~26% of the risk manager's, ~24% of the reviewer's) is deleted, with load-bearing recitation kept — SHARED with item 99(c), which is the same prose; do not strip it twice
+  - [ ] nobody settles (a) by editing the gate first: changing `count_aligned_sources` moves trades
 detail: docs/BOARD_NOTES.md (item 109)
 
 **114. The revisable take-profit refuses rather than re-derives after a big run, by design — filed 2026-09-18 with the change that created it.** `src/risk/target_revision.py` holds the ENTRY PRICE and the PINNED HORIZON fixed across a re-derivation, so `horizon_reach` is still measured from entry over the whole original horizon.
+
+DONE WHEN:
+  - [ ] how often each refusal actually fires is measured against the desk's own recorded target revisions — `REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION` and `REFUSAL_DERIVED_TARGET_BEHIND_PRICE` are both believed uncommon and neither has been counted
+  - [ ] on that measurement, either the reach is re-anchored on the current close over the REMAINING horizon, or a recorded decision that the two refusals stand as they are. The blocker named in this item is gone: the evening-vs-technical horizon contradiction was resolved SWING on 2026-09-25 and item 97 was retired the same day, so this no longer waits on a horizon question.
+  - [ ] the target is never re-anchored on the current price alone — that would make the target a function of the price move, the one thing a revision must not be legitimised by
 detail: docs/BOARD_NOTES.md (item 114)
 
 **119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
@@ -157,13 +271,6 @@ DONE WHEN:
   - [ ] every required series demonstrably gets a real attempt inside the existing ceiling, proven against open-like conditions rather than a healthy mid-morning batch
   - [ ] a series still missing after the bounded re-ask is named, the economist is not paid on the holes, and a later repair pays only once the set is complete
 detail: docs/BOARD_NOTES.md (item 119)
-
-**123. The unit-drift checker never looks at `.path` units, and one is tracked — OPEN, filed 2026-09-18. Pre-existing gap found while reviewing PR #435; NOT caused by it.** `scripts/check_unit_drift.py` now sets `UNIT_SUFFIXES = (".service", ".timer", ".path")` (was `(".service", ".timer")`): PR #642 (2026-09-24) added `.path` to the hand-maintained suffix tuple, so all four buckets — untracked, modified, undeployed, not-enabled — now see a `.path` unit, and a `.path` unit's `paths.target` enablement is handled the same as a `.timer`'s `timers.target` because `parse_wanted_by` reads the target from the unit. Test coverage for the four buckets on a `.path` unit was added afterwards (was missing when #642 shipped). STILL OPEN on the item's own DONE WHEN: the suffix set is still a hand-maintained tuple, not derived from the tracked files, and no run has yet compared the real `quant-agent-status-board.path` on the box against the checkout.
-
-DONE WHEN:
-  - [ ] the checker inspects every unit suffix the repo actually tracks, derived from the tracked files rather than from a hand-maintained list — NOT met: `.path` was added to the hardcoded tuple, not derived
-  - [ ] the tracked `.path` unit's installed state is compared against the checkout at least once, so the gap closes with an observation and not only with code — NOT met: no real-box observation recorded
-detail: docs/BOARD_NOTES.md (item 123)
 
 **125. The desk's sentiment verdicts are unvalidated and nothing measures them — filed 2026-09-18. A finance word list was investigated and REJECTED; do not re-propose it.** Sentiment is an LLM-emitted enum constrained by a hand-authored 4-axis table (`config/prompts/earnings_analyst.md`) whose own rule is that the verdict "must be derivable from these 5 fields — show the arithmetic".
 
@@ -186,7 +293,7 @@ DONE WHEN:
 **139. Roughly 74 of the repo's 90 registered git worktrees are session scratch under `/tmp` — filed 2026-09-18, housekeeping, pre-existing, nobody's current task.** CORRECTION to the filing brief: none of them is stale in git's sense — every registered path still exists, so `git worktree prune` removes nothing [verified 2026-09-18].
 
 DONE WHEN:
-  - [ ] finished sessions remove their own worktree, or a swept-on-a-schedule rule exists and is recorded
+  - [x] finished sessions remove their own worktree, or a swept-on-a-schedule rule exists and is recorded
 detail: docs/BOARD_NOTES.md (item 139)
 
 **147. A model call that succeeds with NO usage data is charged the FULL reservation and marks the day inexact — filed 2026-09-18.** `src/cost_circuit.py` stamps the day inexact whenever it charges the conservative reserve; three live null-cost rows exist on 2026-08-31.
@@ -227,11 +334,6 @@ DONE WHEN:
   - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
 detail: docs/BOARD_NOTES.md (item 157)
 
-**158. The technical seat's per-stock drop reasons live only in the log and as a count, not per stock in the database — filed 2026-09-19.** #538 logs each dropped stock with symbol and reason and counts it, but writes nothing against the stock's own database row, so a later reader cannot tell why a name is absent without the log.
-
-DONE WHEN:
-  - [x] the per-stock drop reason is stored alongside the stock it was dropped for, not only in the log — `parse_telemetry` now carries the WHY keyed by symbol (first concrete reason per key wins), the technical seat's two drop sites pass it, and the risk stage files one `specialist_evidence` row per dropped symbol (kind `analysis_drop`, scope `symbol`, tied to `run_id`) whose payload holds the reason plus whether a retry recovered it into the book; the `analysis_parse_loss` advisory now names each lost row with its reason too. Observability only — a write failure never touches the risk decision. Reuses the existing evidence table, no new store.
-
 **163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
 
 DONE WHEN:
@@ -249,8 +351,10 @@ detail: docs/BOARD_NOTES.md (item 165)
 **174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
 DONE WHEN:
-  - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, stating the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; durable/retryable like the quota-recovery alert
-  - [ ] cooldown and allowance re-read against a real occurrence
+  - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger, when it cleared and why, every number read from the `auto_reset` event row), keeping the DB event and log; durable/retryable like the quota-recovery alert, and suppressed under `QAMC_REHEARSAL=1` at the notifier chokepoint
+  - [x] the resume is PAIRED to a suspension the owner actually received — 2026-09-26: the auto-clear captures the suspension's `alert_state` at the last instant it is knowable (the same write wipes it), and a resume for a suspension that never reached him is resolved as unpaired instead of sent, so an outage that ends before he hears about it is zero messages, not a dangling "back live"
+  - [x] reproducible offline — the fault harness gained a `server_error_mid_stream` kind (a pre-generation 503 is provably free and can never latch; only a mid-stream one can), and a morning rehearsal with it reproduced the latch, the suspension alert, the auto-expiry and the paired resume alert end to end
+  - [ ] cooldown and allowance re-read against a real occurrence — STILL OPEN: production has had ZERO real `auto_reset` events, so the 15-min cooldown and the 19/day allowance remain unmeasured; a rehearsal cannot measure them because it sets the cooldown itself
 detail: docs/BOARD_NOTES.md (item 174)
 
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
@@ -304,7 +408,7 @@ DONE WHEN:
   - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
 detail: docs/BOARD_NOTES.md (item 187)
 
-**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 116, 117, 118, 120, 121, 122, 124, 126, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 141, 142, 143, 144, 145, 146, 149, 151, 153, 156, 159, 160, 161, 162, 164, 166, 167, 168, 169, 171, 172, 175, 176, 178, 181, 184, 115, 140, 150 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md` — every retirement's reason lives there; this line is deliberately not re-narrated. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Item 151 never sat on this board (filed and closed in the same change). The one piece of the items-135/136/137 PR NOT finished — the short-side guard living one layer out from where it belongs — is item 155, still OPEN work, not history. Item 38's follow-up survives as item 52, whose residue is item 63; item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file it. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. Item 141 (live technical-seat ranking ties breaking alphabetically) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 126 was retired 2026-09-20; residue is items 170 (disclosure-lag) and 169 (cockpit chart). Item 120 was retired 2026-09-23 — its SIZING half (new-name buy/short share counts dividing by a mid or stale price) kept it open past the 2026-09-20 rendering fix, so the earlier "retired 2026-09-20" claim was premature; reason in `docs/INCIDENT_HISTORY.md`, residue item 181. Item 111 (the earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`. Item 168 was retired 2026-09-20 (upstream-history claim now rendered from `trading.lookback_days`, not a hand-typed number); reason in `docs/INCIDENT_HISTORY.md`. Items 164 and 171 were retired 2026-09-23; reasons in `docs/INCIDENT_HISTORY.md`. 171's intent survives as item 99(g). Item 32 was retired 2026-09-20 by owner instruction, not by a fix: he removed the whole account-level loss alarm — daily halt and 5d/20d BUY-halving brakes — instead of answering the one-response-or-two question. The §11.2 ladder stays. Items 92 and 144 were VOIDED with it, not answered: both asked about the daily-loss trigger and its 5d/20d rungs, which are deleted. The ladder's own unmeasurable-drawdown behaviour is a separate live question. Item 172 (an unreadable protective stop reaching no owner alert) was FILED AND CLOSED inside the same change that caused it, 2026-09-23: it never sat on this board as open work, and was fixed rather than filed because per-position stops became the only loss protection in the same commit. Item 181 (a SHORT's risk-budget divisor using the analyst's stale entry instead of the today print, inflating `qty_by_risk`) was retired 2026-09-24 — the risk-budget path now sizes off the print via a separate `risk_sizing_price`, the allocation path and the BUY path are unchanged; reason in `docs/INCIDENT_HISTORY.md`. Item 132 (the definition-of-done gate's blind commit range on a shallow checkout) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 159 (dead Form 4 peek-ahead functions with no live caller) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`. Item 81 (the reward:risk inventory's residue) was retired 2026-09-24 — `RiskConfig.min_reward_risk_after_widening`, `ConstructorConfig.min_reward_risk_after_widening` and the dead `SUBFLOOR_SIZE_CAPPED_STATUS` were deleted as zero-reader dead code, but `REWARD_RISK_FLOOR` was NOT deleted: it is still read by `ops/model_policy/deterministic_selection.py`'s model-selection benchmark; reason in `docs/INCIDENT_HISTORY.md`. Item 93 (twelve `docs/INCIDENT_HISTORY.md` entries mis-headed at `##` instead of `###`, invisible to the merge driver) was retired 2026-09-25 — the headings were promoted to `###` and a lint (`tests/test_incident_history_headings.py`) now fails the build if a dated entry sits at `##` again; this was fixed on main in PR #665 but the board entry was never removed, so WORK.md kept reporting it open; reason in `docs/INCIDENT_HISTORY.md`. Item 130 (the number-ledger's `SCOPED_PATHS` excluding the broker order path) was retired 2026-09-25 — shipped via #544 on 2026-09-19: `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py` are already in `SCOPED_PATHS` (`src/number_sources.py`), verified still true on current main; reason in `docs/INCIDENT_HISTORY.md`. Item 108 (the position reviewer's 2% minimum stop-raise stated as a hard rule but not enforced) was retired 2026-09-25 — enforced via #641: `_midday_execute_llm_actions`'s TRAIL_STOP validation now reads the live broker stop and rejects an under-`MIN_RATCHET_PCT` ratchet (`src/pipeline.py`, constant single-sourced from `src.risk.trailing`), covered by `tests/test_exit_quality.py`; reason in `docs/INCIDENT_HISTORY.md`. Item 131 (the standalone coverage sweep leaving no record that it ran) was retired 2026-09-25 — closed via #547: `record_sweep_run` (`src/coverage_watchdog.py`) writes a `specialist_evidence` row every run and `sweep_log_line` writes the greppable log line, both called from `scripts/alert_heartbeat.py`; reason in `docs/INCIDENT_HISTORY.md`. Items 97, 116, 124 and 133 were retired 2026-09-25 on verification against current main — 97's pace already reads the horizon pinned at entry off the trade row (moot), 116's morning/midday/close/intra-check/pre-earnings answers are all persisted (shipped), 124's cluster fact is stamped on every row before truncation so within-symbol crowd-out cannot starve the seat (moot), and 133's held-name accounting is reconciled so a full held book is not read as a jam (shipped); reasons in `docs/INCIDENT_HISTORY.md`. Items 96, 102, 122, 129 and 162 were retired 2026-09-25 on verification against current main — 96 is stale (`veto_contradicted_exit` in `src/risk/exit_guard.py` already runs this check and is wired into the live path), 102 shipped (`src/pipeline.py`'s `partially_filled` branch now records the cumulative fill qty/price), 122 shipped (`scripts/merge_and_deploy.sh` copies changed units, daemon-reloads and enables them, showing a diff before overwriting a hand-edited copy), 129 shipped (`_is_terminal_broker_rejection` in `src/execution/broker.py` classifies a genuine rejection by status code so only a real transient failure spends the retry burst, and both retry constants are recorded as arbitrary with an open question in `config/number_ledger.yaml`), and 162 shipped (both of its own DONE WHEN boxes are checked, resolved 2026-09-23/25); reasons in `docs/INCIDENT_HISTORY.md`. Item 39 (opportunity-cost rotation) was retired 2026-09-25 — its last open thread, the categorical tier abandoning the whole rotation when its single worst below-bar holding was structurally protected, is fixed: the tier now walks the whole below-bar cull set worst-first and culls the first sellable name, abandoning only when all are unsellable; the ranked-margin tier stays OFF by owner mandate and 39(a) was already dissolved; reason in `docs/INCIDENT_HISTORY.md`. Item 143 (`docs/RESEARCH_FINDINGS.md` carrying no entry for ATR bands, trailing, profit-taking, pacing or ranking granularity) was retired 2026-09-26 — a literature pass recorded all five as sections 9-13 of that file, each with fetched citations and an explicit statement of what is NOT published; no number was picked and no value changed; reason in `docs/INCIDENT_HISTORY.md`. Item 80 (a model-typed stop with no computed level, signal bar or volatility band behind it) was retired 2026-09-25 (owner ruling) — the earlier REFUSAL-on-missing-ATR path was overruled; a missing ATR now derives the stop from price structure (nearest computed level on the protective side, else the signal/prior bar) and holds the position, skipping the name only when no structural level is readable or the readable one breaches the stop-distance sanity bound; reason in `docs/INCIDENT_HISTORY.md`. **Next free number is 182 (165-171 filed above/below, 172 filed and closed in one change, 173-177 allocated, 178 the execution SELL loop's split staleness posture, 179 the macro heal's shape-and-storage gap, 180 young-listing, 181 retired 2026-09-24 — the short-side risk-budget over-size) — and note that this sentence has been stale more than once**, because a number is claimed on a branch before it reaches this file. Check the open branches, not just this line.
+**Retired item numbers — never reuse.** 158, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 116, 117, 118, 120, 121, 122, 124, 126, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 141, 142, 144, 145, 146, 149, 151, 153, 156, 159, 160, 161, 162, 164, 166, 167, 168, 169, 171, 172, 175, 176, 178, 181, 184, 115, 140, 150, 123, 143 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. **This line takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry; re-narrating it here made this one line the thing every parallel retirement collided on, and the merge driver refuses prose it cannot reconcile (`scripts/resolve_doc_conflict.py::merge_text`), so two closures in flight at once could not both land. The numbers themselves merge as a union and never conflict. `tests/test_status_board.py` fails a change that adds a reason sentence here. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. The one piece of the items-135/136/137 PR NOT finished — the short-side guard living one layer out from where it belongs — is item 155, still OPEN work, not history. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays. The ladder's own unmeasurable-drawdown behaviour is a separate live question. **Next free number is 182 (165-171 filed above/below, 172 filed and closed in one change, 173-177 allocated, 178 the execution SELL loop's split staleness posture, 179 the macro heal's shape-and-storage gap, 180 young-listing, 181 retired 2026-09-24 — the short-side risk-budget over-size) — and note that this sentence has been stale more than once**, because a number is claimed on a branch before it reaches this file. Check the open branches, not just this line.
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
