@@ -283,6 +283,43 @@ class MacroCoverage:
             return "partial"
         return "ok"
 
+    def verdict_stamp(self) -> tuple[str, str]:
+        """`(state, note)` to stamp onto the verdict this coverage produced.
+
+        Board item 119, second criterion. `describe()` above is the INPUT
+        side — it tells the economist, in its own prompt, what did and did
+        not arrive. This is the OUTPUT side: the same fact travelling with
+        the answer, so a verdict formed on holes is still visibly formed on
+        holes after it leaves `MorningResearchStage`.
+
+        That distinction is the whole defect. `data_status["macro"]` already
+        carries "partial" and already raises the operator's degraded banner,
+        but it is a morning-only construct scoped to one run
+        (`src/pipeline_stages.py`), while the VERDICT outlives the run: it is
+        persisted by `src.data.macro_store.MacroStore.save_last_state`, read
+        back by midday/close/intra as `carried_from_morning`, read back on
+        later days as `remembered`, rendered into the portfolio manager's
+        sheet and into the 7-day regime trajectory, and sent to the owner as
+        the "📊 Market:" line. Every one of those surfaces showed a 7/15 read
+        exactly as it showed a 15/15 one.
+
+        `state` reuses this class's own `status` vocabulary rather than
+        inventing a parallel one, with "complete" in place of "ok" because
+        the word is describing the SET, not the run. No count is compared
+        against any cutoff here: this is a restatement of what happened, and
+        picking a coverage threshold is barred (no sourceable number exists
+        for one).
+        """
+        if self.configured == 0:
+            return "failed", "no FRED series configured (misconfiguration)"
+        state = {"ok": "complete", "partial": "partial", "failed": "failed"}[self.status]
+        if state == "complete":
+            return state, ""
+        names = ", ".join(f.series_id for f in self.failed)
+        return state, (
+            f"{self.succeeded}/{self.configured} FRED series; missing: {names}"
+        )
+
     def describe(self) -> str:
         """Human-readable one-liner for the macro analyst's prompt and log
         lines. Deliberately names what happened rather than going quiet —
