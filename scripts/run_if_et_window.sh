@@ -284,7 +284,11 @@ if "$TIMEOUT" --kill-after=30 1200 "$PYTHON" main.py --mode "$MODE"; then
         echo "${ET_DATE} ${NOW_UNIX}" > "$LAST_FILE"
     fi
     # audit round 2 (#43): do NOT success-ping for intra_check. All six
-    # modes share one HEALTHCHECKS_URL, and intra_check's ~14 OK ticks/day
+    # modes share one HEALTHCHECKS_URL, and intra_check's ~13 OK ticks/day
+    # (was 14 until the timer moved to :15,45 on 2026-09-17; 13 is what the
+    # cost circuit recorded on every trading day 2026-09-21..25, and
+    # tests/test_systemd_units.py derives the count from this window and
+    # that timer rather than trusting this comment)
     # would pin the shared check green even when morning/evening silently
     # die — defeating the dead-man's switch this ping exists for. Failure
     # pings (below) still fire for ALL modes, intra_check included, so a
