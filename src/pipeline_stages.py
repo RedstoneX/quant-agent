@@ -6386,6 +6386,13 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
+            # Board item 95: the PM is shown what the capacity above COSTS.
+            # Read off the same loaded config the rest of this call uses, so
+            # the prompt renderer never re-loads `AppConfig` (which validates
+            # API keys and would fail silently, dropping the price).
+            margin_interest_rate_pct=getattr(
+                pipeline.config.risk, "margin_interest_rate_pct", None,
+            ),
             # 2026-09-23: the §10.3 notional floor, read by exactly the
             # helper the execution-time re-size and the rotation buy-leg
             # projection already read it with, so the rotation pre-check
