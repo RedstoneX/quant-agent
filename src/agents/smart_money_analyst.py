@@ -562,6 +562,18 @@ class SmartMoneyAnalystAgent(BaseAgent):
                     model=getattr(self, "model", "cached"),
                     user_message="[cached evidence hash]",
                     provider_requests=0,
+                    # docs/WORK.md item 147. A cache hit issues NO provider
+                    # request (`provider_requests=0`, no `run()`, no
+                    # `complete_call`), so its cost is not unknown -- it is
+                    # exactly $0.00, the same way `pipeline.py`'s
+                    # deterministic risk_gate row books 0.0. Leaving the
+                    # `AgentResult.cost_usd` default of None wrote a NULL
+                    # into `agent_logs` that reads as "a call happened and
+                    # we cannot price it", which is the one class the cost
+                    # circuit hard-latches on. All 7 NULL-cost rows in the
+                    # production DB (2026-08-14..2026-09-26, 667 rows) are
+                    # this path [measured, read-only 2026-09-26].
+                    cost_usd=0.0,
                 ), None
         result = self.run(observations=observations)
         parsed = result.parse_json()
