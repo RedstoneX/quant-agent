@@ -304,12 +304,24 @@ win, and HOLD only when the chart is clearly still trending in the position's
 favour (higher-highs-and-higher-lows for a long, the mirror for a short), in
 which case the raised trailing stop carries the runner. So the sell is
 conditional on a live read of the chart, never on a price or a gain alone —
-which is precisely the property the fixed-gain trim lacked. When a held
-position is over its target, is still trending, and today's bars hold no
-structure left ahead of price to extend the target to, it leaves that decision
-point for good and is managed by the trailing stop alone: re-running a
+which is precisely the property the fixed-gain trim lacked.
+
+That live read is held to two standards, because it can decide a full close in
+either direction. It is symmetric: a new extreme and a BREAK of the last swing
+in the position's favour register in the same number of bars, so the read
+cannot sit on HOLD through exactly the transition it exists to catch. And it is
+made of the same stuff as the reach test — cleaned bars, completed closes, and
+the desk's own two-consecutive-closes standard for whether a level has really
+gone — so a wick, a bad print or a one-day gap cannot hold a position the desk
+would otherwise bank.
+
+When a held position is over its target, is still trending, and today's bars
+hold no structure left ahead of price to extend the target to, it steps out of
+that decision point and is managed by the trailing stop alone: re-running a
 full-close vote every review on a target the price has left behind would close
-the best runner in the book on noise.
+the best runner in the book on noise. That is a state, not a verdict — it is
+re-tested every review against the same trend read that granted it, and the
+moment the chart breaks the position rejoins the rule and is banked.
 
 ## An unverifiable number must never rank or size a trade
 

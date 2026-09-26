@@ -18,6 +18,7 @@ The pipeline-level cases assemble the sell/hold state from REALISTIC daily bars
 a boolean into the dataclass.
 """
 
+import inspect
 from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -312,8 +313,14 @@ def test_only_the_thrusting_side_is_read_in_progress():
     assert making_higher_highs_and_lows(_bars(falling_lows)) is False
 
 
+def _mirror(vals):
+    """The same chart upside down, in POSITIVE prices — `_clean_bars` drops
+    non-positive bars, so negating the series is not a valid short fixture."""
+    return [300.0 - v for v in vals]
+
+
 def test_short_mirror_counts_an_in_progress_lower_low():
-    inverted = [-v for v in _FRESH_BREAKOUT]
+    inverted = _mirror(_FRESH_BREAKOUT)
     assert making_higher_highs_and_lows(_bars(inverted), is_short=True) is True
     assert making_higher_highs_and_lows(_bars(inverted)) is not True
 
@@ -377,14 +384,47 @@ def test_no_ceiling_in_reach_can_never_turn_a_sell_into_a_hold():
     assert d.code == AT_TARGET_SELL_STALLED and d.should_sell is True
 
 
-def test_a_latched_position_is_not_re_put_to_the_vote_and_is_not_re_voiced():
+def test_a_latched_position_stays_out_of_the_vote_while_it_is_still_trending():
     d = decide_at_target(
         symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
-        still_making_new_highs=False, already_trailing_only=True,
+        still_making_new_highs=True, already_trailing_only=True,
     )
     assert d.code == AT_TARGET_TRAILING_STOP_ONLY_LATCHED
     assert d.should_sell is False
     assert d.reason == ""
+    # `reached` is REPORTED, so it must be TESTED, not asserted.
+    assert d.reached is True
+
+
+def test_a_latched_position_below_its_target_reports_not_reached():
+    """The old latched branch hardcoded reached=True without looking. It is now
+    on the same reach test as everything else."""
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=100.0, target_price=115.0,
+        still_making_new_highs=True, already_trailing_only=True,
+    )
+    assert d.code == AT_TARGET_NOT_REACHED
+    assert d.reached is False and d.should_sell is False
+
+
+def test_a_latched_position_rejoins_the_vote_the_moment_structure_breaks():
+    """The state was entered on ONE review's read of the chart. It lasts
+    exactly as long as the thing that justified it."""
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=False, already_trailing_only=True,
+    )
+    assert d.code == AT_TARGET_SELL_STALLED
+    assert d.should_sell is True
+    assert "has now broken" in d.reason
+
+
+def test_a_latched_position_with_unreadable_structure_is_also_banked():
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=None, already_trailing_only=True,
+    )
+    assert d.should_sell is True
 
 
 def test_only_named_refusals_mean_the_target_cannot_extend():
@@ -432,9 +472,27 @@ def test_pipeline_does_not_leave_the_vote_while_the_target_can_still_extend():
     )
 
 
-def test_pipeline_latched_position_never_reaches_the_full_close_vote():
-    """The defect: `reached` never goes back to False, so a rolled-over read on
-    ANY later review would otherwise close the whole position."""
+def test_pipeline_latched_and_still_trending_is_not_re_put_to_the_vote():
+    """`reached` never goes back to False, so without this a rolled-over read on
+    ANY later review would close the whole position on noise."""
+    close = UPTREND_BARS[-1].close
+    p = _pipeline(
+        _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0,
+                      "timestamp": "2026-01-01 10:00:00"},
+        bars=UPTREND_BARS,
+    )
+    p.db.get_at_target_management.return_value = {
+        "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
+    }
+    order = p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
+    assert order is None
+    p._submit_protected_sell.assert_not_called()
+    p.db.record_at_target_management.assert_not_called()
+
+
+def test_pipeline_latched_position_whose_chart_breaks_is_banked_and_recorded():
+    """The latch is not a life sentence on a fallible read: the same position,
+    once its structure rolls over, is sold and the state change is filed."""
     close = ROLLED_BARS[-1].close
     p = _pipeline(
         _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0,
@@ -445,8 +503,11 @@ def test_pipeline_latched_position_never_reaches_the_full_close_vote():
         "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
     }
     order = p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
-    assert order is None
-    p._submit_protected_sell.assert_not_called()
+    assert order == {"id": "o1", "action": "SELL"}
+    p._submit_protected_sell.assert_called_once()
+    kwargs = p.db.record_at_target_management.call_args.kwargs
+    assert kwargs["trailing_only"] is False
+    assert kwargs["code"] == "AT_TARGET_VOTE_REARMED_STRUCTURE_BROKE"
 
 
 def test_a_latch_from_before_this_position_opened_does_not_count():
@@ -480,3 +541,204 @@ def test_re_arm_writes_nothing_when_there_is_nothing_to_clear():
     p.db.get_at_target_management.return_value = {}
     p._rearm_at_target_vote(sym="AAPL", run_id="r")
     p.db.record_at_target_management.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The adversary's charts. These are the cases the design's own claims missed:
+# each one is a price path, asserted on its verdict, not on its intent.
+# ---------------------------------------------------------------------------
+
+
+# A healthy uptrend, then the transition. Highs 100 -> 108 -> 115, lows 95 -> 100.
+_UPTREND = _zig([90, 100, 95, 108, 100, 115])
+
+
+def test_a_one_bar_blow_off_followed_by_a_collapse_is_not_still_trending():
+    """The decisive asymmetry: a new extreme registered in ONE bar while the
+    collapse behind it needed five. A spike to 200 that price has closed back
+    under is not a swing high in progress, and the drop to 100 IS a lower low."""
+    blow_off = _UPTREND + [200, 175, 150, 125, 100]
+    assert making_higher_highs_and_lows(_bars(blow_off)) is not True
+
+
+def test_a_straight_collapse_through_the_last_higher_low_is_not_still_trending():
+    """The break of the last higher low is the one event a Dow read exists to
+    catch. Confirmed-only it was invisible for five sessions."""
+    collapse = _UPTREND + [110, 100, 90, 80, 70, 60]
+    assert making_higher_highs_and_lows(_bars(collapse)) is False
+
+
+def test_fifteen_consecutive_down_bars_do_not_read_as_still_trending():
+    """Every review for three weeks said HOLD."""
+    bleed = _UPTREND + [115 - 4 * k for k in range(1, 16)]
+    assert making_higher_highs_and_lows(_bars(bleed)) is False
+
+
+def test_loss_of_strength_registers_as_fast_as_a_gain_in_strength():
+    """The property, not one example: one bar past the last swing LOW must
+    change the verdict in the same number of bars as one bar past the last
+    swing HIGH does."""
+    up = _bars(_UPTREND)
+    # Two closes above the last confirmed swing high -> new high registers.
+    gain = _bars(_UPTREND + [116, 117])
+    # Two closes below the last confirmed swing low -> break registers, in the
+    # SAME two bars.
+    loss = _bars(_UPTREND + [99, 98])
+    assert making_higher_highs_and_lows(up) is True
+    assert making_higher_highs_and_lows(gain) is True
+    assert making_higher_highs_and_lows(loss) is False
+
+
+def test_a_single_bad_print_cannot_flip_the_verdict():
+    """`find_structural_levels` cleans its bars before its pivot scan because one
+    bad vendor print becomes a phantom pivot. This read decides a full close, so
+    it cleans too."""
+    topping = _bars(_CONSOLIDATION)
+    assert making_higher_highs_and_lows(topping) is False
+
+    # Same chart, one bar whose HIGH is a garbage print ten times the close.
+    wicked = list(topping)
+    bad = wicked[-3]
+    wicked[-3] = OHLCV(
+        date=bad.date, open=bad.open, high=bad.close * 10, low=bad.low,
+        close=bad.close, volume=1000,
+    )
+    assert making_higher_highs_and_lows(wicked) is False
+
+    # And a fully bad vendor bar, close included.
+    broken = list(topping)
+    bad = broken[-3]
+    broken[-3] = OHLCV(
+        date=bad.date, open=bad.close * 10, high=bad.close * 10,
+        low=bad.close * 9, close=bad.close * 9.5, volume=1000,
+    )
+    assert making_higher_highs_and_lows(broken) is False
+
+
+def test_a_single_plausible_gap_bar_is_not_enough_on_its_own():
+    """Bar-cleaning cannot remove a plausible gap, so the swing read applies the
+    desk's own break standard: two consecutive closes beyond the level, never
+    one. One close through is a spring."""
+    assert making_higher_highs_and_lows(_bars(_CONSOLIDATION + [112])) is False
+    # Held for a second close -> a real break of the prior swing high.
+    assert making_higher_highs_and_lows(_bars(_CONSOLIDATION + [112, 113])) is True
+    # Poked through and closed back inside -> the leg is not in force.
+    assert making_higher_highs_and_lows(
+        _bars(_CONSOLIDATION + [112, 113, 104])
+    ) is False
+
+
+def test_the_trend_read_and_the_reach_test_read_the_same_thing():
+    """`decide_at_target` judges "reached" on the CLOSE so an intrabar wick is
+    not a reach. A trend read that can override it must not be wick-based."""
+    flat = _CONSOLIDATION + [104, 104]
+    wick_only = [
+        OHLCV(date=b.date, open=b.open, high=b.close * 1.5, low=b.low,
+              close=b.close, volume=1000)
+        for b in _bars(flat)
+    ]
+    assert making_higher_highs_and_lows(_bars(flat)) is False
+    assert making_higher_highs_and_lows(wick_only) is False
+
+
+def test_pipeline_a_rollover_while_still_above_target_banks_the_position():
+    """Held above its target, HOLD on one review, rolled over on the next: the
+    second review must bank it, not keep holding because it already decided."""
+    # The rollover stays ABOVE the target throughout — the point is that being
+    # over the target is not a decision the desk gets to make only once.
+    trending = _bars(_UPTREND)
+    rolled = _bars(_UPTREND + [110, 105, 100, 99, 98, 97])
+    target = 96.0
+
+    first = _pipeline(_long(), buy={"take_profit": target}, bars=trending)
+    first.db.get_at_target_management.return_value = {}
+    first._review_target_outcomes = {"AAPL": {"code": "EACH_REVIEW_STRUCTURAL_REREAD"}}
+    assert first._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s") is None
+
+    second = _pipeline(_long(), buy={"take_profit": target}, bars=rolled)
+    second.db.get_at_target_management.return_value = {}
+    second._review_target_outcomes = {"AAPL": {"code": "EACH_REVIEW_STRUCTURAL_REREAD"}}
+    assert second._decide_one_at_target(
+        _long(), "AAPL", run_id="r", seat="s",
+    ) == {"id": "o1", "action": "SELL"}
+
+
+def test_a_position_on_trailing_stop_only_still_has_its_stop_ratcheted():
+    """"Managed by the trailing stop alone" is only safe if that is true. The
+    deterministic trail sweep runs over EVERY held position and knows nothing
+    about at-target state; this proves it for a position that is in it."""
+    import src.execution.scale_in as scale_in
+    import src.execution.stop_records as stop_records
+    import src.risk.trailing as trailing
+
+    p = _pipeline(_long(), buy={"take_profit": 100.0}, bars=UPTREND_BARS)
+    # The position IS on trailing-stop-only management.
+    p.db.get_at_target_management.return_value = {
+        "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
+    }
+    assert p._at_target_trailing_only("AAPL", {"timestamp": "2026-01-01"}) is True
+
+    p.broker = MagicMock()
+    p.broker.get_current_stop_price.return_value = 100.0
+    p._atr_for_symbol = MagicMock(return_value=2.0)
+    p.db.get_symbol_last_buy.return_value = {
+        "take_profit": 100.0, "stop_loss": 100.0, "setup_type": "breakout",
+        "timestamp": "2026-01-01 10:00:00", "initial_stop_loss": 95.0,
+    }
+
+    raised = SimpleNamespace(new_stop=111.0, reason="ratcheted to the last swing low")
+    orig_eval = trailing.evaluate_trailing_stop
+    orig_pending = scale_in.pending_protection_symbols
+    orig_replace = stop_records.replace_stop_and_record
+    orig_accept = stop_records.accepted_stop_order
+    try:
+        trailing.evaluate_trailing_stop = lambda **kw: SimpleNamespace(
+            proposal=raised, code="trailed",
+        )
+        scale_in.pending_protection_symbols = lambda _db: set()
+        stop_records.replace_stop_and_record = lambda *a, **k: {
+            "id": "stop1", "status": "accepted",
+        }
+        stop_records.accepted_stop_order = lambda _o: True
+        orders = p._apply_deterministic_trails([_long()], run_id="r")
+    finally:
+        trailing.evaluate_trailing_stop = orig_eval
+        scale_in.pending_protection_symbols = orig_pending
+        stop_records.replace_stop_and_record = orig_replace
+        stop_records.accepted_stop_order = orig_accept
+
+    assert [o["action"] for o in orders] == ["TRAIL_STOP"]
+    trail_rows = [
+        c.kwargs for c in p.db.insert_trade.call_args_list
+        if c.kwargs.get("action") == "TRAIL_STOP"
+    ]
+    assert trail_rows and trail_rows[0]["stop_loss"] == 111.0
+
+
+def test_the_per_review_caches_are_reset_outside_every_try_block():
+    """A sweep that raises must not leave the next one reading the LAST
+    review's bars, verdicts and trailing-only state."""
+    p = _pipeline(_long(), buy={"take_profit": 100.0}, bars=UPTREND_BARS)
+    p._review_bars_cache = {"AAPL": ["stale"]}
+    p._review_target_outcomes = {"AAPL": {"code": "REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION"}}
+    p._review_trailing_only_cache = {"AAPL": True}
+
+    p._reset_review_caches()
+
+    assert p._review_bars_cache == {}
+    assert p._review_target_outcomes == {}
+    assert p._review_trailing_only_cache == {}
+    assert p._target_can_extend("AAPL") is None
+
+
+def test_the_holding_protection_read_shares_the_one_bars_fetch():
+    """It asked the feed for the identical full-history series a second time for
+    every held name, every review."""
+    p = _pipeline(_long(), buy={"take_profit": 100.0}, bars=UPTREND_BARS)
+    p._reset_review_caches()
+    first = p._review_ohlcv("AAPL")
+    src = inspect.getsource(TradingPipeline._structural_protection_for_holding)
+    assert "self._review_ohlcv(symbol)" in src
+    assert "self.market.get_ohlcv(symbol, self.config.trading.lookback_days)" not in src
+    assert p._review_ohlcv("AAPL") is first
+    p.market.get_ohlcv.assert_called_once()

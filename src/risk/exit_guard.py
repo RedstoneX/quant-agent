@@ -2283,8 +2283,10 @@ AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
 #: to. The position leaves the at-target vote and is managed by the trailing
 #: stop alone from here; see the note below for why.
 AT_TARGET_TRAILING_STOP_ONLY = "AT_TARGET_TRAILING_STOP_ONLY_NO_CEILING_IN_REACH"
-#: A PRIOR review already moved this position to trailing-stop-only management.
-#: It is not re-put to the at-target full-close vote.
+#: A prior review moved this position to trailing-stop-only management AND the
+#: chart is still clearly trending, so it is not put to the full-close vote this
+#: review. Re-checked every review: the state lasts exactly as long as the
+#: structure that justified it.
 AT_TARGET_TRAILING_STOP_ONLY_LATCHED = "AT_TARGET_TRAILING_STOP_ONLY_ALREADY"
 
 # --- Leaving the at-target vote when the target can no longer move -----------
@@ -2308,9 +2310,23 @@ AT_TARGET_TRAILING_STOP_ONLY_LATCHED = "AT_TARGET_TRAILING_STOP_ONLY_ALREADY"
 # So when the at-target decision is HOLD and today's re-derivation refused for
 # want of any target ahead of price, the position leaves the at-target vote and
 # is managed by the trailing stop alone. Nothing is loosened: the trailing stop
-# is the desk's ratified profit-taking mechanism and it still ratchets and still
-# closes the position. What is removed is a repeated full-close coin-flip that
-# no longer has a decision to inform it.
+# is the desk's ratified profit-taking mechanism, it still ratchets and it still
+# closes the position. Nothing is unmanaged either — `_apply_deterministic_trails`
+# runs over EVERY held position every review and knows nothing about this state,
+# which `tests/test_at_target_decision.py` pins by putting a position in it and
+# showing its stop still raised in the same review. What is removed is a
+# repeated full-close coin-flip that no longer has a decision to inform it.
+#
+# It is NOT permanent, and deliberately so. This state is entered on ONE
+# review's reading of the chart, and that reading can be wrong — it is also the
+# EXPECTED outcome for the strongest runners, because the re-derivation measures
+# reach from the pinned ENTRY over the pinned horizon, so a position that has
+# travelled a long way will routinely have no derivable target ahead of it.
+# A one-way latch on a fallible read, applied by default to the largest winners
+# in the book, is not a safety property. So the condition is re-tested every
+# review: the position stays out of the vote only while the chart is still
+# clearly trending, and the moment that structure breaks it rejoins the rule and
+# is banked like any other stalled position at its target.
 #
 #: The re-derivation outcome codes that mean "no target could be put ahead of
 #: price on today's bars". Kept as a named set, not a string test at the call
@@ -2395,19 +2411,14 @@ def decide_at_target(
     above `AT_TARGET_TRAILING_STOP_ONLY`. It can never cause a sell.
 
     `already_trailing_only` says a PRIOR review already moved this position to
-    trailing-stop-only management; the position is then not put to the vote at
-    all, and no reason is re-voiced (the durable one was written when it moved).
+    trailing-stop-only management. It is NOT a bypass: the trend read still
+    runs, and the position stays out of the vote only for as long as the chart
+    is still clearly trending — the same condition that put it there. When that
+    structure breaks the position rejoins the rule and is banked. Nothing is
+    re-voiced while the state holds, because the durable reason was written
+    when it moved.
     """
     sym = str(symbol or "").strip().upper()
-    if already_trailing_only:
-        # A prior review already took this position out of the at-target vote.
-        # Silent by design: the durable reason was recorded once, when it moved,
-        # and re-voicing the same sentence every review is noise, not news.
-        return AtTargetDecision(
-            symbol=sym, code=AT_TARGET_TRAILING_STOP_ONLY_LATCHED,
-            reached=True, should_sell=False,
-            target_price=_finite(target_price), close_price=_finite(close_price),
-        )
     close = _finite(close_price)
     target = _finite(target_price)
     if close is None or target is None or target <= 0 or close <= 0:
@@ -2424,6 +2435,23 @@ def decide_at_target(
         )
 
     move = "lower-highs and lower-lows" if is_short else "higher-highs and higher-lows"
+
+    # A position ALREADY on trailing-stop-only management is re-examined here,
+    # not waved through. The state was entered on one review's verdict that the
+    # chart was clearly still trending, and that verdict can be wrong; the
+    # thing that must re-open it is the thing that justified it failing. So
+    # while the chart is still clearly trending it stays out of the vote
+    # (silently — the durable reason was written when it moved, and re-voicing
+    # the same sentence every review is noise), and the moment the structure
+    # breaks it rejoins the vote and is banked on the branch below like any
+    # other stalled position.
+    if already_trailing_only and still_making_new_highs is True:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_TRAILING_STOP_ONLY_LATCHED,
+            reached=True, should_sell=False,
+            target_price=target, close_price=close,
+        )
+
     if still_making_new_highs is True and target_can_extend is False:
         # HOLD, and the target is pinned under the price with no ceiling in
         # reach to extend to. Leave the at-target vote for good rather than
@@ -2461,6 +2489,12 @@ def decide_at_target(
         " (too little swing structure to confirm a runner)"
         if still_making_new_highs is None else ""
     )
+    broke = (
+        " The structure that took this position off the at-target decision and "
+        "onto trailing-stop-only management has now broken, so it rejoins the "
+        "rule and is banked."
+        if already_trailing_only else ""
+    )
     return AtTargetDecision(
         symbol=sym, code=AT_TARGET_SELL_STALLED, reached=True,
         should_sell=True, target_price=target, close_price=close,
@@ -2468,6 +2502,6 @@ def decide_at_target(
             f"reached its ${target:,.2f} target (close ${close:,.2f}) and is "
             f"NOT clearly still trending{unclear} — the desk is banking the win "
             f"at the target rather than giving it back, since the {move} that "
-            f"would justify holding for more are not there."
+            f"would justify holding for more are not there.{broke}"
         ),
     )

@@ -9876,13 +9876,21 @@ class TradingPipeline:
         `levels_coverage_for_bars` for whether an empty result is a fault or
         a reading), and writes the outcome.
 
-        DELIBERATELY runs AFTER `_midday_execute_llm_actions`. Every exit
-        decision this session makes has already been made and vetoed against
-        `metric_deltas` built before this point, so a revision cannot reach
-        them even in principle. That is the second of two independent
-        defences; the first is that progress/pace are measured against the
-        PINNED `initial_take_profit` (see `_build_position_facts`), so a
-        revision cannot move a guarded metric at all.
+        DELIBERATELY runs AFTER `_midday_execute_llm_actions`. Every
+        REVIEWER-DRIVEN exit this session makes has already been made and
+        vetoed against `metric_deltas` built before this point, so a revision
+        cannot reach those. That is the second of two independent defences for
+        them; the first is that progress/pace are measured against the PINNED
+        `initial_take_profit` (see `_build_position_facts`), so a revision
+        cannot move a guarded metric at all.
+
+        It does NOT mean the fresh target reaches nothing. `_decide_at_target_
+        exits` runs immediately after this sweep and is MEANT to test the
+        number this sweep just wrote — that is the whole point of re-deriving
+        before deciding, and it is a deterministic close-vs-target comparison,
+        not a model claim that could be talked into an exit. The ordering
+        protects the reviewer's exits from a moved denominator; it does not
+        and must not wall the target off from the rule that reads it.
 
         EVERY flag produces a durable row — a re-derivation, a named refusal,
         or a named data fault. Never a silent no-op and never a blank.
@@ -9958,14 +9966,15 @@ class TradingPipeline:
         # One bars fetch per held symbol per review, shared with the at-target
         # decision below via this cache — the re-derivation now runs on EVERY
         # held name every review, so it must not fetch the same series twice.
-        self._review_bars_cache = {}
-        self._review_trailing_only_cache = {}
-        # This review's re-derivation outcome per symbol, read by the
-        # at-target decision below: a position whose target could not be
-        # extended because nothing is left in reach must not be re-put to the
-        # full-close vote every review (see
-        # `src.risk.exit_guard.AT_TARGET_TRAILING_STOP_ONLY`).
-        self._review_target_outcomes = {}
+
+        # The caches are reset UNCONDITIONALLY by `_reset_review_caches` at the
+        # review's call site, never here — a reset inside a try/except'd sweep
+        # is skipped exactly when the sweep raises. This only creates the dict
+        # if the sweep is reached by some other route; it never clears one.
+        by_symbol = getattr(self, "_review_target_outcomes", None)
+        if not isinstance(by_symbol, dict):
+            by_symbol = {}
+            self._review_target_outcomes = by_symbol
 
         outcomes: list[dict] = []
         for sym in order:
@@ -9982,7 +9991,7 @@ class TradingPipeline:
                     # flag. Every protective refusal inside still applies.
                     require_trigger=False,
                 )
-                self._review_target_outcomes[sym] = outcome
+                by_symbol[sym] = outcome
                 outcomes.append(outcome)
                 if outcome.get("applied"):
                     # The target DID extend, so this position is back in front
@@ -10022,20 +10031,58 @@ class TradingPipeline:
             ))
         return outcomes
 
+    def _reset_review_caches(self) -> None:
+        """Clear everything scoped to ONE review, before that review runs.
+
+        Called UNCONDITIONALLY at the review's own call site, never from inside
+        a sweep. The sweeps that populate these are each wrapped in a
+        try/except by their caller, so a reset that lived inside one of them
+        was skipped exactly when the sweep raised — and then the at-target
+        decision ran against the PREVIOUS review's bars, previous re-derivation
+        verdicts and previous trailing-stop-only state, which is the worst
+        possible moment to be reading stale data.
+        """
+        #: Daily bars per symbol, shared by every per-holding read this review.
+        self._review_bars_cache = {}
+        self._review_bars_date = None
+        #: Whether each held name is already on trailing-stop-only management.
+        self._review_trailing_only_cache = {}
+        #: This review's take-profit re-derivation outcome per symbol, read by
+        #: the at-target decision: a position whose target could not be extended
+        #: because nothing is left in reach must not be re-put to the full-close
+        #: vote every review (`src.risk.exit_guard.AT_TARGET_TRAILING_STOP_ONLY`).
+        self._review_target_outcomes = {}
+
     def _review_ohlcv(self, sym: str) -> list:
         """Daily bars for one symbol, fetched at most ONCE per review.
 
         The every-review target re-derivation and the at-target decision both
         read the same series for every held name; without this cache each held
-        name would trigger two or three identical downloads a review. Reset at
-        the top of `_adjudicate_target_revision_flags`. A fetch failure caches
+        name would trigger two or three identical downloads a review. Reset by
+        `_reset_review_caches`. A fetch failure caches
         an empty list so a dead feed is not retried per consumer within the
         review; callers already treat an empty series as a data fault.
         """
+        # Stamped with the trading day it was filled on. `_reset_review_caches`
+        # is the normal boundary, but this method is also reached from the
+        # morning RiskStage's holding-discipline read, and a process that
+        # outlives a session must never be served yesterday's bars because no
+        # review happened to run in between.
+        today = ""
+        try:
+            from src.trading_calendar import et_today
+
+            today = str(et_today())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "review bars: trading-date read failed (%s) — caching for this "
+                "call only", exc,
+            )
         cache = getattr(self, "_review_bars_cache", None)
-        if cache is None:
+        if cache is None or getattr(self, "_review_bars_date", None) != today:
             cache = {}
             self._review_bars_cache = cache
+            self._review_bars_date = today
         key = str(sym).upper()
         if key not in cache:
             try:
@@ -10340,7 +10387,11 @@ class TradingPipeline:
         # count toward break confirmation (a gap resets — #3).
         prior_session_dates: list[str] = []
         try:
-            bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
+            # SAME per-review fetch the target re-derivation and the at-target
+            # decision use. This call site asked the feed for the identical
+            # full-history series a second time for every held name, every
+            # review — two downloads per name where one series is wanted.
+            bars = self._review_ohlcv(symbol)
             if bars:
                 from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
@@ -10604,6 +10655,7 @@ class TradingPipeline:
         `_decide_at_target_exits` for the rule.
         """
         from src.risk.exit_guard import (
+            AT_TARGET_SELL_STALLED,
             AT_TARGET_TRAILING_STOP_ONLY,
             decide_at_target,
         )
@@ -10659,6 +10711,7 @@ class TradingPipeline:
         # the chart is clearly still making higher-highs-and-higher-lows (the
         # mirror for a short). Read from the ratified pivot structure, no number.
         still_trending = making_higher_highs_and_lows(bars, is_short=is_short)
+        was_trailing_only = self._at_target_trailing_only(sym, buy)
 
         decision = decide_at_target(
             symbol=sym, is_short=is_short, close_price=close_price,
@@ -10667,7 +10720,8 @@ class TradingPipeline:
             # under it with nothing left overhead? Only consulted on a HOLD.
             target_can_extend=self._target_can_extend(sym),
             # Did an earlier review already take this position out of the vote?
-            already_trailing_only=self._at_target_trailing_only(sym, buy),
+            # Not a bypass — the trend read above still decides.
+            already_trailing_only=was_trailing_only,
         )
 
         # Voice why/when either way, before acting.
@@ -10688,6 +10742,22 @@ class TradingPipeline:
                 logger.error(
                     "at-target: trailing-stop-only record failed for %s (%s) "
                     "— the position stays in the at-target vote", sym, exc,
+                )
+
+        if was_trailing_only and decision.code == AT_TARGET_SELL_STALLED:
+            # The structure that justified trailing-stop-only management has
+            # broken. Record the state change durably BEFORE the sell, so the
+            # record is right even if the order path then fails.
+            try:
+                self.db.record_at_target_management(
+                    run_id=run_id, symbol=sym,
+                    code="AT_TARGET_VOTE_REARMED_STRUCTURE_BROKE",
+                    trailing_only=False, detail=decision.reason,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "at-target: re-arm-on-broken-structure record failed for "
+                    "%s (%s)", sym, exc,
                 )
 
         if not decision.should_sell:
@@ -14966,12 +15036,20 @@ class TradingPipeline:
         # instrument is doing. The owner removed that class of logic when he
         # removed reward:risk as a universal gate: the reward side of a
         # trade cannot be predetermined because the holding period is
-        # unknown, and profit-taking belongs to the trailing stop
-        # (`src/risk/trailing.py`). The rule predated QAMC and was never
-        # ratified against that doctrine. The ONLY exit rule is the
-        # trailing stop; `tests/test_pipeline.py::
+        # unknown. The rule predated QAMC and was never ratified against
+        # that doctrine. `tests/test_pipeline.py::
         # test_no_fixed_gain_automatic_profit_trim_exists` fails if a
         # fixed-gain trim is reintroduced.
+        #
+        # What is NOT rejected, since the owner's 2026-09-25 ruling, is a
+        # STRUCTURAL target: a price read off the instrument's own levels,
+        # re-derived every review, which may only ratchet away from entry.
+        # Reaching one is a decision point whose default is to bank the win
+        # in full, and the desk holds past it only while the chart is
+        # clearly still trending (`src.risk.exit_guard.decide_at_target`,
+        # `_decide_at_target_exits` below). So profit-taking is the trailing
+        # stop PLUS that decision — this comment said the trailing stop was
+        # the only exit rule, which the same pull request made untrue.
 
         # 1c. Ex-dividend stop adjustment (both sessions — a dividend tomorrow
         # is still a dividend tomorrow no matter which session looks at it).
@@ -15368,11 +15446,16 @@ class TradingPipeline:
             # this session makes. Owner ruling 2026-09-25: the desk re-derives
             # EVERY held position's target off today's bars EVERY review (not
             # only on a seat flag), so a two-week-old target can never sit
-            # ignored. A re-derived target cannot reach this session's exits
-            # even in principle; and because progress/pace are measured against
-            # the PINNED entry target, it cannot reach a later session's
-            # exit-guard veto either. Places no orders: the re-derivation itself
-            # exits nothing.
+            # ignored. A re-derived target cannot reach the REVIEWER's exits
+            # above — they are already decided and vetoed — and because
+            # progress/pace are measured against the PINNED entry target it
+            # cannot reach a later session's exit-guard veto either. It DOES
+            # reach the deterministic at-target decision immediately below,
+            # by design: that rule exists to test today's target, so the
+            # target is re-read first. The sweep itself places no orders.
+            # UNCONDITIONAL, and outside every try below: if a sweep raises,
+            # the next one must not run on the last review's bars and verdicts.
+            self._reset_review_caches()
             try:
                 target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,

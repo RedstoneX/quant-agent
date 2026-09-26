@@ -99,9 +99,19 @@ would register in `exit_guard.MetricDeltas.worsened`, which would clear
 revision on good news into a licence for a "this position is stalling" SELL.
 See `tests/test_target_revision.py`.
 
-It also cannot trigger an exit. Nothing in this module exits anything; the
-automatic profit trim was deleted in PR #321 and the trailing stop remains
-the only automatic exit.
+It also cannot trigger an exit. Nothing in THIS MODULE exits anything: it
+adjusts a measurement and returns, and `tests/test_target_revision.py` pins
+that it names no order, no broker and no exit action.
+
+What happens AT the number it produces is decided elsewhere and is no longer
+nothing. Owner ruling 2026-09-25: reaching a structural target is a decision
+point whose default is to close the position in full, taken by
+`src.risk.exit_guard.decide_at_target` and executed by the pipeline; the desk
+holds instead only while the chart is clearly still trending. The FIXED-GAIN
+trim deleted in PR #321 stays deleted — that sold a fixed fraction at a fixed
+gain with no reference to the instrument — and the trailing stop still runs
+underneath everything. Calling it "the only automatic exit" was true when this
+module was written and stopped being true the day the target became a decision.
 """
 
 from __future__ import annotations
