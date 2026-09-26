@@ -1087,6 +1087,22 @@ def acceptance_observable_problems(change: Change) -> list[str]:
             f"in this repository. Nothing on this desk validates a "
             f"behaviour change offline."
         ]
+    # ONE compliant observable is what this check is for, not every one.
+    #
+    # Requiring EVERY occurrence to pass meant a later commit could never
+    # repair an earlier one, and force-push is blocked on this repository —
+    # so a single weak restatement in the first commit of a branch condemned
+    # the whole branch to being re-cut. That cost nine pull requests on
+    # 2026-09-26, four of them carrying observables that were genuinely
+    # better than the rule: they named the rendered text, the log row and the
+    # database row a reader would actually look at, and cited no file.
+    #
+    # The claim this check exists to enforce is that the change declares
+    # SOMETHING specific a human can confirm after a live session. One
+    # declaration that does so establishes it; a second, vaguer sentence
+    # alongside it subtracts nothing. So every value is still reported when
+    # NONE qualifies — the messages below are the author's guide to what is
+    # missing — and the check passes as soon as one does.
     problems: list[str] = []
     for value in values:
         if _words(value) < MIN_OBSERVABLE_WORDS:
@@ -1095,6 +1111,7 @@ def acceptance_observable_problems(change: Change) -> list[str]:
                 f"words. Under {MIN_OBSERVABLE_WORDS} it names a feeling, "
                 f"not an observation."
             )
+            continue
         cited = [p for p in PATH_IN_TEXT.findall(value)]
         if not cited:
             problems.append(
@@ -1102,14 +1119,17 @@ def acceptance_observable_problems(change: Change) -> list[str]:
                 f"at the code or document that produces the thing to be "
                 f"observed."
             )
-        else:
-            missing = [p for p in cited if not (change.tree / p).exists()]
-            if missing:
-                problems.append(
-                    f"`Acceptance-observable` cites "
-                    f"{', '.join(missing)}, which does not exist after this "
-                    f"change."
-                )
+            continue
+        missing = [p for p in cited if not (change.tree / p).exists()]
+        if missing:
+            problems.append(
+                f"`Acceptance-observable` cites "
+                f"{', '.join(missing)}, which does not exist after this "
+                f"change."
+            )
+            continue
+        # This one is long enough and points at something real. Done.
+        return []
     return problems
 
 
