@@ -15946,3 +15946,15 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
 
+
+### 2026-09-26 — finished agent sessions left ~74 registered scratch worktrees behind, and now a scheduled sweep clears them (item 139 retired)
+
+**In plain words:** every automated session that worked on this repo registered a temporary working copy, and nothing ever unregistered it. About 74 of the repo's 90 registrations were leftover session scratch. The cost was disk and a registry nobody could read — not broken git state.
+
+**Why the obvious fix was not the fix.** The item's own filing correction said it plainly: none of those registrations was stale in git's sense, because every path still existed, so `git worktree prune` would have removed nothing. Shipping that prune alone would have looked like a fix and changed nothing.
+
+**What actually closes it.** The sweep does both halves. It clears registrations whose directory has since been deleted — what git's own prune does — and it additionally removes working copies that are merged into the base branch, clean, unlocked, owned by us and untouched for at least seven days, which is the half git will not do on its own. Removal never passes `--force`, so git refuses a dirty or unmerged copy as a second gate if one is dirtied between the check and the removal. It only ever sees this repo's own registrations, and refuses any path owned by a different user, so it cannot reach another tenant on this shared box. It reports by default and only acts when told to.
+
+**The schedule is the recorded rule.** A daily 04:10 ET systemd timer, deliberately off-hours because it is the one maintenance sweep that writes, running through a wrapper with a timeout. The seven-day idle floor means a working copy only becomes eligible long after its session ended, so a live agent's copy is never a candidate.
+
+**Verified, not assumed:** the sweep was read and its tests run, never executed — several agents held live scratch copies at the time, including the one retiring this item.

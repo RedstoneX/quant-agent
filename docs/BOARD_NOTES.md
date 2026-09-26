@@ -461,12 +461,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Update (2026-09-25) —** The code hole is closed: `.path` is now in `UNIT_SUFFIXES` (PR #642, 2026-09-24), and the four drift buckets are now covered by tests exercising a `.path` unit directly (they fail against the pre-#642 two-suffix set, proving the guard). `.path` units enable through `paths.target` rather than `timers.target`; the checker already handles this because it reads each unit's declared `WantedBy` target. The item stays OPEN on two of its own criteria: the suffix set is still a hand-maintained tuple rather than derived from the tracked files, and no run has yet compared the installed `quant-agent-status-board.path` on the box against the checkout.
 
-## item 139
-
-**Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
-
-**Sweep shipped 2026-09-25 —** `scripts/prune_worktrees.py` is the mechanical guard: it clears registrations whose scratch directory is gone (`git worktree prune`) and removes worktrees that are merged into `origin/main`, clean, unlocked, owned by us and idle >= 7 days (`git worktree remove`, never `--force`). Scoped by construction to this repo's own registered worktrees and refuses any path owned by another uid, so it can never touch another tenant on this shared box. Read-only by default; `--prune` acts. The swept-on-a-schedule rule is `scripts/systemd/quant-agent-worktree-prune.{service,timer}` (daily 04:10 ET, off-hours because it is the one maintenance sweep that writes), run through `scripts/run_worktree_prune.sh`. Detection logic is unit-tested against injected git/fs stubs plus a real-git integration test (`tests/test_prune_worktrees.py`).
-
 ## item 143
 
 **Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
