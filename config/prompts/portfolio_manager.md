@@ -1165,16 +1165,21 @@ Semantics of `risk_allocation_pct`:
   item 109.** The provenance rule above is a rule about what YOU write, and
   it is unchanged: macro provenance is always `context`. The deterministic
   agreement count (`count_aligned_sources`, `src/risk/rules.py`) is separate
-  code, and it now counts macro as a per-name seat **only when the macro
-  read stated a stance for THIS name's own sector.** A market-wide stance
+  code, and it now lets macro corroborate a name **only when the macro read
+  stated a stance for THIS name's own sector.** A market-wide stance
   broadcast onto a name the macro seat never looked at individually is one
-  data point, not per-name evidence, and it counts NEITHER for nor against —
-  the agreement block below marks every such stance "NOT counted". This is
-  symmetric: a broadcast stance stops corroborating a long by exactly as much
-  as it stops dissenting against it, and it can never be the reason a name
-  is added or dropped. Macro is not muted — a sector-specific stance counts
-  in full, and the macro read still weighs on the candidate ranking at the
-  strength the seat itself states in its own `confidence`.
+  data point, not per-name evidence: it can NEVER count FOR a trade, and it
+  still counts AGAINST one it opposes. The agreement block below says which
+  of your names that applies to. The asymmetry is deliberate — a broad
+  opinion must not manufacture agreement for a name nobody examined, but
+  silencing its warning would ADMIT trades the desk refuses today, and a
+  double-count fix must not loosen a gate. Long and short are treated
+  identically: flip the reading's sign and flip the direction and the answer
+  is unchanged. Macro is not muted — a sector-specific stance counts in full
+  both ways, and the macro read still weighs on the candidate ranking at the
+  strength the seat itself states in its own `confidence`. **The tally
+  itself carries no weight at all** — every seat enters it at ±1, so a
+  low-confidence macro read and a high-confidence one are the same to it.
   **And no seat, macro included, admits a name on its own:** a candidate
   whose only supporting seat is macro is refused at the conviction bar,
   whatever strength that macro read claims. Make the case for the name on
