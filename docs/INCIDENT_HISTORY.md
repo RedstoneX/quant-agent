@@ -31,6 +31,133 @@ what would catch it next time.
 
 **Both criteria are now met.** The second — which value the seat meant — is answered: 2.5%, and the emitted 0.5 was not an erroneous field. The sub-floor cap that caused it was retired 2026-09-17, so this exact path is no longer live; nothing restates the narrative after any mechanical size change, and that residual lag is what the detector surfaces. An earlier write-up claiming the emitted field was the error was withdrawn and its pull request closed.
 
+### 2026-09-26 — item 170 retired: a guessed disclosure date was scoring as a perfectly-timely one
+
+**In plain words:** one of the two free sources of congressional trading data
+does not publish the date a trade was disclosed at all. The desk filled that
+blank in with a guess — the legal deadline, 45 days after the trade — and then
+used its own guess to answer the question "was this disclosed on time?". The
+answer was always yes, because the guess was written to be exactly on the
+deadline. So the rows the desk knew LEAST about came out looking like the
+best-behaved ones, while rows with a real, measured date could and did fail.
+Real filings run later than the guess: across the rows that carry a genuine
+filing date the gap from trade to filing was a median of 60 days [measured,
+live read-only fetch, 2026-09-19], so the invented 45 flattered every
+unknown row.
+
+**Scale.** 1,653 of 4,800 congressional observations — 34.4% — carried the
+estimated date in the last full read-only snapshot of the feed [measured,
+2026-09-19]. This was not a corner case; it was a third of the evidence.
+
+**The rule that was violated.** An unknown must not be filled in with a value
+that makes a gate pass. An estimated filing date is missing data, not data.
+The failure was not the estimate itself — the estimate is honest and
+documented, and the desk needs *some* date to order rows by — it was letting
+that estimate flow into a test of the very thing it was invented to stand in
+for. Any gate whose input the desk manufactured cannot measure anything.
+
+**What was ruled out.** Sourcing a real disclosure date from elsewhere: the
+source has no filing-date field at all, so there is nothing to read. Widening
+or recalibrating the 45 toward the measured 60: that would be fitting a
+threshold to observed data, and the 45 is the one number here with a real
+source — it is the STOCK Act's own statutory filing deadline, not a
+tuning knob. Dropping estimated rows entirely: that hides evidence and makes
+a third of the feed silently vanish, which is a different defect. Nothing new
+was chosen, no constant moved, and the number ledger needed no change.
+
+**What was done instead.** The freshness gate now requires that a row's
+disclosure date be a real one *in addition* to being inside the ceiling, so an
+estimated row fails by construction rather than passing by construction — the
+symmetry is deliberate. The row is still carried, still shown, and now says
+what it is: the seat-facing summary reports how many of a symbol's rows have a
+guessed date, and every representative transaction carries its own flag, so a
+reader can tell a measured lag from an invented one wherever a lag is quoted.
+The desk therefore reports the true state — "we do not know when this was
+disclosed" — instead of either lying about it or hiding it.
+
+**What would catch it again.** Three assertions now sit together in one test
+so the pair cannot drift apart: an all-estimated cluster at lag 45 fails; the
+identical cluster with real dates at the same lag 45 still passes (proving
+this is not a blanket ban on rows at the ceiling, and not a source blacklist);
+and a real-date cluster past the ceiling still fails (proving the lag test
+itself is still live and was not quietly replaced by a provenance check). The
+second and third are the negative controls — the first assertion alone would
+also pass if someone disabled the gate outright.
+
+**The general shape, worth reusing.** Look for any threshold whose input the
+desk computes itself from a default. If the default is set at the threshold,
+the test is decorative. Grep for estimates written at exactly a limit.
+
+---
+
+### 2026-09-26 — the rule that keeps a profit target honest was quietly refusing to move it for the desk's best winners (item 114 retired)
+
+**Plain language.** A position's profit target is measured as "how far can
+this stock travel from where we bought it, in the time we gave the trade". If
+the stock runs hard, everything the chart offers inside that distance is now
+BEHIND the price, so the desk could only refuse to update the target — and
+the harder the position won, the more certain the refusal became. The target
+is now allowed one second attempt, measured from today's close over the time
+the position has LEFT, and only onto a real level still standing in its way.
+
+**MEASURED FIRST, and the count is zero.** Both refusals this item named
+(`REFUSAL_DERIVED_TARGET_BEHIND_PRICE`, `REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION`)
+have fired ZERO times. Two independent sources, read read-only on 2026-09-26:
+the production database holds 11,848 `specialist_evidence` rows spanning
+2026-08-17 to 2026-09-26 and NOT ONE of kind `target_revision` or
+`target_level_break`; the retained application logs cover 2026-08-21 to
+2026-09-26 and contain no "Target revised" or "Target revision refused" line
+at all. The revision code has been deployed since 2026-09-18. So the refusals
+are not rare — the whole path is DORMANT, because it only runs when a review
+seat raises a revision flag and no seat has ever raised one.
+
+**DECISION (orchestrator, 2026-09-26, under the 2026-09-18 delegation): build
+the remaining-horizon re-anchor anyway, and say plainly that no measurement
+supports it.** A zero count cannot distinguish "these refusals are correct"
+from "nobody has asked the question yet", and recording "the refusals stand"
+on the strength of a dormant path would be recording a measurement that was
+never taken. What does argue for building it is the code's own shape and the
+unmerged at-target work: the refusal rate rises with how right the desk was,
+which is not a safety property, and PR #726 (item 6) turns this same
+derivation on for EVERY held position on EVERY review, at which point the
+refusal stops being hypothetical and becomes the routine outcome for the
+largest winners in the book. That PR says so itself, in the comment above its
+`TARGET_CANNOT_EXTEND_CODES` set.
+
+**What was built, and what was deliberately NOT built.** The entry-anchored
+derivation is unchanged and still runs first. Only when it has already refused
+with "the target I derived is behind the price" does one fallback run: the
+same derivation, with the reach anchored on the latest completed close over
+the REMAINING horizon — the horizon pinned at entry minus the holiday-aware
+trading sessions the position has already used. Both numbers already existed
+and are already used elsewhere; nothing was invented and no constant was
+added.
+
+Three conditions keep the fallback from becoming the thing this item forbade
+— a target re-anchored on the current price alone, which would chase price
+and always be reachable:
+
+* The remaining horizon must be READ, never assumed. No pinned horizon or no
+  sessions-held count means no re-anchor at all.
+* The reach SHRINKS as the position spends its horizon. A position with one
+  session left reaches a third as far as one with ten, so the target cannot be
+  pushed out indefinitely by the price move; a position past its horizon
+  cannot re-anchor at all and is managed by its stop.
+* The re-anchored target must land on a STRUCTURAL LEVEL still in the way, and
+  must sit further from entry than the stored one. The measured-move fallback
+  is explicitly rejected here: "close plus some ATR" exists whatever the chart
+  looks like, which is the current price wearing a hat.
+
+**What this does NOT touch.** Progress and pace are still measured against the
+target pinned at entry, so a re-anchored target still cannot move the exit
+guard's veto. The module still places no orders. The refusal for a chart with
+no structure left in the trade's direction is unchanged, and no outcome code
+was added or renamed — deliberately, because PR #726 keys its
+trailing-stop-only state off those exact code strings and a new code would
+have silently changed that behaviour.
+
+---
+
 ### 2026-09-26 — the rule stopping the risk seat from making a trade BIGGER was enforced in two places at once (item 155 retired)
 
 **In plain words:** the risk seat is allowed to shrink a planned trade, never to grow one. That rule was being applied twice, in two different parts of the code, and the second copy was written for one side of the market and the first copy for the other. Nothing was mis-sized by it, but two copies of one safety rule is exactly how the copies drift apart and one of them stops matching. It is now enforced in one place, covering both buying and short selling, and a test fails the build if a second copy ever comes back.
