@@ -9021,6 +9021,25 @@ class TradingPipeline:
             return cached
         try:
             from src.data.correlation import build_correlation_matrix
+            # THE CORRELATION WINDOW (board item 148), recorded honestly.
+            # The bars that feed this matrix span `trading.lookback_days`
+            # (deployed 1800 ≈ 5 trading years, config/settings.yaml) — the
+            # SAME history fetched for MA200 and every other indicator, reused
+            # here rather than chosen for correlation. It has NO correlation-
+            # specific derivation: settings.yaml records the 320→1800 raise as
+            # "purely for structure" (deterministic support/resistance), and
+            # `build_correlation_matrix` needs only 20 overlapping daily returns
+            # (`df.corr(min_periods=20)`) over pairwise-complete observations, so
+            # the extra ~1,780 bars add older returns that may straddle regime
+            # changes rather than sharpen a cluster estimate. The window moved
+            # 120d → 5y silently on the switch to `trading.lookback_days`; this
+            # comment is the reason that was never recorded — it is INHERITED
+            # from the structural-level fetch, not justified for clustering.
+            # It is not a ledgered number: `trading.lookback_days` carries no
+            # numeric default (`Field(ge=1)` in src/config.py), so it is not a
+            # definition site the number-ledger scanner can attach an entry to;
+            # the 0.7 cutoff beside it (CLUSTER_CORRELATION_THRESHOLD) IS
+            # ledgered arbitrary.
             pool_bars = dict(ctx.symbols_bars)
             for p in positions:
                 if p.symbol not in pool_bars:

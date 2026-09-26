@@ -1543,6 +1543,36 @@ def _normalize_title_for_dup_check(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
+#: The board already writes this override by hand, in two phrasings seen on
+#: the live backlog: item 138's body says "Item 118 is a NEAR-NEIGHBOUR and
+#: does NOT cover this", item 183's says "Distinct from item 138, which
+#: tracks the order-PRICE buffers...". Neither pair actually trips the title
+#: check today (their titles are dissimilar enough on their own), but the
+#: title wording is free to change, and a future near-neighbour pair COULD
+#: land above `_DUP_TITLE_RATIO` by coincidence. When that happens the
+#: filing author needs a way to say "I know, and here is the other item" —
+#: without renaming a title just to dodge a mechanical check, which is its
+#: own kind of drift. The override must NAME the item it claims distinctness
+#: from; a bare "not a duplicate" with no number is not accepted, because
+#: that would let any flagged pair opt out with no accountable claim behind
+#: it. Matched against `raw_body` (markdown already stripped by
+#: `_parse_numbered_items`), case-insensitively, and read from BOTH sides of
+#: a flagged pair — either item may carry the marker naming the other.
+_NEAR_NEIGHBOUR_RE = re.compile(
+    r"item\s+(\d+)\s+is\s+a\s+near-neighbour", re.IGNORECASE)
+_DISTINCT_FROM_RE = re.compile(
+    r"distinct\s+from\s+item\s+(\d+)", re.IGNORECASE)
+
+
+def _explicit_distinct_targets(raw_body: str) -> set[int]:
+    """Item numbers this item's own body explicitly declares itself distinct
+    from — see the note above `_NEAR_NEIGHBOUR_RE`. Empty when the body
+    carries neither marker."""
+    targets = {int(n) for n in _NEAR_NEIGHBOUR_RE.findall(raw_body)}
+    targets |= {int(n) for n in _DISTINCT_FROM_RE.findall(raw_body)}
+    return targets
+
+
 def find_near_duplicate_open_items(work_md: Path) -> list[str]:
     """OPEN funnel-queue items whose own tidied title is the same finding
     filed twice. See the module note above `_DUP_TITLE_RATIO` for why this
@@ -1552,6 +1582,13 @@ def find_near_duplicate_open_items(work_md: Path) -> list[str]:
     is a job for the existing `load_funnel_queue` problem-reporting path,
     not this check, so an unparseable file reports nothing here rather than
     raising.
+
+    A pair that would otherwise be flagged is let through when either item's
+    own body NAMES the other as a deliberate near-neighbour (see
+    `_explicit_distinct_targets`) — the mechanical equivalent of the board's
+    existing "item N is a NEAR-NEIGHBOUR and does NOT cover this" / "distinct
+    from item N" prose, so that convention keeps working instead of being
+    overridden by a title coincidence.
     """
     items, problem = load_funnel_queue(work_md)
     if problem:
@@ -1575,6 +1612,9 @@ def find_near_duplicate_open_items(work_md: Path) -> list[str]:
                   >= _DUP_TITLE_RATIO):
                 kind = "near-identical"
             else:
+                continue
+            if (item_b.rank in _explicit_distinct_targets(item_a.raw_body)
+                    or item_a.rank in _explicit_distinct_targets(item_b.raw_body)):
                 continue
             flagged.append(
                 f"item {item_a.rank} and item {item_b.rank} look like the "

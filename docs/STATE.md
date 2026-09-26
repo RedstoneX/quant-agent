@@ -928,6 +928,14 @@ says the published schedule spans the whole horizon; every other case reads UNKN
 - Forcing/manufacturing trades for validation.
 - Live-capital promotion without separate explicit authorization.
 
+Live-capital activation is mechanically gated, not merely prohibited in prose:
+`AlpacaConfig._enforce_paper_only` (`src/config.py`) will not build a non-paper
+config unless `config.LIVE_TRADING_AUTHORIZED` has been flipped in a reviewed
+change AND the live-capital pre-flight gate
+(`src/live_capital_preflight.py`, board item 150) reports every condition
+satisfied. The gate — not `docs/FUTURE.md` — is the source of truth for the
+pre-flight checklist.
+
 ## Handoff
 
 Current bounded activities:
