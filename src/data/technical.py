@@ -65,9 +65,12 @@ def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
 #: briefed with (`config/settings.yaml` `lookback_days` was raised for it in
 #: the 2026-07-16 audit, which treated its absence as the analyst judging
 #: trend blind). Named here, not chosen here: it is the same 200 the
-#: `rolling(200)` below has always used. `PortfolioConstructor` reads it as
-#: the bar count under which an instrument is too YOUNG to be measured
-#: (docs/WORK.md item 180; item 54 is retired).
+#: `rolling(200)` below has always used -- a conventional published trend
+#: reference. It is NO LONGER a trade-governing gate: the constructor's
+#: young-listing bar-count refusal that also read this constant was dropped
+#: on the owner's ruling (docs/WORK.md item 180, 2026-09-25); a young name is
+#: now judged on whether a protective stop is readable from whatever bars
+#: exist, not on this count. `ma_200` simply stays None under 200 sessions.
 LONGEST_INDICATOR_WINDOW = 200
 
 

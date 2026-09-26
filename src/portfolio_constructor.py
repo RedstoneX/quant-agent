@@ -294,18 +294,22 @@ STOP_RULE_PRIOR_BAR_NO_ATR = "stop_read_from_prior_bar_no_atr"
 #: the same stock. The width test is on WHATEVER stop would ship — an
 #: honoured level, the absolute floor, the band, or the signal bar.
 STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
-#: The instrument has fewer completed sessions than the LONGEST indicator
-#: window the analyst is briefed with (`src/data/technical.py::
-#: LONGEST_INDICATOR_WINDOW`, the 200-session moving average). The 2026-
-#: 07-16 audit already treated that reference's absence as the analyst
-#: judging trend blind; a listing too young to have it also has too few
-#: repeated turning points for the level scan to say anything reliable.
-#: This is a refusal about the INSTRUMENT (a listing is young), not a data
-#: fault (a feed is dead) — PR #326's split classifies the latter. Read
-#: from `TechAnalysisResult.bars_available`, Python-set by the analyst from
-#: the bars it actually received; None (older row, hand-built object) is
-#: not judged, because an unknown count is not a short one.
-STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
+#: RETIRED as a constructor refusal (board item 180, owner ruling 2026-09-25).
+#: This named the young-listing refusal that fired on a bar COUNT: fewer
+#: completed sessions than `LONGEST_INDICATOR_WINDOW` (200) and the trade was
+#: turned away, however readable its stop and levels were. The owner dropped
+#: the count gate: a young listing is TRADEABLE when a defensible protective
+#: stop is readable from whatever bars exist and the seats clear it, and is
+#: refused ONLY when no stop can be read from the instrument -- the existing
+#: stop-readability rule (`_derive_structural_stop_no_atr` /
+#: `STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`, board item 80) is now the
+#: real gate, catching same-day-IPO / near-zero-bar names on what the trade
+#: needs rather than on a calendar count. Indicators already degrade to the
+#: bars that exist (`compute_indicators`), so a short history simply leaves
+#: `ma_200` = None, which the exit guard treats as UNPARSEABLE for any
+#: `thesis_invalid_if` that references it. The string is deliberately NOT
+#: reused here; the universe screen and the transient-admission lane keep
+#: their own separate `insufficient_history` gates (out of this item's scope).
 #: retired board item 49 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). The portfolio risk budget was spent
 #: before this candidate's turn came round. NOT a judgement about the idea:
 #: it passed every gate, and on a day with fewer competing names it would
@@ -857,8 +861,8 @@ class PortfolioConstructor:
 
         # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
         # "direction"}} for every trade this instance refused BY NAME —
-        # today STOP_REFUSAL_WIDER_THAN_REACH and
-        # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
+        # e.g. STOP_REFUSAL_WIDER_THAN_REACH and
+        # STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY. Written directly, never
         # recovered from log text: `last_drop_reasons`
         # is a regex over the constructor's own log lines and several
         # messages miss its pattern, so a refusal that mattered could reach
@@ -965,49 +969,6 @@ class PortfolioConstructor:
             action or ("SHORT" if str(direction).lower() == "short" else "BUY"),
             symbol, refusal, detail,
         )
-
-    def _require_sufficient_history(
-        self,
-        symbol: str,
-        analysis: TechAnalysisResult | None,
-        direction: str,
-    ) -> bool:
-        """True unless the instrument is too YOUNG to be measured.
-
-        The one narrow refusal that survived the 2026-09-12 replacement of
-        "no floor, no trade" (item 54, retired; this gate is now
-        docs/WORK.md item 180): a listing with fewer
-        completed sessions than the longest indicator window the analyst is
-        briefed with (`LONGEST_INDICATOR_WINDOW`, the 200-session moving
-        average) is refused by name, on both setup types, from the ONE
-        funnel `real_reward_risk_preview` and `_resolve_entry_and_stop`
-        share — FIRST, before the target derivation, because a listing this
-        young usually yields no levels either and the honest name for that
-        is this one, not the derivation's `no_structural_levels`. Nothing
-        about the chart's SHAPE is judged here — absent
-        structure is not a reason (no published method refuses a trade for
-        lack of support below); an unmeasurable instrument is.
-
-        Not a data fault: the bars arrived and are clean, there are simply
-        too few of them yet. A missing count (older persisted row, a
-        hand-built analysis) is not judged — an unknown count is not a
-        short one, and the desk does not refuse on what it did not measure.
-        """
-        count = getattr(analysis, "bars_available", None)
-        try:
-            count = int(count) if count is not None else None
-        except (TypeError, ValueError):
-            count = None
-        if count is None or count >= LONGEST_INDICATOR_WINDOW:
-            return True
-        self._note_refusal(
-            symbol, direction, STOP_REFUSAL_INSUFFICIENT_HISTORY,
-            f"only {count} completed session(s) of history against the "
-            f"{LONGEST_INDICATOR_WINDOW}-session window the analyst's own "
-            f"trend reference needs. Too young to measure, not a judgement "
-            f"about the chart: the name qualifies the day it has the history.",
-        )
-        return False
 
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
         """Same contract as `_construct_orders_impl` — see its docstring for
@@ -2052,17 +2013,14 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
-        # Too young to measure (item 54, 2026-09-12). Checked FIRST, before
-        # the target derivation: a listing with too few sessions usually
-        # also yields no levels, and "insufficient history" is the true
-        # name for that, not `no_structural_levels` (which PR #326 reads
-        # as a feed fault).
-        if not self._require_sufficient_history(
-            target.symbol, analysis, target.direction,
-        ):
-            # drop-reason: delegated — `_require_sufficient_history` files
-            # STOP_REFUSAL_INSUFFICIENT_HISTORY before returning False.
-            return (None, None)
+        #
+        # No young-listing count gate here any more (board item 180, owner
+        # ruling 2026-09-25): a short history is NOT refused on a bar count.
+        # Indicators degrade to the bars that exist upstream (`ma_200` = None
+        # under 200 sessions), and a name too young to read ANY stop from is
+        # caught below by the stop-readability rule (`_derive_structural_stop_
+        # no_atr` / `STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY`), on what
+        # the trade needs rather than on a calendar count.
 
         # The target is derived BEFORE the stop is finalised, because the
         # reward:risk check inside `_widen_stop_past_noise` needs a real
@@ -2447,13 +2405,11 @@ class PortfolioConstructor:
         entry_price = float(entry_price)
         is_short = direction == "short"
 
-        # Too young to measure — same check, same place in the funnel, as
-        # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
-        # constructor would refuse one stage later.
-        if not self._require_sufficient_history(
-            analysis.symbol, analysis, direction,
-        ):
-            return None
+        # No young-listing count gate here (board item 180, owner ruling
+        # 2026-09-25): the preview mirrors `_resolve_entry_and_stop`, which no
+        # longer refuses on a bar count. A name too young to read any stop from
+        # still previews None below when the stop-readability rule cannot place
+        # a stop, so the PM is not shown a candidate the constructor would drop.
 
         derivation = self._derive_target(
             analysis.symbol, analysis, entry_price, direction,

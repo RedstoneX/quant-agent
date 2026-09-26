@@ -41,7 +41,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
 from src.agents.base import agent_log_kwargs
@@ -6927,6 +6927,7 @@ def _reconcile_parse_loss(
 def _parse_loss_advisories(
     dropped: dict[tuple[str, str], int],
     book_symbols: set[str],
+    reasons: dict[tuple[str, str], str] | None = None,
 ) -> list:
     """The parse-loss advisories for this session, reconciled against the book.
 
@@ -6946,6 +6947,21 @@ def _parse_loss_advisories(
     from src.risk.rules import RiskViolation as _RV
 
     recovered, lost = _reconcile_parse_loss(dropped, book_symbols)
+    # Board item 158: name each lost row WITH its recorded reason, not just
+    # the symbol. `reasons` is keyed (model, key); re-key to the "Model:KEY"
+    # display string `_reconcile_parse_loss` produces so the advisory the RM
+    # reads carries the why, matching the row now persisted to the DB.
+    reason_by_name = {
+        f"{model}:{key}": why
+        for (model, key), why in (reasons or {}).items()
+    }
+
+    def _with_reason(names) -> str:
+        return ", ".join(
+            f"{name} ({reason_by_name[name]})" if name in reason_by_name else name
+            for name in names
+        )
+
     out: list = []
     if lost:
         n_lost = sum(lost.values())
@@ -6953,7 +6969,7 @@ def _parse_loss_advisories(
             rule="analysis_parse_loss",
             message=(
                 f"{n_lost} item(s) were discarded at parse this session "
-                f"and are absent from the book below: {', '.join(lost)} "
+                f"and are absent from the book below: {_with_reason(lost)} "
                 f"(TechAnalysisResult = a candidate PM never saw; "
                 f"TargetPosition = a position PM asked for and the desk "
                 f"could not read). The plan was therefore built from, or "
@@ -6984,6 +7000,73 @@ def _parse_loss_advisories(
             limit=0.0,
         ))
     return out
+
+
+#: `kind` for the per-stock parse-drop row written to `specialist_evidence`.
+#: Board item 158: the reason a symbol was dropped at parse used to live only
+#: in a log line and an aggregate count, so a later reader could not tell WHY
+#: a name was absent without the rotated log. One row per dropped symbol is now
+#: filed here, tied to that symbol and this run. Deliberately NOT
+#: `kind='pipeline_event'`: the jam detector (`src/refusal_signature.py`) reads
+#: every symbol-scoped `pipeline_event` row as "this session considered that
+#: stock as a new idea", and a parse drop is not one — same reasoning as
+#: `src/execution/exit_path_records.py`.
+ANALYSIS_DROP_KIND = "analysis_drop"
+
+
+def _persist_dropped_reasons(
+    db: Any,
+    run_id: str | None,
+    dropped: dict[tuple[str, str], int],
+    reasons: dict[tuple[str, str], str],
+    book_symbols: set[str],
+) -> int:
+    """File one `specialist_evidence` row per dropped symbol, WITH its reason.
+
+    This is the board-item-158 fix: the drop reason is stored alongside the
+    stock it was dropped for (queryable by `symbol` + `run_id`), not only in
+    the log. Rows whose own symbol could not be read (`UNIDENTIFIED_DROP_KEY`)
+    are skipped — there is no stock to file them against.
+
+    OBSERVABILITY ONLY. Never raises: a record that cannot be written must
+    never change the risk decision it is recording. `recovered` marks whether
+    the symbol reached the book despite the drop (a retry succeeded), the same
+    split `_reconcile_parse_loss` makes for the advisory. Returns the number of
+    rows written, for callers/tests.
+    """
+    if db is None or not dropped or not run_id:
+        return 0
+    import json as _json
+
+    written = 0
+    for (model, key), count in sorted(dropped.items()):
+        if key == UNIDENTIFIED_DROP_KEY:
+            continue
+        symbol = str(key).strip().upper()
+        if not symbol:
+            continue
+        recovered = symbol in book_symbols
+        payload = {
+            "stage": "analysis",
+            "outcome": "recovered" if recovered else "dropped",
+            "model": model,
+            "reason": reasons.get((model, key)) or "reason not recorded",
+            "count": int(count),
+            "recovered": recovered,
+        }
+        try:
+            db.insert_specialist_evidence(
+                run_id=str(run_id), agent_name="pipeline",
+                kind=ANALYSIS_DROP_KIND, scope="symbol", symbol=symbol,
+                evidence_json=_json.dumps(payload, sort_keys=True, default=str),
+            )
+            written += 1
+        except Exception as exc:  # noqa: BLE001 — a record is never authority
+            logger.warning(
+                "analysis-drop record for %s could not be written: %s",
+                symbol, exc,
+            )
+    return written
 
 
 class RiskStage:
@@ -7310,6 +7393,10 @@ class RiskStage:
         ctx.dropped_analyses = parse_telemetry.dropped_snapshot()
         ctx.null_coerced_fields = parse_telemetry.snapshot()
         dropped = ctx.dropped_analyses
+        # WHY each row was dropped, keyed the same as `dropped` (board item
+        # 158). Read live beside the counts so the reason and the count come
+        # from the same telemetry snapshot.
+        dropped_reasons = parse_telemetry.dropped_reasons_snapshot()
         if dropped:
             # RECONCILED against the book before anything is said about it.
             # A drop whose retry succeeded leaves its counter standing for
@@ -7338,7 +7425,17 @@ class RiskStage:
             recovered_names, lost_names = _reconcile_parse_loss(
                 dropped, book_symbols,
             )
-            rule_violations.extend(_parse_loss_advisories(dropped, book_symbols))
+            # Board item 158: file each dropped stock's REASON to
+            # `specialist_evidence`, tied to symbol + run, so a later reader
+            # can tell why a name was absent without the rotated log. Purely
+            # observational — a write failure never touches the risk decision.
+            _persist_dropped_reasons(
+                getattr(pipeline, "db", None), run_id, dropped,
+                dropped_reasons, book_symbols,
+            )
+            rule_violations.extend(
+                _parse_loss_advisories(dropped, book_symbols, dropped_reasons)
+            )
             if lost_names:
                 logger.error(
                     "Analysis parse loss reached the risk stage: %d item(s) "

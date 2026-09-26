@@ -418,6 +418,72 @@ def test_a_lost_advisory_seat_still_reaches_the_unsilenceable_alert():
     assert "news=failed" in alert.call_args[0][0]
 
 
+# ---------- item 154: the proceed-anyway decision is marked short-handed ----------
+
+
+def test_a_decision_made_short_handed_is_marked_as_such():
+    """Board item 154. When a seat is unreachable and the desk PROCEEDS
+    (advisory loss, owner mandate 2026-09-18), the owner message must say the
+    decision was made short-handed and name the missing seat — the mirror of
+    the skip banner, which fires only when the desk REFUSES (item 20)."""
+    from src.notifier import describe_short_handed_decision
+    record = evidence_gate.freshness(
+        {"tech": "ok", "macro": "ok", "news": "failed"}
+    ).to_evidence()
+    lines = describe_short_handed_decision(record)
+    text = "\n".join(lines)
+    assert "SHORT-HANDED" in text
+    assert "the news research" in text  # named in plain words
+    # Owner-facing: no internal seat keys or raw state tokens.
+    for banned in ("tech", "macro", "smart_money", "failed", "news="):
+        assert banned not in text, f"owner wording still contains {banned!r}"
+
+
+def test_a_fully_staffed_decision_is_not_marked_short_handed():
+    from src.notifier import describe_short_handed_decision
+    record = evidence_gate.freshness(
+        {"tech": "ok", "macro": "ok", "news": "remembered"}
+    ).to_evidence()
+    assert describe_short_handed_decision(record) == []
+
+
+def test_the_short_handed_mark_states_a_fact_and_never_a_verdict():
+    """Disclosure, not a threshold — the minimum-seat count is the owner's
+    (docs/WORK.md item 20). It may not grade or refuse on the count."""
+    from src.notifier import describe_short_handed_decision
+    record = evidence_gate.freshness({"tech": "ok", "news": "failed"}).to_evidence()
+    text = " ".join(describe_short_handed_decision(record)).lower()
+    for verdict_word in ("too few", "insufficient", "minimum", "below",
+                         "at least", "not enough", "should not have"):
+        assert verdict_word not in text
+
+
+def test_proceed_short_handed_message_carries_the_mark_but_a_skip_does_not():
+    """End to end through the session renderer: an advisory loss that PROCEEDS
+    gets the short-handed mark; an evidence-gate refusal does not (its own
+    'NOTHING WAS TRADED' banner already speaks for the missing seat)."""
+    from src.notifier import _append_evidence_freshness
+    proceeded = {
+        "status": "ok",
+        "evidence_freshness": evidence_gate.freshness(
+            {"tech": "ok", "news": "failed"}
+        ).to_evidence(),
+    }
+    lines: list[str] = []
+    _append_evidence_freshness(lines, proceeded)
+    assert any("SHORT-HANDED" in ln for ln in lines)
+
+    refused = {
+        "status": "evidence_gate_skip",
+        "evidence_freshness": evidence_gate.freshness(
+            {"tech": "failed"}
+        ).to_evidence(),
+    }
+    lines2: list[str] = []
+    _append_evidence_freshness(lines2, refused)
+    assert not any("SHORT-HANDED" in ln for ln in lines2)
+
+
 # ---------- the wiring ----------
 
 def _pipeline(data_status: dict):

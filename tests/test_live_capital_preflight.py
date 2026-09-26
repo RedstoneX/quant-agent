@@ -192,3 +192,151 @@ def test_shipped_attestation_ids_match_code():
     file_ids = set(raw["attestations"].keys())
     code_ids = {c.condition_id for c in lcp.MANUAL_CONDITIONS}
     assert file_ids == code_ids
+
+
+# --------------------------------------------------------------------------- #
+# The condition roster is pinned. Shortening the gate's list — dropping a
+# condition, or quietly moving one out of ACTIVATION scope so the live switch
+# stops asking about it — must fail a test. That is the whole point of item 150:
+# the checklist stops being prose that can be edited away without anyone
+# noticing.
+# --------------------------------------------------------------------------- #
+EXPECTED_MECHANICAL_IDS = (
+    "paper_only_guard_active",
+    "settings_declare_paper",
+)
+
+EXPECTED_MANUAL_IDS = (
+    "explicit_owner_approval",
+    "strategy_earned_live_capital",
+    "broker_capabilities_reviewed",
+    "threat_model_and_credential_design",
+    "governor_and_sentinel_specs",
+    "breaker_thresholds_and_escalation_matrix",
+    "broker_local_reconciliation",
+    "failure_mode_tests_passed",
+    "deployment_change_control_incident_recovery",
+    "capital_promotion_criteria",
+    "live_readiness_review_signed",
+    "margin_2x_rederived_for_live",
+)
+
+
+def test_condition_roster_is_pinned():
+    assert tuple(c.condition_id for c in lcp.MECHANICAL_CONDITIONS) == \
+        EXPECTED_MECHANICAL_IDS
+    assert tuple(c.condition_id for c in lcp.MANUAL_CONDITIONS) == \
+        EXPECTED_MANUAL_IDS
+
+
+def test_activation_scope_roster_is_pinned(tmp_path):
+    """Every manual condition is evaluated at the live switch, and none may be
+    dropped from that scope without this failing."""
+    att = _write(tmp_path / "att.yaml", yaml.safe_dump({"attestations": {}}))
+    gate = lcp.evaluate(
+        settings_path=_paper_settings(tmp_path),
+        attestations_path=att,
+        scope=lcp.ACTIVATION,
+    )
+    assert tuple(r.condition_id for r in gate.results) == EXPECTED_MANUAL_IDS
+
+
+def test_audit_scope_covers_every_condition(tmp_path):
+    att = _write(tmp_path / "att.yaml", yaml.safe_dump({"attestations": {}}))
+    gate = lcp.evaluate(
+        settings_path=_paper_settings(tmp_path),
+        attestations_path=att,
+        scope=lcp.AUDIT,
+    )
+    assert tuple(r.condition_id for r in gate.results) == \
+        EXPECTED_MECHANICAL_IDS + EXPECTED_MANUAL_IDS
+
+
+def test_unknown_scope_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        lcp.evaluate(
+            settings_path=_paper_settings(tmp_path),
+            attestations_path=tmp_path / "missing.yaml",
+            scope="whatever",
+        )
+
+
+# --------------------------------------------------------------------------- #
+# assert_live_capital_authorized — the callable the paper-only guard uses.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("cond", lcp.MANUAL_CONDITIONS, ids=lambda c: c.condition_id)
+def test_activation_refuses_when_any_single_condition_unmet(tmp_path, cond):
+    data = _all_attested()
+    data["attestations"][cond.condition_id]["attested"] = False
+    att = _write(tmp_path / "att.yaml", yaml.safe_dump(data))
+    with pytest.raises(lcp.LiveCapitalBlocked) as exc:
+        lcp.assert_live_capital_authorized(
+            settings_path=_paper_settings(tmp_path), attestations_path=att
+        )
+    assert cond.condition_id in str(exc.value)
+
+
+def test_activation_passes_when_all_attested(tmp_path):
+    att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
+    gate = lcp.assert_live_capital_authorized(
+        settings_path=_paper_settings(tmp_path), attestations_path=att
+    )
+    assert gate.passed
+
+
+def test_activation_fails_closed_on_missing_attestation_file(tmp_path):
+    with pytest.raises(lcp.LiveCapitalBlocked):
+        lcp.assert_live_capital_authorized(
+            settings_path=_paper_settings(tmp_path),
+            attestations_path=tmp_path / "nope.yaml",
+        )
+
+
+# --------------------------------------------------------------------------- #
+# The gate sits at the lock point: src/config.py AlpacaConfig.
+# --------------------------------------------------------------------------- #
+def test_live_trading_is_not_authorized_in_the_shipped_code():
+    from src import config as cfg
+
+    assert cfg.LIVE_TRADING_AUTHORIZED is False
+
+
+def test_config_refuses_live_when_not_code_authorized():
+    from src.config import AlpacaConfig
+
+    with pytest.raises(Exception) as exc:
+        AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
+    assert "not authorized" in str(exc.value)
+
+
+def test_config_refuses_live_when_gate_blocks(monkeypatch):
+    """Code-authorized but a condition unmet: refused, and the refusal names it."""
+    from src import config as cfg
+
+    monkeypatch.setattr(cfg, "LIVE_TRADING_AUTHORIZED", True)
+    with pytest.raises(Exception) as exc:
+        cfg.AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
+    message = str(exc.value)
+    assert "pre-flight gate" in message
+    assert "explicit_owner_approval" in message
+
+
+def test_config_allows_live_only_when_code_authorized_and_gate_passes(
+    monkeypatch, tmp_path
+):
+    """The one path to a live account: code-authorized AND every condition met."""
+    from src import config as cfg
+
+    att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
+    settings = _paper_settings(tmp_path)
+
+    real = lcp.assert_live_capital_authorized
+
+    def _passing(**_kwargs):
+        return real(settings_path=settings, attestations_path=att)
+
+    monkeypatch.setattr(cfg, "LIVE_TRADING_AUTHORIZED", True)
+    monkeypatch.setattr(lcp, "assert_live_capital_authorized", _passing)
+
+    conf = cfg.AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
+    assert conf.paper is False

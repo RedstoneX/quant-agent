@@ -417,14 +417,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 **Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it. This is a mandate question, not an engineering one, but it is no longer one that waits on him.
 **Moved from WORK.md (2026-09-24) —** **(a) To be decided by the orchestrator after an adversary run (2026-09-18 ruling) — does macro count as a seat in the agreement gate?** `count_aligned_sources` counts macro ±1 alongside technical/news/earnings/smart_money and flips macro's polarity for inverse ETFs, so the code treats a regime read as per-name evidence **by design**; the PM's sheet said twice, emphatically, that it never counts. On 2026-09-17 a name was killed when a bullish regime read cancelled a bearish filing, and another scored full agreement on macro plus a filing with no technical read at all. The sheet now states the truth and flags the disagreement; the GATE is unchanged because changing it moves trades. The regime-not-evidence side is the PM prompt's own provenance rule, **not** `docs/OUTCOME.md` — that miscitation has already been made twice. Either macro is per-name evidence or it is the regime the book sits in; decide, then make one of the two match. **(c) Dead weight.** ~35% of the PM's sheet, ~26% of the risk manager's and ~24% of the reviewer's is recitation of machinery the model does not perform. Deleting it is the durable fix; done only where a claim was false, because deleting a load-bearing recitation changes behaviour (the reviewer's trigger vocabulary is the clear case — a seat that does not know the words has every exit silently dropped).
 
-## item 115
-
-**Plain language —** The raw insider-filing gobbledygook you complained about is gone from the new "Why" tab, but there is a second screen — the run-detail popup — that still prints the same kind of raw machine text if you open it.
-**Why a separate number —** it was already written down, but buried inside item 106's paragraph about the Why tab, and you asked directly for this to be recorded on its own so it does not get missed or later mistaken for a duplicate of the fixed one.
-**Recommendation —** Same fix as item 106: put the raw evidence behind a labelled toggle in this view too, rather than dumping it as text.
-
-**Moved from WORK.md (2026-09-24) —** The "Why" tab shipped 2026-09-18 (item 106) put `raw_evidence` behind a labelled-rows toggle, but the run-detail modal is a separate surface: `LifecycleTimeline` (`frontend/src/components/LifecycleTimeline.tsx`) has a generic `detailsText()` renderer that `JSON.stringify`s any object-valued field in `event.details`, with no exclusion for `specialist_evidence` — a real column (`src/api/db_reads.py`, `get_specialist_evidence`) that can land in there. Untouched by the Why-tab work; still reachable from `RunDetailModal.tsx`. See item 106 for the surface that WAS fixed.
-
 ## item 180
 
 **Plain language —** Before the desk will buy anything it checks how long the stock has been listed, and refuses outright if it has fewer than 200 trading days of history. That 200 is not a separate safety number: it is the same 200 used for the 200-day average line on a chart (`LONGEST_INDICATOR_WINDOW`, one constant doing two jobs). A young name is therefore turned away for failing a calendar count rather than for missing anything the trade itself needs — at 89 sessions the only measurement that does not compute is that one average; the volatility reading needs 14 bars, the support/resistance scan needs 14, and the 20- and 50-day averages compute normally. That average is used in exactly three places outside the file that computes it — the data record, the text handed to the technical analyst, and the exit guard — and in none of the sizing, stop, target or ranking maths [verified by grep, 2026-09-23]. The history really is short, not merely unfetched: the desk asks for 1,800 calendar days of bars.
@@ -493,10 +485,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
 
-## item 140
-
-**Moved from WORK.md (2026-09-24) —** A rule telling agents to grep first is what already failed.
-
 ## item 143
 
 **Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
@@ -511,11 +499,17 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** Separately, the correlation-cluster window silently moved from 120 days to 5 years with no recorded reason; the 0.7 threshold itself is already in the ledger as arbitrary and is not re-filed here.
 
+**RESOLVED 2026-09-25.** Two level-ranking literals: already closed on main — the `/ 10.0` strength divisor is the named, ledgered `LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (PR #684) and the flat 40% max-distance cap was removed 2026-09-12 (ATR `horizon_reach`, already ledgered). Correlation window: cannot carry a ledger row — it rides `trading.lookback_days`, which has no numeric default and so is not a definition site the scanner can attach an entry to. Took the DONE-WHEN "recorded reason" branch instead: the reason is now written at `_ensure_correlation_matrix` and cross-referenced beside `CLUSTER_CORRELATION_THRESHOLD`. The honest reason is that the 5y window is INHERITED from the structural-level fetch (settings.yaml records the 320→1800 raise as "purely for structure"), never chosen for clustering, which needs only 20 overlapping returns. No number-ledger count change; no value or behaviour changed.
+
 ## item 152
 
-**Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19) — the news seat still uses the whole-answer parser and is unmeasured against this fix.
+**Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19).
+
+**News-seat half closed (2026-09-25, #695).** The news answer is a single nested report, not a list of rows, so its per-entry salvage is `_drop_invalid_state_changes` / `_drop_invalid_stock_news` (a bad state-change or stock-news bullet is dropped alone, the rest of the report survives), and its whole-answer failures are the two the retained forensic dumps actually showed — genuine non-answers ("I need more context…") with nothing to salvage. #695 gave the whole-answer non-JSON path the same one paid heal retry the schema-validation path already had, removed the retry-flag leak on the long-lived instance that had disabled that retry for every later failure of the run, and reworded the final exhausted-retry lines so `log_health` classifies them under `seat_answer_unreadable`; every exhausted failure persists its raw payload rather than being paid-and-discarded. Recovery-on-retry, no cross-call flag leak, and payload persistence are each pinned by tests in `tests/test_news.py`.
 
 ## item 154
+
+**Marked short-handed (2026-09-25) —** Verified first: an unreachable seat already sets `data_status[seat]="failed"`, which the evidence-freshness disclosure ("no answer at all: …"), the "degraded:" line and the unsilenceable data-quality alert all surface owner-facing and durably. What was still missing was the MARK: on a refusal (item 20) the owner sees "DECISION SKIPPED — NOTHING WAS TRADED", but on the proceed-anyway case the absence read as neutral freshness with nothing saying the desk went ahead short-handed. Added the mirror — a `DECIDED SHORT-HANDED` block that names the absent seat(s) in plain words and states the decision was made without them — rendered on every proceed (morning/midday/close/once/intra) and suppressed on a skip so the two banners never double up. Disclosure only, no threshold, no `data_status` key added; reuses the existing `evidence_freshness.absent_seats` already carried in the result. Reproduction proof: the pre-fix disclosure never contained "SHORT-HANDED"; `tests/test_evidence_gate.py` covers the mark, the fully-staffed no-mark case, the no-verdict rule and the proceed-vs-skip split.
 
 **Moved from WORK.md (2026-09-24) —** Distinct from item 20, which refuses a decision when a seat's answer is LOST entirely — this is the proceed-anyway case, and nothing tracks it.
 
@@ -535,7 +529,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Alert shipped 2026-09-25 —** the auto-expiry now sends the owner the same-surface Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger and that it auto-expired), keeping the `auto_reset` DB event and log; delivery is durable/retryable with the same claim state machine the quota-recovery alert uses. Still open: the two unledgered constants below remain unmeasured.
 
-**Moved from WORK.md (2026-09-24) —** Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
+**Moved from WORK.md (2026-09-24) —** Also unmeasured: the 15-min cooldown (midpoint of the 30-min paid-run gap) and the 19/day allowance (one per paid run) have not met a real occurrence, and neither is covered by the number-ledger check.
+
+**Ledger gap is STRUCTURAL, not an oversight (verified 2026-09-25).** Both constants live in `LLMCostCircuitConfig`, which is DELIBERATELY outside the ledger's `SCOPED_CONFIG_CLASSES` (the scanner's own comment names "LLM cost circuits" as settings with "nothing to do with a trade"). Closing the gap would mean scoping the whole cost-circuit class and ledgering every numeric field in it — a scope-policy change, not bookkeeping — and even then `max_transient_latch_auto_clears_per_day` uses a `default_factory` (`_paid_run_count()`), which the scanner structurally cannot see (its own docstring lists this as uncatchable). So there is no clean two-row ledger add here; left for the owner/scope call, not fixed in the item-148 pass. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
 
 ## item 187
 
@@ -553,7 +549,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **"Zero nominations" finding CORRECTED — not a defect.** The `model_dump()` shape does NOT lose nominations in the live flow: `ctx.macro_analysis` is canonically a dict (its type comment; PM reads it with `.get()`), and macro nominations are collected exactly once inside `MorningResearchStage._collect_seat_nominations`, which completes BEFORE `_heal_lost_research_seats` runs. So the shape cannot change any nomination outcome, and changing the heal to emit a model object would fix nothing. What remains true is a deeper SEQUENCING limitation — because collection precedes the heal, a healed macro's nominations are never collected at all — which is a separate question, not the shape bug the original finding described.
 
-**Still OPEN on 179:** the `mechanical_heal_macro` dead-code call (wire or remove — OWNER decision), and the scheduled-save warning-swallow finding (pre-existing, report-only).
+**`mechanical_heal_macro` dead code REMOVED (2026-09-25).** Verified no `src/` caller: the coercion it wrapped (`coerce_macro_shape`) is already wired into every live macro consumption point (`macro_analyst`, `portfolio_manager`, `pipeline_stages`, `pipeline`), and the live heal orchestration (`_heal_lost_research_seats`) uses paid retries, not this unpaid HealResult wrapper — there was no intended fallback for it to be wired into. The function and its four test-only cases were deleted; the still-live helpers and their tests were kept.
+
+**Still OPEN on 179:** the scheduled-save warning-swallow finding (pre-existing, report-only).
 
 ## item 181 — RETIRED 2026-09-24
 

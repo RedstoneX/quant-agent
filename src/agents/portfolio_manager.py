@@ -28,6 +28,8 @@ from src.risk.rules import (
     EARNINGS_STANCE_MAX_AGE_DAYS,
     _gross_multiplier,
     book_exposure as _book_exposure,
+    own_bar_block_reason,
+    own_bar_opposition_reason,
     count_aligned_sources,
     count_opposing_sources,
     position_weight_pct,
@@ -36,8 +38,8 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.rotation import (
-    RotationOpportunity, RotationPrecheck, evaluate_rotation,
-    funding_view_measured, holdings_below_entry_bar,
+    RotationOpportunity, RotationPrecheck,
+    evaluate_rotation, funding_view_measured, holdings_below_entry_bar,
     rotation_binding_constraints,
 )
 from src.trading_calendar import et_today
@@ -640,7 +642,42 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             # resolve one symbol's sector identically (item 31, 2026-09-13).
             symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
+
+        # R7 — the 2026-09-25 owner conviction bar, applied ONCE here to the
+        # candidate_eligibility result and consumed by BOTH sides below: the
+        # PM prompt (ENTRY) and, through the same `blocked` set,
+        # `holdings_below_entry_bar` / rotation's `ineligible_hold` tier
+        # (STAYING). One definition, both sides. It rides on TOP of the R2-R6
+        # pre-decision gates rather than inside `candidate_eligibility`, so the
+        # audit shadow (`ops/model_policy/deterministic_selection.py`) still
+        # mirrors those gates exactly; R7 is a NEW governance overlay on seat
+        # AGREEMENT, separate from the §9.4 net-evidence floor and from the
+        # continuous ranking score. `_apply_conviction_bar` moves any ENTRY
+        # candidate that fails the bar out of `ranked` and into `blocked`, so the
+        # constructor's budget ordering (`last_candidate_ranking`) can never
+        # fund a name the bar refused. For a currently-HELD name the STAY side
+        # is OPPOSITION-ONLY (owner ruling 2026-09-25): it is culled into
+        # `blocked` only when a seat is actively opposed; a held name that fails
+        # the ENTRY bar on soft grounds (no technical read, neutral technical,
+        # support faded to neutral) is simply dropped from the ranked survivors
+        # with no cull reason — it earns its right to STAY.
+        _held_now = {
+            (p.symbol or "").strip().upper()
+            for p in positions if (p.symbol or "").strip()
+        }
+        ranked, blocked = self._apply_conviction_bar(
+            ranked=ranked, blocked=blocked, held_symbols=_held_now,
+            all_verdicts=self._collect_seat_verdicts(
+                analyses=analyses,
+                news_intel=news_intel,
+                macro_analysis=macro_analysis,
+                earnings_analyses=earnings_analyses or [],
+                smart_money_findings=smart_money_findings,
+                symbol_sectors=kwargs.get("symbol_sectors") or {},
+            ),
+        )
         self.last_candidate_ranking = list(ranked)
+
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # Phase 14 — opportunity-cost rotation. The ranking above orders
@@ -1471,7 +1508,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
               `stop_wider_than_instrument_reach` or
-              `insufficient_history` (docs/WORK.md item 54, 2026-09-12).
+              `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
+              item 180 dropped the young-listing bar-count refusal).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM
               being shown a name that funnel has already refused. Absent
@@ -1793,6 +1831,95 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         )
         blocked = {s: why for s, why in eligibility.items() if why}
         return ranked, blocked
+
+    @staticmethod
+    def _apply_conviction_bar(
+        *,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
+        held_symbols: set[str],
+        all_verdicts: list[AnalystVerdict],
+    ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
+        """The 2026-09-25 owner conviction bar (R7), applied to the ranking.
+
+        A NEW governance overlay on top of `candidate_eligibility`'s R2-R6
+        pre-decision gates: the ROLE-BASED conviction bar
+        (`own_bar_block_reason`). A name is admitted only if the technical seat
+        confirms timing (a timing VETO, no positive weight), NO seat is opposed,
+        and at least one NON-technical seat took a supported directional side
+        (`_has_supported_directional_thesis` — not a genuine specificity or
+        falsifiability test; News and Smart-money always synthesise their
+        invalidation). Deliberately OUTSIDE
+        `candidate_eligibility` so the audit shadow
+        (`ops/model_policy/deterministic_selection.py`) keeps mirroring those
+        gates exactly.
+
+        ENTRY vs STAY — two verdicts from ONE bar (owner ruling 2026-09-25):
+
+          * ENTRY (a candidate NOT in `held_symbols`): full-strict. Any R7
+            failure — technical veto, opposition, OR a soft miss (no supported
+            directional thesis) — moves the name OUT of `ranked` and INTO
+            `blocked` under `CONVICTION_BAR_REASON_PREFIX`. Unchanged.
+          * STAY (a candidate IN `held_symbols`): OPPOSITION-ONLY. A held name
+            is culled into `blocked` (which rotation's `ineligible_hold` tier
+            reads) ONLY when a seat is ACTIVELY OPPOSED to the held direction
+            (`own_bar_opposition_reason` non-None). A held name that fails the
+            entry bar on SOFT grounds — no technical read this review, a
+            neutral/non-confirming technical read, or support that faded to
+            neutral — is dropped from the ranked survivors (it does not belong
+            in the fresh-entry budget order) but gets NO cull reason: it earns
+            its right to STAY. The price-thesis-break exit
+            (`src.risk.exit_guard`) handles genuine deterioration separately.
+
+        Supportive/opposed are read from the SEAT VERDICTS
+        (`AnalystVerdict`), one source of "which seat took which side" — a long
+        is supported by a bullish verdict, a short by a bearish one — so this
+        never introduces a second notion of "aligned".
+
+        SAFETY INVARIANT this relies on (not enforced by the type system): every
+        symbol in `ranked` is expected to already carry a technical verdict in
+        `by_symbol`, because ranking itself is derived from technical reads (see
+        `_render_candidate_ranking`: "no Technical reads this session -> nothing
+        to rank"). So the "absent technical read" branch is expected to never
+        fire for a real ranked name — a ranked name with no technical verdict at
+        all would mean that upstream invariant broke. It is logged loudly below
+        when it does; the name is still handled safely (an entry candidate is
+        refused, a held name drops from survivors without a spurious cull).
+        """
+        by_symbol: dict[str, list[AnalystVerdict]] = {}
+        for v in all_verdicts:
+            by_symbol.setdefault(v.symbol.upper(), []).append(v)
+        held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
+        blocked = {s: list(why) for s, why in blocked.items()}
+        survivors: list[RankedCandidate] = []
+        for c in ranked:
+            sym = c.symbol.upper()
+            sym_verdicts = by_symbol.get(sym, [])
+            if not any(v.seat == "technical" for v in sym_verdicts):
+                logger.warning(
+                    "R7 conviction bar: ranked candidate %s carries no "
+                    "technical verdict in by_symbol — the ranked-implies-"
+                    "technical invariant broke upstream; handling %s per the "
+                    "absent-technical branch (not a silent cull, not a crash)",
+                    sym, sym,
+                )
+            reason = own_bar_block_reason(
+                sym_verdicts, direction=c.direction,
+            )
+            if reason is None:
+                survivors.append(c)
+            elif sym in held:
+                # STAY: opposition-only. A soft miss drops the name from the
+                # entry budget order but never adds a cull reason.
+                opposition = own_bar_opposition_reason(
+                    sym_verdicts, direction=c.direction,
+                )
+                if opposition is not None:
+                    blocked.setdefault(sym, []).append(opposition)
+            else:
+                # ENTRY: full-strict.
+                blocked.setdefault(sym, []).append(reason)
+        return survivors, blocked
 
     @staticmethod
     def _render_candidate_ranking(

@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 141, (
+    assert MAX_ARBITRARY_ENTRIES == 140, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -270,6 +270,17 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "the owner ruling. No published method fixes a buffer size, so it is "
         "recorded honestly as `arbitrary`, ratified as owner-appetite with its "
         "open question and cost stated."
+        "141 -> 140 on 2026-09-25, board item 180 (owner ruling): "
+        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was reclassified "
+        "`arbitrary` -> `sourced`. Its WEAKER, unsourced use -- the "
+        "constructor's `_require_sufficient_history` young-listing refusal that "
+        "read the same 200 as a bar-count data-sufficiency gate -- was removed "
+        "on the owner's ruling (a young listing is now judged on whether a "
+        "protective stop is readable, via the existing stop-readability rule, "
+        "not on a bar count). With that use gone the constant's only remaining "
+        "use is the sourced 200-day MA window, so the row is `sourced` again. A "
+        "use was removed, not a value changed, so the count is lowered in the "
+        "same commit."
     )
 
 
@@ -294,6 +305,51 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
 
     values = [e["value"] for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(values) == MAX_ARBITRARY_ENTRIES
+
+
+def test_item_138_order_price_buffers_have_one_source_each() -> None:
+    """Board item 138. The order-price buffers carry three values across many
+    sites — the 3% stop-limit through-buffer and the 0.5% exit offset
+    (0.995 SELL / 1.005 COVER). Each value must have exactly ONE `arbitrary`
+    definition; every other site that prices off it is `derived` from that one
+    base, so the buffer cannot silently acquire a second, divergent source of
+    truth. The general gate value-matches each literal; this pins the
+    consolidation itself, which is what item 138 asked for.
+    """
+    ledger = load_ledger()
+
+    stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
+    exit_offset = "src.pipeline_stages.ExecutionStage._run_session:factor[0]"
+
+    # The two canonical bases: arbitrary, with their unchanged values.
+    assert ledger[stop_buffer]["status"] == "arbitrary", stop_buffer
+    assert ledger[stop_buffer]["value"] == 0.03, stop_buffer
+    assert ledger[exit_offset]["status"] == "arbitrary", exit_offset
+    assert ledger[exit_offset]["value"] == 0.995, exit_offset
+
+    # Every other order-price site at these values derives from the base above.
+    derived_from_base = {
+        "src.pipeline.TradingPipeline._force_delever:factor[1]": stop_buffer,
+        "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
+        "src.pipeline_stages._projected_post_sale_book:factor[1]": exit_offset,
+    }
+    for site_id, base in derived_from_base.items():
+        assert ledger[site_id]["status"] == "derived", site_id
+        assert ledger[site_id]["derived_from"] == base, site_id
+
+    # No SECOND arbitrary source for any of these buffer values.
+    for value in (0.03, 0.995, 1.005):
+        arbitrary_at_value = [
+            site_id
+            for site_id, entry in ledger.items()
+            if entry.get("status") == "arbitrary" and entry.get("value") == value
+        ]
+        assert len(arbitrary_at_value) <= 1, (value, arbitrary_at_value)
 
 
 def test_every_arbitrary_entry_carries_its_debt() -> None:

@@ -1571,6 +1571,42 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
     return lines
 
 
+def describe_short_handed_decision(freshness: Any) -> list[str]:
+    """When the desk WENT AHEAD with a research seat absent, mark it as such.
+
+    Symmetric to `describe_skipped_decision`. Board item 20 REFUSES when a
+    blocking seat's answer is lost, and that refusal is marked out loud
+    ("DECISION SKIPPED — NOTHING WAS TRADED"). Board item 154 is the
+    OTHER half: an advisory seat was unreachable, the desk proceeded and
+    decided anyway, and nothing said the decision was made short-handed —
+    the absence read exactly like a seat that had nothing to say. This is
+    that missing mark.
+
+    Disclosure only, not a threshold: it names the seat(s) that returned no
+    answer and states the decision was made without them. It refuses
+    nothing and grades nothing — the minimum-seat count is the owner's
+    (docs/WORK.md item 20), and none may be invented here.
+
+    Reads the same `evidence_freshness.to_evidence()` record the freshness
+    block does, using its `absent_seats` (a seat unreachable this tick, or
+    one whose answer never arrived — the case item 154 names). Returns []
+    when no seat was absent, so a fully-staffed decision costs nothing, and
+    the CALLER is responsible for not rendering it on a refusal, where the
+    skip banner already speaks for the missing seats.
+    """
+    if not isinstance(freshness, dict):
+        return []
+    absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
+    if not absent:
+        return []
+    return [
+        "<b>DECIDED SHORT-HANDED — a research seat could not be reached</b>",
+        f"   • the desk went ahead and decided without {_seat_list_words(absent)}",
+        "   • that research returned no answer this tick, so its view is "
+        "missing from this decision",
+    ]
+
+
 def describe_universe_changes(block: Any) -> list[str]:
     """The owner-facing account of what the universe screen changed.
 
@@ -1632,12 +1668,25 @@ def _append_universe_changes(lines: list[str], result: dict) -> None:
 
 
 def _append_evidence_freshness(lines: list[str], result: dict) -> None:
-    """Put the freshness disclosure into a session message body."""
+    """Put the freshness disclosure into a session message body, and — when
+    the desk PROCEEDED with a seat absent — the short-handed mark (item 154).
+
+    The short-handed mark is suppressed on an evidence-gate refusal: that
+    path already carries its own "DECISION SKIPPED — NOTHING WAS TRADED"
+    banner naming the missing seat, so marking it short-handed too would say
+    the same thing twice and, worse, imply the desk went ahead when it did
+    not."""
     if not isinstance(result, dict):
         return
     block = describe_evidence_freshness(result.get("evidence_freshness"))
     if block:
         _new_section(lines, *block)
+    if result.get("status") != "evidence_gate_skip":
+        short_handed = describe_short_handed_decision(
+            result.get("evidence_freshness")
+        )
+        if short_handed:
+            _new_section(lines, *short_handed)
 
 
 def describe_skipped_decision(
