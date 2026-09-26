@@ -820,15 +820,14 @@ risk:
   # "could it reach that level at all" is a wider question than "how far do I
   # claim it goes when no level says otherwise".
   max_target_reach_atr_multiple: 1.5
-  # SEPARATED 2026-09-13 (docs/WORK.md item 56). The same 1.5 above was also
-  # the threshold that REFUSES a trade for having too wide a stop — a
-  # target-ESTIMATION number doing risk-REFUSAL work, with no derivation on
-  # record for either job. The value is unchanged so behaviour is unchanged;
-  # what changed is that the two jobs now have two knobs and can no longer be
-  # moved by accident together. Neither is derived. See item 56 for what the
-  # gate is worth today: at this multiple it refuses only a stop with under a
-  # 2% chance of being touched inside the horizon.
-  max_stop_width_reach_atr_multiple: 1.5
+  # DELETED 2026-09-26 (board item 56, route (c)): `max_stop_width_reach_atr_
+  # multiple` was the threshold that REFUSED a trade for having too wide a
+  # stop. It is gone, not retuned, and re-adding the key now raises at config
+  # load. Measured first: across 648 sized stops in production it refused
+  # zero trades, and the widest stop it ever saw was 1.29 x ATR x sqrt(H)
+  # against its 1.5 cap. What answers a wide stop is the position size, which
+  # is the response the literature actually prescribes. The touch-probability
+  # READING is unchanged and still stamped on every sized stop.
   # Guard on the analyst's expected_horizon_sessions before it enters sqrt().
   max_target_horizon_sessions: 60
   # The model's target is kept as EVIDENCE, never as arithmetic. Above this

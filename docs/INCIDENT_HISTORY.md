@@ -38,6 +38,232 @@ what would catch it next time.
 
 **Still open, and it is the part that governs money.** The trade-picking sheet's whole sizing arithmetic exists only as prose: conviction bases of 3.0, 1.75 and 0.75 with ranges around them, a 0.25 bonus at a reward:risk of 3, a halving at eight days stale, a half-point shade inside each range. The technical sheet's "three aligned signals", its 1-3 / 4-7 / 8+ freshness tiers and its forward-PE 40/60 and price-to-sales 15/25 levels are the same shape. Every one was checked against the code on 2026-09-26: no function computes any of them, and none is in the number ledger. Under the desk's own doctrine an unsourceable number comes out of the path rather than being ratified quietly — removing a sizing formula from the sheet that sizes trades is a money decision, not a documentation pass, so it is filed rather than done here.
 
+### 2026-09-26 — the file the desk consults so it never has to guess an exit-side number was empty for five whole topics (item 143 retired)
+
+**In plain words:** `docs/RESEARCH_FINDINGS.md` is where the desk is supposed to look up what published work actually says, so it never has to invent a number. For five subjects that govern real money — how much of a move is just ordinary daily wobble, how far a trailing stop should sit, whether to take profit at a target, how long a position may take to work, and how finely the desk's own scoring separates one stock from another — the file said nothing at all. So every number in those areas was, by construction, unsourceable from the desk's own research file. Five sections were added recording what a real literature pass found, INCLUDING where it found nothing. No number was picked and nothing live was changed.
+
+**What the pass actually supports, and what it does not.** Four findings are worth carrying forward because the next session will otherwise re-invent them:
+
+- **Volatility bands.** The 2-3 x ATR magnitude is corroborated by two named sources (Wilder's 1978 ATR, LeBeau's Chandelier Exit at 3 x ATR(22)), and neither gives a derivation — the Chandelier reference explicitly says to vary the multiplier and states no bounds. **The quantity the desk's noise band actually bounds — the multiple at which an adverse move stops being noise — has no published measurement at all.** Searched directly; the only hits were mutually contradictory practitioner blogs, which is why nothing from them was recorded.
+- **Stops are conditionally valuable, not unconditionally.** Kaminski & Lo's framework result is that a 0/1 stop-loss rule ALWAYS lowers expected return under a random walk, and adds value only under momentum or regime-switching. Their empirical work deliberately reports a threshold RANGE (-1.5 to -0.5 standard deviations) and says why: scanning avoids data-selection bias. Their frequency finding cuts against short clocks — short-horizon stop policies carried negative stopping premiums; policies above one month did better.
+- **Preset profit targets.** Odean (1998) measured that the winners retail investors sell outperform the losers they keep by 3.41% over the next 252 trading days. That is evidence that closing a position because it is a winner is a documented, costly bias — the class the desk's deleted auto-trim belonged to. It is NOT a test of a fixed-percentage trim, and the entry says so; the trend-convexity paper cited beside it is about capping POSITION SIZE, not profit targets, and is cited for the mechanism only.
+- **Pacing and ranking granularity are the two genuine blanks.** Nothing published gives a per-position horizon or pace threshold for a discretionary multi-day equity trade; the momentum literature gives a portfolio REBALANCING horizon (Jegadeesh & Titman's 16-cell grid, all cells positive) which is a different quantity. Nothing in finance addresses score granularity or tie rates in stock ranking either — the rigorous work on it is in recommender-system and information-retrieval evaluation, a different field, and the entry labels it as such and transfers only the mechanism (coarse scores make the tiebreak the real ranking rule), never the magnitudes.
+
+**What was deliberately NOT done, and why it matters more than what was.** No value was picked inside any range found, no live number was recommended for change, and no code or config was touched. Where the literature gives a band, the entry says explicitly that choosing inside it is owner appetite and not research. The desk's existing work on these topics was LINKED rather than restated — item 70's two-jobs-one-number split, the 2026-09-10 stop-floor re-derivation and its warning not to conflate a fixed entry stop with a trailing one, the 2026-09-25 ratification of the floor and regime scales, the 2026-09-12 deletion of the auto take-profit trim, item 75's exit-comparison proposal, item 165's removal of the made-up pace floor, item 141's measured tie rates and three-stage tiebreak, and the item 39(a) finding that the rotation margin sits inside its own score's noise.
+
+**One thing the pass surfaced that is not closed by it.** Item 141's own write-up records that neither the touch-count tiebreak nor the reward:risk tiebreak is rendered into the portfolio manager's prompt or any owner-facing surface. The published tie-handling evidence — that when scores are coarse the tie-break rule becomes an undeclared ranking feature and can dominate the result — is consistent with that gap mattering. It does not measure how much it matters here, and no such measurement is claimed.
+
+**What would catch it next time.** The gap was not that research was missing; it was that a "searched and found nothing" result had nowhere to live, so each session re-searched or re-guessed. A negative result recorded as a section, with what was searched, is the thing that stops the next invented number.
+
+### 2026-09-26 — the safety check that refused a trade for a too-wide stop had never refused anything, and the number it turned on could not be sourced (item 56 retired)
+
+**Plain language.** When the desk works out where to put a stop-loss, a
+separate safety check asked one more question: is this stop so far away that
+the share price could not plausibly reach it before the trade is over? If so,
+it refused the trade, on the reasoning that a stop price will never touch is
+not really a stop, and a position size worked out from it is fiction. That
+check has now been deleted. It never refused a single trade, the number it
+turned on was never read off anything, and the thing it claimed to protect was
+already handled: the desk answers a wide stop by buying fewer shares.
+
+**What the check actually did.** It compared the stop's distance from the
+entry price against how far the stock could plausibly travel inside the
+trade's own expected length — its average daily range, scaled by the square
+root of the number of sessions, multiplied by 1.5. Past that, refuse. The 1.5
+was the whole question: nobody derived it, and because the cap and the
+distance both scale the same way with the trade's length, the 1.5 amounts to
+refusing any stop with less than a 1.67% chance of being touched before the
+trade ends. Item 56 narrowed the board question to exactly that: how unlikely
+must a touch be before a stop stops being a stop?
+
+**Measured before deleting, from the desk's own production record.** Between
+2026-09-13 (when the desk began stamping a touch-probability reading on every
+stop it sizes) and 2026-09-26, `quant_agent.log` holds 648 such readings and
+ZERO refusals — the check never fired once. The widest stop it ever saw sat at
+1.29 average daily ranges per square-root-session against its 1.5 cap, so
+nothing ever came within a sixth of the limit. The lowest touch probability
+ever recorded was 4.0%, against a check that refuses below 1.67%; the median
+was 27%. The production database holds no record of the refusal code either,
+across 4,718 recorded funnel events from 2026-09-02 onward. And it could not
+have fired on the desk's own fallback stop — the 2.5-average-range noise band
+it falls back to when the chart offers nothing — at any trade length of three
+sessions or more, while the shortest horizon the desk has ever actually stated
+is six.
+
+**The three routes, and why two were wrong.**
+
+*A cited measurement (rejected — the literature measures a different thing).*
+The stop-loss literature measures what a stop threshold does to returns and to
+volatility (Acar & Toffel 2000; Kaminski & Lo; Han/Zhou/Zhu on momentum
+stop-losses). None of it measures a minimum touch probability below which a
+level stops counting as a stop. That is a different quantity, so it was not
+adopted, and nothing was borrowed to stand in for it.
+
+*The threshold-free reformulation (rejected — it is not threshold-free).* The
+item proposed refusing when the stop's touch probability is below the target's
+reach probability on the same instrument, on the grounds that this removes the
+number instead of sourcing it. It does not. Both probabilities read the same
+volatility over the same horizon, and touch probability falls strictly as
+distance grows, so the inequality reduces exactly to "the stop is further away
+than the target" — a reward-to-risk floor of 1.0 wearing a probability
+costume. The desk deleted its reward:risk floor on 2026-09-24 (item 81) and
+the owner ruled twice, on 2026-09-11 and again on 2026-09-17, that a breakout
+setup gets no reward-side refusal at all. Adopting it would have smuggled a
+refused rule back in while claiming to have removed a number. The equivalence
+is now pinned by a test
+(`test_the_threshold_free_reformulation_is_a_reward_risk_floor`).
+
+*Delete it (what shipped).* The check's own justification was that a size
+computed off an unreachable distance is fiction. But the desk's ratified sizing
+rule already answers a wide stop by holding the risked dollars constant and
+buying fewer shares — twice the stop distance, half the position — which is
+also what the published practice the check cited actually prescribes; and at
+the extreme the position rounds to nothing and is refused by name
+(`position_sized_to_zero`). The upstream universe screen separately refuses
+instruments whose daily range is too large a fraction of their price. Nothing
+was protected that is not still protected.
+
+**What was kept.** The READING survives untouched and is still stamped on every
+stop the desk sizes: the probability, from the reflection principle and the
+published range-to-sigma identity, that this stop is touched inside this
+trade's horizon. No constant is chosen anywhere in it. It is the evidence that
+could one day answer the question the deleted check pretended to have
+answered, and it now accumulates without a gate attached to it.
+
+**Consequence recorded rather than hidden.** The portfolio manager's
+eligibility rule R6 shows the manager any name the constructor's preview
+already refused. The width check was that preview's only live producer of a
+refusal, so today the preview records none at all: the one remaining refusal
+needs a missing volatility reading, which the preview classifies one step
+earlier as a data fault. R6 itself is unchanged and still reads whatever it is
+handed, and the ENFORCING check was always one stage later, in construction, so
+no enforcement was lost — only an advance warning that currently has nothing to
+warn about. Pinned by a test that fails if a preview-time refusal reappears
+without this being revisited.
+
+**What would catch it next time.** The refusal code stays defined so that old
+records remain readable and the blocked-proposal census can still name it, but
+a test now walks every module under `src/` and fails if any live code emits it
+again, so the gate cannot come back silently. Two more tests fail if the
+deleted threshold reappears on either of its former definition sites, and a
+settings file still carrying the key now raises at config load rather than
+loading silently and letting an operator believe a width refusal is in force.
+
+**Still `arbitrary`, and not touched here.** The target-side reach multiple
+(the other 1.5, which estimates how far a stock can travel toward a price
+target) is a different number doing a different job and is unchanged and still
+unsourced. The desk's 2.5-average-range fallback stop is also unchanged.
+
+
+### 2026-09-26 — the desk let the trade-picker spend borrowed money without ever telling it borrowing costs anything (item 95 retired)
+
+**Plain language.** The account is allowed to borrow, up to twice what it owns.
+The seat that picks the trades was told how much it could spend and was told,
+in so many words, "you may borrow" — and was never once told that borrowed
+money is charged interest. A spending limit with no price attached reads as
+free money. It now sees the price next to the limit, and the answer to the
+question this item asked — may it plan against borrowed money at all — is yes,
+under the limits already set, which were never mine to move.
+
+**DECISION (orchestrator, 2026-09-26, under the 2026-09-18 delegation).** The
+portfolio manager MAY plan against borrowed money. The constraint is the one
+already ratified and nothing new: the 2.0x gross-exposure cap and the §11.2
+de-levering ladder. The new obligation is disclosure, not permission — the
+seat must be shown what the debit costs whenever it is shown what it may
+spend.
+
+**Why yes rather than no.** Refusing would have *moved* ratified owner
+appetite, which this delegation does not authorise. Margin has been enabled
+since 2026-09-02; the cap and the ladder are the owner's own table; the PM's
+own briefing sheet has said "You may borrow, and above 1.0x you are borrowing"
+since before this item was filed. The desk was already planning against
+borrowed money. The only real question left was whether it was doing so
+blind, and it was.
+
+**What the delegation deliberately did NOT decide, and why it is not mine.**
+Whether the leveraged part of the book must clear a MINIMUM RETURN. 6.25%/yr
+is the owner-supplied COST of the overnight debit, not a required return.
+Break-even on borrowed money is 6.25% — that is arithmetic and is stated to
+the seat as arithmetic. Turning it into a gate that refuses a trade whose
+expected return is under 6.25% would be setting a new risk-appetite dial, and
+the standing rule is that dials are the owner's. Nothing gates on the figure;
+it informs. If the owner ever wants the leveraged sleeve held to a floor, that
+is the one appetite call this item leaves unanswered, and it is his.
+
+**What was measured first, read-only, against the live production database
+(`/home/qamc/quant-agent/data/quant_agent.db`, snapshot 2026-09-26).** The
+item's third prerequisite — has any de-levering ladder rung ever been
+exercised, real or rehearsed — is answered, and the answer is NEVER.
+
+  - 18 recorded ladder resolutions across every session stored in
+    `session_reports` (2026-09-18 to 2026-09-25, morning/midday/close). Every
+    single one resolved `rung: none` at a 2.00x ceiling. The worst drawdown
+    the ladder has ever seen is -4.19% (2026-09-18 midday); the shallowest
+    rung needs -8%.
+  - 55 agent prompts carrying the ladder's own wording, every one of them
+    rendering "rung none". No prompt in the desk's history has ever told a
+    seat the ceiling was cut.
+  - The book has carried an overnight debit on 5 of the 31 days
+    `margin_interest_daily` tracks: 2026-09-18 ($915.83), 09-21 ($5,728.86),
+    09-22 and 09-23 ($8,087.35 each), and 09-25 ($6,114.51). Peak debit
+    $8,087.35. Total estimated cost across the whole history: $7.46 — every
+    row `source: estimate`, not one `broker_actual`, consistent with the
+    2026-09-18 finding that the paper broker returned zero `INT` activity
+    rows against a real carried debit.
+
+So the mechanism this item worried about has never fired, and the cost it
+worried about has been $7.46 of estimated, probably-uncharged paper interest.
+That changed the shape of the decision: the binding defect was never the cost,
+it was that the seat could not see one.
+
+**The lost equity rows: already repaired, and the hole that is left must stay
+a hole.** The item recorded four `daily_pnl.total_value` rows against
+twenty-four recorded evening runs, understating peak-to-trough by roughly half
+(-1.3% where the truth was about -2.7%). That claim is STALE. The restore
+already happened on 2026-09-18 — the broker box still holds the
+`quant_agent.db.pre-daily-pnl-restore-20260918T120417` snapshot with its four
+rows, against 23 rows live today, and every row the 2026-08-28 backup held is
+present in production. Peak equity now reads $10,189.45 (2026-09-24), which is
+the real high-water mark, not the truncated one.
+
+What remains is a genuine gap: no `daily_pnl` row exists for 2026-09-03
+through 2026-09-14. It was NOT back-filled and must not be. Those rows were
+never lost — the desk did not run. `agent_logs` shows 3 rows on 2026-09-03 and
+then nothing at all until 2026-09-15, and no trade was placed between
+2026-09-02 and 2026-09-15. There is no equity reading for those days because
+none was ever taken, and inventing one would put a fabricated number into the
+only series the de-levering ladder reads. The gap is permanent and is recorded
+here as permanent.
+
+**Known, unfixed, and deliberately left alone.** `_compute_recent_performance`
+reads its rolling windows positionally — `rows[5]` is called "5 trading days
+ago" — so across that 11-day pause the trailing-5-day and trailing-20-day
+figures span more calendar time than they claim. Both are REPORTING ONLY since
+the 2026-09-20 removal of the drawdown brakes; nothing gates on them. The
+ladder's own high-water mark is unaffected, because a peak does not care about
+ordering. Not fixed here: it is a separate defect from this item's question
+and fixing it inside a decision change would bury it.
+
+**What shipped.** `format_borrowing_cost_lines` in `src/margin_interest.py`
+prices two things off numbers the desk already holds — the debit being carried
+right now, and what the session's remaining ladder headroom would cost if it
+were spent and held overnight — at the configured rate under Alpaca's 360-day
+convention. `src/agents/portfolio_manager.py` renders them under the Margin
+Capacity block, on both its resolved and unresolved branches, and
+`config/prompts/portfolio_manager.md` now says next to "you may borrow" that
+borrowing is not free. Three things the wording is careful about: intraday
+leverage is free, so a position closed before the bell costs nothing to have
+borrowed for and the seat is told that explicitly; every figure carries
+`ESTIMATE_LABEL`, because the one night the desk actually checked, the paper
+broker charged nothing; and the lines state in terms that this is a cost of
+carry and NOT a hurdle rate, and that the seat must not invent one.
+
+The rate is threaded in from the caller's already-loaded config rather than
+re-read inside the renderer. The first attempt did re-read it, and it failed
+in every context without API keys — `load_config` validates them — which would
+have made the price silently disappear exactly where nobody would look for it.
+An absent rate now prints no cost line at all rather than a guessed one.
+
 ### 2026-09-26 — the retired-item reasons move out of the board's one shared line (no item retired)
 **In plain words:** closing a board item meant appending a sentence to a single line in the board file. That line had grown past eight thousand characters, and because two closures always edited the same line, only one of them could ever merge — the desk could finish work in parallel but not record it in parallel. The numbers stay on that line, where they merge as a union without conflict; the reasons move here, where entries merge one at a time.
 
