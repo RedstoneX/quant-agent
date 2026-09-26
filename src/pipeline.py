@@ -10044,6 +10044,30 @@ class TradingPipeline:
                     "today's break, if any, starts unconfirmed", sym, exc,
                 )
 
+            # Sessions this position has already spent out of its pinned
+            # horizon — the HOLIDAY-AWARE broker count (item 165), the same
+            # `broker.trading_sessions_held` the reviewer's own facts and
+            # the exit guard's noise band read; never a calendar-day count
+            # and never a default. It is what lets a target the price has
+            # run past be re-anchored on the close over the REMAINING
+            # horizon (item 114); a None here simply means no re-anchor is
+            # attempted and the existing refusal stands.
+            sessions_held: int | None = None
+            entry_ts = (buy.get("timestamp") or "")[:10]
+            if entry_ts:
+                try:
+                    from datetime import date as _date
+                    sessions_held = self.broker.trading_sessions_held(
+                        _date.fromisoformat(entry_ts), et_today(),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: sessions-held read failed for %s "
+                        "(%s) — no remaining horizon, so a target behind "
+                        "price is refused rather than re-anchored", sym, exc,
+                    )
+                    sessions_held = None
+
             outcome = assess_target_revision(
                 symbol=sym,
                 direction="short" if is_short else "long",
@@ -10057,6 +10081,7 @@ class TradingPipeline:
                 close_price=close_price,
                 levels_coverage=coverage or COVERAGE_UNKNOWN,
                 break_seen_prior_close=break_seen_prior_close,
+                sessions_held=sessions_held,
                 # The same ratified derivation bars the constructor passes at
                 # entry, read off `risk_engine.config` (what
                 # `ConstructorConfig` itself mirrors). Read defensively
