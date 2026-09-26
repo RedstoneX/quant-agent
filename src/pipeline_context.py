@@ -207,6 +207,24 @@ class RunContext:
     # (early return, resume, paid-suspended) — there the preamble margin
     # floor is the sole enforcer, which is correct.
     evidence_registry: dict[str, dict[str, str]] = field(default_factory=dict)
+    # §9.4 freshness, stashed beside the registry it belongs to: the exact
+    # {symbol: {source}} set `PortfolioManagerAgent.stale_evidence_sources`
+    # produced this session. The conviction de-lever passes it as
+    # `ignored_sources`, like every other caller — a stance too old to size
+    # a trade is too old to defend one against a cut.
+    evidence_stale_sources: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Item 112 — the morning preamble scopes itself to the margin FLOOR and
+    # leaves the ORDINARY §11.2 ceiling to the post-decision conviction pass.
+    # This is the debt that deferral creates. `_discharge_deferred_gross_
+    # ceiling`, called from the morning body's `finally`, pays it on every
+    # lane the conviction pass never reached (PM-less early returns, resume,
+    # an exception exit), so no lane can silently lose the ordinary ceiling.
+    gross_ceiling_deferred: bool = False
+    # True once a de-lever in THIS run submitted a trim that never reached a
+    # terminal broker state. The refreshed book then understates what is
+    # already on its way out, so no further de-lever pass may re-measure and
+    # cut again — it would shed the same exposure twice.
+    delever_unsettled: bool = False
 
     portfolio_decision: "PortfolioDecision | None" = None
     # Transport-successful model output can still fail deterministic parsing,

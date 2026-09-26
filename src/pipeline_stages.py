@@ -6650,6 +6650,10 @@ class DecisionStage:
         stale_sources = PortfolioManagerAgent.stale_evidence_sources(
             earnings_analyses=earnings_results,
         )
+        # Item 112 — the conviction de-lever reads the registry above; it must
+        # read the same freshness exclusions the constructor does, or a stale
+        # stance would defend a position against a cut it cannot size.
+        ctx.evidence_stale_sources = stale_sources
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the
         # constructor runs so a construction failure cannot lose the record

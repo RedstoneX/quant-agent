@@ -1421,16 +1421,19 @@ def apply_gross_ceiling(
     # (`TradingPipeline._enforce_gross_ceiling`), which runs before any agent
     # and therefore cannot be disabled by a blank model response.
     emit_trims: bool = True,
-    # Item 112 — optional per-symbol CONVICTION rank for the step-3 trim
-    # order. When supplied it maps each held symbol to its signed source
-    # score `S` (aligned minus opposed seats: `signed_source_score`), and the
-    # WEAKEST conviction (lowest `S`) is trimmed FIRST — a conviction-dead
-    # winner is sold before an intact-thesis loser. When None (the default,
+    # Item 112 — optional per-symbol CONVICTION cut order for step 3. Maps
+    # each held symbol to an ALREADY-BUILT sort key, lowest cut FIRST; this
+    # function never computes conviction and never interprets the tuple
+    # beyond comparing it. The caller
+    # (`TradingPipeline._conviction_cut_order`) builds it from the §9.4
+    # yes/no and the desk's own `rank_verdicts` candidate ordering — NOT
+    # from the signed source score as a grade, whose graded use was retired
+    # (board item 66; see `agreement_refuses_trade`). When None (the default,
     # and every lane with no fresh per-seat read — midday, close, intraday,
     # PM-less morning) the order is byte-identical to before: biggest loser
     # first. It changes only the ORDER trims are taken, never which book is
-    # over its ceiling, how much is shed, or the never-full-liquidation clamp.
-    conviction_rank: dict[str, int] | None = None,
+    # over its ceiling or the never-full-liquidation clamp.
+    conviction_rank: dict[str, tuple[int, int]] | None = None,
 ) -> GrossCeilingOutcome:
     """Enforce the §11.2 gross-exposure ceiling, blocking BEFORE trimming.
 
@@ -1654,17 +1657,17 @@ def apply_gross_ceiling(
     # already uses for the cash-only safety net — a second, divergent notion
     # of "which position goes first" is exactly the sprawl §12.2 cleaned up.
     #
-    # Item 112 — when a CONVICTION rank is supplied (the morning post-decision
-    # de-lever, which has THIS session's fresh per-seat read), it is the
-    # PRIMARY key: the weakest conviction (lowest signed source score) goes
-    # first, so a conviction-dead winner is sold before an intact-thesis
-    # loser. A symbol with no fresh read defaults to 0 (net-neutral), sorting
-    # among the neutral names. The biggest-loser trio stays as the tie-break,
-    # so with no conviction_rank the order is exactly as before.
+    # Item 112 — when a CONVICTION cut order is supplied (the morning
+    # post-decision de-lever, which has THIS session's fresh per-seat read),
+    # it is the PRIMARY key: the lowest key goes first, so a conviction-dead
+    # winner is sold before an intact-thesis loser. A symbol the caller did
+    # not place sorts at the weakest end — the desk produced no defence of
+    # holding it. The biggest-loser trio stays as the tie-break, so with no
+    # conviction_rank the order is exactly as before.
     if conviction_rank is not None:
         candidates.sort(
             key=lambda item: (
-                int(conviction_rank.get(item[1], 0)),
+                conviction_rank.get(item[1], (0, 0)),
                 float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
                 -item[2],
                 item[1],

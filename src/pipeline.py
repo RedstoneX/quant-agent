@@ -50,6 +50,8 @@ from src.risk.rules import (
     position_weight_pct,
     resolve_gross_ceiling,
     signed_source_score,
+    SECTOR_SIDE_LONG,
+    agreement_refuses_trade,
 )
 from src.execution.broker import (
     AlpacaBroker,
@@ -4477,6 +4479,10 @@ class TradingPipeline:
                         prot["order_id"],
                     )
                 except Exception as exc:  # noqa: BLE001
+                    # Always LEAVE THE KEY, even on failure: a caller reading
+                    # it back (the gross-ceiling race guard) must be able to
+                    # tell "waited, not terminal" from "never waited".
+                    prot["terminal_status"] = None
                     logger.warning(
                         "%s: wait failed for %s order %s: %s — finalize will "
                         "use whatever fill_info reads now",
@@ -12647,7 +12653,11 @@ class TradingPipeline:
         return ceiling
 
     def _enforce_gross_ceiling(
-        self, ctx: RunContext, *, floor_only: bool = False,
+        self,
+        ctx: RunContext,
+        *,
+        floor_only: bool = False,
+        conviction_rank: dict[str, tuple[int, int]] | None = None,
     ) -> list[dict]:
         """De-lever the HELD book when it is over the §11.2 gross ceiling.
 
@@ -12675,13 +12685,21 @@ class TradingPipeline:
         run, by `_enforce_gross_ceiling_by_conviction` — which cuts the
         WEAKEST-by-conviction names first using this session's fresh per-seat
         read, instead of the stale-stance biggest-loser cut. The margin floor
-        remains the sole enforcer on every PM-less morning lane (early return,
-        resume, paid-suspended), which is correct: only a genuine liquidation
-        proximity cannot wait for research, and the soft-ceiling breach is
-        still caught by the next same-day midday/close preamble. Midday, close
-        and intraday keep `floor_only=False` (default): they have no fresh
-        read, so they de-lever the full §11.2 ceiling with the unchanged
-        biggest-loser ordering.
+        DEFERRAL IS NOT A WAIVER. `floor_only` only says "not yet": it sets
+        `ctx.gross_ceiling_deferred`, and the morning body's `finally`
+        discharges that debt with a FULL ordinary-ceiling pass on every lane
+        the conviction pass did not reach — the nine PM-less early returns,
+        the resume lane and an exception exit included. Midday, close and
+        intraday keep `floor_only=False` (default): they have no fresh read,
+        so they de-lever the full §11.2 ceiling in the preamble with the
+        unchanged biggest-loser ordering.
+
+        `conviction_rank` (item 112) is the weakest-conviction-first cut
+        order built by `_conviction_cut_order`. This is the ONE place that
+        calls `apply_gross_ceiling` with trims enabled — the single-owner
+        invariant `test_trimming_the_held_book_has_exactly_one_owner` pins —
+        so the conviction pass delegates here rather than building a second
+        de-lever.
 
         Returns the submitted orders (empty when the book is under its
         ceiling, which is the ordinary case). `ctx` is refreshed from the
@@ -12692,11 +12710,36 @@ class TradingPipeline:
             # Tests that bypass __init__ via TradingPipeline.__new__.
             return []
         ceiling = self._resolve_gross_ceiling(ctx)
+        if getattr(ctx, "delever_unsettled", False):
+            # ASYNC-FILL RACE GUARD. An earlier de-lever in THIS run left at
+            # least one trim order non-terminal (`wait_for_order_terminal`
+            # has a ceiling and returns the last known status, which may be
+            # `new` or `partially_filled`). The broker refresh that followed
+            # therefore reported a book that still carries exposure already
+            # on its way out. Re-measuring it here and cutting again would
+            # shed that exposure TWICE. Under-cutting is the safe side of
+            # this race: the breach is already recorded by
+            # `_record_delever_shortfall`, the owner is already paged by
+            # `_alert_owner_delever_incomplete`, and the next session's
+            # preamble re-measures a settled book.
+            logger.warning(
+                "Gross-exposure ceiling: an earlier de-lever this run is "
+                "still unsettled — refusing to re-cut on a book that has "
+                "not caught up with its own fills",
+            )
+            return []
         if floor_only and not self._is_margin_floor_breach(ctx):
             # No genuine liquidation-proximity breach: leave an ordinary
-            # §11.2 ceiling breach to the post-decision conviction pass (or,
-            # on a PM-less lane, to the next same-day midday/close preamble).
+            # §11.2 ceiling breach to the post-decision conviction pass — or,
+            # if the run never reaches it, to the `finally` discharge.
+            ctx.gross_ceiling_deferred = True
             return []
+        if floor_only:
+            # The floor trims to the ordinary ceiling, but a shortfall (an
+            # unfillable name, a min-order clamp) can leave the book over it.
+            # Keep the debt open; the discharge re-measures and no-ops when
+            # the book did come under.
+            ctx.gross_ceiling_deferred = True
         min_order_usd = _risk_number(
             getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
             500.0,
@@ -12705,6 +12748,7 @@ class TradingPipeline:
             [], ctx.positions, ctx.total_value, ceiling,
             cash_park_symbol=self._sweep_symbol(),
             min_order_usd=min_order_usd,
+            conviction_rank=conviction_rank,
         )
         return self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
 
@@ -12742,57 +12786,123 @@ class TradingPipeline:
             return False
         return distance < base_distance
 
-    def _enforce_gross_ceiling_by_conviction(self, ctx: RunContext) -> list[dict]:
-        """Morning post-decision §11.2 de-lever, WEAKEST-conviction cut first.
+    def _conviction_cut_order(self, ctx: RunContext) -> dict[str, tuple[int, int]]:
+        """Weakest-conviction-FIRST sort key per held symbol (item 112).
 
-        Runs after the risk stage and before execution, on the morning lane
-        only. It reads THIS session's fresh per-seat evidence registry
-        (`ctx.evidence_registry`, stashed by DecisionStage) and ranks every
-        held name by its signed source score `S` — aligned minus opposed
-        seats for the side the position actually carries — so the book is
-        trimmed weakest-conviction first: a conviction-dead winner is sold
-        before an intact-thesis loser. A name with no fresh read this session
-        scores 0 (net-neutral) and sorts among the neutral names.
+        Two keys, both taken from a ranking the desk has already ratified —
+        and deliberately NOT from `signed_source_score` as a grade. That
+        function's graded use was retired (board item 66, owner decision
+        2026-09-14, see `agreement_refuses_trade`): the signed score is
+        legitimate as a YES/NO and nothing else, because its seats are not
+        independent and no honest slope exists between two positive values.
+        Ranking a cut by it would resurrect exactly the retired defect.
 
-        Absent registry (every PM-less lane) means the preamble margin floor
-        was the sole enforcer — nothing to do here, so it returns []. It
-        RE-MEASURES gross first, so if the floor already trimmed a genuine
-        margin breach this pass only ever acts on a RESIDUAL §11.2 breach —
-        no double-cut. Same `apply_gross_ceiling`, same submit/finalize/alert/
-        shortfall body as the floor, so the amount shed and the
-        never-full-liquidation clamp are identical; only the trim ORDER
-        differs.
+        Key 1 — DOES THE FRESH READ STILL SUPPORT THE SIDE WE HOLD? The
+        yes/no the signed score IS allowed to give, via
+        `agreement_refuses_trade`: 0 when the net evidence for this
+        position's own side is absent or against it, 1 when it is for it.
+        Read from `ctx.evidence_registry` (THIS session's per-seat read) with
+        `ctx.evidence_stale_sources` excluded, the same `ignored_sources`
+        every other caller passes — a stance too old to size a trade is too
+        old to defend one.
+
+        Key 2 — THE DESK'S OWN CANDIDATE RANKING, the `rank_verdicts` order
+        the PM's prompt was rendered from and the order
+        `allocate_risk_budget` already spends the risk budget down. Strength
+        is the position in that best-first list, and it counts only when the
+        ranked direction MATCHES the side the book actually carries: a
+        top-ranked BEARISH read is not conviction in a long. A held name the
+        ranking does not place for its own side scores 0 — the weakest end
+        of its bucket, which is the honest reading of "the desk produced no
+        ranked thesis for holding this".
+
+        Sorted ASCENDING by `(supported, strength)`, so the cut starts with
+        the names the desk can least defend.
         """
-        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
-        if risk_cfg is None:
-            return []
-        evidence_registry = getattr(ctx, "evidence_registry", None)
-        if not evidence_registry:
-            return []
-        # Re-measure so this only trims what is STILL over after the preamble
-        # floor and after any exits the plan already carried (mirrors the
-        # post-trim refresh at the end of `_submit_gross_ceiling_trims`).
-        ceiling = self._resolve_gross_ceiling(ctx)
-        conviction_rank: dict[str, int] = {}
+        registry = getattr(ctx, "evidence_registry", None) or {}
+        stale = getattr(ctx, "evidence_stale_sources", None) or {}
+        ranked = getattr(
+            getattr(self, "portfolio_manager", None), "last_candidate_ranking", None,
+        ) or []
+        total = len(ranked)
+        strength_of: dict[tuple[str, str], int] = {}
+        for index, candidate in enumerate(ranked):
+            symbol = str(getattr(candidate, "symbol", "") or "").strip().upper()
+            direction = str(getattr(candidate, "direction", "") or "").strip().lower()
+            if symbol and direction:
+                # Best-first -> biggest number is the strongest conviction.
+                strength_of[(symbol, direction)] = total - index
+        order: dict[str, tuple[int, int]] = {}
         for position in ctx.positions or []:
             symbol = str(getattr(position, "symbol", "") or "").strip().upper()
             if not symbol:
                 continue
-            sources = evidence_registry.get(symbol) or {}
-            conviction_rank[symbol] = signed_source_score(
-                symbol, sources, position_side(position),
+            side = position_side(position)
+            wanted = "bullish" if side == SECTOR_SIDE_LONG else "bearish"
+            score = signed_source_score(
+                symbol, registry.get(symbol) or {}, side,
+                ignored_sources=stale.get(symbol),
             )
-        min_order_usd = _risk_number(
-            getattr(getattr(self.config, "cash_sweep", None), "min_order_usd", None),
-            500.0,
+            supported = 0 if agreement_refuses_trade(score) else 1
+            order[symbol] = (supported, strength_of.get((symbol, wanted), 0))
+        return order
+
+    def _enforce_gross_ceiling_by_conviction(self, ctx: RunContext) -> list[dict]:
+        """Morning post-decision §11.2 de-lever, WEAKEST-conviction cut first.
+
+        Runs after the risk stage and before execution, on the morning lane
+        only. It ranks the held book with `_conviction_cut_order` — this
+        session's fresh per-seat read as a yes/no, then the desk's own
+        `rank_verdicts` candidate ordering — so a conviction-dead winner is
+        sold before an intact-thesis loser.
+
+        Absent registry (every PM-less lane) means nothing fresh was read, so
+        it returns [] and the `finally` discharge enforces the ordinary
+        ceiling with the unchanged biggest-loser ordering. It DELEGATES to
+        `_enforce_gross_ceiling`, the single owner of held-book trimming,
+        which re-measures gross first and refuses to act on a book still
+        catching up with an unsettled earlier de-lever. Clears the deferred
+        debt on success so the discharge does not cut the same breach twice.
+        """
+        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        if risk_cfg is None:
+            return []
+        if not getattr(ctx, "evidence_registry", None):
+            return []
+        orders = self._enforce_gross_ceiling(
+            ctx, conviction_rank=self._conviction_cut_order(ctx),
         )
-        outcome = apply_gross_ceiling(
-            [], ctx.positions, ctx.total_value, ceiling,
-            cash_park_symbol=self._sweep_symbol(),
-            min_order_usd=min_order_usd,
-            conviction_rank=conviction_rank,
-        )
-        return self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
+        # The full ordinary ceiling has now been enforced on this lane,
+        # whether or not it had anything to shed.
+        ctx.gross_ceiling_deferred = False
+        return orders
+
+    def _discharge_deferred_gross_ceiling(self, ctx: RunContext) -> None:
+        """Pay the `floor_only` debt on any lane the conviction pass missed.
+
+        Item 112 defect 2: scoping the morning preamble to the margin floor
+        left the ORDINARY §11.2 ceiling unenforced on every lane that never
+        reaches the Portfolio Manager — the nine early returns, the resume
+        lane, and an exception exit. That was a regression against the
+        behaviour where the preamble always enforced the full ceiling.
+
+        Called from the morning body's `finally`, which is the ONE place
+        every exit path passes through, so a lane added later inherits the
+        enforcement instead of silently losing it. A no-op when the
+        conviction pass already discharged the debt, and it re-measures, so
+        a book that came under its ceiling meanwhile sheds nothing. Never
+        raises: it runs while another exception may be propagating.
+        """
+        if not getattr(ctx, "gross_ceiling_deferred", False):
+            return
+        ctx.gross_ceiling_deferred = False
+        try:
+            self._enforce_gross_ceiling(ctx)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Deferred gross-ceiling enforcement failed: %s — the book may "
+                "remain over its §11.2 ceiling until the next session", exc,
+            )
 
     def _submit_gross_ceiling_trims(
         self, ctx: RunContext, ceiling, outcome,
@@ -12921,6 +13031,33 @@ class TradingPipeline:
             protection["trim_qty"] = qty
             self._finalize_pending_protections(
                 [protection], context="GROSS-EXPOSURE DE-LEVER",
+            )
+        # ASYNC-FILL RACE. Every trim above was waited on to terminal, but
+        # `wait_for_order_terminal` has a ceiling and returns the LAST KNOWN
+        # status — so a slow fill leaves `new` or `partially_filled`. The
+        # broker refresh below then reports a book that still carries
+        # exposure already on its way out, and any LATER de-lever pass in
+        # this run would shed it a second time. Flag it; `_enforce_gross_
+        # ceiling` refuses to re-cut while it is set.
+        # The broker CLASS's own list, not the instance's: a mocked broker in
+        # a test would answer with another mock and silently call every trim
+        # unsettled.
+        terminal = AlpacaBroker._ORDER_TERMINAL_STATES
+        # A protection with NO `terminal_status` key was never waited on by
+        # this run (nothing to race with); one whose recorded status is not
+        # terminal — including None, the wait's own failure marker — is.
+        unsettled = [
+            str(p.get("symbol") or "?") for p in pending_protections
+            if "terminal_status" in p
+            and str(p.get("terminal_status") or "").lower() not in terminal
+        ]
+        if unsettled:
+            ctx.delever_unsettled = True
+            logger.warning(
+                "GROSS-EXPOSURE DE-LEVER: %s did not reach a terminal state "
+                "before the re-measure — the refreshed book understates what "
+                "is already on its way out; no further de-lever this run",
+                ", ".join(unsettled),
             )
         try:
             account = self.broker.get_account()
@@ -14032,6 +14169,14 @@ class TradingPipeline:
                 "execution_skips": list(ctx.execution_skips),
             }
         finally:
+            # Item 112 — pay the deferred ordinary §11.2 ceiling. The preamble
+            # scoped itself to the margin floor so the cut could be ordered by
+            # THIS session's fresh conviction read; if the run never reached
+            # that pass (any PM-less early return, the resume lane, or an
+            # exception), the ordinary ceiling is enforced here instead, with
+            # the unchanged biggest-loser ordering. One place, so a lane added
+            # later cannot silently lose the ceiling. No-op once discharged.
+            self._discharge_deferred_gross_ceiling(ctx)
             # Phase 3: ask broker which of today's submitted orders actually filled.
             # Unfilled ones get flagged so PM memory / calibration skip them.
             self._reconcile_fills(ctx)
