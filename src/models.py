@@ -936,11 +936,25 @@ class AnalystVerdict(BaseModel):
     comparable judgement instead — the same four things from every seat:
 
     1. **direction** — bullish / bearish / neutral, PLUS `magnitude`, how
-       far in that direction the seat leans on a 0..1 scale. The label
+       far in that direction the seat leans on a 0..1 scale — or `None`,
+       meaning this seat HAS no strength scale and states none. The label
        vocabulary is the one `stance_is_aligned` and the evidence registry
        already speak (`StockNewsItem.sentiment`, `SmartMoneyFinding.stance`,
        `MacroAnalysis.equity_outlook`), so a verdict can be netted against
        the §9.4 score without a translation table.
+
+       **`None` is not zero — item 65, 2026-09-26.** Until this date a seat
+       with no strength scale sent the literal `0.0`, which is a STATED
+       strength of nothing and is indistinguishable, at every consumer, from
+       a seat that has a scale and read zero off it. The ranking then summed
+       four such terms into a number it labelled "strength, summed over N
+       seats" and showed the Portfolio Manager. A sum is additively neutral
+       to a zero, so the ORDER was never wrong — but the reported quantity
+       was, and nothing structural stopped a future consumer from averaging,
+       min-ing or thresholding those zeros, at which point the placeholder
+       would have moved money. `None` makes the absence a type rather than a
+       value: it cannot be summed by accident, and every consumer has to say
+       what it does with a seat that has no scale.
     2. **conviction** — how sure the seat is, on the desk's existing
        `high` / `medium` / `low` scale, SEPARATE from what it thinks.
     3. **evidence** — a list of `VerdictEvidence`, at least one for any
@@ -956,14 +970,18 @@ class AnalystVerdict(BaseModel):
     verdict and a registry stance about the same name agree on who said it.
 
     `signed_magnitude` is the number a ranking or a netting rule reads:
-    +magnitude for bullish, -magnitude for bearish, 0 for neutral.
+    +magnitude for bullish, -magnitude for bearish, 0 for neutral — and
+    `None` when the seat stated no strength at all, for the same reason
+    `magnitude` is `None`: an absent number must not arrive as a zero.
 
     Not an `LLMOutputModel` — see `VerdictEvidence` for why.
     """
     seat: str = Field(min_length=1)
     symbol: str
     direction: Literal["bullish", "bearish", "neutral"]
-    magnitude: float = Field(ge=0.0, le=1.0)
+    #: `None` = this seat states no strength (see the class docstring and
+    #: `NO_STATED_STRENGTH`). A float is a strength the seat actually stated.
+    magnitude: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     conviction: Literal["high", "medium", "low"]
     evidence: list[VerdictEvidence] = Field(default_factory=list)
     invalidation: str = ""
@@ -981,12 +999,27 @@ class AnalystVerdict(BaseModel):
     @model_validator(mode="after")
     def _a_call_must_be_falsifiable_and_backed(self):
         if self.direction == "neutral":
-            if self.magnitude != 0.0:
+            if self.magnitude not in (None, 0.0):
                 raise ValueError(
                     f"{self.symbol}: a neutral verdict cannot carry magnitude "
                     f"{self.magnitude} — neutral means no lean"
                 )
             return self
+        # Item 65, 2026-09-26. A seat that HAS a strength scale and puts a
+        # directional call on it cannot place that call at zero distance:
+        # "bullish, strength nil" is the neutral verdict above wearing a
+        # direction. The honest encoding of no distance claimed is `None`
+        # (no scale), which this deliberately still allows — see the class
+        # docstring. This closes the hole the old placeholder left open: a
+        # 0.0 arriving on a directional verdict is now always a bug and is
+        # refused at construction instead of being summed as information.
+        if self.magnitude == 0.0:
+            raise ValueError(
+                f"{self.symbol}: a {self.direction} verdict from {self.seat} "
+                "states a strength of 0.0 — a directional call at zero "
+                "distance is a neutral one. Use magnitude=None if this seat "
+                "has no strength scale (see NO_STATED_STRENGTH)"
+            )
         if not self.invalidation:
             raise ValueError(
                 f"{self.symbol}: a {self.direction} verdict from {self.seat} "
@@ -1002,7 +1035,12 @@ class AnalystVerdict(BaseModel):
 
     @computed_field
     @property
-    def signed_magnitude(self) -> float:
+    def signed_magnitude(self) -> float | None:
+        # `None` in, `None` out — a seat with no strength scale has no
+        # signed strength either, and handing back 0.0 here would put the
+        # placeholder straight back for any netting rule that reads this.
+        if self.magnitude is None:
+            return None
         if self.direction == "bullish":
             return self.magnitude
         if self.direction == "bearish":
@@ -1022,9 +1060,9 @@ RATING_MAGNITUDE: dict[str, float] = {
 }
 
 #: `AnalystVerdict.magnitude` for a DIRECTIONAL verdict from a seat that
-#: states no independent strength of its own. The same "ordinary conviction"
-#: rung `RATING_MAGNITUDE` gives Technical's single-strength buy/sell, reused
-#: rather than respelled, so there is one number here and not four.
+#: states no independent strength of its own. It is `None` — the ABSENCE of
+#: a number, not a number — so there is nothing here for an arithmetic to
+#: consume by accident.
 #:
 #: WHY THIS IS FLAT, 2026-09-13 (see `docs/INCIDENT_HISTORY.md`, retired
 #: item 31). `score_verdict`
@@ -1056,7 +1094,7 @@ RATING_MAGNITUDE: dict[str, float] = {
 #: conviction via `_SMART_MONEY_ROLE_CONVICTION`, whose ordering is a
 #: restatement of the pre-existing `_ROLE_RANK`, not a new judgment.
 #:
-#: AND WHY IT IS ZERO, not 0.5 — corrected 2026-09-13, same day, on
+#: AND WHY IT IS NOT 0.5 — corrected 2026-09-13, same day, on
 #: adversarial review before merge. The first version of this deletion set the
 #: four rungless seats to 0.5, "Technical's `buy` rung, reused rather than
 #: respelled". Borrowing is not deriving: 0.5 is a number read off ANOTHER
@@ -1064,18 +1102,48 @@ RATING_MAGNITUDE: dict[str, float] = {
 #: whole reason they are here. A seat that states no strength states no
 #: strength, and the honest encoding of "no distance claimed" is no distance.
 #:
+#: AND WHY IT IS NO LONGER `0.0` EITHER — item 65, RESOLVED 2026-09-26.
+#: 2026-09-13 got the judgement right and the encoding wrong. `0.0` is a
+#: point ON the 0..1 strength scale, so "this seat has no scale" was being
+#: spelled with a value drawn from the scale it is denying having. Verified
+#: against the code before changing anything: `rank_verdicts` SUMS the term
+#: (`magnitude = sum(v.magnitude * w ...)`), a zero is additively neutral,
+#: and no consumer averaged or thresholded it — so the placeholder never
+#: reordered a candidate and no money moved because of it. What it did do
+#: was make the ranking REPORT a "strength summed over N seats" that only
+#: one seat could ever contribute to, and leave the next consumer free to
+#: treat four placeholders as four measured zeros. `None` is the absence
+#: itself: it cannot be summed by accident, `rank_verdicts` now names the
+#: seats the strength term actually covers, and a directional verdict that
+#: arrives with a literal `0.0` is REFUSED by `AnalystVerdict`'s validator.
+#:
 #: This is only coherent because `rank_verdicts` no longer AVERAGES seats (see
 #: `src/verdicts.py`): such a seat still contributes its own weighted
 #: conviction to the total, so a directional read with nothing behind it is
 #: not silently equal to no coverage at all — it is equal to exactly what it
-#: is worth, its conviction. Under the old weighted average a zero here would
-#: have DRAGGED an agreeing candidate down; under a sum it cannot.
+#: is worth, its conviction. Under the old weighted average an absent
+#: strength would have DRAGGED an agreeing candidate down; under a sum over
+#: only the seats that state one, it cannot.
 #:
-#: If a seat is ever given a real strength scale of its own — measured, or
-#: read from the instrument the way Technical's rungs are — that is a schema
-#: change to RATIFY with the derivation attached, not a constant to restore
-#: here. Tracked as `docs/WORK.md` item 62.
-NO_STATED_STRENGTH: float = 0.0
+#: THE STANDING DECISION (item 65, recorded 2026-09-26, retired with it):
+#: direction plus confidence is all these four seats can say, and that is the
+#: answer, not a gap awaiting a number. Each was re-checked against its own
+#: model on the day: `EarningsAnalysis.investment_implications.sentiment`,
+#: `StockNewsItem.sentiment`, `MacroAnalysis.equity_outlook` and
+#: `SmartMoneyFinding.stance` are every one of them a SINGLE directional rung
+#: (bullish/bearish/neutral) with no graded vocabulary anywhere beside them —
+#: unlike Technical, whose `strong_buy`/`buy` rungs are a strength the seat
+#: already publishes and `RATING_MAGNITUDE` merely transcribes. Asking any of
+#: the four to emit a 0..1 number would be asking it to invent boundaries no
+#: source, no measurement and no instrument supplies
+#: (`qamc-no-arbitrary-numbers-principle`), and it would be uncheckable by
+#: construction. REVISIT ONLY IF one of two things happens: a seat's own
+#: output model gains a graded rung it genuinely observes (the way Technical
+#: has one), or the conviction ledger clears `_CONVICTION_OUTCOME_MIN_N`
+#: resolved calls for that seat and supplies a measured one. Either is a
+#: schema change to RATIFY with the derivation attached, plus the seat's
+#: prompt in the same pass — never a constant restored here.
+NO_STATED_STRENGTH: None = None
 
 RATING_DIRECTION: dict[str, str] = {
     "strong_buy": "bullish", "buy": "bullish", "neutral": "neutral",
@@ -1982,7 +2050,7 @@ _SMART_MONEY_ROLE_CONVICTION: dict[str, str] = {
 #: `_SMART_MONEY_ROLE_CONVICTION` above is keyed on. Both halves of
 #: `score_verdict` therefore read one categorical label, so the composite
 #: counted it twice and an "actionable" finding alone scored the maximum.
-#: Magnitude is now `NO_STATED_STRENGTH` (0.0 — this seat has no strength
+#: Magnitude is now `NO_STATED_STRENGTH` (None — this seat has no strength
 #: scale of its own, and does not borrow one); the role still sets
 #: conviction, which is the one place it has a derivation behind it.
 
@@ -2169,7 +2237,7 @@ class SmartMoneyFinding(LLMOutputModel):
                        "mixed" and "neutral" as the same non-directional
                        bucket — conflicting buy/sell activity supports
                        neither a bullish nor a bearish call.
-        magnitude    — `NO_STATED_STRENGTH` (0.0), directional or not. This
+        magnitude    — `NO_STATED_STRENGTH` (None), directional or not. This
                        seat states no strength independent of
                        `economic_role`, and `economic_role` already drives
                        conviction, so a magnitude derived from it would be
@@ -2202,7 +2270,8 @@ class SmartMoneyFinding(LLMOutputModel):
         """
         stance = "neutral" if self.stance in ("neutral", "mixed") else self.stance
         # 0.0 either way — a neutral read has no lean, and a directional
-        # read from this seat states no distance. See `NO_STATED_STRENGTH`.
+        # read from this seat states no distance, and an absent distance is
+        # None, never 0.0. See `NO_STATED_STRENGTH`.
         magnitude = NO_STATED_STRENGTH
         conviction = _SMART_MONEY_ROLE_CONVICTION[self.economic_role]
         cluster = self.purchase_cluster()
@@ -3140,7 +3209,7 @@ class MacroAnalysis(LLMOutputModel):
     # verdict hands to `conviction` — so `score_verdict`'s two-signal
     # composite was counting macro's confidence twice, at an unsourced
     # spacing. The second was an unsourced constant on top of it. Magnitude
-    # is now `NO_STATED_STRENGTH` (0.0); `regime_shift`/`shift_reason`
+    # is now `NO_STATED_STRENGTH` (None); `regime_shift`/`shift_reason`
     # still reach the reader through `invalidation` below, where they are the
     # analyst's own words rather than a number nobody derived.
 
@@ -3197,7 +3266,7 @@ class MacroAnalysis(LLMOutputModel):
                        the broad read used too, and substituting a
                        sector-specific one would mean inventing it.
         conviction   — `confidence` verbatim; already high/medium/low.
-        magnitude    — `NO_STATED_STRENGTH` (0.0), directional or not. See
+        magnitude    — `NO_STATED_STRENGTH` (None), directional or not. See
                        that constant for why the previous confidence-keyed
                        table and regime-shift bonus were deleted rather than
                        re-derived, and why nothing was borrowed in their
@@ -3255,7 +3324,7 @@ class MacroAnalysis(LLMOutputModel):
             sector_direction = "neutral"
 
         direction = sector_direction or self.equity_outlook
-        # 0.0 either way — see `NO_STATED_STRENGTH`.
+        # Absent either way — None, not 0.0. See `NO_STATED_STRENGTH`.
         magnitude = NO_STATED_STRENGTH
 
         evidence: list[VerdictEvidence] = []
@@ -3552,7 +3621,7 @@ def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "Analy
     "low" — the weakest assertion the scale offers, since there is
     nothing here to be confident ABOUT.
 
-    **magnitude** — `NO_STATED_STRENGTH` (0.0), directional or not. A news
+    **magnitude** — `NO_STATED_STRENGTH` (None), directional or not. A news
     item states a sentiment and a conviction, and nothing else about how far
     it leans: a magnitude derived from that conviction would be the same
     signal counted twice in `score_verdict`, and a magnitude borrowed off
@@ -3610,7 +3679,11 @@ def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "Analy
 
     if direction == "neutral":
         conviction = "low"
-        magnitude = 0.0
+        # NOT 0.0 (item 65, 2026-09-26). News has no strength scale at all,
+        # so it states none on a neutral read either — spelling this one
+        # `0.0` while the directional branch below says `None` would claim
+        # the seat has a scale it happens to read zero on.
+        magnitude = NO_STATED_STRENGTH
         invalidation = ""
     else:
         agreeing = [item.conviction for item in items if item.sentiment == direction]
@@ -3846,7 +3919,7 @@ class EarningsAnalysis(LLMOutputModel):
                      `data_quality` is free prose, not a graded scale.
                      Inventing a gradient from either would be a fake
                      precision this seat cannot back. So every call carries
-                     `NO_STATED_STRENGTH` (0.0) — no distance claimed, rather
+                     `NO_STATED_STRENGTH` (None) — no distance claimed, rather
                      than a distance borrowed off Technical's scale. The seat
                      still reaches the ranking through its weighted
                      conviction.
@@ -3877,7 +3950,7 @@ class EarningsAnalysis(LLMOutputModel):
         """
         impl = self.investment_implications
         direction = impl.sentiment
-        # 0.0 either way — see `NO_STATED_STRENGTH`.
+        # Absent either way — None, not 0.0. See `NO_STATED_STRENGTH`.
         magnitude = NO_STATED_STRENGTH
 
         evidence: list[VerdictEvidence] = []

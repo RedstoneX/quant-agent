@@ -1944,8 +1944,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "agreeing seats always score higher: breadth is the point, and "
             "an agreeing seat can never pull a name down. Only technical "
             "states a strength of its own (its rating rungs); the other four "
-            "seats have no strength scale, so they contribute their "
-            "conviction only. The score is therefore NOT capped at 2.0 and "
+            "seats HAVE no strength scale, so they are absent from the "
+            "strength term entirely — they are not a strength of zero, and "
+            "each row below names which seats the strength figure covers. "
+            "Those seats contribute their weighted conviction and nothing "
+            "else. The score is therefore NOT capped at 2.0 and "
             "not comparable across sessions with different coverage. "
             "This is the tiebreak among equally eligible names: to take a "
             "lower-ranked name over a higher one, say what the ranking does "
@@ -1967,12 +1970,32 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     f" | no lean from: {', '.join(c.neutral_seats)}"
                     if c.neutral_seats else ""
                 )
+                # Item 65, 2026-09-26. The strength half is reported with
+                # the seats it is actually summed over, and is reported as
+                # ABSENT — not as 0.00 — when no seat on this name has a
+                # strength scale at all. Before this, four rungless seats
+                # each fed a literal 0.0 into a figure labelled "summed over
+                # N seats", so a name covered by four agreeing non-technical
+                # seats read here as "strength 0.00", which is what a name
+                # whose seats all measured no lean would also read as.
+                if c.strength_seats:
+                    strength = (
+                        f"strength {c.components['magnitude']:.2f} from "
+                        f"{'/'.join(c.strength_seats)}"
+                    )
+                else:
+                    strength = "no strength stated by any seat on this name"
+                no_strength = (
+                    f" | no strength scale: {', '.join(c.no_strength_seats)}"
+                    if c.no_strength_seats else ""
+                )
                 lines.append(
                     f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
-                    f"(strength {c.components['magnitude']:.2f} + conviction "
-                    f"{c.components['conviction_score']:.2f}, summed over "
+                    f"({strength} + conviction "
+                    f"{c.components['conviction_score']:.2f} summed over "
                     f"{len(c.verdicts)} seat(s)) | seats: {seats} "
-                    f"({convictions}){no_lean} | invalid if — {invalidation}"
+                    f"({convictions}){no_strength}{no_lean} | invalid if "
+                    f"— {invalidation}"
                 )
         else:
             lines.append("(no name passes every pre-decision rule today)")

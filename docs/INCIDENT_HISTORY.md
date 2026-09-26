@@ -22,6 +22,77 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
+
+**In ordinary words.** When the desk decides which stock ideas get money, each
+specialist contributes two things: which way it leans and how sure it is. Only
+the chart specialist publishes a "how strongly" — it has strong-buy and buy as
+separate ratings. The other four have nothing of the kind. Rather than leave
+that blank, they were each sending the number zero, and the ranking added all
+five numbers together and reported the total to the portfolio manager as
+"strength, added up across every specialist covering this name". Adding zero
+changes nothing, so no stock was ever ranked wrongly and no money moved because
+of it — that was checked against the code before anything was touched. What was
+wrong is what the desk was TELLING itself: a name backed by four agreeing
+specialists displayed a strength of zero, which is exactly what a name whose
+specialists had all measured no enthusiasm would display. Two different states,
+one number. And nothing stopped the next piece of code from averaging those
+four zeros, which would have moved money.
+
+**The decision, which is the substance of this entry, not the code change.**
+The item asked one question: should those four be made to rate their own
+strength, or is "which way, and how sure" genuinely everything they can say?
+The answer recorded here is the second. Each seat's own output was re-checked
+on the day rather than taken from a docstring: the earnings seat's sentiment,
+the news seat's sentiment, the macro seat's equity outlook and the smart-money
+seat's stance are every one of them a single bullish/bearish/neutral rung with
+no graded vocabulary anywhere beside them. The chart specialist is different in
+kind, not in effort — strong-buy versus buy is a distinction it already
+publishes, so transcribing it invents nothing. Asking any of the other four for
+a number between 0 and 1 would be asking it to invent the boundaries too: no
+published source supplies them, no measurement on this desk supplies them, and
+nobody downstream could ever check the answer. That is the desk's standing rule
+against made-up numbers, and it applies to a number a model asserts just as
+much as to one a developer types.
+
+**Ruled out, with reasons, so none of these is re-proposed.** Deriving a
+strength from a field the seat already reports — that was the 2026-09-13 defect
+(one signal counted twice at three different unsourced spacings) and it is
+deleted. Borrowing the chart specialist's 0.5 rung — a number read off another
+seat's scale is not read off this seat's instrument, which is the whole reason
+these four are here. Fitting one to the desk's own past outcomes — forbidden
+outright, and the conviction ledger is far short of the resolved-call minimum
+that would make an own-data reading possible anyway. Dropping the four seats
+from the ranking — explicitly not an answer; they still carry their full
+weighted confidence into the score, unchanged.
+
+**What changed instead.** The marker for "this seat states no strength" is no
+longer the number zero; it is the absence of a number. The ranking's strength
+term is summed only over the seats that actually state one and names them; a
+name where nobody does now carries no strength figure at all rather than a
+zero, and the portfolio manager's own prompt says so in words instead of
+printing "strength 0.00". A directional verdict that arrives carrying a literal
+zero strength is refused where it is built, because a seat claiming to have a
+scale and to have read nothing off it is describing the neutral verdict with a
+direction attached. Every total is arithmetically identical to before — that is
+deliberate and is pinned by its own test, since a fix that quietly reordered
+candidates would have been a far worse outcome than the reporting defect it was
+correcting.
+
+**What would catch it again.** The honesty of the encoding is now enforced by
+the type rather than by a comment: a placeholder cannot be summed by accident,
+and the construction-time refusal fails loudly if one is reintroduced. The
+per-seat tests each assert the absence off the seat's own model, so if any of
+the four is ever given a real graded rung, those tests fail and force the
+ratification rather than allowing a quiet edit.
+
+**Reopen only on one of two triggers**, neither of which is a matter of
+appetite: a seat's own output model gains a graded rung it genuinely observes,
+the way the chart seat has one; or the conviction ledger accumulates enough
+resolved calls for that seat to supply a measured strength. Either is a schema
+change to ratify with its derivation attached and the seat's prompt updated in
+the same pass.
+
 ### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
 
 **In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
@@ -7640,9 +7711,11 @@ not make 4.0. Evidence adds, measurements average.
 **Defect 2 — 0.5 was not a derivation either.** The flat value was
 Technical's `buy` rung, borrowed by four seats that have no rungs — which is
 the whole reason they were in this fix. Borrowing is not deriving. The four
-seats now carry ZERO stated strength (`NO_STATED_STRENGTH`), which is the
+seats now carry NO stated strength (`NO_STATED_STRENGTH`), which is the
 honest encoding of "states no distance", and they reach the ranking through
-their weighted confidence alone. This only became a coherent option once the
+their weighted confidence alone. (That marker was the literal `0.0` on this
+date and became `None` on 2026-09-26 — see item 65's entry below for why the
+judgement was right and the encoding was not.) This only became a coherent option once the
 aggregation was a sum: under the old average a zero would have dragged an
 agreeing stock down, which is exactly why 0.5 looked necessary at the time.
 

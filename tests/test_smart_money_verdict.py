@@ -83,10 +83,10 @@ def test_bearish_stance_maps_to_bearish_direction():
     assert v.direction == "bearish"
 
 
-def test_neutral_stance_maps_to_neutral_direction_with_zero_magnitude():
+def test_neutral_stance_maps_to_neutral_direction_with_no_stated_magnitude():
     v = _finding(stance="neutral").to_verdict()
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -100,7 +100,7 @@ def test_mixed_stance_folds_onto_neutral_not_a_fifth_direction():
         observations=[_obs(direction="buy"), _obs(direction="sell", actor="B")],
     ).to_verdict()
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -152,10 +152,10 @@ def test_the_role_reaches_the_score_through_conviction_only():
     assert top.magnitude == bottom.magnitude == NO_STATED_STRENGTH
 
 
-def test_neutral_magnitude_is_always_zero_regardless_of_role():
+def test_neutral_magnitude_is_always_absent_regardless_of_role():
     for role in ("actionable", "confirmatory", "contradictory", "historical"):
         v = _finding(stance="neutral", economic_role=role).to_verdict()
-        assert v.magnitude == 0.0
+        assert v.magnitude is None
 
 
 # ==========================================================================
@@ -230,9 +230,12 @@ def test_a_directional_verdict_from_this_seat_still_validates_the_shared_shape()
     assert v.invalidation
 
 
-def test_a_bearish_finding_has_negative_signed_magnitude():
+def test_a_bearish_finding_states_no_signed_magnitude():
     v = _finding(
         stance="bearish", economic_role="actionable",
         observations=[_obs(direction="sell")],
     ).to_verdict()
-    assert v.signed_magnitude == -NO_STATED_STRENGTH
+    # Item 65, 2026-09-26: smart_money has no strength scale, so there is
+    # nothing to negate — the sign of an absent number is still absent,
+    # never a signed zero a netting rule could read as a measurement.
+    assert v.magnitude is None and v.signed_magnitude is None

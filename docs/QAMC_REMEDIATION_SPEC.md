@@ -2479,8 +2479,9 @@ own conviction, macro from its `confidence`, smart_money from the single
 `economic_role` label that also set its conviction), at three different
 unsourced spacings. Those seats therefore entered the composite with one
 signal counted twice before this prior was applied at all. The three tables
-are deleted; every seat but Technical now carries `NO_STATED_STRENGTH` (0.0)
-for a directional call, so this prior weights exactly the seat's stated
+are deleted; every seat but Technical now carries `NO_STATED_STRENGTH`
+(`None` since 2026-09-26, item 65 — the literal `0.0` it used to be was a
+point on a strength scale those seats do not have) for a directional call, so this prior weights exactly the seat's stated
 conviction. Technical keeps a gradient because its rating rungs are a strength
 it actually states, and earnings was already flat for exactly this reason.
 Deleting invented weights, not replacing them. Detail:
