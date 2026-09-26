@@ -498,20 +498,6 @@ numbers:
     cost_while_unanswered: >-
       Ratified is not sourced: the desk's largest routine exposure rests on a
       round number.
-  - id: src.config.RiskConfig.max_stop_width_reach_atr_multiple
-    value: 1.5
-    status: arbitrary
-    site: src/config.py
-    note: >-
-      The reach caps, split out of one number -- board item 56 owns the
-      question and records that the split made them CONSISTENT without making
-      either RIGHT.
-    open_question: >-
-      How far, in sqrt(session)-scaled ATRs, can a stop sit from entry and
-      still be a stop the instrument can plausibly reach?
-    cost_while_unanswered: >-
-      A reachable stop is refused, or an unreachable one is accepted and the
-      position is sized off a distance price will not travel.
   - id: src.config.RiskConfig.max_target_horizon_sessions
     value: 60
     status: arbitrary
@@ -1911,20 +1897,6 @@ numbers:
     cost_while_unanswered: >-
       A diversification-shaped number on a desk whose mandate explicitly
       rejects diversification as a goal.
-  - id: src.portfolio_constructor.ConstructorConfig.max_stop_width_reach_atr_multiple
-    value: 1.5
-    status: derived
-    site: src/portfolio_constructor.py
-    derived_from: src.config.RiskConfig.max_stop_width_reach_atr_multiple
-    base_value: 1.5
-    note: >-
-      Mirror of src.config.RiskConfig.max_stop_width_reach_atr_multiple, the
-      deployed value. Recorded as `derived` rather than as a second arbitrary
-      number: it is ONE number with two definition sites, so counting it twice
-      would inflate the arbitrary total the same way this ledger's first
-      version claimed the 0.50% floor existed in one place while listing it in
-      two. Base-drift now fails the build if the pair stops agreeing, which
-      nothing previously checked.
   - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived

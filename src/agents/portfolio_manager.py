@@ -1545,9 +1545,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`constructor_refusals_by_symbol`, a snapshot of
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
-              `stop_wider_than_instrument_reach` or
               `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
-              item 180 dropped the young-listing bar-count refusal).
+              item 180 dropped the young-listing bar-count refusal, and
+              item 56 deleted the stop-WIDTH refusal
+              `stop_wider_than_instrument_reach` on 2026-09-26 — a wide
+              stop is answered by a smaller position, never a refusal).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM
               being shown a name that funnel has already refused. Absent

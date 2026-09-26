@@ -796,11 +796,21 @@ class RiskConfig(BaseModel):
     # Looser than the projection on purpose: this asks "could it get there",
     # the projection asks "how far do I claim it goes".
     max_target_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
-    # The REFUSAL threshold on a stop's width, in the same units. Split off
-    # from `max_target_reach_atr_multiple` on 2026-09-13 (docs/WORK.md item
-    # 56) at the same value: one number was estimating targets AND refusing
-    # trades, with no derivation for either job. Same value, two knobs.
-    max_stop_width_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
+    # NO `max_stop_width_reach_atr_multiple` HERE ANY MORE -- the stop-width
+    # REFUSAL it threshold-ed was deleted 2026-09-26 (board item 56, route
+    # (c)). It was split off from `max_target_reach_atr_multiple` on
+    # 2026-09-13 so that estimating a target and refusing a trade stopped
+    # sharing one number; the split made them independent without making
+    # either derived, and no published work fixes the touch probability
+    # below which a stop stops being a stop. Measured before deletion: 648
+    # sized stops recorded a touch-probability reading in production
+    # (quant_agent.log, 2026-09-13..2026-09-26) and the refusal fired zero
+    # times; the widest stop ever seen was 1.29 x ATR x sqrt(H) against a
+    # 1.5 cap. A wide stop is answered by a smaller position
+    # (`_plan_risk_targets`, the ratified spec 2.1 invariant) and, at the
+    # extreme, by `position_sized_to_zero`. Removed keys are rejected loudly
+    # by `_reject_deleted_stop_width_gate_key` below. The target-side
+    # `max_target_reach_atr_multiple` is UNAFFECTED and still in force.
     # Ceiling on `expected_horizon_sessions` before it enters the sqrt()
     # travel estimate, so an implausible horizon cannot licence a target far
     # outside anything the symbol does.
@@ -1090,6 +1100,29 @@ class RiskConfig(BaseModel):
                 "(board item 81): it refused nothing and capped nothing. "
                 "Delete the key from the settings file; there is no "
                 "replacement key."
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_stop_width_gate_key(cls, data):
+        # Board item 56 (2026-09-26), route (c). Same pattern and same
+        # reason as the validator above: with `extra="ignore"` a
+        # settings.yaml still carrying this key would load silently and an
+        # operator would believe a stop-width refusal was in force when
+        # nothing reads it. The gate is deleted, not retuned -- see
+        # docs/INCIDENT_HISTORY.md 2026-09-26. There is no replacement key:
+        # width is answered by position size, and the touch-probability
+        # READING is still recorded on every sized stop
+        # (`src.data.levels.touch_probability`).
+        if isinstance(data, dict) and "max_stop_width_reach_atr_multiple" in data:
+            raise ValueError(
+                "risk.max_stop_width_reach_atr_multiple was removed "
+                "2026-09-26 (board item 56): the stop-width refusal it "
+                "thresholded is deleted, never having refused a single "
+                "trade. Delete the key from the settings file; there is no "
+                "replacement key. `max_target_reach_atr_multiple` is a "
+                "different number and is unchanged."
             )
         return data
 

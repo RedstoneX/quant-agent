@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 140, (
+    assert MAX_ARBITRARY_ENTRIES == 139, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -280,6 +280,21 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "not on a bar count). With that use gone the constant's only remaining "
         "use is the sourced 200-day MA window, so the row is `sourced` again. A "
         "use was removed, not a value changed, so the count is lowered in the "
+        "same commit."
+        "140 -> 139 on 2026-09-26, board item 56 (route (c)): "
+        "`src.config.RiskConfig.max_stop_width_reach_atr_multiple` was "
+        "DELETED, not sourced -- the stop-WIDTH refusal it thresholded is "
+        "gone, and its `derived` mirror on `ConstructorConfig` went with it "
+        "(a `derived` row never counted, so only one comes off). Measured "
+        "before deleting: across 648 sized stops recorded in production "
+        "between 2026-09-13 and 2026-09-26 the gate refused ZERO trades, and "
+        "the widest stop it ever saw sat at 1.29 x ATR x sqrt(H) against its "
+        "1.5 cap; arithmetically it could not refuse the desk's own 2.5 ATR "
+        "fallback stop at any horizon of three sessions or more, and no "
+        "stated horizon has ever been under six. No published work fixes the "
+        "touch probability below which a stop stops being a stop, so the "
+        "number could not be sourced; a wide stop is answered by a smaller "
+        "position. A row left the ledger, so the count is lowered in the "
         "same commit."
     )
 

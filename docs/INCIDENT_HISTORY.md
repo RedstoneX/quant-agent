@@ -22,6 +22,106 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — the safety check that refused a trade for a too-wide stop had never refused anything, and the number it turned on could not be sourced (item 56 retired)
+
+**Plain language.** When the desk works out where to put a stop-loss, a
+separate safety check asked one more question: is this stop so far away that
+the share price could not plausibly reach it before the trade is over? If so,
+it refused the trade, on the reasoning that a stop price will never touch is
+not really a stop, and a position size worked out from it is fiction. That
+check has now been deleted. It never refused a single trade, the number it
+turned on was never read off anything, and the thing it claimed to protect was
+already handled: the desk answers a wide stop by buying fewer shares.
+
+**What the check actually did.** It compared the stop's distance from the
+entry price against how far the stock could plausibly travel inside the
+trade's own expected length — its average daily range, scaled by the square
+root of the number of sessions, multiplied by 1.5. Past that, refuse. The 1.5
+was the whole question: nobody derived it, and because the cap and the
+distance both scale the same way with the trade's length, the 1.5 amounts to
+refusing any stop with less than a 1.67% chance of being touched before the
+trade ends. Item 56 narrowed the board question to exactly that: how unlikely
+must a touch be before a stop stops being a stop?
+
+**Measured before deleting, from the desk's own production record.** Between
+2026-09-13 (when the desk began stamping a touch-probability reading on every
+stop it sizes) and 2026-09-26, `quant_agent.log` holds 648 such readings and
+ZERO refusals — the check never fired once. The widest stop it ever saw sat at
+1.29 average daily ranges per square-root-session against its 1.5 cap, so
+nothing ever came within a sixth of the limit. The lowest touch probability
+ever recorded was 4.0%, against a check that refuses below 1.67%; the median
+was 27%. The production database holds no record of the refusal code either,
+across 4,718 recorded funnel events from 2026-09-02 onward. And it could not
+have fired on the desk's own fallback stop — the 2.5-average-range noise band
+it falls back to when the chart offers nothing — at any trade length of three
+sessions or more, while the shortest horizon the desk has ever actually stated
+is six.
+
+**The three routes, and why two were wrong.**
+
+*A cited measurement (rejected — the literature measures a different thing).*
+The stop-loss literature measures what a stop threshold does to returns and to
+volatility (Acar & Toffel 2000; Kaminski & Lo; Han/Zhou/Zhu on momentum
+stop-losses). None of it measures a minimum touch probability below which a
+level stops counting as a stop. That is a different quantity, so it was not
+adopted, and nothing was borrowed to stand in for it.
+
+*The threshold-free reformulation (rejected — it is not threshold-free).* The
+item proposed refusing when the stop's touch probability is below the target's
+reach probability on the same instrument, on the grounds that this removes the
+number instead of sourcing it. It does not. Both probabilities read the same
+volatility over the same horizon, and touch probability falls strictly as
+distance grows, so the inequality reduces exactly to "the stop is further away
+than the target" — a reward-to-risk floor of 1.0 wearing a probability
+costume. The desk deleted its reward:risk floor on 2026-09-24 (item 81) and
+the owner ruled twice, on 2026-09-11 and again on 2026-09-17, that a breakout
+setup gets no reward-side refusal at all. Adopting it would have smuggled a
+refused rule back in while claiming to have removed a number. The equivalence
+is now pinned by a test
+(`test_the_threshold_free_reformulation_is_a_reward_risk_floor`).
+
+*Delete it (what shipped).* The check's own justification was that a size
+computed off an unreachable distance is fiction. But the desk's ratified sizing
+rule already answers a wide stop by holding the risked dollars constant and
+buying fewer shares — twice the stop distance, half the position — which is
+also what the published practice the check cited actually prescribes; and at
+the extreme the position rounds to nothing and is refused by name
+(`position_sized_to_zero`). The upstream universe screen separately refuses
+instruments whose daily range is too large a fraction of their price. Nothing
+was protected that is not still protected.
+
+**What was kept.** The READING survives untouched and is still stamped on every
+stop the desk sizes: the probability, from the reflection principle and the
+published range-to-sigma identity, that this stop is touched inside this
+trade's horizon. No constant is chosen anywhere in it. It is the evidence that
+could one day answer the question the deleted check pretended to have
+answered, and it now accumulates without a gate attached to it.
+
+**Consequence recorded rather than hidden.** The portfolio manager's
+eligibility rule R6 shows the manager any name the constructor's preview
+already refused. The width check was that preview's only live producer of a
+refusal, so today the preview records none at all: the one remaining refusal
+needs a missing volatility reading, which the preview classifies one step
+earlier as a data fault. R6 itself is unchanged and still reads whatever it is
+handed, and the ENFORCING check was always one stage later, in construction, so
+no enforcement was lost — only an advance warning that currently has nothing to
+warn about. Pinned by a test that fails if a preview-time refusal reappears
+without this being revisited.
+
+**What would catch it next time.** The refusal code stays defined so that old
+records remain readable and the blocked-proposal census can still name it, but
+a test now walks every module under `src/` and fails if any live code emits it
+again, so the gate cannot come back silently. Two more tests fail if the
+deleted threshold reappears on either of its former definition sites, and a
+settings file still carrying the key now raises at config load rather than
+loading silently and letting an operator believe a width refusal is in force.
+
+**Still `arbitrary`, and not touched here.** The target-side reach multiple
+(the other 1.5, which estimates how far a stock can travel toward a price
+target) is a different number doing a different job and is unchanged and still
+unsourced. The desk's 2.5-average-range fallback stop is also unchanged.
+
+
 ### 2026-09-26 — the desk let the trade-picker spend borrowed money without ever telling it borrowing costs anything (item 95 retired)
 
 **Plain language.** The account is allowed to borrow, up to twice what it owns.
