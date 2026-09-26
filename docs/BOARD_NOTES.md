@@ -485,10 +485,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
 
-## item 143
-
-**Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
-
 ## item 147
 
 **Moved from WORK.md (2026-09-24) —** An inexact day blocks the quota rearm, so a provider omitting usage costs budget never spent.
