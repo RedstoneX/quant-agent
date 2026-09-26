@@ -21,9 +21,7 @@ import pytest
 from src.models import (
     PortfolioDecision, Position, RiskModification, RiskVerdict, TradeDecision,
 )
-from src.pipeline_stages import (
-    DecisionStage, RiskStage, _revert_entry_size_increases,
-)
+from src.pipeline_stages import DecisionStage, RiskStage
 
 from tests.test_risk_verdict_per_symbol import (
     _chpx, _ctx, _exit_pipeline, _position, _rc, _stage_pipeline, _two_exits,
@@ -203,35 +201,6 @@ def test_approved_false_drops_named_entry_and_records_the_ignored_veto():
     ignored = [p for _s, p in _events(pipeline)
                if p["stage"] == "risk" and p["outcome"] == "batch_veto_ignored"]
     assert len(ignored) == 1, "the approved=False flag is recorded, not enforced"
-
-
-# ---------------------------------------------------------------------------
-# src/pipeline_stages.py — `_revert_entry_size_increases` failure branch
-# ---------------------------------------------------------------------------
-
-class _UncopyableShort:
-    """A SHORT whose size cannot be restored — the branch that DROPS it."""
-
-    action = "SHORT"
-    symbol = "TSLA"
-    allocation_pct = 8.0
-
-    def model_copy(self, update=None):
-        raise RuntimeError("copy failed")
-
-
-def test_a_failed_short_revert_is_recorded_as_a_drop_not_a_revert():
-    out, rejected = _revert_entry_size_increases(
-        [_UncopyableShort()], {("TSLA", "SHORT"): 5.0},
-    )
-
-    assert out == []                         # dropped — unchanged behaviour
-    assert len(rejected) == 1
-    row = rejected[0]
-    assert row["outcome"] == "dropped"
-    assert row["gate"] == "rm_enlargement_revert_failed"
-    assert row["before"] == 5.0 and row["requested"] == 8.0
-    assert "DROPPED" in row["reason"] and "Reverted" not in row["reason"]
 
 
 # ---------------------------------------------------------------------------

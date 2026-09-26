@@ -4504,82 +4504,6 @@ def _stash_macro_parse_failure(reason: str) -> None:
         failures.append(reason)
 
 
-
-def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
-    """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
-
-    `_apply_risk_modifications` guard 1b already does this for a BUY. It was
-    written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
-    the same cumulative clamp in the constructor, and treated alongside BUY as
-    new risk (as `_record_scale_advisory` also does) — could be enlarged by an
-    edit the seat believed was protective. On a short that ADDS
-    to a short already held, `allocation_pct` is an increment exactly as it is
-    on a long add, so an upward edit grows the short by more than the number
-    reads.
-
-    Enforced here rather than inside guard 1b only because this sweep needs
-    the pre-modification sizes, which this stage already has. Guard 1b stays:
-    it fires first and more specifically for a BUY, and this is a no-op behind
-    it. If the two are ever consolidated, consolidate ONTO guard 1b.
-
-    Fails toward the SMALLER size in every branch: the pre-modification value
-    is the constructor's own, which is already clamped by the single-name
-    ceiling, the risk budget and the sector dial. Nothing here can raise a
-    size, and a decision whose pre-modification size is unknown is left
-    untouched rather than guessed at.
-    """
-    out: list = []
-    rejected: list[dict] = []
-    for d in decisions:
-        if d is None or d.action not in ("BUY", "SHORT"):
-            out.append(d)
-            continue
-        before = pre_alloc.get((d.symbol.strip().upper(), d.action))
-        if before is None or d.allocation_pct <= before:
-            out.append(d)
-            continue
-        reason = (
-            f"RM modification would INCREASE {d.symbol}'s {d.action} "
-            f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}). "
-            f"Reverted — the risk seat may only reduce an entry's size, "
-            f"never enlarge it; on an add to a position already held this "
-            f"field is an increment, so an upward edit grows the position by "
-            f"more than the number reads."
-        )
-        logger.warning("Risk mod REJECTED for %s: %s", d.symbol, reason)
-        rejected.append({
-            "symbol": d.symbol, "field": "allocation_pct", "reason": reason,
-        })
-        try:
-            out.append(d.model_copy(update={"allocation_pct": before}))
-        except Exception as e:
-            # Cannot restore the smaller size, so do not ship the larger one.
-            logger.warning(
-                "Could not revert %s's enlarged allocation_pct (%s) — "
-                "DROPPING the decision rather than executing the increase",
-                d.symbol, e,
-            )
-            # Board item 164: the entry above says "Reverted", which is no
-            # longer true — the decision is gone. Restate it as the drop it
-            # is, so the durable record does not claim a trade shipped at
-            # its pre-edit size when nothing shipped at all.
-            rejected[-1].update({
-                "outcome": "dropped",
-                "gate": "rm_enlargement_revert_failed",
-                "action": d.action,
-                "before": before,
-                "requested": d.allocation_pct,
-                "reason": (
-                    f"RM modification would INCREASE {d.symbol}'s {d.action} "
-                    f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}); "
-                    f"restoring the pre-edit size failed ({e}), so the "
-                    f"{d.action} was DROPPED rather than shipped at the "
-                    f"enlarged size."
-                ),
-            })
-    return out, rejected
-
-
 #: The four fields a risk-seat edit or `scale_all_buys` can change — the
 #: same set `_apply_risk_modifications` accepts (`modifiable_fields` there).
 _RISK_EDITABLE_FIELDS = ("allocation_pct", "entry_price", "stop_loss", "take_profit")
@@ -8005,33 +7929,23 @@ class RiskStage:
         pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
 
         if verdict.modifications:
-            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
-            # `allocation_pct` edit that ENLARGES a BUY, but it tests
-            # `decision.action == "BUY"` only — a SHORT was never covered,
-            # although the constructor sizes it with the identical cumulative
-            # arithmetic (`name_headroom_pct = (max_position_pct -
-            # current_short_gross_pct) / gross_mul`, the explicit mirror of
-            # the long clamp) and `_record_scale_advisory` already treats the
-            # two sides alike because both open new risk. Snapshotted here
-            # and enforced below for BOTH sides: for a BUY the inner guard
-            # has already reverted the edit, so this sweep is a no-op and
-            # finds nothing; for a SHORT it is the only thing standing
-            # between the seat and a short it believes it is cutting.
-            pre_mod_entry_alloc = {
-                (d.symbol.strip().upper(), d.action): d.allocation_pct
-                for d in portfolio_decision.decisions
-                if d.action in ("BUY", "SHORT")
-            }
+            # Board items 135 + 155. An `allocation_pct` edit that ENLARGES an
+            # entry is refused by `_apply_risk_modifications` guard 1b, which
+            # now covers SHORT as well as BUY. It used to test
+            # `decision.action == "BUY"` only, and the SHORT half was patched
+            # in HERE, one layer out, by a second sweep over the same
+            # decisions — solely because `src/pipeline.py` was locked by
+            # another workstream on 2026-09-18. That sweep is DELETED and
+            # must not come back: one rule, one enforcement point, inside the
+            # guard that already owns it. `tests/test_pipeline_stages.py`
+            # fails the build if a duplicate reappears in this file.
             unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
                 unapplied=unapplied_mods,
             )
-            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
-                portfolio_decision.decisions, pre_mod_entry_alloc,
-            )
-            rejected_mods = list(rejected_mods) + enlarged
+            rejected_mods = list(rejected_mods)
             # A modification this method refused (exit silently zeroed, or a
             # stop/target edit that would have shipped a reward:risk / noise-
             # band floor breach) must be a visible, distinguishable event —
