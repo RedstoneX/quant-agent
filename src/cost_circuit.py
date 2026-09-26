@@ -150,6 +150,62 @@ _SELF_CLEARING_HARD_TRIGGERS = frozenset({
 })
 
 
+# === docs/WORK.md item 147 (2026-09-26): a NULL cost that is not unknown ===
+#
+# `_seed_day_locked` counts every `agent_logs` row with `cost_usd IS NULL`
+# as an unknown-cost row, seeds the ET day inexact, and so arms
+# `legacy_unknown_cost` -- an operator-only hard latch that refuses all paid
+# analysis for the rest of the day. That is right for a row whose provider
+# request happened and could not be priced. It is wrong for a row where NO
+# PROVIDER REQUEST WAS EVER ISSUED.
+#
+# MEASURED, production DB read-only 2026-09-26: `agent_logs` holds 667 rows
+# over 2026-08-14..2026-09-26, of which exactly 7 have `cost_usd IS NULL`.
+# All 7 are the same thing -- `smart_money_analyst` synthesis-cache hits
+# (`provider_requests=0`, `latency_s=0.0`, `input_message='[cached evidence
+# hash]'`, 0 input and 0 output tokens, `status='success'`), six on
+# 2026-08-31 and one on 2026-09-17. Not one of them cost anything, because
+# not one of them called a provider. Zero rows have tokens > 0 with a NULL
+# cost, so the unpriceable-model case has never occurred in production.
+#
+# The proof of $0 is the row's own recorded provider-request count, in the
+# same spirit as `_KNOWN_ZERO_COST_STATUS_CODES` below: forgive only what
+# is provably free, never what is merely probably free. All three
+# conditions are required, and the third is not redundant --
+# `src/pipeline.py`'s evening exception path also synthesises an
+# `AgentResult` with `provider_requests=0` and no cost after a call that
+# may well have reached the provider, and that row must stay unknown. It is
+# excluded because its status is not `success`.
+#
+# `provider_requests` is NULL on 194 pre-column legacy rows. SQL's
+# `= 0` never matches NULL, so those keep counting as unknown, which is the
+# safe direction: their request count was never recorded, so nothing about
+# them is proven.
+_PROVEN_ZERO_ROW_SQL = (
+    "cost_usd IS NULL AND provider_requests = 0 AND status = 'success'"
+)
+
+
+def _unknown_cost_row_expr(conn: sqlite3.Connection) -> str:
+    """SQL scoring 1 for an `agent_logs` row of genuinely unknown cost.
+
+    Falls back to the plain `cost_usd IS NULL` test when the columns that
+    carry the proof are absent, because a standalone breaker DB may hold an
+    older `agent_logs` shape (the caller already tolerates the table being
+    missing outright). Without the proof there is no proof, so the row
+    counts as unknown -- fail closed.
+    """
+
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_logs)")}
+    except sqlite3.OperationalError:
+        columns = set()
+    if not {"provider_requests", "status"} <= columns:
+        return "CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+    return f"CASE WHEN ({_PROVEN_ZERO_ROW_SQL}) THEN 0 " \
+           "WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+
+
 def _trigger_scope(code: Any) -> str:
     if not isinstance(code, str):
         return "hard"
@@ -1700,9 +1756,10 @@ class LLMCostCircuitBreaker:
         # agent_logs predates the breaker.  Seed its actual reported spend so
         # deploying mid-day cannot reset the budget to zero.
         try:
+            unknown_expr = _unknown_cost_row_expr(conn)
             row = conn.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0) AS cost, "
-                "COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) "
+                f"COALESCE(SUM({unknown_expr}), 0) "
                 "AS unknown_cost_rows "
                 "FROM agent_logs WHERE timestamp BETWEEN ? AND ?",
                 (utc_start, utc_end),
@@ -1712,7 +1769,7 @@ class LLMCostCircuitBreaker:
             legacy = conn.execute(
                 "SELECT run_id, COALESCE(SUM(cost_usd), 0) AS cost, "
                 "COUNT(*) AS calls, "
-                "COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) "
+                f"COALESCE(SUM({unknown_expr}), 0) "
                 "AS unknown_cost_rows FROM agent_logs "
                 "WHERE timestamp BETWEEN ? AND ? GROUP BY run_id",
                 (utc_start, utc_end),
