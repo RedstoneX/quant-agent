@@ -16,7 +16,17 @@ evenly-spaced sample of real `agent_logs.full_response` rows for
 `agent_name='tech_analyst'`, read from the read-only production snapshot
 available on this box (`/tmp/qamc_ro.db`, generated 2026-09-18 19:24 UTC),
 and then REDACTED: this repository is public, so every symbol, entry price,
-stop, target, level and piece of reasoning text in it is synthetic. What is
+stop, target, level and piece of reasoning text in it is synthetic. The
+prices and levels are WHOLE DOLLARS on a synthetic ladder (2026-09-26 —
+the first redaction pass left them at their real cent-precision values,
+which the leak guard `tests/test_no_real_desk_output.py` correctly reads
+as real desk output). They were assigned rank-preserving, so every
+ordering the real values carried survives: each row's stop/entry/target
+direction, and the sort order inside each support/resistance array. The
+replay below reads no value at all, so nothing here asserts on a price;
+what the substitution had to protect was the row-validity split, and that
+is unchanged [measured 2026-09-26: 63 parsed rows, 40 valid and 23
+invalid against `TechAnalysisResult`, identical before and after]. What is
 real, and what this file tests, is the STRUCTURE the model produced — row
 counts, key names, key order, null patterns, fence markers (including the
 double-fenced self-correction in log 283) and indentation. The replay below
