@@ -275,13 +275,17 @@ success — cancelled, never-ran or genuinely failed all report the same way.
 A `pytest` failure that returns in a few seconds, with no test output to
 speak of, is almost always the definition-of-done check above failing inside
 one shard, not a test regression; read the shard's own log before assuming
-otherwise. Separately, `test_the_settled_cost_ceiling_still_stops_the_
-portfolio_manager` (`tests/test_rehearsal_reproduces_cost_ceiling.py`) is an
+otherwise. Separately, `test_the_settled_cost_ceiling_still_suspends_paid_
+analysis` (`tests/test_rehearsal_reproduces_cost_ceiling.py`) is an
 ops-acceptance test gated on `sudo -n -u qamc` read access to the production
 database — it is SKIPPED, not failed, everywhere that access is unavailable,
 which includes every CI run. Two agents independently reported it as
-pre-existing repo breakage on 2026-09-18; both were wrong, and it is not
-evidence of anything broken in this repository.
+pre-existing repo breakage on 2026-09-18; both were wrong, and a skip is not
+evidence of anything broken in this repository. On the deployment box, where
+the access DOES exist, it really runs and can really be red — and because CI
+can never run it, nothing but a manual run on that box will ever say so. It
+takes roughly five minutes; run it there after touching `src/cost_circuit.py`
+or `ops/rehearsal/`.
 
 **The gate reads commit messages only, never the PR description** — `git log
 base..HEAD`, nothing else — and that base must be resolved on a FULL-HISTORY
