@@ -265,6 +265,14 @@ class RunContext:
     # expiry peek). None means the seat has no honest input and must stay
     # lost rather than be re-asked with nothing.
     heal_news_text: str | None = None
+    # Board item 78: what the soft-exit heal actually did to each
+    # open/increase name that arrived without a falsifier, keyed by symbol,
+    # as `{"outcome": <src.seat_heal HEAL_* code>, "detail": <prose>}`.
+    # Drained from the PM by `DecisionStage` right after `decide()`, because
+    # the candidate-accounting re-ask calls `decide()` again and resets it.
+    # The blank-falsifier refusal quotes this rather than asserting a retry
+    # that may never have been attempted.
+    soft_exit_heals: dict[str, dict] = field(default_factory=dict)
     # How much of this decision's evidence was read on THIS tick, as
     # `evidence_gate.EvidenceFreshness.to_evidence()`. Written by the
     # evidence gate, the one path every decision passes through. Owner
