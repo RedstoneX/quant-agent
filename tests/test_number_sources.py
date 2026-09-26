@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 140, (
+    assert MAX_ARBITRARY_ENTRIES == 141, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -281,6 +281,29 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "use is the sourced 200-day MA window, so the row is `sourced` again. A "
         "use was removed, not a value changed, so the count is lowered in the "
         "same commit."
+        "140 -> 139 on 2026-09-26, board item 183: "
+        "`src.portfolio_constructor.ConstructorConfig.min_order_usd` (500) was "
+        "deleted as dead code. Nothing in `PortfolioConstructor` read it, and "
+        "the one call that forwarded it reached an `apply_gross_ceiling` "
+        "parameter that has been explicitly accepted-and-ignored since "
+        "2026-09-24, so no order size, refusal or gate changes. The comment at "
+        "its definition site claiming that gate still read it was false on the "
+        "day it was written. A row left the ledger, so the count is lowered in "
+        "the same commit."
+        "139 -> 140 on 2026-09-26, board item 70: "
+        "`src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` was reclassified "
+        "`derived` -> `arbitrary`. It was recorded as derived from "
+        "`src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25` "
+        "while its own value is 1 -- a derivation that never produced its own "
+        "figure. It is a second independent flat number and is now counted as "
+        "one. No value changed. "
+        "140 -> 141 on 2026-09-26, board item 70: a genuinely new name, "
+        "`src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0) -- the "
+        "second of the two different jobs the single noise-band literal was "
+        "doing, the margin a completed daily close must clear a structural "
+        "level by. Same value, no behaviour change; item 70 requires the two "
+        "jobs to become two independently justified numbers and forbids "
+        "collapsing them to keep the count down, so the count rises by one."
     )
 
 

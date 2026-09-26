@@ -141,6 +141,27 @@ numbers:
       everything above it is parked in the T-bill ETF (src/config.py:1175).
       src/config.py:1178 records that an earlier pass raised it to 5.0 as a
       workaround for BUYs being skipped and it was deliberately put back.
+      CHECKED 2026-09-26, board item 183 -- the question was whether the
+      deployment-gap advisory that still reads this band should be deleted
+      along with the retired sweep. FINDING, and the reason nothing was
+      deleted here: this number has TWO readers, not one. The advisory
+      (`sweep_reserve_usd` / `cash_above_reserve`, surfaced on the /account
+      response as `reserve_usd` and `cash_above_reserve`) is display-only --
+      `src/quantities.py` says in terms that subtracting it from deployable
+      produced a figure no part of the engine ever used, and no front-end
+      consumer of either field exists in this repo. But the sweeper itself
+      (`CashSweeper.reserve_usd`) also reads it, and the sweeper is DISABLED,
+      not removed: `config/settings.yaml:973` sets `cash_sweep.enabled:
+      false` while `src/pipeline.py` and `src/pipeline_stages.py` still
+      construct and call `CashSweeper`. Deleting the advisory on its own would
+      leave this band alive, unreported and still reachable by flipping one
+      flag -- less honest than today, not more. So this constant, the four
+      dead sweep constants item 183 names (`_BUY_LIMIT_PAD`,
+      `_SELL_LIMIT_PAD`, `_FUND_BUFFER_FRAC`, `_FUND_BUFFER_MIN_USD`) and
+      `CashSweepConfig.min_order_usd` all die together, with the sweeper and
+      the advisory, or not at all. That retirement touches roughly 187
+      references across `src/pipeline.py`, `src/pipeline_stages.py`, the API
+      and nine test modules, and is its own job; it was NOT started here.
     open_question: >-
       What is the largest observed shortfall between an order's sized cost and
       its settled cost on this account - fees, slippage and partial fills
@@ -248,10 +269,31 @@ numbers:
       fill. docs/INCIDENT_HISTORY.md records the belt comparing every range
       ticket to a flat unsourced number and skipping a name the constructor
       had already approved. 40bps is not read off any spread.
+      MEASURED 2026-09-26 from this desk's own filled orders (board item 183;
+      method and the full distribution are in docs/INCIDENT_HISTORY.md).
+      Source rows: the production `trades` table, `fill_status = 'filled'`,
+      2026-09-15 to 2026-09-25 -- 30 BUY and 3 SHORT entries. The reference
+      price is recovered from the stored submitted limit, which this belt
+      itself sets at reference x (1 +/- 40bp), so realised entry slippage is
+      (fill - reference)/reference.
+      Result: median +2.6bp, 90th percentile +26.4bp, maximum exactly +40.0bp
+      -- one order of the 30 filled AT the belt and none above it. The belt is
+      therefore not routinely binding, and it does not explain any ordinary
+      fill. It also does NOT identify 40: the sample is RIGHT-CENSORED by the
+      belt itself (an order that would have slipped past 40bp is refused, so
+      it can never appear), and the refusals sit far away -- every one of the
+      9 recorded slippage skips had the quoted ask 391bp to 1466bp above the
+      reference. Between roughly 32bp and 390bp no observed order distinguishes
+      one value from another. Measured, and still unsourced at 40.
     open_question: >-
-      What is the distribution of reference-to-fill slippage on this desk's
-      own orders at its own order times, and which percentile of it should be
-      refused?
+      The distribution is now measured and it does not pick a percentile,
+      because the belt censors its own tail. Answering this needs data the
+      desk does not have: either the untruncated slippage of orders it
+      currently refuses, which would mean deliberately sending some through a
+      wider belt, or a published reference for an acceptable entry-slippage
+      bound on retail marketable limits. Until one of those exists, 40 is a
+      choice inside a measured indifference band of roughly 32bp to 390bp, and
+      choosing inside it is the owner's appetite rather than a measurement.
     cost_while_unanswered: >-
       An approved trade is silently not sent when the book is merely busy, or
       a genuinely abnormal book is paid through.
@@ -1925,28 +1967,6 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.min_order_usd
-    value: 500
-    status: arbitrary
-    site: src/portfolio_constructor.py
-    note: >-
-      Minimum order value. Not a broker minimum -- the broker accepts
-      fractional notional well below it. A round $500 with nothing behind it,
-      and it compounded with min_risk_pct to drop small plans.
-      Fixed 2026-09-24 (real incident, see the `CashSweepConfig.min_order_usd`
-      entry above): `_apply_sector_crowding_scale` no longer rejects a
-      sector-crowded trade for being under this floor, and neither does
-      `apply_gross_ceiling`'s NEW-entry check (src/risk/rules.py), which
-      still reads this same field but only as a vestigial, ignored
-      parameter now -- both paths grant a small, nonzero entry instead of
-      refusing it; only a genuine zero still refuses.
-    open_question: >-
-      None outstanding for trade sizing -- this field's blocking use is
-      fully removed. Whether to delete the now-unused parameter from
-      `apply_gross_ceiling`'s signature (currently kept for caller/test
-      compatibility) is a separate, purely mechanical cleanup.
-    cost_while_unanswered: >-
-      None -- no trade-sizing path still uses this field to refuse an order.
   - id: src.portfolio_constructor.ConstructorConfig.min_risk_pct
     value: 0.5
     status: sourced
@@ -2004,9 +2024,20 @@ numbers:
     note: >-
       How large a weight change must be before the desk bothers to trade it. A
       round half a percent with no measurement of cost against it.
+      MEASURED 2026-09-26, the cost half of the question below (board item 183;
+      method in docs/INCIDENT_HISTORY.md). Commission is zero -- Alpaca charges
+      none on stock -- so the whole cost of a small trade is execution
+      slippage, and on this desk's own 30 filled BUY entries that ran at a
+      median +2.6bp with a 90th percentile of +26.4bp. On a $10k book a 0.5%
+      weight change is a $50 order whose measured expected cost is about a
+      cent. The measurement therefore says the cost side cannot justify a
+      floor of this size; it does NOT say what the floor should be, because
+      the other half of the question -- how much pointless order churn the
+      desk is willing to create -- is appetite and was never measured.
     open_question: >-
-      How small a weight change is not worth an order, given this account's
-      commission and spread?
+      Given a measured cost of roughly a cent on a $50 order, how much order
+      churn is the desk willing to accept to stop skipping genuine small
+      rebalances? Appetite, not measurement.
     cost_while_unanswered: >-
       Small genuine rebalances are skipped, or the desk churns.
   - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
@@ -2198,15 +2229,74 @@ numbers:
       in one sentence.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
     value: 1
-    status: derived
+    status: arbitrary
     site: src/risk/exit_guard.py
-    derived_from: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
-    base_value: 1.25
     note: >-
       The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
-      widening described at src/risk/exit_guard.py:260-278. Same magnitude and
-      same question as the trailing-stop noise band, which carries the open
-      question.
+      widening described at src/risk/exit_guard.py:260-278. How far an adverse
+      move must travel FROM ENTRY before it stops being ordinary daily wobble.
+      RECLASSIFIED 2026-09-26, board item 70: this entry read `derived` from
+      `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
+      while its own value is 1 -- a derivation that never produced its own
+      figure. 1.0 is not a reading of 1.25; it is a second, independent flat
+      number, and it is now labelled as one. It also used to do a SECOND job,
+      the structural break margin, which is now its own constant
+      (`BREAK_CONFIRMATION_ATR_MULTIPLE`); nothing about either value changed.
+      RESEARCH, 2026-09-26 (docs/INCIDENT_HISTORY.md -- do not re-search):
+      every published volatility-band multiple for THIS quantity sits well
+      ABOVE 1.0 -- Wilder's Volatility System ARC ~2.8-3.1 (New Concepts,
+      1978), the Chandelier Exit default 3.0 x ATR(22) with 2.5 tight and
+      3.5-4.0 loose, and Kaufman treating it as a whipsaw dial with no blessed
+      constant. Those measure stop distance from a RUNNING EXTREME rather than
+      excess over noise from entry, so they are the closest published
+      analogue, not an exact fit -- which is why this stays `arbitrary` and
+      was NOT swapped to 3.0. Moving it from 1.0 toward 3.0 is a large
+      LOOSENING of how readily the desk may sell, and item 70 states in terms
+      that how readily the desk blocks a sale is owner appetite and not this
+      item's to change.
+    open_question: >-
+      Does the owner accept a noise band read from the published
+      volatility-stop literature (~3 ATR, against today's 1.0), knowing it
+      makes the desk markedly slower to accept that an adverse move is real?
+      That is a risk-appetite question, not a measurement, and it is the only
+      remaining route -- the literature offers a range, not a value.
+    cost_while_unanswered: >-
+      The band that decides whether an adverse move is real sits below every
+      published volatility multiple, and it is the measured cause of the
+      7-of-8 discretionary exits the reviewer approved and this gate blocked.
+  - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
+    value: 1
+    status: arbitrary
+    site: src/risk/exit_guard.py
+    note: >-
+      How far beyond a structural LEVEL a completed daily close must sit
+      before that level counts as broken -- the margin in
+      `check_structural_protection` (src/risk/exit_guard.py) and in the three
+      target-revision break tests that import it. NEW ENTRY 2026-09-26, board
+      item 70: this is the second of the two jobs the single
+      `NOISE_BAND_ATR_MULTIPLE` literal used to do. Same value, no behaviour
+      change; the point of the split is that the two jobs can now be answered
+      separately, which a shared constant made impossible.
+      RESEARCH, 2026-09-26 (docs/INCIDENT_HISTORY.md -- do not re-search): the
+      published literature answers this quantity in PERCENT and
+      level-dependently, never in ATRs -- Edwards & Magee ~3% for a major
+      level and ~1% for a short-term one; Bulkowski's answer is effectively a
+      decisive close, i.e. zero distance, with confirmation carried by the
+      close count and the throwback behaviour. So there is no ATR basis for
+      this number to be sourced against at all: it is unidentifiable in its
+      own units, not merely uncited. The confirmation RULE around it IS
+      sourced (`TREND_CONFIRMING_CLOSES` = 2, Edwards & Magee); only the
+      margin is not.
+    open_question: >-
+      Re-express the break margin in the units the literature actually uses --
+      a percentage of price, scaled by whether the level is major or
+      short-term -- or accept an ATR margin nobody can source? The first is a
+      real reformulation of the exit path and changes behaviour; the second is
+      owner appetite. Nothing measurable decides between them.
+    cost_while_unanswered: >-
+      Whether a structural level counts as broken, and therefore whether a
+      position keeps its protection, turns on an ATR distance no published
+      work expresses in ATRs.
   - id: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
     value: 2
     status: sourced
@@ -4569,10 +4659,21 @@ numbers:
       An entry BUY is skipped when the quoted ask sits more than 2% above the
       slippage cap (src/pipeline_stages.py:7242-7247); the comment says the
       multiple is 'deliberately loose because the input is'.
+      MEASURED 2026-09-26 from this desk's own records (board item 183; method
+      in docs/INCIDENT_HISTORY.md), which is exactly the comparison the open
+      question below asked for. All 9 recorded skips on this gate had the IEX
+      ask 391bp to 1466bp above the reference; the 30 orders that filled
+      normally came in at or under 40bp. This multiple fires at about 241bp
+      above the reference (the 40bp cap x 1.02), which sits in a ~350bp band
+      containing NO observation at all. Every multiple from about 1.004 to
+      about 1.035 would have produced an identical decision on every case the
+      desk has ever seen, so the data cannot identify 1.02 -- it can only show
+      the gate is nowhere near either population.
     open_question: >-
-      How far above the cap does an IEX ask sit on names the desk then fills
-      normally, versus on names that genuinely ran -- measured from the desk's
-      own skip and fill records?
+      The measurement is done and it does not pick a value. What remains is
+      whether the desk accepts a gate whose exact multiple is unidentifiable
+      inside a 350bp gap in its own data, or replaces the IEX-ask test with
+      something the desk can actually source. Nothing measurable decides it.
     cost_while_unanswered: >-
       Too tight and approved entries are skipped on venue noise; too loose and
       an entry is sent into a market that has genuinely run away.
@@ -4712,26 +4813,32 @@ numbers:
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
       (src/risk/target_revision.py:105-115). One number, reached through a
       second name; the base carries the question.
-  - id: src.risk.target_revision.assess_target_revision(noise_band_atr_multiple)
+  - id: src.risk.target_revision.assess_target_revision(break_margin_atr_multiple)
     value: 1
     status: derived
     site: src/risk/target_revision.py
-    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    derived_from: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     base_value: 1
     note: >-
-      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
-      second name; the base carries the question.
-  - id: src.risk.target_revision.levels_still_in_the_way(noise_band_atr_multiple)
+      Parameter default bound to the imported constant
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      One number, reached through a second name; the base carries the
+      question. Repointed 2026-09-26 (board item 70) from the noise band to
+      the break margin, which is the job this parameter actually does; the
+      parameter was renamed to match.
+  - id: src.risk.target_revision.levels_still_in_the_way(break_margin_atr_multiple)
     value: 1
     status: derived
     site: src/risk/target_revision.py
-    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    derived_from: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     base_value: 1
     note: >-
-      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
-      second name; the base carries the question.
+      Parameter default bound to the imported constant
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      One number, reached through a second name; the base carries the
+      question. Repointed 2026-09-26 (board item 70) from the noise band to
+      the break margin, which is the job this parameter actually does; the
+      parameter was renamed to match.
   - id: src.risk.target_revision.stale_reach_trigger(max_horizon_sessions)
     value: 60
     status: derived
@@ -4762,16 +4869,19 @@ numbers:
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
       (src/risk/target_revision.py:105-115). One number, reached through a
       second name; the base carries the question.
-  - id: src.risk.target_revision.target_level_broken(noise_band_atr_multiple)
+  - id: src.risk.target_revision.target_level_broken(break_margin_atr_multiple)
     value: 1
     status: derived
     site: src/risk/target_revision.py
-    derived_from: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    derived_from: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     base_value: 1
     note: >-
-      Parameter default bound to the imported constant NOISE_BAND_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
-      second name; the base carries the question.
+      Parameter default bound to the imported constant
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      One number, reached through a second name; the base carries the
+      question. Repointed 2026-09-26 (board item 70) from the noise band to
+      the break margin, which is the job this parameter actually does; the
+      parameter was renamed to match.
   - id: src.risk.trailing.compute_trailing_stop(qty)
     value: 1
     status: not-trade-governing
