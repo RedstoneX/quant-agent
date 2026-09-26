@@ -285,8 +285,18 @@ def changed_line_ranges(ref: str, path: str,
 
 #: A trailer line, for the unwrap below: `Key: value` at the start of a line.
 #: Deliberately matches ANY key, not just this module's own — a continuation
-#: line must never swallow the next trailer, whoever owns it.
+#: line must never swallow the next trailer, whoever owns it. A commit SUBJECT
+#: like `Item 95: the trade-picker may borrow` does not match, because the key
+#: may not contain a space.
 _ANY_TRAILER_START = re.compile(r"^[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]*:", re.I)
+
+#: The keys this module actually reads. A continuation is only ever joined
+#: onto one of THESE, which is what makes joining an unindented line safe:
+#: ordinary prose after some other `Word:` line is left exactly alone.
+_GATE_KEYS = re.compile(
+    r"^[ \t]*(Acceptance-observable|Objection-\d+|Response-\d+"
+    r"|Done-criteria-met|Done-criteria-deferred|Consumers-unchanged)"
+    r"[ \t]*:", re.I)
 
 
 def unwrap_trailers(messages: str) -> str:
@@ -295,31 +305,42 @@ def unwrap_trailers(messages: str) -> str:
     Every check in this module captures a trailer's value to END OF LINE, so a
     trailer written across several physical lines was silently truncated to its
     first line: an `Acceptance-observable:` wrapped at column 72 arrived as
-    eight words with no path and failed, and because the gate reads EVERY
-    occurrence in `git log base..HEAD`, no later commit could correct it. With
-    force-push blocked, the only remedy was re-cutting the branch — which cost
-    four pull requests on 2026-09-26 alone, none of them for anything wrong
-    with the work.
+    eight words with no path and failed. Because the gate reads EVERY
+    occurrence in `git log base..HEAD`, no later commit could correct it, and
+    with force-push blocked the only remedy was re-cutting the branch — which
+    cost four pull requests on 2026-09-26, then five more the same day.
 
-    Wrapping is a typographic accident, not a claim about content, so it is
-    normalised here rather than policed. The rule is git's own trailer
-    convention: a line that is INDENTED and is not itself `Key:` continues the
-    trailer above it. A blank line, an unindented line, or the start of another
-    trailer ends it. Nothing else in the message is touched, and a message with
-    no wrapped trailers comes back byte-identical.
+    THE FIRST VERSION OF THIS FUNCTION ONLY ACCEPTED AN INDENTED CONTINUATION,
+    following git's own trailer convention. That was too narrow to be any use:
+    nobody writing these indents them, so it did not rescue a single one of the
+    five pull requests still blocked when it shipped. A rule that describes a
+    convention nobody follows is not a fix.
+
+    So a continuation is now any non-blank line that follows one of the keys
+    this module reads and is not itself a trailer, indented or not. Joining is
+    deliberately restricted to those keys: after any other `Word:` line the
+    text is left untouched, so a commit body that happens to contain a colon
+    cannot be reshaped. A blank line or the next trailer ends the join, and a
+    message with no wrapped trailer comes back byte-identical.
+
+    What this cannot do is tell a wrapped declaration from a declaration
+    followed immediately by an unrelated sentence — both join. That direction
+    is the safe one: it can only ever make a claim look longer than its author
+    typed on one line, and every threshold the gate applies is a floor on
+    substance the author still has to have written.
     """
     out: list[str] = []
-    in_trailer = False
+    in_gate_trailer = False
     for line in (messages or "").splitlines():
         if _ANY_TRAILER_START.match(line):
             out.append(line)
-            in_trailer = True
+            in_gate_trailer = bool(_GATE_KEYS.match(line))
             continue
-        if in_trailer and line.strip() and line[:1] in (" ", "\t"):
+        if in_gate_trailer and line.strip():
             out[-1] = out[-1].rstrip() + " " + line.strip()
             continue
         out.append(line)
-        in_trailer = False
+        in_gate_trailer = False
     return "\n".join(out) + ("\n" if (messages or "").endswith("\n") else "")
 
 
