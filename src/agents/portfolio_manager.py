@@ -172,6 +172,66 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
                 rows.append({"sector": str(sector), "stance": direction})
         return rows
 
+    @staticmethod
+    def _macro_sectors(
+        positions: list[Position],
+        symbol_sectors: dict[str, str] | None,
+    ) -> dict[str, str]:
+        """`{SYMBOL: sector}` from the caller's map, back-filled from the
+        held positions' own `sector` field. Extracted so the registry and
+        the uncounted-source gate below resolve a symbol's sector from
+        exactly the same inputs in exactly the same order.
+        """
+        sectors = {str(k).upper(): str(v) for k, v in (symbol_sectors or {}).items()}
+        for position in positions:
+            if position.sector:
+                sectors.setdefault(position.symbol.upper(), position.sector)
+        return sectors
+
+    @classmethod
+    def _macro_stance_rows(
+        cls,
+        *,
+        macro_analysis: dict | None,
+        symbols: set[str],
+        sectors: dict[str, str],
+    ) -> list[tuple[str, str, bool]]:
+        """`(SYMBOL, stance, is_broadcast)` for every symbol macro covers.
+
+        ONE definition, two readers — `build_evidence_registry`, which puts
+        the stance IN the registry, and `broadcast_macro_sources`, which
+        decides whether that stance may CORROBORATE a trade in the §9.4
+        agreement tally. A second walk over `sector_guidance` in the second reader is
+        precisely how the two would drift about which symbols got the broad
+        fallback, and the whole point of the gate is that they cannot.
+
+        `is_broadcast` is True when this read stated NO stance for the
+        symbol's own sector and the market-wide `equity_outlook` was
+        back-filled instead. It is the registry-side twin of the same
+        distinction `src/risk/rules.py::_is_broadcast_macro_verdict` draws
+        on the Phase 13 verdict, where it is carried by the
+        `sector_stance:<sector>` evidence label.
+        """
+        if not macro_analysis:
+            return []
+        guidance: dict[str, list[str]] = {}
+        for row in cls._sector_guidance_rows(macro_analysis.get("sector_guidance")):
+            sector = str(row.get("sector") or "").strip().lower()
+            stance = row.get("stance")
+            if sector and stance:
+                guidance.setdefault(sector, []).append(str(stance))
+        broad = cls._collapse_stances([
+            macro_analysis.get("equity_outlook") or macro_analysis.get("regime")
+        ])
+        rows: list[tuple[str, str, bool]] = []
+        for symbol in symbols:
+            sector = sectors.get(symbol, "").strip().lower()
+            stance = cls._collapse_stances(guidance.get(sector, [])) if sector else None
+            resolved = stance or broad
+            if resolved:
+                rows.append((symbol, resolved, stance is None))
+        return rows
+
     @classmethod
     def _earnings_stance_rows(
         cls, earnings_analyses: list[dict],
@@ -383,6 +443,95 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         return stale
 
     @classmethod
+    def broadcast_macro_sources(
+        cls,
+        *,
+        registry: dict[str, dict[str, str]],
+        positions: list[Position],
+        macro_analysis: dict | None,
+        symbol_sectors: dict[str, str] | None = None,
+    ) -> dict[str, frozenset[str]]:
+        """`{SYMBOL: {"macro"}}` for every symbol whose macro stance is the
+        market-wide BROADCAST rather than a stance for its own sector.
+
+        Fed to `signed_source_score(non_corroborating_sources=...)`, which is
+        a ONE-SIDED removal: a broadcast stance may not CORROBORATE a trade,
+        and its dissent still counts against one. NOT `ignored_sources`, the
+        two-sided freshness removal — see "why one-sided" below, which is the
+        load-bearing part of this docstring.
+
+        Board item 109, owner ruling 2026-09-25. Macro is the only seat that
+        back-fills a stance onto every name: when this read stated nothing
+        about a symbol's sector, `build_evidence_registry` writes the broad
+        `equity_outlook` into that symbol's registry slot. The §9.4 tally
+        then reads it as one more INDEPENDENT per-name seat, so a single
+        market-wide opinion is counted once per name — the same one data
+        point, re-used as though several analysts had each looked at each
+        name. That is the double count this removes.
+
+        Macro is NOT removed and NOT muted. A SECTOR-SPECIFIC macro stance
+        counts in the tally exactly as before, and a broadcast stance still
+        reaches the candidate RANKING through the seat's own stated
+        `confidence` (`MacroAnalysis.to_verdict` ->
+        `src/verdicts.py::score_verdict`, at `SEAT_WEIGHT["macro"]`). Only
+        its claim to be per-NAME agreement goes.
+
+        **WHY ONE-SIDED, and why the first attempt at this was wrong.** The
+        first version of this gate took the broadcast stance off BOTH counts,
+        reasoning that a symmetric removal was what "sign-symmetric" meant.
+        It is not, and it LOOSENED the entry gate — the exact opposite of
+        what a double-count fix must do. Worked example, executed: technical
+        bullish, earnings bullish, news bearish, macro broadcast bearish is
+        2 aligned / 2 opposed, net 0, which `agreement_refuses_trade`
+        REFUSES; drop the macro dissent and it is 2 aligned / 1 opposed,
+        net +1, and the desk buys it. Nobody sanctioned that, and three
+        comments in the same change still claimed gating a stance "can only
+        ever shrink" the net while it no longer could.
+
+        The owner's sign-symmetry ruling does not decide this, and saying it
+        does is how the error got in. "It can be measured and weighted
+        depending on if it's positive or negative. Would help on a long or a
+        short" is symmetry between the two SIDES OF A TRADE — a long and a
+        short must be treated alike. A one-sided removal satisfies that
+        exactly: flip the reading's sign and flip the trade's direction and
+        the answer is unchanged (broadcast-bullish on a short and
+        broadcast-bearish on a long both score -1; broadcast-bullish on a
+        long and broadcast-bearish on a short both score 0). What differs is
+        SUPPORT versus OPPOSITION, which is a different axis entirely and one
+        he did not rule on.
+
+        So the axis he DID rule on is the one that decides it: a market-wide
+        opinion must not manufacture agreement for a name nobody examined. It
+        was never an argument for silencing a warning. Declining a trade on a
+        broad bearish read costs an opportunity; taking one on a broad
+        bullish read costs money, and only one of those is reversible.
+
+        **This is deliberately the OPPOSITE carve-out from
+        `src/risk/rules.py::_is_broadcast_macro_verdict`, which drops a
+        broadcast stance from OPPOSITION at the conviction bar.** The two
+        are not inconsistent, and the difference is the blast radius, not the
+        seat: there, opposition CULLS, and one `equity_outlook` flip acting
+        on every held name at once is a portfolio-wide forced liquidation
+        dressed up as per-name judgement (that is the documented reason the
+        carve-out exists). Here, opposition merely refuses ONE new entry.
+        Both gates therefore resolve a broadcast stance the same way in
+        substance: it is never the reason the desk takes on risk, and never
+        the reason it dumps the book, but it may be the reason it declines a
+        single new name.
+        """
+        if not macro_analysis:
+            return {}
+        sectors = cls._macro_sectors(positions, symbol_sectors)
+        symbols = set(registry) | {p.symbol.upper() for p in positions}
+        return {
+            symbol: frozenset({"macro"})
+            for symbol, _stance, is_broadcast in cls._macro_stance_rows(
+                macro_analysis=macro_analysis, symbols=symbols, sectors=sectors,
+            )
+            if is_broadcast
+        }
+
+    @classmethod
     def build_evidence_registry(
         cls,
         *,
@@ -440,24 +589,18 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             put(symbol, "smart_money", cls._collapse_stances(stances))
 
         if macro_analysis:
-            sectors = {str(k).upper(): str(v) for k, v in (symbol_sectors or {}).items()}
-            for position in positions:
-                if position.sector:
-                    sectors.setdefault(position.symbol.upper(), position.sector)
-            guidance: dict[str, list[str]] = {}
-            for row in cls._sector_guidance_rows(macro_analysis.get("sector_guidance")):
-                sector = str(row.get("sector") or "").strip().lower()
-                stance = row.get("stance")
-                if sector and stance:
-                    guidance.setdefault(sector, []).append(str(stance))
-            broad = cls._collapse_stances([
-                macro_analysis.get("equity_outlook") or macro_analysis.get("regime")
-            ])
-            symbols = set(registry) | {p.symbol.upper() for p in positions}
-            for symbol in symbols:
-                sector = sectors.get(symbol, "").strip().lower()
-                stance = cls._collapse_stances(guidance.get(sector, [])) if sector else None
-                put(symbol, "macro", stance or broad)
+            # The stance still lands in the registry for EVERY covered
+            # symbol, broadcast or not — it is real coverage, the PM may
+            # still cite it, and `validate_grounding` must still recognise
+            # it. What a BROADCAST stance no longer does is CORROBORATE a
+            # trade in the agreement tally — its dissent still counts.
+            # See `broadcast_macro_sources`.
+            for symbol, stance, _is_broadcast in cls._macro_stance_rows(
+                macro_analysis=macro_analysis,
+                symbols=set(registry) | {p.symbol.upper() for p in positions},
+                sectors=cls._macro_sectors(positions, symbol_sectors),
+            ):
+                put(symbol, "macro", stance)
 
         return {symbol: sources for symbol, sources in registry.items() if sources}
 
@@ -492,6 +635,18 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         stale_sources = self.stale_evidence_sources(
             earnings_analyses=earnings_analyses,
         )
+        # Item 109 — a SEPARATE mapping with a separate consequence, never
+        # merged into `stale_sources`: a macro stance broadcast onto a name
+        # whose sector this read never mentioned may not CORROBORATE the
+        # name, while its dissent still counts. Merging the two would both
+        # loosen the gate and record "stale" as the durable reason for a
+        # stance that is not stale.
+        non_corroborating_sources = self.broadcast_macro_sources(
+            registry=evidence_registry,
+            positions=positions,
+            macro_analysis=macro_analysis,
+            symbol_sectors=kwargs.get("symbol_sectors") or {},
+        )
         evidence_registry_text = json.dumps(
             evidence_registry, sort_keys=True, indent=2,
         )
@@ -511,6 +666,24 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             )
             if not stale_registry_note.rstrip().endswith(":"):
                 evidence_registry_text += stale_registry_note
+        if non_corroborating_sources:
+            # A DIFFERENT fact with a different consequence, so it gets its
+            # own note rather than an "or" the reader cannot resolve: this
+            # stance is current and real, it simply is not about this name.
+            broadcast_note = (
+                "\n\nMARKET-WIDE, NOT ABOUT THIS NAME (still real coverage, "
+                "still citable as provenance, and still counted AGAINST a "
+                "trade it opposes — but it can never count FOR one: this "
+                "macro stance is the broad equity outlook, applied to a name "
+                "whose sector the macro read did not mention):\n"
+                + "\n".join(
+                    f"- {symbol}: {', '.join(sorted(sources))}"
+                    for symbol, sources in sorted(non_corroborating_sources.items())
+                    if symbol in evidence_registry
+                )
+            )
+            if not broadcast_note.rstrip().endswith(":"):
+                evidence_registry_text += broadcast_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -529,17 +702,41 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         # constructor silently sized against the PM's own stated reasoning.
         def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
             ignored = stale_sources.get(symbol)
-            stale_note = (
-                f"; {', '.join(sorted(ignored))} stance NOT counted — filing "
-                f"older than {EARNINGS_STANCE_MAX_AGE_DAYS}d"
-                if ignored and any(s in sources for s in ignored) else ""
-            )
-            long_for = count_aligned_sources(symbol, sources, "long", ignored_sources=ignored)
+            broadcast = non_corroborating_sources.get(symbol)
+            # Each caveat states its OWN reason. A merged "A or B" line let a
+            # reader attribute the wrong one, and the two do different things.
+            notes = []
+            stale_here = sorted(s for s in (ignored or ()) if s in sources)
+            if stale_here:
+                notes.append(
+                    f"{', '.join(stale_here)} stance NOT counted either way "
+                    f"— filing older than {EARNINGS_STANCE_MAX_AGE_DAYS}d"
+                )
+            broadcast_here = sorted(s for s in (broadcast or ()) if s in sources)
+            if broadcast_here:
+                notes.append(
+                    f"{', '.join(broadcast_here)} stance is the market-wide "
+                    "outlook, not a read on this name's sector — it cannot "
+                    "count FOR the trade; it still counts against one it opposes"
+                )
+            stale_note = f"; {'; '.join(notes)}" if notes else ""
+            # The ALIGNED side drops both; the OPPOSED side drops only the
+            # stale stance. That asymmetry is the whole point of item 109's
+            # one-sided gate, and these displayed counts are the same ones
+            # `signed_source_score` nets below.
+            for_ignored = frozenset(ignored or ()) | frozenset(broadcast or ())
+            long_for = count_aligned_sources(symbol, sources, "long", ignored_sources=for_ignored)
             long_against = count_opposing_sources(symbol, sources, "long", ignored_sources=ignored)
-            short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=ignored)
+            short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=for_ignored)
             short_against = count_opposing_sources(symbol, sources, "short", ignored_sources=ignored)
-            long_net = signed_source_score(symbol, sources, "long", ignored_sources=ignored)
-            short_net = signed_source_score(symbol, sources, "short", ignored_sources=ignored)
+            long_net = signed_source_score(
+                symbol, sources, "long", ignored_sources=ignored,
+                non_corroborating_sources=broadcast,
+            )
+            short_net = signed_source_score(
+                symbol, sources, "short", ignored_sources=ignored,
+                non_corroborating_sources=broadcast,
+            )
             return (
                 f"- {symbol}: {long_for} aligned / {long_against} opposed = "
                 f"net {long_net:+d} if long, "
@@ -628,6 +825,8 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             analyses=analyses,
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
+            positions=positions,
             allowed_buy_symbols=set(allowed_buy_symbols),
             active_state_changes=kwargs.get("active_state_changes") or "",
             rr_floor=float(kwargs.get("rr_floor", REWARD_RISK_FLOOR)),
@@ -674,6 +873,7 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
                 earnings_analyses=earnings_analyses or [],
                 smart_money_findings=smart_money_findings,
                 symbol_sectors=kwargs.get("symbol_sectors") or {},
+                positions=positions,
             ),
         )
         self.last_candidate_ranking = list(ranked)
@@ -936,7 +1136,7 @@ Bear triggers (would turn defensive):
 ### Stock-Specific News
 {stock_text}{lost_text}
 
-Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confidence})"""
+Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_intel.confidence})"""
         else:
             news_section = "## News Intelligence\nNo news data available."
 
@@ -1511,6 +1711,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         analyses: list[TechAnalysisResult],
         evidence_registry: dict[str, dict[str, str]],
         stale_sources: dict[str, set[str]] | None = None,
+        non_corroborating_sources: dict[str, set[str]] | None = None,
         allowed_buy_symbols: set[str] | None,
         active_state_changes: str,
         rr_floor: float = REWARD_RISK_FLOOR,
@@ -1584,6 +1785,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             if str(s).strip()
         }
         stale = stale_sources or {}
+        # Item 109: a macro stance broadcast onto a name whose sector this
+        # read never mentioned may not CORROBORATE the name; its dissent
+        # still counts. One-sided on purpose — see
+        # `broadcast_macro_sources`.
+        non_corroborating = non_corroborating_sources or {}
 
         verdicts: dict[str, list[str]] = {}
         for analysis in analyses:
@@ -1602,6 +1808,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             sources = evidence_registry.get(symbol, {})
             net = signed_source_score(
                 symbol, sources, direction, ignored_sources=stale.get(symbol),
+                non_corroborating_sources=non_corroborating.get(symbol),
             ) if sources else 0
             if net <= 0:
                 blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
@@ -1631,6 +1838,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         earnings_analyses: list[dict],
         smart_money_findings: list[SmartMoneyFinding] | None,
         symbol_sectors: dict[str, str] | None = None,
+        positions: list[Position] | None = None,
     ) -> list[AnalystVerdict]:
         """Every seat's Phase 13 verdict, best-effort, one bad entry never
         drops another's or the run's.
@@ -1728,10 +1936,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     failures = PortfolioManagerAgent._macro_parse_failures
                 failures.append(reason)
             if macro is not None:
-                sectors = {
-                    str(k).strip().upper(): str(v)
-                    for k, v in (symbol_sectors or {}).items()
-                }
+                # ONE sector input, shared with `build_evidence_registry` and
+                # `broadcast_macro_sources` (board item 109, 2026-09-26).
+                # This used to build its own map from `symbol_sectors` alone
+                # while the registry side ALSO back-filled `Position.sector`,
+                # so for a held name with no entry in the cache the two sides
+                # resolved different sectors — measured divergence on one
+                # macro read and one symbol: the registry said bullish and
+                # sector-specific while the verdict said bearish and
+                # broadcast, opposite direction AND opposite classification,
+                # with the tally and the conviction bar each acting on its
+                # own answer. `_macro_sectors` is now the only resolution.
+                sectors = PortfolioManagerAgent._macro_sectors(
+                    list(positions or []), symbol_sectors,
+                )
                 symbols = {a.symbol.upper() for a in analyses}
                 for symbol in symbols:
                     try:
@@ -1799,6 +2017,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         analyses: list[TechAnalysisResult],
         evidence_registry: dict[str, dict[str, str]],
         stale_sources: dict[str, set[str]] | None = None,
+        non_corroborating_sources: dict[str, set[str]] | None = None,
         allowed_buy_symbols: set[str] | None,
         active_state_changes: str,
         rr_floor: float = REWARD_RISK_FLOOR,
@@ -1810,6 +2029,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
         constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
         symbol_sectors: dict[str, str] | None = None,
+        positions: list[Position] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1839,6 +2059,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             analyses=analyses,
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
             allowed_buy_symbols=allowed_buy_symbols,
             active_state_changes=active_state_changes,
             rr_floor=rr_floor,
@@ -1853,6 +2074,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             earnings_analyses=earnings_analyses or [],
             smart_money_findings=smart_money_findings,
             symbol_sectors=symbol_sectors,
+            positions=positions,
         )
         eligible_verdicts = [
             v for v in all_verdicts

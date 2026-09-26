@@ -853,7 +853,7 @@ def test_a_gated_stance_is_not_shown_to_the_pm_as_corroborating():
     # registry block, and the earnings section must ALL say the same thing —
     # each is asserted separately because each is written separately.
     assert "- NVDA: 1 aligned / 0 opposed = net +1 if long" in msg
-    assert "earnings stance NOT counted — filing older than 90d" in msg
+    assert "earnings stance NOT counted either way — filing older than 90d" in msg
     assert "STALE (still real coverage, still citable as provenance" in msg
     assert "does NOT count toward the agreement score" in msg
 

@@ -156,6 +156,10 @@ class PositionReviewerAgent(BaseAgent):
         already_trimmed_today: set[str] = set(
             kwargs.get("already_trimmed_today") or set()
         )
+        # Board item 74 — pre-formatted by `src.risk.spent_trigger`, which is
+        # the same module the executor enforces with. Empty when nothing is
+        # spent or the record could not be read.
+        spent_triggers_block: str = str(kwargs.get("spent_triggers_block") or "")
 
         # Build morning trade context map (entry thesis, stop_loss, reference target).
         trade_context: dict[str, dict] = {}
@@ -416,7 +420,7 @@ class PositionReviewerAgent(BaseAgent):
                 f"PM Briefing: {news_intel.pm_briefing[:300]}\n\n"
                 f"State changes this session:\n{state_text}\n\n"
                 f"Held-position alerts:\n{stock_text}{lost_text}\n\n"
-                f"Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})\n"
+                f"Overall sentiment: {news_intel.format_market_sentiment()} ({news_intel.confidence})\n"
             )
         else:
             news_section = "### Session News\n(no news report available)\n"
@@ -690,17 +694,25 @@ class PositionReviewerAgent(BaseAgent):
         # deterministic de-lever). The Python executor
         # enforces this rule independently — this section is the prompt-side
         # belt so the LLM isn't fighting an invisible filter.
-        if already_trimmed_today:
+        if already_trimmed_today or spent_triggers_block:
+            trimmed_line = (
+                f"Symbols sold earlier today: "
+                f"{', '.join(sorted(already_trimmed_today))}\n"
+                if already_trimmed_today else ""
+            )
             already_trimmed_section = (
                 "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
-                f"Symbols sold earlier today: {', '.join(sorted(already_trimmed_today))}\n"
+                + trimmed_line +
                 "These positions ALREADY received a sell-side action this session day "
                 "(a midday REDUCE, or a deterministic de-lever).\n"
-                "**HOLD them at this session unless ONE of these HARD triggers fires:**\n"
+                "**HOLD them at this session unless a HARD trigger fires that the "
+                "desk has NOT already acted on today:**\n"
                 "  - Named `thesis_invalid_if` condition is satisfied (price closed below "
                 "cited level, fundamental signal flipped, etc.)\n"
                 "  - HIGH-conviction bearish stock-specific state_change reversal landed today\n"
                 "  - Bearish earnings filing analysis posted today for this symbol\n"
+                "\n"
+                + spent_triggers_block +
                 "\n"
                 "`TARGET_BREACH`, slowing pace, geopolitical noise, valuation stretch, "
                 "concentration drift — these are NOT hard triggers. The earlier action "
@@ -831,6 +843,10 @@ schema."""
                yesterday_insights: dict | None = None,
                recent_performance: dict | None = None,
                already_trimmed_today: set[str] | None = None,
+               # Board item 74 — the triggers this seat has already spent
+               # today, rendered by `src.risk.spent_trigger` so the prompt
+               # and the executor's refusal read the same record.
+               spent_triggers_block: str = "",
                allow_margin: bool = True,
                substantiation_challenge: str = "",
                # §11.2 ladder headroom, threaded from the SAME computation
@@ -865,6 +881,7 @@ schema."""
             yesterday_insights=yesterday_insights,
             recent_performance=recent_performance or {},
             already_trimmed_today=already_trimmed_today or set(),
+            spent_triggers_block=spent_triggers_block,
             allow_margin=allow_margin,
             substantiation_challenge=substantiation_challenge,
             margin_headroom_usd=margin_headroom_usd,

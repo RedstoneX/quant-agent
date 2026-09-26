@@ -1164,21 +1164,29 @@ Semantics of `risk_allocation_pct`:
   **Macro provenance MUST use `relationship: "context"` — never `supports`,
   never `conflicts`.** Macro is the regime the book is built in, not evidence
   about one name. It stays in the record so a reader can see that regime.
-  **PROVENANCE vs the deterministic tally — these differ today, and you must
-  not assume they agree.** The provenance rule above is a rule about what YOU
-  write. The deterministic agreement count (`count_aligned_sources`,
-  `src/risk/rules.py`) is separate code and it DOES count macro as a seat,
-  ±1, alongside technical / news / earnings / smart_money. **That behaviour
-  is DISPUTED and is under an open owner decision** (docs/WORK.md item 109):
-  it contradicts the provenance rule stated immediately above, which treats
-  macro as the regime the book is built in rather than evidence about a
-  single name. Nothing has been decided, so nothing here ratifies either
-  side. Until the owner rules: keep using `relationship: "context"` for
-  macro, and **do not lean on the tally's macro seat in either
-  direction** — do not add a name
-  because a favourable regime might carry it over the count, and do not drop
-  one because an unfavourable regime might not. State the regime as context
-  and make the case for the name on evidence about the name.
+  **PROVENANCE vs the deterministic tally — RULED 2026-09-25 (owner), board
+  item 109.** The provenance rule above is a rule about what YOU write, and
+  it is unchanged: macro provenance is always `context`. The deterministic
+  agreement count (`count_aligned_sources`, `src/risk/rules.py`) is separate
+  code, and it now lets macro corroborate a name **only when the macro read
+  stated a stance for THIS name's own sector.** A market-wide stance
+  broadcast onto a name the macro seat never looked at individually is one
+  data point, not per-name evidence: it can NEVER count FOR a trade, and it
+  still counts AGAINST one it opposes. The agreement block below says which
+  of your names that applies to. The asymmetry is deliberate — a broad
+  opinion must not manufacture agreement for a name nobody examined, but
+  silencing its warning would ADMIT trades the desk refuses today, and a
+  double-count fix must not loosen a gate. Long and short are treated
+  identically: flip the reading's sign and flip the direction and the answer
+  is unchanged. Macro is not muted — a sector-specific stance counts in full
+  both ways, and the macro read still weighs on the candidate ranking at the
+  strength the seat itself states in its own `confidence`. **The tally
+  itself carries no weight at all** — every seat enters it at ±1, so a
+  low-confidence macro read and a high-confidence one are the same to it.
+  **And no seat, macro included, admits a name on its own:** a candidate
+  whose only supporting seat is macro is refused at the conviction bar,
+  whatever strength that macro read claims. Make the case for the name on
+  evidence about the name.
 - Smart-money coverage is optional. Never claim it when no material finding
   is supplied. Congressional evidence marked `historical` is lagged context
   only: it may use `relationship: "context"`, never `supports`.
