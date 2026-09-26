@@ -1458,6 +1458,66 @@ def test_an_unparseable_board_reports_nothing_here(tmp_path):
     assert sb.find_near_duplicate_open_items(p) == []
 
 
+# ---------------------------------------------------------------------------
+# the explicit override marker -- a genuinely deliberate near-neighbour whose
+# TITLES happen to land above the ratio must still be filable, the same way
+# the live board already declares item 138/118 and 183/138 distinct in prose.
+# The marker must NAME the item it claims distinctness from; a bare "not a
+# duplicate" claim with no number does not suppress anything.
+# ---------------------------------------------------------------------------
+
+def test_near_neighbour_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Item 1 is a NEAR-NEIGHBOUR and does NOT cover this — it "
+        "asks a different question about the same buffers.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_distinct_from_marker_suppresses_a_would_be_flag(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 1, which tracks a different family of "
+        "buffers entirely.\n"
+    )
+    assert sb.find_near_duplicate_open_items(p) == []
+
+
+def test_marker_naming_the_wrong_item_does_not_suppress(tmp_path):
+    """The override must name the ACTUAL other item in the flagged pair, not
+    just claim distinctness from something. A marker pointing at an unrelated
+    item number must not let a real duplicate through."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. The order-price buffer sites are unsourced — filed 2026-09-18, "
+        "TIER 1.** Five sites, three values.\n\n"
+        "**2. The order price buffer sites are unsourced — filed later, "
+        "TIER 1.** Distinct from item 99, an item that does not even exist "
+        "here.\n"
+    )
+    flagged = sb.find_near_duplicate_open_items(p)
+    assert len(flagged) == 1
+
+
+def test_a_bare_not_a_duplicate_claim_with_no_item_number_does_not_suppress():
+    """A marker with no number attached is not accountable to anything and
+    must not be honoured -- otherwise any flagged pair could opt out by
+    writing "not a duplicate" with nothing behind it."""
+    assert sb._explicit_distinct_targets(
+        "This is not a duplicate, it is a near-neighbour of something else."
+    ) == set()
+
+
 
 def test_a_partial_or_pending_closure_is_not_flagged():
     """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
