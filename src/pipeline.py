@@ -11616,6 +11616,27 @@ class TradingPipeline:
             for symbol in (already_trimmed_today or set())
             if symbol and symbol.strip()
         }
+        # Board item 74 — what the desk has ALREADY acted on today, so a
+        # trigger cannot authorise a second cut of the same name on the same
+        # record. Read ONCE per execution pass and appended to in-process as
+        # cuts submit, so two actions inside THIS pass cannot double-cut
+        # either. `None` means the read failed: that is uncertainty and the
+        # layer fails OPEN (src/risk/spent_trigger.py).
+        from src.risk.spent_trigger import (
+            SPENT_LAYER, acted_trigger_payload, parse_acted_triggers,
+            spent_trigger_check,
+        )
+        try:
+            _raw_acted = self.db.get_acted_exit_triggers_today()
+            acted_today = (
+                None if _raw_acted is None else parse_acted_triggers(_raw_acted)
+            )
+        except Exception as _e:  # noqa: BLE001 — a failed read is uncertainty
+            logger.warning(
+                "spent trigger: today's acted-trigger record could not be "
+                "read (%s) — this layer fails OPEN for this pass", _e,
+            )
+            acted_today = None
         # Entry context (thesis_invalid_if / entry price / entry stop) for the
         # holding-discipline claim check below. Built ONCE and only if some
         # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
@@ -11930,22 +11951,66 @@ class TradingPipeline:
             # dead code wearing the costume of a safety check, which is worse
             # than no check at all.
             #
-            # RESIDUAL GAP, deliberately not closed here: the old gate exempted
-            # hard triggers, and so does this one. A symbol trimmed at midday
-            # on "bearish earnings" can be trimmed again at close on the SAME
-            # "bearish earnings" — one event, two cuts, which is the 2026-05-04
-            # AMZN shape with a valid trigger instead of a soft flag. Closing
-            # it needs per-event dedup (has THIS trigger already been acted on
-            # for this symbol today?), which is a different mechanism from a
-            # phrase gate and is not in Phase 3.3's scope. Surfaced rather than
-            # silently expanded.
+            # That residual gap — hard triggers exempt, so a symbol trimmed
+            # at midday on "bearish earnings" could be trimmed again at close
+            # on the SAME "bearish earnings" — is CLOSED below by the
+            # per-event dedup it called for (board item 74, 2026-09-26). The
+            # warning here stays: a second sell-side action is still worth
+            # seeing in the log even when it is legitimate.
             if act in ("SELL", "REDUCE", "COVER") and symbol in already_trimmed:
                 logger.warning(
                     "Position reviewer: %s %s is a SECOND sell-side action "
-                    "today, allowed because the reason names a trigger. Check "
-                    "the evening grade for one-event double-application. "
-                    "Reason: %r",
+                    "today. Reason: %r",
                     act, symbol, (action_item.get("reason") or "")[:160],
+                )
+            # Board item 74 — the RESIDUAL GAP above, now closed. The line is
+            # the RECORD the seat cites, never a cooldown or a score: same
+            # trigger + same cited record = spent, refuse; a different record
+            # = new information, execute and say so.
+            spent = spent_trigger_check(
+                action=act, symbol=symbol,
+                trigger=action_item.get("exit_trigger"),
+                evidence=action_item.get("trigger_evidence"),
+                acted_today=acted_today,
+            )
+            if spent.verdict == "uncertain":
+                logger.error(
+                    "Spent-trigger check: today's acted-trigger record is "
+                    "unreadable — failing OPEN on %s %s. %s",
+                    act, symbol, spent.detail,
+                )
+            elif spent.blocks:
+                logger.warning(
+                    "Position reviewer: REFUSING %s %s — the trigger is "
+                    "SPENT. %s", act, symbol, spent.detail,
+                )
+                try:
+                    self.db.record_intraday_evaluation(
+                        symbol=symbol, run_id=run_id,
+                        status="exit_blocked_trigger_already_spent",
+                        detail=spent.detail[:500],
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("spent trigger: audit write failed: %s", e)
+                self._record_exit_refusal(
+                    symbol=symbol, run_id=run_id, action=act,
+                    code=spent.code, dropped=True,
+                    detail=spent.detail[:400], layer=SPENT_LAYER,
+                )
+                continue
+            elif spent.verdict == "new_evidence":
+                # Allowed, NOT silent: a second cut on a different record is
+                # exactly the "genuinely worse reading" this item preserves,
+                # and the evening grade must be able to audit whether it was.
+                logger.warning(
+                    "Position reviewer: %s %s is a second cut on the same "
+                    "trigger but a DIFFERENT record — allowed. %s",
+                    act, symbol, spent.detail,
+                )
+                self._record_exit_refusal(
+                    symbol=symbol, run_id=run_id, action=act,
+                    code=spent.code, dropped=False,
+                    detail=spent.detail[:400], layer=SPENT_LAYER,
                 )
             existing = [p for p in positions if p.symbol == symbol]
             # COVER only matches a held SHORT (qty < 0); SELL / REDUCE /
@@ -12152,6 +12217,31 @@ class TradingPipeline:
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                 )
+                # Board item 74 — spend the trigger. Written AFTER the order
+                # is away, so a cut that never reached the broker never
+                # consumes the trigger that would authorise the retry. The
+                # in-process list is appended too: a later action in THIS
+                # same pass sees it without a second DB read.
+                _acted = acted_trigger_payload(
+                    symbol=symbol, trigger=action_item.get("exit_trigger"),
+                    evidence=action_item.get("trigger_evidence"),
+                    action=act, run_id=run_id,
+                )
+                if _acted is not None:
+                    try:
+                        self.db.record_acted_exit_trigger(
+                            run_id=run_id, payload_json=_acted.to_json(),
+                            symbol=_acted.symbol,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "spent trigger: could not record the acted "
+                            "trigger for %s (%s) — a second cut on this "
+                            "same record today would not be caught",
+                            symbol, e,
+                        )
+                    if acted_today is not None:
+                        acted_today.append(_acted)
                 logger.info(
                     "Midday action: %s %s %s — %s",
                     act, self._format_qty(qty),
@@ -14777,6 +14867,28 @@ class TradingPipeline:
             already_trimmed_today = self._symbols_already_trimmed_today() & {
                 p.symbol for p in review_positions
             }
+            # Board item 74 — the seat must SEE which triggers it has already
+            # spent today, or the executor's refusal is an invisible filter.
+            # Same text the enforcement reads, so prompt and gate cannot rot
+            # apart. A failed read renders nothing rather than claiming
+            # nothing is spent.
+            try:
+                from src.risk.spent_trigger import (
+                    format_spent_triggers_block, parse_acted_triggers,
+                )
+                _acted_rows = self.db.get_acted_exit_triggers_today()
+                spent_triggers_block = (
+                    "" if _acted_rows is None else format_spent_triggers_block(
+                        parse_acted_triggers(_acted_rows),
+                        {p.symbol for p in review_positions},
+                    )
+                )
+            except Exception as _e:  # noqa: BLE001
+                logger.warning(
+                    "spent trigger: prompt block unavailable (%s) — the "
+                    "executor still enforces it", _e,
+                )
+                spent_triggers_block = ""
 
             yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
             recent_performance = self._compute_recent_performance(last_equity)
@@ -14830,6 +14942,7 @@ class TradingPipeline:
                     yesterday_insights=yesterday_insights,
                     recent_performance=recent_performance,
                     already_trimmed_today=already_trimmed_today,
+                    spent_triggers_block=spent_triggers_block,
                     allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
                     margin_headroom_usd=margin_headroom_usd,
                     margin_ladder_backed=margin_ladder_backed,

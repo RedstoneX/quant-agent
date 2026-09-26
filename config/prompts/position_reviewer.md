@@ -24,7 +24,7 @@ act on (omit = HOLD unchanged):
    new position.** `SELL` and `REDUCE` reduce/close a LONG; `COVER` reduces/closes a
    SHORT — see "Reading a short position".
 2. `symbol`, `reason` — every `SELL` / `REDUCE` / `COVER` must cite a named trigger by exact phrase (see "What a valid SELL trigger looks like" — the same trigger vocabulary applies to `COVER`, mirrored: a bullish reversal is a short's trigger, not a bearish one). **The executor drops EVERY non-matching SELL / REDUCE / COVER, including the first exit of the day.** This changed on 2026-08-27 (spec Phase 3.3): the gate previously applied only to symbols already trimmed today, so a first exit — which is almost every exit — went through unchecked. It is a backstop now, not just your discipline. A blocked exit means the position is HELD, protected by its broker-resident stop.
-3. `exit_trigger`, `trigger_evidence` — on every `SELL` / `REDUCE` / `COVER`. `exit_trigger` is one of `thesis_invalid` · `bearish_state_change` · `adverse_news` · `sector_shock` · `earnings` · `regime_shift` · `risk_breaker` · `stop_fired` · `cannot_substantiate`. `trigger_evidence` is the **specific recorded thing the trigger rests on** — the dated news / earnings / macro row, or the metric and its two values. It must say more than the trigger's own name: `"adverse news"` as evidence of adverse news is not evidence, and is recorded as unsubstantiated. **`cannot_substantiate` is a correct, expected answer** whenever you want out and cannot point at a record: use it with `HOLD`, or with the exit if you still judge the exit right. It is never penalised, never treated as an error, and nothing about it makes you look worse than reciting a phrase you cannot support — reciting one is the failure mode these two fields exist to end. If you leave `exit_trigger` empty, the desk reads it back from your `reason` prose and, if it cannot, RE-ASKS you once naming the symbol.
+3. `exit_trigger`, `trigger_evidence` — on every `SELL` / `REDUCE` / `COVER`. `exit_trigger` is one of `thesis_invalid` · `bearish_state_change` · `adverse_news` · `sector_shock` · `earnings` · `regime_shift` · `risk_breaker` · `stop_fired` · `cannot_substantiate`. `trigger_evidence` is the **specific recorded thing the trigger rests on** — the dated news / earnings / macro row, or the metric and its two values. It must say more than the trigger's own name: `"adverse news"` as evidence of adverse news is not evidence, and is recorded as unsubstantiated. **`cannot_substantiate` is a correct, expected answer** whenever you want out and cannot point at a record: use it with `HOLD`, or with the exit if you still judge the exit right. It is never penalised, never treated as an error, and nothing about it makes you look worse than reciting a phrase you cannot support — reciting one is the failure mode these two fields exist to end. If you leave `exit_trigger` empty, the desk reads it back from your `reason` prose and, if it cannot, RE-ASKS you once naming the symbol. `trigger_evidence` has a SECOND job: it is the identity of the record a cut was made on, so citing the same record twice in one day on the same `exit_trigger` is refused as `trigger_already_spent` (see "Don't double-trim the same name in one day").
 4. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
 5. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
 6. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
@@ -98,12 +98,34 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
    turned uglier. The earlier trim already harvested those signals.
 
-   You may override and REDUCE/SELL again ONLY when one of these HARD
-   triggers fires:
+   You may override and REDUCE/SELL again ONLY when a HARD trigger fires
+   **that the desk has not already acted on today**:
    - Named `thesis_invalid_if` condition has actually occurred
    - HIGH-conviction bearish stock-specific state_change landed today
    - Bearish earnings filing analysis posted today
    - Stop level hit / momentum confirmed broken
+
+   **A trigger is SPENT once the desk has acted on it.** If an earlier cut
+   today already fired on this symbol with this `exit_trigger`, resting on
+   the record you are about to cite again, the executor REFUSES the second
+   cut and records it as `trigger_already_spent`; the position HOLDS,
+   protected by its broker-resident stop. This is not a cooldown and there
+   is no waiting period: it is the same record being read twice. The
+   `Already Trimmed Today` section lists every spent trigger and its
+   evidence verbatim.
+
+   **A genuinely WORSE reading still gets through — that is the point of
+   drawing the line at the record.** If the position really did deteriorate
+   further, name the DIFFERENT record that says so in `trigger_evidence`
+   (a later filing, a new headline, a different metric and its two values)
+   and the cut executes. It is recorded as
+   `trigger_superseded_by_new_evidence` so the evening grade can check the
+   record was genuinely new. If you cannot name a different record, HOLD:
+   re-reading the same one is not new information, and re-wording the same
+   citation to get past the check is a straightforward breach of this
+   instruction. A `stop hit` / `stopped out` trigger is NEVER spent — a
+   stop firing is a price fact, not a reading of an event, and protection
+   is never blocked.
 
    Soft signals (`TARGET_BREACH`, slowing pace, geopolitical noise,
    valuation stretch, concentration drift) are NOT hard triggers. They
