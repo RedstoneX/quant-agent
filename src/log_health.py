@@ -338,7 +338,13 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"FRACTIONAL DAY STOP RE-PLACED: ([A-Z][A-Z.-]{0,5})",
             r"get_current_stop_price: ([A-Z][A-Z.-]{0,5}) carries [1-9]",
         ),
-        board_item=127,
+        # Item 127 (two desk processes racing the same broker write) was
+        # retired 2026-09-26: one advisory lock now wraps the whole repair
+        # pass and the half-hourly check's broker-writing preamble. The
+        # REPORTING of a holding still missing its stop stays — that is a
+        # standing fact about money, not a tracked defect — so it no longer
+        # points at a board item.
+        board_item=None,
     ),
     FaultFamily(
         key="overnight_fractional_exposure",
@@ -357,7 +363,10 @@ FAMILIES: tuple[FaultFamily, ...] = (
         # before the open carries it and a report after the close does not.
         patterns=_p(r"OVERNIGHT FRACTIONAL EXPOSURE"),
         resolved_by=_p(r"COVERAGE REPAIRED:"),
-        board_item=127,
+        # A standing broker constraint, not a defect anyone is fixing: the
+        # broker refuses an overnight stop on a part-share. It was never
+        # item 127's to close, and item 127 is retired.
+        board_item=None,
     ),
     FaultFamily(
         key="broker_turned_us_away",
