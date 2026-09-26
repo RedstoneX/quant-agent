@@ -55,7 +55,7 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 - **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
 - **Tier 2, wastes money or opportunity:** 91, 82, 81, 92.
 - **Tier 3, clarity and hygiene:** 89 (its thirteen clarity defects), 94. (93 retired 2026-09-25.)
-- **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86, 109(a). (96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
+- **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109 stays on the board for its part (c) only. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
 
@@ -216,13 +216,12 @@ DONE WHEN:
   - [ ] SHARED CRITERIA with item 99: (b) here is 99(a), and (c) here is 99(g). They are one requirement seen from two audits — tick them together rather than doing the work twice.
 detail: docs/BOARD_NOTES.md (item 107)
 
-**109. One mandate question and the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17. Prompts corrected; NO gate touched.** Part (b) was removed as fixed (PR #489, verified on main 2026-09-18).
+**109. (a) RULED AND BUILT 2026-09-26; (c) still open — the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17.** Part (b) was removed as fixed (PR #489, verified on main 2026-09-18). Part (a) was ruled by the OWNER on 2026-09-25, not by the orchestrator: macro stays a per-name input weighted by the strength the reading itself states, the weighting is sign-symmetric, and no seat may admit a name alone. Built 2026-09-26 — a macro stance broadcast onto a name whose sector the read never mentioned no longer counts in the agreement tally in either direction, a sector-specific stance counts in full, and macro alone is refused at the conviction bar. Write-up in `docs/INCIDENT_HISTORY.md` (2026-09-26).
 
 DONE WHEN:
-  - [ ] (a) a decision is recorded on whether macro counts as a per-name seat in the agreement gate, then ONE of `count_aligned_sources` and the PM's sheet is changed to match the other. Not the owner's: the 2026-09-18 delegation ruling recorded at the top of this file moved this exact item to the orchestrator-after-an-adversary-run, and the item is already listed there.
-  - [ ] whichever side wins is justified from the PM prompt's own provenance rule, NOT from `docs/OUTCOME.md`, which says nothing on this beyond a cash-deployment line — that miscitation has already been made twice
+  - [x] (a) a decision is recorded on whether macro counts as a per-name seat in the agreement gate, then ONE of `count_aligned_sources` and the PM's sheet is changed to match the other — owner ruling 2026-09-25; BOTH were changed to match it on 2026-09-26, and the sheet states the rule rather than flagging a dispute
+  - [x] whichever side wins is justified from the PM prompt's own provenance rule, NOT from `docs/OUTCOME.md` — that rule ("macro is the regime the book is built in, not evidence about one name") is exactly what separates a broadcast stance from a sector-specific one, and it is left unchanged
   - [ ] (c) the dead-weight recitation (~35% of the PM's sheet, ~26% of the risk manager's, ~24% of the reviewer's) is deleted, with load-bearing recitation kept — SHARED with item 99(c), which is the same prose; do not strip it twice
-  - [ ] nobody settles (a) by editing the gate first: changing `count_aligned_sources` moves trades
 detail: docs/BOARD_NOTES.md (item 109)
 
 **119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).

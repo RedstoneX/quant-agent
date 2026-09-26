@@ -6742,14 +6742,20 @@ class DecisionStage:
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
-        # §9.4 freshness — same pure function, same inputs, so the stances
-        # the constructor refuses to pay for are exactly the ones the PM's
-        # prompt marked stale. An earnings view older than
-        # `EARNINGS_STANCE_MAX_AGE_DAYS` stops counting toward the agreement
-        # tally; it stays in the registry above, so grounding still accepts
-        # it as coverage and this can only ever shrink a ceiling.
-        stale_sources = PortfolioManagerAgent.stale_evidence_sources(
+        # §9.4 — same pure function, same inputs, so the stances the
+        # constructor refuses to pay for are exactly the ones the PM's own
+        # prompt marked uncounted. An earnings view older than
+        # `EARNINGS_STANCE_MAX_AGE_DAYS`, and (item 109) a macro stance that
+        # is the market-wide broadcast rather than a read on the name's own
+        # sector, stop counting toward the agreement tally; both stay in the
+        # registry above, so grounding still accepts them as coverage and
+        # this can only ever shrink a ceiling.
+        stale_sources = PortfolioManagerAgent.uncounted_evidence_sources(
             earnings_analyses=earnings_results,
+            registry=evidence_registry,
+            positions=positions,
+            macro_analysis=_macro_analysis_as_dict(macro_analysis),
+            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the
