@@ -49,10 +49,11 @@ from src.risk.rules import (
     position_side,
     position_weight_pct,
     resolve_gross_ceiling,
-    signed_source_score,
     SECTOR_SIDE_LONG,
-    agreement_refuses_trade,
+    count_aligned_sources,
+    count_opposing_sources,
 )
+from src.verdicts import rank_verdicts
 from src.execution.broker import (
     AlpacaBroker,
     _get_sector,
@@ -85,6 +86,26 @@ from src.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SessionTerminated(BaseException):
+    """The wrapper's `timeout` sent SIGTERM; unwind so `finally` blocks run.
+
+    `scripts/run_if_et_window.sh` runs each mode under
+    `timeout --kill-after=30 1200`, so a hung session gets SIGTERM and then,
+    thirty seconds later, SIGKILL. Python's default SIGTERM handling ends the
+    process on the spot and NO `finally` runs — which is how a morning tick
+    killed at the PM→RM boundary (the observed death mode: 61/61 BUY-proposal
+    days during the 6/30-7/15 relay outage) could leave the deferred §11.2
+    gross ceiling unenforced.
+
+    Raised from a handler installed only for the duration of the morning
+    body, it converts that silent death into an ordinary unwind that spends
+    part of the thirty-second grace window paying the session's outstanding
+    safety debts. A `BaseException` on purpose: the body is full of
+    `except Exception` guards that would otherwise swallow it and carry on
+    inside a process that is about to be killed.
+    """
 
 
 @dataclass(frozen=True)
@@ -1294,6 +1315,9 @@ class TradingPipeline:
         # __init__) degrade to a disabled sweeper instead of AttributeError.
         from src.execution.cash_sweep import CashSweeper
         self.cash_sweeper = CashSweeper(pipeline=self)
+        # Exit orders still working at the broker — see the attribute's own
+        # comment above `_register_exit_settlement`.
+        self._unsettled_exit_orders = {}
 
     def _sweeper(self):
         """The cash sweeper, or None when absent/disabled.
@@ -4440,9 +4464,113 @@ class TradingPipeline:
         prot = {
             "order_id": order["id"], "symbol": symbol,
             "position_qty_before_sell": position_qty_before_sell,
+            # How much this order asked the broker to shed. Needed to net an
+            # order still working out of a later gross re-measure — see
+            # `_register_exit_settlement`.
+            "submitted_qty": abs(float(qty or 0.0)),
             "specs": stop_specs, "wal_row_id": wal_row_id, "side": side,
         }
         return order, prot
+
+    #: Exit orders this process submitted and waited on that did NOT reach a
+    #: terminal broker state: {order_id: {symbol, submitted_qty}}.
+    #: `wait_for_order_terminal` has a 15s ceiling and returns the LAST KNOWN
+    #: status, so a marketable limit that does not fill in time leaves the
+    #: order working while the code moves on and re-reads the book from the
+    #: broker. That refreshed book still carries exposure already on its way
+    #: out, and anything that then re-measures gross would shed it twice.
+    #: Registered centrally in `_finalize_pending_protections` so EVERY exit
+    #: path is covered by construction — the cash-deficit safety net, the
+    #: gross-ceiling de-lever, the position reviewer's sells, the execution
+    #: stage and the cash sweep — rather than by remembering to flag each one.
+    _unsettled_exit_orders: dict[str, dict]
+
+    def _register_exit_settlement(self, prot: dict) -> None:
+        """Record or clear one exit order in the unsettled register."""
+        order_id = str(prot.get("order_id") or "")
+        if not order_id:
+            return
+        register = getattr(self, "_unsettled_exit_orders", None)
+        if register is None:
+            register = {}
+            self._unsettled_exit_orders = register
+        status = str(prot.get("terminal_status") or "").lower()
+        if status in AlpacaBroker._ORDER_TERMINAL_STATES:
+            register.pop(order_id, None)
+            return
+        register[order_id] = {
+            "symbol": str(prot.get("symbol") or "").strip().upper(),
+            "submitted_qty": abs(float(prot.get("submitted_qty") or 0.0)),
+        }
+
+    def _open_exit_relief(self, positions) -> tuple[list, bool]:
+        """Exits still WORKING at the broker, as SELL decisions, plus whether
+        any of them could not be measured.
+
+        Re-polls every order in `_unsettled_exit_orders` (a settled one is
+        dropped, so the register self-heals) and expresses each remaining
+        open quantity as an ordinary SELL `TradeDecision`.
+        `apply_gross_ceiling`'s STEP 1 already subtracts planned exits from
+        the book before it judges anything, so handing these in makes a
+        later pass cut the TRUE residual instead of re-cutting exposure that
+        is already on its way out. That is the measured answer; refusing the
+        whole pass was the blunt one, and refusing is worst exactly when this
+        fires — a marketable limit that misses in fifteen seconds means a
+        gap, a halt or a vanished book.
+
+        The second return value is True when an order's state could not be
+        read at all. Nothing is guessed there: the caller refuses to re-cut,
+        because an unmeasurable in-flight exit is precisely the case where
+        netting nothing would double the shed.
+        """
+        register = getattr(self, "_unsettled_exit_orders", None) or {}
+        if not register:
+            return [], False
+        held = {
+            str(getattr(p, "symbol", "") or "").strip().upper(): p
+            for p in (positions or [])
+        }
+        relief: list = []
+        unmeasurable = False
+        for order_id, row in list(register.items()):
+            try:
+                info = self.broker.get_order_fill_info(order_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("open-exit re-poll failed for %s: %s", order_id, exc)
+                info = None
+            if info is None:
+                unmeasurable = True
+                continue
+            status = str(info.get("status") or "").lower()
+            if status in AlpacaBroker._ORDER_TERMINAL_STATES:
+                register.pop(order_id, None)
+                continue
+            symbol = row.get("symbol") or ""
+            position = held.get(symbol)
+            held_qty = abs(float(getattr(position, "qty", 0.0) or 0.0)) if position else 0.0
+            open_qty = max(
+                0.0,
+                float(row.get("submitted_qty") or 0.0)
+                - float(info.get("filled_qty") or 0.0),
+            )
+            if open_qty <= 0:
+                continue
+            if held_qty <= 0:
+                # Still working against a position the book no longer shows:
+                # nothing to net it against, and nothing safe to assume.
+                unmeasurable = True
+                continue
+            relief.append(TradeDecision(
+                action="SELL", symbol=symbol,
+                allocation_pct=min(100.0, open_qty / held_qty * 100.0),
+                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+                reasoning=(
+                    f"Exit order {order_id} is still working at the broker "
+                    f"({open_qty:g} of {held_qty:g}); it is netted out of the "
+                    f"gross re-measure so the book is not sold down twice."
+                ),
+            ))
+        return relief, unmeasurable
 
     def _finalize_pending_protections(
         self,
@@ -4488,6 +4616,7 @@ class TradingPipeline:
                         "use whatever fill_info reads now",
                         context, prot["symbol"], prot["order_id"], exc,
                     )
+                self._register_exit_settlement(prot)
             finalize_side = prot.get("side")
             side_kwargs = {} if not finalize_side or finalize_side == "sell" else {"side": finalize_side}
             ok, _retry_specs = self._finalize_protection_after_sell(
@@ -12669,9 +12798,10 @@ class TradingPipeline:
         exposure. Nothing here reads a PM decision.
 
         The ordering rule still holds and is enforced inside
-        `apply_gross_ceiling`: this call passes NO decisions, so there is no
-        new exposure to block, and trims are emitted only because the held
-        book alone exceeds the ceiling. New exposure proposed later in the
+        `apply_gross_ceiling`: the only decisions this call passes are
+        already-working EXITS (`_open_exit_relief`), never an entry, so there
+        is no new exposure to block and trims are emitted only because the
+        held book alone exceeds the ceiling. New exposure proposed later in the
         same session is blocked by the sizing gate (the constructor) and the
         execution gate (`max_gross_exposure`), never by selling something the
         desk already owns to make room.
@@ -12710,23 +12840,24 @@ class TradingPipeline:
             # Tests that bypass __init__ via TradingPipeline.__new__.
             return []
         ceiling = self._resolve_gross_ceiling(ctx)
-        if getattr(ctx, "delever_unsettled", False):
-            # ASYNC-FILL RACE GUARD. An earlier de-lever in THIS run left at
-            # least one trim order non-terminal (`wait_for_order_terminal`
-            # has a ceiling and returns the last known status, which may be
-            # `new` or `partially_filled`). The broker refresh that followed
-            # therefore reported a book that still carries exposure already
-            # on its way out. Re-measuring it here and cutting again would
-            # shed that exposure TWICE. Under-cutting is the safe side of
-            # this race: the breach is already recorded by
-            # `_record_delever_shortfall`, the owner is already paged by
-            # `_alert_owner_delever_incomplete`, and the next session's
-            # preamble re-measures a settled book.
+        # ASYNC-FILL RACE. Any exit this process submitted that has not
+        # reached a terminal broker state is still shedding exposure the
+        # refreshed book has not caught up with. Net those open quantities
+        # out of the measurement (STEP 1 of `apply_gross_ceiling` subtracts
+        # planned exits before it judges anything) so this pass cuts the TRUE
+        # residual rather than the same exposure twice.
+        open_exits, unmeasurable_exits = self._open_exit_relief(ctx.positions)
+        if unmeasurable_exits:
+            # An in-flight exit whose state cannot be read is the one case
+            # where netting nothing would double the shed, and there is no
+            # honest number to net. Leave the debt OWED — never silently
+            # paid — so the next pass or the next session re-measures it.
             logger.warning(
-                "Gross-exposure ceiling: an earlier de-lever this run is "
-                "still unsettled — refusing to re-cut on a book that has "
-                "not caught up with its own fills",
+                "Gross-exposure ceiling: an exit order from this run cannot "
+                "be read — refusing to re-cut a book that may already be "
+                "shedding, and leaving the ceiling recorded as still owed",
             )
+            ctx.gross_ceiling_deferred = True
             return []
         if floor_only and not self._is_margin_floor_breach(ctx):
             # No genuine liquidation-proximity breach: leave an ordinary
@@ -12745,12 +12876,18 @@ class TradingPipeline:
             500.0,
         )
         outcome = apply_gross_ceiling(
-            [], ctx.positions, ctx.total_value, ceiling,
+            open_exits, ctx.positions, ctx.total_value, ceiling,
             cash_park_symbol=self._sweep_symbol(),
             min_order_usd=min_order_usd,
             conviction_rank=conviction_rank,
         )
-        return self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
+        orders = self._submit_gross_ceiling_trims(ctx, ceiling, outcome)
+        if not floor_only:
+            # The FULL ordinary ceiling has now been measured and acted on.
+            # This is the only thing that clears the debt — a pass that
+            # returned early above never marks it paid.
+            ctx.gross_ceiling_deferred = False
+        return orders
 
     def _is_margin_floor_breach(self, ctx: RunContext) -> bool:
         """Is the book levered beyond the margin buffer the BASE cap preserves?
@@ -12789,62 +12926,115 @@ class TradingPipeline:
     def _conviction_cut_order(self, ctx: RunContext) -> dict[str, tuple[int, int]]:
         """Weakest-conviction-FIRST sort key per held symbol (item 112).
 
-        Two keys, both taken from a ranking the desk has already ratified —
-        and deliberately NOT from `signed_source_score` as a grade. That
-        function's graded use was retired (board item 66, owner decision
-        2026-09-14, see `agreement_refuses_trade`): the signed score is
-        legitimate as a YES/NO and nothing else, because its seats are not
-        independent and no honest slope exists between two positive values.
-        Ranking a cut by it would resurrect exactly the retired defect.
+        WHAT THIS RANKS, AND WHAT IT DELIBERATELY DOES NOT. It ranks SEAT
+        CONVICTION ABOUT THE HOLDING. It must not rank ENTRY ELIGIBILITY,
+        and an earlier version of this build did: it read
+        `PortfolioManagerAgent.last_candidate_ranking`, which is the list of
+        survivors AFTER `candidate_eligibility` (R2 neutral rating, R3 not
+        BUY-eligible today, R6 constructor refusal) and AFTER the conviction
+        bar. Every one of those is a reason not to BUY a name today. None is
+        a reason to SELL it first. Worse, the conviction bar's STAY side is
+        opposition-only by owner ruling (2026-09-25): a held name that fails
+        the ENTRY bar on soft grounds — no technical read, a neutral read,
+        support faded — is dropped from the survivors "with no cull reason;
+        it earns its right to STAY". Ordering a cut by that list sold exactly
+        the names the ruling protects. So this reads the RAW seat verdicts
+        (`ctx.seat_verdicts`, everything the seats actually said, before any
+        admission gate) and this session's evidence registry.
 
-        Key 1 — DOES THE FRESH READ STILL SUPPORT THE SIDE WE HOLD? The
-        yes/no the signed score IS allowed to give, via
-        `agreement_refuses_trade`: 0 when the net evidence for this
-        position's own side is absent or against it, 1 when it is for it.
-        Read from `ctx.evidence_registry` (THIS session's per-seat read) with
-        `ctx.evidence_stale_sources` excluded, the same `ignored_sources`
-        every other caller passes — a stance too old to size a trade is too
-        old to defend one.
+        Key 1 — the bucket. THREE states, not two, so "four seats argued
+        against this" and "nobody looked at this" can never collapse into one
+        decision to liquidate (the reason the graded score was retired at all,
+        board item 66):
 
-        Key 2 — THE DESK'S OWN CANDIDATE RANKING, the `rank_verdicts` order
-        the PM's prompt was rendered from and the order
-        `allocate_risk_budget` already spends the risk budget down. Strength
-        is the position in that best-first list, and it counts only when the
-        ranked direction MATCHES the side the book actually carries: a
-        top-ranked BEARISH read is not conviction in a long. A held name the
-        ranking does not place for its own side scores 0 — the weakest end
-        of its bucket, which is the honest reading of "the desk produced no
-        ranked thesis for holding this".
+          0 OPPOSED      at least one seat argues AGAINST the side held. The
+                         desk has a live objection, so this is the one state
+                         that is itself a reason to shed — and it is the exact
+                         test the owner's 2026-09-25 STAY ruling uses to cull
+                         a holding ("opposition-only").
+          1 NO COVERAGE  no seat read this name for this side at all. Cut
+                         ahead of a live thesis, because there is none to
+                         protect — but NEVER first, because a name the desk
+                         could not read is not a name the desk decided
+                         against, and refusing to BUY is not a decision to
+                         SELL. A bar-fetch outage must not author a
+                         liquidation order.
+          2 SUPPORTED    at least one seat argues FOR the side held and none
+                         against. Cut last.
 
-        Sorted ASCENDING by `(supported, strength)`, so the cut starts with
-        the names the desk can least defend.
+        Counted with `count_opposing_sources` / `count_aligned_sources`
+        against the side the position actually carries, with
+        `ctx.evidence_stale_sources` excluded as `ignored_sources` exactly as
+        every other caller does — which today means an over-age EARNINGS
+        stance and nothing else, that being §9.4's only freshness rule.
+
+        Key 2 — inside a bucket, the desk's own `rank_verdicts` ordering over
+        those same raw verdicts, best first, counted only when the ranked
+        direction MATCHES the side held (a top-ranked BEARISH read is not
+        conviction in a long). Unranked scores 0.
+
+        Sorted ASCENDING, so the cut starts with the names the desk has an
+        argument against and reaches its live theses last.
+
+        MISSING TECHNICAL READS ARE MADE VISIBLE, NOT FILLED IN. The
+        technical seat's symbol set (`_run_tech`) is today's admitted names
+        plus the configured universe; unlike News it is NOT passed the held
+        book, and a symbol whose bars fail to fetch is skipped. A held name
+        can therefore reach here with no technical verdict through no fault
+        of its own. This build does not inject held symbols into the
+        technical seat — that widens the paid research scope and is a
+        separate, costed decision — it instead gives absence its own bucket
+        and LOGS every uncovered holding by name, so the gap is reportable
+        instead of silently scoring zero and sorting first.
         """
         registry = getattr(ctx, "evidence_registry", None) or {}
         stale = getattr(ctx, "evidence_stale_sources", None) or {}
-        ranked = getattr(
-            getattr(self, "portfolio_manager", None), "last_candidate_ranking", None,
-        ) or []
-        total = len(ranked)
+        verdicts = list(getattr(ctx, "seat_verdicts", None) or [])
         strength_of: dict[tuple[str, str], int] = {}
-        for index, candidate in enumerate(ranked):
-            symbol = str(getattr(candidate, "symbol", "") or "").strip().upper()
-            direction = str(getattr(candidate, "direction", "") or "").strip().lower()
-            if symbol and direction:
-                # Best-first -> biggest number is the strongest conviction.
-                strength_of[(symbol, direction)] = total - index
+        if verdicts:
+            try:
+                ranked = rank_verdicts(verdicts)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("conviction cut order: ranking failed: %s", exc)
+                ranked = []
+            total = len(ranked)
+            for index, candidate in enumerate(ranked):
+                symbol = str(getattr(candidate, "symbol", "") or "").strip().upper()
+                direction = str(getattr(candidate, "direction", "") or "").strip().lower()
+                if symbol and direction:
+                    # Best-first -> biggest number is the strongest conviction.
+                    strength_of[(symbol, direction)] = total - index
         order: dict[str, tuple[int, int]] = {}
+        uncovered: list[str] = []
         for position in ctx.positions or []:
             symbol = str(getattr(position, "symbol", "") or "").strip().upper()
             if not symbol:
                 continue
             side = position_side(position)
             wanted = "bullish" if side == SECTOR_SIDE_LONG else "bearish"
-            score = signed_source_score(
-                symbol, registry.get(symbol) or {}, side,
-                ignored_sources=stale.get(symbol),
+            sources = registry.get(symbol) or {}
+            ignored = stale.get(symbol)
+            opposed = count_opposing_sources(
+                symbol, sources, side, ignored_sources=ignored,
             )
-            supported = 0 if agreement_refuses_trade(score) else 1
-            order[symbol] = (supported, strength_of.get((symbol, wanted), 0))
+            aligned = count_aligned_sources(
+                symbol, sources, side, ignored_sources=ignored,
+            )
+            if opposed > 0:
+                bucket = 0      # OPPOSED — cut first
+            elif aligned > 0:
+                bucket = 2      # SUPPORTED — cut last
+            else:
+                bucket = 1      # NO COVERAGE — between the two, never first
+                uncovered.append(symbol)
+            order[symbol] = (bucket, strength_of.get((symbol, wanted), 0))
+        if uncovered:
+            logger.warning(
+                "Conviction cut order: no seat read %s for the side held — "
+                "ranked as UNREAD, never as opposed. A holding the desk could "
+                "not read is not a holding it decided against.",
+                ", ".join(sorted(uncovered)),
+            )
         return order
 
     def _enforce_gross_ceiling_by_conviction(self, ctx: RunContext) -> list[dict]:
@@ -12859,23 +13049,51 @@ class TradingPipeline:
         Absent registry (every PM-less lane) means nothing fresh was read, so
         it returns [] and the `finally` discharge enforces the ordinary
         ceiling with the unchanged biggest-loser ordering. It DELEGATES to
-        `_enforce_gross_ceiling`, the single owner of held-book trimming,
-        which re-measures gross first and refuses to act on a book still
-        catching up with an unsettled earlier de-lever. Clears the deferred
-        debt on success so the discharge does not cut the same breach twice.
+        `_enforce_gross_ceiling`, the single owner of held-book trimming.
+
+        It does NOT touch `ctx.gross_ceiling_deferred`. Only the delegate
+        clears that, and only after it has actually measured and acted on
+        the full ordinary ceiling — an earlier version cleared it here
+        unconditionally, including when the delegate had bailed, which
+        marked the debt paid without anything being enforced.
         """
         risk_cfg = getattr(getattr(self, "config", None), "risk", None)
         if risk_cfg is None:
             return []
         if not getattr(ctx, "evidence_registry", None):
             return []
-        orders = self._enforce_gross_ceiling(
+        return self._enforce_gross_ceiling(
             ctx, conviction_rank=self._conviction_cut_order(ctx),
         )
-        # The full ordinary ceiling has now been enforced on this lane,
-        # whether or not it had anything to shed.
-        ctx.gross_ceiling_deferred = False
-        return orders
+
+    def _install_sigterm_unwind(self, context: str):
+        """Make the wrapper's SIGTERM raise instead of killing silently.
+
+        Returns whatever handler was installed before, for the caller to
+        restore. Returns None — and changes nothing — when signals cannot be
+        set here (not the main thread, or a platform without SIGTERM), which
+        is the ordinary case under pytest's worker threads.
+        """
+        import signal
+        try:
+            return signal.signal(
+                signal.SIGTERM,
+                lambda *_: (_ for _ in ()).throw(
+                    SessionTerminated(f"{context}: SIGTERM from the run wrapper")
+                ),
+            )
+        except (ValueError, OSError, AttributeError, RuntimeError) as exc:
+            logger.debug("SIGTERM unwind not installed for %s: %s", context, exc)
+            return None
+
+    def _restore_sigterm(self, previous) -> None:
+        if previous is None:
+            return
+        import signal
+        try:
+            signal.signal(signal.SIGTERM, previous)
+        except (ValueError, OSError, AttributeError, RuntimeError):
+            pass
 
     def _discharge_deferred_gross_ceiling(self, ctx: RunContext) -> None:
         """Pay the `floor_only` debt on any lane the conviction pass missed.
@@ -12892,10 +13110,14 @@ class TradingPipeline:
         conviction pass already discharged the debt, and it re-measures, so
         a book that came under its ceiling meanwhile sheds nothing. Never
         raises: it runs while another exception may be propagating.
+
+        It does NOT clear the flag itself. The delegate clears it only when
+        the full ordinary ceiling was actually measured and acted on, so a
+        discharge that bails — or raises — leaves the debt visibly OWED
+        rather than silently paid.
         """
         if not getattr(ctx, "gross_ceiling_deferred", False):
             return
-        ctx.gross_ceiling_deferred = False
         try:
             self._enforce_gross_ceiling(ctx)
         except Exception as exc:  # noqa: BLE001
@@ -13032,33 +13254,10 @@ class TradingPipeline:
             self._finalize_pending_protections(
                 [protection], context="GROSS-EXPOSURE DE-LEVER",
             )
-        # ASYNC-FILL RACE. Every trim above was waited on to terminal, but
-        # `wait_for_order_terminal` has a ceiling and returns the LAST KNOWN
-        # status — so a slow fill leaves `new` or `partially_filled`. The
-        # broker refresh below then reports a book that still carries
-        # exposure already on its way out, and any LATER de-lever pass in
-        # this run would shed it a second time. Flag it; `_enforce_gross_
-        # ceiling` refuses to re-cut while it is set.
-        # The broker CLASS's own list, not the instance's: a mocked broker in
-        # a test would answer with another mock and silently call every trim
-        # unsettled.
-        terminal = AlpacaBroker._ORDER_TERMINAL_STATES
-        # A protection with NO `terminal_status` key was never waited on by
-        # this run (nothing to race with); one whose recorded status is not
-        # terminal — including None, the wait's own failure marker — is.
-        unsettled = [
-            str(p.get("symbol") or "?") for p in pending_protections
-            if "terminal_status" in p
-            and str(p.get("terminal_status") or "").lower() not in terminal
-        ]
-        if unsettled:
-            ctx.delever_unsettled = True
-            logger.warning(
-                "GROSS-EXPOSURE DE-LEVER: %s did not reach a terminal state "
-                "before the re-measure — the refreshed book understates what "
-                "is already on its way out; no further de-lever this run",
-                ", ".join(unsettled),
-            )
+        # ASYNC-FILL RACE: any trim that did not reach a terminal state is
+        # already in `_unsettled_exit_orders` (registered centrally by
+        # `_finalize_pending_protections`, so every exit path is covered),
+        # and the next gross re-measure nets its open quantity out.
         try:
             account = self.broker.get_account()
             ctx.positions = self.broker.get_positions()
@@ -13782,6 +13981,14 @@ class TradingPipeline:
 
         self._activate_cost_session(run_id, "morning")
 
+        # The wrapper kills a slow morning with SIGTERM 30s before SIGKILL,
+        # and that is a DOCUMENTED, OBSERVED death mode for this very
+        # function. Without this, SIGTERM ends the process where it stands
+        # and the `finally` below — which pays the deferred §11.2 gross
+        # ceiling — never runs. Converting it to an unwind spends part of
+        # that grace window on the session's outstanding safety debts.
+        _prior_sigterm = self._install_sigterm_unwind("morning")
+
         try:
             # 0a. FIRST BROKER ACTION OF THE DAY: broker-truth coverage audit
             # (independent of the WAL). Catches any long that went naked
@@ -14183,6 +14390,7 @@ class TradingPipeline:
             # Fills (or stop-outs since snapshot) change the book. Re-read
             # the broker; do not reuse the pre-execution list.
             self._sync_positions_from_broker()
+            self._restore_sigterm(_prior_sigterm)
 
     def run_midday(self) -> dict:
         """13:00 ET — position reviewer, patient disposition."""

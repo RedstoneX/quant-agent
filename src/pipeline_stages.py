@@ -6643,6 +6643,27 @@ class DecisionStage:
         # otherwise a DecisionStage local, discarded when the stage returns —
         # exactly the stale-stance trap the prior attempt was rejected for.
         ctx.evidence_registry = evidence_registry
+        # Item 112 — and the RAW seat verdicts behind it, BEFORE any admission
+        # gate. The cut order must rank seat conviction about a HOLDING, and
+        # `last_candidate_ranking` cannot serve: it is the post-
+        # `candidate_eligibility`, post-conviction-bar ENTRY survivor list, and
+        # the bar's STAY side is opposition-only by owner ruling (2026-09-25) —
+        # a held name that fails the entry bar on soft grounds is dropped from
+        # it with no cull reason because "it earns its right to STAY".
+        try:
+            ctx.seat_verdicts = PortfolioManagerAgent._collect_seat_verdicts(
+                analyses=analyses,
+                news_intel=news_intel,
+                macro_analysis=_macro_analysis_as_dict(macro_analysis),
+                earnings_analyses=earnings_results,
+                smart_money_findings=ctx.smart_money_findings,
+                symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Best-effort like the collector itself: no verdicts means the cut
+            # order falls back to its buckets alone, never to a wrong order.
+            logger.warning("seat verdicts unavailable for the cut order: %s", exc)
+            ctx.seat_verdicts = []
         # §9.4 freshness — same pure function, same inputs, so the stances
         # the constructor refuses to pay for are exactly the ones the PM's
         # prompt marked stale. An earnings view older than
@@ -6653,8 +6674,11 @@ class DecisionStage:
             earnings_analyses=earnings_results,
         )
         # Item 112 — the conviction de-lever reads the registry above; it must
-        # read the same freshness exclusions the constructor does, or a stale
-        # stance would defend a position against a cut it cannot size.
+        # apply the SAME freshness exclusions the constructor does. Today
+        # `stale_evidence_sources` returns EARNINGS only (§9.4's earnings-age
+        # rule is the only freshness rule the desk has), so this excludes an
+        # over-age earnings stance and nothing else — it is not a general
+        # staleness sweep over macro or smart money.
         ctx.evidence_stale_sources = stale_sources
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the

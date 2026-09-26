@@ -1685,6 +1685,30 @@ def apply_gross_ceiling(
         if over <= 1e-6:
             break
         take = min(position_gross, over)
+        # THE MINIMUM TRIM MUST NOT AMPLIFY A ROUNDING RESIDUE. The fraction
+        # below is expressed to 0.1% and the pipeline then floors the order
+        # to whole shares, both deliberately DOWNWARD so a trim never sells
+        # the book below its ceiling. That leaves a residue of a few dollars,
+        # and before this guard the residue pulled in a WHOLE EXTRA NAME at
+        # the 1.0% floor — shedding up to 1% of a second position to chase a
+        # $2 remainder. Under the conviction cut order that spurious trim
+        # landed by construction on the HIGHEST-conviction holding still
+        # standing, because the cut walks weakest-first and the strongest
+        # name is what is left: the exact opposite of the ordering's purpose.
+        # So once a trim has been taken, stop as soon as the minimum trim
+        # would shed MORE than the breach that remains. The book is then
+        # under its ceiling to within the ticket's own precision, which is
+        # the same residue whole-share flooring already leaves.
+        # The 1.0% below is the trim builder's own long-standing minimum
+        # slice, unchanged and read here rather than re-chosen.
+        if out.trims and take < position_gross * 0.01:
+            logger.info(
+                "Gross-exposure ceiling: $%.0f of breach remains, less than "
+                "the minimum trim of %s ($%.0f) — stopping rather than selling "
+                "a second name to chase a rounding residue",
+                take, symbol, position_gross * 0.01,
+            )
+            break
         fraction_pct = min(100.0, max(1.0, round(take / position_gross * 100, 1)))
         is_short = position_side(position) == SECTOR_SIDE_SHORT
         trim = TradeDecision(

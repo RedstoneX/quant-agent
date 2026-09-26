@@ -209,10 +209,19 @@ class RunContext:
     evidence_registry: dict[str, dict[str, str]] = field(default_factory=dict)
     # §9.4 freshness, stashed beside the registry it belongs to: the exact
     # {symbol: {source}} set `PortfolioManagerAgent.stale_evidence_sources`
-    # produced this session. The conviction de-lever passes it as
-    # `ignored_sources`, like every other caller — a stance too old to size
-    # a trade is too old to defend one against a cut.
+    # produced this session — which today means an over-age EARNINGS stance
+    # and nothing else, since that is the only freshness rule §9.4 has. The
+    # conviction de-lever passes it as `ignored_sources` so it counts the
+    # same stances the constructor is willing to size on.
     evidence_stale_sources: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Item 112 — the RAW `AnalystVerdict`s every seat produced this session,
+    # BEFORE `candidate_eligibility` and the conviction bar remove names that
+    # may not be BOUGHT today. The de-lever's cut order ranks conviction about
+    # a HOLDING, and an entry-admission list is the wrong question for that:
+    # the conviction bar's STAY side is opposition-only by owner ruling
+    # (2026-09-25), so a held name dropped from the entry survivors has
+    # explicitly earned its right to stay.
+    seat_verdicts: list = field(default_factory=list)
     # Item 112 — the morning preamble scopes itself to the margin FLOOR and
     # leaves the ORDINARY §11.2 ceiling to the post-decision conviction pass.
     # This is the debt that deferral creates. `_discharge_deferred_gross_
@@ -220,11 +229,6 @@ class RunContext:
     # lane the conviction pass never reached (PM-less early returns, resume,
     # an exception exit), so no lane can silently lose the ordinary ceiling.
     gross_ceiling_deferred: bool = False
-    # True once a de-lever in THIS run submitted a trim that never reached a
-    # terminal broker state. The refreshed book then understates what is
-    # already on its way out, so no further de-lever pass may re-measure and
-    # cut again — it would shed the same exposure twice.
-    delever_unsettled: bool = False
 
     portfolio_decision: "PortfolioDecision | None" = None
     # Transport-successful model output can still fail deterministic parsing,
