@@ -36,6 +36,109 @@ what would catch it next time.
 
 **What would catch it next time.** A test reads the guard's own source: it fails if a sweep function reappears in the stage layer, and it fails if the guard narrows back to buy-only, which is the gap that made a second enforcement point look necessary in the first place. Both failure modes were confirmed by breaking the code on purpose and watching the test go red.
 
+### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
+
+**In plain words.** A single figure, "one average day's range", was deciding
+two unrelated things: how far a holding must fall before the desk accepts the
+fall is real, and how far a day's closing price must sit past a support level
+before that level counts as broken. They are different questions about
+different things, and because they shared one figure neither could be answered
+without silently moving the other. They are now two separate figures. Both are
+still exactly what they were, nothing the desk does changed today, and neither
+was nudged — this item's own terms forbid retuning either while splitting them.
+Separately, five gates that decide whether an order is placed at all were
+examined against the desk's own filled orders. One was deleted outright as dead.
+Three were measured for the first time, and the measurements are genuinely
+useful while still not picking a value. The last one cannot be removed on its
+own without making the account report less honest than it is today.
+
+**The split, and a labelling error found while doing it.** The exit path's band
+was recorded in the number ledger as if it were worked out from the trailing
+stop's band of 1.25 average ranges. It reads 1.0. A figure that is not its
+stated parent's figure was never derived from it; it is a second flat number
+and is now recorded as one. That correction, and the new name for the break
+margin, are why the ledger's count of unanswered numbers rises by one after the
+deletion below lowers it by one.
+
+**What the published work actually says, so this is not searched a third time.**
+For the "has it really moved against me" band, every published multiple sits
+near three average daily ranges, not one — Wilder's 1978 volatility system, the
+Chandelier Exit's standard setting, and Kaufman, who treats it as a dial and
+blesses no constant. All three measure a stop's distance from a running high
+rather than a move away from the entry price, so they are the closest published
+analogue and not the same measurement; that is why nothing was swapped. Going
+from one to three would make the desk markedly slower to accept a loss as real,
+which is owner appetite and outside this item. For the "has this level broken"
+margin there is no answer in these units at all: the literature measures a break
+as a percentage of price and differently for a major level than a minor one
+(Edwards & Magee, roughly 3% and 1%), or holds that a decisive close needs no
+distance at all (Bulkowski). The confirmation rule wrapped around it — two
+consecutive closes — is properly sourced. Only the distance is not, and it is
+unidentifiable in the units it is written in rather than merely uncited.
+
+**The order gates, measured.** Method, so it can be repeated: the production
+`trades` table, rows with `fill_status = 'filled'`, 2026-09-15 to 2026-09-25,
+30 buy entries and 3 short entries. The submitted limit is stored, and the
+slippage belt itself sets that limit at the reference price plus or minus 40
+basis points, so the reference price can be recovered from it and the realised
+slippage is the fill against that reference. Results:
+
+* The entry-slippage belt runs at a median of 2.6 basis points, a 90th
+  percentile of 26.4, and a maximum of exactly 40.0 — one order in thirty
+  filled at the belt and none above it. It does not explain any ordinary fill.
+  It also cannot be identified from this data, because the belt censors its own
+  tail: an order that would have slipped further is refused and never appears.
+  The refusals are nowhere near it — all nine recorded slippage skips had the
+  quoted offer between 391 and 1466 basis points above the reference.
+* The 2% ask-skip therefore fires at about 241 basis points above the
+  reference, which sits inside a roughly 350-point band of the desk's own data
+  containing no observation whatsoever. Every multiple between about 1.004 and
+  about 1.035 would have produced an identical decision on every case the desk
+  has ever seen. The measurement the ledger asked for is done; it tells us the
+  gate is far from both populations and cannot tell us the value.
+* The 0.5% minimum weight change faces zero commission — Alpaca charges none on
+  stock — so its whole cost is that same measured slippage. On a $10,000 book a
+  0.5% change is a $50 order whose measured expected cost is about one cent.
+  The cost side cannot justify a floor of this size. What the floor should be
+  is still open, because the other half of the question is how much pointless
+  order churn the desk will tolerate, and that is appetite.
+
+**The deletion, and what it changes.** The constructor's own $500 minimum-order
+floor is gone. Nothing in the constructor read it. The single call that
+forwarded it reached a parameter that `apply_gross_ceiling` has explicitly
+accepted and ignored since 2026-09-24 — so the comment sitting at the field's
+definition site, which said that gate still read it as a notional floor, was
+false on the day it was written. No order size, refusal or gate behaves
+differently. The sweep's own separately-named $500 is untouched.
+
+**Why the cash reserve band was NOT deleted.** The advisory that reads it is
+display-only — the repo's own quantities module says in terms that subtracting
+it from deployable cash produced a figure no part of the engine ever used, and
+no consumer of the two API fields exists here. But the band has a second reader:
+the cash sweeper itself, which is disabled rather than removed. Deleting the
+advisory alone would leave the band alive, no longer reported anywhere, and one
+configuration flag away from governing real money again — worse than today, not
+better. The band, the four dead sweep padding and buffer constants, the sweep's
+minimum order and the advisory all retire together with the sweeper, which is
+about 187 references across the pipeline, the API and nine test modules. That is
+its own job and was not begun here.
+### 2026-09-26 — the file the desk consults so it never has to guess an exit-side number was empty for five whole topics (item 143 retired)
+
+**In plain words:** `docs/RESEARCH_FINDINGS.md` is where the desk is supposed to look up what published work actually says, so it never has to invent a number. For five subjects that govern real money — how much of a move is just ordinary daily wobble, how far a trailing stop should sit, whether to take profit at a target, how long a position may take to work, and how finely the desk's own scoring separates one stock from another — the file said nothing at all. So every number in those areas was, by construction, unsourceable from the desk's own research file. Five sections were added recording what a real literature pass found, INCLUDING where it found nothing. No number was picked and nothing live was changed.
+
+**What the pass actually supports, and what it does not.** Four findings are worth carrying forward because the next session will otherwise re-invent them:
+
+- **Volatility bands.** The 2-3 x ATR magnitude is corroborated by two named sources (Wilder's 1978 ATR, LeBeau's Chandelier Exit at 3 x ATR(22)), and neither gives a derivation — the Chandelier reference explicitly says to vary the multiplier and states no bounds. **The quantity the desk's noise band actually bounds — the multiple at which an adverse move stops being noise — has no published measurement at all.** Searched directly; the only hits were mutually contradictory practitioner blogs, which is why nothing from them was recorded.
+- **Stops are conditionally valuable, not unconditionally.** Kaminski & Lo's framework result is that a 0/1 stop-loss rule ALWAYS lowers expected return under a random walk, and adds value only under momentum or regime-switching. Their empirical work deliberately reports a threshold RANGE (-1.5 to -0.5 standard deviations) and says why: scanning avoids data-selection bias. Their frequency finding cuts against short clocks — short-horizon stop policies carried negative stopping premiums; policies above one month did better.
+- **Preset profit targets.** Odean (1998) measured that the winners retail investors sell outperform the losers they keep by 3.41% over the next 252 trading days. That is evidence that closing a position because it is a winner is a documented, costly bias — the class the desk's deleted auto-trim belonged to. It is NOT a test of a fixed-percentage trim, and the entry says so; the trend-convexity paper cited beside it is about capping POSITION SIZE, not profit targets, and is cited for the mechanism only.
+- **Pacing and ranking granularity are the two genuine blanks.** Nothing published gives a per-position horizon or pace threshold for a discretionary multi-day equity trade; the momentum literature gives a portfolio REBALANCING horizon (Jegadeesh & Titman's 16-cell grid, all cells positive) which is a different quantity. Nothing in finance addresses score granularity or tie rates in stock ranking either — the rigorous work on it is in recommender-system and information-retrieval evaluation, a different field, and the entry labels it as such and transfers only the mechanism (coarse scores make the tiebreak the real ranking rule), never the magnitudes.
+
+**What was deliberately NOT done, and why it matters more than what was.** No value was picked inside any range found, no live number was recommended for change, and no code or config was touched. Where the literature gives a band, the entry says explicitly that choosing inside it is owner appetite and not research. The desk's existing work on these topics was LINKED rather than restated — item 70's two-jobs-one-number split, the 2026-09-10 stop-floor re-derivation and its warning not to conflate a fixed entry stop with a trailing one, the 2026-09-25 ratification of the floor and regime scales, the 2026-09-12 deletion of the auto take-profit trim, item 75's exit-comparison proposal, item 165's removal of the made-up pace floor, item 141's measured tie rates and three-stage tiebreak, and the item 39(a) finding that the rotation margin sits inside its own score's noise.
+
+**One thing the pass surfaced that is not closed by it.** Item 141's own write-up records that neither the touch-count tiebreak nor the reward:risk tiebreak is rendered into the portfolio manager's prompt or any owner-facing surface. The published tie-handling evidence — that when scores are coarse the tie-break rule becomes an undeclared ranking feature and can dominate the result — is consistent with that gap mattering. It does not measure how much it matters here, and no such measurement is claimed.
+
+**What would catch it next time.** The gap was not that research was missing; it was that a "searched and found nothing" result had nowhere to live, so each session re-searched or re-guessed. A negative result recorded as a section, with what was searched, is the thing that stops the next invented number.
+
 ### 2026-09-26 — the safety check that refused a trade for a too-wide stop had never refused anything, and the number it turned on could not be sourced (item 56 retired)
 
 **Plain language.** When the desk works out where to put a stop-loss, a
@@ -298,20 +401,6 @@ An absent rate now prints no cost line at all rather than a guessed one.
 
 - Item 158 (the technical seat's per-stock drop reasons living only in the log and as an aggregate count) was retired 2026-09-26 — the reason is now stored against the stock's own row as a stable code plus the human detail, and the funnel answers "why is this name not here" from that row; reason in `docs/INCIDENT_HISTORY.md`.
 
-### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
-
-**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
-
-**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
-
-**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
-
-**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
-
-**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
-
----
-
 ### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
 
 **In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
@@ -328,6 +417,20 @@ An absent rate now prints no cost line at all rather than a guessed one.
 **What was ruled out.** A new table and a new column were both rejected: the evidence store already holds symbol-scoped forensic rows, and the whole record is observability — losing it must not be able to change a trading decision, which is also why the write can never raise. No schema change means nothing to migrate and every row already on disk still reads; a row written by the first pass has no code at all and is read back as `unspecified` rather than failing.
 
 **What would catch it next time.** `tests/test_analysis_drop_reason_stored.py` asserts a dropped stock's row carries the code and the reason, a kept stock has no row, and the aggregate count reconciles against the per-row counts. `tests/test_api_funnel.py` asserts the funnel answers the question for a dropped name, marks a recovered one as recovered, says nothing about a drop for a kept name, and still reads a pre-code row.
+
+### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
+
+**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
+
+**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
+
+**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
+
+**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
+
+**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
+
+---
 
 ### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
 

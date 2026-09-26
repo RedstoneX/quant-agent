@@ -288,6 +288,10 @@ agent has widened the rule to work around it.
 **The decision —** None for you on the number yet. How readily the desk should block a sale at all is still yours and is not this item — this item is only the two unsourced 1.0s. Each stays open until it has either a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant.
 **Recommendation —** Keep them as two questions. Do not retune either number to make sales easier or harder — that would be picking an appetite figure. Do not collapse them into one shared constant just because the digits match. Search for a published measurement of each quantity, or name a single derivation that produces both; until then, leave the figure where it is.
 
+**2026-09-26, what changed and what did not —** The two jobs now have two names, at the same value, and nothing the desk does changed today. One number became `NOISE_BAND_ATR_MULTIPLE` (how far a holding must move against you before the move counts as real) and the other `BREAK_CONFIRMATION_ATR_MULTIPLE` (how far a day's closing price must sit past a support level before that level counts as broken). Both are still 1.0 and neither was retuned, which this item forbids in the same pass. A separate error turned up in the ledger while doing it: the exit-path band was filed as if it were worked out from the trailing-stop band of 1.25, which it plainly is not, since it reads 1.0 — so it is now recorded honestly as a number with nothing behind it.
+**What the published work says, so nobody searches again —** For the first job every published figure is roughly three times today's: Wilder's 1978 volatility system, the Chandelier Exit's standard setting and Kaufman all sit near 3 average daily ranges, though all three measure a stop's distance from a running high rather than a move away from your entry, so they are the nearest published analogue and not the same measurement. Moving the desk from 1 to 3 would make it markedly slower to accept that a loss is real — fewer premature sales, a bigger give-back before it acts — and that is your appetite, not this item's to set. For the second job there is no answer in these units at all: the literature measures a break in PERCENT of price and differently for a major level than a minor one (Edwards & Magee use about 3% and about 1%), or treats a decisive close as sufficient with no distance at all (Bulkowski). The rule around it — two consecutive closes — is properly sourced; only the distance is not.
+**Still open —** Both values, and the separate hard floor under every stop, which still has nothing of its own behind it.
+
 **Moved from WORK.md (2026-09-24) —** Same round number, two questions, no source, nothing tying them. The first job blocked 7 of 8 recorded discretionary exits. Settles with, for each independently, a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant. How readily the desk should block a sale at all is the owner's appetite, not this item.
 
 ## item 74
@@ -457,10 +461,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 **Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
 
 **Sweep shipped 2026-09-25 —** `scripts/prune_worktrees.py` is the mechanical guard: it clears registrations whose scratch directory is gone (`git worktree prune`) and removes worktrees that are merged into `origin/main`, clean, unlocked, owned by us and idle >= 7 days (`git worktree remove`, never `--force`). Scoped by construction to this repo's own registered worktrees and refuses any path owned by another uid, so it can never touch another tenant on this shared box. Read-only by default; `--prune` acts. The swept-on-a-schedule rule is `scripts/systemd/quant-agent-worktree-prune.{service,timer}` (daily 04:10 ET, off-hours because it is the one maintenance sweep that writes), run through `scripts/run_worktree_prune.sh`. Detection logic is unit-tested against injected git/fs stubs plus a real-git integration test (`tests/test_prune_worktrees.py`).
-
-## item 143
-
-**Moved from WORK.md (2026-09-24) —** Every constant in those five areas is therefore unsourceable from the desk's own research file, which is where item 90's half two has to read them from.
 
 ## item 147
 
