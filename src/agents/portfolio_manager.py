@@ -1102,6 +1102,44 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                     "limit — a BUY may still be able to draw margin. Treat "
                     "the ladder as unknown, not as zero."
                 )
+            # Board item 95. Capacity without its price is half the picture:
+            # this block has named the spending limit since 2026-09-17 and
+            # never once named the cost, while the PM's own sheet says "You
+            # may borrow". The cost lines go on BOTH branches — the
+            # unresolved-ladder branch is exactly where a seat is most
+            # likely to reach for margin on a guess — and are silent when
+            # there is no debit and no headroom to price. Rate read here
+            # rather than threaded through kwargs so an older caller that
+            # predates this cannot silently drop the price; a config read
+            # that fails must never break the prompt, so it degrades to
+            # saying nothing extra rather than to a fabricated figure.
+            # The rate is THREADED IN from the caller's already-loaded
+            # `config.risk.margin_interest_rate_pct`, never re-read here:
+            # loading `AppConfig` inside a prompt renderer validates API
+            # keys and fails in every context that has none, which would
+            # make the price silently vanish exactly where it is hardest
+            # to notice. Absent rate -> no cost lines, never a guessed one.
+            try:
+                from src.margin_interest import format_borrowing_cost_lines
+                _rate_pct = kwargs.get("margin_interest_rate_pct")
+                _cost_lines = format_borrowing_cost_lines(
+                    cash_balance,
+                    _rate_pct if isinstance(_rate_pct, (int, float))
+                    and not isinstance(_rate_pct, bool) else None,
+                    headroom_usd if isinstance(headroom_usd, (int, float))
+                    and not isinstance(headroom_usd, bool) else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not render the borrowing-cost lines for the PM "
+                    "prompt (%s); the Margin Capacity block is being sent "
+                    "WITHOUT its cost of carry.", exc,
+                )
+                _cost_lines = []
+            if _cost_lines:
+                margin_section += "\n\n### What borrowing costs\n" + "\n".join(
+                    _cost_lines
+                )
 
         # Recent system performance, REPORTING ONLY. The `in_drawdown`  # retired-ok
         # flag and its two thresholds used to live here and halved every new
@@ -1507,9 +1545,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`constructor_refusals_by_symbol`, a snapshot of
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
-              `stop_wider_than_instrument_reach` or
               `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
-              item 180 dropped the young-listing bar-count refusal).
+              item 180 dropped the young-listing bar-count refusal, and
+              item 56 deleted the stop-WIDTH refusal
+              `stop_wider_than_instrument_reach` on 2026-09-26 — a wide
+              stop is answered by a smaller position, never a refusal).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM
               being shown a name that funnel has already refused. Absent
@@ -2370,6 +2410,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                margin_ladder_backed: bool = False,
                margin_ladder_multiple: float | None = None,
                margin_ladder_rung: str | None = None,
+               # Board item 95: the annual margin-interest rate the account
+               # is actually charged on its OVERNIGHT debit, threaded from
+               # the caller's already-loaded `config.risk`. `None` means the
+               # cost of carry is simply not stated — never guessed.
+               margin_interest_rate_pct: float | None = None,
                # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
                # smallest order this desk will place. Threaded rather than
                # defaulted to a literal so the rotation pre-check tests the
@@ -2467,6 +2512,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
+            margin_interest_rate_pct=margin_interest_rate_pct,
             min_order_usd=min_order_usd,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,

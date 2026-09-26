@@ -5970,6 +5970,31 @@ class MorningResearchStage:
                 parse_telemetry.total_null_coercions(),
                 parse_telemetry.describe_null_coercions(),
             )
+        if parse_telemetry.total_hygiene_violations():
+            # Item 157's runtime check (2026-09-23): whether a schema-
+            # enforced route is actually being honoured, surfaced where a
+            # human running this desk can see it, since no deployed process
+            # ever holds a real GOOGLE_API_KEY for a pytest-based live check
+            # to run against (see docs/WORK.md item 157,
+            # tests/test_tech_schema_live.py). Never blocks anything — a
+            # strict schema is supposed to make fenced markdown and extra
+            # keys impossible; when they show up anyway the row still
+            # parsed and was still used, so this is evidence, not a gate.
+            # Each count is tagged with the ACTUAL provider that answered
+            # (`_record_answer_hygiene` in src/agents/tech_analyst.py) —
+            # adversary review, 2026-09-23: only "openrouter"/"google" are
+            # ever given a response_format at all (src/agents/base.py); a
+            # count against any other provider is not evidence the strict
+            # schema failed, since no schema was sent on that call.
+            logger.warning(
+                "Tech-seat answer hygiene violations this run (%d), by "
+                "provider (only openrouter/google were ever sent a strict "
+                "schema; any other provider's count reflects no schema "
+                "being sent at all, not a schema failing to suppress): "
+                "%s — see docs/WORK.md item 157",
+                parse_telemetry.total_hygiene_violations(),
+                parse_telemetry.describe_hygiene_violations(),
+            )
         return ctx
 
     def _run_nomination_responder_pass(self, ctx: RunContext, prior_macro_state: dict) -> None:
@@ -6437,6 +6462,13 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
+            # Board item 95: the PM is shown what the capacity above COSTS.
+            # Read off the same loaded config the rest of this call uses, so
+            # the prompt renderer never re-loads `AppConfig` (which validates
+            # API keys and would fail silently, dropping the price).
+            margin_interest_rate_pct=getattr(
+                pipeline.config.risk, "margin_interest_rate_pct", None,
+            ),
             # 2026-09-23: the §10.3 notional floor, read by exactly the
             # helper the execution-time re-size and the rotation buy-leg
             # projection already read it with, so the rotation pre-check
@@ -7578,6 +7610,42 @@ class RiskStage:
                     f"alone."
                 ),
                 value=float(n_nulled),
+                limit=0.0,
+            ))
+
+        ctx.hygiene_violations = parse_telemetry.hygiene_snapshot()
+        hygiene = ctx.hygiene_violations
+        if hygiene:
+            # Item 157's runtime check (2026-09-23), routed the same way
+            # `analysis_parse_loss`/`analysis_field_nulled` already are —
+            # adversary review found the earlier research-stage-only log
+            # line never reached anywhere a human actually looks (the
+            # owner sees Telegram and the dashboard, not logs); this
+            # reaches the Risk Manager's own advisory the same way those
+            # two do. Informational only — a hygiene violation never costs
+            # the row and this rule is not one the risk seat can veto on
+            # (docs/WORK.md: hard limits are code-enforced; over guidelines
+            # the risk seat may only resize), it only makes the finding
+            # visible to whatever reads the RM's review.
+            from src.risk.rules import RiskViolation as _RV
+            n_hygiene = sum(hygiene.values())
+            detail = ", ".join(
+                f"{model}.{kind}x{n}" if n > 1 else f"{model}.{kind}"
+                for (model, kind), n in sorted(hygiene.items(), key=lambda kv: -kv[1])
+            )
+            rule_violations.append(_RV(
+                rule="tech_answer_hygiene",
+                message=(
+                    f"{n_hygiene} tech-seat answer(s) this session carried "
+                    f"fenced markdown or an undeclared key despite a strict "
+                    f"response schema: {detail}. Model name is tagged with "
+                    f"the actual provider that answered — only openrouter/"
+                    f"google were ever sent a schema, so a count against "
+                    f"any other provider reflects no schema being sent, not "
+                    f"one failing to suppress. Never blocks anything; the "
+                    f"row was still parsed and used. See docs/WORK.md item 157."
+                ),
+                value=float(n_hygiene),
                 limit=0.0,
             ))
 
