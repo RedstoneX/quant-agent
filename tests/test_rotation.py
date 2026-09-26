@@ -30,7 +30,12 @@ def _rc(symbol: str, score: float, direction: str = "bullish") -> RankedCandidat
     return RankedCandidate(symbol=symbol, direction=direction, score=score)
 
 
-def _verdict(symbol: str, seat: str, magnitude: float, conviction: str,
+# `magnitude=None` is a seat that states NO strength (item 65, 2026-09-26 —
+# `src/models.py::NO_STATED_STRENGTH`), which is what news, macro,
+# smart_money and earnings always send. It scores the same as the literal
+# 0.0 these fixtures used to pass, which is the point: the rotation margins
+# below are unchanged by the item-65 encoding change.
+def _verdict(symbol: str, seat: str, magnitude: float | None, conviction: str,
              direction: str = "bullish") -> AnalystVerdict:
     return AnalystVerdict(
         seat=seat, symbol=symbol, direction=direction, magnitude=magnitude,
@@ -260,8 +265,8 @@ def test_coverage_decay_alone_does_not_rotate_a_held_name_out():
     held = _rcv("HELD", {"technical": (1.0, "high")})
     new = _rcv("NEW", {
         "technical": (1.0, "high"),      # 1.2 * 2.0 = 2.4, identical to HELD
-        "earnings": (0.0, "high"),       # 1.2 * 1.0 = 1.2, coverage HELD lost
-        "smart_money": (0.0, "medium"),  # 0.8 * 0.5 = 0.4, coverage HELD lost
+        "earnings": (None, "high"),      # 1.2 * 1.0 = 1.2, coverage HELD lost
+        "smart_money": (None, "medium"), # 0.8 * 0.5 = 0.4, coverage HELD lost
     })
     assert held.score == 2.4
     assert new.score == 4.0
@@ -281,7 +286,7 @@ def test_no_shared_scoring_seat_declines_rather_than_comparing():
     technical alone; the full composites clear the margin (1.2 vs 2.4) but
     there is no seat that has an opinion on both, so there is nothing
     like-for-like to compare and Tier 2 declines."""
-    held = _rcv("HELD", {"earnings": (0.0, "high")})     # 1.2
+    held = _rcv("HELD", {"earnings": (None, "high")})    # 1.2
     new = _rcv("NEW", {"technical": (1.0, "high")})      # 2.4
     assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
 
@@ -300,7 +305,7 @@ def test_a_real_like_for_like_gap_still_rotates_and_records_the_comparison():
     held = _rcv("HELD", {"technical": (0.75, "low")})    # 0.9
     new = _rcv("NEW", {
         "technical": (1.0, "high"),                      # 2.4
-        "earnings": (0.0, "high"),                       # 1.2
+        "earnings": (None, "high"),                      # 1.2
     })
     opp = evaluate_rotation_opportunity(
         ranked=[new, held], blocked={}, held_symbols={"HELD"},
@@ -324,7 +329,11 @@ def test_the_like_for_like_check_can_only_remove_rotations_never_add_one():
     clears the original comparison. Swept over a grid of coverage and
     strength combinations."""
     convictions = ("low", "medium", "high")
-    magnitudes = (0.0, 0.5, 1.0)
+    # `None` = the seat states no strength at all (item 65) — the case that
+    # used to be spelled 0.0 and is the ONLY thing four of the five seats
+    # ever send. A literal 0.0 on a directional verdict is refused at
+    # construction now, so sweeping it here would test an impossible input.
+    magnitudes = (None, 0.5, 1.0)
     seat_sets = (
         ("technical",),
         ("technical", "earnings"),
@@ -479,7 +488,7 @@ def test_render_states_the_like_for_like_comparison_for_the_ranked_tier():
 
     result = PortfolioManagerAgent._render_rotation_section(
         ranked=[
-            _rcv("NEW", {"technical": (1.0, "high"), "earnings": (0.0, "high")}),
+            _rcv("NEW", {"technical": (1.0, "high"), "earnings": (None, "high")}),
             _rcv("HELD", {"technical": (0.75, "low")}),
         ],
         blocked={},
@@ -673,7 +682,7 @@ def test_no_refusal_point_is_silent_and_every_one_is_reachable():
             ranked=[
                 _rcv("NEW", {"technical": (1.0, "high"),
                              "earnings": (1.0, "high")}),      # 4.8
-                _rcv("OLD", {"technical": (0.0, "low"),        # 0.0
+                _rcv("OLD", {"technical": (None, "low"),       # 0.0
                              "news": (0.5, "low")}),           # 0.5
             ],
             blocked={}, held_symbols={"OLD"},

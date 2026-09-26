@@ -289,10 +289,12 @@ def test_a_bullish_earnings_read_maps_onto_the_verdict():
     v = _earnings("bullish", "high").to_verdict()
     assert v.seat == "earnings"
     assert v.symbol == "AAPL"
-    # magnitude 0.0: earnings states a direction and a conviction and no
+    # magnitude None: earnings states a direction and a conviction and no
     # strength scale of its own — see `NO_STATED_STRENGTH`. It reaches the
-    # ranking through its weighted conviction, not through a borrowed rung.
-    assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.0, "high")
+    # ranking through its weighted conviction, not through a borrowed rung,
+    # and since item 65 (2026-09-26) the absence is None rather than a 0.0
+    # the ranking would sum as if it were a reading.
+    assert (v.direction, v.magnitude, v.conviction) == ("bullish", None, "high")
     assert v.invalidation == "China demand craters"
     by_label = {e.label: e for e in v.evidence}
     assert by_label["key_thesis"].text == "services mix offsets hardware softness"
@@ -306,14 +308,14 @@ def test_a_bullish_earnings_read_maps_onto_the_verdict():
 
 def test_a_bearish_earnings_read_uses_the_bull_case_as_its_invalidation():
     v = _earnings("bearish", "low").to_verdict()
-    assert (v.direction, v.magnitude, v.conviction) == ("bearish", 0.0, "low")
+    assert (v.direction, v.magnitude, v.conviction) == ("bearish", None, "low")
     assert v.invalidation == "services mix reaccelerates"
-    assert v.signed_magnitude == 0.0
+    assert v.signed_magnitude is None
 
 
 def test_a_neutral_earnings_read_maps_to_a_neutral_verdict_with_no_lean():
     v = _earnings("neutral", "medium").to_verdict()
-    assert (v.direction, v.magnitude, v.invalidation) == ("neutral", 0.0, "")
+    assert (v.direction, v.magnitude, v.invalidation) == ("neutral", None, "")
 
 
 def test_an_undisclosed_falsifier_is_treated_as_blank_not_as_content():
@@ -648,6 +650,113 @@ def test_the_real_structural_ratio_replaces_the_analysts_guess_in_ranking():
     )
     [c] = rank_verdicts([v], real_reward_risk={"AAA": 2.2})
     assert c.components["risk_reward_tiebreak"] == 2.2
+
+
+# --- item 65: a seat with no strength scale is ABSENT, never a constant ------
+#
+# Until 2026-09-26 the four rungless seats sent the literal 0.0 and
+# `rank_verdicts` summed it like any other seat's reading. Verified before
+# the change: a sum is additively neutral to a zero, so no candidate ever
+# reordered because of it and no money moved. What did happen is that the
+# strength term was REPORTED as summed over every leaning seat when only one
+# of five could contribute to it, and nothing in the types stopped the next
+# consumer from averaging or thresholding four placeholders. These pin all
+# three halves: the absence is carried, the arithmetic is unchanged, and the
+# placeholder cannot come back.
+
+def _no_strength(seat: str, symbol: str = "XLE", conviction: str = "high",
+                 direction: str = "bullish") -> AnalystVerdict:
+    return AnalystVerdict(
+        seat=seat, symbol=symbol, direction=direction,
+        magnitude=NO_STATED_STRENGTH, conviction=conviction,
+        evidence=_evidence(), invalidation="x",
+    )
+
+
+def test_a_seat_that_states_no_strength_is_absent_from_the_strength_term():
+    """The item's own minimum bar: not a zero contribution — no contribution.
+    Four agreeing seats, none with a strength scale, produce a candidate with
+    NO `magnitude` component at all, and both seat lists say so."""
+    seats = ("news", "macro", "smart_money", "earnings")
+    [c] = rank_verdicts([_no_strength(s) for s in seats])
+    assert "magnitude" not in c.components
+    assert c.strength_seats == []
+    assert c.no_strength_seats == sorted(seats)
+    # The seats are still fully counted — on conviction, which is the whole
+    # of what they state. 1.0*(1.0 + 0.8 + 0.8 + 1.2) = 3.8.
+    assert c.components["conviction_score"] == 3.8
+    assert c.score == 3.8
+
+
+def test_a_seat_that_states_a_strength_carries_it_into_the_ranking():
+    """The other half of the same bar. Technical DOES state a strength (its
+    rating rungs), so its reading reaches `components["magnitude"]` and the
+    term names technical as its only coverage even with four other seats on
+    the name."""
+    tech = _tech("XLE", "strong_buy", "high").to_verdict()
+    [c] = rank_verdicts([
+        tech, *(_no_strength(s) for s in ("news", "macro", "smart_money", "earnings"))
+    ])
+    assert c.strength_seats == ["technical"]
+    assert c.no_strength_seats == ["earnings", "macro", "news", "smart_money"]
+    # 1.0 (strong_buy) * 1.2 (technical's prior) — and nothing else, because
+    # nothing else has a strength to add.
+    assert c.components["magnitude"] == 1.2
+    assert c.score == round(1.2 + (1.2 + 1.0 + 0.8 + 0.8 + 1.2), 4)
+
+
+def test_the_score_is_unchanged_by_the_absence_encoding():
+    """**The behaviour pin.** The point of item 65 is that the reported
+    quantity becomes honest while the ORDER does not move — a placeholder
+    that reordered candidates would have been a money defect, and this is
+    the test that says it was not and still is not. Scored against the
+    arithmetic the old literal-0.0 encoding produced, written out longhand:
+    a seat with no strength adds `weight * (0 + conviction)`."""
+    tech = _tech("XLE", "buy", "medium").to_verdict()      # 0.5 + 0.5, x1.2
+    group = [tech, _no_strength("news", conviction="low"),      # 0 + 0.0, x1.0
+             _no_strength("earnings", conviction="high")]       # 0 + 1.0, x1.2
+    [c] = rank_verdicts(group)
+    expected = 1.2 * (0.5 + 0.5) + 1.0 * (0.0 + 0.0) + 1.2 * (0.0 + 1.0)
+    assert c.score == round(expected, 4)
+    # Same total through the per-verdict helper the rotation margin reuses.
+    assert round(sum(seat_weight(v.seat) * score_verdict(v) for v in group), 4) \
+        == c.score
+
+
+def test_a_directional_verdict_cannot_state_a_strength_of_zero():
+    """The mechanical guard against the placeholder returning. `0.0` is a
+    point ON the 0..1 strength scale, so a seat sending it is claiming to
+    have a scale and to have read nothing off it — which is the neutral
+    verdict wearing a direction. The honest encoding of no scale is None."""
+    with pytest.raises(ValidationError):
+        AnalystVerdict(
+            seat="news", symbol="XLE", direction="bullish", magnitude=0.0,
+            conviction="high", evidence=_evidence(), invalidation="x",
+        )
+    # ...and a NEUTRAL verdict may still state 0.0, because a seat that has
+    # a scale (technical) genuinely reads zero when it has no lean.
+    assert AnalystVerdict(
+        seat="technical", symbol="XLE", direction="neutral", magnitude=0.0,
+        conviction="low",
+    ).signed_magnitude == 0.0
+
+
+def test_the_recorded_decision_is_that_the_absence_is_the_answer():
+    """Item 65's recorded decision, pinned rather than trusted from a
+    docstring: the shared no-strength marker IS the absence, and the
+    earnings seat — the one of the four with the strongest case for a
+    gradient, and the one weighted highest — emits it off its own model on a
+    directional read. If a seat is ever given a real strength scale this
+    fails, which is the intended trip-wire: that is a schema change to
+    ratify with its derivation and the seat's prompt, not a quiet edit.
+    Each of the other three is pinned the same way in its own file
+    (`test_news_verdict`, `test_macro_verdict`, `test_smart_money_verdict`).
+    """
+    assert NO_STATED_STRENGTH is None
+    v = _earnings("bullish", "high").to_verdict()
+    assert v.direction == "bullish" and v.magnitude is None
+    [c] = rank_verdicts([v])
+    assert "magnitude" not in c.components and c.no_strength_seats == ["earnings"]
 
 
 # --- eligibility + ranking through the PM -----------------------------------
@@ -1071,8 +1180,30 @@ def test_the_ranking_is_rendered_into_the_pm_prompt(monkeypatch):
     assert "an agreeing seat can never pull a name down" in section
     assert "technical: closes below MA50 on volume" in lines[0]
     assert "- ZZZ: R2 neutral rating" in section
+    # Item 65, 2026-09-26. The strength half names the seats it is actually
+    # summed over, and news — which has no strength scale — is listed as
+    # such instead of silently feeding a 0.0 into a figure the prompt
+    # describes as covering every leaning seat.
+    assert "strength 1.20 from technical" in lines[0]
+    assert "no strength scale: news" in lines[0]
+    assert "they are absent from the strength term entirely" in section
     # The ranking sits AFTER the reports it orders.
     assert msg.index("## Technical Analysis Reports") < msg.index("## Candidate Ranking")
+
+
+def test_the_prompt_reports_no_strength_rather_than_zero_when_no_seat_has_one():
+    """Item 65's reporting half, at the surface it actually matters on. A
+    name carried entirely by seats with no strength scale used to render as
+    "strength 0.00" — identical to what a name whose seats all measured no
+    lean would render as, and shown to a model that then chooses between
+    them. It now says plainly that no seat stated one."""
+    seats = ("news", "macro", "smart_money", "earnings")
+    ranked = rank_verdicts([_no_strength(s, symbol="AAA") for s in seats])
+    section = PortfolioManagerAgent._render_candidate_ranking(ranked, {})
+    line = [ln for ln in section.splitlines() if ln.startswith("1.")][0]
+    assert "no strength stated by any seat on this name" in line
+    assert "strength 0.00" not in section
+    assert "no strength scale: earnings, macro, news, smart_money" in line
 
 
 def test_the_prompt_says_nothing_is_ranked_when_nothing_is_eligible(monkeypatch):
