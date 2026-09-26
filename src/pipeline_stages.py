@@ -56,9 +56,12 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
+    ANALYSIS_DROP_KIND as _ANALYSIS_DROP_KIND,
+    DROP_CODE_UNSPECIFIED,
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
-    parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
+    parse_telemetry, SOFT_EXIT_HEAL_EVENT_REASON,
+    SOFT_EXIT_MISSING_AFTER_RETRY,
 )
 from src.nominations import select_nominations
 from src.portfolio_constructor import (
@@ -4233,6 +4236,65 @@ def _targets_admitted_to_book(
     return admitted, refused
 
 
+def _record_soft_exit_heals(pipeline, ctx) -> None:
+    """Drain the PM's per-name soft-exit heal outcomes onto ctx and to disk.
+
+    Board item 78. The heal itself (`PortfolioManagerAgent.
+    _fill_missing_open_falsifiers`, the desk's standing heal order:
+    mechanical restore, then ONE paid seat retry under the existing
+    per-seat cap) has four exits that used to leave nothing but a log
+    line — never attempted for want of a replayable message, blocked by
+    the spend cap, errored, or answered without a falsifier. A name can
+    therefore be refused for a blank falsifier without any durable record
+    of whether the seat was ever actually re-asked.
+
+    One `pipeline_event` row per name fixes that, and `ctx.soft_exit_heals`
+    carries the same fact forward so the refusal can quote what really
+    happened instead of asserting a retry. Recording only; never raises.
+    """
+    try:
+        agent = getattr(pipeline, "portfolio_manager", None)
+        drain = getattr(agent, "drain_soft_exit_heals", None)
+        heals = dict(drain() if callable(drain) else {})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("soft-exit heal drain failed: %s", exc)
+        return
+    if not heals:
+        return
+    try:
+        ctx.soft_exit_heals = {**(getattr(ctx, "soft_exit_heals", None) or {}), **heals}
+    except Exception:  # noqa: BLE001
+        pass
+    for symbol, heal in heals.items():
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "soft_exit_heal",
+            str(heal.get("outcome") or "unknown"), SOFT_EXIT_HEAL_EVENT_REASON,
+            detail=str(heal.get("detail") or ""),
+        )
+
+
+def _soft_exit_heal_detail(ctx, symbol: str) -> str:
+    """The TRUE per-name heal outcome, for the refusal's durable reason.
+
+    Board item 78 / owner 2026-09-25 ("untrue is a lie"): the refusal used
+    to assert "after mechanical heal and one paid retry" for every name,
+    including names whose retry was never attempted. It now states what the
+    heal record says, and says plainly when there is no heal record at all.
+    """
+    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(
+        str(symbol).strip().upper()
+    )
+    if isinstance(heal, dict) and (heal.get("detail") or heal.get("outcome")):
+        return (
+            f"heal outcome '{heal.get('outcome') or 'unknown'}': "
+            f"{heal.get('detail') or ''}".strip()
+        )
+    return (
+        "no soft-exit heal was recorded for this name — the mechanical "
+        "restore did not fill it and no paid retry outcome was filed"
+    )
+
+
 def _record_soft_exit_missing_after_retry(
     pipeline, ctx, symbol: str, *, action: str | None = None,
 ) -> None:
@@ -4240,9 +4302,18 @@ def _record_soft_exit_missing_after_retry(
         pipeline, ctx, symbol, "deterministic_gate",
         "blocked", SOFT_EXIT_MISSING_AFTER_RETRY,
         detail=(
-            "thesis_invalid_if still empty or unknown after "
-            "mechanical heal and one paid retry; refusing this "
-            "name before the book. No falsifier was invented."
+            "thesis_invalid_if still empty or unknown; refusing this "
+            "name before the book. No falsifier was invented. "
+            + _soft_exit_heal_detail(ctx, symbol)
+        ),
+        heal_outcome=str(
+            (
+                (getattr(ctx, "soft_exit_heals", None) or {}).get(
+                    str(symbol).strip().upper()
+                )
+                or {}
+            ).get("outcome")
+            or "none_recorded"
         ),
         **({"action": action} if action else {}),
     )
@@ -4256,9 +4327,30 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     is schema + prompt + mechanical heal + one paid seat retry, then
     refuse before construct_orders. This filter does not invent a
     thesis_invalid_if or catalyst string. It does not delete the target
-    — Risk must still be told the name was proposed and refused. Delete
-    this isolate when a live session proves no actionable name arrives
-    blank.
+    — Risk must still be told the name was proposed and refused.
+
+    EXACTLY WHAT WOULD JUSTIFY DELETING IT (board item 78, 2026-09-26).
+    It stays until a LIVE session record shows all three. None of the
+    three can be shown offline: each is a claim about what the seats
+    really emit when real money is at stake.
+      1. `specialist_evidence` holds ZERO `pipeline_event` rows with
+         reason `soft-exit missing after retry`, over a window of live
+         sessions that actually produced BUY/SHORT targets — not a window
+         in which the desk simply proposed nothing. Zero refusals across
+         zero opens proves nothing. [measured 2026-09-26: 0 such rows in
+         4,709 pipeline_event rows spanning 2026-09-02 to 2026-09-26, so
+         criterion 1 alone is already met and is NOT sufficient.]
+      2. Over that same window no `soft_exit_heal` row carries outcome
+         `paid_retry`: the heal being needed and working is not the same
+         as the producing step producing. This is the criterion item 78
+         actually names — Tech and the PM emitting a real falsifier
+         unaided.
+      3. No `soft_exit_heal` row in that window carries `not_attempted`,
+         `cap_blocked` or `failed`. Each of those says the desk does not
+         yet know whether the seat can fill the field, so a zero refusal
+         count in their presence is silence, not evidence.
+    Until all three hold, this stays. The heal and the durable heal record
+    above are what keep it unreachable in normal operation.
 
     Catches empty AND `unknown` on BUY/SHORT — omitted empty is missing,
     not "the analyst had nothing to say". Neutrals, reductions and closes
@@ -6397,6 +6489,10 @@ class DecisionStage:
         # calls decide() again, which resets this list.
         _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)
         pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
+        # Board item 78: same "read NOW" reason — the accounting re-ask
+        # resets the heal record too. One durable row per name, whether the
+        # heal worked or not.
+        _record_soft_exit_heals(pipeline, ctx)
         from src.agents.portfolio_manager import PortfolioManagerAgent
         macro_failures = list(
             getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
@@ -7011,7 +7107,11 @@ def _parse_loss_advisories(
 #: every symbol-scoped `pipeline_event` row as "this session considered that
 #: stock as a new idea", and a parse drop is not one — same reasoning as
 #: `src/execution/exit_path_records.py`.
-ANALYSIS_DROP_KIND = "analysis_drop"
+#:
+#: An ALIAS of `src.models.ANALYSIS_DROP_KIND`, not a second literal: the
+#: read-only API must name the same kind and may not import this module
+#: (`tests/test_api_safety.py`), so the string has exactly one home.
+ANALYSIS_DROP_KIND = _ANALYSIS_DROP_KIND
 
 
 def _persist_dropped_reasons(
@@ -7020,6 +7120,7 @@ def _persist_dropped_reasons(
     dropped: dict[tuple[str, str], int],
     reasons: dict[tuple[str, str], str],
     book_symbols: set[str],
+    codes: dict[tuple[str, str], str] | None = None,
 ) -> int:
     """File one `specialist_evidence` row per dropped symbol, WITH its reason.
 
@@ -7027,6 +7128,12 @@ def _persist_dropped_reasons(
     stock it was dropped for (queryable by `symbol` + `run_id`), not only in
     the log. Rows whose own symbol could not be read (`UNIDENTIFIED_DROP_KEY`)
     are skipped — there is no stock to file them against.
+
+    Each row carries BOTH a stable `reason_code` (one of
+    `src.models.ANALYSIS_DROP_CODES`) and the human `reason`. `count` is taken
+    from the `dropped` tally itself rather than re-derived, so the per-row
+    reason and the aggregate count cannot disagree: they are the same numbers
+    read from the same snapshot in the same pass.
 
     OBSERVABILITY ONLY. Never raises: a record that cannot be written must
     never change the risk decision it is recording. `recovered` marks whether
@@ -7050,6 +7157,7 @@ def _persist_dropped_reasons(
             "stage": "analysis",
             "outcome": "recovered" if recovered else "dropped",
             "model": model,
+            "reason_code": (codes or {}).get((model, key)) or DROP_CODE_UNSPECIFIED,
             "reason": reasons.get((model, key)) or "reason not recorded",
             "count": int(count),
             "recovered": recovered,
@@ -7397,6 +7505,8 @@ class RiskStage:
         # 158). Read live beside the counts so the reason and the count come
         # from the same telemetry snapshot.
         dropped_reasons = parse_telemetry.dropped_reasons_snapshot()
+        # The stable code beside the prose, from the same telemetry pass.
+        dropped_reason_codes = parse_telemetry.dropped_reason_codes_snapshot()
         if dropped:
             # RECONCILED against the book before anything is said about it.
             # A drop whose retry succeeded leaves its counter standing for
@@ -7431,7 +7541,7 @@ class RiskStage:
             # observational — a write failure never touches the risk decision.
             _persist_dropped_reasons(
                 getattr(pipeline, "db", None), run_id, dropped,
-                dropped_reasons, book_symbols,
+                dropped_reasons, book_symbols, dropped_reason_codes,
             )
             rule_violations.extend(
                 _parse_loss_advisories(dropped, book_symbols, dropped_reasons)

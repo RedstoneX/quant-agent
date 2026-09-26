@@ -1,0 +1,23 @@
+# Stale-worktree prune — pairs with quant-agent-worktree-prune.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-worktree-prune.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-worktree-prune.timer
+[Unit]
+Description=quant-agent stale session-worktree prune (no LLM, no trading, no Telegram)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Board item 139: finished agent sessions leave their scratch worktree
+# registered, so `git worktree list` grows without bound. This sweep clears
+# the ones whose directory is gone (`git worktree prune`) and removes the
+# ones that are merged, clean, unlocked, owned by us and idle >= 7 days
+# (`git worktree remove`, never --force). It is scoped by construction to
+# THIS repo's own registered worktrees and refuses any path owned by another
+# uid, so it can never touch another tenant on this shared box. No network,
+# no model call, no Telegram — safe to fire regardless of what else runs.
+ExecStart=/home/qamc/quant-agent/scripts/run_worktree_prune.sh
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal

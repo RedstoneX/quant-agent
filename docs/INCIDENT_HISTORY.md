@@ -22,6 +22,23 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
+
+**In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
+
+**What was actually wrong.** The salvage fix of 2026-09-18 made a garbled answer cost one row instead of all of them, and it logged each dropped stock by name with a reason. But the reason went to the log and to an aggregate counter, and nowhere else. Both are transient: the log rotates, and the counter says how many, never which or why. The owner-facing funnel — the surface built to answer "why did it trade, or why not?" — showed a dropped name with every field empty and a fallback sentence reading "candidate-specific reason was not recorded," which by then was false.
+
+**What was done, in two passes.** The first pass (2026-09-25) carried the reason through the parse telemetry keyed by symbol and filed one evidence row per dropped stock, tied to that stock and that run. The second pass (2026-09-26) closed the two gaps that left: the reason was prose only, and nothing owner-facing read the row.
+
+- The stored reason now carries a STABLE code beside the human sentence — `malformed_row` (the model's row was not valid JSON), `schema_invalid` (it decoded but failed the contract), `unspecified` (no code recorded). A reader asking "show me every stock the seat could not read this month" must not be grepping English, because English gets reworded and the rows already written do not.
+- Code and prose are stored as ONE value in the telemetry, not two parallel maps. Two independently first-wins-ed dictionaries can drift the moment one call site passes a sentence and the next passes a code, and a stable code contradicting its own detail is worse than either alone.
+- The count and the per-row reasons cannot disagree, structurally: the row's own `count` is taken from the same telemetry snapshot in the same pass, never re-derived.
+- The candidate funnel now returns and renders the drop, so the answer to "why is this name not here" comes off the stored row. A retry that recovered the name is said as a cost note, not as missing coverage.
+
+**What was ruled out.** A new table and a new column were both rejected: the evidence store already holds symbol-scoped forensic rows, and the whole record is observability — losing it must not be able to change a trading decision, which is also why the write can never raise. No schema change means nothing to migrate and every row already on disk still reads; a row written by the first pass has no code at all and is read back as `unspecified` rather than failing.
+
+**What would catch it next time.** `tests/test_analysis_drop_reason_stored.py` asserts a dropped stock's row carries the code and the reason, a kept stock has no row, and the aggregate count reconciles against the per-row counts. `tests/test_api_funnel.py` asserts the funnel answers the question for a dropped name, marks a recovered one as recovered, says nothing about a drop for a kept name, and still reads a pre-code row.
+
 ### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
 
 **In plain words:** the file that records what has gone wrong and been fixed can be edited by two sessions at once, and a tool merges their edits automatically. Twelve entries in it were written with the wrong heading style, so that merge tool could not see them and could quietly overwrite one with another. The code fix for this landed on 2026-09-24, but the board (`docs/WORK.md`, `docs/BOARD_NOTES.md`) was never told, so it kept reporting the defect as open.
@@ -2013,6 +2030,33 @@ real-spend latch expire on the transient path. The remaining known gap is
 on the board as item 174 — a suspension reaches the owner on Telegram but a
 self-clear does not, so he can still be left believing the desk is down
 when it is back.
+
+**Closed 2026-09-25/26 in two passes, with one finding worth keeping.** The
+first pass gave the self-clear the same Telegram surface, claim/retry state
+machine and DB audit trail the suspension has. The second pass found that
+the resume alert was not PAIRED to a suspension alert: when the "SUSPENDED"
+send fails (a Telegram outage at latch time), the auto-clear wipes
+`suspended` and `alert_state` on its way out, so that suspension alert can
+never be delivered — and firing "RESUMED" anyway hands the owner a recovery
+for an incident he was never told about. The auto-clear now captures the
+suspension's own alert state at the last instant it is knowable, and a
+resume for an undelivered suspension is resolved as unpaired rather than
+sent. From the owner's side, an outage that ends before he hears about it
+is correctly zero messages, not one dangling "back live".
+
+**The harness could not reach this path at all, and now can.** `ops/rehearsal`
+could inject a 503 (`server_error`), but a pre-generation 503 is provably
+free and by design never latches, so no rehearsal could ever produce an
+`auto_reset`. The only 503 shape that latches is one reported from inside a
+started stream, so a `server_error_mid_stream` kind was added; it chains a
+real `LLMStreamErrorChunk` onto the raise rather than renaming anything, so
+the production classifier is the thing being exercised. A morning rehearsal
+with that fault reproduced the whole sequence end to end offline: the latch,
+the suspension alert, the auto-expiry, and the paired resume alert — three
+alerts raised and captured instead of sent, with production byte-identical
+afterwards. **Production has still had ZERO real `auto_reset` events**, so
+the cooldown (15 min) and the daily allowance (19) remain unmeasured against
+a real occurrence; that is what keeps item 174 open.
 
 ---
 
