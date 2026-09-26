@@ -630,6 +630,11 @@ def own_bar_block_reason(
          supported directional non-technical seat exists". Technical
          confirming is necessary but NOT sufficient and is never counted
          here — it carries no positive weight.
+      4. MACRO IS NOT THE ONLY SUPPORTER (board item 109, owner ruling
+         2026-09-25: "nothing can green light a name on its own"). Macro is
+         the one seat that holds a view on every name whether or not it
+         examined any of them, so it is the one seat that can satisfy (3)
+         alone on a name no other seat looked at. Unconditional on weight.
 
     Supportive/opposed are read from `AnalystVerdict.direction` (a long is
     supported by a bullish verdict, a short by a bearish one), the one
@@ -666,12 +671,30 @@ def own_bar_block_reason(
             "(mandate: no seat may be opposed)"
         )
 
-    if not any(
-        _has_supported_directional_thesis(v, aligned) for v in seat_verdicts
-    ):
+    supporting = sorted({
+        v.seat for v in seat_verdicts
+        if _has_supported_directional_thesis(v, aligned)
+    })
+    if not supporting:
         return (
             f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a "
             "supported directional side"
+        )
+    if supporting == ["macro"]:
+        # Board item 109, owner ruling 2026-09-25: "Nothing can green light a
+        # name on its own. This is a trading desk with multiple agents."
+        # Macro is the one seat that has a view on every name whether or not
+        # it looked at any of them, so it is the one seat that can reach this
+        # branch alone on a name nobody else examined. Enforced HERE, at the
+        # entry bar itself, and unconditionally on the weight: no strength a
+        # macro reading can state — broadcast or sector-specific — makes one
+        # market view sufficient to admit a name by itself. Technical is
+        # already confirming by the time control reaches this line, and
+        # technical is a timing veto that carries no positive weight, so
+        # "macro only" really does mean nothing else backs the name.
+        return (
+            f"{OWN_BAR_REASON_PREFIX} — macro is the only seat supporting "
+            "this name; one macro view cannot admit a name on its own"
         )
 
     return None
