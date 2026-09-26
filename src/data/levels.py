@@ -452,34 +452,135 @@ def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str]]
     return pivots
 
 
+def _alternating_swings(
+    pivots: list[tuple[int, float, str]],
+) -> list[tuple[int, float, str]]:
+    """Collapse raw pivots into a real ALTERNATING swing sequence, in time order.
+
+    `_find_pivots` returns highs and lows independently, so the raw list can hold
+    two swing highs in a row with no intervening low (a stair-step of local
+    peaks inside one leg). Comparing "the last two highs" across such a list is
+    not a Dow read at all: the two highs being compared may not have a low
+    between them, and the two lows being compared may not have a high between
+    them, so the structure asserted need never have existed.
+
+    This is the standard zig-zag reduction: walk the pivots in chronological
+    order and, whenever the next pivot repeats the kind of the one before it,
+    keep only the more EXTREME of the two (the higher high, the lower low) —
+    they are the same leg. What comes back therefore strictly alternates
+    R, S, R, S, ..., which is what makes "the last two highs" and "the last two
+    lows" automatically interleave in time.
+
+    A bar that `_find_pivots` reports as BOTH a swing high and a swing low is
+    dropped: its neighbourhood is flat, so it carries no swing information and
+    cannot be placed in the sequence without inventing an order for it.
+
+    Introduces no number: the only input is the pivot list the caller already
+    computed with the ratified window.
+    """
+    both = {i for (i, _p, k) in pivots if k == "R"} & {
+        i for (i, _p, k) in pivots if k == "S"
+    }
+    ordered = sorted(
+        (p for p in pivots if p[0] not in both), key=lambda p: p[0],
+    )
+    seq: list[tuple[int, float, str]] = []
+    for pivot in ordered:
+        if seq and seq[-1][2] == pivot[2]:
+            more_extreme = (
+                pivot[1] > seq[-1][1] if pivot[2] == "R" else pivot[1] < seq[-1][1]
+            )
+            if more_extreme:
+                seq[-1] = pivot
+            continue
+        seq.append(pivot)
+    return seq
+
+
 def making_higher_highs_and_lows(
     bars: list, *, is_short: bool = False, window: int = PIVOT_WINDOW,
 ) -> bool | None:
     """Is the instrument CLEARLY still trending in the position's favour, read
     from its OWN swing structure? Pure.
 
-    Reads the last two CONFIRMED swing highs and the last two confirmed swing
-    lows off the daily bars, using the same symmetric-window pivots
-    `find_structural_levels` uses (`PIVOT_WINDOW` — no new number is introduced
-    here). This is the Dow definition of an intact trend:
+    THE DOW READ, AS ACTUALLY IMPLEMENTED
+    -------------------------------------
+    Pivots are found with the same symmetric window `find_structural_levels`
+    uses (`PIVOT_WINDOW` — no new number is introduced here), then reduced by
+    `_alternating_swings` to a strictly alternating R, S, R, S sequence. The
+    answer compares the last two swing highs and the last two swing lows OF
+    THAT SEQUENCE, so the compared swings always interleave in time — a higher
+    high with a low between it and the previous high, and a higher low with a
+    high between it and the previous low. That interleaving is the Dow
+    definition; two independent lists of highs and lows are not.
 
       LONG  — True when the latest swing high is above the prior swing high AND
-              the latest swing low is above the prior swing low (higher-highs
-              and higher-lows).
+              the latest swing low is above the prior swing low.
       SHORT — the mirror: lower-highs and lower-lows.
 
-    Returns None when there are not yet two confirmed swings of each kind to
-    compare (too few bars, or a young position). For the at-target decision a
-    None reads as "not CLEARLY still trending" — the owner's lean is to bank a
-    win at a real target unless the chart is clearly still running.
-
+    THE IN-PROGRESS EXTREME, AND WHY IT IS NOT AN EXCEPTION
+    -------------------------------------------------------
     A confirmed pivot needs `window` bars on BOTH sides, so the most recent
-    swing is up to `window` sessions old: this is a confirmed-swing read, not an
-    intrabar high, by construction.
+    CONFIRMED swing is up to `window` sessions old. Reading only confirmed
+    pivots makes this function structurally blind in exactly the situation it
+    is asked about: at the moment a long closes at a resistance TARGET, the
+    move that reached the target is a fresh breakout with no bars after it
+    yet, so the newest confirmed swing high is the PRE-breakout peak. The read
+    would then report "not making higher highs" BECAUSE the thrust is too
+    recent to confirm — and the at-target rule would bank the cleanest
+    breakouts, which is the very behaviour the fixed-gain auto-trim was deleted
+    to stop.
+
+    So the leg in progress is counted on the side that is thrusting. For a
+    long: if the running HIGH of the bars after the last confirmed swing high
+    exceeds that swing high, that running high is appended to the pivot list as
+    a provisional swing high before the zig-zag reduction, exactly as a
+    confirmed one would be. For a short, the mirror on the running LOW. The
+    other side of the read — higher LOWS for a long, lower HIGHS for a short —
+    stays confirmed-only, because a pullback low that has not yet held is not
+    evidence of anything.
+
+    This adds no threshold and no tolerance: the provisional extreme counts
+    only when it is strictly beyond the last confirmed swing on its own side,
+    and it is measured over the bars the same `window` has not yet had time to
+    confirm.
+
+    Returns None when the resulting sequence does not hold two swing highs and
+    two swing lows to compare (too few bars, or a young position). For the
+    at-target decision a None reads as "not CLEARLY still trending" — the
+    owner's lean is to bank a win at a real target unless the chart is clearly
+    still running.
     """
-    pivots = _find_pivots(list(bars or []), window)
-    highs = [price for (_i, price, kind) in pivots if kind == "R"]
-    lows = [price for (_i, price, kind) in pivots if kind == "S"]
+    series = list(bars or [])
+    seq = _alternating_swings(_find_pivots(series, window))
+
+    # The leg IN PROGRESS on the thrusting side, appended as a provisional
+    # swing at the last bar. Without it the read is blind for `window` sessions
+    # after every new extreme — see the docstring. It is measured over the bars
+    # AFTER the whole confirmed sequence, so it can only ever extend the
+    # sequence forward in time, never be slotted in behind a confirmed swing.
+    kind = "S" if is_short else "R"
+    same_side = [p for p in seq if p[2] == kind]
+    if seq and same_side and series:
+        tail = series[seq[-1][0] + 1:]
+        last_price = same_side[-1][1]
+        running = None
+        if tail:
+            try:
+                running = (
+                    min(float(b.low) for b in tail) if is_short
+                    else max(float(b.high) for b in tail)
+                )
+            except (TypeError, ValueError):
+                running = None
+        if running is not None and (
+            running < last_price if is_short else running > last_price
+        ):
+            seq = _alternating_swings(
+                [*seq, (len(series) - 1, float(running), kind)]
+            )
+    highs = [price for (_i, price, k) in seq if k == "R"]
+    lows = [price for (_i, price, k) in seq if k == "S"]
     if len(highs) < 2 or len(lows) < 2:
         return None
     if is_short:

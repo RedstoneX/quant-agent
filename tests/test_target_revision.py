@@ -19,10 +19,14 @@
    target (`trades.initial_take_profit`) rather than the live one. These
    tests pin it end to end: the arithmetic, and the guard's actual verdict.
 
-2. NOTHING AUTOMATICALLY EXITS AT THE TARGET, and the revision path did not
-   change that. The automatic trim was deleted in PR #321;
+2. THE REVISION MODULE ITSELF NEVER EXITS ANYTHING. Reaching a STRUCTURAL
+   target IS a decision point since the owner's 2026-09-25 ruling — see
+   `tests/test_at_target_decision.py` — but that decision belongs to
+   `src.risk.exit_guard.decide_at_target` and the pipeline, not here: this
+   module adjusts a measurement and must stay pure. The FIXED-GAIN automatic
+   trim remains deleted (PR #321);
    `tests/test_pipeline.py::test_no_fixed_gain_automatic_profit_trim_exists`
-   pins the general rule, and the checks here pin it specifically for the
+   pins that general rule, and the checks here pin purity specifically for the
    revision module and for the flag schema.
 """
 
@@ -180,7 +184,7 @@ def test_pinned_target_column_is_never_written_by_a_revision():
 
 
 # ---------------------------------------------------------------------------
-# 2. No automatic exit at the target
+# 2. The revision module itself exits nothing
 # ---------------------------------------------------------------------------
 
 
@@ -643,3 +647,41 @@ def test_every_review_still_waits_two_closes_for_a_break():
     )
     assert out.code == tr.REVISION_BREAK_PENDING_CONFIRMATION
     assert out.new_price is None
+
+
+# ---------------------------------------------------------------------------
+# 3. The every-review sweep is not gated on a seat happening to speak
+# ---------------------------------------------------------------------------
+
+
+def test_the_sweep_re_derives_every_held_name_with_no_flags_raised():
+    """Owner ruling 2026-09-25 is EVERY review, not "every review on which a
+    seat raised a flag". It is also what tells the at-target decision whether a
+    target can still extend, so a skipped sweep silently re-puts a runner that
+    has nothing left overhead to the full-close vote every review."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.db.get_at_target_management.return_value = {}
+    p.risk_engine = SimpleNamespace(config=SimpleNamespace())
+    p._assess_one_target_revision = MagicMock(
+        return_value={"symbol": "AAPL", "code": "NO_CHANGE_ON_REDERIVATION",
+                      "applied": False},
+    )
+    review = SimpleNamespace(target_revision_flags=[])
+    positions = [SimpleNamespace(symbol="AAPL", qty=10.0, avg_entry=90.0)]
+
+    out = p._adjudicate_target_revision_flags(
+        review, positions, run_id="r", seat="position_reviewer",
+    )
+
+    assert p._assess_one_target_revision.call_count == 1
+    assert p._assess_one_target_revision.call_args.kwargs["sym"] == "AAPL"
+    assert p._assess_one_target_revision.call_args.kwargs["require_trigger"] is False
+    assert [o["symbol"] for o in out] == ["AAPL"]
+    # And the outcome is handed to the at-target decision.
+    assert p._target_can_extend("AAPL") is True

@@ -9885,9 +9885,14 @@ class TradingPipeline:
         )
         from src.trading_calendar import et_today
 
-        flags = list(getattr(review, "target_revision_flags", None) or [])
-        if not flags:
-            return []
+        # NO early return on "no seat flagged anything". Owner ruling
+        # 2026-09-25 made the re-derivation an EVERY-REVIEW sweep over every
+        # held position, and a seat flag only enriches one symbol's evidence.
+        # Returning early when no flag was raised left the ruling true only on
+        # the reviews where a seat happened to speak, and left the at-target
+        # decision with no answer to "can this target still extend?" — which is
+        # what keeps a position that has run past its last ceiling out of the
+        # repeated full-close vote.
 
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
@@ -9933,6 +9938,13 @@ class TradingPipeline:
         # decision below via this cache — the re-derivation now runs on EVERY
         # held name every review, so it must not fetch the same series twice.
         self._review_bars_cache = {}
+        self._review_trailing_only_cache = {}
+        # This review's re-derivation outcome per symbol, read by the
+        # at-target decision below: a position whose target could not be
+        # extended because nothing is left in reach must not be re-put to the
+        # full-close vote every review (see
+        # `src.risk.exit_guard.AT_TARGET_TRAILING_STOP_ONLY`).
+        self._review_target_outcomes = {}
 
         outcomes: list[dict] = []
         for sym in order:
@@ -9942,13 +9954,20 @@ class TradingPipeline:
                 "sit ignored (owner ruling 2026-09-25)"
             )
             try:
-                outcomes.append(self._assess_one_target_revision(
+                outcome = self._assess_one_target_revision(
                     sym=sym, position=held[sym], seat=seat, evidence=evidence,
                     run_id=run_id, target_cfg=target_cfg,
                     # EVERY review, not only on a structural event or a seat
                     # flag. Every protective refusal inside still applies.
                     require_trigger=False,
-                ))
+                )
+                self._review_target_outcomes[sym] = outcome
+                outcomes.append(outcome)
+                if outcome.get("applied"):
+                    # The target DID extend, so this position is back in front
+                    # of a real ceiling: if an earlier review had taken it out
+                    # of the at-target vote for want of one, put it back.
+                    self._rearm_at_target_vote(sym=sym, run_id=run_id)
             except Exception as exc:  # noqa: BLE001
                 # A per-symbol raise must still leave a DURABLE machine-readable
                 # reason — the desk rule is that nothing holds a candidate on a
@@ -10563,7 +10582,10 @@ class TradingPipeline:
         win. Returns the order or None. Voices either way. See
         `_decide_at_target_exits` for the rule.
         """
-        from src.risk.exit_guard import decide_at_target
+        from src.risk.exit_guard import (
+            AT_TARGET_TRAILING_STOP_ONLY,
+            decide_at_target,
+        )
 
         is_short = float(getattr(position, "qty", 0) or 0) < 0
         try:
@@ -10620,10 +10642,32 @@ class TradingPipeline:
         decision = decide_at_target(
             symbol=sym, is_short=is_short, close_price=close_price,
             target_price=target_price, still_making_new_highs=still_trending,
+            # Can the target still move up with the price, or is it pinned
+            # under it with nothing left overhead? Only consulted on a HOLD.
+            target_can_extend=self._target_can_extend(sym),
+            # Did an earlier review already take this position out of the vote?
+            already_trailing_only=self._at_target_trailing_only(sym, buy),
         )
 
         # Voice why/when either way, before acting.
         self._voice_at_target_decision(sym=sym, run_id=run_id, decision=decision)
+
+        if decision.code == AT_TARGET_TRAILING_STOP_ONLY:
+            # Durable, machine-readable: this position has LEFT the at-target
+            # vote and is managed by its trailing stop alone from here.
+            try:
+                self.db.record_at_target_management(
+                    run_id=run_id, symbol=sym,
+                    code=AT_TARGET_TRAILING_STOP_ONLY, trailing_only=True,
+                    detail=decision.reason,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # A write failure only means the position is asked again next
+                # review — the same state it was already in. Never fatal.
+                logger.error(
+                    "at-target: trailing-stop-only record failed for %s (%s) "
+                    "— the position stays in the at-target vote", sym, exc,
+                )
 
         if not decision.should_sell:
             return None
@@ -10672,6 +10716,90 @@ class TradingPipeline:
                 [prot], context="At-target reassessment",
             )
         return order
+
+    def _target_can_extend(self, sym: str) -> bool | None:
+        """Could THIS review's re-derivation put a target ahead of price for
+        `sym`? False only when it refused for want of any structure left in the
+        trade's direction; None when the re-derivation did not run (so nothing
+        is assumed, and the position stays in the at-target vote).
+        """
+        from src.risk.exit_guard import target_cannot_extend
+
+        outcomes = getattr(self, "_review_target_outcomes", None) or {}
+        outcome = outcomes.get(str(sym).upper())
+        if not isinstance(outcome, dict):
+            return None
+        return not target_cannot_extend(outcome.get("code"))
+
+    def _at_target_trailing_only(self, sym: str, buy: dict | None) -> bool:
+        """Has an earlier review already moved THIS position to trailing-stop-
+        only management?
+
+        Only a record NEWER than the position's own opening row counts: a later
+        re-entry in the same ticker is a different position and must start in
+        the at-target vote. A missing or unreadable record reads False, so a
+        read failure can only ever put the position back in front of the vote,
+        never silently out of it.
+        """
+        key = str(sym).upper()
+        cache = getattr(self, "_review_trailing_only_cache", None)
+        if cache is None:
+            cache = {}
+            self._review_trailing_only_cache = cache
+        if key in cache:
+            return cache[key]
+        latched = False
+        try:
+            state = self.db.get_at_target_management([key])
+            row = state.get(key) if isinstance(state, dict) else None
+            # A payload that is not a plain dict with a real boolean and a real
+            # timestamp is not a record — it is unreadable, and unreadable must
+            # never take a position out of the vote.
+            if isinstance(row, dict) and row.get("trailing_only") is True:
+                stamped = row.get("timestamp")
+                opened = (buy or {}).get("timestamp")
+                opened = opened if isinstance(opened, str) else ""
+                if isinstance(stamped, str) and stamped and (
+                    not opened or stamped >= opened
+                ):
+                    latched = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "at-target: management-state read failed for %s (%s) — the "
+                "position stays in the at-target vote", sym, exc,
+            )
+            latched = False
+        cache[key] = latched
+        return latched
+
+    def _rearm_at_target_vote(self, *, sym: str, run_id: str) -> None:
+        """A re-derivation extended the target, so this position is back in
+        front of a real ceiling: clear any trailing-stop-only state. Writes
+        only when there is something to clear, and never raises.
+        """
+        key = str(sym).upper()
+        try:
+            state = self.db.get_at_target_management([key])
+            row = state.get(key) if isinstance(state, dict) else None
+            if not (isinstance(row, dict) and row.get("trailing_only") is True):
+                return
+            self.db.record_at_target_management(
+                run_id=run_id, symbol=key, code="AT_TARGET_VOTE_REARMED",
+                trailing_only=False,
+                detail=(
+                    "the take-profit was extended to fresh structure on today's "
+                    "bars, so this position is in front of a real target again "
+                    "and rejoins the at-target reassessment"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "at-target: re-arm write failed for %s (%s) — the position "
+                "stays on trailing-stop-only management", sym, exc,
+            )
+        cache = getattr(self, "_review_trailing_only_cache", None)
+        if isinstance(cache, dict):
+            cache.pop(key, None)
 
     def _voice_at_target_decision(
         self, *, sym: str, run_id: str, decision,

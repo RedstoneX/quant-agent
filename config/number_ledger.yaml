@@ -4459,6 +4459,28 @@ numbers:
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
       (src/pipeline.py:11382). Same number as the ExecutionStage SELL offset.
+  - id: src.pipeline.TradingPipeline._decide_one_at_target:factor[0]
+    value: 1.005
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      The at-target reassessment's COVER limit, price x 1.005. Not a new
+      number: the at-target close is submitted on the SAME protected path and
+      with the same marketable-limit offset the midday reviewer's own full
+      covers use, mirrored as 1.005 = 2 - 0.995.
+  - id: src.pipeline.TradingPipeline._decide_one_at_target:factor[1]
+    value: 0.995
+    status: derived
+    site: src/pipeline.py
+    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    base_value: 0.995
+    note: >-
+      The at-target reassessment's SELL limit, price x 0.995. The same
+      marketable-limit offset the midday reviewer's own full sells use; the
+      at-target decision chooses WHETHER to close, never how the order is
+      priced.
   - id: src.pipeline.TradingPipeline._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary

@@ -22,6 +22,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from src.data.levels import _find_pivots, making_higher_highs_and_lows
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.risk.exit_guard import (
@@ -29,7 +30,10 @@ from src.risk.exit_guard import (
     AT_TARGET_INPUTS_UNREADABLE,
     AT_TARGET_NOT_REACHED,
     AT_TARGET_SELL_STALLED,
+    AT_TARGET_TRAILING_STOP_ONLY,
+    AT_TARGET_TRAILING_STOP_ONLY_LATCHED,
     decide_at_target,
+    target_cannot_extend,
 )
 
 
@@ -242,3 +246,237 @@ def test_at_target_sweep_skips_already_sold_symbols():
     )
     assert orders == []
     p._submit_protected_sell.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The swing read itself: confirmation lag, and a real Dow sequence
+# ---------------------------------------------------------------------------
+
+
+def _zig(pivots, spacing=6):
+    """The raw price path of `_bars_from_pivots`, so a tail can be appended."""
+    vals = []
+    for a, b in zip(pivots, pivots[1:]):
+        for s in range(spacing):
+            vals.append(a + (b - a) * s / spacing)
+    vals.append(pivots[-1])
+    last, prev = pivots[-1], pivots[-2]
+    step = -1 if last > prev else 1
+    for k in range(1, spacing + 1):
+        vals.append(last + step * abs(last - prev) * k / spacing)
+    return vals
+
+
+def _bars(vals):
+    d = date(2026, 1, 1)
+    return [
+        OHLCV(date=d + timedelta(days=i), open=v, high=v, low=v, close=v,
+              volume=1000)
+        for i, v in enumerate(vals)
+    ]
+
+
+# A base that has ROLLED OVER on confirmed pivots alone: highs 108 -> 106.
+_CONSOLIDATION = _zig([90, 108, 100, 106, 101])
+# The same chart with a fresh thrust clean through 108 on the last four bars —
+# too recent for any pivot to confirm.
+_FRESH_BREAKOUT = _CONSOLIDATION + [104, 108, 112, 115]
+
+
+def test_confirmed_only_read_calls_a_fresh_breakout_not_trending():
+    """The defect this guards, stated as the pre-condition: on the CONFIRMED
+    pivots alone this chart is making lower highs."""
+    assert making_higher_highs_and_lows(_bars(_CONSOLIDATION)) is False
+
+
+def test_an_in_progress_higher_high_counts_before_it_is_confirmed():
+    """A long that reaches a resistance TARGET does so on a breakout with no
+    bars after it yet, so the newest CONFIRMED swing high is the pre-breakout
+    peak. The thrust that just hit the target must count, or the gate sells the
+    cleanest breakouts for want of five more sessions."""
+    assert making_higher_highs_and_lows(_bars(_FRESH_BREAKOUT)) is True
+
+
+def test_the_in_progress_extreme_must_actually_exceed_the_last_swing():
+    """No threshold and no tolerance: a thrust that stops SHORT of the last
+    confirmed swing high is not a higher high."""
+    stops_short = _CONSOLIDATION + [104, 105, 105.5, 105.9]
+    assert making_higher_highs_and_lows(_bars(stops_short)) is False
+
+
+def test_only_the_thrusting_side_is_read_in_progress():
+    """For a long the HIGH side may be in progress; the LOW side stays
+    confirmed-only, because a pullback low that has not held is not evidence.
+    Here the fresh high is real but the confirmed lows are FALLING."""
+    falling_lows = _zig([90, 108, 100, 106, 95]) + [104, 110, 114, 118]
+    assert making_higher_highs_and_lows(_bars(falling_lows)) is False
+
+
+def test_short_mirror_counts_an_in_progress_lower_low():
+    inverted = [-v for v in _FRESH_BREAKOUT]
+    assert making_higher_highs_and_lows(_bars(inverted), is_short=True) is True
+    assert making_higher_highs_and_lows(_bars(inverted)) is not True
+
+
+def test_compared_swings_are_a_real_alternating_sequence():
+    """Two swing highs with no swing low between them are ONE leg, not two
+    comparable highs. The reduction keeps the more extreme of the pair, so what
+    is compared always interleaves in time — which is what makes it Dow."""
+    from src.data.levels import _alternating_swings
+
+    seq = _alternating_swings([
+        (0, 100.0, "R"), (10, 105.0, "R"), (20, 95.0, "S"), (30, 110.0, "R"),
+    ])
+    assert [k for (_i, _p, k) in seq] == ["R", "S", "R"]
+    assert [p for (_i, p, _k) in seq] == [105.0, 95.0, 110.0]
+    # And it alternates for real bars too, on both sides.
+    for bars in (UPTREND_BARS, ROLLED_BARS, _bars(_FRESH_BREAKOUT)):
+        kinds = [k for (_i, _p, k) in _alternating_swings(_find_pivots(bars, 5))]
+        assert all(a != b for a, b in zip(kinds, kinds[1:]))
+
+
+def test_a_bar_that_is_both_a_high_and_a_low_carries_no_swing_information():
+    from src.data.levels import _alternating_swings
+
+    seq = _alternating_swings([
+        (5, 100.0, "R"), (5, 100.0, "S"), (10, 90.0, "S"), (20, 110.0, "R"),
+    ])
+    assert [(i, k) for (i, _p, k) in seq] == [(10, "S"), (20, "R")]
+
+
+# ---------------------------------------------------------------------------
+# Leaving the vote when the target can no longer move
+# ---------------------------------------------------------------------------
+
+
+def test_hold_with_no_ceiling_in_reach_leaves_the_at_target_vote():
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=True, target_can_extend=False,
+    )
+    assert d.code == AT_TARGET_TRAILING_STOP_ONLY
+    assert d.should_sell is False
+    assert "trailing stop" in d.reason
+
+
+def test_a_hold_with_a_target_that_can_still_extend_stays_in_the_vote():
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=True, target_can_extend=True,
+    )
+    assert d.code == AT_TARGET_HOLD_STILL_TRENDING
+
+
+def test_no_ceiling_in_reach_can_never_turn_a_sell_into_a_hold():
+    """It only ever applies on a HOLD. A stalled chart at its target is still
+    banked, ceiling or no ceiling."""
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=False, target_can_extend=False,
+    )
+    assert d.code == AT_TARGET_SELL_STALLED and d.should_sell is True
+
+
+def test_a_latched_position_is_not_re_put_to_the_vote_and_is_not_re_voiced():
+    d = decide_at_target(
+        symbol="AAPL", is_short=False, close_price=120.0, target_price=115.0,
+        still_making_new_highs=False, already_trailing_only=True,
+    )
+    assert d.code == AT_TARGET_TRAILING_STOP_ONLY_LATCHED
+    assert d.should_sell is False
+    assert d.reason == ""
+
+
+def test_only_named_refusals_mean_the_target_cannot_extend():
+    assert target_cannot_extend("REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION") is True
+    assert target_cannot_extend("REFUSAL_DERIVED_TARGET_BEHIND_PRICE") is True
+    # A re-derivation that MOVED the target, a blank, and an unknown code all
+    # leave the position in the vote.
+    assert target_cannot_extend("EACH_REVIEW_STRUCTURAL_REREAD") is False
+    assert target_cannot_extend("") is False
+    assert target_cannot_extend(None) is False
+
+
+def test_pipeline_records_a_durable_reason_when_it_leaves_the_vote():
+    close = UPTREND_BARS[-1].close
+    p = _pipeline(
+        _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0},
+        bars=UPTREND_BARS,
+    )
+    p.db.get_at_target_management.return_value = {}
+    p._review_target_outcomes = {
+        "AAPL": {"code": "REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION"},
+    }
+    order = p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
+    assert order is None
+    p._submit_protected_sell.assert_not_called()
+    p.db.record_at_target_management.assert_called_once()
+    kwargs = p.db.record_at_target_management.call_args.kwargs
+    assert kwargs["trailing_only"] is True
+    assert kwargs["code"] == AT_TARGET_TRAILING_STOP_ONLY
+    assert kwargs["detail"]
+
+
+def test_pipeline_does_not_leave_the_vote_while_the_target_can_still_extend():
+    close = UPTREND_BARS[-1].close
+    p = _pipeline(
+        _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0},
+        bars=UPTREND_BARS,
+    )
+    p.db.get_at_target_management.return_value = {}
+    p._review_target_outcomes = {"AAPL": {"code": "EACH_REVIEW_STRUCTURAL_REREAD"}}
+    p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
+    p.db.record_at_target_management.assert_not_called()
+    assert p._voice_at_target_decision.call_args.kwargs["decision"].code == (
+        AT_TARGET_HOLD_STILL_TRENDING
+    )
+
+
+def test_pipeline_latched_position_never_reaches_the_full_close_vote():
+    """The defect: `reached` never goes back to False, so a rolled-over read on
+    ANY later review would otherwise close the whole position."""
+    close = ROLLED_BARS[-1].close
+    p = _pipeline(
+        _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0,
+                      "timestamp": "2026-01-01 10:00:00"},
+        bars=ROLLED_BARS,
+    )
+    p.db.get_at_target_management.return_value = {
+        "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
+    }
+    order = p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
+    assert order is None
+    p._submit_protected_sell.assert_not_called()
+
+
+def test_a_latch_from_before_this_position_opened_does_not_count():
+    """A re-entry in the same ticker is a different position and starts in the
+    vote."""
+    close = ROLLED_BARS[-1].close
+    p = _pipeline(
+        _long(), buy={"take_profit": close - 1.0, "stop_loss": 80.0,
+                      "timestamp": "2026-03-01 10:00:00"},
+        bars=ROLLED_BARS,
+    )
+    p.db.get_at_target_management.return_value = {
+        "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
+    }
+    order = p._decide_one_at_target(_long(), "AAPL", run_id="r", seat="s")
+    assert order == {"id": "o1", "action": "SELL"}
+
+
+def test_an_extended_target_re_arms_the_vote():
+    p = _pipeline(_long(), buy={}, bars=ROLLED_BARS)
+    p.db.get_at_target_management.return_value = {
+        "AAPL": {"trailing_only": True, "timestamp": "2026-02-01 10:00:00"},
+    }
+    p._rearm_at_target_vote(sym="AAPL", run_id="r")
+    p.db.record_at_target_management.assert_called_once()
+    assert p.db.record_at_target_management.call_args.kwargs["trailing_only"] is False
+
+
+def test_re_arm_writes_nothing_when_there_is_nothing_to_clear():
+    p = _pipeline(_long(), buy={}, bars=ROLLED_BARS)
+    p.db.get_at_target_management.return_value = {}
+    p._rearm_at_target_vote(sym="AAPL", run_id="r")
+    p.db.record_at_target_management.assert_not_called()
