@@ -56,6 +56,8 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
+    ANALYSIS_DROP_KIND as _ANALYSIS_DROP_KIND,
+    DROP_CODE_UNSPECIFIED,
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
     parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
@@ -7021,7 +7023,11 @@ def _parse_loss_advisories(
 #: every symbol-scoped `pipeline_event` row as "this session considered that
 #: stock as a new idea", and a parse drop is not one — same reasoning as
 #: `src/execution/exit_path_records.py`.
-ANALYSIS_DROP_KIND = "analysis_drop"
+#:
+#: An ALIAS of `src.models.ANALYSIS_DROP_KIND`, not a second literal: the
+#: read-only API must name the same kind and may not import this module
+#: (`tests/test_api_safety.py`), so the string has exactly one home.
+ANALYSIS_DROP_KIND = _ANALYSIS_DROP_KIND
 
 
 def _persist_dropped_reasons(
@@ -7030,6 +7036,7 @@ def _persist_dropped_reasons(
     dropped: dict[tuple[str, str], int],
     reasons: dict[tuple[str, str], str],
     book_symbols: set[str],
+    codes: dict[tuple[str, str], str] | None = None,
 ) -> int:
     """File one `specialist_evidence` row per dropped symbol, WITH its reason.
 
@@ -7037,6 +7044,12 @@ def _persist_dropped_reasons(
     stock it was dropped for (queryable by `symbol` + `run_id`), not only in
     the log. Rows whose own symbol could not be read (`UNIDENTIFIED_DROP_KEY`)
     are skipped — there is no stock to file them against.
+
+    Each row carries BOTH a stable `reason_code` (one of
+    `src.models.ANALYSIS_DROP_CODES`) and the human `reason`. `count` is taken
+    from the `dropped` tally itself rather than re-derived, so the per-row
+    reason and the aggregate count cannot disagree: they are the same numbers
+    read from the same snapshot in the same pass.
 
     OBSERVABILITY ONLY. Never raises: a record that cannot be written must
     never change the risk decision it is recording. `recovered` marks whether
@@ -7060,6 +7073,7 @@ def _persist_dropped_reasons(
             "stage": "analysis",
             "outcome": "recovered" if recovered else "dropped",
             "model": model,
+            "reason_code": (codes or {}).get((model, key)) or DROP_CODE_UNSPECIFIED,
             "reason": reasons.get((model, key)) or "reason not recorded",
             "count": int(count),
             "recovered": recovered,
@@ -7407,6 +7421,8 @@ class RiskStage:
         # 158). Read live beside the counts so the reason and the count come
         # from the same telemetry snapshot.
         dropped_reasons = parse_telemetry.dropped_reasons_snapshot()
+        # The stable code beside the prose, from the same telemetry pass.
+        dropped_reason_codes = parse_telemetry.dropped_reason_codes_snapshot()
         if dropped:
             # RECONCILED against the book before anything is said about it.
             # A drop whose retry succeeded leaves its counter standing for
@@ -7441,7 +7457,7 @@ class RiskStage:
             # observational — a write failure never touches the risk decision.
             _persist_dropped_reasons(
                 getattr(pipeline, "db", None), run_id, dropped,
-                dropped_reasons, book_symbols,
+                dropped_reasons, book_symbols, dropped_reason_codes,
             )
             rule_violations.extend(
                 _parse_loss_advisories(dropped, book_symbols, dropped_reasons)

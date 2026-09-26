@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 import sqlite3
 import threading
@@ -2944,3 +2945,170 @@ def test_schema_migration_adds_recovery_alert_timestamp_on_an_old_db(tmp_path):
     cols_after = {r[1] for r in conn.execute("PRAGMA table_info(llm_circuit_events)")}
     assert "recovery_alert_updated_at" in cols_after
     conn.close()
+
+
+def test_resume_is_not_announced_for_a_suspension_the_owner_never_received(
+    tmp_path, monkeypatch,
+):
+    """Item 174 pairing: the resume note must be PAIRED to a suspension note.
+
+    If the "PAID ANALYSIS SUSPENDED" alert never reached Telegram (outage at
+    latch time), the auto-clear wipes `suspended` and `alert_state` on its way
+    out, so that suspension alert can never be delivered -- it is gone. Firing
+    "RESUMED" anyway hands the owner a recovery for an incident he was never
+    told about, which reads as the desk having been down without telling him.
+    The honest state is that, from his side, nothing happened: neither note.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+
+    class _Down:
+        messages: list[str] = []
+
+        def send(self, _message):
+            return False
+
+    circuit = _latch_on_failed_call(path, notifier=_Down())
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT alert_state FROM llm_circuit_state WHERE singleton=1"
+        ).fetchone()[0] == 0  # suspension never delivered
+
+    _age_latch(path, 16)
+    good = _Notifier()
+    circuit.notifier = good
+    assert circuit.status()["suspended"] is False
+
+    assert [m for m in good.messages if "RESUMED" in m] == []
+    # And it is not left pending forever: the row is resolved as unpaired.
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0] == 2
+
+
+def test_resume_alert_states_what_resumed_when_and_why(tmp_path, monkeypatch):
+    """Item 174 content: never a bare status word, and every number in the
+    message read from the `auto_reset` event row, not recomputed at send time.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+    _age_latch(path, 16)
+    circuit.status()
+
+    message = next(m for m in notifier.messages if "RESUMED" in m)
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        event = dict(conn.execute(
+            "SELECT * FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone())
+
+    # WHAT was suspended, and that paid analysis (not the whole desk) resumed.
+    assert "PAID ANALYSIS RESUMED" in message
+    assert event["trigger_code"] in message
+    # WHEN -- the event row's own stamp, not the clock at send time.
+    assert f"resumed at: {event['created_at']} UTC" in message
+    # WHY it cleared.
+    assert "auto-expired" in message
+    assert event["detail"] in message
+    # Numbers are the event's, not invented: settled spend at resume.
+    assert f"${float(event['session_cost_usd']):.4f}" in message
+    assert f"${float(event['daily_cost_usd']):.4f}" in message
+    # And it says the limits still bite, so "resumed" is not read as "all clear".
+    assert "remain enforced" in message
+
+
+def test_rehearsal_sends_no_resume_alert_to_the_owner(tmp_path, monkeypatch, caplog):
+    """QAMC_REHEARSAL=1 must suppress every outbound notification, including
+    this one -- a rehearsal alert is indistinguishable from a real one in the
+    owner's chat, which is worse than sending nothing."""
+    from src.notifier import TelegramNotifier
+
+    _freeze_et_day(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "sentinel-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "sentinel-chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    monkeypatch.setattr("src.notifier._REHEARSAL_MODE", True)
+
+    def _explode(*_args, **_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("a rehearsal transmitted to the network")
+
+    monkeypatch.setattr("src.notifier.requests.post", _explode)
+
+    telegram = TelegramNotifier()
+    # Guard against a vacuous pass: `send` returns early when the notifier is
+    # disabled, which would suppress the alert for a reason that is NOT the
+    # rehearsal flag and prove nothing.
+    assert telegram.enabled is True
+
+    path = _db_path(tmp_path)
+    with caplog.at_level(logging.INFO, logger="src.notifier"):
+        circuit = _latch_on_failed_call(path, notifier=telegram)
+        _age_latch(path, 16)
+        assert circuit.status()["suspended"] is False
+    suppressed = [
+        r.getMessage() for r in caplog.records
+        if "REHEARSAL: suppressed operator alert" in r.getMessage()
+    ]
+    # The suspension alert proves the chokepoint is live in this test (a
+    # disabled notifier would have returned before reaching it), and
+    # `_explode` proves nothing went on the wire.
+    assert any("SUSPENDED" in m for m in suppressed)
+    # Under rehearsal the suspension is itself undelivered, so item 174's
+    # pairing rule independently withholds the resume: the owner gets neither
+    # note, and the event is resolved as unpaired rather than left pending.
+    assert not any("RESUMED" in m for m in suppressed)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='auto_reset'"
+        ).fetchone()[0] == 2
+
+    # And the resume text itself is suppressed by the same guard when it does
+    # reach the notifier (the paired case), rather than only by the pairing rule.
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        event = dict(conn.execute(
+            "SELECT * FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone())
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="src.notifier"):
+        assert telegram.send(
+            LLMCostCircuitBreaker.format_auto_reset_alert(event)
+        ) is False
+    assert any(
+        "REHEARSAL: suppressed operator alert" in r.getMessage()
+        for r in caplog.records
+    )
+    # The audit trail is still written -- suppression is delivery-only.
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events WHERE event_type='auto_reset'"
+        ).fetchone()[0] == 1
+
+
+def test_schema_migration_adds_suspension_alert_state_on_an_old_db(tmp_path):
+    """An older DB missing the pairing column migrates rather than crashing,
+    and its pre-existing rows default to 'the owner was told' -- the direction
+    that can only over-send, never silently swallow a resume."""
+    path = _db_path(tmp_path)
+    LLMCostCircuitBreaker(path, _config(), _Notifier())
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "ALTER TABLE llm_circuit_events DROP COLUMN suspension_alert_state"
+        )
+        conn.commit()
+        cols_before = {r[1] for r in conn.execute(
+            "PRAGMA table_info(llm_circuit_events)"
+        )}
+    assert "suspension_alert_state" not in cols_before
+
+    LLMCostCircuitBreaker(path, _config(), _Notifier())
+    with sqlite3.connect(path) as conn:
+        cols_after = {r[1] for r in conn.execute(
+            "PRAGMA table_info(llm_circuit_events)"
+        )}
+    assert "suspension_alert_state" in cols_after
