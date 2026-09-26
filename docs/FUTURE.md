@@ -113,6 +113,23 @@ EXITS_ONLY  RESTORE_PROTECTION  EMERGENCY_FLATTEN
 
 Until then: **paper trading only; live trading is not authorized.**
 
+**This list is no longer the source of truth — the gate is (board item 150).**
+Every condition above is enumerated in `src/live_capital_preflight.py` and the
+list here is a human-readable mirror of it. The gate sits at the point where the
+paper lock would be lifted: `AlpacaConfig._enforce_paper_only` in
+`src/config.py` refuses a non-paper account unless BOTH the reviewed code
+constant `config.LIVE_TRADING_AUTHORIZED` is flipped AND the gate reports every
+activation-scope condition satisfied, and a refusal names the conditions that
+failed. Run it with `.venv/bin/python scripts/live_capital_preflight.py`
+(add `--scope activation` to see only what the live switch itself evaluates).
+
+Conditions the desk cannot prove in code are NOT assumed satisfied: each one is
+an explicit blocker requiring a signed entry in
+`config/live_capital_preflight_attestations.yaml` (who attested, on what date).
+Nothing is signed today, so the gate blocks. Adding a condition here means
+adding it to the gate; the roster is pinned by a test, so it cannot be shortened
+silently.
+
 ## 3. Mission Control security panel
 
 A read-only panel showing host and network security next to trading state, so posture is visible from the cockpit instead of over SSH. Background: `ops/security/vps-hardening-plan.md`.

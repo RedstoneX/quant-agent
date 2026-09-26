@@ -197,9 +197,11 @@ _RECORDED_REASON_KINDS: dict[tuple[str, str, str], str] = {
     ("deterministic_gate", "unmeasurable", "data_fault"): "data_fault",
     # 2026-09-12 — a trade the constructor refused BY NAME and recorded as
     # data (`PortfolioConstructor.last_refusals`), not recovered from a log
-    # line. Today the codes are `stop_wider_than_instrument_reach`
+    # line. Historical records carry `stop_wider_than_instrument_reach`
     # and `insufficient_history` (docs/WORK.md item 54; the day-one
-    # `no_structural_floor` code was retired the same day it shipped).
+    # `no_structural_floor` code was retired the same day it shipped, and
+    # the stop-WIDTH refusal itself was deleted 2026-09-26, item 56 --
+    # this census must keep naming it because old rows still hold it).
     # `_load_recorded_reasons` appends the code so each rule gets its own
     # line rather than merging into one bucket.
     ("deterministic_gate", "blocked", "constructor_refused"): "constructor_refused",

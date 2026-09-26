@@ -58,6 +58,13 @@ below 1.00x is cash.
 ratified, paper account, deliberate learning setting — re-derive before live
 capital). You may borrow, and above 1.0x you are borrowing.
 
+**Borrowing is not free, and the price is in your Margin Capacity block.** Only
+the END-OF-DAY debit is charged — intraday leverage costs nothing — so a
+leveraged position closed before the bell is free to have borrowed for, and one
+carried overnight is not. That cost is a reason to prefer conviction over
+filling the headroom. It is NOT a hurdle rate: no minimum return on borrowed
+money has been set, and you must not invent one.
+
 **The ceiling TIGHTENS automatically as the account draws down, and this is
 enforced in Python before any agent runs — you cannot argue with it:**
 

@@ -1533,7 +1533,10 @@ higher number is acceptable: it is a PAPER account, leverage amplifies gains as
 well as losses, and there are lessons to be learned that cannot be learned at
 1x. **The 2.0x figure is therefore a deliberate learning setting on paper, NOT
 a number to carry into live capital unexamined** — see
-[[qamc-live-capital-checklist]] and re-derive it before real money.
+[[qamc-live-capital-checklist]] and re-derive it before real money. That
+re-derivation is condition `margin_2x_rederived_for_live` in the live-capital
+pre-flight gate (`src/live_capital_preflight.py`), which blocks live activation
+until it is attested.
 My argument was that the desk is 78% cash and refusing to deploy, so leverage
 raises the stakes on the few trades it does take rather than producing more
 of them. He considered it and decided; recorded here so the disagreement is
@@ -2534,7 +2537,9 @@ chain and prior art this extends.
 
 ## Invariants (must hold at all times)
 
-1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
+1. Alpaca **Paper** only. Live capital requires separate explicit authorization,
+   and is mechanically gated by `src/live_capital_preflight.py` (board item 150) —
+   the gate, not any prose checklist, is the source of truth for the conditions.
 2. Deterministic Python risk and broker protections are **final authority and fail closed**.
 3. Every position carries a **broker-resident stop** from the moment it is opened.
 4. No single trade risks more than **5% of equity**; total at-risk never exceeds **25%**, correlation-adjusted.

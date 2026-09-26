@@ -56,6 +56,22 @@ class ApiKeysConfig(BaseModel):
 # disagreeing and giving a reader a false impression of which venue is in use.
 _ALPACA_PAPER_HOST = "paper-api.alpaca.markets"
 
+# The deliberate, reviewed code-level authorization for live capital. Flipping
+# this is one of the TWO things that must happen for the desk to leave paper;
+# the other is the live-capital pre-flight gate (board item 150,
+# `src/live_capital_preflight.py`) passing every condition in its ACTIVATION
+# scope. Neither alone is enough, on purpose:
+#
+#   * a settings.yaml edit alone still fails — this constant is False;
+#   * flipping this constant alone still fails — the gate blocks and the error
+#     names every unmet condition;
+#   * a signed attestation file alone still fails — this constant is False.
+#
+# Before this existed the guard simply raised, which was safe but silent about
+# WHY; the checklist lived in prose and nothing checked it. Do not flip this
+# without the gate reporting PASS, and never as a drive-by edit.
+LIVE_TRADING_AUTHORIZED = False
+
 
 class AlpacaConfig(BaseModel):
     base_url: str
@@ -73,17 +89,38 @@ class AlpacaConfig(BaseModel):
         config edit should not be able to do that.
 
         This is deliberately a hard failure with no env-var escape hatch. If
-        live trading is ever authorized, removing this guard should be a
-        reviewed code change in its own commit — the same deliberate,
-        auditable act that authorizing it is.
+        live trading is ever authorized, it takes BOTH a reviewed code change
+        flipping `LIVE_TRADING_AUTHORIZED` above AND the live-capital pre-flight
+        gate (board item 150) reporting every activation-scope condition
+        satisfied. This is the point where the paper lock would be lifted, so
+        this is where the gate sits: there is no code path to a live account
+        that does not run it, and a refusal names the conditions that failed.
         """
         if self.paper is not True:
-            raise ValueError(
-                "alpaca.paper must be true — live trading is not authorized "
-                "(see the hard boundaries in CLAUDE.md / docs/STATE.md). "
-                "Enabling live trading requires removing this guard in a "
-                "reviewed change, not a settings.yaml edit."
+            if not LIVE_TRADING_AUTHORIZED:
+                raise ValueError(
+                    "alpaca.paper must be true — live trading is not authorized "
+                    "(see the hard boundaries in CLAUDE.md / docs/STATE.md). "
+                    "Enabling live trading requires BOTH a reviewed change to "
+                    "config.LIVE_TRADING_AUTHORIZED and a passing live-capital "
+                    "pre-flight gate (src/live_capital_preflight.py), not a "
+                    "settings.yaml edit."
+                )
+            # Authorized in code — the gate still has the last word, and names
+            # which condition failed rather than refusing anonymously.
+            from src.live_capital_preflight import (  # local: avoids import cycle
+                LiveCapitalBlocked,
+                assert_live_capital_authorized,
             )
+
+            try:
+                assert_live_capital_authorized()
+            except LiveCapitalBlocked as exc:
+                raise ValueError(
+                    f"alpaca.paper is false and live trading is code-authorized, "
+                    f"but the live-capital pre-flight gate refuses: {exc}"
+                ) from exc
+            return self
         host = self.base_url.strip().lower()
         if host and _ALPACA_PAPER_HOST not in host:
             raise ValueError(
@@ -759,11 +796,21 @@ class RiskConfig(BaseModel):
     # Looser than the projection on purpose: this asks "could it get there",
     # the projection asks "how far do I claim it goes".
     max_target_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
-    # The REFUSAL threshold on a stop's width, in the same units. Split off
-    # from `max_target_reach_atr_multiple` on 2026-09-13 (docs/WORK.md item
-    # 56) at the same value: one number was estimating targets AND refusing
-    # trades, with no derivation for either job. Same value, two knobs.
-    max_stop_width_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
+    # NO `max_stop_width_reach_atr_multiple` HERE ANY MORE -- the stop-width
+    # REFUSAL it threshold-ed was deleted 2026-09-26 (board item 56, route
+    # (c)). It was split off from `max_target_reach_atr_multiple` on
+    # 2026-09-13 so that estimating a target and refusing a trade stopped
+    # sharing one number; the split made them independent without making
+    # either derived, and no published work fixes the touch probability
+    # below which a stop stops being a stop. Measured before deletion: 648
+    # sized stops recorded a touch-probability reading in production
+    # (quant_agent.log, 2026-09-13..2026-09-26) and the refusal fired zero
+    # times; the widest stop ever seen was 1.29 x ATR x sqrt(H) against a
+    # 1.5 cap. A wide stop is answered by a smaller position
+    # (`_plan_risk_targets`, the ratified spec 2.1 invariant) and, at the
+    # extreme, by `position_sized_to_zero`. Removed keys are rejected loudly
+    # by `_reject_deleted_stop_width_gate_key` below. The target-side
+    # `max_target_reach_atr_multiple` is UNAFFECTED and still in force.
     # Ceiling on `expected_horizon_sessions` before it enters the sqrt()
     # travel estimate, so an implausible horizon cannot licence a target far
     # outside anything the symbol does.
@@ -835,6 +882,16 @@ class RiskConfig(BaseModel):
     # risk-per-share. A short gaps through its stop upward with no bound —
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
+    #
+    # 2026-09-26, board item 186: the DIRECTION above is arithmetic and needs
+    # no citation. The MAGNITUDE 1.5 is still a chosen number. Researched and
+    # deliberately NOT sourced: the skewness-pricing literature measures
+    # expected returns to lottery-like stocks, not the size of an overnight
+    # gap against a short, and the empirical overnight-gap studies are
+    # index-level and disagree in sign. Measuring it properly needs a stored
+    # daily-bar history this desk does not keep. The number ledger carries
+    # the routed owner-appetite question; 1.5 means a short opens at
+    # two-thirds the size of a long carrying the same stated risk.
     short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
     # --- Kill switch (2026-09-02 operational safety guard) ---------------
     # A file whose mere EXISTENCE halts every order this desk would place —
@@ -1043,6 +1100,29 @@ class RiskConfig(BaseModel):
                 "(board item 81): it refused nothing and capped nothing. "
                 "Delete the key from the settings file; there is no "
                 "replacement key."
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_stop_width_gate_key(cls, data):
+        # Board item 56 (2026-09-26), route (c). Same pattern and same
+        # reason as the validator above: with `extra="ignore"` a
+        # settings.yaml still carrying this key would load silently and an
+        # operator would believe a stop-width refusal was in force when
+        # nothing reads it. The gate is deleted, not retuned -- see
+        # docs/INCIDENT_HISTORY.md 2026-09-26. There is no replacement key:
+        # width is answered by position size, and the touch-probability
+        # READING is still recorded on every sized stop
+        # (`src.data.levels.touch_probability`).
+        if isinstance(data, dict) and "max_stop_width_reach_atr_multiple" in data:
+            raise ValueError(
+                "risk.max_stop_width_reach_atr_multiple was removed "
+                "2026-09-26 (board item 56): the stop-width refusal it "
+                "thresholded is deleted, never having refused a single "
+                "trade. Delete the key from the settings file; there is no "
+                "replacement key. `max_target_reach_atr_multiple` is a "
+                "different number and is unchanged."
             )
         return data
 

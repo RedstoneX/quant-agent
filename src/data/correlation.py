@@ -17,8 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 # Pairs above this threshold are treated as "highly correlated" and aggregated
-# into a single cluster for exposure accounting. 0.7 is the traditional finance
-# cutoff for "economically meaningful" correlation.
+# into a single cluster for exposure accounting.
+#
+# CORRECTION 2026-09-26 (board item 186): this comment used to say "0.7 is the
+# traditional finance cutoff for 'economically meaningful' correlation". That
+# was untrue and is removed rather than softened. There is no traditional
+# cutoff. The mainstream portfolio-clustering literature does not threshold a
+# correlation at all — it clusters hierarchically on a correlation DISTANCE
+# (Mantegna's correlation-based hierarchical clustering / minimum spanning
+# tree, and the risk-parity work built on it), which has no cutoff to pick.
+# Where thresholded correlation NETWORKS are used, published cutoffs run
+# roughly 0.3-0.8 and are chosen for the network density a study wants.
+#
+# So 0.7 is a CHOSEN number, awaiting owner ratification as appetite; the
+# number ledger carries the routed question. Note before changing it that the
+# clustering below is TRANSITIVE, so lowering this grows clusters faster than
+# the number alone suggests.
 CLUSTER_CORRELATION_THRESHOLD = 0.7
 
 # The WINDOW — how many bars feed the matrix — is not set here; this module

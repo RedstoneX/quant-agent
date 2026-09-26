@@ -56,9 +56,12 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.data.technical import compute_indicators
 from src.models import (
+    ANALYSIS_DROP_KIND as _ANALYSIS_DROP_KIND,
+    DROP_CODE_UNSPECIFIED,
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
-    parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
+    parse_telemetry, SOFT_EXIT_HEAL_EVENT_REASON,
+    SOFT_EXIT_MISSING_AFTER_RETRY,
 )
 from src.nominations import select_nominations
 from src.portfolio_constructor import (
@@ -4233,6 +4236,65 @@ def _targets_admitted_to_book(
     return admitted, refused
 
 
+def _record_soft_exit_heals(pipeline, ctx) -> None:
+    """Drain the PM's per-name soft-exit heal outcomes onto ctx and to disk.
+
+    Board item 78. The heal itself (`PortfolioManagerAgent.
+    _fill_missing_open_falsifiers`, the desk's standing heal order:
+    mechanical restore, then ONE paid seat retry under the existing
+    per-seat cap) has four exits that used to leave nothing but a log
+    line — never attempted for want of a replayable message, blocked by
+    the spend cap, errored, or answered without a falsifier. A name can
+    therefore be refused for a blank falsifier without any durable record
+    of whether the seat was ever actually re-asked.
+
+    One `pipeline_event` row per name fixes that, and `ctx.soft_exit_heals`
+    carries the same fact forward so the refusal can quote what really
+    happened instead of asserting a retry. Recording only; never raises.
+    """
+    try:
+        agent = getattr(pipeline, "portfolio_manager", None)
+        drain = getattr(agent, "drain_soft_exit_heals", None)
+        heals = dict(drain() if callable(drain) else {})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("soft-exit heal drain failed: %s", exc)
+        return
+    if not heals:
+        return
+    try:
+        ctx.soft_exit_heals = {**(getattr(ctx, "soft_exit_heals", None) or {}), **heals}
+    except Exception:  # noqa: BLE001
+        pass
+    for symbol, heal in heals.items():
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "soft_exit_heal",
+            str(heal.get("outcome") or "unknown"), SOFT_EXIT_HEAL_EVENT_REASON,
+            detail=str(heal.get("detail") or ""),
+        )
+
+
+def _soft_exit_heal_detail(ctx, symbol: str) -> str:
+    """The TRUE per-name heal outcome, for the refusal's durable reason.
+
+    Board item 78 / owner 2026-09-25 ("untrue is a lie"): the refusal used
+    to assert "after mechanical heal and one paid retry" for every name,
+    including names whose retry was never attempted. It now states what the
+    heal record says, and says plainly when there is no heal record at all.
+    """
+    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(
+        str(symbol).strip().upper()
+    )
+    if isinstance(heal, dict) and (heal.get("detail") or heal.get("outcome")):
+        return (
+            f"heal outcome '{heal.get('outcome') or 'unknown'}': "
+            f"{heal.get('detail') or ''}".strip()
+        )
+    return (
+        "no soft-exit heal was recorded for this name — the mechanical "
+        "restore did not fill it and no paid retry outcome was filed"
+    )
+
+
 def _record_soft_exit_missing_after_retry(
     pipeline, ctx, symbol: str, *, action: str | None = None,
 ) -> None:
@@ -4240,9 +4302,18 @@ def _record_soft_exit_missing_after_retry(
         pipeline, ctx, symbol, "deterministic_gate",
         "blocked", SOFT_EXIT_MISSING_AFTER_RETRY,
         detail=(
-            "thesis_invalid_if still empty or unknown after "
-            "mechanical heal and one paid retry; refusing this "
-            "name before the book. No falsifier was invented."
+            "thesis_invalid_if still empty or unknown; refusing this "
+            "name before the book. No falsifier was invented. "
+            + _soft_exit_heal_detail(ctx, symbol)
+        ),
+        heal_outcome=str(
+            (
+                (getattr(ctx, "soft_exit_heals", None) or {}).get(
+                    str(symbol).strip().upper()
+                )
+                or {}
+            ).get("outcome")
+            or "none_recorded"
         ),
         **({"action": action} if action else {}),
     )
@@ -4256,9 +4327,30 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     is schema + prompt + mechanical heal + one paid seat retry, then
     refuse before construct_orders. This filter does not invent a
     thesis_invalid_if or catalyst string. It does not delete the target
-    — Risk must still be told the name was proposed and refused. Delete
-    this isolate when a live session proves no actionable name arrives
-    blank.
+    — Risk must still be told the name was proposed and refused.
+
+    EXACTLY WHAT WOULD JUSTIFY DELETING IT (board item 78, 2026-09-26).
+    It stays until a LIVE session record shows all three. None of the
+    three can be shown offline: each is a claim about what the seats
+    really emit when real money is at stake.
+      1. `specialist_evidence` holds ZERO `pipeline_event` rows with
+         reason `soft-exit missing after retry`, over a window of live
+         sessions that actually produced BUY/SHORT targets — not a window
+         in which the desk simply proposed nothing. Zero refusals across
+         zero opens proves nothing. [measured 2026-09-26: 0 such rows in
+         4,709 pipeline_event rows spanning 2026-09-02 to 2026-09-26, so
+         criterion 1 alone is already met and is NOT sufficient.]
+      2. Over that same window no `soft_exit_heal` row carries outcome
+         `paid_retry`: the heal being needed and working is not the same
+         as the producing step producing. This is the criterion item 78
+         actually names — Tech and the PM emitting a real falsifier
+         unaided.
+      3. No `soft_exit_heal` row in that window carries `not_attempted`,
+         `cap_blocked` or `failed`. Each of those says the desk does not
+         yet know whether the seat can fill the field, so a zero refusal
+         count in their presence is silence, not evidence.
+    Until all three hold, this stays. The heal and the durable heal record
+    above are what keep it unreachable in normal operation.
 
     Catches empty AND `unknown` on BUY/SHORT — omitted empty is missing,
     not "the analyst had nothing to say". Neutrals, reductions and closes
@@ -4500,82 +4592,6 @@ def _stash_macro_parse_failure(reason: str) -> None:
         failures = PortfolioManagerAgent._macro_parse_failures
     if reason not in failures:
         failures.append(reason)
-
-
-
-def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
-    """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
-
-    `_apply_risk_modifications` guard 1b already does this for a BUY. It was
-    written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
-    the same cumulative clamp in the constructor, and treated alongside BUY as
-    new risk (as `_record_scale_advisory` also does) — could be enlarged by an
-    edit the seat believed was protective. On a short that ADDS
-    to a short already held, `allocation_pct` is an increment exactly as it is
-    on a long add, so an upward edit grows the short by more than the number
-    reads.
-
-    Enforced here rather than inside guard 1b only because this sweep needs
-    the pre-modification sizes, which this stage already has. Guard 1b stays:
-    it fires first and more specifically for a BUY, and this is a no-op behind
-    it. If the two are ever consolidated, consolidate ONTO guard 1b.
-
-    Fails toward the SMALLER size in every branch: the pre-modification value
-    is the constructor's own, which is already clamped by the single-name
-    ceiling, the risk budget and the sector dial. Nothing here can raise a
-    size, and a decision whose pre-modification size is unknown is left
-    untouched rather than guessed at.
-    """
-    out: list = []
-    rejected: list[dict] = []
-    for d in decisions:
-        if d is None or d.action not in ("BUY", "SHORT"):
-            out.append(d)
-            continue
-        before = pre_alloc.get((d.symbol.strip().upper(), d.action))
-        if before is None or d.allocation_pct <= before:
-            out.append(d)
-            continue
-        reason = (
-            f"RM modification would INCREASE {d.symbol}'s {d.action} "
-            f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}). "
-            f"Reverted — the risk seat may only reduce an entry's size, "
-            f"never enlarge it; on an add to a position already held this "
-            f"field is an increment, so an upward edit grows the position by "
-            f"more than the number reads."
-        )
-        logger.warning("Risk mod REJECTED for %s: %s", d.symbol, reason)
-        rejected.append({
-            "symbol": d.symbol, "field": "allocation_pct", "reason": reason,
-        })
-        try:
-            out.append(d.model_copy(update={"allocation_pct": before}))
-        except Exception as e:
-            # Cannot restore the smaller size, so do not ship the larger one.
-            logger.warning(
-                "Could not revert %s's enlarged allocation_pct (%s) — "
-                "DROPPING the decision rather than executing the increase",
-                d.symbol, e,
-            )
-            # Board item 164: the entry above says "Reverted", which is no
-            # longer true — the decision is gone. Restate it as the drop it
-            # is, so the durable record does not claim a trade shipped at
-            # its pre-edit size when nothing shipped at all.
-            rejected[-1].update({
-                "outcome": "dropped",
-                "gate": "rm_enlargement_revert_failed",
-                "action": d.action,
-                "before": before,
-                "requested": d.allocation_pct,
-                "reason": (
-                    f"RM modification would INCREASE {d.symbol}'s {d.action} "
-                    f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}); "
-                    f"restoring the pre-edit size failed ({e}), so the "
-                    f"{d.action} was DROPPED rather than shipped at the "
-                    f"enlarged size."
-                ),
-            })
-    return out, rejected
 
 
 #: The four fields a risk-seat edit or `scale_all_buys` can change — the
@@ -5878,6 +5894,31 @@ class MorningResearchStage:
                 parse_telemetry.total_null_coercions(),
                 parse_telemetry.describe_null_coercions(),
             )
+        if parse_telemetry.total_hygiene_violations():
+            # Item 157's runtime check (2026-09-23): whether a schema-
+            # enforced route is actually being honoured, surfaced where a
+            # human running this desk can see it, since no deployed process
+            # ever holds a real GOOGLE_API_KEY for a pytest-based live check
+            # to run against (see docs/WORK.md item 157,
+            # tests/test_tech_schema_live.py). Never blocks anything — a
+            # strict schema is supposed to make fenced markdown and extra
+            # keys impossible; when they show up anyway the row still
+            # parsed and was still used, so this is evidence, not a gate.
+            # Each count is tagged with the ACTUAL provider that answered
+            # (`_record_answer_hygiene` in src/agents/tech_analyst.py) —
+            # adversary review, 2026-09-23: only "openrouter"/"google" are
+            # ever given a response_format at all (src/agents/base.py); a
+            # count against any other provider is not evidence the strict
+            # schema failed, since no schema was sent on that call.
+            logger.warning(
+                "Tech-seat answer hygiene violations this run (%d), by "
+                "provider (only openrouter/google were ever sent a strict "
+                "schema; any other provider's count reflects no schema "
+                "being sent at all, not a schema failing to suppress): "
+                "%s — see docs/WORK.md item 157",
+                parse_telemetry.total_hygiene_violations(),
+                parse_telemetry.describe_hygiene_violations(),
+            )
         return ctx
 
     def _run_nomination_responder_pass(self, ctx: RunContext, prior_macro_state: dict) -> None:
@@ -6345,6 +6386,13 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
+            # Board item 95: the PM is shown what the capacity above COSTS.
+            # Read off the same loaded config the rest of this call uses, so
+            # the prompt renderer never re-loads `AppConfig` (which validates
+            # API keys and would fail silently, dropping the price).
+            margin_interest_rate_pct=getattr(
+                pipeline.config.risk, "margin_interest_rate_pct", None,
+            ),
             # 2026-09-23: the §10.3 notional floor, read by exactly the
             # helper the execution-time re-size and the rotation buy-leg
             # projection already read it with, so the rotation pre-check
@@ -6397,6 +6445,10 @@ class DecisionStage:
         # calls decide() again, which resets this list.
         _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)
         pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
+        # Board item 78: same "read NOW" reason — the accounting re-ask
+        # resets the heal record too. One durable row per name, whether the
+        # heal worked or not.
+        _record_soft_exit_heals(pipeline, ctx)
         from src.agents.portfolio_manager import PortfolioManagerAgent
         macro_failures = list(
             getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
@@ -7011,7 +7063,11 @@ def _parse_loss_advisories(
 #: every symbol-scoped `pipeline_event` row as "this session considered that
 #: stock as a new idea", and a parse drop is not one — same reasoning as
 #: `src/execution/exit_path_records.py`.
-ANALYSIS_DROP_KIND = "analysis_drop"
+#:
+#: An ALIAS of `src.models.ANALYSIS_DROP_KIND`, not a second literal: the
+#: read-only API must name the same kind and may not import this module
+#: (`tests/test_api_safety.py`), so the string has exactly one home.
+ANALYSIS_DROP_KIND = _ANALYSIS_DROP_KIND
 
 
 def _persist_dropped_reasons(
@@ -7020,6 +7076,7 @@ def _persist_dropped_reasons(
     dropped: dict[tuple[str, str], int],
     reasons: dict[tuple[str, str], str],
     book_symbols: set[str],
+    codes: dict[tuple[str, str], str] | None = None,
 ) -> int:
     """File one `specialist_evidence` row per dropped symbol, WITH its reason.
 
@@ -7027,6 +7084,12 @@ def _persist_dropped_reasons(
     stock it was dropped for (queryable by `symbol` + `run_id`), not only in
     the log. Rows whose own symbol could not be read (`UNIDENTIFIED_DROP_KEY`)
     are skipped — there is no stock to file them against.
+
+    Each row carries BOTH a stable `reason_code` (one of
+    `src.models.ANALYSIS_DROP_CODES`) and the human `reason`. `count` is taken
+    from the `dropped` tally itself rather than re-derived, so the per-row
+    reason and the aggregate count cannot disagree: they are the same numbers
+    read from the same snapshot in the same pass.
 
     OBSERVABILITY ONLY. Never raises: a record that cannot be written must
     never change the risk decision it is recording. `recovered` marks whether
@@ -7050,6 +7113,7 @@ def _persist_dropped_reasons(
             "stage": "analysis",
             "outcome": "recovered" if recovered else "dropped",
             "model": model,
+            "reason_code": (codes or {}).get((model, key)) or DROP_CODE_UNSPECIFIED,
             "reason": reasons.get((model, key)) or "reason not recorded",
             "count": int(count),
             "recovered": recovered,
@@ -7397,6 +7461,8 @@ class RiskStage:
         # 158). Read live beside the counts so the reason and the count come
         # from the same telemetry snapshot.
         dropped_reasons = parse_telemetry.dropped_reasons_snapshot()
+        # The stable code beside the prose, from the same telemetry pass.
+        dropped_reason_codes = parse_telemetry.dropped_reason_codes_snapshot()
         if dropped:
             # RECONCILED against the book before anything is said about it.
             # A drop whose retry succeeded leaves its counter standing for
@@ -7431,7 +7497,7 @@ class RiskStage:
             # observational — a write failure never touches the risk decision.
             _persist_dropped_reasons(
                 getattr(pipeline, "db", None), run_id, dropped,
-                dropped_reasons, book_symbols,
+                dropped_reasons, book_symbols, dropped_reason_codes,
             )
             rule_violations.extend(
                 _parse_loss_advisories(dropped, book_symbols, dropped_reasons)
@@ -7468,6 +7534,42 @@ class RiskStage:
                     f"alone."
                 ),
                 value=float(n_nulled),
+                limit=0.0,
+            ))
+
+        ctx.hygiene_violations = parse_telemetry.hygiene_snapshot()
+        hygiene = ctx.hygiene_violations
+        if hygiene:
+            # Item 157's runtime check (2026-09-23), routed the same way
+            # `analysis_parse_loss`/`analysis_field_nulled` already are —
+            # adversary review found the earlier research-stage-only log
+            # line never reached anywhere a human actually looks (the
+            # owner sees Telegram and the dashboard, not logs); this
+            # reaches the Risk Manager's own advisory the same way those
+            # two do. Informational only — a hygiene violation never costs
+            # the row and this rule is not one the risk seat can veto on
+            # (docs/WORK.md: hard limits are code-enforced; over guidelines
+            # the risk seat may only resize), it only makes the finding
+            # visible to whatever reads the RM's review.
+            from src.risk.rules import RiskViolation as _RV
+            n_hygiene = sum(hygiene.values())
+            detail = ", ".join(
+                f"{model}.{kind}x{n}" if n > 1 else f"{model}.{kind}"
+                for (model, kind), n in sorted(hygiene.items(), key=lambda kv: -kv[1])
+            )
+            rule_violations.append(_RV(
+                rule="tech_answer_hygiene",
+                message=(
+                    f"{n_hygiene} tech-seat answer(s) this session carried "
+                    f"fenced markdown or an undeclared key despite a strict "
+                    f"response schema: {detail}. Model name is tagged with "
+                    f"the actual provider that answered — only openrouter/"
+                    f"google were ever sent a schema, so a count against "
+                    f"any other provider reflects no schema being sent, not "
+                    f"one failing to suppress. Never blocks anything; the "
+                    f"row was still parsed and used. See docs/WORK.md item 157."
+                ),
+                value=float(n_hygiene),
                 limit=0.0,
             ))
 
@@ -7989,33 +8091,23 @@ class RiskStage:
         pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
 
         if verdict.modifications:
-            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
-            # `allocation_pct` edit that ENLARGES a BUY, but it tests
-            # `decision.action == "BUY"` only — a SHORT was never covered,
-            # although the constructor sizes it with the identical cumulative
-            # arithmetic (`name_headroom_pct = (max_position_pct -
-            # current_short_gross_pct) / gross_mul`, the explicit mirror of
-            # the long clamp) and `_record_scale_advisory` already treats the
-            # two sides alike because both open new risk. Snapshotted here
-            # and enforced below for BOTH sides: for a BUY the inner guard
-            # has already reverted the edit, so this sweep is a no-op and
-            # finds nothing; for a SHORT it is the only thing standing
-            # between the seat and a short it believes it is cutting.
-            pre_mod_entry_alloc = {
-                (d.symbol.strip().upper(), d.action): d.allocation_pct
-                for d in portfolio_decision.decisions
-                if d.action in ("BUY", "SHORT")
-            }
+            # Board items 135 + 155. An `allocation_pct` edit that ENLARGES an
+            # entry is refused by `_apply_risk_modifications` guard 1b, which
+            # now covers SHORT as well as BUY. It used to test
+            # `decision.action == "BUY"` only, and the SHORT half was patched
+            # in HERE, one layer out, by a second sweep over the same
+            # decisions — solely because `src/pipeline.py` was locked by
+            # another workstream on 2026-09-18. That sweep is DELETED and
+            # must not come back: one rule, one enforcement point, inside the
+            # guard that already owns it. `tests/test_pipeline_stages.py`
+            # fails the build if a duplicate reappears in this file.
             unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
                 unapplied=unapplied_mods,
             )
-            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
-                portfolio_decision.decisions, pre_mod_entry_alloc,
-            )
-            rejected_mods = list(rejected_mods) + enlarged
+            rejected_mods = list(rejected_mods)
             # A modification this method refused (exit silently zeroed, or a
             # stop/target edit that would have shipped a reward:risk / noise-
             # band floor breach) must be a visible, distinguishable event —

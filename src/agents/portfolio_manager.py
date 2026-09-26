@@ -1102,6 +1102,44 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                     "limit — a BUY may still be able to draw margin. Treat "
                     "the ladder as unknown, not as zero."
                 )
+            # Board item 95. Capacity without its price is half the picture:
+            # this block has named the spending limit since 2026-09-17 and
+            # never once named the cost, while the PM's own sheet says "You
+            # may borrow". The cost lines go on BOTH branches — the
+            # unresolved-ladder branch is exactly where a seat is most
+            # likely to reach for margin on a guess — and are silent when
+            # there is no debit and no headroom to price. Rate read here
+            # rather than threaded through kwargs so an older caller that
+            # predates this cannot silently drop the price; a config read
+            # that fails must never break the prompt, so it degrades to
+            # saying nothing extra rather than to a fabricated figure.
+            # The rate is THREADED IN from the caller's already-loaded
+            # `config.risk.margin_interest_rate_pct`, never re-read here:
+            # loading `AppConfig` inside a prompt renderer validates API
+            # keys and fails in every context that has none, which would
+            # make the price silently vanish exactly where it is hardest
+            # to notice. Absent rate -> no cost lines, never a guessed one.
+            try:
+                from src.margin_interest import format_borrowing_cost_lines
+                _rate_pct = kwargs.get("margin_interest_rate_pct")
+                _cost_lines = format_borrowing_cost_lines(
+                    cash_balance,
+                    _rate_pct if isinstance(_rate_pct, (int, float))
+                    and not isinstance(_rate_pct, bool) else None,
+                    headroom_usd if isinstance(headroom_usd, (int, float))
+                    and not isinstance(headroom_usd, bool) else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not render the borrowing-cost lines for the PM "
+                    "prompt (%s); the Margin Capacity block is being sent "
+                    "WITHOUT its cost of carry.", exc,
+                )
+                _cost_lines = []
+            if _cost_lines:
+                margin_section += "\n\n### What borrowing costs\n" + "\n".join(
+                    _cost_lines
+                )
 
         # Recent system performance, REPORTING ONLY. The `in_drawdown`  # retired-ok
         # flag and its two thresholds used to live here and halved every new
@@ -1507,9 +1545,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`constructor_refusals_by_symbol`, a snapshot of
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
-              `stop_wider_than_instrument_reach` or
               `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
-              item 180 dropped the young-listing bar-count refusal).
+              item 180 dropped the young-listing bar-count refusal, and
+              item 56 deleted the stop-WIDTH refusal
+              `stop_wider_than_instrument_reach` on 2026-09-26 — a wide
+              stop is answered by a smaller position, never a refusal).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM
               being shown a name that funnel has already refused. Absent
@@ -2347,6 +2387,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                margin_ladder_backed: bool = False,
                margin_ladder_multiple: float | None = None,
                margin_ladder_rung: str | None = None,
+               # Board item 95: the annual margin-interest rate the account
+               # is actually charged on its OVERNIGHT debit, threaded from
+               # the caller's already-loaded `config.risk`. `None` means the
+               # cost of carry is simply not stated — never guessed.
+               margin_interest_rate_pct: float | None = None,
                # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
                # smallest order this desk will place. Threaded rather than
                # defaulted to a literal so the rotation pre-check tests the
@@ -2406,6 +2451,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         # conflict — with the gate and the reason, for `DecisionStage` to
         # persist per symbol. Reset per call; recording only.
         self.last_dropped_targets = []
+        # Board item 78 (2026-09-26): what the soft-exit heal ACTUALLY did
+        # to each open/increase name that arrived without a falsifier —
+        # filled, blocked by the spend cap, never attempted for want of a
+        # replayable message, errored, or answered without one. Reset per
+        # call; recording only. `DecisionStage` drains it and files one
+        # durable row per symbol, and the blank-falsifier refusal quotes it
+        # instead of asserting a retry that may never have run.
+        self.last_soft_exit_heals: dict[str, dict[str, str]] = {}
         result = self.run(
             analyses=analyses,
             positions=positions,
@@ -2436,6 +2489,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
+            margin_interest_rate_pct=margin_interest_rate_pct,
             min_order_usd=min_order_usd,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
@@ -3437,6 +3491,31 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         parsed["targets"] = valid
         return parsed
 
+    def drain_soft_exit_heals(self) -> dict[str, dict[str, str]]:
+        """Per-symbol soft-exit heal outcomes from the last `decide()`, cleared.
+
+        Same hand-over contract as `PortfolioConstructor.drain_refusals`: a
+        fresh dict the caller can hold, and the agent forgets it so a later
+        session cannot re-file a stale outcome. Board item 78.
+        """
+        heals = dict(getattr(self, "last_soft_exit_heals", None) or {})
+        self.last_soft_exit_heals = {}
+        return heals
+
+    def _record_soft_exit_heal(self, symbols, outcome: str, detail: str) -> None:
+        """File one heal outcome per named symbol. Recording only; never raises."""
+        try:
+            store = getattr(self, "last_soft_exit_heals", None)
+            if store is None:
+                store = {}
+                self.last_soft_exit_heals = store
+            for symbol in symbols or []:
+                key = str(symbol).strip().upper()
+                if key:
+                    store[key] = {"outcome": outcome, "detail": detail}
+        except Exception:  # noqa: BLE001 - bookkeeping must not break a decision
+            pass
+
     def _fill_missing_open_falsifiers(
         self, decision, result, *, positions=None, total_value: float = 0.0,
         existing_risk_pct=None,
@@ -3452,12 +3531,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         `soft-exit missing after retry`.
         """
         from src.cost_circuit import PaidAnalysisSuspended
-        from src.seat_heal import merge_retry_falsifiers
+        from src.seat_heal import (
+            HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
+            merge_retry_falsifiers,
+        )
 
         if decision is None:
             return decision, result
-        if getattr(self, "_soft_exit_retry_used", False):
-            return decision, result
+        retry_already_used = bool(getattr(self, "_soft_exit_retry_used", False))
         held = {
             str(getattr(p, "symbol", "")).upper(): p
             for p in list(positions or [])
@@ -3474,11 +3555,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         ]
         if not missing:
             return decision, result
+        if retry_already_used:
+            self._record_soft_exit_heal(
+                missing, HEAL_NOT_ATTEMPTED,
+                "the seat's one soft-exit fill retry was already spent on an "
+                "earlier attempt in this decide() call; no second retry was "
+                "bought and no falsifier was invented",
+            )
+            return decision, result
         user_message = getattr(result, "user_message", None) or ""
         if not str(user_message).strip():
             logger.warning(
                 "Open target(s) missing thesis_invalid_if (%s) — no user "
                 "message to replay for a fill retry", missing,
+            )
+            self._record_soft_exit_heal(
+                missing, HEAL_NOT_ATTEMPTED,
+                "no replayable user message survived, so the paid soft-exit "
+                "fill retry was NEVER ATTEMPTED for this name",
             )
             return decision, result
         self._soft_exit_retry_used = True
@@ -3507,10 +3601,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "Soft-exit fill retry blocked by spend cap for %s: %s",
                 missing, exc,
             )
+            self._record_soft_exit_heal(
+                missing, HEAL_CAP_BLOCKED,
+                f"the paid soft-exit fill retry was blocked by the spend cap "
+                f"({exc}); the seat was never re-asked for this name",
+            )
             return decision, result
         except Exception as exc:
             logger.warning(
                 "Soft-exit fill retry failed for %s: %s", missing, exc,
+            )
+            self._record_soft_exit_heal(
+                missing, HEAL_FAILED,
+                f"the paid soft-exit fill retry was attempted and errored "
+                f"({type(exc).__name__}: {exc})",
             )
             return decision, result
         reparsed = retried.parse_json() if retried is not None else None
@@ -3531,6 +3635,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "Soft-exit fill retry did not produce a stated falsifier "
                 "for %s", missing,
             )
+        filled_keys = {str(s).strip().upper() for s in (filled or [])}
+        self._record_soft_exit_heal(
+            filled, HEAL_PAID_RETRY,
+            "the seat stated a real thesis_invalid_if on the one paid "
+            "soft-exit fill retry; the string is the seat's, not invented",
+        )
+        self._record_soft_exit_heal(
+            [s for s in missing if str(s).strip().upper() not in filled_keys],
+            HEAL_FAILED,
+            "the one paid soft-exit fill retry WAS attempted and the seat "
+            "still did not state a falsifier for this name",
+        )
         return decision, retried
 
     _DECISION_FIELDS = ("targets",)

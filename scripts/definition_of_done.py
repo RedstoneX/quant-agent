@@ -283,15 +283,56 @@ def changed_line_ranges(ref: str, path: str,
     return out
 
 
+#: A trailer line, for the unwrap below: `Key: value` at the start of a line.
+#: Deliberately matches ANY key, not just this module's own — a continuation
+#: line must never swallow the next trailer, whoever owns it.
+_ANY_TRAILER_START = re.compile(r"^[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]*:", re.I)
+
+
+def unwrap_trailers(messages: str) -> str:
+    """Join a trailer's continuation lines onto the trailer itself.
+
+    Every check in this module captures a trailer's value to END OF LINE, so a
+    trailer written across several physical lines was silently truncated to its
+    first line: an `Acceptance-observable:` wrapped at column 72 arrived as
+    eight words with no path and failed, and because the gate reads EVERY
+    occurrence in `git log base..HEAD`, no later commit could correct it. With
+    force-push blocked, the only remedy was re-cutting the branch — which cost
+    four pull requests on 2026-09-26 alone, none of them for anything wrong
+    with the work.
+
+    Wrapping is a typographic accident, not a claim about content, so it is
+    normalised here rather than policed. The rule is git's own trailer
+    convention: a line that is INDENTED and is not itself `Key:` continues the
+    trailer above it. A blank line, an unindented line, or the start of another
+    trailer ends it. Nothing else in the message is touched, and a message with
+    no wrapped trailers comes back byte-identical.
+    """
+    out: list[str] = []
+    in_trailer = False
+    for line in (messages or "").splitlines():
+        if _ANY_TRAILER_START.match(line):
+            out.append(line)
+            in_trailer = True
+            continue
+        if in_trailer and line.strip() and line[:1] in (" ", "\t"):
+            out[-1] = out[-1].rstrip() + " " + line.strip()
+            continue
+        out.append(line)
+        in_trailer = False
+    return "\n".join(out) + ("\n" if (messages or "").endswith("\n") else "")
+
+
 def commit_messages(ref: str, repo: Path | None = None) -> str:
     """Every commit message on this change, as one blob.
 
     A merge commit's own message is included. The declarations this module
     reads are trailers, and which of a change's commits carries them is not
-    something a gate should have an opinion about.
+    something a gate should have an opinion about. Wrapped trailers are joined
+    by `unwrap_trailers` before any check sees them.
     """
     r = _git("log", "--format=%B%n", f"{ref}..HEAD", repo=repo)
-    return r.stdout
+    return unwrap_trailers(r.stdout)
 
 
 @dataclass
