@@ -833,6 +833,7 @@ def test_a_blank_line_ends_a_continuation():
     assert "unrelated paragraph" not in objections[0][1]
 
 
+
 def test_one_compliant_observable_rescues_a_weaker_one_beside_it():
     """A later commit must be able to repair an earlier one.
 

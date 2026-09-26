@@ -22,6 +22,88 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — the rule that keeps a profit target honest was quietly refusing to move it for the desk's best winners (item 114 retired)
+
+**Plain language.** A position's profit target is measured as "how far can
+this stock travel from where we bought it, in the time we gave the trade". If
+the stock runs hard, everything the chart offers inside that distance is now
+BEHIND the price, so the desk could only refuse to update the target — and
+the harder the position won, the more certain the refusal became. The target
+is now allowed one second attempt, measured from today's close over the time
+the position has LEFT, and only onto a real level still standing in its way.
+
+**MEASURED FIRST, and the count is zero.** Both refusals this item named
+(`REFUSAL_DERIVED_TARGET_BEHIND_PRICE`, `REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION`)
+have fired ZERO times. Two independent sources, read read-only on 2026-09-26:
+the production database holds 11,848 `specialist_evidence` rows spanning
+2026-08-17 to 2026-09-26 and NOT ONE of kind `target_revision` or
+`target_level_break`; the retained application logs cover 2026-08-21 to
+2026-09-26 and contain no "Target revised" or "Target revision refused" line
+at all. The revision code has been deployed since 2026-09-18. So the refusals
+are not rare — the whole path is DORMANT, because it only runs when a review
+seat raises a revision flag and no seat has ever raised one.
+
+**DECISION (orchestrator, 2026-09-26, under the 2026-09-18 delegation): build
+the remaining-horizon re-anchor anyway, and say plainly that no measurement
+supports it.** A zero count cannot distinguish "these refusals are correct"
+from "nobody has asked the question yet", and recording "the refusals stand"
+on the strength of a dormant path would be recording a measurement that was
+never taken. What does argue for building it is the code's own shape and the
+unmerged at-target work: the refusal rate rises with how right the desk was,
+which is not a safety property, and PR #726 (item 6) turns this same
+derivation on for EVERY held position on EVERY review, at which point the
+refusal stops being hypothetical and becomes the routine outcome for the
+largest winners in the book. That PR says so itself, in the comment above its
+`TARGET_CANNOT_EXTEND_CODES` set.
+
+**What was built, and what was deliberately NOT built.** The entry-anchored
+derivation is unchanged and still runs first. Only when it has already refused
+with "the target I derived is behind the price" does one fallback run: the
+same derivation, with the reach anchored on the latest completed close over
+the REMAINING horizon — the horizon pinned at entry minus the holiday-aware
+trading sessions the position has already used. Both numbers already existed
+and are already used elsewhere; nothing was invented and no constant was
+added.
+
+Three conditions keep the fallback from becoming the thing this item forbade
+— a target re-anchored on the current price alone, which would chase price
+and always be reachable:
+
+* The remaining horizon must be READ, never assumed. No pinned horizon or no
+  sessions-held count means no re-anchor at all.
+* The reach SHRINKS as the position spends its horizon. A position with one
+  session left reaches a third as far as one with ten, so the target cannot be
+  pushed out indefinitely by the price move; a position past its horizon
+  cannot re-anchor at all and is managed by its stop.
+* The re-anchored target must land on a STRUCTURAL LEVEL still in the way, and
+  must sit further from entry than the stored one. The measured-move fallback
+  is explicitly rejected here: "close plus some ATR" exists whatever the chart
+  looks like, which is the current price wearing a hat.
+
+**What this does NOT touch.** Progress and pace are still measured against the
+target pinned at entry, so a re-anchored target still cannot move the exit
+guard's veto. The module still places no orders. The refusal for a chart with
+no structure left in the trade's direction is unchanged, and no outcome code
+was added or renamed — deliberately, because PR #726 keys its
+trailing-stop-only state off those exact code strings and a new code would
+have silently changed that behaviour.
+
+---
+
+### 2026-09-26 — the rule stopping the risk seat from making a trade BIGGER was enforced in two places at once (item 155 retired)
+
+**In plain words:** the risk seat is allowed to shrink a planned trade, never to grow one. That rule was being applied twice, in two different parts of the code, and the second copy was written for one side of the market and the first copy for the other. Nothing was mis-sized by it, but two copies of one safety rule is exactly how the copies drift apart and one of them stops matching. It is now enforced in one place, covering both buying and short selling, and a test fails the build if a second copy ever comes back.
+
+**What was actually wrong.** The original guard only understood a BUY. On 2026-09-18 the short side needed the same protection, but the file holding the guard was locked by another piece of work at the time, so the short-side check was added one layer out as a separate sweep over the whole plan. Its own comment said so and named the guard as the place to consolidate onto. The duplicate was deliberate and temporary; it then sat there for eight days.
+
+**What was verified before collapsing them.** The board's claim was "these are duplicates", and board claims have been wrong before, so it was not assumed. A differential harness ran thirty-four scenarios — both sides, single and repeated edits to the same name, edits that shrink, grow, equal, go out of range or go negative, stop and entry edits, unknown fields, edits naming a name not in the plan, mixed buy-and-short plans, exits and holds — through the real code before and after the change, comparing every resulting position size and every refusal recorded.
+
+- Thirty-one of thirty-four are byte-identical. Every buy scenario is identical, which proves the outer sweep really was doing nothing for a buy.
+- Three differ, all on the short side, all where the seat edits the same name's size more than once in one run, and all in the safer direction. The old outer sweep only compared the final size against the starting size, so a seat that cut a short from 10 to 5 and then pushed it back up to 8 was left at 8 with no record. The single guard refuses each upward edit as it happens, so that case now ends at 5 and the refusal is written down.
+- So the two were not equivalent, but the difference runs the right way: the surviving guard catches strictly more, and never permits a size the deleted sweep would have refused. That is the test the decision turned on — had the outer sweep caught anything the inner one could not, the collapse would have been abandoned.
+
+**What would catch it next time.** A test reads the guard's own source: it fails if a sweep function reappears in the stage layer, and it fails if the guard narrows back to buy-only, which is the gap that made a second enforcement point look necessary in the first place. Both failure modes were confirmed by breaking the code on purpose and watching the test go red.
+
 ### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
 
 **In plain words.** A single figure, "one average day's range", was deciding
@@ -16534,4 +16616,3 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
-
