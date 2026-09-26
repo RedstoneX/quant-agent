@@ -701,14 +701,10 @@ def build_constructor_config(config, risk_engine_config):
             # for, this one gets structurally.
             max_sector_pct=risk_engine_config.max_sector_pct,
             max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
-            # §10.3's floor — reuses the existing $500 threshold rather than
-            # inventing a second notion of "too small to bother". It lives
-            # under `cash_sweep` because that is where it was first needed;
-            # the number, not the section, is what is being reused.
-            min_order_usd=_risk_number(
-                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
-                500.0,
-            ),
+            # No `min_order_usd`: board item 183 deleted
+            # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
+            # constructor read it — the one call that forwarded it reached an
+            # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
