@@ -503,6 +503,15 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             -- a legacy row -> treated as 0) for every non-`auto_reset` event.
             recovery_alert_state INTEGER NOT NULL DEFAULT 0,
             recovery_alert_updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            -- Item 174 pairing: the suspension's own `alert_state` as it stood
+            -- the instant the auto-clear wiped it. 1 = the owner actually got
+            -- the "SUSPENDED" note, -1 = a send was in flight and its outcome
+            -- is unknown, 0 = it never reached him. A resume note is only
+            -- honest as the answer to a suspension note he received, so a 0
+            -- here resolves the recovery as unpaired (recovery_alert_state=2)
+            -- instead of sending. Defaults to 1 so non-`auto_reset` rows and
+            -- legacy rows keep the pre-pairing behaviour.
+            suspension_alert_state INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -631,6 +640,20 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE llm_circuit_events ADD COLUMN recovery_alert_updated_at "
             "TEXT NOT NULL DEFAULT ''"
+        )
+    if "suspension_alert_state" not in event_columns:
+        # Item 174 pairing. Default 1 ("the owner was told about the
+        # suspension") is the only safe backfill: for rows written before this
+        # column existed the true value is unrecoverable, and the two wrong
+        # directions are not symmetric -- defaulting to 0 would silently
+        # swallow a legitimate resume note, while defaulting to 1 at worst
+        # sends one. Every row already on the books is additionally
+        # recovery_alert_state=1 (handled) from the migration above, so this
+        # backfill changes nothing retroactively; it only governs rows written
+        # by a build that still lacks the column.
+        conn.execute(
+            "ALTER TABLE llm_circuit_events ADD COLUMN suspension_alert_state "
+            "INTEGER NOT NULL DEFAULT 1"
         )
 
     # Migrate a latch created by the original one-state implementation.  Known
@@ -2053,12 +2076,19 @@ class LLMCostCircuitBreaker:
         conn.execute(
             "INSERT INTO llm_circuit_events "
             "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
-            "session_cost_usd, daily_cost_usd) VALUES "
-            "('auto_reset', ?, ?, ?, ?, 'transient_latch_expiry', ?, ?, ?)",
+            "session_cost_usd, daily_cost_usd, suspension_alert_state) VALUES "
+            "('auto_reset', ?, ?, ?, ?, 'transient_latch_expiry', ?, ?, ?, ?)",
             (
                 code, reason, run_id, mode,
                 int(state.get("session_attempts") or 0),
                 session_cost, daily,
+                # Item 174 pairing: capture whether the owner actually received
+                # the "SUSPENDED" note BEFORE the UPDATE below resets
+                # alert_state to 0. After that write the answer is gone, and
+                # the suspension alert itself becomes undeliverable (its claim
+                # requires suspended=1), so this is the last moment it is
+                # knowable.
+                int(state.get("alert_state") or 0),
             ),
         )
         updated_state = conn.execute(
@@ -2591,6 +2621,31 @@ class LLMCostCircuitBreaker:
                 conn.commit()
             if event is None:
                 return
+            # Item 174 pairing. A resume note is only meaningful as the answer
+            # to a suspension note the owner received. When the suspension
+            # alert never reached him (send failed at latch time), the
+            # auto-clear has already made that alert undeliverable, so firing
+            # "RESUMED" would report a recovery from an incident he was never
+            # told about. From his side nothing happened; the honest output is
+            # neither note. Resolve the row as unpaired (2) so it is not
+            # retried forever, and keep the DB event and the log line, which
+            # is where an operator reads the full history.
+            if int(event.get("suspension_alert_state") or 0) == 0:
+                logger.info(
+                    "cost-circuit auto-reset %s: suppressing the owner resume "
+                    "alert because the matching suspension alert never "
+                    "reached him (%s)",
+                    event.get("id"), event.get("detail"),
+                )
+                with self._connect() as conn:
+                    conn.execute(
+                        "UPDATE llm_circuit_events SET recovery_alert_state=2, "
+                        "recovery_alert_updated_at=datetime('now') "
+                        "WHERE id=? AND recovery_alert_state=-1",
+                        (event["id"],),
+                    )
+                    conn.commit()
+                continue
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
             sent = False
@@ -2614,9 +2669,16 @@ class LLMCostCircuitBreaker:
         code = str(event.get("trigger_code") or "transient provider latch")
         session_cost = float(event.get("session_cost_usd") or 0.0)
         daily_cost = float(event.get("daily_cost_usd") or 0.0)
+        # "When" is read from the event row's own `created_at` (UTC, written by
+        # SQLite at the instant of the auto-clear), never from the clock at
+        # send time -- a retried alert can go out minutes or a boundary later
+        # than the resume it describes.
+        resumed_at = str(event.get("created_at") or "").strip()
+        when = f"resumed at: {resumed_at} UTC\n" if resumed_at else ""
         return (
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
+            f"{when}"
             f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
             f"settled spend at resume: ${session_cost:.4f} this run · "
             f"${daily_cost:.4f} today\n"

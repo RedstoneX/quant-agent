@@ -63,6 +63,7 @@ def test_bad_specs_are_rejected_with_an_explanation(bad):
 @pytest.mark.parametrize("kind,retryable", [
     ("rate_limit", True),          # 429 — the 2026-08-31 failure
     ("server_error", True),        # 503 — upstream outage
+    ("server_error_mid_stream", True),  # 503 from inside a started stream
     ("timeout", True),             # no status — unclassified transient
     ("auth", False),               # 401 — a dead key cannot be slept off
     ("insufficient_balance", False),  # 402 — the DeepSeek out-of-money case
@@ -75,7 +76,8 @@ def test_every_kind_is_pinned_by_the_test_above():
     """A new fault kind must arrive with its classification asserted, not
     inherit whatever the catch-all happens to do that week."""
     pinned = {
-        "rate_limit", "server_error", "timeout", "auth", "insufficient_balance",
+        "rate_limit", "server_error", "server_error_mid_stream", "timeout",
+        "auth", "insufficient_balance",
     }
     assert set(KINDS) == pinned
 
@@ -164,3 +166,30 @@ def test_an_injected_fault_is_never_mistaken_for_a_real_one():
     detail = excinfo.value.record["detail"]
     assert "rehearsal fault injection" in detail
     assert "not a real provider failure" in detail
+
+
+# ------------------------------------------- the 503 that actually latches
+
+def test_mid_stream_503_is_booked_ambiguous_while_a_plain_503_is_free():
+    """Item 174's self-clear only ever fires after an AMBIGUOUS failure, and
+    `server_error` (a pre-generation 503) is provably free -- so it can never
+    reach that path. `server_error_mid_stream` is the 503 shape that can: the
+    production classifier, unmodified, must see it as not-provably-free.
+    """
+    from src.cost_circuit import _is_known_zero_cost_failure
+
+    injector = ProviderFaultInjector.from_specs(
+        ["tech_analyst:server_error", "news_analyst:server_error_mid_stream"],
+    )
+    with pytest.raises(InjectedProviderFault) as free:
+        injector.check("tech_analyst", "m")
+    with pytest.raises(InjectedProviderFault) as ambiguous:
+        injector.check("news_analyst", "m")
+
+    assert free.value.status_code == 503
+    assert ambiguous.value.status_code == 503
+    assert _is_known_zero_cost_failure(free.value) is True
+    assert _is_known_zero_cost_failure(ambiguous.value) is False
+    # It is judged by the REAL mid-stream class on the cause chain, not by a
+    # renamed stand-in the classifier would not recognise in production.
+    assert type(ambiguous.value.__cause__).__name__ == "LLMStreamErrorChunk"
