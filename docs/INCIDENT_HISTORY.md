@@ -22,6 +22,115 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — the desk let the trade-picker spend borrowed money without ever telling it borrowing costs anything (item 95 retired)
+
+**Plain language.** The account is allowed to borrow, up to twice what it owns.
+The seat that picks the trades was told how much it could spend and was told,
+in so many words, "you may borrow" — and was never once told that borrowed
+money is charged interest. A spending limit with no price attached reads as
+free money. It now sees the price next to the limit, and the answer to the
+question this item asked — may it plan against borrowed money at all — is yes,
+under the limits already set, which were never mine to move.
+
+**DECISION (orchestrator, 2026-09-26, under the 2026-09-18 delegation).** The
+portfolio manager MAY plan against borrowed money. The constraint is the one
+already ratified and nothing new: the 2.0x gross-exposure cap and the §11.2
+de-levering ladder. The new obligation is disclosure, not permission — the
+seat must be shown what the debit costs whenever it is shown what it may
+spend.
+
+**Why yes rather than no.** Refusing would have *moved* ratified owner
+appetite, which this delegation does not authorise. Margin has been enabled
+since 2026-09-02; the cap and the ladder are the owner's own table; the PM's
+own briefing sheet has said "You may borrow, and above 1.0x you are borrowing"
+since before this item was filed. The desk was already planning against
+borrowed money. The only real question left was whether it was doing so
+blind, and it was.
+
+**What the delegation deliberately did NOT decide, and why it is not mine.**
+Whether the leveraged part of the book must clear a MINIMUM RETURN. 6.25%/yr
+is the owner-supplied COST of the overnight debit, not a required return.
+Break-even on borrowed money is 6.25% — that is arithmetic and is stated to
+the seat as arithmetic. Turning it into a gate that refuses a trade whose
+expected return is under 6.25% would be setting a new risk-appetite dial, and
+the standing rule is that dials are the owner's. Nothing gates on the figure;
+it informs. If the owner ever wants the leveraged sleeve held to a floor, that
+is the one appetite call this item leaves unanswered, and it is his.
+
+**What was measured first, read-only, against the live production database
+(`/home/qamc/quant-agent/data/quant_agent.db`, snapshot 2026-09-26).** The
+item's third prerequisite — has any de-levering ladder rung ever been
+exercised, real or rehearsed — is answered, and the answer is NEVER.
+
+  - 18 recorded ladder resolutions across every session stored in
+    `session_reports` (2026-09-18 to 2026-09-25, morning/midday/close). Every
+    single one resolved `rung: none` at a 2.00x ceiling. The worst drawdown
+    the ladder has ever seen is -4.19% (2026-09-18 midday); the shallowest
+    rung needs -8%.
+  - 55 agent prompts carrying the ladder's own wording, every one of them
+    rendering "rung none". No prompt in the desk's history has ever told a
+    seat the ceiling was cut.
+  - The book has carried an overnight debit on 5 of the 31 days
+    `margin_interest_daily` tracks: 2026-09-18 ($915.83), 09-21 ($5,728.86),
+    09-22 and 09-23 ($8,087.35 each), and 09-25 ($6,114.51). Peak debit
+    $8,087.35. Total estimated cost across the whole history: $7.46 — every
+    row `source: estimate`, not one `broker_actual`, consistent with the
+    2026-09-18 finding that the paper broker returned zero `INT` activity
+    rows against a real carried debit.
+
+So the mechanism this item worried about has never fired, and the cost it
+worried about has been $7.46 of estimated, probably-uncharged paper interest.
+That changed the shape of the decision: the binding defect was never the cost,
+it was that the seat could not see one.
+
+**The lost equity rows: already repaired, and the hole that is left must stay
+a hole.** The item recorded four `daily_pnl.total_value` rows against
+twenty-four recorded evening runs, understating peak-to-trough by roughly half
+(-1.3% where the truth was about -2.7%). That claim is STALE. The restore
+already happened on 2026-09-18 — the broker box still holds the
+`quant_agent.db.pre-daily-pnl-restore-20260918T120417` snapshot with its four
+rows, against 23 rows live today, and every row the 2026-08-28 backup held is
+present in production. Peak equity now reads $10,189.45 (2026-09-24), which is
+the real high-water mark, not the truncated one.
+
+What remains is a genuine gap: no `daily_pnl` row exists for 2026-09-03
+through 2026-09-14. It was NOT back-filled and must not be. Those rows were
+never lost — the desk did not run. `agent_logs` shows 3 rows on 2026-09-03 and
+then nothing at all until 2026-09-15, and no trade was placed between
+2026-09-02 and 2026-09-15. There is no equity reading for those days because
+none was ever taken, and inventing one would put a fabricated number into the
+only series the de-levering ladder reads. The gap is permanent and is recorded
+here as permanent.
+
+**Known, unfixed, and deliberately left alone.** `_compute_recent_performance`
+reads its rolling windows positionally — `rows[5]` is called "5 trading days
+ago" — so across that 11-day pause the trailing-5-day and trailing-20-day
+figures span more calendar time than they claim. Both are REPORTING ONLY since
+the 2026-09-20 removal of the drawdown brakes; nothing gates on them. The
+ladder's own high-water mark is unaffected, because a peak does not care about
+ordering. Not fixed here: it is a separate defect from this item's question
+and fixing it inside a decision change would bury it.
+
+**What shipped.** `format_borrowing_cost_lines` in `src/margin_interest.py`
+prices two things off numbers the desk already holds — the debit being carried
+right now, and what the session's remaining ladder headroom would cost if it
+were spent and held overnight — at the configured rate under Alpaca's 360-day
+convention. `src/agents/portfolio_manager.py` renders them under the Margin
+Capacity block, on both its resolved and unresolved branches, and
+`config/prompts/portfolio_manager.md` now says next to "you may borrow" that
+borrowing is not free. Three things the wording is careful about: intraday
+leverage is free, so a position closed before the bell costs nothing to have
+borrowed for and the seat is told that explicitly; every figure carries
+`ESTIMATE_LABEL`, because the one night the desk actually checked, the paper
+broker charged nothing; and the lines state in terms that this is a cost of
+carry and NOT a hurdle rate, and that the seat must not invent one.
+
+The rate is threaded in from the caller's already-loaded config rather than
+re-read inside the renderer. The first attempt did re-read it, and it failed
+in every context without API keys — `load_config` validates them — which would
+have made the price silently disappear exactly where nobody would look for it.
+An absent rate now prints no cost line at all rather than a guessed one.
+
 ### 2026-09-26 — the retired-item reasons move out of the board's one shared line (no item retired)
 **In plain words:** closing a board item meant appending a sentence to a single line in the board file. That line had grown past eight thousand characters, and because two closures always edited the same line, only one of them could ever merge — the desk could finish work in parallel but not record it in parallel. The numbers stay on that line, where they merge as a union without conflict; the reasons move here, where entries merge one at a time.
 
@@ -75,20 +184,6 @@ what would catch it next time.
 
 - Item 158 (the technical seat's per-stock drop reasons living only in the log and as an aggregate count) was retired 2026-09-26 — the reason is now stored against the stock's own row as a stable code plus the human detail, and the funnel answers "why is this name not here" from that row; reason in `docs/INCIDENT_HISTORY.md`.
 
-### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
-
-**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
-
-**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
-
-**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
-
-**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
-
-**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
-
----
-
 ### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
 
 **In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
@@ -105,6 +200,20 @@ what would catch it next time.
 **What was ruled out.** A new table and a new column were both rejected: the evidence store already holds symbol-scoped forensic rows, and the whole record is observability — losing it must not be able to change a trading decision, which is also why the write can never raise. No schema change means nothing to migrate and every row already on disk still reads; a row written by the first pass has no code at all and is read back as `unspecified` rather than failing.
 
 **What would catch it next time.** `tests/test_analysis_drop_reason_stored.py` asserts a dropped stock's row carries the code and the reason, a kept stock has no row, and the aggregate count reconciles against the per-row counts. `tests/test_api_funnel.py` asserts the funnel answers the question for a dropped name, marks a recovered one as recovered, says nothing about a drop for a kept name, and still reads a pre-code row.
+
+### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
+
+**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
+
+**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
+
+**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
+
+**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
+
+**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
+
+---
 
 ### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
 
