@@ -22,6 +22,140 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — three items that could only be closed by a real broker event: two are closed on observed evidence, one cannot be attempted without spending on the shared account (items 86 and 173 retired, item 157 stays open)
+
+**In plain words:** three jobs on the board were stuck because no amount of
+code-reading could settle them — each needed something to actually happen at
+a broker or a provider. Two of them turn out to be settled already, by real
+events the desk recorded and nobody went back to look at. The third cannot be
+attempted from the practice account at all, for a reason worth writing down.
+
+**Item 86 — the live fill feed. MET.** The feed that tells the desk the
+instant an order has filled had never once logged in: 1,017 refusals across
+three days and no successes. The cause was found and the fix shipped on
+2026-09-18, and the item was left open on purpose until a real attempt proved
+it. It has proved it nineteen times. Read out of the desk's own live log,
+read-only:
+
+```
+2026-09-21 13:37:00,168 [INFO] src.execution.broker: trade_updates websocket authenticated (endpoint=BaseURL.TRADING_STREAM_PAPER)
+2026-09-25 19:32:10,036 [INFO] src.execution.broker: trade_updates websocket authenticated (endpoint=BaseURL.TRADING_STREAM_PAPER)
+```
+
+Nineteen such lines in the retained logs, the first on 2026-09-21 13:37:00
+UTC and the most recent on 2026-09-25 19:32:10 UTC, each one immediately
+preceded by the desk's own line saying the CURRENT login format was accepted
+and the vendor's deprecated one was not needed. The last refusal of any kind
+was on 2026-09-17 19:04:06 UTC; there have been zero refusals, zero
+give-ups and zero handshake failures since the first success. **Stated at its
+honest limit:** the item's single criterion was one live line saying the feed
+authenticated, and that is met many times over — but nothing in the desk's
+logging records a fill *arriving over* the socket, because no such line is
+written, so this entry does not claim one. The credential exception that
+makes this work at all (the key is handed to the process as a file, because
+the login happens inside the conversation and no gateway can rewrite it) is
+unchanged and stays recorded in
+`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+**Item 173(a) — the share count with no sale behind it. MET, and it resolved
+itself the way the item said it should.** A holding left the book on
+2026-09-21 between 16:19 and 16:45 UTC and no sale was written down for the
+remaining 8.5962 shares; the worry was that the seven-day window would run
+out around 2026-09-28, after which the desk would page the owner CRITICAL at
+every session entry, every day, forever, with no way to silence it. Read
+read-only from the live database today, the gap is closed: two exits are
+recorded against that symbol, 0.5962 shares at $42.574 and 8.0000 shares at
+$42.57, totalling exactly the missing 8.5962, each carrying a broker order id
+the ledger had never seen, each with realized profit-and-loss computed
+(-$1.62 and -$21.76) rather than guessed, and the ledger's own belief about
+that symbol now reads 0.0 shares. They were written back by an ordinary
+reconciliation pass between 2026-09-21 18:19 and 2026-09-23 15:24 UTC (their
+row order in the ledger brackets it), on the broker's own record of the
+fills. No unexplained-gap flag for that symbol exists anywhere in the
+evidence store.
+
+**What was still unproven, and was proved on a live account today.** That the
+gap was closed does not by itself say the current code would close the next
+one, so the situation was rebuilt from scratch on the owner's separate
+practice account (the unmonitored one, verified before anything was placed:
+account number PA30V8QHEW1C, equity $10,000.00, empty book), with all owner
+messaging suppressed. A small position was bought and filled, then sold in
+full at the broker with no sale ever written to the desk's ledger — the exact
+shape of the original: the ledger believes it holds shares, the broker's book
+is empty, nothing explains the difference. The real reconciliation code from
+current main was then run against the real broker, twice.
+
+With the fill inside the lookback window, the desk fixed itself and said so:
+
+```
+WARNING src.pipeline: EXIT RECORDED (SELL): BTC/USD 0.000199 sh @ $83983.5000 (order eb93e881-e66b-4de2-a7a5-a1eeb630731e, type=market, realized_pnl=unknown) — broker-initiated exit written back to the ledger by the reconciler
+```
+
+Note the label: `SELL`, not `STOP_OUT`. The broker said the order type was a
+plain market sale, so the desk declined to attribute it to a protective stop
+— which is precisely the unevidenced-cause trap this item was filed to avoid,
+now demonstrably shut on live data. It also refused to invent a profit figure
+it could not derive, flagging `stop_out_pnl_unmatched` instead. Afterwards
+the ledger's belief for that symbol dropped from 0.0002 to 0.0000005 shares,
+below the threshold that makes it look open at all.
+
+With the same fill outside the lookback window — the state the original
+holding would have entered around 2026-09-28 had nothing resolved it — the
+feared behaviour reproduces exactly and in full:
+
+```
+ERROR src.pipeline: stop-out reconcile: BTC/USD stop_out_gap_unexplained — ledger believes 0.0002 sh open, broker shows 0.0000, but no untracked filled SELL order was found in the last 0 day(s) — recording nothing rather than guessing
+CRITICAL src.notifier: OWNER ALERT
+RECORDS DISAGREE — the desk's records and the broker's do not match, and the desk cannot tell which is right
+```
+
+So both halves of the item's own reasoning are now measured rather than
+argued: inside the window the desk repairs itself on broker evidence and
+never guesses a cause; outside it, it pages CRITICAL with no dedup and no
+throttle and will keep doing so. The item closes because its own condition —
+resolved on its own evidence before the window expired — is what actually
+happened. **The unbounded repeat page is real and is NOT closed by this
+entry**; it is a property of `send_owner_alert` having no dedup at all, which
+is a general alerting gap rather than anything about one holding, and the
+next occurrence of any unexplainable gap will page daily until someone acts.
+
+**Two things seen in passing, neither fixed here.** The two recovered exits
+for the 2026-09-21 holding are labelled `STOP_OUT` with category
+`broker_stop_fill`, but they were written back before the 2026-09-24 change
+that labels a recovered exit by the broker's own order type — so their "this
+was a protective stop" attribution rests on the blanket label that change
+exists to stop, not on evidence, and the same is true of another holding's
+recovered exit dated 2026-09-02 that carries no realized figure at all. Nothing owner-facing is wrong in quantity or money; the *cause* stamped
+on two exits is unverified. Separately, and only as a caution for anyone
+repeating this rehearsal: the practice run had to use a crypto instrument
+because the exercise ran on a Saturday, and a crypto position is reported by
+the broker under a different symbol spelling than its own orders are
+(`BTCUSD` versus `BTC/USD`), which would make the reconciler unable to find
+the explaining sale if the desk ever traded crypto. The desk trades equities
+only, so this is a note, not a defect.
+
+**Item 157 — the Google route's enforced answer format. NOT attempted, and
+the reason is structural.** The remaining criterion is a live call proving
+that Google's endpoint really enforces a sent answer schema. It was not
+attempted, deliberately. The practice account reaches providers through the
+same credential gateway the desk uses, and the gateway hands out credentials
+per identity: the practice identity is granted the broker, economics,
+messaging and general model credentials, and is **not** granted the Google
+one. The only identity that can make that call is the production one, so any
+live attempt would spend real money on the shared account rather than on the
+throwaway account this exercise is scoped to. That is a hard blocker, not a
+scheduling one: either the Google credential is granted to the rehearsal
+identity, or someone accepts a single production-billed call worth a fraction
+of a cent. Until one of those happens the criterion cannot be met from a
+rehearsal, and the item stays open with nothing else about it changed.
+
+**What was left on the practice account.** Nothing open. Two filled crypto
+orders sit in its history and the book is empty; equity finished at $9,999.90
+against $10,000.00 at the start — about ten cents, the spread and fee on a $17
+round trip. The monitored production account was never contacted: every
+call in this exercise asserted the account number and the equity band before
+placing anything, as a hard assertion that would have aborted the script.
+
 ### 2026-09-26 — the market-wide view was counted once per name, as though several analysts had each looked at each name (item 109 part (a), DECIDED AND BUILT; the item stays open for part (c))
 
 **In plain words:** the desk has one seat that reads the whole market — rates, credit, volatility, the general mood — and four seats that read one company at a time. When the desk added up how much evidence backed a single trade, the market-wide read was counted as one more company-specific opinion about that company, even when nobody had looked at that company's part of the market at all. One opinion, copied onto every name, and then counted as if it were several. That is now fixed: the whole-market view still informs every decision, but it only counts as evidence ABOUT a name when the market read actually said something about that name's own industry.
