@@ -31,7 +31,7 @@ file. `test_no_atr_multiple_survives_anywhere` is the mechanical guard.
 The ATR question was not deleted, it was put back where it belongs: whether
 a stop is far enough out to survive the name's noise is still
 `min_stop_atr_multiple` / `absolute_min_stop_atr_multiple`, and whether a
-level has BROKEN is still `NOISE_BAND_ATR_MULTIPLE`. Both are genuinely
+level has BROKEN is `BREAK_CONFIRMATION_ATR_MULTIPLE`. Both are genuinely
 volatility questions. "Which level is this stop on" is an identity question
 about a zone, and is answered in the zone's unit.
 """
