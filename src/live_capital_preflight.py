@@ -52,6 +52,24 @@ PASS = "PASS"
 FAIL = "FAIL"
 BLOCK = "BLOCK"  # manual condition not (yet) attested
 
+# Evaluation scopes.
+#
+# AUDIT — the standalone run (scripts/live_capital_preflight.py). Everything is
+#   in scope, including the two mechanical checks that confirm the desk is still
+#   paper-locked and has not drifted.
+# ACTIVATION — the evaluation performed by the paper-only guard itself at the
+#   moment live capital would be switched on. The two paper-state mechanical
+#   checks are deliberately NOT in this scope, and the reason is not
+#   convenience: at the activation point they are self-contradictory. A live
+#   switch necessarily declares `alpaca.paper: false`, and the guard asking
+#   whether the guard rejects `paper=False` is asking itself. Everything that
+#   can still be meaningfully evaluated at that instant is in this scope, and
+#   all of it must pass.
+AUDIT = "audit"
+ACTIVATION = "activation"
+ALL_SCOPES = frozenset({AUDIT, ACTIVATION})
+AUDIT_ONLY = frozenset({AUDIT})
+
 
 @dataclass
 class ConditionResult:
@@ -90,6 +108,9 @@ def _check_paper_only_guard() -> tuple[str, str]:
     Source: src/config.py AlpacaConfig._enforce_paper_only — "going live must
     never be a casual config toggle" (docs/FUTURE.md). We prove the guard is
     still wired by constructing a non-paper config and requiring it to raise.
+
+    AUDIT scope only. At ACTIVATION this check would be the guard interrogating
+    itself, so it is excluded there rather than being made to answer trivially.
     """
     try:
         from src.config import AlpacaConfig
@@ -109,6 +130,10 @@ def _check_settings_declare_paper(settings_path: Path) -> tuple[str, str]:
     Source: docs/STATE.md / docs/OUTCOME.md — Alpaca Paper is the only
     authorized environment. A pre-flight run should confirm the live switch has
     not already been flipped silently.
+
+    AUDIT scope only: a genuine live activation declares `paper: false` by
+    definition, so at ACTIVATION this condition could never be anything but a
+    contradiction. It is a drift detector for the paper era, not a live gate.
     """
     try:
         raw = yaml.safe_load(settings_path.read_text()) or {}
@@ -138,6 +163,7 @@ class MechanicalCondition:
     source: str
     checker: Callable[..., tuple[str, str]]
     needs_settings: bool = False
+    scopes: frozenset[str] = AUDIT_ONLY
 
 
 @dataclass(frozen=True)
@@ -145,6 +171,7 @@ class ManualCondition:
     condition_id: str
     title: str
     source: str
+    scopes: frozenset[str] = ALL_SCOPES
 
 
 # Mechanical conditions — checkable in code.
@@ -154,6 +181,7 @@ MECHANICAL_CONDITIONS: tuple[MechanicalCondition, ...] = (
         title="The paper-only guard still rejects a non-paper config",
         source="src/config.py AlpacaConfig._enforce_paper_only; docs/FUTURE.md",
         checker=_check_paper_only_guard,
+        scopes=AUDIT_ONLY,
     ),
     MechanicalCondition(
         condition_id="settings_declare_paper",
@@ -161,6 +189,7 @@ MECHANICAL_CONDITIONS: tuple[MechanicalCondition, ...] = (
         source="config/settings.yaml; docs/STATE.md; docs/OUTCOME.md",
         checker=_check_settings_declare_paper,
         needs_settings=True,
+        scopes=AUDIT_ONLY,
     ),
 )
 
@@ -273,11 +302,17 @@ def _evaluate_manual(cond: ManualCondition, attestations: dict) -> ConditionResu
 def evaluate(
     settings_path: Path = DEFAULT_SETTINGS_PATH,
     attestations_path: Path = DEFAULT_ATTESTATIONS_PATH,
+    scope: str = AUDIT,
 ) -> GateResult:
-    """Evaluate every pre-flight condition. Defaults to BLOCK on any failure."""
+    """Evaluate every pre-flight condition in `scope`. BLOCKs on any failure."""
+    if scope not in ALL_SCOPES:
+        raise ValueError(f"unknown scope {scope!r}; expected one of {sorted(ALL_SCOPES)}")
+
     results: list[ConditionResult] = []
 
     for mech in MECHANICAL_CONDITIONS:
+        if scope not in mech.scopes:
+            continue
         try:
             if mech.needs_settings:
                 status, detail = mech.checker(settings_path)
@@ -294,17 +329,59 @@ def evaluate(
 
     attestations = load_attestations(attestations_path)
     for manual in MANUAL_CONDITIONS:
+        if scope not in manual.scopes:
+            continue
         results.append(_evaluate_manual(manual, attestations))
 
     return GateResult(results=results)
 
 
 # --------------------------------------------------------------------------- #
+# The activation gate itself — called BY the paper-only guard in src/config.py
+# --------------------------------------------------------------------------- #
+class LiveCapitalBlocked(Exception):
+    """Raised when live capital is requested with a pre-flight condition unmet.
+
+    The message names every failing condition, because "blocked" without the
+    reason is exactly the prose-only state board item 150 exists to end.
+    """
+
+    def __init__(self, gate: "GateResult") -> None:
+        self.gate = gate
+        named = "; ".join(
+            f"{r.condition_id} [{r.status}] {r.detail}" for r in gate.blocking
+        )
+        super().__init__(
+            f"live-capital pre-flight gate BLOCKED — "
+            f"{len(gate.blocking)} of {len(gate.results)} condition(s) unmet: {named}"
+        )
+
+
+def assert_live_capital_authorized(
+    settings_path: Path = DEFAULT_SETTINGS_PATH,
+    attestations_path: Path = DEFAULT_ATTESTATIONS_PATH,
+) -> GateResult:
+    """Return the activation-scope gate result, or raise `LiveCapitalBlocked`.
+
+    Fails closed: an empty result set never passes, and any checker error is a
+    FAIL rather than a skip.
+    """
+    gate = evaluate(
+        settings_path=settings_path,
+        attestations_path=attestations_path,
+        scope=ACTIVATION,
+    )
+    if not gate.passed:
+        raise LiveCapitalBlocked(gate)
+    return gate
+
+
+# --------------------------------------------------------------------------- #
 # Reporting
 # --------------------------------------------------------------------------- #
-def format_report(gate: GateResult) -> str:
+def format_report(gate: GateResult, scope: str = AUDIT) -> str:
     lines: list[str] = []
-    lines.append("Live-capital pre-flight gate (board item 150)")
+    lines.append(f"Live-capital pre-flight gate (board item 150) — scope: {scope}")
     lines.append("=" * 60)
     for r in gate.results:
         mark = {PASS: "PASS ", FAIL: "FAIL ", BLOCK: "BLOCK"}[r.status]
@@ -335,10 +412,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--attestations", type=Path, default=DEFAULT_ATTESTATIONS_PATH
     )
+    parser.add_argument(
+        "--scope", choices=sorted(ALL_SCOPES), default=AUDIT,
+        help="audit (default) checks everything; activation checks what the "
+             "paper-only guard itself evaluates when live capital is requested",
+    )
     args = parser.parse_args(argv)
 
-    gate = evaluate(settings_path=args.settings, attestations_path=args.attestations)
-    print(format_report(gate))
+    gate = evaluate(
+        settings_path=args.settings,
+        attestations_path=args.attestations,
+        scope=args.scope,
+    )
+    print(format_report(gate, scope=args.scope))
     return 0 if gate.passed else 1
 
 

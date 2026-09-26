@@ -183,7 +183,7 @@ DONE WHEN:
 **138. Five unsourced order-price buffer sites carrying three values — filed 2026-09-18, TIER 1.** A 1% ladder offset, a 0.5% midday offset and a 3% stop-limit buffer decide whether an order fills, and none of the five sites is in `config/number_ledger.yaml` (they sit in the broker/execution path item 130 shows the ledger's scope rule excludes). **Item 118 is a NEAR-NEIGHBOUR and does NOT cover this** — it asks whether the ladder's 1% limit fills on a gap day; this is the whole family of unsourced price buffers.
 
 DONE WHEN:
-  - [ ] all five sites carry a ledger entry with a source, or the open question and what the desk pays meanwhile, with no value changed in the same pass
+  - [x] all five sites carry a ledger entry with a source, or the open question and what the desk pays meanwhile, with no value changed in the same pass
 
 **139. Roughly 74 of the repo's 90 registered git worktrees are session scratch under `/tmp` — filed 2026-09-18, housekeeping, pre-existing, nobody's current task.** CORRECTION to the filing brief: none of them is stale in git's sense — every registered path still exists, so `git worktree prune` removes nothing [verified 2026-09-18].
 
@@ -206,20 +206,20 @@ detail: docs/BOARD_NOTES.md (item 147)
 **148. Two level-ranking numbers are invisible to the ledger, and the correlation window changed with no note — filed 2026-09-18.** The level strength that decides which six levels the analyst ever sees is `len(cluster) / (1.0 + distance_pct / 10.0)` in `src/data/levels.py`, and the 40% maximum distance beside it: both are INLINE literals, so item 90's scanner — which reads module-level constants and config defaults — cannot see either, an instance of item 130's scope hole on the data side.
 
 DONE WHEN:
-  - [ ] both inline literals carry a ledger entry or are moved to a scanned definition site, with no value changed in the same pass
-  - [ ] the correlation window's current value has a recorded reason, or is named as arbitrary like the threshold beside it
+  - [x] both inline literals carry a ledger entry or are moved to a scanned definition site, with no value changed in the same pass — DONE on main before this pass: the `/ 10.0` divisor is now the named `LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (ledgered `arbitrary`, PR #684), and the flat 40% max-distance cap no longer exists — replaced 2026-09-12 by the ATR `horizon_reach` window (ledgered via `MAX_REACH_ATR_MULTIPLE`/`MAX_HORIZON_SESSIONS`). No value changed.
+  - [x] the correlation window's current value has a recorded reason, or is named as arbitrary like the threshold beside it — the correlation window has no definition site the number-ledger can attach a row to (it rides `trading.lookback_days`, which carries no numeric default), so it took the "recorded reason" branch: the reason is written at `_ensure_correlation_matrix` and cross-referenced beside `CLUSTER_CORRELATION_THRESHOLD`. Honest finding: the 5y window is INHERITED from the structural-level fetch (settings.yaml records the 320→1800 raise as "purely for structure"), not justified for correlation clustering; clustering needs only 20 overlapping returns. No value or behaviour changed.
 detail: docs/BOARD_NOTES.md (item 148)
 
 **152. A research seat's answer coming back unreadable has no board item — filed 2026-09-18, from the log-health report; the technical-seat half is SETTLED by #538 (2026-09-19), news seat still open.** A parse failure means the call was paid for and thrown away with nothing to show for it; measured on the retained logs: 11 on the news seat, 79 on the technical seat [measured 2026-09-18 against `quant_agent.log` and its five rotations].
 
 DONE WHEN:
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry
+  - [x] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — shipped by #695 (2026-09-25): the whole-answer non-JSON path now gets the same one paid heal retry the schema path had, the retry flag no longer leaks across the long-lived instance (which had silently disabled the retry for every later failure in the run), and any final exhausted failure persists its raw payload and logs in log_health's `seat_answer_unreadable` family instead of being paid-and-discarded
 detail: docs/BOARD_NOTES.md (item 152)
 
 **154. A research seat being unreachable, with the work going ahead short-handed, has no board item — filed 2026-09-18, from the log-health report.** `Morning research degraded` fired 14 times across the retained logs.
 
 DONE WHEN:
-  - [ ] a decision made short-handed this way is marked as such wherever the desk records it, or the missing seat is shown not to change the decision
+  - [x] a decision made short-handed this way is marked as such wherever the desk records it, or the missing seat is shown not to change the decision
 detail: docs/BOARD_NOTES.md (item 154)
 
 **155. The item-135 short-side guard is a deliberate duplicate sitting one layer out from where it belongs — filed 2026-09-18, from PR #528's own objection record.** `_revert_entry_size_increases` in `src/pipeline_stages.py` re-does, for BUY and SHORT together, what `_apply_risk_modifications` guard 1b in `src/pipeline.py` already does for BUY alone; it was placed there only because `src/pipeline.py` was locked by another workstream at the time, not because two enforcement points are the right shape.

@@ -3823,8 +3823,11 @@ numbers:
       (the derived 0.97 below). Still re-used, on the fallback path, by stop
       repair (src/execution/stop_repair.py) and the scale-in rearm. A class
       attribute, so rules (a)/(b) never saw it; PR #544's description said it
-      was ledgered and it was not. src/execution/scale_in.py carries a second
-      0.03 as a getattr fallback, in a file outside scope.
+      was ledgered and it was not. src/execution/scale_in.py (outside scope)
+      re-uses this same buffer via
+      `getattr(broker, "STOP_LIMIT_BUFFER_PCT", AlpacaBroker.STOP_LIMIT_BUFFER_PCT)`;
+      it holds no independent 0.03 literal, so this class attribute is the
+      single source of the value [verified 2026-09-25].
     open_question: >-
       On this desk's names, how far past a stop trigger does a stop-LIMIT
       fill actually land on the gap/fast-market days the stop exists for --
