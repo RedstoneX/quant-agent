@@ -1088,6 +1088,15 @@ def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     text = " / ".join(bits)
     if isinstance(target, (int, float)):
         text += f" · target {target:g}% invested"
+    # Board item 119: the owner's one-line market read must not present a
+    # regime call formed on an incomplete FRED set as a complete one. The
+    # stamp comes from the deterministic fetch record, not the economist —
+    # see `src/data/macro.py::MacroCoverage.verdict_stamp`. "unknown" prints
+    # nothing: an unstamped verdict makes no claim either way.
+    coverage_state = str(macro.get("coverage_state") or "unknown")
+    if coverage_state in ("partial", "failed"):
+        note = str(macro.get("coverage_note") or "").strip()
+        text += " · ⚠️ PARTIAL READ" + (f" ({note})" if note else "")
     if text:
         lines.append(f"📊 Market: {text}")
 

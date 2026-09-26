@@ -177,6 +177,17 @@ class MacroStore:
             "bull_triggers": analysis.get("bull_triggers") or [],
             "bear_triggers": analysis.get("bear_triggers") or [],
             "alignment_with_news": analysis.get("alignment_with_news") or "",
+            # Board item 119: how much of the FRED set this regime call was
+            # actually formed on. This snapshot is what midday/close/intra
+            # read back as `carried_from_morning`, what later DAYS read back
+            # as `remembered`, and what feeds the PM's 7-day regime
+            # trajectory — so a verdict formed on holes must not be
+            # laundered into a complete-looking one by being written here
+            # without the stamp. Defaults to "unknown" rather than
+            # "complete" for the same reason as on the model: an unstamped
+            # caller makes no claim, and absence is not proof of coverage.
+            "coverage_state": analysis.get("coverage_state") or "unknown",
+            "coverage_note": analysis.get("coverage_note") or "",
         }
         if isinstance(series_prints, dict) and (
             series_prints.get("values") or series_prints.get("observations")
