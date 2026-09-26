@@ -5035,6 +5035,11 @@ class MorningResearchStage:
                 macro_events, event_coverage, fomc_meetings, fomc_coverage,
             )
 
+        # Filled by `_run_news` below (same thread-pool fan-out), read after
+        # the future resolves to file a per-stock record of an unreadable
+        # news answer. Board item 152.
+        news_symbols_asked: set[str] = set()
+
         def _run_news():
             # Per-symbol news selection (2026-08-30 owner decision): held
             # positions first, then this run's admitted candidates — the
@@ -5051,6 +5056,11 @@ class MorningResearchStage:
             ]
             held = [s for s in held if s]
             candidates = sorted(ctx.admitted_symbols)
+            # Board item 152: remember WHICH names this seat was asked about,
+            # so that if its answer comes back unreadable the loss can be
+            # filed per-stock rather than as a bare log line and a count.
+            news_symbols_asked.update(held)
+            news_symbols_asked.update(candidates)
             try:
                 return self._run_news_update(
                     ctx.run_id, session="morning", universe=effective_symbols,
@@ -5625,6 +5635,31 @@ class MorningResearchStage:
                 )
             else:
                 data_status["news"] = "ok"
+            # Board item 152. An unreadable news answer was paid for and
+            # thrown away; until now the only trace was a log line (gone at
+            # the next 10MB rotation) and a count. File the loss per STOCK,
+            # with its reason, through the same `analysis_drop` writer the
+            # technical seat's row drops already use (item 158), so a later
+            # reader can ask "why is this name's news seat absent on this
+            # run?" and get an answer from the database. Observability only:
+            # `_persist_dropped_reasons` never raises and nothing downstream
+            # reads these rows to make a decision. `book_symbols=set()`
+            # because nothing recovered — the whole answer is gone.
+            if data_status["news"] == "parse_error" and news_symbols_asked:
+                reason = (
+                    "news seat's answer was unreadable after its one paid "
+                    "heal retry — this stock has NO news seat on this run "
+                    "(absent, not neutral); raw payload in "
+                    "data/parse_failures/news_analyst_*.json"
+                )
+                _persist_dropped_reasons(
+                    self.db, ctx.run_id,
+                    {("NewsIntelligenceReport", sym): 1
+                     for sym in sorted(news_symbols_asked)},
+                    {("NewsIntelligenceReport", sym): reason
+                     for sym in news_symbols_asked},
+                    set(),
+                )
             # PM TEST GATE item 4, second half (2026-09-14). A structural
             # loss — the seat had real headline coverage for a symbol and
             # its answer for that symbol is missing (see
@@ -5643,6 +5678,26 @@ class MorningResearchStage:
                     "data_status['news']='symbol_dropped' instead of 'ok': %s",
                     len(news_intel.dropped_news_symbols),
                     news_intel.dropped_news_symbols,
+                )
+            # Board item 152, salvage half. The report parsed and is usable,
+            # but `analyze()` had to drop a top-level field the seat sent
+            # unreadable (measured: `market_sentiment` carrying "mixed").
+            # That is not "ok" — a field is missing — and it is not a lost
+            # seat either, so it gets its own word rather than overstating
+            # either reading. Checked after `symbol_dropped`, which is a
+            # per-STOCK loss and so the worse news, and before
+            # `low_confidence`, which is only the model's own self-report.
+            if data_status["news"] == "ok" and news_intel and news_intel.unreadable_fields:
+                data_status["news"] = "field_unreadable"
+                logger.warning(
+                    "News seat answered but %d field(s) were unreadable and "
+                    "dropped to save the rest of the report: %s — those "
+                    "fields read ABSENT, not neutral.",
+                    len(news_intel.unreadable_fields),
+                    ", ".join(
+                        f"{k}={v!r}"
+                        for k, v in sorted(news_intel.unreadable_fields.items())
+                    ),
                 )
             # Self-reported confidence is a second, independent signal from
             # the coverage check above: coverage measures whether the wire

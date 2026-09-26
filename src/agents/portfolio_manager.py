@@ -1088,7 +1088,7 @@ Bear triggers (would turn defensive):
 ### Stock-Specific News
 {stock_text}{lost_text}
 
-Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confidence})"""
+Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_intel.confidence})"""
         else:
             news_section = "## News Intelligence\nNo news data available."
 

@@ -404,7 +404,7 @@ class PositionReviewerAgent(BaseAgent):
                 f"PM Briefing: {news_intel.pm_briefing[:300]}\n\n"
                 f"State changes this session:\n{state_text}\n\n"
                 f"Held-position alerts:\n{stock_text}{lost_text}\n\n"
-                f"Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})\n"
+                f"Overall sentiment: {news_intel.format_market_sentiment()} ({news_intel.confidence})\n"
             )
         else:
             news_section = "### Session News\n(no news report available)\n"
