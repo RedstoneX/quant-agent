@@ -4444,8 +4444,20 @@ def _link_nominations_to_decision(pipeline, ctx) -> None:
         logger.warning("Conviction ledger: nomination join failed: %s", e)
 
 
-def _record_seat_stances(pipeline, ctx, evidence_registry, symbols) -> None:
+def _record_seat_stances(
+    pipeline, ctx, evidence_registry, symbols, *,
+    non_corroborating_sources=None,
+) -> None:
     """Spec §9.5 — record who ARGUED AGAINST, not only who proposed. NEVER raises.
+
+    `non_corroborating_sources` (board item 109) marks the stances the §9.4
+    tally would not let corroborate the trade — today only a macro stance
+    broadcast onto a name whose sector the macro read never mentioned. The
+    ledger is read later to score who was right; a stance recorded with no
+    trace that the desk declined to count it reads as a seat that backed the
+    idea, which is not what happened. It is recorded in `observation`
+    because that field already exists and already travels with the row; no
+    schema change is taken for this.
 
     §9.4 already computes each seat's stance per symbol into the canonical
     evidence registry, and counts only the ALIGNED ones to earn size. The
@@ -4479,19 +4491,29 @@ def _record_seat_stances(pipeline, ctx, evidence_registry, symbols) -> None:
                 str(getattr(a, "conviction", "") or DEFAULT_CONVICTION)
             for a in (ctx.analyses or [])
         }
+        non_corroborating = non_corroborating_sources or {}
         stances: list[SeatStance] = []
         for symbol in sorted(wanted):
+            gated = non_corroborating.get(symbol) or frozenset()
             for source, stance in sorted((evidence_registry.get(symbol) or {}).items()):
                 seat = normalize_seat(source)
                 declared = (nominations.get(symbol) or {}).get(seat) or {}
                 conviction = declared.get("conviction")
                 if not conviction and seat == "technical":
                     conviction = tech_conviction.get(symbol)
+                observation = str(declared.get("observation") or "")
+                if source in gated:
+                    note = (
+                        "market-wide stance, not a read on this name's "
+                        "sector — did not count toward agreement for the "
+                        "trade (still counted against one it opposed)"
+                    )
+                    observation = f"{observation} [{note}]".strip()
                 stances.append(SeatStance(
                     seat=seat, symbol=symbol, stance=stance,
                     conviction=conviction or DEFAULT_CONVICTION,
                     nominated=bool(declared),
-                    observation=str(declared.get("observation") or ""),
+                    observation=observation,
                 ))
         if not stances:
             return
@@ -6742,16 +6764,24 @@ class DecisionStage:
             smart_money_findings=ctx.smart_money_findings,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
         )
-        # §9.4 — same pure function, same inputs, so the stances the
-        # constructor refuses to pay for are exactly the ones the PM's own
-        # prompt marked uncounted. An earnings view older than
-        # `EARNINGS_STANCE_MAX_AGE_DAYS`, and (item 109) a macro stance that
-        # is the market-wide broadcast rather than a read on the name's own
-        # sector, stop counting toward the agreement tally; both stay in the
-        # registry above, so grounding still accepts them as coverage and
-        # this can only ever shrink a ceiling.
-        stale_sources = PortfolioManagerAgent.uncounted_evidence_sources(
+        # §9.4 freshness — same pure function, same inputs, so the stances
+        # the constructor refuses to pay for are exactly the ones the PM's
+        # prompt marked stale. An earnings view older than
+        # `EARNINGS_STANCE_MAX_AGE_DAYS` stops counting toward the agreement
+        # tally on BOTH sides; it stays in the registry above, so grounding
+        # still accepts it as coverage and this can only ever shrink a
+        # ceiling.
+        stale_sources = PortfolioManagerAgent.stale_evidence_sources(
             earnings_analyses=earnings_results,
+        )
+        # Item 109 — a SEPARATE mapping, never merged into the one above.
+        # A macro stance broadcast onto a name whose sector the macro read
+        # never mentioned cannot count FOR that name; its dissent still
+        # counts against it. One-sided, so this too can only ever shrink a
+        # ceiling — merging it into `stale_sources` would drop the dissent
+        # as well and RAISE the net on exactly the names a bearish broad
+        # read opposed. See `broadcast_macro_sources`.
+        non_corroborating_sources = PortfolioManagerAgent.broadcast_macro_sources(
             registry=evidence_registry,
             positions=positions,
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
@@ -6782,6 +6812,7 @@ class DecisionStage:
         _record_seat_stances(
             pipeline, ctx, evidence_registry,
             [t.symbol for t in portfolio_decision.targets],
+            non_corroborating_sources=non_corroborating_sources,
         )
         book_targets, refused_soft_exit = _targets_admitted_to_book(
             portfolio_decision.targets,
@@ -6825,6 +6856,7 @@ class DecisionStage:
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
             # Spec §11.2 — the session's gross-exposure ceiling, already
             # resolved from account state in the run preamble (and re-derived
             # here only on a lane where the preamble did not run). The

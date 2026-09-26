@@ -435,8 +435,22 @@ def signed_source_score(
     direction: str,
     *,
     ignored_sources: frozenset[str] | set[str] | None = None,
+    non_corroborating_sources: frozenset[str] | set[str] | None = None,
 ) -> int:
     """`S` — the §9.4 signed sum: aligned seats minus opposed seats.
+
+    `non_corroborating_sources` (board item 109, 2026-09-26) is the ONE-SIDED
+    removal: a seat named here may not CORROBORATE the trade, but its dissent
+    still counts against it. `ignored_sources` stays two-sided ("a stance too
+    stale to corroborate is too stale to dissent"). The two are separate
+    parameters, not one merged set, because they are separate facts with
+    separate consequences, and merging them silently turned this score's one
+    guarantee — that gating a stance can only ever pull the net DOWN — into a
+    falsehood: dropping an OPPOSED seat RAISES the net, and a name at net 0
+    (refused) becomes net +1 (traded). A fix for a double count must not
+    admit trades the desk refuses today, so the broadcast-macro exclusion is
+    one-sided. See `PortfolioManagerAgent.broadcast_macro_sources` for why
+    that is the right side to take it off.
 
     `S = sum(s_i)` over the five evidence seats, where `s_i` is `+SEAT_WEIGHT`
     for a seat pointing the way `direction` proposes, `-SEAT_WEIGHT` for one
@@ -456,9 +470,12 @@ def signed_source_score(
     composite methodology counts only agreers: a disagreeing input enters a
     composite as a negative number in a signed sum, and that is what this is.
     """
+    aligned_ignored = frozenset(ignored_sources or ()) | frozenset(
+        non_corroborating_sources or ()
+    )
     return SEAT_WEIGHT * (
         count_aligned_sources(
-            symbol, sources, direction, ignored_sources=ignored_sources,
+            symbol, sources, direction, ignored_sources=aligned_ignored,
         )
         - count_opposing_sources(
             symbol, sources, direction, ignored_sources=ignored_sources,
@@ -692,6 +709,28 @@ def own_bar_block_reason(
         # already confirming by the time control reaches this line, and
         # technical is a timing veto that carries no positive weight, so
         # "macro only" really does mean nothing else backs the name.
+        #
+        # **THIS IS NARROWER THAN HIS WORDS, AND THE GAP IS REAL.** Check (3)
+        # excludes only technical, so NEWS, EARNINGS or SMART_MONEY can each
+        # still be the sole backer — and `_has_supported_directional_thesis`
+        # says in its own docstring that News and Smart-money always
+        # synthesise their invalidation, so a news-only name clears this bar
+        # on a templated falsifier with nothing else having looked at it.
+        # Under "nothing green-lights a name on its own" that is the same
+        # defect wearing a different seat's badge.
+        #
+        # It is scoped to macro anyway, and the reason is NOT that the
+        # role-based bar is old — it is not. Both rulings landed on
+        # 2026-09-25, one day before this code: the role-based bar says ONE
+        # supporting seat with a falsifiable thesis and no seat opposed is
+        # enough, and the macro ruling says nothing acts alone. Those two
+        # same-day rulings are in tension and only the owner can resolve it.
+        # What distinguishes macro is not seniority of ruling but that macro
+        # is the ONLY seat holding a stance on a name it never examined:
+        # every other seat's sole-backer case is a seat that actually looked.
+        # Closing the general case means raising the bar to two seats, which
+        # would overturn the role-based bar rather than interpret it, so it
+        # is left open and stated rather than decided here.
         return (
             f"{OWN_BAR_REASON_PREFIX} — macro is the only seat supporting "
             "this name; one macro view cannot admit a name on its own"
