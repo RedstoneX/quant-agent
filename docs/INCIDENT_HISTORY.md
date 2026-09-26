@@ -22,6 +22,73 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — the retired-item reasons move out of the board's one shared line (no item retired)
+**In plain words:** closing a board item meant appending a sentence to a single line in the board file. That line had grown past eight thousand characters, and because two closures always edited the same line, only one of them could ever merge — the desk could finish work in parallel but not record it in parallel. The numbers stay on that line, where they merge as a union without conflict; the reasons move here, where entries merge one at a time.
+
+**What was moved, verbatim.** Every sentence below was cut from that line on 2026-09-26 and is reproduced unchanged. Four of the items named here — 38, 126, 144 and the 92/144 pair — had no entry of their own in this file, so this is now their only record and nothing was lost by the move.
+
+- Item 151 never sat on this board (filed and closed in the same change).
+
+- Item 38's follow-up survives as item 52, whose residue is item 63; item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file it.
+
+- Item 141 (live technical-seat ranking ties breaking alphabetically) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 126 was retired 2026-09-20; residue is items 170 (disclosure-lag) and 169 (cockpit chart).
+
+- Item 120 was retired 2026-09-23 — its SIZING half (new-name buy/short share counts dividing by a mid or stale price) kept it open past the 2026-09-20 rendering fix, so the earlier "retired 2026-09-20" claim was premature; reason in `docs/INCIDENT_HISTORY.md`, residue item 181.
+
+- Item 111 (the earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 168 was retired 2026-09-20 (upstream-history claim now rendered from `trading.lookback_days`, not a hand-typed number); reason in `docs/INCIDENT_HISTORY.md`.
+
+- Items 164 and 171 were retired 2026-09-23; reasons in `docs/INCIDENT_HISTORY.md`. 171's intent survives as item 99(g).
+
+- Item 32 was retired 2026-09-20 by owner instruction, not by a fix: he removed the whole account-level loss alarm — daily halt and 5d/20d BUY-halving brakes — instead of answering the one-response-or-two question.
+
+- Items 92 and 144 were VOIDED with it, not answered: both asked about the daily-loss trigger and its 5d/20d rungs, which are deleted.
+
+- Item 172 (an unreadable protective stop reaching no owner alert) was FILED AND CLOSED inside the same change that caused it, 2026-09-23: it never sat on this board as open work, and was fixed rather than filed because per-position stops became the only loss protection in the same commit.
+
+- Item 181 (a SHORT's risk-budget divisor using the analyst's stale entry instead of the today print, inflating `qty_by_risk`) was retired 2026-09-24 — the risk-budget path now sizes off the print via a separate `risk_sizing_price`, the allocation path and the BUY path are unchanged; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 132 (the definition-of-done gate's blind commit range on a shallow checkout) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 159 (dead Form 4 peek-ahead functions with no live caller) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 81 (the reward:risk inventory's residue) was retired 2026-09-24 — `RiskConfig.min_reward_risk_after_widening`, `ConstructorConfig.min_reward_risk_after_widening` and the dead `SUBFLOOR_SIZE_CAPPED_STATUS` were deleted as zero-reader dead code, but `REWARD_RISK_FLOOR` was NOT deleted: it is still read by `ops/model_policy/deterministic_selection.py`'s model-selection benchmark; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 93 (twelve `docs/INCIDENT_HISTORY.md` entries mis-headed at `##` instead of `###`, invisible to the merge driver) was retired 2026-09-25 — the headings were promoted to `###` and a lint (`tests/test_incident_history_headings.py`) now fails the build if a dated entry sits at `##` again; this was fixed on main in PR #665 but the board entry was never removed, so WORK.md kept reporting it open; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 130 (the number-ledger's `SCOPED_PATHS` excluding the broker order path) was retired 2026-09-25 — shipped via #544 on 2026-09-19: `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py` are already in `SCOPED_PATHS` (`src/number_sources.py`), verified still true on current main; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 108 (the position reviewer's 2% minimum stop-raise stated as a hard rule but not enforced) was retired 2026-09-25 — enforced via #641: `_midday_execute_llm_actions`'s TRAIL_STOP validation now reads the live broker stop and rejects an under-`MIN_RATCHET_PCT` ratchet (`src/pipeline.py`, constant single-sourced from `src.risk.trailing`), covered by `tests/test_exit_quality.py`; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 131 (the standalone coverage sweep leaving no record that it ran) was retired 2026-09-25 — closed via #547: `record_sweep_run` (`src/coverage_watchdog.py`) writes a `specialist_evidence` row every run and `sweep_log_line` writes the greppable log line, both called from `scripts/alert_heartbeat.py`; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Items 97, 116, 124 and 133 were retired 2026-09-25 on verification against current main — 97's pace already reads the horizon pinned at entry off the trade row (moot), 116's morning/midday/close/intra-check/pre-earnings answers are all persisted (shipped), 124's cluster fact is stamped on every row before truncation so within-symbol crowd-out cannot starve the seat (moot), and 133's held-name accounting is reconciled so a full held book is not read as a jam (shipped); reasons in `docs/INCIDENT_HISTORY.md`.
+
+- Items 96, 102, 122, 129 and 162 were retired 2026-09-25 on verification against current main — 96 is stale (`veto_contradicted_exit` in `src/risk/exit_guard.py` already runs this check and is wired into the live path), 102 shipped (`src/pipeline.py`'s `partially_filled` branch now records the cumulative fill qty/price), 122 shipped (`scripts/merge_and_deploy.sh` copies changed units, daemon-reloads and enables them, showing a diff before overwriting a hand-edited copy), 129 shipped (`_is_terminal_broker_rejection` in `src/execution/broker.py` classifies a genuine rejection by status code so only a real transient failure spends the retry burst, and both retry constants are recorded as arbitrary with an open question in `config/number_ledger.yaml`), and 162 shipped (both of its own DONE WHEN boxes are checked, resolved 2026-09-23/25); reasons in `docs/INCIDENT_HISTORY.md`.
+
+- Item 39 (opportunity-cost rotation) was retired 2026-09-25 — its last open thread, the categorical tier abandoning the whole rotation when its single worst below-bar holding was structurally protected, is fixed: the tier now walks the whole below-bar cull set worst-first and culls the first sellable name, abandoning only when all are unsellable; the ranked-margin tier stays OFF by owner mandate and 39(a) was already dissolved; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 80 (a model-typed stop with no computed level, signal bar or volatility band behind it) was retired 2026-09-25 (owner ruling) — the earlier REFUSAL-on-missing-ATR path was overruled; a missing ATR now derives the stop from price structure (nearest computed level on the protective side, else the signal/prior bar) and holds the position, skipping the name only when no structural level is readable or the readable one breaches the stop-distance sanity bound; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 158 (the technical seat's per-stock drop reasons living only in the log and as an aggregate count) was retired 2026-09-26 — the reason is now stored against the stock's own row as a stable code plus the human detail, and the funnel answers "why is this name not here" from that row; reason in `docs/INCIDENT_HISTORY.md`.
+
+### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
+
+**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
+
+**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
+
+**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
+
+**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
+
+**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
+
+---
+
 ### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
 
 **In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
@@ -38,20 +105,6 @@ what would catch it next time.
 **What was ruled out.** A new table and a new column were both rejected: the evidence store already holds symbol-scoped forensic rows, and the whole record is observability — losing it must not be able to change a trading decision, which is also why the write can never raise. No schema change means nothing to migrate and every row already on disk still reads; a row written by the first pass has no code at all and is read back as `unspecified` rather than failing.
 
 **What would catch it next time.** `tests/test_analysis_drop_reason_stored.py` asserts a dropped stock's row carries the code and the reason, a kept stock has no row, and the aggregate count reconciles against the per-row counts. `tests/test_api_funnel.py` asserts the funnel answers the question for a dropped name, marks a recovered one as recovered, says nothing about a drop for a kept name, and still reads a pre-code row.
-
-### 2026-09-26 — the checker that guards the desk's schedule could only see the unit types someone had remembered to type in
-
-**In plain words:** the desk's whole trading day is a set of small scheduling files installed on the machine, and one script exists to notice when those installed files stop matching what the repository says they should be. That script only looked at the file types listed by hand inside it. A new type of scheduling file could therefore be added, tracked, deployed and go wrong, and the guard would never look at it — not because it found nothing, but because it never looked. One such file, the status-board watcher, had in fact been tracked since 2026-08-31 and had never once been compared against the real machine.
-
-**What was wrong.** `UNIT_SUFFIXES` in `scripts/check_unit_drift.py` was a hand-maintained tuple. `.path` was missing from it, so the tracked `quant-agent-status-board.path` fell outside all four of the checker's buckets (untracked, modified, undeployed, not-enabled). Adding `.path` to the tuple (2026-09-24) fixed that one instance and left the class open: the next new unit type would be invisible in exactly the same way, silently.
-
-**What closed it.** The suffix set is now derived at run time from the unit files actually present, scanning BOTH the repository's `scripts/systemd/` and the box's systemd user directory, bounded by systemd's own fixed enumeration of unit types so a non-unit file living alongside the units (`paused_units.yaml`) is never mistaken for one. The union of both sides matters: a unit type that only ever appears hand-installed on the box, tracked nowhere, is the dangerous case the script exists to catch, and deriving from the repository alone would have hidden it before it could be reported. The old tuple survives as a sanity backstop only — a test asserts it still agrees with what the repository actually tracks, so a divergence gets a human's attention instead of a silent behaviour change.
-
-**The observation the item demanded, and why it was demanded.** The item deliberately refused to close on code alone: a guard that has never been pointed at the real thing is a claim, not a check. Run read-only against the live box on 2026-09-26 [measured], the checker reported all 35 tracked units installed byte-identically, with nothing untracked, modified, undeployed or paused-but-enabled. Specifically for `quant-agent-status-board.path`: tracked, installed, byte-identical to the checkout, and enabled through `paths.target` (a real `.wants` symlink, `systemctl --user` agreeing: enabled and active). The derived suffix set observed on the live box was `.path`, `.service`, `.timer` — so the unit was genuinely in scope of the comparison, not merely absent from the findings. No drift had occurred; the defect was always that nobody would have known either way.
-
-**What would catch it next time.** A test tracks a `.socket` unit in a fixture and asserts the checker reports it, without the test ever touching `UNIT_SUFFIXES` — if the suffix set ever reverts to being hand-maintained, that test fails. The backstop test comparing the tuple against the real `scripts/systemd/` catches the opposite drift.
-
----
 
 ### 2026-09-25 — item 93's board entry was still open a day after the code was already fixed
 
