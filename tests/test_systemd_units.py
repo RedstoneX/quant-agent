@@ -1073,3 +1073,128 @@ def test_intra_check_shares_no_tick_with_any_other_session_timer(mode: str):
         f"intra_check and {mode} still share a tick — the exact "
         f"2026-09-17 defect"
     )
+
+
+# === Board item 177, the CADENCE third ================================
+#
+# The cadence decides how many PAID intraday ticks there can be, and it is
+# the one part of item 177 with three separate definition sites:
+#
+#   1. `src/config.INTRA_CHECK_TICK_MINUTES` — the ledgered constant the
+#      cost circuit derives its transient-latch cooldown from.
+#   2. `src/scheduler.TradingScheduler._build_intra_check_trigger` — the
+#      APScheduler trigger, used by `--mode live` only.
+#   3. `scripts/systemd/quant-agent-intra_check.timer` + the ET window in
+#      `scripts/run_if_et_window.sh` — WHAT PRODUCTION ACTUALLY RUNS.
+#
+# Sites 1 and 2 were already pinned to each other
+# (`tests/test_cost_circuit.py::
+# test_the_tick_spacing_this_module_pins_matches_the_scheduler`). Site 3
+# was pinned only for its MINUTES (`tests/test_trader_feed.py`, the hourly
+# checkpoint), never for its SPACING — so the production cadence could be
+# halved or doubled, the cost circuit's cooldown would go on being derived
+# from a constant that no longer described production, and nothing would
+# fail. That is the gap these tests close; they change no schedule.
+#
+# Verified against the box on 2026-09-26: `systemctl --user list-timers`
+# shows quant-agent-intra_check.timer last fired 06:45 and next fires
+# 07:15, i.e. production runs the timer, not the APScheduler trigger.
+
+
+def _intra_check_et_window_minutes() -> tuple[int, int]:
+    """The intra_check ET window, re-read from the wrapper that enforces
+    it, so this test cannot drift from the gate."""
+    text = (SCRIPTS_DIR / "run_if_et_window.sh").read_text()
+    match = re.search(
+        r"^\s*intra_check\)\s*LO=(\d+);\s*HI=(\d+)", text, re.MULTILINE,
+    )
+    assert match, "intra_check's LO/HI window is no longer parseable"
+    return int(match.group(1)), int(match.group(2))
+
+
+def _cyclic_gaps(minutes: set[int]) -> set[int]:
+    ordered = sorted(minutes)
+    return {
+        (ordered[(i + 1) % len(ordered)] - m) % 60
+        for i, m in enumerate(ordered)
+    }
+
+
+def test_the_production_timer_spacing_is_the_ledgered_cadence_constant():
+    """The gap between two consecutive PRODUCTION intraday ticks must be
+    exactly the constant the cost circuit reasons about. Until this test
+    the constant was pinned only to the APScheduler trigger, which
+    production does not use."""
+    from src.config import INTRA_CHECK_TICK_MINUTES
+
+    minutes = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
+            "Timer.OnCalendar"
+        ][0]
+    )
+    assert _cyclic_gaps(minutes) == {INTRA_CHECK_TICK_MINUTES}, (
+        "quant-agent-intra_check.timer no longer ticks every "
+        f"{INTRA_CHECK_TICK_MINUTES} minutes — the cost circuit's "
+        "cooldown and every per-tick spend estimate are derived from that "
+        "spacing"
+    )
+
+
+def test_the_production_and_live_mode_cadences_cannot_silently_diverge():
+    """`--mode live` and the box must agree on how often the paid tick
+    fires. They deliberately land on different minutes (:15/:45 vs
+    :00/:30, the 2026-09-17 fix); they must not disagree on the SPACING,
+    because that is what decides how many paid ticks a day can hold."""
+    from src.scheduler import TradingScheduler
+
+    timer_gaps = _cyclic_gaps(
+        _fire_minutes(
+            parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
+                "Timer.OnCalendar"
+            ][0]
+        )
+    )
+    def _field(trigger, name: str) -> int:
+        return int(str(next(f for f in trigger.fields if f.name == name)))
+
+    fired = sorted(
+        _field(t, "hour") * 60 + _field(t, "minute")
+        for t in TradingScheduler._build_intra_check_trigger().triggers
+    )
+    scheduler_gaps = {b - a for a, b in zip(fired, fired[1:])}
+    assert scheduler_gaps == timer_gaps, (
+        "the live-mode trigger and the production timer now tick at "
+        f"different spacings ({scheduler_gaps} vs {timer_gaps})"
+    )
+
+
+def test_the_number_of_paid_intraday_ticks_a_day_is_derived_not_asserted():
+    """How many paid ticks a day can exist is a spending fact (board item
+    177). It is the product of the timer's minutes and the wrapper's ET
+    window, and nothing anywhere computed it. Measured against the desk's
+    own cost circuit on 2026-09-26: exactly 13 intra_check sessions were
+    recorded on each of 2026-09-21..25, the days since the timer moved to
+    :15/:45, and 14 on each day before it — both reproduced here from the
+    two files rather than typed in."""
+    lo, hi = _intra_check_et_window_minutes()
+    minutes = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
+            "Timer.OnCalendar"
+        ][0]
+    )
+    ticks = [m for m in range(lo, hi + 1) if m % 60 in minutes]
+    assert ticks, "the intra_check timer fires nowhere inside its own window"
+    assert len(ticks) == 13, (
+        f"the production intraday cadence now allows {len(ticks)} paid "
+        "ticks a day, not the 13 the desk's recorded spend was measured "
+        "on — re-measure the per-day cost before landing this"
+    )
+    # The wrapper's own comment quotes a tick count to the operator; it must
+    # not outlive the schedule it describes.
+    text = (SCRIPTS_DIR / "run_if_et_window.sh").read_text()
+    quoted = re.search(r"intra_check's ~(\d+) OK ticks/day", text)
+    assert quoted, "the wrapper no longer states its tick count"
+    assert int(quoted.group(1)) == len(ticks), (
+        "run_if_et_window.sh tells the operator a tick count the schedule "
+        "no longer produces"
+    )

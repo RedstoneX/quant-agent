@@ -17428,6 +17428,81 @@ class TradingPipeline:
         candidates.sort(key=lambda t: -t[1])
         return candidates, snapshots
 
+    @staticmethod
+    def _intraday_move_in_atr(
+        move_pct: float, atr_14: float | None, prev_close: float | None,
+    ) -> tuple[float | None, float | None]:
+        """The trigger's move expressed in the NAME'S OWN daily range.
+
+        Board item 177, the trigger third. `move_threshold_pct` is a flat
+        3% applied to every symbol alike, and the number ledger's open
+        question against it asks what move size *relative to the name's own
+        ATR* marks a development worth re-reading. That question cannot be
+        answered from the desk's record, because the record never held the
+        denominator: `intraday_evaluations.detail` stored `move_pct=` and
+        nothing else, so 253 recorded selections (2026-09-02 -> 2026-09-25)
+        say how far a name moved and never how far that name normally
+        moves. Measured on those 253 rows, the flat threshold does not
+        discriminate at all — the median move of a selection that produced
+        a BUY/SHORT is 3.50% against 3.67% for one that produced nothing,
+        and the 5-7% band produced zero orders from 51 selections — so
+        re-picking the flat number in either direction has no basis, and
+        the ATR-relative form has no data yet. This records the
+        denominator, on bars the scan already paid to fetch, changing no
+        behaviour: the threshold, the cap and the cooldown all still
+        decide exactly what they decided before.
+
+        Returns (atr_pct_of_prev_close, move_in_atr_multiples), either of
+        which is None when the inputs cannot support it.
+        """
+        if not isinstance(atr_14, (int, float)) or atr_14 <= 0:
+            return None, None
+        if not isinstance(prev_close, (int, float)) or prev_close <= 0:
+            return None, None
+        atr_pct = float(atr_14) / float(prev_close) * 100.0
+        if atr_pct <= 0:
+            return None, None
+        return atr_pct, float(move_pct) / atr_pct
+
+    def _record_intraday_trigger_atr_context(
+        self, ctx: RunContext, symbol: str, mover_symbols: set[str],
+        move_by_symbol: dict, snapshots: dict, indicators,
+    ) -> None:
+        """Stamp the ATR denominator onto a mover's existing ledger row.
+
+        Upsert on (symbol, run_id), so this updates the row
+        `record_intraday_evaluation` already wrote at selection time rather
+        than adding one: no new row, no change to the cooldown the row
+        enforces, no extra market or model call. Best-effort — a
+        measurement must never cost the scan that carries it.
+        """
+        upper = symbol.upper()
+        if upper not in mover_symbols:
+            return
+        move_pct = move_by_symbol.get(symbol, move_by_symbol.get(upper))
+        if not isinstance(move_pct, (int, float)):
+            return
+        snap = snapshots.get(symbol) or snapshots.get(upper) or {}
+        atr_pct, move_atr = self._intraday_move_in_atr(
+            float(move_pct), getattr(indicators, "atr_14", None),
+            snap.get("prev_close"),
+        )
+        detail = f"move_pct={float(move_pct):.4f}"
+        if atr_pct is None or move_atr is None:
+            detail += ";atr_pct=unreadable;move_atr=unreadable"
+        else:
+            detail += f";atr_pct={atr_pct:.4f};move_atr={move_atr:.4f}"
+        try:
+            self.db.record_intraday_evaluation(
+                symbol=upper, run_id=ctx.run_id, status="selected",
+                detail=detail,
+            )
+        except Exception as exc:  # noqa: BLE001 — measurement, never the scan
+            logger.warning(
+                "Intraday trigger ATR context not recorded for %s (%s) — the "
+                "scan is unaffected", upper, exc,
+            )
+
     def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
         """Durable skip: lock still held, movers named, no silent drop."""
         blocking = self._blocking_owner_session() or "owner_lock"
@@ -17622,6 +17697,11 @@ class TradingPipeline:
                 len(held_for_tech), held_for_tech,
             )
         tech_symbols = list(symbols) + held_for_tech
+        # Item 177: the mover set, so the ATR context below is stamped only
+        # on names the flat `move_threshold_pct` trigger actually selected —
+        # held-book coverage never went through that trigger and must not be
+        # mixed into the measurement that will answer for it.
+        symbols_set = {s.upper() for s in symbols}
 
         symbols_data = []
         symbols_bars: dict[str, list] = {}
@@ -17643,6 +17723,9 @@ class TradingPipeline:
                 )
                 continue
             indicators = compute_indicators(symbol, bars)
+            self._record_intraday_trigger_atr_context(
+                ctx, symbol, symbols_set, move_by_symbol, snapshots, indicators,
+            )
             symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
             symbols_bars[symbol] = bars
         if not symbols_data:
