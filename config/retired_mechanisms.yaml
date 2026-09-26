@@ -186,3 +186,113 @@ retired:
       - docs/WORK.md
       - docs/BOARD_NOTES.md
       - tests/test_retired_mechanisms.py
+
+# ===========================================================================
+# described: LIVE mechanisms that prompt text tells a paid seat about.
+# ===========================================================================
+#
+# The section above runs after somebody records a retirement. This one makes
+# them record it. Each entry pins a live code symbol to the exact places its
+# behaviour is described. Delete or rename the symbol and the build fails at
+# the deletion site, listing every sentence that just became untrue and
+# pointing at the one way out: move it to `retired:` above with the phrases
+# that described it. See `src/retired_mechanisms.py` for why this is not a
+# third grep, and `src/prompt_bindings.py` (item 107) for the other case —
+# behaviour that CHANGED while still existing.
+#
+# Fields:
+#   name          what the mechanism is, in words.
+#   why           what the seats are told, so a reader at the deletion site
+#                 can judge the damage without opening three files.
+#   symbols       file + dotted symbol (`name` or `Class.method`). Must
+#                 resolve to a def/class right now.
+#   described_in  file + `contains:` needles, each >= 12 characters and each
+#                 fitting inside ONE source line. Any file: the two
+#                 confirmed drift cases on this desk were Python-assembled
+#                 strings, not prompt files, so `src/agents/*.py` is the
+#                 primary surface here, not an afterthought.
+#
+# ADD AN ENTRY when you write prose describing a mechanism a seat is paid to
+# read. DO NOT add an entry per sentence — that is the annotate-everything
+# design already rejected. Add one when the sentence would be a LIE if the
+# code went away.
+
+described:
+
+  - name: sweep-vehicle liquidation before a BUY
+    why: >-
+      Three seats are told that the cash parked in the sweep vehicle is
+      auto-liquidated before any BUY executes and is therefore already
+      counted in the cash figure they are shown. If that stopped being
+      true, all three would be sizing against money that is not there.
+      `CashSweeper.fund_buys` is the code that makes it true.
+    symbols:
+      - file: src/execution/cash_sweep.py
+        symbol: CashSweeper.fund_buys
+    described_in:
+      - file: src/agents/portfolio_manager.py
+        contains:
+          - "cash-equivalent sweep vehicle and is auto-liquidated before "
+      - file: src/agents/position_reviewer.py
+        contains:
+          - "auto-liquidated before any BUY executes"
+      - file: src/agents/risk_manager.py
+        contains:
+          - "auto-liquidated before any BUY executes"
+
+  - name: the contradicted-exit veto
+    why: >-
+      The position reviewer is told that a SELL or REDUCE citing stalling,
+      lack of progress, fading momentum or deterioration on a name whose
+      own recorded numbers improved will be VETOED by deterministic code.
+      That is a promise about `veto_contradicted_exit` and the deterioration
+      vocabulary in `is_deterioration_claim`. Delete either and the seat is
+      being threatened with a gate that no longer exists, which changes how
+      it writes every exit reason.
+    symbols:
+      - file: src/risk/exit_guard.py
+        symbol: veto_contradicted_exit
+      - file: src/risk/exit_guard.py
+        symbol: is_deterioration_claim
+      - file: src/risk/exit_guard.py
+        symbol: MetricDeltas.net_improved
+    described_in:
+      - file: src/agents/position_reviewer.py
+        contains:
+          - "A SELL or REDUCE on one of these citing stalling, "
+          - "be VETOED by deterministic code"
+
+  - name: same-day trim discipline
+    why: >-
+      The reviewer is told which positions already took a sell-side action
+      today - "a midday REDUCE, or a deterministic de-lever" - and that it
+      must hold them absent a fresh hard trigger. Which symbols those are is
+      decided by `TradingPipeline._symbols_already_trimmed_today`, and the
+      executor enforces the rule independently of the prompt. If the query
+      goes, the section silently renders the wrong set or nothing at all,
+      and the 2026-05-04 AMZN 41 -> 21 -> 11 double-trim is back.
+    symbols:
+      - file: src/pipeline.py
+        symbol: TradingPipeline._symbols_already_trimmed_today
+    described_in:
+      - file: src/agents/position_reviewer.py
+        contains:
+          - "(a midday REDUCE, or a deterministic de-lever)"
+          - "Already Trimmed Today"
+
+  - name: risk-manager edits apply as an increment, and may only reduce
+    why: >-
+      The risk manager is told that an `allocation_pct` it edits is applied
+      as an INCREMENT on top of what is already held, and that an edit
+      RAISING it is refused by the engine while a reduction is applied.
+      Both halves are `TradingPipeline._apply_risk_modifications`. If that
+      guard went, the seat would go on believing it cannot increase risk
+      while its edits did exactly that.
+    symbols:
+      - file: src/pipeline.py
+        symbol: TradingPipeline._apply_risk_modifications
+    described_in:
+      - file: src/agents/risk_manager.py
+        contains:
+          - "that raises it is refused by the engine; only a "
+          - "that raises it is refused by the engine, only a "
