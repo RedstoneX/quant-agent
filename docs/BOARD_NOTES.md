@@ -447,12 +447,6 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Retired 2026-09-24** — decided: delete. `SUBFLOOR_SIZE_CAPPED_STATUS`, `RiskConfig.min_reward_risk_after_widening` and `ConstructorConfig.min_reward_risk_after_widening` were removed as zero-reader dead code, each re-verified against the current tree first. `REWARD_RISK_FLOOR` itself was NOT deleted — `ops/model_policy/deterministic_selection.py` still reads it in a real comparison for the model-selection benchmark. Full writeup in `docs/INCIDENT_HISTORY.md` (2026-09-24 entry).
 
-## item 170
-
-**Moved from WORK.md (2026-09-24) —** Live now, a real risk. Separate from item 126 (reporting vs. evidence quality). Don't just widen 45 (the only sourced number here). Decide: UNKNOWN lag for estimates, or source a real date elsewhere.
-
-**Retired 2026-09-25** — decided: mark the lag UNKNOWN rather than source a real date elsewhere (congresswatch.us has no filing-date field at all to source from). `#657` (2026-09-24, already on main) made an estimated congressional disclosure date fail the STOCK Act freshness gate outright instead of satisfying it by construction. That closed the lateness-test and no-new-constant boxes but left the flag invisible past the gate; this pass adds `disclosure_date_estimated_count` and a per-transaction `disclosure_date_estimated` flag to the seat-facing compact summary (`SmartMoneyAnalystAgent._compact_symbol`), so the seat can distinguish a measured lag from a guessed one wherever it reads `lag_days`. All three DONE-WHEN boxes closed.
-
 ## item 173
 
 **Moved from WORK.md (2026-09-24) —** Inside the 7-day lookback the next pass writes it back; past ~2026-09-28 it turns unexplained, and `send_owner_alert` has NO dedup or throttle, so it pages CRITICAL at all five session entries, daily. Nothing shows the exit was a stop, so writing it back as one stamps an unevidenced cause onto owner P&L. **(b)** `_reconcile_stop_out_fills` runs BEFORE `_reconcile_fills` at every session entry, so the desk's own unreconciled sale pages a false CRITICAL (NUE 2026-09-21). **(c)** Signed from the action name, so a COVER — and a filled buy-to-cover TRAIL_STOP — subtracts from a short instead of retiring it (36 short, fully covered, reads -72). Silent today; pinned by a test saying it is wrong.
