@@ -14,11 +14,34 @@ There is already a per-symbol check on `TargetPosition` itself
 `ReasoningChain` and speaks about many symbols at once -- which is exactly
 where the filed defect sat. This module closes that surface.
 
-DETECTION ONLY. Nothing here changes a target, a size, a price or an exit.
-`risk_allocation_pct` stays authoritative; a mismatch is surfaced and logged,
-never acted on. It reuses the exact tolerance and the exact narrow risk-%
-matcher the `TargetPosition` check uses, so both surfaces agree on what "an
-explicit risk claim" and "materially different" mean.
+RECORD AND SURFACE -- IT DOES NOT BLOCK, AND THAT WAS MEASURED, NOT ASSUMED.
+A mismatch is written to the evidence stream and reported exactly as found. No
+number is corrected toward the other one and no target is refused.
+
+The obvious argument for blocking is that a size the seat's own reasoning
+contradicts is fabricated rather than degraded. Replaying the one filed case
+against the production database on 2026-09-26 shows why that argument does not
+hold HERE. In run `run-601011e0` the model's raw response contains no 0.5 at
+all: it asked for RSG 2.5% and ZS 1.75%, exactly as the narrative says. The
+0.5 was written afterwards by the desk's own deterministic sub-floor size cap
+(`PortfolioManagerAgent._apply_subfloor_catalyst_rule` as it stood that day --
+RSG was a RANGE setup at reward:risk 0.81), whose own log line calls the result
+"Deterministic, not PM inconsistency". RSG was then traded, correctly, at the
+capped size. A gate that refused the name on this mismatch would have killed a
+legitimately sized trade over a NARRATION LAG -- the narrative is written
+before the mechanical adjustment runs, which is the same ordering problem
+`PortfolioDecision.constructor_dropped` exists to explain to the Risk Manager.
+
+So the disagreement is real and worth surfacing -- an owner-facing story that
+says 2.5% beside a position taken at 0.5% is a false statement about a live
+trade -- but it is not by itself evidence that the emitted number is wrong,
+and it cannot be allowed to veto the number. Raising this to a block needs a
+way to tell "the seat contradicted itself" from "a deterministic rule moved
+the number after the seat wrote about it", which nothing here has.
+
+It reuses the exact narrow risk-% matcher the `TargetPosition` check uses, so
+both surfaces agree on what counts as "an explicit risk claim". It does NOT
+reuse that check's tolerance -- see `_half_ulp`.
 
 FEASIBILITY / FALSE-POSITIVE POSTURE. `sizing_logic` is free prose, so a
 reliable check has to refuse to guess. Two guards keep it honest:
@@ -36,7 +59,11 @@ reliable check has to refuse to guess. Two guards keep it honest:
 
 The measured case ("RSG and AAPL get 2.5% risk each") is one sentence, one
 distinct value (2.5%), two named symbols -- so RSG (field 0.5%) is flagged and
-AAPL (field 2.5%) is not.
+AAPL (field 2.5%) is not. Re-confirmed 2026-09-26 by replaying that stored run
+read-only out of the production database: its `portfolio_manager` / `target`
+evidence rows carry RSG 0.5 and ZS 0.5 while the same run's stored
+`sizing_logic` narrates 2.5% and 1.75%. (ZS is a deliberate MISS -- its clause
+never puts the word "risk" beside the number.)
 """
 
 from __future__ import annotations
@@ -44,14 +71,60 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from src.models import (
-    RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT,
-    _explicit_risk_pct_claims,
-)
+from src.models import _RISK_PCT_CLAIM_PATTERN
 
 logger = logging.getLogger(__name__)
+
+def _explicit_risk_pct_claim_texts(text: str) -> list[str]:
+    """Every explicit risk-% claim as the seat WROTE it, digits and all.
+
+    The float-returning `models._explicit_risk_pct_claims` throws away the
+    written form, and the written form is the whole point here: "2.5" and
+    "2.50" are the same value stated to different precision, and the
+    precision is what decides whether a difference is a real disagreement or
+    a rounding of the same number (see `_half_ulp`).
+    """
+    out: list[str] = []
+    for match in _RISK_PCT_CLAIM_PATTERN.finditer(text or ""):
+        out.append(next(g for g in match.groups() if g is not None))
+    return out
+
+
+def _half_ulp(field_pct: float) -> Decimal | None:
+    """Half the last place of `risk_allocation_pct` AS IT WAS EMITTED.
+
+    NOT a chosen tolerance -- there is no number to choose here. A decimal
+    figure carries its own precision: a field emitted as ``0.5`` asserts a
+    tenth-of-a-point value, so every quantity in [0.45, 0.55) rounds to it
+    and is the SAME number said differently, while anything outside that
+    band is a different number. Half the unit of the field's own last place
+    is exactly that band's half-width, so it is read off the emitted value
+    rather than picked.
+
+    This deliberately replaces the earlier borrowed tolerance
+    (`models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT`, one
+    `min_position_risk_pct` increment = 0.5pp). That figure is a risk-BUDGET
+    floor, not a statement about how precisely the field is written, and at
+    0.5pp it declared prose "2.5% risk" and an emitted 2.0 to be the same
+    risk -- a 25% sizing difference passing unseen. The per-symbol
+    `TargetPosition.thesis` check still uses its own constant; that surface
+    is not touched here.
+
+    Returns ``None`` when the emitted value has no readable decimal form, in
+    which case the pair is left alone rather than judged on a guess.
+    """
+    try:
+        emitted = Decimal(str(field_pct))
+    except (InvalidOperation, ValueError):
+        return None
+    exponent = emitted.as_tuple().exponent
+    if not isinstance(exponent, int):
+        return None
+    return Decimal(1).scaleb(exponent) / Decimal(2)
+
 
 #: Split prose into sentences WITHOUT breaking a decimal: the delimiter must be
 #: followed by whitespace (or be a line break), so the "." inside "2.5%" -- a
@@ -109,13 +182,17 @@ def check_sizing_narrative(decision: Any) -> list[SizingNarrativeMismatch]:
     flagged: set[str] = set()
 
     for sentence in _SENTENCE_SPLIT.split(text):
-        distinct = set(_explicit_risk_pct_claims(sentence))
+        # Keyed by VALUE, not by spelling: "2.5" and "2.50" are one claim.
+        distinct = {
+            Decimal(t): t for t in _explicit_risk_pct_claim_texts(sentence)
+        }
         # 0 claims -> nothing to check. 2+ distinct claims in one sentence ->
         # cannot pair a value to a symbol with confidence, so MISS rather than
         # false-flag. Only the unambiguous single-value sentence is checked.
         if len(distinct) != 1:
             continue
-        prose_pct = next(iter(distinct))
+        prose_text = next(iter(distinct.values()))
+        prose_pct = float(prose_text)
 
         for symbol, field_pct in field_by_symbol.items():
             if symbol in flagged:
@@ -126,7 +203,11 @@ def check_sizing_narrative(decision: Any) -> list[SizingNarrativeMismatch]:
             # flag).
             if not re.search(rf"\b{re.escape(symbol)}\b", sentence):
                 continue
-            if abs(prose_pct - field_pct) > RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT:
+            half_ulp = _half_ulp(field_pct)
+            if half_ulp is None:
+                continue
+            gap = abs(Decimal(prose_text) - Decimal(str(field_pct)))
+            if gap > half_ulp:
                 detail = (
                     f"{symbol}: sizing_logic narrative states risk "
                     f"{prose_pct:g}% but emitted risk_allocation_pct="
