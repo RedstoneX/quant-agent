@@ -12,7 +12,12 @@ from src.data.levels import (
     format_levels_block,
     structure_coverage,
 )
-from src.models import TechAnalysisResult, parse_telemetry
+from src.models import (
+    DROP_CODE_MALFORMED_ROW,
+    DROP_CODE_SCHEMA_INVALID,
+    TechAnalysisResult,
+    parse_telemetry,
+)
 from src.token_budget import pack_to_budget, size_model_for_agent
 
 logger = logging.getLogger(__name__)
@@ -952,6 +957,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 _malformed_sink[sym] = reason
             parse_telemetry.record_dropped_item(
                 "TechAnalysisResult", sym, reason=reason,
+                reason_code=DROP_CODE_MALFORMED_ROW,
             )
         if malformed_rows:
             logger.warning(
@@ -1030,6 +1036,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     reason = f"failed validation on {fields}"
                     parse_telemetry.record_dropped_item(
                         "TechAnalysisResult", bad_symbol, reason=reason,
+                        reason_code=DROP_CODE_SCHEMA_INVALID,
                     )
                     if bad_symbol in submitted:
                         _malformed_sink[bad_symbol] = reason

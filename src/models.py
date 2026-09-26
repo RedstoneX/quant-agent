@@ -185,6 +185,38 @@ def _normalize_enum_case_fields(
 # a whole candidate.
 
 
+#: `specialist_evidence.kind` for the per-stock parse-drop row (board item
+#: 158). Defined HERE rather than in `src/pipeline_stages.py` so the read-only
+#: API can name the same kind without importing the pipeline — that import is
+#: forbidden for `src/api/routes_evidence.py` and enforced by
+#: `tests/test_api_safety.py`. `src.pipeline_stages.ANALYSIS_DROP_KIND` is an
+#: alias of this constant, not a second copy.
+ANALYSIS_DROP_KIND = "analysis_drop"
+
+#: STABLE machine-readable drop codes. The prose reason beside them is written
+#: for a person and will be reworded; a reader filtering "show me every stock
+#: the tech seat could not read this month" must not be grepping English. These
+#: strings are part of the stored record: rename one and every row already on
+#: disk becomes unmatchable, so add a new code instead.
+#:
+#: `malformed_row`   — the model's row was not valid JSON (the #538 salvage
+#:                     path); the row never became an object.
+#: `schema_invalid`  — the row decoded but failed the Pydantic contract.
+#: `unspecified`     — recorded before codes existed, or by a seat whose drop
+#:                     site passes no code. NOT an error: a row written by the
+#:                     original item-158 fix carries a reason and no code, and
+#:                     must still read back.
+DROP_CODE_MALFORMED_ROW = "malformed_row"
+DROP_CODE_SCHEMA_INVALID = "schema_invalid"
+DROP_CODE_UNSPECIFIED = "unspecified"
+
+ANALYSIS_DROP_CODES = frozenset({
+    DROP_CODE_MALFORMED_ROW,
+    DROP_CODE_SCHEMA_INVALID,
+    DROP_CODE_UNSPECIFIED,
+})
+
+
 class AnalysisParseTelemetry:
     """Per-run tally of what parsing lost or had to paper over.
 
@@ -209,7 +241,13 @@ class AnalysisParseTelemetry:
         # the stock it was dropped for (`specialist_evidence`, kind
         # `analysis_drop`). First concrete reason per key wins — a retry's
         # second drop of the same symbol never overwrites the original why.
-        self._drop_reasons: dict[tuple[str, str], str] = {}
+        #
+        # ONE dict holding `(code, prose)` as a pair, not two dicts. A stable
+        # code and the human detail that contradicts it is worse than either
+        # alone, and two independently-`setdefault`-ed maps can drift the
+        # moment one call site passes a reason and the next passes a code.
+        # Written once, read as two projections below.
+        self._drop_reasons: dict[tuple[str, str], tuple[str, str]] = {}
         self._local = threading.local()
 
     @property
@@ -247,11 +285,16 @@ class AnalysisParseTelemetry:
 
     def record_dropped_item(
         self, model_name: str, key: str, reason: str | None = None,
+        reason_code: str | None = None,
     ) -> None:
         """A whole parsed item was discarded — `key` is the symbol where known.
 
         `reason` is the human-readable WHY (e.g. "malformed: ..." or "failed
-        validation on ..."). Passed by the technical seat's two drop sites so
+        validation on ..."); `reason_code` is the STABLE machine-readable
+        companion (one of `ANALYSIS_DROP_CODES`), because prose written for a
+        person gets reworded and a later reader must still be able to select
+        every drop of one kind without grepping English. Passed by the
+        technical seat's two drop sites so
         board item 158's requirement — the reason stored alongside the stock,
         not only in the log — can be met downstream. Optional so the other
         seats' drop sites (news, PM, evening) need no change; they record a
@@ -274,11 +317,16 @@ class AnalysisParseTelemetry:
             return
         with self._lock:
             self._drops[(model_name, key)] += 1
-            if reason:
+            if reason or reason_code:
                 # First concrete reason per key wins; a later retry's drop of
                 # the same symbol keeps the original why rather than clobbering
-                # it. `setdefault` is inside the same lock as the count.
-                self._drop_reasons.setdefault((model_name, str(key)), str(reason))
+                # it. `setdefault` is inside the same lock as the count, and
+                # code and prose are stored as ONE value so they can never be
+                # half-updated against each other.
+                code = str(reason_code or DROP_CODE_UNSPECIFIED)
+                self._drop_reasons.setdefault(
+                    (model_name, str(key)), (code, str(reason or "")),
+                )
 
     def snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
@@ -289,9 +337,25 @@ class AnalysisParseTelemetry:
             return dict(self._drops)
 
     def dropped_reasons_snapshot(self) -> dict[tuple[str, str], str]:
-        """WHY each dropped item was dropped, keyed (model, symbol)."""
+        """WHY each dropped item was dropped, in prose, keyed (model, symbol).
+
+        Only keys with real prose appear: a drop recorded with a code and no
+        sentence has nothing to show a person here.
+        """
         with self._lock:
-            return dict(self._drop_reasons)
+            return {
+                key: reason for key, (_code, reason) in self._drop_reasons.items()
+                if reason
+            }
+
+    def dropped_reason_codes_snapshot(self) -> dict[tuple[str, str], str]:
+        """The STABLE code for each dropped item, keyed (model, symbol).
+
+        Same source tuple as `dropped_reasons_snapshot`, so the code and the
+        prose can never name different causes for the same key.
+        """
+        with self._lock:
+            return {key: code for key, (code, _reason) in self._drop_reasons.items()}
 
     def total_null_coercions(self) -> int:
         with self._lock:
