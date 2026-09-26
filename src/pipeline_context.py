@@ -211,6 +211,37 @@ class RunContext:
     #    distance_to_forced_liquidation_pct, alert_owner, reason}
     leverage: dict = field(default_factory=dict)
 
+    # Spec §11.2 (item 112) — THIS session's fresh per-seat read, the canonical
+    # {symbol: {seat: stance}} evidence registry the Portfolio Manager was
+    # actually shown, stashed by DecisionStage so the post-decision
+    # conviction de-lever can cut the WEAKEST-by-conviction names first
+    # instead of a stale persisted stance. Absent on every PM-less lane
+    # (early return, resume, paid-suspended) — there the preamble margin
+    # floor is the sole enforcer, which is correct.
+    evidence_registry: dict[str, dict[str, str]] = field(default_factory=dict)
+    # §9.4 freshness, stashed beside the registry it belongs to: the exact
+    # {symbol: {source}} set `PortfolioManagerAgent.stale_evidence_sources`
+    # produced this session — which today means an over-age EARNINGS stance
+    # and nothing else, since that is the only freshness rule §9.4 has. The
+    # conviction de-lever passes it as `ignored_sources` so it counts the
+    # same stances the constructor is willing to size on.
+    evidence_stale_sources: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Item 112 — the RAW `AnalystVerdict`s every seat produced this session,
+    # BEFORE `candidate_eligibility` and the conviction bar remove names that
+    # may not be BOUGHT today. The de-lever's cut order ranks conviction about
+    # a HOLDING, and an entry-admission list is the wrong question for that:
+    # the conviction bar's STAY side is opposition-only by owner ruling
+    # (2026-09-25), so a held name dropped from the entry survivors has
+    # explicitly earned its right to stay.
+    seat_verdicts: list = field(default_factory=list)
+    # Item 112 — the morning preamble scopes itself to the margin FLOOR and
+    # leaves the ORDINARY §11.2 ceiling to the post-decision conviction pass.
+    # This is the debt that deferral creates. `_discharge_deferred_gross_
+    # ceiling`, called from the morning body's `finally`, pays it on every
+    # lane the conviction pass never reached (PM-less early returns, resume,
+    # an exception exit), so no lane can silently lose the ordinary ceiling.
+    gross_ceiling_deferred: bool = False
+
     portfolio_decision: "PortfolioDecision | None" = None
     # Transport-successful model output can still fail deterministic parsing,
     # schema, or grounding. Preserve the exact subtype for session status and

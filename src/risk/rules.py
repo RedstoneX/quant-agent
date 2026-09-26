@@ -1421,6 +1421,19 @@ def apply_gross_ceiling(
     # (`TradingPipeline._enforce_gross_ceiling`), which runs before any agent
     # and therefore cannot be disabled by a blank model response.
     emit_trims: bool = True,
+    # Item 112 — optional per-symbol CONVICTION cut order for step 3. Maps
+    # each held symbol to an ALREADY-BUILT sort key, lowest cut FIRST; this
+    # function never computes conviction and never interprets the tuple
+    # beyond comparing it. The caller
+    # (`TradingPipeline._conviction_cut_order`) builds it from the §9.4
+    # yes/no and the desk's own `rank_verdicts` candidate ordering — NOT
+    # from the signed source score as a grade, whose graded use was retired
+    # (board item 66; see `agreement_refuses_trade`). When None (the default,
+    # and every lane with no fresh per-seat read — midday, close, intraday,
+    # PM-less morning) the order is byte-identical to before: biggest loser
+    # first. It changes only the ORDER trims are taken, never which book is
+    # over its ceiling or the never-full-liquidation clamp.
+    conviction_rank: dict[str, tuple[int, int]] | None = None,
 ) -> GrossCeilingOutcome:
     """Enforce the §11.2 gross-exposure ceiling, blocking BEFORE trimming.
 
@@ -1643,17 +1656,59 @@ def apply_gross_ceiling(
     # deterministic order across runs. The SAME ordering `_force_delever`
     # already uses for the cash-only safety net — a second, divergent notion
     # of "which position goes first" is exactly the sprawl §12.2 cleaned up.
-    candidates.sort(
-        key=lambda item: (
-            float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
-            -item[2],
-            item[1],
+    #
+    # Item 112 — when a CONVICTION cut order is supplied (the morning
+    # post-decision de-lever, which has THIS session's fresh per-seat read),
+    # it is the PRIMARY key: the lowest key goes first, so a conviction-dead
+    # winner is sold before an intact-thesis loser. A symbol the caller did
+    # not place sorts at the weakest end — the desk produced no defence of
+    # holding it. The biggest-loser trio stays as the tie-break, so with no
+    # conviction_rank the order is exactly as before.
+    if conviction_rank is not None:
+        candidates.sort(
+            key=lambda item: (
+                conviction_rank.get(item[1], (0, 0)),
+                float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
+                -item[2],
+                item[1],
+            )
         )
-    )
+    else:
+        candidates.sort(
+            key=lambda item: (
+                float(getattr(item[0], "unrealized_pnl", 0.0) or 0.0),
+                -item[2],
+                item[1],
+            )
+        )
     for position, symbol, position_gross in candidates:
         if over <= 1e-6:
             break
         take = min(position_gross, over)
+        # THE MINIMUM TRIM MUST NOT AMPLIFY A ROUNDING RESIDUE. The fraction
+        # below is expressed to 0.1% and the pipeline then floors the order
+        # to whole shares, both deliberately DOWNWARD so a trim never sells
+        # the book below its ceiling. That leaves a residue of a few dollars,
+        # and before this guard the residue pulled in a WHOLE EXTRA NAME at
+        # the 1.0% floor — shedding up to 1% of a second position to chase a
+        # $2 remainder. Under the conviction cut order that spurious trim
+        # landed by construction on the HIGHEST-conviction holding still
+        # standing, because the cut walks weakest-first and the strongest
+        # name is what is left: the exact opposite of the ordering's purpose.
+        # So once a trim has been taken, stop as soon as the minimum trim
+        # would shed MORE than the breach that remains. The book is then
+        # under its ceiling to within the ticket's own precision, which is
+        # the same residue whole-share flooring already leaves.
+        # The 1.0% below is the trim builder's own long-standing minimum
+        # slice, unchanged and read here rather than re-chosen.
+        if out.trims and take < position_gross * 0.01:
+            logger.info(
+                "Gross-exposure ceiling: $%.0f of breach remains, less than "
+                "the minimum trim of %s ($%.0f) — stopping rather than selling "
+                "a second name to chase a rounding residue",
+                take, symbol, position_gross * 0.01,
+            )
+            break
         fraction_pct = min(100.0, max(1.0, round(take / position_gross * 100, 1)))
         is_short = position_side(position) == SECTOR_SIDE_SHORT
         trim = TradeDecision(
