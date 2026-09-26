@@ -3125,10 +3125,11 @@ class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
     # buying) while leaving SELL/COVER/HOLD — every exit and existing holding —
     # untouched. This, not a veto, is how the seat stops new buying.
     scale_all_buys: float = Field(default=1.0, ge=0.0, le=1.0)
-    # Categorized reason for any modification / scaling. PM reads the recent
-    # history of this field to self-calibrate in a targeted way: repeated
-    # `oversized` means cut base allocations; repeated `rr_fail` means trust
-    # TA's R/R math more literally; etc. One label per verdict.
+    # Categorized reason for any modification / scaling. The recent history of
+    # this field is RENDERED INTO PM's sheet, which then asks PM to adjust its
+    # own sizing when a tag repeats (`oversized` → smaller bases, `rr_fail` →
+    # read TA's R/R more literally, etc.). Nothing here resizes anything: no
+    # code reads this field and changes an allocation. One label per verdict.
     reason_category: RiskReasonCategory = "clean"
     reasoning: str
 

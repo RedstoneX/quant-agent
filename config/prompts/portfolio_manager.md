@@ -640,7 +640,7 @@ unless noted, single match for `signal_fidelity`:
 
 | `cat=` tag | Today's adjustment |
 |---|---|
-| `oversized` | Cut every BUY base 25%; name it in `sizing_logic` |
+| `oversized` | Your recent BUY bases have been too big for their conviction: bring them DOWN on the names whose thesis is thinnest, and name the reduction in `sizing_logic`. No fixed percentage — the old flat 25% was an invented figure nothing in the desk enforced, and it is gone. |
 | `rr_fail` | Read TA R/R literally on RANGE setups and prefer better-paying candidates; never apply it to a breakout |
 | `concentration` | Over-concentrated: SHRINK or SKIP into the crowded sector — trim base size or drop the marginal name; NEVER open or add a name to "diversify" or balance the book. Concentration can shed weight, it cannot buy it. |
 | `correlation_risk` | At most 1 name per highly-correlated cluster |
