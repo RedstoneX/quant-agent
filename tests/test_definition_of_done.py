@@ -91,6 +91,23 @@ def _change(repo: Path, base: str) -> dod.Change:
     )
 
 
+
+def _change_retiring_an_item(messages: str, tmp_path: Path | None = None) -> dod.Change:
+    """A Change that retires one item, so the observable check arms.
+
+    The tree is this repository, so a path cited in `messages` resolves the
+    way it does in the live gate.
+    """
+    return dod.Change(
+        base="BASE",
+        paths=["docs/WORK.md"],
+        messages=dod.unwrap_trailers(messages),
+        work_md_before=_board("**7. Thing — OPEN.**", "1, 2"),
+        work_md_after=_board("", "1, 2, 7"),
+        tree=Path(__file__).resolve().parents[1],
+    )
+
+
 def _base_with_board(tmp_path: Path, items: str, retired: str = "1, 2") -> tuple[Path, str]:
     repo = _repo(tmp_path)
     _write(repo, dod.WORK_MD, _board(items, retired))
@@ -814,3 +831,38 @@ def test_a_blank_line_ends_a_continuation():
     assert len(objections) == 1
     assert "wraps onto this line" in objections[0][1]
     assert "unrelated paragraph" not in objections[0][1]
+
+
+
+def test_one_compliant_observable_rescues_a_weaker_one_beside_it():
+    """A later commit must be able to repair an earlier one.
+
+    Requiring EVERY occurrence to pass, on a repository where force-push is
+    blocked, meant one weak sentence in a branch's first commit condemned the
+    whole branch to being re-cut. That cost nine pull requests on 2026-09-26,
+    four of them carrying observables genuinely better than the rule — they
+    named the rendered text, the log row and the database row a reader would
+    actually look at, and cited no file. The claim this check enforces is that
+    the change declares SOMETHING confirmable; one declaration establishes it.
+    """
+    weak = "Acceptance-observable: the ranking reads better than it did before"
+    good = (
+        "Acceptance-observable: tests/test_definition_of_done.py fails when a "
+        "closure declares nothing a human could confirm after a live session"
+    )
+    change = _change_retiring_an_item(messages=weak + "\n" + good + "\n")
+    assert dod.acceptance_observable_problems(change) == []
+
+
+def test_every_weak_observable_is_reported_when_none_qualifies():
+    """The messages are the author's guide, so they must all still appear."""
+    messages = (
+        "Acceptance-observable: too short to count here\n"
+        "Acceptance-observable: long enough to clear the word floor easily but "
+        "naming no file anywhere in this repository at all\n"
+    )
+    problems = dod.acceptance_observable_problems(
+        _change_retiring_an_item(messages=messages))
+    assert len(problems) == 2
+    assert any("words" in p for p in problems)
+    assert any("cites no path" in p for p in problems)
