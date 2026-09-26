@@ -38,6 +38,74 @@ what would catch it next time.
 
 **Still open, and it is the part that governs money.** The trade-picking sheet's whole sizing arithmetic exists only as prose: conviction bases of 3.0, 1.75 and 0.75 with ranges around them, a 0.25 bonus at a reward:risk of 3, a halving at eight days stale, a half-point shade inside each range. The technical sheet's "three aligned signals", its 1-3 / 4-7 / 8+ freshness tiers and its forward-PE 40/60 and price-to-sales 15/25 levels are the same shape. Every one was checked against the code on 2026-09-26: no function computes any of them, and none is in the number ledger. Under the desk's own doctrine an unsourceable number comes out of the path rather than being ratified quietly — removing a sizing formula from the sheet that sizes trades is a money decision, not a documentation pass, so it is filed rather than done here.
 
+### 2026-09-26 — the rule that keeps a profit target honest was quietly refusing to move it for the desk's best winners (item 114 retired)
+
+**Plain language.** A position's profit target is measured as "how far can
+this stock travel from where we bought it, in the time we gave the trade". If
+the stock runs hard, everything the chart offers inside that distance is now
+BEHIND the price, so the desk could only refuse to update the target — and
+the harder the position won, the more certain the refusal became. The target
+is now allowed one second attempt, measured from today's close over the time
+the position has LEFT, and only onto a real level still standing in its way.
+
+**MEASURED FIRST, and the count is zero.** Both refusals this item named
+(`REFUSAL_DERIVED_TARGET_BEHIND_PRICE`, `REFUSAL_NO_STRUCTURE_LEFT_IN_DIRECTION`)
+have fired ZERO times. Two independent sources, read read-only on 2026-09-26:
+the production database holds 11,848 `specialist_evidence` rows spanning
+2026-08-17 to 2026-09-26 and NOT ONE of kind `target_revision` or
+`target_level_break`; the retained application logs cover 2026-08-21 to
+2026-09-26 and contain no "Target revised" or "Target revision refused" line
+at all. The revision code has been deployed since 2026-09-18. So the refusals
+are not rare — the whole path is DORMANT, because it only runs when a review
+seat raises a revision flag and no seat has ever raised one.
+
+**DECISION (orchestrator, 2026-09-26, under the 2026-09-18 delegation): build
+the remaining-horizon re-anchor anyway, and say plainly that no measurement
+supports it.** A zero count cannot distinguish "these refusals are correct"
+from "nobody has asked the question yet", and recording "the refusals stand"
+on the strength of a dormant path would be recording a measurement that was
+never taken. What does argue for building it is the code's own shape and the
+unmerged at-target work: the refusal rate rises with how right the desk was,
+which is not a safety property, and PR #726 (item 6) turns this same
+derivation on for EVERY held position on EVERY review, at which point the
+refusal stops being hypothetical and becomes the routine outcome for the
+largest winners in the book. That PR says so itself, in the comment above its
+`TARGET_CANNOT_EXTEND_CODES` set.
+
+**What was built, and what was deliberately NOT built.** The entry-anchored
+derivation is unchanged and still runs first. Only when it has already refused
+with "the target I derived is behind the price" does one fallback run: the
+same derivation, with the reach anchored on the latest completed close over
+the REMAINING horizon — the horizon pinned at entry minus the holiday-aware
+trading sessions the position has already used. Both numbers already existed
+and are already used elsewhere; nothing was invented and no constant was
+added.
+
+Three conditions keep the fallback from becoming the thing this item forbade
+— a target re-anchored on the current price alone, which would chase price
+and always be reachable:
+
+* The remaining horizon must be READ, never assumed. No pinned horizon or no
+  sessions-held count means no re-anchor at all.
+* The reach SHRINKS as the position spends its horizon. A position with one
+  session left reaches a third as far as one with ten, so the target cannot be
+  pushed out indefinitely by the price move; a position past its horizon
+  cannot re-anchor at all and is managed by its stop.
+* The re-anchored target must land on a STRUCTURAL LEVEL still in the way, and
+  must sit further from entry than the stored one. The measured-move fallback
+  is explicitly rejected here: "close plus some ATR" exists whatever the chart
+  looks like, which is the current price wearing a hat.
+
+**What this does NOT touch.** Progress and pace are still measured against the
+target pinned at entry, so a re-anchored target still cannot move the exit
+guard's veto. The module still places no orders. The refusal for a chart with
+no structure left in the trade's direction is unchanged, and no outcome code
+was added or renamed — deliberately, because PR #726 keys its
+trailing-stop-only state off those exact code strings and a new code would
+have silently changed that behaviour.
+
+---
+
 ### 2026-09-26 — the rule stopping the risk seat from making a trade BIGGER was enforced in two places at once (item 155 retired)
 
 **In plain words:** the risk seat is allowed to shrink a planned trade, never to grow one. That rule was being applied twice, in two different parts of the code, and the second copy was written for one side of the market and the first copy for the other. Nothing was mis-sized by it, but two copies of one safety rule is exactly how the copies drift apart and one of them stops matching. It is now enforced in one place, covering both buying and short selling, and a test fails the build if a second copy ever comes back.
