@@ -22,6 +22,145 @@ what would catch it next time.
 
 ---
 
+### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
+
+**In plain words.** A single figure, "one average day's range", was deciding
+two unrelated things: how far a holding must fall before the desk accepts the
+fall is real, and how far a day's closing price must sit past a support level
+before that level counts as broken. They are different questions about
+different things, and because they shared one figure neither could be answered
+without silently moving the other. They are now two separate figures. Both are
+still exactly what they were, nothing the desk does changed today, and neither
+was nudged — this item's own terms forbid retuning either while splitting them.
+Separately, five gates that decide whether an order is placed at all were
+examined against the desk's own filled orders. One was deleted outright as dead.
+Three were measured for the first time, and the measurements are genuinely
+useful while still not picking a value. The last one cannot be removed on its
+own without making the account report less honest than it is today.
+
+**The split, and a labelling error found while doing it.** The exit path's band
+was recorded in the number ledger as if it were worked out from the trailing
+stop's band of 1.25 average ranges. It reads 1.0. A figure that is not its
+stated parent's figure was never derived from it; it is a second flat number
+and is now recorded as one. That correction, and the new name for the break
+margin, are why the ledger's count of unanswered numbers rises by one after the
+deletion below lowers it by one.
+
+**What the published work actually says, so this is not searched a third time.**
+For the "has it really moved against me" band, every published multiple sits
+near three average daily ranges, not one — Wilder's 1978 volatility system, the
+Chandelier Exit's standard setting, and Kaufman, who treats it as a dial and
+blesses no constant. All three measure a stop's distance from a running high
+rather than a move away from the entry price, so they are the closest published
+analogue and not the same measurement; that is why nothing was swapped. Going
+from one to three would make the desk markedly slower to accept a loss as real,
+which is owner appetite and outside this item. For the "has this level broken"
+margin there is no answer in these units at all: the literature measures a break
+as a percentage of price and differently for a major level than a minor one
+(Edwards & Magee, roughly 3% and 1%), or holds that a decisive close needs no
+distance at all (Bulkowski). The confirmation rule wrapped around it — two
+consecutive closes — is properly sourced. Only the distance is not, and it is
+unidentifiable in the units it is written in rather than merely uncited.
+
+**The order gates, measured.** Method, so it can be repeated: the production
+`trades` table, rows with `fill_status = 'filled'`, 2026-09-15 to 2026-09-25,
+30 buy entries and 3 short entries. The submitted limit is stored, and the
+slippage belt itself sets that limit at the reference price plus or minus 40
+basis points, so the reference price can be recovered from it and the realised
+slippage is the fill against that reference. Results:
+
+* The entry-slippage belt runs at a median of 2.6 basis points, a 90th
+  percentile of 26.4, and a maximum of exactly 40.0 — one order in thirty
+  filled at the belt and none above it. It does not explain any ordinary fill.
+  It also cannot be identified from this data, because the belt censors its own
+  tail: an order that would have slipped further is refused and never appears.
+  The refusals are nowhere near it — all nine recorded slippage skips had the
+  quoted offer between 391 and 1466 basis points above the reference.
+* The 2% ask-skip therefore fires at about 241 basis points above the
+  reference, which sits inside a roughly 350-point band of the desk's own data
+  containing no observation whatsoever. Every multiple between about 1.004 and
+  about 1.035 would have produced an identical decision on every case the desk
+  has ever seen. The measurement the ledger asked for is done; it tells us the
+  gate is far from both populations and cannot tell us the value.
+* The 0.5% minimum weight change faces zero commission — Alpaca charges none on
+  stock — so its whole cost is that same measured slippage. On a $10,000 book a
+  0.5% change is a $50 order whose measured expected cost is about one cent.
+  The cost side cannot justify a floor of this size. What the floor should be
+  is still open, because the other half of the question is how much pointless
+  order churn the desk will tolerate, and that is appetite.
+
+**The deletion, and what it changes.** The constructor's own $500 minimum-order
+floor is gone. Nothing in the constructor read it. The single call that
+forwarded it reached a parameter that `apply_gross_ceiling` has explicitly
+accepted and ignored since 2026-09-24 — so the comment sitting at the field's
+definition site, which said that gate still read it as a notional floor, was
+false on the day it was written. No order size, refusal or gate behaves
+differently. The sweep's own separately-named $500 is untouched.
+
+**Why the cash reserve band was NOT deleted.** The advisory that reads it is
+display-only — the repo's own quantities module says in terms that subtracting
+it from deployable cash produced a figure no part of the engine ever used, and
+no consumer of the two API fields exists here. But the band has a second reader:
+the cash sweeper itself, which is disabled rather than removed. Deleting the
+advisory alone would leave the band alive, no longer reported anywhere, and one
+configuration flag away from governing real money again — worse than today, not
+better. The band, the four dead sweep padding and buffer constants, the sweep's
+minimum order and the advisory all retire together with the sweeper, which is
+about 187 references across the pipeline, the API and nine test modules. That is
+its own job and was not begun here.
+### 2026-09-26 — the retired-item reasons move out of the board's one shared line (no item retired)
+**In plain words:** closing a board item meant appending a sentence to a single line in the board file. That line had grown past eight thousand characters, and because two closures always edited the same line, only one of them could ever merge — the desk could finish work in parallel but not record it in parallel. The numbers stay on that line, where they merge as a union without conflict; the reasons move here, where entries merge one at a time.
+
+**What was moved, verbatim.** Every sentence below was cut from that line on 2026-09-26 and is reproduced unchanged. Four of the items named here — 38, 126, 144 and the 92/144 pair — had no entry of their own in this file, so this is now their only record and nothing was lost by the move.
+
+- Item 151 never sat on this board (filed and closed in the same change).
+
+- Item 38's follow-up survives as item 52, whose residue is item 63; item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file it.
+
+- Item 141 (live technical-seat ranking ties breaking alphabetically) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 126 was retired 2026-09-20; residue is items 170 (disclosure-lag) and 169 (cockpit chart).
+
+- Item 120 was retired 2026-09-23 — its SIZING half (new-name buy/short share counts dividing by a mid or stale price) kept it open past the 2026-09-20 rendering fix, so the earlier "retired 2026-09-20" claim was premature; reason in `docs/INCIDENT_HISTORY.md`, residue item 181.
+
+- Item 111 (the earliest-trimmed symbol in a multi-symbol de-lever left naked) was retired 2026-09-20; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 168 was retired 2026-09-20 (upstream-history claim now rendered from `trading.lookback_days`, not a hand-typed number); reason in `docs/INCIDENT_HISTORY.md`.
+
+- Items 164 and 171 were retired 2026-09-23; reasons in `docs/INCIDENT_HISTORY.md`. 171's intent survives as item 99(g).
+
+- Item 32 was retired 2026-09-20 by owner instruction, not by a fix: he removed the whole account-level loss alarm — daily halt and 5d/20d BUY-halving brakes — instead of answering the one-response-or-two question.
+
+- Items 92 and 144 were VOIDED with it, not answered: both asked about the daily-loss trigger and its 5d/20d rungs, which are deleted.
+
+- Item 172 (an unreadable protective stop reaching no owner alert) was FILED AND CLOSED inside the same change that caused it, 2026-09-23: it never sat on this board as open work, and was fixed rather than filed because per-position stops became the only loss protection in the same commit.
+
+- Item 181 (a SHORT's risk-budget divisor using the analyst's stale entry instead of the today print, inflating `qty_by_risk`) was retired 2026-09-24 — the risk-budget path now sizes off the print via a separate `risk_sizing_price`, the allocation path and the BUY path are unchanged; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 132 (the definition-of-done gate's blind commit range on a shallow checkout) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 159 (dead Form 4 peek-ahead functions with no live caller) was retired 2026-09-24; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 81 (the reward:risk inventory's residue) was retired 2026-09-24 — `RiskConfig.min_reward_risk_after_widening`, `ConstructorConfig.min_reward_risk_after_widening` and the dead `SUBFLOOR_SIZE_CAPPED_STATUS` were deleted as zero-reader dead code, but `REWARD_RISK_FLOOR` was NOT deleted: it is still read by `ops/model_policy/deterministic_selection.py`'s model-selection benchmark; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 93 (twelve `docs/INCIDENT_HISTORY.md` entries mis-headed at `##` instead of `###`, invisible to the merge driver) was retired 2026-09-25 — the headings were promoted to `###` and a lint (`tests/test_incident_history_headings.py`) now fails the build if a dated entry sits at `##` again; this was fixed on main in PR #665 but the board entry was never removed, so WORK.md kept reporting it open; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 130 (the number-ledger's `SCOPED_PATHS` excluding the broker order path) was retired 2026-09-25 — shipped via #544 on 2026-09-19: `src/execution/broker.py`, `src/execution/stop_repair.py` and `src/coverage_watchdog.py` are already in `SCOPED_PATHS` (`src/number_sources.py`), verified still true on current main; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 108 (the position reviewer's 2% minimum stop-raise stated as a hard rule but not enforced) was retired 2026-09-25 — enforced via #641: `_midday_execute_llm_actions`'s TRAIL_STOP validation now reads the live broker stop and rejects an under-`MIN_RATCHET_PCT` ratchet (`src/pipeline.py`, constant single-sourced from `src.risk.trailing`), covered by `tests/test_exit_quality.py`; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 131 (the standalone coverage sweep leaving no record that it ran) was retired 2026-09-25 — closed via #547: `record_sweep_run` (`src/coverage_watchdog.py`) writes a `specialist_evidence` row every run and `sweep_log_line` writes the greppable log line, both called from `scripts/alert_heartbeat.py`; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Items 97, 116, 124 and 133 were retired 2026-09-25 on verification against current main — 97's pace already reads the horizon pinned at entry off the trade row (moot), 116's morning/midday/close/intra-check/pre-earnings answers are all persisted (shipped), 124's cluster fact is stamped on every row before truncation so within-symbol crowd-out cannot starve the seat (moot), and 133's held-name accounting is reconciled so a full held book is not read as a jam (shipped); reasons in `docs/INCIDENT_HISTORY.md`.
+
+- Items 96, 102, 122, 129 and 162 were retired 2026-09-25 on verification against current main — 96 is stale (`veto_contradicted_exit` in `src/risk/exit_guard.py` already runs this check and is wired into the live path), 102 shipped (`src/pipeline.py`'s `partially_filled` branch now records the cumulative fill qty/price), 122 shipped (`scripts/merge_and_deploy.sh` copies changed units, daemon-reloads and enables them, showing a diff before overwriting a hand-edited copy), 129 shipped (`_is_terminal_broker_rejection` in `src/execution/broker.py` classifies a genuine rejection by status code so only a real transient failure spends the retry burst, and both retry constants are recorded as arbitrary with an open question in `config/number_ledger.yaml`), and 162 shipped (both of its own DONE WHEN boxes are checked, resolved 2026-09-23/25); reasons in `docs/INCIDENT_HISTORY.md`.
+
+- Item 39 (opportunity-cost rotation) was retired 2026-09-25 — its last open thread, the categorical tier abandoning the whole rotation when its single worst below-bar holding was structurally protected, is fixed: the tier now walks the whole below-bar cull set worst-first and culls the first sellable name, abandoning only when all are unsellable; the ranked-margin tier stays OFF by owner mandate and 39(a) was already dissolved; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 80 (a model-typed stop with no computed level, signal bar or volatility band behind it) was retired 2026-09-25 (owner ruling) — the earlier REFUSAL-on-missing-ATR path was overruled; a missing ATR now derives the stop from price structure (nearest computed level on the protective side, else the signal/prior bar) and holds the position, skipping the name only when no structural level is readable or the readable one breaches the stop-distance sanity bound; reason in `docs/INCIDENT_HISTORY.md`.
+
+- Item 158 (the technical seat's per-stock drop reasons living only in the log and as an aggregate count) was retired 2026-09-26 — the reason is now stored against the stock's own row as a stable code plus the human detail, and the funnel answers "why is this name not here" from that row; reason in `docs/INCIDENT_HISTORY.md`.
+
 ### 2026-09-26 — a stock the desk could not read vanished with no explanation anywhere the owner looks (item 158 retired)
 
 **In plain words:** when the technical seat's answer for a stock came back unreadable, that stock quietly disappeared from the day's work. The only trace was a line in a log file that rotates away, so a week later nobody could say whether a name was missing because nothing liked it or because the desk had simply failed to read it. Now the reason is written against that stock itself, and the screen that shows the day's candidates says it out loud.
@@ -16170,89 +16309,3 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
 
-### 2026-09-26 — one number was doing two jobs in the selling path, and three of the order gates turn out to be measurable but still unanswerable (items 70, 183 both stay open)
-
-**In plain words.** A single figure, "one average day's range", was deciding
-two unrelated things: how far a holding must fall before the desk accepts the
-fall is real, and how far a day's closing price must sit past a support level
-before that level counts as broken. They are different questions about
-different things, and because they shared one figure neither could be answered
-without silently moving the other. They are now two separate figures. Both are
-still exactly what they were, nothing the desk does changed today, and neither
-was nudged — this item's own terms forbid retuning either while splitting them.
-Separately, five gates that decide whether an order is placed at all were
-examined against the desk's own filled orders. One was deleted outright as dead.
-Three were measured for the first time, and the measurements are genuinely
-useful while still not picking a value. The last one cannot be removed on its
-own without making the account report less honest than it is today.
-
-**The split, and a labelling error found while doing it.** The exit path's band
-was recorded in the number ledger as if it were worked out from the trailing
-stop's band of 1.25 average ranges. It reads 1.0. A figure that is not its
-stated parent's figure was never derived from it; it is a second flat number
-and is now recorded as one. That correction, and the new name for the break
-margin, are why the ledger's count of unanswered numbers rises by one after the
-deletion below lowers it by one.
-
-**What the published work actually says, so this is not searched a third time.**
-For the "has it really moved against me" band, every published multiple sits
-near three average daily ranges, not one — Wilder's 1978 volatility system, the
-Chandelier Exit's standard setting, and Kaufman, who treats it as a dial and
-blesses no constant. All three measure a stop's distance from a running high
-rather than a move away from the entry price, so they are the closest published
-analogue and not the same measurement; that is why nothing was swapped. Going
-from one to three would make the desk markedly slower to accept a loss as real,
-which is owner appetite and outside this item. For the "has this level broken"
-margin there is no answer in these units at all: the literature measures a break
-as a percentage of price and differently for a major level than a minor one
-(Edwards & Magee, roughly 3% and 1%), or holds that a decisive close needs no
-distance at all (Bulkowski). The confirmation rule wrapped around it — two
-consecutive closes — is properly sourced. Only the distance is not, and it is
-unidentifiable in the units it is written in rather than merely uncited.
-
-**The order gates, measured.** Method, so it can be repeated: the production
-`trades` table, rows with `fill_status = 'filled'`, 2026-09-15 to 2026-09-25,
-30 buy entries and 3 short entries. The submitted limit is stored, and the
-slippage belt itself sets that limit at the reference price plus or minus 40
-basis points, so the reference price can be recovered from it and the realised
-slippage is the fill against that reference. Results:
-
-* The entry-slippage belt runs at a median of 2.6 basis points, a 90th
-  percentile of 26.4, and a maximum of exactly 40.0 — one order in thirty
-  filled at the belt and none above it. It does not explain any ordinary fill.
-  It also cannot be identified from this data, because the belt censors its own
-  tail: an order that would have slipped further is refused and never appears.
-  The refusals are nowhere near it — all nine recorded slippage skips had the
-  quoted offer between 391 and 1466 basis points above the reference.
-* The 2% ask-skip therefore fires at about 241 basis points above the
-  reference, which sits inside a roughly 350-point band of the desk's own data
-  containing no observation whatsoever. Every multiple between about 1.004 and
-  about 1.035 would have produced an identical decision on every case the desk
-  has ever seen. The measurement the ledger asked for is done; it tells us the
-  gate is far from both populations and cannot tell us the value.
-* The 0.5% minimum weight change faces zero commission — Alpaca charges none on
-  stock — so its whole cost is that same measured slippage. On a $10,000 book a
-  0.5% change is a $50 order whose measured expected cost is about one cent.
-  The cost side cannot justify a floor of this size. What the floor should be
-  is still open, because the other half of the question is how much pointless
-  order churn the desk will tolerate, and that is appetite.
-
-**The deletion, and what it changes.** The constructor's own $500 minimum-order
-floor is gone. Nothing in the constructor read it. The single call that
-forwarded it reached a parameter that `apply_gross_ceiling` has explicitly
-accepted and ignored since 2026-09-24 — so the comment sitting at the field's
-definition site, which said that gate still read it as a notional floor, was
-false on the day it was written. No order size, refusal or gate behaves
-differently. The sweep's own separately-named $500 is untouched.
-
-**Why the cash reserve band was NOT deleted.** The advisory that reads it is
-display-only — the repo's own quantities module says in terms that subtracting
-it from deployable cash produced a figure no part of the engine ever used, and
-no consumer of the two API fields exists here. But the band has a second reader:
-the cash sweeper itself, which is disabled rather than removed. Deleting the
-advisory alone would leave the band alive, no longer reported anywhere, and one
-configuration flag away from governing real money again — worse than today, not
-better. The band, the four dead sweep padding and buffer constants, the sweep's
-minimum order and the advisory all retire together with the sweeper, which is
-about 187 references across the pipeline, the API and nine test modules. That is
-its own job and was not begun here.
