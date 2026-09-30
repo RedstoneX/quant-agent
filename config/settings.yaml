@@ -785,8 +785,10 @@ risk:
   # bars the stop comes from. The rule, and why each number is what it is:
   # src/data/levels.py, "Deriving the TARGET from structure".
   #
-  # A target inside this many ATRs of entry is not a destination — price is
-  # already there and the reward is one ordinary session's noise.
+  # Flags a target inside this many ATRs of entry as thin reward — price is
+  # barely off it and the whole payoff is one ordinary session's noise. It
+  # LABELS the derived target; it does not choose it (changed 2026-09-30,
+  # when it was found dropping close walls and targeting past them).
   min_target_atr_multiple: 1.0
   # Measured move claimed when nothing structural stands in the way, in
   # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the analyst's

@@ -1987,6 +1987,20 @@ class PortfolioConstructor:
                 f"${derivation.model_target:,.2f}, "
                 f"{derivation.divergence_pct:+.1f}%]"
             )
+        # The thin-reward fact travels WITH the target or it does not exist
+        # (2026-09-30). `derive_structural_target` now targets the nearest
+        # wall instead of stepping over it, which is the honest answer, but
+        # a $730.41 target on a $728.41 entry reads as an ordinary target to
+        # every downstream reader unless the room is stated. This string is
+        # the one place the AI Risk Manager sees the target's provenance, so
+        # the smallness goes here rather than dying in `detail`, which
+        # nothing reads on a successful derivation.
+        if derivation.target_inside_noise:
+            note = note.rstrip("]") + (
+                "; ENTIRE reward is inside one session's typical range — "
+                "thin geometry, judge it on conviction and risk, not on "
+                "this ratio]"
+            )
         return note
 
     def _resolve_entry_and_stop(
@@ -3037,13 +3051,52 @@ class PortfolioConstructor:
             # (owner 2026-09-11, restated 2026-09-17). Nothing overhead is
             # expected to stop this stock. The RISK side is unchanged and
             # has already run above.
+            # The sentence used to end "There is no overhead level to
+            # measure a reward against" UNCONDITIONALLY. That is a claim
+            # about the chart, and on the label branch nothing had measured
+            # it: `is_trend_trade` returns True on `setup_type="breakout"`
+            # before it ever consults `structural_ceiling`. META,
+            # 2026-09-21, is the measured case — the derivation had found a
+            # real level and recorded `basis="structural_level"`, and this
+            # line asserted in the same record that no such level existed.
+            # Both cannot be true; the derivation was the true one. The log
+            # now states which of the two grounds the exemption rests on
+            # and never denies structure the desk itself computed.
+            # `structural_ceiling`, NOT the target price. The two come
+            # apart on exactly the branch this sentence is about: a real
+            # `measured_move` derivation (the chart yielded levels, none
+            # of them overhead) returns a finite positive PRICE with
+            # `level_used=None`, so testing the price would assert a
+            # level was found on the one branch where none was — swapping
+            # one false sentence for another. Verified by construction:
+            # entry 100, levels [85, 92], ATR 2, 25 sessions returns
+            # price 110.0 and level_used None. `structural_ceiling` is
+            # computed by all four call sites as
+            # `derivation.level_used is not None`, which is the question
+            # actually being asked here. `None` means the caller did not
+            # measure it, so it is never reported as a finding either way.
+            if structural_ceiling is True:
+                why = (
+                    "the desk's own level scan DID find a level overhead, "
+                    "but a breakout is managed by trailing rather than to "
+                    "that level"
+                )
+            elif structural_ceiling is False:
+                why = (
+                    "the desk's own level scan found nothing overhead to "
+                    "measure a reward against"
+                )
+            else:
+                why = (
+                    "whether anything stands overhead was not measured at "
+                    "this call site, so the exemption rests on the "
+                    "analyst's setup label alone"
+                )
             logger.info(
                 "Constructor: %s %s stop $%.2f [%s] shipped with NO "
-                "reward:risk check — breakout setup. There is no overhead "
-                "level to measure a reward against and the position is "
-                "managed by trailing, so approval rests on the risk side "
-                "alone.",
-                side_label, symbol, honoured, rule,
+                "reward:risk check — breakout setup: %s, so approval rests "
+                "on the risk side alone.",
+                side_label, symbol, honoured, rule, why,
             )
             return honoured
         reward_risk = self._reward_risk_at(

@@ -29,6 +29,103 @@ what would catch it next time.
 **What closes it.** Item 189's two DONE WHEN criteria carry no new work of their own — they are the same cash-sweep-retirement criteria, unstarted, now living under item 190. Both are deferred rather than met.
 
 **Verified on main.** `docs/WORK.md` no longer carries a `**189.` block; `docs/BOARD_NOTES.md`'s `## item 189` heading is renamed `## item 190` in the same change, so the owner-facing prose is not orphaned. No code, ledger or test file was touched by the renumber.
+### 2026-09-30 — the desk aimed META above the wall, because a level too close to trade toward was deleted instead of reported
+
+**In plain words:** the desk works out where a stock is likely to run into
+trouble on the way up, and calls that the target. It had a rule saying a
+level almost on top of the current price is not worth aiming at, because the
+profit would be smaller than an ordinary day's wobble. That rule was right.
+What it then did was wrong: instead of saying "this trade has very little
+room", it threw that level away and aimed at the NEXT one up — on the far
+side of the very wall it had just decided not to mention. So the closer the
+wall, the further past it the desk aimed.
+
+META on 2026-09-21 is the measured case. The desk added to the position at
+$728.41 with a typical daily range of $21.22, which set the "too close"
+distance at $749.63. Its own chart scan had found resistance at $730.41 and
+at $739.84, the second of which the stock had been turned back from in
+January. Both sat under $749.63, so both were deleted, and the target was set
+at $785.20 — above both of those rejections and above the highest price the
+stock had traded in a year. The stock reached $779.82 and turned around.
+
+**What was ruled out, by reproducing it rather than reasoning about it.**
+Three explanations were checked against the desk's own code and five years of
+real bars, and all three were wrong. The scan does not look at too little
+history: it reads roughly five years and it found the relevant levels. It did
+not throw them away for being weak: they carried two and three touches, above
+the minimum. It does not ignore levels overhead. The level scan was correct
+throughout — the fault was entirely in which of its answers the target picked.
+
+**What the number was never doing, and what it was.** The target is not, and
+since the owner's ruling of 2026-09-30 is explicitly not, a signal to sell.
+Nothing sells because a target is reached. So aiming too high did not cost a
+sale. What it did cost is honesty in two places that do use the number: the
+reward-versus-risk figure calculated at entry, which is a live tie-break when
+the desk ranks which candidates to buy, and the owner's own messages, where
+the target is stated as what the desk expects. On the three affected
+positions the reward figure was overstated by 5.7x, 1.9x and 28.4x against
+the first real wall. Two of those three were the kind of setup whose reward
+figure does feed ranking, so a worse trade could outrank a better one.
+
+**What changed.** The "too close" distance no longer decides WHICH level the
+desk aims at. It only labels the answer: the target is the nearest wall,
+full stop, and when the room under that wall is smaller than a day's range
+the trade now carries a recorded flag saying exactly that. Nothing is
+refused that was not refused before — the desk ruled in 2026-09-17 that a
+reward figure ranks a trade and never blocks one — so this makes the desk
+honest about thin trades rather than blind to them.
+
+**What would catch it next time.** The test that used to guard this
+behaviour asserted the bug: it said in so many words "skip it and take the
+next real level out". A test can pin a defect as confidently as it pins a
+fix, and this one did for weeks. It is now inverted and carries the META
+numbers, so the specific chart that produced the error is the thing under
+test.
+
+**Why the rule was there in the first place, which is the real lesson.**
+It was not carelessness. When it was written on 2026-09-01 the desk refused
+any trade whose reward was under 1.5x its risk, and that refusal was hard.
+Dropping a close wall and aiming at the next one was the only way a trade
+with a wall just overhead could be admitted at all, so the filter was doing
+real work FOR that gate. The gate was later removed — the desk now ranks on
+reward rather than refusing on it — and nothing went back to ask whether the
+filter still had a reason to exist. That is this desk's most familiar
+failure: a number outliving its own justification quietly, because nothing
+is attached to the justification that fails when it dies.
+
+**One thing this also changes, which is a real change and not a tidy-up.**
+Whether a name counts as a "nothing standing in the way" trade is decided by
+whether the desk found a level overhead. Before, a name whose only overhead
+level sat inside a day's range recorded NO level found — because the level
+had just been deleted — and was therefore classified as a clear-run trade,
+exempt from any reward comparison, and given a target projected from
+volatility alone. It now records the level it actually found, so the same
+name is classified as trading into a level and does get a reward figure.
+That is the correct classification and it was previously the opposite of the
+measured fact, but it is a behaviour change that reaches both model prompts
+and the ranking, so it is written down here rather than described as
+housekeeping. No trade is refused either way: the desk ruled on 2026-09-17
+that a reward figure ranks a trade and never blocks one.
+
+**The three affected positions are NOT repaired by this change.** META's
+2026-09-21 purchase still holds $785.20 as both its live and its entry
+target, and nothing will correct it on its own: the only automatic
+re-derivation triggers on the target drifting outside what the instrument can
+reach, and $785.20 is still inside that, so the desk will go on quoting
+$785.20 to the owner until a level above the 52-week high breaks. AMD and UPS
+are in the same position with their own numbers. Repairing stored targets on
+open positions is a separate, deliberate action on live records and is not
+being done as a side effect of a code fix.
+
+**Still open, deliberately not fixed here.** A rejection only counts as a
+wall when at least two turning points sit within one percent of each other,
+so META's third rejection at $756.59 is a single touch and is invisible. The
+two-touch part of that is settled and sourced and must not be loosened. The
+one-percent part is an open measurement the desk has already scheduled, not a
+settled preference, so it is left alone rather than guessed at. Separately, a
+position built in two purchases carries a target per purchase with the last
+one written winning — META holds $730.99 and $785.20 against one position.
+
 ### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
 
 **In ordinary words.** When the desk decides which stock ideas get money, each
