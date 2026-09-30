@@ -569,7 +569,7 @@ def test_a_stop_on_the_wrong_side_of_entry_is_named(archive):
     assert record and record["refusal"] == STOP_REFUSAL_WRONG_SIDE
 
 
-def test_the_sector_dial_refusals_are_named(archive):
+def test_the_sector_dial_refusals_are_named(archive, monkeypatch):
     """§10.3's two ends. Both logged a sentence the regex happened to match,
     which is how they survived the first pass — a matched sentence lands as a
     generic `constructor_dropped` row, not as a code the funnel can count.
@@ -587,6 +587,16 @@ def test_the_sector_dial_refusals_are_named(archive):
         STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
         STOP_REFUSAL_SIZED_TO_ZERO,
+    )
+    # This test IS about sector crowding: NVDA and the crowding MSFT holding
+    # have to share a sector for the dial to fire at all. That shared sector
+    # used to arrive from a LIVE yfinance lookup, so the test passed or failed
+    # on whether Yahoo answered. State it instead -- the conftest default
+    # gives every symbol its own sector precisely so a test that needs them
+    # shared has to say so.
+    monkeypatch.setattr(
+        "src.execution.broker._get_sector",
+        lambda symbol: "Technology",
     )
     decision = next(d for d in archive["decisions"] if d["run_id"] == _REAL_ROW)
     target = TargetPosition.model_validate(
