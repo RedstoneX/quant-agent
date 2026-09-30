@@ -10,8 +10,14 @@ bars "since entry" for a position four sessions old, and
 `src/risk/trailing.py::_swing_lows` — which needs `2 * PIVOT_WINDOW + 1` = 7
 bars before it can confirm one pivot — had nothing to read.
 
-These tests pin the lookup itself and the one property that makes the change
-safe to ship: it only ever LENGTHENS the window, so it cannot remove protection.
+These tests pin the lookup itself and the one property it really has: the
+open is never AFTER the last buy, so the window only ever LENGTHENS. That is
+NOT the same as "cannot remove protection", which an earlier version of this
+docstring claimed. A longer window raises the chandelier's high-water anchor,
+and `evaluate_trailing_stop` refuses outright once the candidate rises through
+its noise floor, so a wider window can cost a tighten. The change is justified
+by consistency with the blended `avg_entry` price, and its cost was measured
+at zero across all 21 recorded refusals (see `src/risk/trailing.py::_swing_lows`).
 """
 import pytest
 
@@ -59,11 +65,14 @@ def test_scale_in_does_not_move_the_position_open(db):
 
 
 def test_window_only_ever_lengthens(db):
-    """The property that makes this safe: the open is never AFTER the last buy.
+    """The one property this change really has: the open is never AFTER the
+    last buy, so the bar window only ever lengthens.
 
-    A longer bar window can hand structure bars it previously lacked and can
-    only raise the chandelier's high-water anchor (a TIGHTER stop). It can
-    never shorten the window, so it can never withdraw protection.
+    Do not read this as "cannot withdraw protection". A longer window raises
+    the chandelier's high-water anchor, which raises the proposed stop, which
+    can push it through the noise floor — and `evaluate_trailing_stop` then
+    refuses outright rather than proposing a lower level. The monotonicity
+    pinned here is real; the safety conclusion drawn from it was not.
     """
     for ts in ("2026-09-17 14:26:00", "2026-09-21 16:19:00",
                "2026-09-23 17:19:00"):

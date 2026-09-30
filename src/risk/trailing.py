@@ -319,9 +319,35 @@ def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
     scale-in additionally resetting the caller's bar window to zero until
     `src/pipeline.py::_apply_deterministic_trails` was changed to slice from
     the POSITION OPEN (`Database.get_position_open_timestamp`) instead of the
-    latest add. That change lengthens the window and cannot remove protection,
-    but it was measured against all 21 recorded refusals and flipped NONE of
-    them — the 7-bar floor, not the window start, is what binds.
+    latest add.
+
+    **That change is not risk-free, and it was described as such in error.**
+    A longer window can only raise `highest`, so it can only raise
+    `chandelier = highest - CHANDELIER_ATR_MULTIPLE * ATR`; a candidate that
+    rises through the noise floor makes `evaluate_trailing_stop` return
+    `TRAIL_CODE_INSIDE_NOISE_BAND` outright, with no fallback to a lower
+    level the shorter window would have accepted. Price 100, ATR 4, live stop
+    90: a 106 high proposes 94 and the stop tightens; a 108 high proposes 96,
+    above the 95 floor, and the stop stays at 90. The wider window can LOSE a
+    tighten. The justification is that the old window disagreed by
+    construction with the blended `avg_entry` price used in the same call —
+    not that the change cannot cost protection.
+
+    **The exposure was then MEASURED, not assumed.** Re-running all 21
+    recorded refusals through both windows (live DB, 2026-09-30): only 5 have
+    a window start that moves at all — every one of them MRVL, the only
+    position whose adds fall on different sessions; META's two adds are the
+    same session, and the other four names never scaled in. In all 5 the
+    verdict is unchanged and NOT ONE lands inside the noise band that did
+    not before. Newly-refused-as-inside-noise-band: ZERO.
+
+    The 7-bar floor is what binds in 20 of the 21, but not in all of them,
+    and the PR first claimed otherwise. The widest new window (MRVL,
+    2026-09-29) holds 8 bars and CLEARS the floor — it still produces no
+    pivot, because the eight lows rise almost monotonically and neither of
+    the two eligible centre bars is a strict local minimum. Confirmed pivots
+    found under the new window: ZERO, same as the old. "Flips none" survives;
+    "the 7-bar floor is the only reason" does not.
 
     So on today's holding periods the chandelier IS the trail, and the
     "trail under each successive higher low" rule in the module docstring

@@ -4530,6 +4530,19 @@ class Database:
         `2 * PIVOT_WINDOW + 1` = 7 bars before it can confirm anything — had
         nothing to read. See `tests/test_position_open_timestamp.py`.
 
+        This lookup makes the trail's window LONGER, and a longer window is
+        not automatically safer — the PR that added this said it was, and
+        that was untrue. A longer window can only raise the chandelier's
+        high-water anchor, and `src/risk/trailing.py::evaluate_trailing_stop`
+        REFUSES outright once the resulting candidate rises through its
+        noise floor instead of falling back to a lower one, so a wider
+        window can cost a tighten the narrower window took. The reason to
+        do it anyway is consistency: the caller takes the entry PRICE from
+        `position.avg_entry`, blended across every add, so slicing bars from
+        the last add alone was incoherent by construction. Measured against
+        all 21 recorded refusals on 2026-09-30, the cost is currently zero;
+        see the `_swing_lows` docstring for that measurement.
+
         Returns the timestamp string as stored, or None when `buy_row` is
         missing or carries no `position_id` (legacy rows predating the id,
         and rows the backfill could not chain). None means "unknown", never

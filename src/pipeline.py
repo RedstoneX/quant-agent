@@ -11318,10 +11318,26 @@ class TradingPipeline:
             # case: a position opened 2026-09-17 was evaluated with zero
             # bars because it had been added to that morning.
             #
-            # This only ever LENGTHENS the window, so it cannot remove
-            # protection: it can hand structure bars it previously lacked,
-            # and it anchors the chandelier on the position's real
-            # high-water mark rather than the latest add's. No new constant.
+            # This is NOT a risk-free change, and an earlier version of
+            # this comment claimed it was. A longer window can only RAISE
+            # `highest`, which raises `chandelier = highest - 3*ATR`; a
+            # higher candidate can rise THROUGH the noise floor, and
+            # `evaluate_trailing_stop` then refuses OUTRIGHT
+            # (`inside_noise_band`) rather than falling back to a lower
+            # candidate the shorter window would have accepted. Worked
+            # case: price 100, ATR 4, live stop 90. A window whose high is
+            # 106 proposes 94 and the stop tightens 90 -> 94; a longer
+            # window that sees a pre-add high of 108 proposes 96, which is
+            # above the 95 noise floor, so nothing is placed and the stop
+            # stays at 90. The wider window LOSES a tighten the narrower
+            # one took.
+            #
+            # The justification is therefore consistency, not safety: the
+            # old window disagreed BY CONSTRUCTION with the entry price the
+            # same call uses (`position.avg_entry`, blended across every
+            # add). Measured 2026-09-30 against all 21 recorded refusals,
+            # the exposure is currently zero — see `_swing_lows` in
+            # `src/risk/trailing.py` for that measurement. No new constant.
             bars = []
             try:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
