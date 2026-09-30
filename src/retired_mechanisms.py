@@ -294,3 +294,262 @@ def resurrected_symbols(
 
 def format_findings(findings: list[Finding]) -> str:  # pragma: no cover
     return "\n\n".join(str(f) for f in findings)
+
+
+# ===========================================================================
+# THE OTHER HALF: the TRIGGER, not the scan.
+# ===========================================================================
+#
+# Everything above runs AFTER somebody has recorded a retirement. Its own
+# docstring names the limit plainly: "a retirement nobody records. This is
+# the real limit, and it is a convention." A convention is not enforcement,
+# and the desk's meta-rule is that everything relying on remembering slips.
+#
+# `described:` closes that. It is the inverse index: a small list of LIVE
+# code symbols that prompt text currently DESCRIBES, each paired with the
+# exact places that description lives. Delete or rename one of those symbols
+# and the build goes red at the deletion site, naming every sentence that is
+# now a lie and telling you the one way out — move it to `retired:` with the
+# phrases that described it, which is precisely the entry the scan above
+# needs and nobody was remembering to write.
+#
+# WHY IT IS NOT A THIRD MECHANISM. There are exactly three jobs here and
+# they do not overlap:
+#
+#   * `retired:` + `scan()` — the mechanism is GONE; find surviving prose by
+#     the WORDS it used. Runs after the fact.
+#   * `described:` + `described_gaps()` — this section. The mechanism is
+#     ALIVE and described; fail the moment it stops existing. It is the
+#     trigger that makes the first one fire, and it holds no phrases and
+#     no digests of its own.
+#   * `src/prompt_bindings.py` (board item 107) — the mechanism is alive and
+#     its BEHAVIOUR changed while still existing; a digest on each side
+#     forces the prose to be re-read. That is a different failure and it is
+#     built there, not here. Check both before building anything new.
+#
+# WHY IT LIVES IN THIS FILE. It is the deletion site's own trigger, it reads
+# the same registry, and splitting it out would have produced the extra grep
+# module that board item 99(d) and item 107 both warn against.
+#
+# WHAT IT DELIBERATELY DOES NOT DO. It does not scan for symbols nobody
+# registered. That was measured on 2026-09-26 and rejected: 430 snake_case
+# tokens appear in `config/prompts/*.md` and 151 of them resolve to no
+# Python definition at all, because they are enum literals and JSON field
+# names the seats EMIT (`greed_top_chasing`, `thesis_invalid_if`,
+# `fundamentals_mispricing`). A gate over those is 151 false positives on
+# day one, and a check that cries wolf gets switched off — which costs more
+# than not having it. The list is explicit for the same reason `retired:`
+# is: maintenance is asked once, at the moment somebody has the facts open.
+#
+# PYTHON-ASSEMBLED STRINGS ARE THE POINT, NOT AN AFTERTHOUGHT. Both
+# confirmed drift instances on this desk lived in strings Python builds at
+# run time, not in a prompt file. `described_in` therefore takes any file,
+# and the first three entries shipped point at `src/agents/*.py` and at no
+# markdown at all.
+
+
+@dataclass(frozen=True)
+class DescribedSymbol:
+    file: str
+    symbol: str
+
+
+@dataclass(frozen=True)
+class DescribedIn:
+    file: str
+    contains: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Described:
+    name: str
+    why: str
+    symbols: tuple[DescribedSymbol, ...]
+    described_in: tuple[DescribedIn, ...]
+
+
+#: A `contains` needle shorter than this cannot reliably select one
+#: sentence, and a needle that matches by accident is the noise that gets a
+#: check disabled.
+MIN_NEEDLE = 12
+
+
+def _resolve_symbol(tree: ast.AST, dotted: str) -> ast.AST | None:
+    """The def/class named by `dotted` (`name` or `Class.method`)."""
+    node: ast.AST | None = tree
+    for part in dotted.split("."):
+        found: ast.AST | None = None
+        for child in ast.iter_child_nodes(node):  # type: ignore[arg-type]
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            ) and child.name == part:
+                found = child
+                break
+        if found is None:
+            return None
+        node = found
+    return node
+
+
+def load_described(path: Path | str = REGISTRY_PATH) -> list[Described]:
+    """The `described:` section. An absent section is legal and empty."""
+    path = Path(path)
+    if not path.exists():
+        raise RegistryError(f"retired-mechanism registry missing: {path}")
+    raw = yaml.safe_load(path.read_text()) or {}
+    entries = raw.get("described")
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise RegistryError(f"{path}: `described:` must be a list")
+
+    retired_symbols = {s for e in load_registry(path) for s in e.symbols}
+    out: list[Described] = []
+    seen: set[str] = set()
+    for i, item in enumerate(entries):
+        if not isinstance(item, dict):
+            raise RegistryError(f"{path}: described entry #{i} is not a mapping")
+        for required in ("name", "why", "symbols", "described_in"):
+            if required not in item:
+                raise RegistryError(
+                    f"{path}: described entry #{i} "
+                    f"({item.get('name', '?')}) has no `{required}`",
+                )
+        name = str(item["name"])
+        if name in seen:
+            raise RegistryError(f"{path}: two described entries named {name!r}")
+        seen.add(name)
+
+        symbols: list[DescribedSymbol] = []
+        for s in item["symbols"] or ():
+            if not isinstance(s, dict) or "file" not in s or "symbol" not in s:
+                raise RegistryError(
+                    f"{path}: `{name}` has a symbol without `file`/`symbol`",
+                )
+            dotted = str(s["symbol"])
+            if dotted.split(".")[-1] in retired_symbols:
+                raise RegistryError(
+                    f"{path}: `{name}` says `{dotted}` is LIVE and described, "
+                    f"while the `retired:` section says the same name is "
+                    f"gone. One of the two is wrong and the build must not "
+                    f"pass on a registry that contradicts itself.",
+                )
+            symbols.append(DescribedSymbol(str(s["file"]), dotted))
+        if not symbols:
+            raise RegistryError(
+                f"{path}: `{name}` names no live symbol, so deleting "
+                f"anything could never make it fire",
+            )
+
+        anchors: list[DescribedIn] = []
+        for p in item["described_in"] or ():
+            if not isinstance(p, dict) or "file" not in p:
+                raise RegistryError(
+                    f"{path}: `{name}` has a described_in without `file`",
+                )
+            needles = tuple(str(x) for x in (p.get("contains") or ()))
+            if not needles:
+                raise RegistryError(
+                    f"{path}: `{name}` describes nothing in {p['file']}",
+                )
+            for needle in needles:
+                if len(needle) < MIN_NEEDLE:
+                    raise RegistryError(
+                        f"{path}: needle {needle!r} in `{name}` is shorter "
+                        f"than {MIN_NEEDLE} characters — too short to select "
+                        f"one description, and a loose needle is noise",
+                    )
+            anchors.append(DescribedIn(str(p["file"]), needles))
+        if not anchors:
+            raise RegistryError(
+                f"{path}: `{name}` records no place the description lives",
+            )
+        out.append(Described(
+            name=name,
+            why=str(item["why"]),
+            symbols=tuple(symbols),
+            described_in=tuple(anchors),
+        ))
+    return out
+
+
+def described_gaps(
+    root: Path | str = REPO_ROOT,
+    registry_path: Path | str | None = None,
+) -> list[str]:
+    """Live mechanisms whose code, or whose description, has gone missing.
+
+    Empty is a pass. Two failures, and they read differently on purpose:
+
+      * THE SYMBOL IS GONE — a delete or a rename. Every sentence listed
+        under it is now describing nothing. This is the deletion site.
+      * THE DESCRIPTION IS GONE — the prose was rewritten or removed while
+        the code stayed. The pointer has rotted; either re-point it or
+        confirm the seat is meant to no longer be told.
+    """
+    root = Path(root)
+    entries = load_described(
+        registry_path or root / "config" / "retired_mechanisms.yaml",
+    )
+    problems: list[str] = []
+    trees: dict[str, ast.AST | None] = {}
+    for entry in entries:
+        where = "; ".join(
+            f"{a.file} ({', '.join(repr(n) for n in a.contains)})"
+            for a in entry.described_in
+        )
+        why = " ".join(entry.why.split())[:260]
+        for sym in entry.symbols:
+            path = root / sym.file
+            if not path.exists():
+                problems.append(
+                    f"`{entry.name}`: {sym.file} is gone, so "
+                    f"`{sym.symbol}` cannot be there.\n"
+                    f"    still described in: {where}\n"
+                    f"    what the seats are told: {why}\n"
+                    f"    if the mechanism was RETIRED, add it to the "
+                    f"`retired:` section of config/retired_mechanisms.yaml "
+                    f"with the phrases above, delete this entry, and fix "
+                    f"every sentence the scan then reports.",
+                )
+                continue
+            if sym.file not in trees:
+                try:
+                    trees[sym.file] = ast.parse(
+                        path.read_text(), filename=str(path),
+                    )
+                except SyntaxError as exc:
+                    raise RegistryError(f"cannot parse {sym.file}: {exc}") from exc
+            tree = trees[sym.file]
+            if tree is None or _resolve_symbol(tree, sym.symbol) is None:
+                problems.append(
+                    f"`{entry.name}`: {sym.file} no longer defines "
+                    f"`{sym.symbol}` — it was deleted or renamed.\n"
+                    f"    still described in: {where}\n"
+                    f"    what the seats are told: {why}\n"
+                    f"    A RENAME: re-point this entry, one line. A "
+                    f"DELETION: move it to the `retired:` section with the "
+                    f"phrases that described it, delete this entry, and fix "
+                    f"every sentence the scan then reports. The desk PAYS a "
+                    f"model to read some of these lines.",
+                )
+        for anchor in entry.described_in:
+            apath = root / anchor.file
+            if not apath.exists():
+                problems.append(
+                    f"`{entry.name}`: described_in points at {anchor.file}, "
+                    f"which does not exist.",
+                )
+                continue
+            text = apath.read_text()
+            for needle in anchor.contains:
+                if needle not in text:
+                    problems.append(
+                        f"`{entry.name}`: {anchor.file} no longer contains "
+                        f"{needle!r}.\n"
+                        f"    The description moved or was deleted while the "
+                        f"code it describes is still live. Re-point this "
+                        f"entry, or confirm the seat is deliberately no "
+                        f"longer told: {why}",
+                    )
+    return problems

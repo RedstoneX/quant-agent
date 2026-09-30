@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — a practice run against history cannot be made to fund the same trades the live desk would (item 64 retired)
+
+**In plain words:** the live desk spends its risk budget on its best-ranked trade ideas first when there is not enough budget for all of them. The practice run against history cannot do that, and after checking how it is built, it never will be able to: it does not ask any analyst anything, so there is no ranked list to spend down. Making one up was already refused once. The honest answer is that this kind of practice run cannot grade "which trades get funded when the budget runs out" at all — only the parts of the trade it does simulate (stop placement, position size, trailing).
+
+**What was checked before deciding this, not taken on the board's word.** `src/backtest/engine.py` and its module docstring (`src/backtest/__init__.py`) both say outright that this backtester replays only the deterministic layer — stop placement, sizing, trailing — and never calls the five analyst seats, because an LLM's answer on a past day is not reproducible (`docs/QAMC_REMEDIATION_SPEC.md` §7.1, done 2026-08-30 on exactly that scope). Live's rationing order comes from `src/verdicts.py::rank_verdicts`, which takes a list of `AnalystVerdict` objects — the analysts' own outputs — and is passed into `src/risk/budget.py::allocate_risk_budget` as `priority=[c.symbol for c in rank_verdicts(...)]` (see `PortfolioConstructor._plan_risk_targets`). The backtest's own call to `allocate_risk_budget` in `run_backtest` passes no `priority` at all (`RiskRequest(c["symbol"], config.risk.max_position_risk_pct)`, no `rank_verdicts` import, nothing computed to rank by), so the allocator falls back to its documented "no ranking supplied" behaviour, which is alphabetical. That is not a bug in the allocator or an oversight in the engine; there are no verdicts in this code path to rank by, by the backtester's own design.
+
+**Why the two stand-ins already on record stay refused.** Copying live analyst ratings onto historical rows is not replaying them, since the LLM was never asked about that day; it would grade the desk against opinions manufactured after the fact. Ranking by the engine's own reward:risk number was ruled out 2026-09-16 for the same reason live never uses it as the rank — it is a tie-break under the real ranking there, not the ranking itself, so promoting it in the backtest would score a different, invented selection rule and still look like a ranking fix.
+
+**The decision, per item 64's own done-criteria (docs/WORK.md, "Not an owner call").** This engine cannot evaluate rationing. It is closed on that basis, not as a ranking fix. Every backtest result keeps printing how many of its days the risk ceiling bound and that the tie-break is alphabetical (shipped 2026-09-16), so its numbers can never be read as evidence about how the live desk picks among trades on a binding day. `tests/test_backtest.py` already locks the shape in: `run_backtest`'s source is asserted to contain the unranked `RiskRequest(...)` call and to contain neither `priority=` nor `rank_verdicts`, while `PortfolioConstructor._plan_risk_targets`'s source is asserted to contain `priority=ranking` — so a future change that quietly added ranking to one side without the other, or added a stand-in score, fails that test.
+
+**What would reopen this.** Only a change to what this backtester scopes to simulate — teaching it to call the analyst seats over historical data, which the spec's own reproducibility requirement (§7.1) currently rules out — would ever let it evaluate rationing for real. Nothing short of that is a fix; it is a disguised version of the stand-in score this item, and 2026-09-16 before it, already refused.
+
+---
+
 ### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 191 retired)
 
 **In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
@@ -179,6 +193,21 @@ a check that fires every session is a check nobody reads. On the day it was
 written it found three names aiming past a standing wall — META from this
 bug, and AAPL and NOK from levels that formed after those positions were
 opened, which is a real state the desk had no way to see before.
+
+### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
+
+**In plain words:** the desk pays models to read standing instruction sheets. Since 2026-09-17 the build fails when a sheet still describes something the code deleted — but only after a person adds that deletion to a list. Nothing made them. The list was the last link in the chain and it was held together by memory, which is the one thing this desk has established does not hold.
+
+**What was built.** The same registry gained a second section naming LIVE machinery that the sheets currently describe, together with the exact sentences that describe it. Delete or rename one of those pieces of machinery and the build goes red where the deletion happens, prints every sentence that has just become untrue, and tells the reader to write the retirement entry. The entry nobody was remembering to write is now the only way to get the build green again.
+
+**It deliberately points at code-assembled text, not at the prompt files.** Both drift cases this desk has actually confirmed lived in text that Python builds while the session runs, not in any prompt file, so a check anchored on prompt files would have missed both. Four pieces of machinery are registered to start and every one of them is described in code-assembled text; three are described nowhere else.
+
+**What was measured and rejected.** Scanning the prompt files for anything that looks like a code name: 430 candidate names, 151 of which match nothing in the code at all, because they are the vocabulary the seats are required to answer in rather than references to machinery. That is 151 false alarms on the first run, and a check that cries wolf gets turned off, which is worse than not having it. The explicit list stays explicit, for the same reason the older half is explicit.
+
+**What it still cannot do, said plainly.** It covers only what somebody registered. It cannot tell a prose fix from a prose regression. Registering an entry and never reading the sentence again defeats it. Those are the same limits the two neighbouring checks accept, and naming them is not an argument for a worse check — it is the reason there are three narrow checks rather than one that claims to do everything.
+
+**A second finding, filed rather than fixed.** The trade-picking sheet instructs the seat to cut every purchase by a quarter after two "too big" verdicts in a row. Nothing in the code does that. Worse, the risk manager's own sheet states the loop as a live fact and tells that seat to treat a cautious-looking plan as the first seat flinching from its history rather than as genuine conviction. So one seat follows an instruction nothing enforces, and a second discounts the first because of it. The quarter has no source anywhere. It is left open: removing a sizing instruction from the sheet that sizes trades changes what the desk buys, which is not a documentation pass.
+
 
 ### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
 

@@ -485,7 +485,15 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 153, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 154, (
+        "153 -> 154 on 2026-09-26, item 99(d): +1 for "
+        "src.retired_mechanisms.MIN_NEEDLE (12), the minimum length a "
+        "described_in.contains needle must have in the new deletion-site "
+        "TRIGGER (described: / described_gaps()) so a short substring "
+        "cannot match a sentence by accident. It bounds a string-matching "
+        "rule inside a build-time prompt-drift check, not any trade "
+        "decision -- it decides whether a registry entry loads, never a "
+        "size, price, stop or exit. "
         "152 -> 153 on 2026-09-24, item 163: +1 for "
         "src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT (0.5), the "
         "tolerance the new PM risk-narrative-mismatch check uses to compare "
