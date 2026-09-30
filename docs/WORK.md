@@ -269,7 +269,8 @@ detail: docs/BOARD_NOTES.md (item 187)
 
 DONE WHEN:
   - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [ ] the substitute is either measured at the three decision seats through `ops/model_policy/benchmark_models.py`, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
+  - [ ] every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and why it did not — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable)
+  - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
 
 detail: docs/BOARD_NOTES.md (item 188)
 
