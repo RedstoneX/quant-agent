@@ -1871,7 +1871,8 @@ class LLMCostCircuitConfig(BaseModel):
         if self.require_telegram_alerts is not True:
             raise ValueError(
                 "llm_cost_circuit.require_telegram_alerts must remain true; "
-                "shutdown notification is mandatory"
+                "a durably recorded, operator-visible shutdown notification is "
+                "mandatory (a muted transport alone no longer suspends the desk)"
             )
         if self.daily_cost_limit_usd < self.session_cost_limit_usd:
             raise ValueError("daily_cost_limit_usd must be >= session_cost_limit_usd")

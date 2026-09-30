@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import re
+import warnings
 import html as html_mod
 import subprocess
 import sys
@@ -761,6 +762,13 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
     cap = sb.WORK_MD_GROWTH_CAP_BYTES
     budget = sb.work_md_growth_budget(before, cap)
     grew_by = after - before
+    # Board item 200: say so LOUDLY while there is still room to act,
+    # rather than letting a blocked merge be the first warning. Emitted
+    # here, in the same place a budget failure speaks, so one place
+    # reports the file filling up.
+    warning = sb.work_md_cap_warning(after, cap)
+    if warning is not None:
+        warnings.warn(warning, stacklevel=1)
     assert grew_by <= budget, (
         f"docs/WORK.md grew from {before:,} to {after:,} bytes (+{grew_by:,}), "
         f"more than the {budget:,}-byte growth budget allowed at this fullness "
@@ -771,6 +779,90 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
         "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
         "fits the budget."
     )
+
+
+def _work_md_base_size():
+    """`docs/WORK.md`'s size on main before this change, or None when that
+    cannot be read (a local run with no reachable origin, or the file not
+    existing at the base)."""
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    base = _work_md_base_ref()
+    if base is None:
+        return None
+    r = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
+        capture_output=True, check=False,
+    )
+    if r.returncode != 0:
+        return None
+    return len(r.stdout)
+
+
+def _work_md_shrank_in_this_change():
+    """True only when this change leaves `docs/WORK.md` strictly smaller
+    than main had it. Fails closed: an unknowable base is not a shrink, so
+    a change cannot buy its way past the cap by making the base
+    unreadable."""
+    repo = Path(__file__).resolve().parents[1]
+    before = _work_md_base_size()
+    if before is None:
+        return False
+    after = (repo / "docs" / "WORK.md").stat().st_size
+    return sb.work_md_cap_blocker(before, after) is None and after > sb.WORK_MD_GROWTH_CAP_BYTES
+
+
+def test_the_cap_cannot_deadlock_the_board():
+    """Board item 200. The hard cap was a bare check on the file as it
+    stands, so the moment the file went over it, EVERY change failed —
+    including the retirement that would bring it back under. The only
+    exits were force-merging or raising the cap, and raising the cap is
+    the one thing the cap exists to prevent.
+
+    `sb.work_md_cap_blocker` is the rule now: over the cap is refused,
+    except for a change that strictly shrinks the file, which always
+    lands. Simulated here against over-cap sizes rather than trusting the
+    real file, which is currently comfortably under.
+    """
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+
+    # Under the cap: nothing to say, growing or shrinking.
+    assert sb.work_md_cap_blocker(90_000, 95_000, cap) is None
+    assert sb.work_md_cap_blocker(95_000, 90_000, cap) is None
+    assert sb.work_md_cap_blocker(99_999, cap, cap) is None  # exactly at it
+
+    # The change that pushes it over is refused at that change.
+    blocked = sb.work_md_cap_blocker(99_000, 101_000, cap)
+    assert blocked is not None and "over the" in blocked
+
+    # Already over: a prune lands however far over it still is.
+    assert sb.work_md_cap_blocker(120_000, 119_999, cap) is None
+    assert sb.work_md_cap_blocker(120_000, 101_000, cap) is None
+    # ...and it lands all the way back under, obviously.
+    assert sb.work_md_cap_blocker(120_000, 80_000, cap) is None
+
+    # Already over and NOT shrinking: still refused, including a change
+    # that leaves the size exactly as it found it.
+    assert sb.work_md_cap_blocker(120_000, 120_000, cap) is not None
+    assert sb.work_md_cap_blocker(120_000, 130_000, cap) is not None
+
+
+def test_the_cap_warns_before_it_binds():
+    """Board item 200's other half: the first warning must not be a
+    blocked merge. `sb.work_md_cap_warning` fires at
+    `sb.WORK_MD_WARN_SHARE` of the cap, while `work_md_growth_budget`
+    still allows a normal change, and is emitted from the growth-budget
+    test so the notice and the eventual failure speak in one place."""
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+    assert sb.WORK_MD_WARN_SHARE == 0.8
+    assert sb.work_md_cap_warning(70_000, cap) is None
+    assert sb.work_md_cap_warning(79_999, cap) is None
+    warned = sb.work_md_cap_warning(80_000, cap)
+    assert warned is not None and "80%" in warned
+    assert sb.work_md_cap_warning(95_000, cap) is not None
+    # Fires early enough that pruning is still a choice, not a precondition.
+    assert sb.work_md_growth_budget(int(sb.WORK_MD_WARN_SHARE * cap), cap) == 10_000
 
 
 def test_work_md_stays_under_a_hundred_thousand_bytes():
@@ -797,11 +889,23 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
     if not work_md.exists():
         return
     size = work_md.stat().st_size
+    # Board item 200: the cap must not be able to deadlock the board. A
+    # change that SHRINKS the file lands even while the file is still over
+    # the cap — otherwise the first change to cross the line blocks every
+    # later one, including the prune that would fix it. Growth over the cap
+    # is refused exactly as hard as before; `sb.work_md_cap_blocker` holds
+    # that rule and its reasoning. The assertion below stays literal
+    # because `scripts/check_board_hygiene.py:read_cap_bytes` parses this
+    # line for the cap; it is the same 100,000 bytes it always was.
+    if size > 100_000 and _work_md_shrank_in_this_change():
+        return
     assert size <= 100_000, (
         f"docs/WORK.md is {size} bytes, over the 100,000-byte cap — finished "
         "or decided content has likely crept back in; MOVE it to "
         "docs/INCIDENT_HISTORY.md rather than deleting it, and never raise this "
-        "number to make room"
+        "number to make room. A change that SHRINKS the file is exempt while "
+        "the file is over the cap, so the prune that fixes this can always "
+        "merge."
     )
 
 
@@ -2605,10 +2709,13 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         "resolved items are still in docs/WORK.md; write them up in "
         "docs/INCIDENT_HISTORY.md and delete them from the queue"
     )
-    # Genuinely partial work stays where he can see it.
-    for rank in (18,):
+    # Genuinely partial work stays where he can see it. Item 18 was retired
+    # 2026-09-30 once its prompt-bulk defect was fixed and re-measured; its
+    # three unrelated residuals were carried forward as item 208, so the pin
+    # moves to 208 rather than being dropped -- the residual work must still
+    # be visible on the board.
+    for rank in (208,):
         assert by_rank[rank].bucket == "open", rank
-        assert by_rank[rank].part_done is True, rank
     # And the negated lines stay open, as they always did. (28 was the other
     # one; it is retired above.)
     # 32 was pinned here from 2026-09-13 until 2026-09-20, when the owner

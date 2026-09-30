@@ -142,6 +142,47 @@ def _session_lock_active() -> bool | None:
         return None
 
 
+#: A drift snapshot older than this is no longer evidence of anything: the
+#: timer runs far more often, so silence means the checker itself stopped.
+#: Reported as `stale`, which is degraded — the same treatment the alert
+#: channel gets, and for the same reason.
+_DRIFT_SNAPSHOT_MAX_AGE_H = 26
+
+
+def _deploy_drift_state() -> dict:
+    """Read the deploy-drift snapshot written by scripts/check_deploy_drift.py.
+
+    Never raises and never runs git. A missing file means the check has not
+    run on this box yet, which is `unknown`, not healthy.
+    """
+    try:
+        from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
+
+        record = (load_state(DEPLOY_DRIFT_STATE_PATH) or {}).get("deploy_drift")
+        if not isinstance(record, dict) or not record.get("status"):
+            return {"status": "unknown", "reason": "no drift check recorded"}
+        record = dict(record)
+        checked_at = record.get("checked_at")
+        if checked_at:
+            try:
+                seen = datetime.fromisoformat(str(checked_at))
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=timezone.utc)
+                age_h = (datetime.now(timezone.utc) - seen).total_seconds() / 3600.0
+                record["age_hours"] = round(age_h, 2)
+                if age_h > _DRIFT_SNAPSHOT_MAX_AGE_H and record["status"] != "behind":
+                    record["status"] = "stale"
+                    record["reason"] = "drift check has not run recently"
+            except (TypeError, ValueError):
+                record["age_hours"] = None
+        else:
+            record["status"] = "stale"
+            record["reason"] = "snapshot carries no timestamp"
+        return record
+    except Exception:
+        return {"status": "unknown", "reason": "drift state read failed"}
+
+
 @router.get("/health", response_model=HealthResponse)
 def get_health() -> HealthResponse:
     try:
@@ -163,6 +204,11 @@ def get_health() -> HealthResponse:
             alert_channel = get_alert_channel_health()
         except Exception:
             alert_channel = {"status": "unknown", "error": "health read failed"}
+
+        # Deploy drift: read the on-box snapshot, never computed here (no
+        # git call on a request path). A snapshot that is missing or stale
+        # is reported as such rather than as healthy.
+        deploy_drift = _deploy_drift_state()
 
         broker_reachable = check_broker_reachable()
         recent_pm_status = (llm_health or {}).get("recent_pm_status")
@@ -213,11 +259,20 @@ def get_health() -> HealthResponse:
         alert_channel_degraded = str(
             (alert_channel or {}).get("status") or "unknown"
         ) in ("broken", "stale")
+        # A box running code that was never merged-then-deployed is degraded:
+        # every fix believed to be live is not. `unknown` (never checked) is
+        # shown in the payload but does not flip the board, for the same
+        # reason the alert channel's `unknown` does not — a missing
+        # measurement is not a detected fault.
+        deploy_drift_degraded = str(
+            (deploy_drift or {}).get("status") or "unknown"
+        ) in ("behind", "stale")
         overall_status = (
             "degraded"
             if (not db_reachable or broker_reachable is False
                 or decision_path_status != "ok"
-                or alert_channel_degraded)
+                or alert_channel_degraded
+                or deploy_drift_degraded)
             else "ok"
         )
 
@@ -232,6 +287,7 @@ def get_health() -> HealthResponse:
             decision_path_status=decision_path_status,
             llm_circuit=llm_health,
             alert_channel=alert_channel,
+            deploy_drift=deploy_drift,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
@@ -249,6 +305,7 @@ def get_health() -> HealthResponse:
             decision_path_status="unknown_health_exception",
             llm_circuit=None,
             alert_channel={"status": "unknown", "error": "health read failed"},
+            deploy_drift={"status": "unknown", "error": "health read failed"},
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
