@@ -817,8 +817,43 @@ def repair_failure_alert_day(now: datetime | None = None) -> str:
     return (now or _utc_now()).astimezone(ET).date().isoformat()
 
 
-def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
-    raw = state.get("repair_failure_alerted_symbols")
+# ---------------------------------------------------------------------------
+# THE ONE RULE for every owner page that can recur (docs/WORK.md item 188)
+# ---------------------------------------------------------------------------
+# Five near-identical claim helpers grew here one condition at a time, and
+# two other owner pages grew the opposite defect: `_alert_owner_no_stop`
+# repeated on every 30-minute sweep for as long as a position stayed naked,
+# while `_alert_owner_delever_incomplete` pages only on the TRANSITION into
+# still-over-ceiling and therefore says nothing on the second consecutive
+# morning over the limit. One channel cannot be both.
+#
+# THE RULE, stated once and shared by every caller below:
+#
+#   A recurring owner page is claimed per (condition, subject, ET calendar
+#   day). The first observation of the condition pages. Further observations
+#   of the SAME subject inside the SAME day do not. The claim expires at the
+#   day boundary, so a condition that is STILL true on the next trading day
+#   pages again. Observing the subject CLEAR releases the claim, so a
+#   condition that goes away and comes back pages again the same day.
+#
+# The boundary is the ET calendar date the desk already files alerts under
+# (`repair_failure_alert_day`) — not an interval anybody picked. No minutes,
+# no repeat counts, no backoff.
+#
+# What is deduped is the MESSAGE ONLY. Every caller still writes its log
+# line, its gap row and its evidence record on every single observation,
+# claimed or not: a suppressed page must never make the condition disappear
+# from the record.
+#
+# An unwritable state file errs towards telling the owner twice rather than
+# not at all, which is the right way round for an unprotected position.
+
+
+def _claimed_subjects(state: dict[str, Any], state_key: str, day: str) -> set[str]:
+    """The subjects already paged under `state_key` TODAY. A stored day that
+    is not today reads as an empty set, which is what makes the claim expire
+    at the boundary without anything having to clean it up."""
+    raw = state.get(state_key)
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
     return {
@@ -826,6 +861,88 @@ def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]
         for sym in (raw.get("symbols") or [])
         if str(sym).strip()
     }
+
+
+def _write_claim(
+    state: dict[str, Any], state_key: str, day: str, subjects: Iterable[str],
+) -> None:
+    state[state_key] = {"day": day, "symbols": sorted(subjects)}
+
+
+def claim_owner_alert(
+    state_key: str, subjects: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's page under `state_key` for `subjects`; return the ones
+    NOT already paged today, in the order given.
+
+    An empty list means every subject has already been reported today and the
+    caller must stay quiet. A non-empty list is the caller's to send and is
+    recorded as sent before this returns.
+
+    `subjects` are upper-cased symbols for a per-position condition. An
+    account-wide condition that has no symbol passes a single fixed subject
+    (the de-lever pages use `ACCOUNT`), which gives it exactly the same
+    once-a-day-with-a-daily-re-assert behaviour without a second mechanism.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _claimed_subjects(state, state_key, day)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in subjects if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    _write_claim(state, state_key, day, already | set(fresh))
+    save_state(state, path)
+    return fresh
+
+
+def release_owner_alert(
+    state_key: str, subjects: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Drop `subjects` from today's claim under `state_key`; return the ones
+    that were actually holding a claim.
+
+    The half that makes the rule honest rather than a mute: a caller that can
+    SEE the condition is gone says so, and the next occurrence of it pages
+    immediately instead of waiting for midnight. Callers release only on a
+    positive observation that the condition no longer holds — never on a read
+    that failed, which is an unknown, not a clear.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _claimed_subjects(state, state_key, day)
+    if not already:
+        return []
+    drop = {
+        str(raw).strip().upper() for raw in subjects if str(raw).strip()
+    }
+    released = sorted(already & drop)
+    if not released:
+        return []
+    _write_claim(state, state_key, day, already - drop)
+    save_state(state, path)
+    return released
+
+
+# State keys. One per CONDITION, never shared: two conditions behind one key
+# would let either silence the other on the same name, which is the opposite
+# of not double-alerting.
+NO_STOP_CLAIM_KEY = "no_stop_alerted_symbols"
+DELEVER_INCOMPLETE_CLAIM_KEY = "delever_incomplete_alerted"
+FORCE_DELEVER_INCOMPLETE_CLAIM_KEY = "force_delever_incomplete_alerted"
+# The subject an account-wide condition is claimed under — one book, one
+# subject, so the per-subject machinery above needs no special case.
+ACCOUNT_SUBJECT = "ACCOUNT"
+
+
+def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    return _claimed_subjects(state, "repair_failure_alerted_symbols", day)
 
 
 def _record_repair_failure_alert(
@@ -1193,14 +1310,7 @@ def claim_kill_switch_block_alert(
 
 
 def _unreadable_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
-    raw = state.get("unreadable_stop_alerted_symbols")
-    if not isinstance(raw, dict) or raw.get("day") != day:
-        return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return _claimed_subjects(state, "unreadable_stop_alerted_symbols", day)
 
 
 def claim_unreadable_stop_alert(
@@ -1221,23 +1331,9 @@ def claim_unreadable_stop_alert(
     30-minute cadence, so without this the same name would page the owner
     roughly a dozen times a session.
     """
-    day = repair_failure_alert_day(now)
-    state = load_state(path)
-    already = _unreadable_alerted_symbols(state, day)
-    fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
-        if sym not in already
-    ]
-    if not fresh:
-        return []
-    merged = already | set(fresh)
-    state["unreadable_stop_alerted_symbols"] = {
-        "day": day, "symbols": sorted(merged),
-    }
-    save_state(state, path)
-    return fresh
+    return claim_owner_alert(
+        "unreadable_stop_alerted_symbols", symbols, now=now, path=path,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1250,14 +1346,7 @@ def claim_unreadable_stop_alert(
 # happen together by construction.
 
 def _exit_declined_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
-    raw = state.get("exit_declined_alerted_symbols")
-    if not isinstance(raw, dict) or raw.get("day") != day:
-        return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return _claimed_subjects(state, "exit_declined_alerted_symbols", day)
 
 
 def claim_exit_declined_alert(
@@ -1271,22 +1360,9 @@ def claim_exit_declined_alert(
     telling the owner twice over not at all: a position the desk decided to
     leave and could not is not a state to under-report.
     """
-    day = repair_failure_alert_day(now)
-    state = load_state(path)
-    already = _exit_declined_alerted_symbols(state, day)
-    fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
-        if sym not in already
-    ]
-    if not fresh:
-        return []
-    state["exit_declined_alerted_symbols"] = {
-        "day": day, "symbols": sorted(already | set(fresh)),
-    }
-    save_state(state, path)
-    return fresh
+    return claim_owner_alert(
+        "exit_declined_alerted_symbols", symbols, now=now, path=path,
+    )
 
 
 def exit_declined_text(symbol: str, *, side: str, why: str) -> str:

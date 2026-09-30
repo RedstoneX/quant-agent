@@ -3638,8 +3638,25 @@ class TradingPipeline:
         ]
         if elected_unfilled:
             self._alert_owner_elected_unfilled(elected_unfilled)
-        if naked:
-            self._alert_owner_no_stop(naked)
+        # Item 188. Called unconditionally now, not only when `naked` is
+        # non-empty: the symbols this pass found covered are what RELEASE
+        # their claim, and a pass with nothing naked is exactly the pass
+        # that proves the condition cleared. `gaps`, the log lines above and
+        # every stored row are unchanged and still written every pass —
+        # only the owner MESSAGE is claimed.
+        _naked_syms = {
+            str(g.get("symbol") or "").strip().upper() for g in naked
+            if str(g.get("symbol") or "").strip()
+        }
+        self._alert_owner_no_stop(
+            naked,
+            cleared=[
+                str(getattr(p, "symbol", "") or "").strip().upper()
+                for p in (positions or [])
+                if str(getattr(p, "symbol", "") or "").strip().upper()
+                not in _naked_syms
+            ],
+        )
         # A session-hours re-placement that did not land is its own
         # escalation, separate from the naked list above: the whole-share
         # GTC leg is usually still standing watch, so the gap classifies as
@@ -3993,10 +4010,57 @@ class TradingPipeline:
             logger.error("stop-repair resolution notice failed: %s", exc)
 
     @staticmethod
-    def _alert_owner_no_stop(naked: list[dict]) -> None:
-        """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
+    def _alert_owner_no_stop(
+        naked: list[dict], *, cleared: list[str] | None = None,
+    ) -> None:
+        """Push the NO-STOP-AT-ALL escalation to the owner. Never raises.
+
+        Item 188 — the LAST page on this reconciliation path with no dedup
+        at all. The sweep runs every thirty minutes, so a position that
+        stayed naked from 09:35 to the close sent the identical message
+        about a dozen times, which is how the channel the desk's only loss
+        protection reports through gets tuned out.
+
+        Claimed per symbol per ET calendar day on the shared
+        `claim_owner_alert` rule (`src/coverage_watchdog.py`), the same one
+        the placement-failure, unreadable-stop, elected-unfilled,
+        declined-exit and kill-switch pages already follow, on its OWN state
+        key so no other condition can silence it. `cleared` releases the
+        claim for every position this pass proved covered, so a name that
+        goes naked, is repaired and goes naked again pages both times.
+
+        The dedup is on the MESSAGE only. The CRITICAL log line, the gap row
+        in `stop_coverage_gaps` and the session banner are written on every
+        pass, claimed or not — a suppressed page must never make an
+        unprotected position disappear from the record.
+        """
         try:
             from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                NO_STOP_CLAIM_KEY, claim_owner_alert, release_owner_alert,
+            )
+
+            if cleared:
+                release_owner_alert(NO_STOP_CLAIM_KEY, cleared)
+            if not naked:
+                return
+            fresh = set(claim_owner_alert(
+                NO_STOP_CLAIM_KEY,
+                [str(g.get("symbol") or "") for g in naked],
+            ))
+            if not fresh:
+                logger.warning(
+                    "NO STOP AT ALL still true for %s — already paged today, "
+                    "not repeating; the gap row and this line still stand.",
+                    ", ".join(sorted(
+                        str(g.get("symbol") or "?") for g in naked
+                    )),
+                )
+                return
+            naked = [
+                g for g in naked
+                if str(g.get("symbol") or "").strip().upper() in fresh
+            ]
 
             # The refusal REASON, not just the shortfall (docs/WORK.md item
             # 88). "The automatic repair could not restore one" was true of a
@@ -12631,6 +12695,22 @@ class TradingPipeline:
                 deficit=deficit, projected_proceeds=projected_proceeds,
                 failed_symbols=failed_symbols,
             )
+        else:
+            # Item 188. The sweep cleared the deficit — release the page
+            # claim so a fresh deficit it CANNOT clear later the same day
+            # pages again rather than being swallowed.
+            try:
+                from src.coverage_watchdog import (
+                    ACCOUNT_SUBJECT, FORCE_DELEVER_INCOMPLETE_CLAIM_KEY,
+                    release_owner_alert,
+                )
+                release_owner_alert(
+                    FORCE_DELEVER_INCOMPLETE_CLAIM_KEY, [ACCOUNT_SUBJECT],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "force de-lever page-claim release failed: %s", exc,
+                )
 
         return orders
 
@@ -12646,9 +12726,19 @@ class TradingPipeline:
         rejected, a stop-clear that failed, or simply not enough sellable value)
         would leave the account on margin with only a log line nobody reads. It
         is reporting-only: it changes no order, no sizing and no sequencing.
+
+        Item 188: claimed once per ET calendar day on the shared
+        `claim_owner_alert` rule, released the moment a sweep clears its
+        deficit. The `logger.error` below is written on EVERY occurrence
+        whether the page goes out or not — the account being on margin must
+        stay in the record even when the owner is not told twice.
         """
         try:
             from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                ACCOUNT_SUBJECT, FORCE_DELEVER_INCOMPLETE_CLAIM_KEY,
+                claim_owner_alert,
+            )
 
             shortfall = max(0.0, deficit - projected_proceeds)
             names = ", ".join(sorted(failed_symbols)) if failed_symbols else "—"
@@ -12660,6 +12750,14 @@ class TradingPipeline:
                 f"until this is resolved."
             )
             logger.error(msg)
+            if not claim_owner_alert(
+                FORCE_DELEVER_INCOMPLETE_CLAIM_KEY, [ACCOUNT_SUBJECT],
+            ):
+                logger.warning(
+                    "FORCE DE-LEVER INCOMPLETE already paged today — not "
+                    "repeating; the line above is the record.",
+                )
+                return
             _notifier.send_owner_alert(msg)
         except Exception as exc:  # noqa: BLE001
             logger.error("force de-lever incomplete owner alert failed: %s", exc)
@@ -13098,6 +13196,19 @@ class TradingPipeline:
             logger.warning("delever ceiling-state write failed: %s", exc)
 
         if not still_over:
+            # Item 188. A book proved back under its ceiling releases the
+            # claim, so a second breach the SAME day pages again instead of
+            # being swallowed by the morning's message.
+            try:
+                from src.coverage_watchdog import (
+                    ACCOUNT_SUBJECT, DELEVER_INCOMPLETE_CLAIM_KEY,
+                    release_owner_alert,
+                )
+                release_owner_alert(
+                    DELEVER_INCOMPLETE_CLAIM_KEY, [ACCOUNT_SUBJECT],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("delever page-claim release failed: %s", exc)
             return
 
         leverage["delever_incomplete"] = True
@@ -13107,13 +13218,31 @@ class TradingPipeline:
             gross_x, ceiling_x,
         )
 
-        if was_over:
-            # Already paged when the book first crossed into still-over; do not
-            # repeat every session while it stays there.
-            return
-
+        # Item 188. The edge trigger above (`was_over`) is KEPT as the
+        # durable record of what the last session measured — it is still
+        # read and still written — but it no longer decides the page. It
+        # could not: firing only on the transition INTO still-over meant a
+        # book sitting over its ceiling for a second consecutive morning
+        # paged nobody, which is the same defect as repeating forever with
+        # the sign flipped. The shared claim gives both halves: once a day
+        # while it persists, and again on the next trading day.
         try:
             from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                ACCOUNT_SUBJECT, DELEVER_INCOMPLETE_CLAIM_KEY,
+                claim_owner_alert,
+            )
+
+            if not claim_owner_alert(
+                DELEVER_INCOMPLETE_CLAIM_KEY, [ACCOUNT_SUBJECT],
+            ):
+                logger.warning(
+                    "GROSS-EXPOSURE DE-LEVER: still over the ceiling and "
+                    "already paged today (last session over-ceiling=%s) — "
+                    "not repeating; the flag, this line and the shortfall "
+                    "evidence row are unchanged.", was_over,
+                )
+                return
 
             msg = (
                 f"GROSS-EXPOSURE DE-LEVER INCOMPLETE: after de-levering, gross "
