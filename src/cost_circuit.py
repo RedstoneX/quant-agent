@@ -415,6 +415,26 @@ def _all_attempts_provably_free(
     return free
 
 
+def _fmt_settled(value: float | None) -> str:
+    """A settled-cost dollar amount for any owner-facing alert built in this
+    module -- never the raw f"${value:.4f}" this module used to print.
+
+    2026-09-29: every alert below prints a genuinely tiny settled figure
+    (sub-cent daily/session spend is common on the free-tier-heavy path),
+    and four decimal places was this module's only way to show that
+    without rounding it to "$0.00". But a `$` token with anything but 2
+    decimal digits is exactly the shape `src/notifier.py`'s
+    `_redact_malformed_numbers` exists to strip before anything reaches
+    the owner, so every one of these alerts had its cost line redacted
+    out from under it -- five times in one afternoon, per the log. Lazily
+    imported (matches this module's existing `from src.notifier import
+    TelegramNotifier` pattern) so this module keeps no module-level
+    dependency on `src/notifier.py`.
+    """
+    from src.notifier import format_settled_money
+    return format_settled_money(value)
+
+
 class PaidAnalysisSuspended(RuntimeError):
     """Raised before a paid provider request when the circuit is open."""
 
@@ -1068,14 +1088,8 @@ class UnavailableLLMCostCircuit:
                 "prevented a trustworthy snapshot"
             )
         else:
-            session_text = (
-                f"${self.session_cost_usd:.4f}" if self.session_cost_usd is not None
-                else "unavailable"
-            )
-            daily_text = (
-                f"${self.daily_cost_usd:.4f}" if self.daily_cost_usd is not None
-                else "unavailable"
-            )
+            session_text = _fmt_settled(self.session_cost_usd)
+            daily_text = _fmt_settled(self.daily_cost_usd)
             qualifier = "" if self.costs_exact else " (known/conservative snapshot)"
             cost_line = (
                 f"cost: {session_text} this run · {daily_text} today{qualifier}"
@@ -2126,8 +2140,9 @@ class LLMCostCircuitBreaker:
             f"transient provider latch {code} auto-expired after "
             f"{float(elapsed):.1f} min (cooldown {cooldown:.0f} min); "
             f"{failed_call_rows} failed-call row(s) of unproven cost forgiven, "
-            f"settled spend untouched at ${daily:.4f}/${daily_limit:.2f} day "
-            f"and ${session_cost:.4f}/${session_limit:.2f} session; "
+            f"settled spend untouched at {_fmt_settled(daily)} of a "
+            f"${daily_limit:.2f} day cap and {_fmt_settled(session_cost)} of "
+            f"a ${session_limit:.2f} session cap; "
             f"auto-clear {used + 1} of {allowance} today"
         )
         conn.execute(
@@ -2737,8 +2752,8 @@ class LLMCostCircuitBreaker:
             f"previous suspension: {code}\n"
             f"{when}"
             f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
-            f"settled spend at resume: ${session_cost:.4f} this run · "
-            f"${daily_cost:.4f} today\n"
+            f"settled spend at resume: {_fmt_settled(session_cost)} this run · "
+            f"{_fmt_settled(daily_cost)} today\n"
             "status: paid analysis is live again; no operator reset was needed. "
             "Session, call-count, attempt, and daily limits remain enforced and "
             "re-latch instantly if real settled spend is over a cap."
@@ -2773,8 +2788,8 @@ class LLMCostCircuitBreaker:
             f"affected run: {hold.get('run_id') or 'unknown'} "
             f"({hold.get('mode') or 'unknown'} / {hold.get('agent_name') or 'unknown'})\n"
             f"attempts: {attempts} provider attempt{'s' if attempts != 1 else ''}\n"
-            f"cost: ${session_cost:.4f} this run · ${daily_cost:.4f} "
-            f"on ET day {hold.get('day')}{qualifier}\n"
+            f"cost: {_fmt_settled(session_cost)} this run · "
+            f"{_fmt_settled(daily_cost)} on ET day {hold.get('day')}{qualifier}\n"
             f"{recovery}\n"
             "preserved: broker-resident stops, reconciliation, deterministic loss "
             "protection, close/P&L jobs, and the read-only API; no operator reset is required."
@@ -2824,7 +2839,8 @@ class LLMCostCircuitBreaker:
             f"affected run: {state.get('run_id') or 'unknown'} "
             f"({state.get('mode') or 'unknown'} / {state.get('agent_name') or 'unknown'})\n"
             f"{attempts_line}\n"
-            f"cost: ${session_cost:.4f} this run · ${daily_cost:.4f} today{cost_note}\n"
+            f"cost: {_fmt_settled(session_cost)} this run · "
+            f"{_fmt_settled(daily_cost)} today{cost_note}\n"
             "suspended: all paid LLM analysis, repairs, retries, and provider failover\n"
             "preserved: broker-resident stops, order/fill reconciliation, deterministic "
             "loss protection, close/P&L jobs, and the read-only API\n"
@@ -2878,7 +2894,7 @@ class LLMCostCircuitBreaker:
         elif daily >= float(self.config.daily_cost_limit_usd):
             self._trip_locked(
                 conn, code="daily_cost_limit",
-                detail=(f"daily LLM spend ${daily:.4f} reached safe limit "
+                detail=(f"daily LLM spend {_fmt_settled(daily)} reached safe limit "
                         f"${float(self.config.daily_cost_limit_usd):.2f}"),
                 run_id=run_id, mode=mode, agent_name=agent_name,
                 attempts=attempts, attempts_exact=attempts_exact,
@@ -2888,7 +2904,7 @@ class LLMCostCircuitBreaker:
         elif session >= float(self.config.session_cost_limit_usd):
             self._trip_locked(
                 conn, code="session_cost_limit",
-                detail=(f"session LLM spend ${session:.4f} reached safe limit "
+                detail=(f"session LLM spend {_fmt_settled(session)} reached safe limit "
                         f"${float(self.config.session_cost_limit_usd):.2f}"),
                 run_id=run_id, mode=mode, agent_name=agent_name,
                 attempts=attempts, attempts_exact=attempts_exact,
