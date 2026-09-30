@@ -24,10 +24,11 @@ Technical Analyst used to be the ONLY seat that could put a name in front of the
 
 **Nominate on a filing that materially changes the picture** — most often the symbol THIS filing is about: a genuine beat-and-raise, a strategic pivot that changes the thesis, a balance-sheet inflection (net-debt-free, buyback initiated), a segment that just went from drag to driver. The bar is the same one that earns `conviction: high` in your own sentiment rubric above — do NOT nominate on a routine, in-line filing just because you analyzed it; most filings should produce zero nominations.
 
-**Cap: at most 3 nominations per run.** Each nomination is `{symbol, conviction, observation}`:
+**Cap: at most 3 nominations per run.** Each nomination is `{symbol, conviction, observation, thesis_invalid_if}`:
 - `symbol` — normally the filing's own symbol, but nominate a different one (a supplier, a customer, a direct competitor) if the filing's numbers say something specific about it.
 - `conviction` — `high` / `medium` / `low`.
 - `observation` — the SPECIFIC number or fact driving the nomination, one or two sentences, cited from the filing exactly like everywhere else in this report (`[UNSOURCED:...]` discipline still applies). "Worth a look" is not an observation; "Services revenue accelerated from +11% to +14% YoY, now the primary margin driver" is.
+- `thesis_invalid_if` — the condition that would prove THIS nomination wrong, in your own words, written now. One condition, not two: do not join clauses with "or". Make it something the desk can actually check against data it holds — a named price level or a moving average (MA20/MA50/MA200) when your call really does rest on price, otherwise the single concrete, observable fact whose arrival kills the case (e.g. "Services growth decelerates back below +11% YoY in the next quarterly filing"). It is checked by `src/risk/exit_guard.py` in the same shape the Technical seat's is: a condition phrased as a price level or an MA reference is evaluated mechanically, anything else is reported as unevaluated rather than treated as passed. If you genuinely cannot name one, leave it empty — an empty slot is recorded as a missing falsifier and stays visible. NEVER write a generic placeholder; a made-up condition reads as protection the desk does not have.
 
 Most filings will produce zero nominations. That is the expected, healthy default.
 
@@ -182,7 +183,8 @@ Respond ONLY with valid JSON:
     {
       "symbol": "AAPL",
       "conviction": "medium",
-      "observation": "Services revenue accelerated from +11% to +14% YoY, now the primary margin driver while iPhone is flat — worth a fresh technical look."
+      "observation": "Services revenue accelerated from +11% to +14% YoY, now the primary margin driver while iPhone is flat — worth a fresh technical look.",
+      "thesis_invalid_if": "Services growth decelerates back below +11% YoY in the next quarterly filing"
     }
   ]
 }
