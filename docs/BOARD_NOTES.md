@@ -524,7 +524,7 @@ Measurement only. No production code was written or changed for it; both events 
 
 **What was deliberately not done.** No fix, no alert, no change to `scale_in.py` — including the docstring's "~15 s", which the measurement contradicts but which is a code change and not this pass's mandate.
 
-## item 197
+## item 197 — RETIRED 2026-09-30, the re-peg now derives a floor for a short and a ceiling for a long, with the room test, the quote side and the walk direction inverted to match, and a sell_short spec is exercised in tests
 
 The re-peg path (`_repeg_entry_order`, `src/pipeline_stages.py`) was written for
 the BUY side and never generalised. It builds a single bound —

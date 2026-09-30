@@ -343,15 +343,6 @@ DONE WHEN:
   - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
-**197. The entry re-peg is side-blind and would walk a short's limit the wrong way — filed 2026-09-30, found by item 183's adversary pass. Detail: `docs/BOARD_NOTES.md` ("item 197").**
-
-DONE WHEN:
-  - [ ] `_repeg_entry_order` reads the spec's side and derives a ceiling for a long and a floor for a short, with the room test and the walk direction inverted to match
-  - [ ] a test exercises a `sell_short` spec through the re-peg path and fails if the replaced limit moves away from the reference
-  - [ ] the guard is in place BEFORE `repeg_enabled` is ever turned on, or the flag is documented as long-only until it is
-
-detail: docs/BOARD_NOTES.md (item 197)
-
 **200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
 
 DONE WHEN:
@@ -381,6 +372,7 @@ DONE WHEN:
 - retired queue: 198
 - retired queue: 112
 - retired queue: 152
+- retired queue: 197
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
