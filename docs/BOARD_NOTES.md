@@ -860,7 +860,7 @@ risk leg binds, the execution-side read is the one that sizes the live short.
 The withdrawn work carried a ledger line saying the number "NO LONGER SIZES
 ANY SHORT". That was untrue and is removed rather than softened. The
 construction / execution split is a latent defect in its own right and is
-filed as board item 215.
+filed as board item 216.
 
 WHAT SHIPPED INSTEAD — THE RECORDING. The reason this number cannot be read
 off the instrument is not that the reading is hard; it is that the desk has
@@ -967,7 +967,7 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
 
 
-## item 215 — the short-side gap haircut has two application sites
+## item 216 — the short-side gap haircut has two application sites
 
 Filed 2026-09-30 out of the item 186 pass. Execution sizes a position as
 min(qty_by_alloc, qty_by_risk). The constructor applies the short-side
