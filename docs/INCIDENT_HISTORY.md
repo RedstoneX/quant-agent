@@ -94,13 +94,6 @@ what would catch it next time.
 
 **Criterion status.** 182/1 (the cushion) is met. 182/2 (the owner alert) is DEFERRED and the item does not close.
 
-### 2026-09-30 — the anti-collision number tool failed open and let item 192 be claimed twice; it now fails closed
-
-**In plain words:** `scripts/next_board_number.py` exists so that two changes cannot claim the same board item number. Its open-pull-request read is the half that catches the parallel-agent race, because a number is claimed on a branch long before it reaches `docs/WORK.md`. That read hit a GitHub request limit, the script printed a WARNING and returned a number anyway with exit 0, and two pull requests then both claimed item 192 — caught by hand, not by a machine. The 192 double-claim is reported by the session that caught it and is no longer directly verifiable, because the hand fix renumbered one of the two: [measured 2026-09-30, `gh pr diff` over the last 60 pull requests] only PR 792 now adds item 192. What IS independently verifiable is the pattern and the defect: PR 783 is titled "Renumber item 189 to 190 — third parallel-PR number collision", and the fail-open behaviour was plainly in the script's own code and exit-code table. The desk's standing rule is that everything mechanically enforced holds and everything relying on somebody noticing a warning slips; the old output was a warning.
-
-It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
-
-**What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
 **In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
@@ -17415,3 +17408,53 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
+### 2026-09-30 — the anti-collision number tool failed open and let item 192 be claimed twice; it now fails closed
+
+**In plain words:** `scripts/next_board_number.py` exists so that two changes cannot claim the same board item number. Its open-pull-request read is the half that catches the parallel-agent race, because a number is claimed on a branch long before it reaches `docs/WORK.md`. That read hit a GitHub request limit, the script printed a WARNING and returned a number anyway with exit 0, and two pull requests then both claimed item 192 — caught by hand, not by a machine. The 192 double-claim is reported by the session that caught it and is no longer directly verifiable, because the hand fix renumbered one of the two: [measured 2026-09-30, `gh pr diff` over the last 60 pull requests] only PR 792 now adds item 192. What IS independently verifiable is the pattern and the defect: PR 783 is titled "Renumber item 189 to 190 — third parallel-PR number collision", and the fail-open behaviour was plainly in the script's own code and exit-code table. The desk's standing rule is that everything mechanically enforced holds and everything relying on somebody noticing a warning slips; the old output was a warning.
+
+It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
+
+**What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
+
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
