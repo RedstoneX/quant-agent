@@ -226,14 +226,6 @@ DONE WHEN:
   - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
 detail: docs/BOARD_NOTES.md (item 157)
 
-
-DONE WHEN:
-  - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger, when it cleared and why, every number read from the `auto_reset` event row), keeping the DB event and log; durable/retryable like the quota-recovery alert, and suppressed under `QAMC_REHEARSAL=1` at the notifier chokepoint
-  - [x] the resume is PAIRED to a suspension the owner actually received — 2026-09-26: the auto-clear captures the suspension's `alert_state` at the last instant it is knowable (the same write wipes it), and a resume for a suspension that never reached him is resolved as unpaired instead of sent, so an outage that ends before he hears about it is zero messages, not a dangling "back live"
-  - [x] reproducible offline — the fault harness gained a `server_error_mid_stream` kind (a pre-generation 503 is provably free and can never latch; only a mid-stream one can), and a morning rehearsal with it reproduced the latch, the suspension alert, the auto-expiry and the paired resume alert end to end
-  - [ ] cooldown and allowance re-read against a real occurrence — STILL OPEN: production has had ZERO real `auto_reset` events, so the 15-min cooldown and the 19/day allowance remain unmeasured; a rehearsal cannot measure them because it sets the cooldown itself
-detail: docs/BOARD_NOTES.md (item 174)
-
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
 
 DONE WHEN:
@@ -369,8 +361,8 @@ DONE WHEN:
 - retired queue: 163
 - retired queue: 86, 173
 - retired queue: 198
-- retired queue: 174
 - retired queue: 112
+- retired queue: 174
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
