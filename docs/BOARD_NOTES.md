@@ -482,6 +482,8 @@ Retired from the queue 2026-09-30: the filed premise (a full reservation eating 
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
+**2026-09-30 — the case is now RECORDED, not yet priced.** `agent_logs.telemetry` says `complete`, `no_cost` (tokens known, no price) or `no_usage` (no token counts), so a missing measurement no longer looks like a measured zero; NULL on every older row means unknown. Recording only: the pricing/exclusion question in the criterion stays open, and the free model in use today is the normal source of `no_cost`/`no_usage` rows.
+
 ## item 157
 
 **Live-call criterion is BLOCKED on a credential grant, not on effort (measured 2026-09-26).** The rehearsal identity the desk uses for live proofs is granted the broker, economics, messaging and general-model credentials and is NOT granted the Google one, so the only identity that can make the confirming call is production — a live attempt spends real money on the shared account. Either grant the Google credential to the rehearsal identity or accept one production-billed call; until then this box cannot be ticked from a rehearsal. Evidence: `docs/INCIDENT_HISTORY.md` (2026-09-26).
