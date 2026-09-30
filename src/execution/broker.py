@@ -6271,6 +6271,21 @@ class AlpacaBroker:
         order_class = str(getattr(order_class, "value", order_class) or "").lower()
         if order_class not in ("", "simple") or getattr(order, "legs", None):
             return _AMEND_NOT_ATTEMPTED
+        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
+        # can present as class "" with no legs and slip past the test above.
+        # `parent_id` is the field that is populated ON the child. Its absence
+        # is what the guard above was claiming to test and did not.
+        if getattr(order, "parent_id", None):
+            return _AMEND_NOT_ATTEMPTED
+        # A stop-LIMIT carries a limit price too, and ReplaceOrderRequest here
+        # amends stop_price ONLY -- the limit would keep its old level and the
+        # buffer between them would widen on every trail. `_submit_stop_limit_order`
+        # produces exactly this shape. Leave it to the fallback, which rebuilds
+        # both legs together.
+        otype = getattr(order, "order_type", None) or getattr(order, "type", None)
+        otype = str(getattr(otype, "value", otype) or "").lower()
+        if otype != "stop":
+            return _AMEND_NOT_ATTEMPTED
         # A price-only amend cannot fix a coverage gap: if the resting stop
         # does not already cover exactly the position, the fallback (which
         # resubmits at the position's qty) is the path that repairs it.
@@ -6285,7 +6300,14 @@ class AlpacaBroker:
                 spec["id"], ReplaceOrderRequest(stop_price=price),
             )
         except Exception as exc:  # noqa: BLE001
-            if getattr(exc, "status_code", None) is not None:
+            # MEASURED 2026-09-30 (rehearsal PA30V8QHEW1C): a genuine refusal
+            # is APIError with status_code 422. `status_code is not None` also
+            # catches 429/500/502/504 -- a transport-layer failure that may have
+            # been applied at the broker BEFORE the answer was lost. Treating
+            # that as "refused" would leave the desk recording the OLD stop
+            # level while the broker holds the NEW one. Use the file's existing
+            # terminal-rejection classifier (400/404/422) instead.
+            if _is_terminal_broker_rejection(exc):
                 # The broker ANSWERED and said no. The original order is still
                 # resting at its old price (measured), so protection is intact
                 # — falling back to cancel+resubmit here would re-open exactly

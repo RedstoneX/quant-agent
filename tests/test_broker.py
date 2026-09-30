@@ -2578,6 +2578,12 @@ def _plain_resting_stop(order_id="old-stop", qty="10", stop_price="185.0"):
     stop.limit_price = None
     stop.order_class = "simple"
     stop.legs = None
+    # A child leg carries parent_id; a standalone stop does not. A stop-LIMIT
+    # carries a limit the amend does not touch. The atomic path requires both
+    # to be absent, so the double must state them rather than let MagicMock
+    # invent a truthy attribute.
+    stop.parent_id = None
+    stop.order_type = "stop"
     return stop
 
 
