@@ -101,6 +101,49 @@ what would catch it next time.
 It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
 
 **What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
+
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
 **In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
@@ -302,6 +345,15 @@ a check that fires every session is a check nobody reads. On the day it was
 written it found three names aiming past a standing wall — META from this
 bug, and AAPL and NOK from levels that formed after those positions were
 opened, which is a real state the desk had no way to see before.
+
+### 2026-09-26 — the trade-picker never contradicted itself; the desk's own sizing cap did (item 163 retired)
+**In plain words:** the board recorded that the portfolio manager said one thing and emitted another — that it wrote "RSG and AAPL get 2.5% risk each" while emitting 0.5 for RSG. It did not. Reproduced read-only against the stored run: the seat's own raw response asks for RSG 2.5 and ZS 1.75 and contains the string "0.5" nowhere. The 0.5 was written AFTER parsing by the desk's deterministic sub-floor size cap (RSG was a range setup at reward:risk 0.81), whose own log line already said "Deterministic, not PM inconsistency". RSG was then traded at the capped size, correctly.
+
+**So the filed defect was misdiagnosed, and the real one is narration lag:** the story is written before a mechanical adjustment and never restated, so a reader comparing prose to stored numbers sees a contradiction that never happened. The detector shipped earlier reads the stored decision and flags a symbol whose prose names a risk % materially different from its emitted `risk_allocation_pct`, recording each to the evidence stream; detection only, and `risk_allocation_pct` stays authoritative. Its tolerance is read off the emitted field's own precision rather than borrowed from the risk-budget floor, which had called prose "2.5% risk" and an emitted 2.0 the same thing.
+
+**Block versus record:** a blocking gate was built first and then deleted. On the only case the desk has measured, blocking would have refused a correctly-sized, correctly-capped trade over a stale sentence, and nothing available distinguishes "the seat contradicted itself" from "a rule moved the number after the seat wrote about it".
+
+**Both criteria are now met.** The second — which value the seat meant — is answered: 2.5%, and the emitted 0.5 was not an erroneous field. The sub-floor cap that caused it was retired 2026-09-17, so this exact path is no longer live; nothing restates the narrative after any mechanical size change, and that residual lag is what the detector surfaces. An earlier write-up claiming the emitted field was the error was withdrawn and its pull request closed.
 
 ### 2026-09-26 — the drift check could only see a mechanism that was deleted, so one that merely changed went on being described wrongly (item 107, part)
 

@@ -225,6 +225,16 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+**The number-ledger ratchet needs no setup.** The fourth file every parallel
+branch used to collide on was `src/number_sources.py`: its
+`MAX_ARBITRARY_ENTRIES` was one hand-edited line carrying both the count and
+the whole narrative of every past move, so two branches retiring different
+numbers always conflicted. The count is now computed as the sum of the deltas
+in `config/number_ledger_history.yaml`, one appended entry per change, and
+that file is registered `merge=union` — a git built-in, so unlike `docsmerge`
+it works in every clone with no `git config`. To move the count, APPEND an
+entry there; never edit an existing one, and never write the literal back.
+
 **Register the board-document merge driver (one-time, per clone — not automatic).**
 `docs/WORK.md`, `docs/BOARD_NOTES.md` and `docs/INCIDENT_HISTORY.md` are the
 three files every parallel branch collides on, and `.gitattributes` names a
