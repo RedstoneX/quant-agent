@@ -845,9 +845,27 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 )
 
 #: At or worse than this drawdown the ceiling is the floor rung AND the owner
-#: is told. Kept as its own constant rather than inferred from the last
-#: `GROSS_LADDER` row so that adding a rung never silently moves the alert.
-GROSS_LADDER_ALERT_PCT = -20.0
+#: is told. COMPUTED from `GROSS_LADDER`, not chosen (board item 182,
+#: 2026-09-30).
+#:
+#: It used to be a second literal `-20.0` sitting beside the ladder's own
+#: `-20.0`, justified by a comment saying it was kept separate "so that
+#: adding a rung never silently moves the alert". That justification had it
+#: backwards. The alert does not answer an independent question — the
+#: sentence it prints is "the desk is at its most de-levered setting and the
+#: owner is being told", and "most de-levered setting" IS the ladder's
+#: deepest rung, by definition. If a deeper rung is ever added, the desk's
+#: most-de-levered setting moves and the alert must move with it; freezing
+#: the alert at an old rung would mean hitting a NEW floor in silence, which
+#: is the failure the alert exists to prevent. Adding an INTERMEDIATE rung
+#: still does not move it, because `min` reads the deepest row, not the last
+#: one written.
+#:
+#: This makes the alert inherit the ladder's owner ratification (2026-09-25:
+#: the six `GROSS_LADDER` numbers are ratified appetite) instead of being a
+#: seventh independently-picked number that merely happens to agree with the
+#: sixth. There is nothing left here to source.
+GROSS_LADDER_ALERT_PCT: float = min(threshold for threshold, _ in GROSS_LADDER)
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
 #: `HARD_BLOCK_RULES` (below in this file) — one string, two places.
@@ -1010,8 +1028,9 @@ def resolve_gross_ceiling(
         )
     if alert:
         reason += (
-            " This is past the -20% rung: the desk is at its most de-levered "
-            "setting and the owner is being told."
+            f" This is past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% rung: the "
+            f"desk is at its most de-levered setting and the owner is being "
+            f"told."
         )
     return GrossCeiling(
         ceiling_x=ceiling, base_x=base, drawdown_pct=drawdown,

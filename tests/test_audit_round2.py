@@ -337,6 +337,13 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p.broker = MagicMock()
     p.broker.get_account.return_value = {"cash": 10.0, "portfolio_value": 90_000.0}
     p.broker.get_positions.return_value = []
+    # A real live quote: the partial sale sizes itself off the SELL limit the
+    # order will actually rest at (board item 182 removed the flat 2%
+    # cushion). Without this a MagicMock quote float()s to 1.0 and the sizing
+    # would ask for one share per dollar of deficit.
+    p.broker.get_latest_quote.return_value = {
+        "bid_price": 100.5, "ask_price": 100.7,
+    }
     p.db = MagicMock()
     p._submit_protected_sell = MagicMock(return_value=(
         {"id": "s1", "status": "accepted"}, {"symbol": "SGOV"}))
@@ -350,7 +357,29 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p._force_delever(ctx)
     kwargs = p._submit_protected_sell.call_args.kwargs
     assert kwargs["label"] == "SWEEP_SELL"          # ledger isolation held
-    assert kwargs["qty"] <= 7                       # ceil(510/100.6)=6 … not 800
+    assert kwargs["qty"] <= 7                       # ceil(500/100.5)=5 … not 800
+
+    # Board item 182: the share count is the deficit divided by the price
+    # floor the order carries, so it must be enough to actually clear the
+    # deficit at that floor — not a padded guess, and not a share short.
+    assert kwargs["qty"] * 100.5 >= 500.0
+
+    # With NO live quote the order becomes a MARKET order, which has no price
+    # floor. The sizing then falls back to the same conservative must-fill
+    # haircut the proceeds counter already uses (mark less
+    # STOP_LIMIT_BUFFER_PCT) rather than to a chosen cushion — and still does
+    # not full-liquidate the park.
+    p.broker.get_latest_quote.return_value = {}
+    p._submit_protected_sell.reset_mock()
+    ctx2 = RunContext.start("morning")
+    ctx2.cash = -500.0
+    ctx2.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
+                               current_price=100.6, market_value=80_480,
+                               unrealized_pnl=80, sector="Unknown")]
+    p._force_delever(ctx2)
+    no_quote = p._submit_protected_sell.call_args.kwargs
+    assert no_quote["limit_price"] is None, "no quote -> MARKET order"
+    assert no_quote["qty"] <= 7, "still must not full-liquidate the park"
 
 
 def test_earnings_batch_isolates_one_bad_filing():

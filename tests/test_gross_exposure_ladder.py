@@ -3233,3 +3233,42 @@ def test_a_symbol_absent_from_the_cut_order_is_unread_not_opposed():
         conviction_rank={"OPP": (OPPOSED, 0)},  # GONE deliberately absent
     )
     assert outcome.trims[0].symbol == "OPP"
+
+
+def test_the_owner_alert_is_the_ladders_deepest_rung_not_a_second_number():
+    """Board item 182. `GROSS_LADDER_ALERT_PCT` used to be a second literal
+    `-20.0` written beside the ladder's own `-20.0`, defended by a comment
+    saying it was kept separate "so that adding a rung never silently moves
+    the alert". That had the argument backwards: the sentence the alert
+    prints is "the desk is at its most de-levered setting", and the most
+    de-levered setting IS the deepest rung. Freezing the alert at an old rung
+    would mean reaching a NEW floor in silence — exactly what the alert
+    exists to prevent.
+
+    So it is now COMPUTED from the table, and this test is the guard that it
+    stays computed. It also pins the owner-facing prose to the same source,
+    because that sentence used to carry its own hardcoded "-20%".
+    """
+    import re
+
+    from src.risk.rules import GROSS_LADDER_ALERT_PCT, resolve_gross_ceiling
+
+    deepest = min(threshold for threshold, _ in GROSS_LADDER)
+    assert GROSS_LADDER_ALERT_PCT == deepest
+
+    # It fires AT the deepest rung (ties go to the tighter side, as the whole
+    # file does) and not one step above it.
+    assert resolve_gross_ceiling(deepest, base_x=BASE_X).alert_owner
+    assert resolve_gross_ceiling(deepest - 5.0, base_x=BASE_X).alert_owner
+    shallower = max(
+        threshold for threshold, _ in GROSS_LADDER if threshold > deepest
+    )
+    assert not resolve_gross_ceiling(shallower, base_x=BASE_X).alert_owner
+
+    # The owner-facing sentence names the ladder's own deepest rung, so the
+    # prose cannot outlive the table it describes.
+    reason = resolve_gross_ceiling(deepest, base_x=BASE_X).reason
+    assert f"{abs(deepest):.0f}%" in reason
+    # No OTHER percentage is presented as the alert rung in that sentence.
+    tail = reason.split("This is past the")[-1]
+    assert re.findall(r"(\d+)%", tail)[0] == f"{abs(deepest):.0f}"

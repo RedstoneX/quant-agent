@@ -12727,21 +12727,6 @@ class TradingPipeline:
             if projected_proceeds >= deficit:
                 break
             is_sweep = sweep_symbol is not None and p.symbol == sweep_symbol
-            if is_sweep and p.current_price and p.current_price > 0:
-                # audit round 2: only unpark what the deficit needs (plus a
-                # 2% cushion) — full-liquidating an $80k T-bill balance for a
-                # $200 deficit forced a full re-park at the session bookend,
-                # a pointless round-trip. Real positions keep whole-position
-                # sells (partial de-levers of losers re-review next session).
-                import math as _math
-                needed = (deficit - projected_proceeds) * 1.02
-                qty = min(float(_math.ceil(needed / p.current_price)), p.qty)
-                if qty >= p.qty:
-                    qty = self._full_sell_qty(p.qty)
-            else:
-                qty = self._full_sell_qty(p.qty)
-            if qty is None or qty <= 0:
-                continue
             # Price the must-fill exit off the LIVE quote at submit time: a
             # marketable limit AT the live bid, or a MARKET order (limit=None)
             # when no live quote is available. See `_live_delever_price`. The
@@ -12749,8 +12734,66 @@ class TradingPipeline:
             # a legitimately gapped fill; it falls back to the mark only when
             # there is no quote, in which case the order is a MARKET order the
             # guard skips anyway.
+            #
+            # Priced BEFORE the quantity is chosen (board item 182): the
+            # partial sweep sale below sizes itself off this limit, and it
+            # cannot do that if the limit is only established afterwards.
             sell_limit, quote_ref = self._live_delever_price(p.symbol, "sell")
             exec_ref = quote_ref if quote_ref is not None else p.current_price
+            # The price floor each share of a partial sweep sale is
+            # guaranteed to raise. A SELL limit fills AT OR ABOVE its limit
+            # or it does not fill, so the live limit IS that floor. With no
+            # live quote the order is a MARKET order, which has no floor at
+            # all, so the loop falls back to the SAME conservative must-fill
+            # haircut it already applies when counting proceeds a few lines
+            # below: the mark less `STOP_LIMIT_BUFFER_PCT`, the slippage the
+            # desk budgets for a gapping exit. That is an existing derived
+            # number, not a new one.
+            from src.execution.broker import AlpacaBroker as _AlpacaBroker
+            if sell_limit is not None and sell_limit > 0:
+                sizing_price: float | None = sell_limit
+            elif p.current_price and p.current_price > 0:
+                sizing_price = float(p.current_price) * (
+                    1 - _AlpacaBroker.STOP_LIMIT_BUFFER_PCT
+                )
+            else:
+                sizing_price = None
+            if is_sweep and sizing_price is not None and sizing_price > 0:
+                # audit round 2: only unpark what the deficit needs —
+                # full-liquidating an $80k T-bill balance for a $200 deficit
+                # forced a full re-park at the session bookend, a pointless
+                # round-trip. Real positions keep whole-position sells
+                # (partial de-levers of losers re-review next session).
+                #
+                # THE SHARE COUNT IS COMPUTED, NOT PADDED (board item 182,
+                # 2026-09-30). This used to divide the remaining deficit by
+                # the possibly-stale `current_price` and then multiply by a
+                # flat 1.02 — a 2% guess at how far the fill would land under
+                # the mark, chosen by nobody and read off nothing. The guess
+                # is unnecessary, because the order this loop is about to
+                # place already carries its own worst case. `sizing_price`
+                # above IS that worst case: the live limit the order rests
+                # at, or — with no quote, where the order becomes a MARKET
+                # order with no floor — the mark less the must-fill slippage
+                # the desk already budgets elsewhere in this same function.
+                # Dividing the remaining deficit by that worst case gives the
+                # smallest share count that clears it, and `ceil` supplies
+                # the whole-share rounding the 2% was partly standing in for.
+                # No cushion is chosen because none is needed: this extends
+                # to the QUANTITY exactly what `_live_delever_price` already
+                # states for the PRICE — "no new % constant is introduced on
+                # either branch".
+                import math as _math
+                remaining = deficit - projected_proceeds
+                qty = min(
+                    float(_math.ceil(remaining / sizing_price)), p.qty,
+                )
+                if qty >= p.qty:
+                    qty = self._full_sell_qty(p.qty)
+            else:
+                qty = self._full_sell_qty(p.qty)
+            if qty is None or qty <= 0:
+                continue
             limit_str = f"${sell_limit:.2f}" if sell_limit is not None else "market"
             # The sweep vehicle's exit is recorded as SWEEP_SELL, not
             # FORCE_DELEVER (audit round 2): action names are the sweep's

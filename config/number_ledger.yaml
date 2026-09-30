@@ -2583,21 +2583,6 @@ numbers:
       And the gross multiple at the floor rung.
     cost_while_unanswered: >-
       As above.
-  - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
-    value: -20
-    status: arbitrary
-    site: src/risk/rules.py
-    note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
-    open_question: >-
-      At what drawdown must the owner be told, independently of what the
-      ladder does to exposure?
-    cost_while_unanswered: >-
-      The owner either hears about ordinary volatility or first hears at the
-      floor rung.
   - id: src.risk.rules.SEAT_WEIGHT
     value: 1
     status: sourced
@@ -4525,20 +4510,6 @@ numbers:
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
-    value: 1.02
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      The 2% cushion on how much of the T-bill sweep vehicle is sold to cover
-      a cash deficit (src/pipeline.py:11524-11531): needed = deficit x 1.02.
-    open_question: >-
-      How far does a sweep-vehicle sale's realised proceeds fall short of
-      price x qty on this account, measured from its own SWEEP_SELL fills?
-    cost_while_unanswered: >-
-      Too small and a de-lever leaves a residual deficit for the next session;
-      too large and more of the cash park is sold, and re-parked, than the
-      deficit needs.
-  - id: src.pipeline.TradingPipeline._force_delever:factor[1]
     value: 0.97
     status: derived
     site: src/pipeline.py
@@ -4554,7 +4525,11 @@ numbers:
       (the same must-fill slippage STOP_LIMIT_BUFFER_PCT budgets for a gapping
       exit) so the loop never stops one position too early and leaves a
       residual deficit. Under-counting proceeds is the safe error. 0.97 =
-      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number.
+      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number. Was factor[1] until
+      2026-09-30 (board item 182): the 1.02 sweep-sizing cushion that used to
+      precede it in this function was reformulated away, so this literal is
+      now the first factor-band literal in source order. Positional id only --
+      the number, its derivation and its behaviour are unchanged.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
