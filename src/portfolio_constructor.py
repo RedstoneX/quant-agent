@@ -79,23 +79,6 @@ def format_mechanical_size_down_reason(
     return "; ".join(parts)
 
 
-def cites_mechanical_size_down(reason: str | None) -> bool:
-    return MECHANICAL_SIZE_DOWN_TRIGGER in (reason or "")
-
-
-def is_soft_exit_reduction(decision) -> bool:
-    """True when a SELL/COVER's named trigger is thesis/falsifier free text.
-
-    A funding-trim whose reasoning starts with the Python mechanical
-    size-down warrant is not a soft-exit.
-    """
-    action = getattr(decision, "action", None)
-    if action not in ("SELL", "COVER"):
-        return False
-    reason = getattr(decision, "reasoning", None) or ""
-    return not reason.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
-
-
 def _size_down_checkable(
     current_pct: float, target_pct: float, *, long_side: bool,
 ) -> bool:
