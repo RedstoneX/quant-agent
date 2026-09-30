@@ -52,7 +52,7 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 ### Ordered backlog — RESUME POINT
 
 **PRIORITY ORDER, set 2026-09-17 (the owner authorised the ordering). Work it top-down — it overrides item-number order.**
-- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
+- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127, 199. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
 - **Tier 2, wastes money or opportunity:** 91, 82, 81, 92.
 - **Tier 3, clarity and hygiene:** 89 (its thirteen clarity defects), 94. (93 retired 2026-09-25.)
 - **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109 stays on the board for its part (c) only. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
@@ -149,6 +149,8 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 78)
 
 **90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails.
+
+**2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
 
 DONE WHEN:
   - [ ] half two: every `status: arbitrary` row in `config/number_ledger.yaml` is sourced, measured, owner-ratified as appetite, or reformulated away, and `MAX_ARBITRARY_ENTRIES` — an EQUALITY, not a ceiling — reaches zero
@@ -341,6 +343,13 @@ DONE WHEN:
   - [ ] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check
 
 detail: docs/BOARD_NOTES.md (item 193)
+
+**199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
+DONE WHEN:
+  - [ ] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed
+  - [ ] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening
+  - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
+detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
 **197. The entry re-peg is side-blind and would walk a short's limit the wrong way — filed 2026-09-30, found by item 183's adversary pass. Detail: `docs/BOARD_NOTES.md` ("item 197").** `_repeg_entry_order` in `src/pipeline_stages.py` computes one bound, `reference * (1 + slippage_bps / 10_000)`, calls it `ceiling`, and returns early when `limit_price >= ceiling`. It never reads the spec's side. For a BUY that is right: the ceiling is above the reference and there is room to chase only when the limit sits below it. For a `sell_short` the fillable bound is a FLOOR at `reference * (1 - slippage_bps / 10_000)`, below the reference, and both the arithmetic and the comparison are inverted — a short limit would be judged to have room and walked UP, away from a fill, and the early return that is supposed to mean "already at the bound" would instead fire on exactly the short limits that are furthest from it. NOT INTRODUCED by item 183 and NOT LIVE: `repeg_enabled` is `false` in `config/settings.yaml` and defaults to `False` in `src/config.py`, so this path does not run today, and item 183 deliberately did not touch it. This is filed rather than fixed because the fix is a behaviour change on a money path that nothing currently exercises, and because turning the flag on without it is the real hazard. MEASURED: nothing — there are no re-peg outcomes in the record to measure, which is itself the reason the defect survived review.
 

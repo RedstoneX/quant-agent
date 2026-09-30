@@ -698,7 +698,17 @@ risk:
   # than one ordinary day's range. That fired exits inside noise, and forced
   # huge positions to reach any meaningful risk. A floor is the right fix.
   #
-  # 3.0 -> 1.5 on 2026-09-04. THE 3.0 WAS NEVER DERIVED. Traced back, the
+  # CORRECTED 2026-09-30 (board item 90): the heading below read "3.0 -> 1.5
+  # on 2026-09-04" and there was no such move. This file went 3.0
+  # (3dff9408, 2026-08-27) straight to 2.5 (0088328c, 2026-09-10) and never
+  # deployed 1.5 — `git log --all -S'min_stop_atr_multiple: 1.5' --
+  # config/settings.yaml` returns nothing. 0088328c is a SQUASH of PR #269:
+  # sub-commit one moved 3.0 -> 1.5, sub-commit two moved 1.5 -> 2.5, both
+  # merged together, so the 1.5 existed only inside that branch. The
+  # reasoning recorded under the two headings below is sound and is kept;
+  # only the dates and the implication that 1.5 was ever live are wrong.
+  #
+  # 3.0 -> 1.5 (PR #269, sub-commit one). THE 3.0 WAS NEVER DERIVED. Traced back, the
   # comment that introduced it jumps from a MEASURED 1.25 ATR ("one ordinary
   # day's range") to a CHOSEN 3.0 with nothing cited in between. Measured
   # against this desk's own record (docs/WORK.md item 33): 0 of 42 real
@@ -713,7 +723,8 @@ risk:
   # floor. That specific combination is self-defeating and does not appear in
   # the literature.
   #
-  # 1.5 -> 2.5 (2026-09-10). The 1.5 was Sweeney MAE analysis on this desk's
+  # 1.5 -> 2.5 (PR #269, sub-commit two, merged 2026-09-10 in the same
+  # squash as the leg above). The 1.5 was Sweeney MAE analysis on this desk's
   # own ~2-week trade history — the SAME window whose seat outputs were later
   # found to include misreported confidence/data quality (the 2026-09-04/05
   # content-honesty fixes). Owner call: that history is too short and now of
@@ -735,7 +746,45 @@ risk:
   # CAVEAT, stated plainly: 2.5 does not by itself resolve the reward:risk
   # arithmetic tension below — it moves the binding horizon requirement into
   # a range this desk's own stated holds can plausibly clear, it does not
-  # guarantee it. Re-measure once honest post-fix trade history exists.
+  # guarantee it.
+  #
+  # THE LAST LINE OF THAT CAVEAT USED TO READ "re-measure once honest
+  # post-fix trade history exists", AND IT IS DELETED (2026-09-30, board
+  # item 90) rather than left standing. It instructed the next reader to do
+  # the one thing docs/OUTCOME.md forbids: re-measuring a threshold against
+  # this desk's own past trades is fitting, "an arbitrary number with a
+  # backtest stapled to it" (the 2026-09-12 correction), and it is how the
+  # abandoned 1.5 was produced in the first place. No quantity of future
+  # trade history will make that route legal.
+  #
+  # WHAT IS ACTUALLY OPEN, 2026-09-30 (board item 90).
+  #
+  # THIS NUMBER IS NOT SOURCED, and the comment above should not be read as
+  # saying it is. "General stop-placement guidance" is not a citation:
+  # docs/OUTCOME.md requires a URL a later reader can open. Searched
+  # 2026-09-30 and recorded so nobody repeats it — the pages asserting
+  # 2.5-3.0x for a FIXED multi-day entry stop are vendor and content
+  # marketing, not literature; one secondary claim attributed to Technical
+  # Analysis of Stocks & Commodities points the other way (1.5-2.0x); the
+  # Van Tharp / Chandelier 2-3x figures are TRAILING mechanisms, which the
+  # note above already concedes; and the top search hit for this desk's own
+  # phrasing is now this desk's own PR #269. Note too that the band quoted
+  # above (2.5-3.0) is not the band quoted a few lines below it (2-3).
+  # So BOTH ends are unsupported, not just the point between them.
+  #
+  # 2.5 therefore STAYS as the interim value and is deliberately not
+  # re-picked — with no cited band, moving it would be one more unsourced
+  # choice — and it stays `arbitrary` in the ledger.
+  #
+  # The route that removes this constant for most of the names it governs
+  # is board item 199: when no 5-touch level backs the stop, read the floor
+  # off the nearest computed level below entry at any touch count instead
+  # of off an ATR multiple. An earlier draft of this pass refused
+  # reformulation on arithmetic that was wrong; see
+  # `config/number_ledger.yaml` under
+  # `src.config.RiskConfig.min_stop_atr_multiple` for the retraction and
+  # the measured bounce-probability asymmetry that makes 191 viable.
+  # Do not re-derive any of it here.
   min_stop_atr_multiple: 2.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level

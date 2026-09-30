@@ -817,7 +817,25 @@ def build_constructor_config(config, risk_engine_config):
                 if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
                 else None
             ),
-            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
+            # 1.5 -> 2.5 on 2026-09-30 (board item 90). This fallback was
+            # left behind by the 2026-09-10 base move and still named the
+            # value the desk EXPLICITLY ABANDONED: 1.5 was the Sweeney MAE
+            # fit to this desk's own ~2-week history, dropped both because
+            # that window's seat outputs were later found to misreport
+            # confidence/data quality AND because fitting a threshold to
+            # past outcomes is barred outright (docs/OUTCOME.md, "No
+            # arbitrary numbers, ever", the 2026-09-12 correction). Not
+            # reachable on the production path today — a real `RiskConfig`
+            # always carries the attribute and pydantic coerces the YAML —
+            # so this is a stale constant, not a live defect, and it is
+            # corrected rather than reported as one. `_risk_setting`'s own
+            # docstring says it returns "the ratified default", and 2.5 is
+            # the ratified default. The ledger gate cannot see this line:
+            # `src/number_sources.py` names "fallback arguments" among the
+            # shapes it structurally cannot scan, which is why every
+            # fallback in this block is now pinned to its `RiskConfig`
+            # field default by `tests/test_risk_setting_fallbacks.py`.
+            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 2.5),
             # Spec §12.1 — a stop sitting at a level the system COMPUTED is
             # honoured whatever the band says, down to a deterministic 1x ATR
             # floor. Same "wire from the ratified setting, not the
@@ -14103,7 +14121,7 @@ class TradingPipeline:
         )
         if extra:
             payload.update(extra)
-        # 2026-09-30 (item 191): this is the third legit PM-less completion
+        # 2026-09-30 (item 199): this is the third legit PM-less completion
         # alongside `no_data` and `evidence_gate_skip` above, both of which
         # already call `_dc.write_status` so the evening dead-man probe
         # skips its "research ran, PM never did — killed mid-run?" guess.
