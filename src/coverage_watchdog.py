@@ -136,6 +136,17 @@ STATE_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
 )
 
+#: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
+#: by the /health API so a checkout that is behind origin/main is VISIBLE on
+#: the desk's own board, not only in a Telegram message. Alerts can be muted;
+#: the board cannot. It lives beside the other alerting state and is read and
+#: written with the same `load_state`/`save_state` helpers, so the per-day
+#: dedup that stops a repeating alert is the one already in use here rather
+#: than a fourth private implementation.
+DEPLOY_DRIFT_STATE_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
+)
+
 TABLE = "alert_channel_checks"
 
 #: How many weekdays back to look for the most recent trading day. A long
