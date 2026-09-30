@@ -341,6 +341,18 @@ def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
     construction with the blended `avg_entry` price used in the same call —
     not that the change cannot cost protection.
 
+    **Since then the candidate search was widened, which narrows that
+    exposure without moving any number.** `evaluate_trailing_stop` used to
+    build the chandelier only when structure produced nothing, so it fixed on
+    one candidate BEFORE testing it; it now builds both legs and carries each
+    through the same invariants, taking the first that survives. A structural
+    pivot inside the noise band therefore no longer suppresses a chandelier
+    level that clears it. This does NOT rescue the case above, where the
+    chandelier is itself the offending candidate — there is no lower
+    already-derived level to fall back to, and synthesising one at the band's
+    own edge would trail under today's price, which is the very thing
+    `_swing_lows` refuses on principle.
+
     **The exposure was then MEASURED, not assumed.** Re-running all 21
     recorded refusals through both windows (live DB, 2026-09-30): only 5 have
     a window start that moves at all — every one of them MRVL, the only
@@ -761,36 +773,47 @@ def evaluate_trailing_stop(
         # Target exceeded: fall through to the structural/chandelier trail
         # below exactly as before fix #3 — unchanged.
 
-    # --- Candidate: structure first ---------------------------------------
-    candidate: float | None = None
-    source = ""
+    # --- Candidate SET: structure first, chandelier second -----------------
+    # BOTH legs are now always built. Before this change the chandelier was
+    # computed only `if candidate is None`, so the module committed to the
+    # structural pivot BEFORE testing it — and a pivot that the invariants
+    # below then rejected (most sharply the noise band) silently suppressed a
+    # chandelier level that would have passed every one of them. Committing
+    # to the first candidate before testing it is a defect in how the
+    # candidate is FOUND, not a reason to drop a leg.
+    #
+    # Nothing about the preference order or the arithmetic changes: structure
+    # is still tried first, the chandelier is still second, no new multiple or
+    # threshold is introduced, and each candidate is carried through exactly
+    # the SAME invariants as before. The first candidate that survives all of
+    # them is used. There is deliberately NO synthesised third candidate at
+    # the noise band's own edge: a level read off today's price is a pure
+    # price-follower, which is a different exit rule from the ratified one and
+    # needs an argued decision, not a quiet patch here.
+    candidates: list[tuple[float, str]] = []
     if is_short:
         pivot = _structural_pivot(_swing_highs(bars or []), is_short=True)
         # The pivot is only usable if it is BELOW the current stop and ABOVE
         # current price: above the stop is not a ratchet, below the price is
         # not a stop.
         if pivot is not None and cur < pivot < stop:
-            candidate = pivot
-            source = "structure"
+            candidates.append((pivot, "structure"))
     else:
         pivot = _structural_pivot(_swing_lows(bars or []), is_short=False)
         # Mirror: only a pivot ABOVE the current stop and BELOW current price
         # is usable — below the stop is not a ratchet, above the price is not
         # a stop.
         if pivot is not None and stop < pivot < cur:
-            candidate = pivot
-            source = "structure"
+            candidates.append((pivot, "structure"))
 
-    # --- Fallback: chandelier, where structure is unclear ------------------
-    if candidate is None and atr_f is not None and atr_f > 0:
+    if atr_f is not None and atr_f > 0:
         if is_short:
             lows = [_finite(getattr(b, "low", None)) for b in (bars or [])]
             lows = [l for l in lows if l is not None]
             lowest = min(lows) if lows else cur
             chandelier = lowest + CHANDELIER_ATR_MULTIPLE * atr_f
             if cur < chandelier < stop:
-                candidate = chandelier
-                source = "chandelier"
+                candidates.append((chandelier, "chandelier"))
         else:
             highs = [
                 _finite(getattr(b, "high", None)) for b in (bars or [])
@@ -799,31 +822,46 @@ def evaluate_trailing_stop(
             highest = max(highs) if highs else cur
             chandelier = highest - CHANDELIER_ATR_MULTIPLE * atr_f
             if stop < chandelier < cur:
-                candidate = chandelier
-                source = "chandelier"
+                candidates.append((chandelier, "chandelier"))
 
-    if candidate is None:
+    if not candidates:
         return TrailEvaluation(None, TRAIL_CODE_NO_CANDIDATE)
 
     # --- Invariants --------------------------------------------------------
-    # Ratchet toward less risk only, and only when the move is worth an order.
-    if is_short:
-        if candidate >= stop * (1 - min_ratchet_pct / 100.0):
-            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
-    else:
-        if candidate <= stop * (1 + min_ratchet_pct / 100.0):
-            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
-
-    # Never inside one ordinary day's range of current price.
-    if atr_f is not None and atr_f > 0:
+    # Ratchet toward less risk only, and only when the move is worth an order,
+    # and never inside one ordinary day's range of current price. Applied per
+    # candidate. The refusal reported when every candidate fails is the FIRST
+    # candidate's, which keeps the recorded reason identical to what this
+    # module produced before whenever only one leg offered anything at all —
+    # which is every refusal in the production record to date.
+    candidate: float | None = None
+    source = ""
+    first_refusal: str | None = None
+    for _cand, _source in candidates:
+        _refusal: str | None = None
         if is_short:
-            noise_ceiling = cur + NOISE_BAND_ATR_MULTIPLE * atr_f
-            if candidate < noise_ceiling:
-                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
+            if _cand >= stop * (1 - min_ratchet_pct / 100.0):
+                _refusal = TRAIL_CODE_BELOW_MIN_RATCHET
         else:
-            noise_floor = cur - NOISE_BAND_ATR_MULTIPLE * atr_f
-            if candidate > noise_floor:
-                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
+            if _cand <= stop * (1 + min_ratchet_pct / 100.0):
+                _refusal = TRAIL_CODE_BELOW_MIN_RATCHET
+        if _refusal is None and atr_f is not None and atr_f > 0:
+            if is_short:
+                noise_ceiling = cur + NOISE_BAND_ATR_MULTIPLE * atr_f
+                if _cand < noise_ceiling:
+                    _refusal = TRAIL_CODE_INSIDE_NOISE_BAND
+            else:
+                noise_floor = cur - NOISE_BAND_ATR_MULTIPLE * atr_f
+                if _cand > noise_floor:
+                    _refusal = TRAIL_CODE_INSIDE_NOISE_BAND
+        if _refusal is None:
+            candidate, source = _cand, _source
+            break
+        if first_refusal is None:
+            first_refusal = _refusal
+
+    if candidate is None:
+        return TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE)
 
     candidate = round(candidate, 2)
     if is_short:
