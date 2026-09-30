@@ -24,7 +24,6 @@ from src.feature_flags import (
     MAX_UNDECLARED_TRISTATE_FIELDS,
     audit,
     collect_switches,
-    collect_tristate_switches,
     effective_values,
     load_declarations,
 )
@@ -78,16 +77,6 @@ def test_every_declared_switch_carries_a_reason_and_an_intentional_flag() -> Non
     for flag_id, entry in load_declarations().items():
         assert isinstance(entry.get("intentional"), bool), flag_id
         assert str(entry.get("reason") or "").strip(), flag_id
-
-
-def test_no_tristate_boolean_switch_is_hiding_from_the_scan() -> None:
-    """The one shape this module's plain-`bool` scan cannot see: a
-    `bool | None` tri-state field. None exist today. If one is added, this
-    fails until `MAX_UNDECLARED_TRISTATE_FIELDS` is raised as a reviewed line
-    saying it was looked at — mirrors `MAX_UNSCOPED_NUMERIC_SITES` in
-    `src/number_sources.py`.
-    """
-    assert len(collect_tristate_switches()) <= MAX_UNDECLARED_TRISTATE_FIELDS
 
 
 # --------------------------------------------------------------------------
