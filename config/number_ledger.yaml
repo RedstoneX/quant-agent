@@ -841,6 +841,13 @@ numbers:
       same risk allocation opens a SMALLER short than an equivalent long
       (src/config.py:961-965). The direction is reasoned; the 1.5 magnitude is
       not measured against any gap distribution.
+      ITEM 186 BUILT 2026-09-30 — NO LONGER SIZES ANY SHORT. The
+      constructor sizes a short on stop distance + that name's own Wilder
+      ATR (true range contains the overnight gap by construction), and
+      refuses the name outright when no read is available; the constructor
+      mirror of this number was deleted with that change. This row survives
+      as the execution-time belt in src/pipeline_stages.py only, which is a
+      cap on construction's size, never the sizing itself.
       ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
       no citation: a short's loss above its stop is unbounded while a long's
       below its stop is bounded by zero, which is arithmetic, not an
@@ -2278,25 +2285,6 @@ numbers:
     cost_while_unanswered: >-
       Owner-ratified at 5% on 2026-08-27 but not sourced; it caps every real
       position.
-  - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
-    value: 1.5
-    status: derived
-    site: src/portfolio_constructor.py
-    derived_from: src.config.RiskConfig.short_gap_risk_multiple
-    base_value: 1.5
-    note: >-
-      Mirror of src.config.RiskConfig.short_gap_risk_multiple, the deployed
-      value. Recorded as `derived` rather than as a second arbitrary number:
-      it is ONE number with two definition sites, so counting it twice would
-      inflate the arbitrary total the same way this ledger's first version
-      claimed the 0.50% floor existed in one place while listing it in two.
-      Base-drift now fails the build if the pair stops agreeing, which nothing
-      previously checked. CORRECTION 2026-09-18: the first version quoted
-      "until a separate pass re-examines it" as text at this site; that phrase
-      is in docs/, not in src/portfolio_constructor.py.
-      ITEM 186 BUILT 2026-09-30 — this mirror is now READ ONLY WHEN THE BARS
-      ARE MISSING; `_short_risk_per_share` adds the name's own worst
-      overnight gap instead. Kept, and kept in sync, as the fallback.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary

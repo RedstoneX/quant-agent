@@ -310,6 +310,13 @@ STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: the largest silent bucket on the sheet. Verified on this branch before the
 #: fix by running the capture's own regex against the real message.
 STOP_REFUSAL_BUDGET_EXHAUSTED = "risk_budget_exhausted"
+
+#: Board item 186. A short cannot be sized without a gap-inclusive
+#: volatility read, and there is no number to fall back on: the flat 1.5
+#: haircut this replaced is disowned (unsourced magnitude), so sizing a
+#: name on it would put live capital on a number the desk has retired.
+#: Fail closed, by name, per symbol.
+STOP_REFUSAL_NO_GAP_VOLATILITY_READ = "no_gap_inclusive_volatility_read"
 #: Board item 10 (2026-09-14): the same defect item 49 fixed for the
 #: PORTFOLIO-level budget allocator, found again by statically running
 #: `_DropReasonCapture._SYMBOL` against every other constructor drop message
@@ -554,6 +561,13 @@ class RiskPlan:
     #: True when this plan is a trim of a held, unanalysed name sized from its
     #: live broker stop. Such a plan may only REDUCE the position.
     sized_from_live_stop: bool = False
+    #: Board item 186, shorts only. The gap-inclusive volatility (Wilder ATR,
+    #: dollars/share) this short was sized on, and the resulting multiple on
+    #: risk-per-share. Cost a provider fetch, cannot be recomputed later (the
+    #: bars move), and governs the size of a live short — so it is carried
+    #: rather than discarded. None on every long and on any legacy caller.
+    short_gap_multiple: float | None = None
+    short_gap_atr: float | None = None
 
 
 @dataclass
@@ -649,12 +663,12 @@ class ConstructorConfig:
     # place it was passed to discarded it, so the constructor no longer passes
     # anything: no order size, refusal or gate changes. The sweep's own
     # `cash_sweep.min_order_usd` is a different field and is untouched.
-    # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
-    # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
-    # this before it is converted to a weight, so the same risk allocation
-    # opens a smaller short than an equivalent long. Keep in sync with
-    # `risk.short_gap_risk_multiple`.
-    short_gap_risk_multiple: float = 1.5
+    # Board item 186 (2026-09-30): the constructor's mirror of
+    # `risk.short_gap_risk_multiple` is GONE. A short's risk-per-share is
+    # now stop distance + this name's own gap-inclusive volatility read
+    # (`_short_risk_per_share`), so there is no haircut dial here to keep
+    # in sync, and leaving a disowned 1.5 sitting in the dataclass would
+    # read as though something still consulted it.
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -1019,9 +1033,8 @@ class PortfolioConstructor:
         # Reset per call; `pipeline_stages.DecisionStage` persists it.
         self.last_side_flips: dict[str, dict] = {}
 
-    def _short_gap_fraction(self, symbol: str) -> float | None:
-        """This name's own worst ADVERSE overnight gap, as a fraction of the
-        prior close, read off the bars the desk already fetches.
+    def _short_gap_volatility(self, symbol: str) -> float | None:
+        """This name's own gap-inclusive volatility, in dollars per share.
 
         Board item 186. The short-side haircut used to be a flat x1.5 on
         risk-per-share: an appetite constant governing per-name risk, which
@@ -1030,65 +1043,85 @@ class PortfolioConstructor:
         because the gap opens through it — but the MAGNITUDE belongs to the
         instrument, not to a dial.
 
-        The read is the largest upward open-to-prior-close gap this symbol
-        actually printed over the window: the worst overnight move it has
-        demonstrated it can make against a short. No percentile is chosen
-        (a percentile would be a new constant); max over the window is the
-        instrument's own demonstrated worst, and the window is the lookback
-        the caller's fetch already uses. A name that never gapped up reads
-        0.0, which is the honest answer for that name.
+        The read is Wilder's average true range, THE reading this desk
+        already takes off every name (`src.data.technical.atr_series`).
+        True range is ``max(H-L, |H-Cprev|, |L-Cprev|)``, so it CONTAINS the
+        overnight gap by construction: a bar that opened away from the prior
+        close has that whole distance inside its true range.
 
-        Returns None when the bars are unavailable or too short to contain a
-        single overnight transition, so the caller can fail closed.
+        This is what replaced the first build's "worst upward gap over the
+        window". That statistic was a maximum over a 1800-day lookback which
+        `config/settings.yaml` says was raised to that length "purely for
+        structure" — a chart-level constant sizing every short — and a
+        maximum can only grow until its bar ages out, so a 2021 gap sized a
+        2026 trade. That is a number fitted to past outcomes, which doctrine
+        forbids on a sizing path. Wilder's smoothing is recursive and decays
+        geometrically, so this reading is dominated by the recent tape and
+        UPDATES when the regime does, whatever length of history it is
+        handed. No window is chosen here and no outlier statistic is taken.
+
+        Returns None when the bars are unavailable or too short to warm the
+        ATR, so the caller can fail closed.
         """
         if symbol in self._short_gap_cache:
             return self._short_gap_cache[symbol]
+        from src.data.technical import atr_series
         result: float | None = None
         if self._bars_fn is not None:
             try:
                 bars = self._bars_fn(symbol) or []
             except Exception as exc:  # provider down, symbol unknown, timeout
                 logger.warning(
-                    "Constructor: short gap read unavailable for %s (%s); "
-                    "falling back to the configured haircut", symbol, exc,
+                    "Constructor: gap-inclusive volatility read unavailable "
+                    "for %s (%s); the short will be refused by name",
+                    symbol, exc,
                 )
                 bars = []
-            worst = None
-            for prev, cur in zip(bars, bars[1:]):
-                try:
-                    prev_close = float(prev.close)
-                    cur_open = float(cur.open)
-                except (AttributeError, TypeError, ValueError):
-                    continue
-                if prev_close <= 0:
-                    continue
-                gap = (cur_open - prev_close) / prev_close
-                if gap <= 0:
-                    gap = 0.0
-                worst = gap if worst is None else max(worst, gap)
-            result = worst
+            try:
+                series = atr_series(bars)
+            except Exception as exc:
+                logger.warning(
+                    "Constructor: ATR read failed for %s (%s)", symbol, exc,
+                )
+                series = None
+            if series is not None and len(series):
+                value = float(series[-1])
+                # A non-positive or non-finite ATR is not a reading of zero
+                # volatility, it is the absence of a reading.
+                if math.isfinite(value) and value > 0:
+                    result = value
         self._short_gap_cache[symbol] = result
         return result
 
     def _short_risk_per_share(
         self, symbol: str, entry: float, base_risk_per_share: float,
-    ) -> tuple[float, float, bool]:
-        """(risk-per-share to size on, the effective multiple, read_used).
+    ) -> tuple[float, float, float] | None:
+        """(risk-per-share to size on, the effective multiple, the ATR read).
 
         A short that gaps opens ABOVE its stop, so the loss actually taken is
-        the distance to the stop PLUS the gap it opened through. That sum is
-        the sized risk. Fail closed: with no usable bars the configured
-        haircut applies exactly as before this item.
+        the distance to the stop PLUS the distance it gapped through. The
+        gap-inclusive volatility read above is that second term, so the sized
+        risk is their sum.
+
+        Returns None when there is no read, and the caller REFUSES the name.
+        There is deliberately no fallback multiple: the 1.5 that used to sit
+        here is disowned, and the names with no data are exactly the names
+        with the least evidence for carrying a short.
+
+        The multiple this produces is strictly greater than 1.0 for every
+        name, because the ATR read is strictly positive by the check above.
+        That is what satisfies the desk's declared floor
+        (`RiskConfig.short_gap_risk_multiple`'s `gt=1.0`) — structurally,
+        rather than by clamping a computed 1.0 up to something invented. The
+        previous build could return exactly 1.0 for a never-gapped name,
+        sizing a short precisely like a long while the schema next to it
+        declared that impossible.
         """
-        frac = self._short_gap_fraction(symbol)
-        if frac is None or entry <= 0 or base_risk_per_share <= 0:
-            return (
-                base_risk_per_share * self.cfg.short_gap_risk_multiple,
-                self.cfg.short_gap_risk_multiple,
-                False,
-            )
-        sized = base_risk_per_share + frac * entry
-        return sized, sized / base_risk_per_share, True
+        read = self._short_gap_volatility(symbol)
+        if read is None or entry <= 0 or base_risk_per_share <= 0:
+            return None
+        sized = base_risk_per_share + read
+        return sized, sized / base_risk_per_share, read
 
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
@@ -1950,6 +1983,9 @@ class PortfolioConstructor:
         ) if existing_risk_pct is not None else None
 
         plans: dict[str, RiskPlan] = {}
+        # Board item 186: {symbol: (multiple, ATR)} for every short sized
+        # this call, carried onto the plan and then onto the order.
+        short_gap_reads: dict[str, tuple[float, float]] = {}
         for sym in closes:
             plans[sym] = RiskPlan(
                 symbol=sym, risk_pct=0.0, target_weight_pct=0.0,
@@ -2016,9 +2052,25 @@ class PortfolioConstructor:
                 # must open a SMALLER short than an equivalent long at the
                 # same stop distance. Board item 186: HOW MUCH smaller is now
                 # read off this name's own worst overnight gap, not a dial.
-                risk_per_share, _gap_mult, _gap_read = (
-                    self._short_risk_per_share(sym, entry, risk_per_share)
-                )
+                sized = self._short_risk_per_share(sym, entry, risk_per_share)
+                if sized is None:
+                    # Fail closed. No gap-inclusive read means no honest
+                    # short size, and the number that used to stand in here
+                    # is disowned. Dropped, not zeroed — a 0% risk target
+                    # reads downstream as "sell it".
+                    self._note_refusal(
+                        sym, "short", STOP_REFUSAL_NO_GAP_VOLATILITY_READ,
+                        f"no gap-inclusive volatility (ATR) read is "
+                        f"available for {sym}, and a short's size depends on "
+                        f"it: the loss above the stop is the stop distance "
+                        f"plus whatever it gapped through. The flat 1.5x "
+                        f"haircut that used to stand in for that is an "
+                        f"unsourced number the desk has disowned (board item "
+                        f"186), so there is nothing to size on.",
+                    )
+                    continue
+                risk_per_share, gap_mult, gap_read = sized
+                short_gap_reads[sym] = (gap_mult, gap_read)
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
@@ -2030,6 +2082,8 @@ class PortfolioConstructor:
                 stop_price=stop,
                 note=note,
                 sized_from_live_stop=sym in live_stop_trims,
+                short_gap_multiple=short_gap_reads.get(sym, (None, None))[0],
+                short_gap_atr=short_gap_reads.get(sym, (None, None))[1],
             )
         return plans
 
@@ -4066,9 +4120,22 @@ class PortfolioConstructor:
         # model, so this haircut is what keeps the measured size honest
         # relative to what live capital would actually risk. Board item 186:
         # the amount is this name's own worst overnight gap, not a dial.
-        risk_per_share, gap_mult, _gap_read = self._short_risk_per_share(
+        sized = self._short_risk_per_share(
             target.symbol, entry_price, risk_per_share,
         )
+        if sized is None:
+            # Fail closed — see `_short_risk_per_share`.
+            self._note_refusal(
+                target.symbol, target.direction,
+                STOP_REFUSAL_NO_GAP_VOLATILITY_READ,
+                f"no gap-inclusive volatility (ATR) read is available for "
+                f"{target.symbol}, and a short cannot be sized without one "
+                f"(board item 186): the loss above the stop is the stop "
+                f"distance plus the gap it opened through, and the flat "
+                f"1.5x that used to stand in for that is disowned.",
+            )
+            return None
+        risk_per_share, gap_mult, gap_read = sized
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:
@@ -4087,7 +4154,8 @@ class PortfolioConstructor:
                     f" [constructor: PM target delta {allocation_pct:.2f}% "
                     f"capped to {alloc_cap_by_risk:.2f}% by the "
                     f"{self.cfg.risk_budget_pct:.1f}% risk budget (x"
-                    f"{gap_mult:.1f} gap-risk haircut) "
+                    f"{gap_mult:.2f} gap-risk haircut, = stop distance + "
+                    f"${gap_read:,.2f} ATR) "
                     f"— the size difference vs PM's stated weight is "
                     f"deterministic, not PM inconsistency]"
                 )
@@ -4162,6 +4230,13 @@ class PortfolioConstructor:
 
         return TradeDecision(
             action="SHORT",
+            # Board item 186. The gap-inclusive volatility read this short
+            # was sized on and the multiple it produced. A provider fetch
+            # paid for it and the bars move, so it cannot be recomputed
+            # after the fact; it governs the size of a live short, so it is
+            # stored on the order rather than dropped on the floor.
+            short_gap_atr=gap_read,
+            short_gap_multiple=gap_mult,
             symbol=target.symbol,
             allocation_pct=allocation_pct,
             entry_price=entry_price,

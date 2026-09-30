@@ -52,6 +52,27 @@ class _Bar:
     low: float
 
 
+def _gap_read_bars_fn(symbol, _price=100.0):
+    """A bars source whose Wilder ATR is exactly $2.00 per share.
+
+    Board item 186: a short is sized on stop distance + this name's own
+    gap-inclusive volatility read (ATR, whose true range contains the
+    overnight gap by construction), and a constructor handed NO bars source
+    refuses the short by name rather than falling back on the disowned flat
+    1.5. Every test below that expects a SHORT to come out therefore hands
+    the constructor bars, exactly as `src/pipeline.py` hands it the live
+    provider. True range is a flat 2.0 on every bar here, and Wilder's
+    average of a constant is that constant, so the read is an exact $2.00
+    and the sizing arithmetic in these tests stays checkable by hand.
+    """
+    from types import SimpleNamespace
+    return [
+        SimpleNamespace(open=_price, high=_price + 1.0, low=_price - 1.0,
+                        close=_price)
+        for _ in range(60)
+    ]
+
+
 def _bars(pattern):
     """`pattern` is a list of (high, low) tuples, oldest first."""
     return [_Bar(high=h, low=lo) for h, lo in pattern]
@@ -620,7 +641,7 @@ def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
     )
     from src.portfolio_constructor import PortfolioConstructor
 
-    constructor = PortfolioConstructor()
+    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
     rc = TechReasoningChain(trend="x", momentum="x", volatility="x",
                             volume="x", support_resistance="x")
     analysis = TechAnalysisResult(

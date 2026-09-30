@@ -842,6 +842,98 @@ chaining), and it rations only; the desk still never buys to diversify. The
 remaining appetite question on this item (overnight earnings tolerance) is
 untouched.
 
+UPDATE 2026-09-30 (second pass, REWORKED after an adversary pass): the
+SHORT-SIZE RATIO is REPLACED, not ratified, and its routed owner-appetite
+question is withdrawn. The flat x1.5 haircut on a short's risk-per-share was
+a per-name risk constant, which the owner's ruling makes a defect. A short's
+sized risk-per-share is now the distance to its stop PLUS that name's own
+GAP-INCLUSIVE VOLATILITY READ: Wilder's average true range, the reading this
+desk already takes off every name. True range is max(H-L, |H-Cprev|,
+|L-Cprev|), so it CONTAINS the overnight gap by construction — a short that
+gaps opens above its stop and loses the stop distance plus the distance it
+gapped through, and both terms are now read off the instrument.
+
+The FIRST version of this build used "the worst upward overnight gap this
+name printed over the lookback", and that was killed. The lookback is 1800
+calendar days, raised to that length "purely for structure" per
+config/settings.yaml — a chart level-finding constant would have governed
+every short's size. Worse, a maximum over a window can only grow until the
+bar ages out, so a 2021 gap would still have sized a 2026 trade: a number
+fitted to past outcomes, which doctrine forbids on a sizing path. Wilder's
+smoothing decays geometrically, so the ATR read is dominated by the recent
+tape and UPDATES when the regime does, whatever length of history it is
+handed. No window is chosen and no outlier statistic is taken.
+
+Four defects from the same pass, all fixed here:
+- The multiple is now strictly above 1.0 for every name STRUCTURALLY (a
+  positive ATR cannot produce 1.0), which is what `RiskConfig.
+  short_gap_risk_multiple`'s `gt=1.0` schema floor declares. The first
+  version returned exactly 1.0 for a never-gapped name — sizing a short
+  precisely like a long while the schema next to it said that was
+  impossible.
+- No data is now a REFUSAL, by name, per symbol
+  (`no_gap_inclusive_volatility_read`), not a fallback to the disowned 1.5.
+  The names with no read are the names with the least evidence for carrying
+  a short at all.
+- The read and the multiple it produced are STORED on the order
+  (`TradeDecision.short_gap_atr` / `short_gap_multiple`) and on the risk
+  plan. A provider fetch paid for them and the bars move, so no later audit
+  could recompute what a live short was actually sized on.
+- SPLIT ADJUSTMENT, settled 2026-09-30 [measured]: `MarketDataProvider.
+  get_ohlcv` calls `yfinance.download` without `auto_adjust`, and the
+  installed yfinance is 1.7.0, whose default is `auto_adjust=True` — bars
+  are split- and dividend-adjusted, so a reverse split cannot print as a
+  huge up-move. This mattered critically to the killed max-gap version and
+  much less to a 14-period average, but it is now established rather than
+  assumed.
+
+MEASURED across the live universe (101 names, 400 sessions on disk,
+2026-09-30): the ATR read is 0.86% of price at the quietest name, 2.53% at
+the median and 8.33% at the widest. Because the desk's own minimum entry
+stop is 2.5 ATR, the multiple at that binding floor is 1.40 for every name,
+and it falls as the structural stop sits wider — 1.33 at a 3-ATR stop, 1.25
+at 4, 1.20 at 5. So the new read sizes every short somewhat LARGER than the
+old flat 1.5 did, and the amount now moves with the instrument.
+
+The constructor's mirror of the dial is DELETED (`ConstructorConfig.
+short_gap_risk_multiple`, its ledger row and the parity tuple in
+`build_constructor_config`). `RiskConfig.short_gap_risk_multiple` SURVIVES,
+read by one caller only: the execution-time vol-adjusted-sizing belt in
+`src/pipeline_stages.py`, which is a cap on construction's size and is
+explicitly required to be at least as conservative as construction — which
+at 1.5 it now always is. Folding that belt onto the same read is left to its
+own pass; one change at a time on a sizing path. The unread-earnings buy cap
+is likewise left for its own pass.
+
+Item 90's half two, surfaced for visibility. Whether an order fills, is skipped, or trades at all is decided by flat unsourced constants: the 40bps entry-slippage belt (`ExecutionConfig.max_entry_slippage_bps`), the $500 constructor minimum-order floor (`ConstructorConfig.min_order_usd` — DELETED 2026-09-26, see below), the 0.5% minimum weight change before the desk bothers to trade (`ConstructorConfig.min_trade_weight_delta` — DELETED 2026-09-30, see below), the entry-skip when the ask sits more than 2% above the slippage cap (`ExecutionStage._run_session` — DELETED 2026-09-30, see below), and the 1% cash-reserve band (`CashSweepConfig.reserve_pct` — still live via the deployment-gap advisory even though the sweep itself is retired). All `status: arbitrary`, none read off a spread or a measurement. Distinct from item 138, which tracks the order-PRICE buffers (the 1% / 0.5% / 3% offsets), not these gates.
+
+
+## item 185 — detail moved from the board 2026-09-30
+
+Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelier giveback (`trailing.CHANDELIER_ATR_MULTIPLE`), the 2% minimum ratchet over the live stop (`trailing.MIN_RATCHET_PCT`), and the midday guard that refused a proposed trailing stop below 50% of current price as a likely model typo (`_midday_execute_llm_actions`). The trailing pivot window belongs to item 55 and the range ratchets to item 142; both are excluded here.
+
+**2026-09-26 pass — two of three closed.** `CHANDELIER_ATR_MULTIPLE` is already `sourced` against the published Chandelier default and is untouched. `MIN_RATCHET_PCT` (2%) is CLOSED as owner-ratified churn appetite, and its old open question was rebuilt because it was false: it claimed live capital would eventually supply the commission/spread/replace cost that settles the number, but US-listed equity orders at this desk's broker are commission-free and replacing a resting stop crosses no spread and prints no fill, so that cost is about zero and no future measurement can derive 2.0. The real cost of churn is operational (rate limits, the brief unprotected replace window, alert noise).
+
+**2026-09-30 pass — the 50% literal is GONE from the code, and the item STAYS OPEN because that is not the same thing as the question being answered.** What shipped: the midday path no longer carries a chosen fraction of price at all. It now compares a proposal against `portfolio_constructor.widest_reachable_stop_atr_multiple` — the base `min_stop_atr_multiple` times the largest setup and regime scalers, 3.00 at today's settings — measured against the name's own live ATR14, and CLAMPS an over-wide proposal to that stop rather than refusing it, because refusing on that branch (the live broker stop was unreadable or absent) would have ended the loop with the position holding no stop at all, which is board item 80's ruling inverted. The universe screen's ceiling, which used to be that same 0.5 divided by the BASE multiple, is now 1 / the widest reachable multiple (33.3%): the ATR/price at which the widest legitimate stop sits at or below zero. The circularity item 185 recorded is therefore gone and one ledger row comes off.
+
+**Why the item does NOT retire on that.** A number may be retired when its question is ANSWERED, never when it is declined. Item 185's question about this guard is *how volatile a name may this desk hold* — and 1/3.00 does not answer it. 1/3.00 answers a different question, *where does the arithmetic degenerate*, and it never binds: the highest ATR14/price this desk has ever recorded is 8.11% [measured 2026-09-30 over n=46 constructor stop lines across every retained production log 2026-08-31 to 2026-09-30, ATR recovered as |stop−entry|/ATRs-stated; median 2.97%, p90 4.56%]. The old 20% and the new 33.3% are both multiples beyond anything observed, so neither has ever screened a name and neither would. Worse for the retirement case, the 3.00 is composed of two ledger rows that are still `status: arbitrary` with live open questions (the 2.5 base, and the 1.20 risk-off regime scaler whose row records that no measured regime/MAE breakdown exists in this repo) plus a 1.00 that is only the declared absence of a setup scaler. One literal left the ledger; the desk's arbitrary content did not fall.
+
+**What was searched on 2026-09-30, and ruled out.** (a) Practitioner sources give mutually inconsistent bands for a swing-tradable ATR/price and derive none of them — 1-3%, 1.5-5% for large/mid caps, 5-12% for small caps, and a Price/ATR 20-50 preference; nothing states a bound or a method, so nothing here is adoptable and none of it is recorded as a source. (b) The published index-methodology route does not produce an absolute bound either: where index eligibility screens volatility at all it appears to do so CROSS-SECTIONALLY, by quantile of realized volatility at reconstitution, not against a fixed percentage. **That reading is from a search summary and is UNVERIFIED** — the Nasdaq NDXLV methodology PDF (https://indexes.nasdaq.com/docs/Methodology_NDXLV.pdf) was fetched on 2026-09-30 and its text could not be extracted, so the primary document has not been read. (c) The idiosyncratic-volatility literature works in quintile/decile breakpoints, which are cross-sectional by construction and give no absolute cutoff. (d) The desk's own data cannot settle it: the screen has never executed once (`universe_screen.enabled: false`; no `universe_state.json` exists anywhere on the box, re-verified 2026-09-30), and the 46 ATR readings above are all names the desk already admitted, so they measure what it held, never what it should have refused.
+
+**What would settle it, in the order it should be tried.** (1) A primary index or fund methodology document, read end to end, that states an ABSOLUTE volatility eligibility bound — if one exists, cite it and close the item on that. (2) Failing that, the honest published FORM is a cross-sectional quantile rather than a constant, and adopting a form is a design change, not a number: rewrite the ceiling as "refuse the top q% of the screened cross-section by ATR/price" and the remaining question becomes q, which is owner appetite over how much of the market to decline and IS his call. (3) Nothing else. Do not re-pick a constant, and do not treat the arithmetic-degeneracy bound as an answer to the eligibility question — it is a floor under nonsense, not a statement of appetite.
+
+
+## item 186 — detail moved from the board 2026-09-30
+
+UPDATE 2026-09-30: the correlation-cluster cutoff (0.7) is REMOVED rather than
+ratified. Cluster membership is read structurally — Mantegna correlation
+distance, minimum spanning tree, cut at the tree's own largest edge-length gap
+— so there is no level to pick and the routed owner-appetite question on it is
+withdrawn. The clustering stays transitive on purpose (a theme transmits by
+chaining), and it rations only; the desk still never buys to diversify. The
+remaining appetite question on this item (overnight earnings tolerance) is
+untouched.
+
 UPDATE 2026-09-30 (second pass): the SHORT-SIZE RATIO is REPLACED, not
 ratified, and its routed owner-appetite question is withdrawn. The flat x1.5
 haircut on a short's risk-per-share was a per-name risk constant, which the

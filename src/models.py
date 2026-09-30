@@ -1745,6 +1745,22 @@ class TradeDecision(LLMOutputModel):
     # the flag set, the belt checks for DEGRADATION instead: execution may
     # not make the ratio worse than the geometry the RM approved.
     subfloor_catalyst_exception: bool = False
+    # --- How a SHORT was gap-sized (board item 186, 2026-09-30) ----------
+    # `short_gap_atr` is the gap-inclusive volatility read (Wilder ATR, in
+    # dollars per share) the constructor took off this name's own bars, and
+    # `short_gap_multiple` is (stop distance + that read) / stop distance —
+    # the factor by which this short was sized smaller than an equivalent
+    # long at the same stop distance. True range is
+    # max(H-L, |H-Cprev|, |L-Cprev|), so it contains the overnight gap by
+    # construction; that is why this, and not a chosen haircut, sets the
+    # size.
+    #
+    # Carried for the reason `stop_rule` and `setup_type` above are carried,
+    # plus one more: it cost a provider fetch and the bars move, so nothing
+    # downstream and no later audit can recompute the number this order was
+    # actually sized on. None on every long and on SELL/COVER/HOLD.
+    short_gap_atr: float | None = None
+    short_gap_multiple: float | None = None
     # --- How this position is MANAGED (2026-09-11, WORK.md item 1(d)) -----
     # `TechAnalysisResult.setup_type` for the analysis this order was built
     # from — "range" (Type A) or "breakout" (Type B) — or None for

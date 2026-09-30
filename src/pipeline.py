@@ -738,7 +738,6 @@ def build_risk_config(config) -> RiskConfig:
                 # mechanism, so they carry the same parity requirement.
                 "max_cluster_risk_share_pct",
                 "max_gross_exposure_x",
-                "short_gap_risk_multiple",
             ),
     )
 
@@ -752,7 +751,7 @@ def build_constructor_config(config, risk_engine_config):
 
     This is the enforcement home for four settings the Portfolio Manager's
     standing sheet renders — `min_position_risk_pct`, `max_portfolio_risk_pct`,
-    `max_cluster_risk_share_pct` and `short_gap_risk_multiple` — none of which
+    `max_cluster_risk_share_pct` — none of which
     `src/risk/rules.py` reads at all. The sizing seat's parity is against THIS
     object, not only against `RiskConfig`.
     """
@@ -826,8 +825,7 @@ def build_constructor_config(config, risk_engine_config):
             # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
-            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
-            # Spec §11.2 — same "size under the hard block" pattern again.
+                # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
             # breaches the ceiling would be DROPPED rather than taken
             # smaller without this. The per-session ladder step is passed to
