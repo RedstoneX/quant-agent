@@ -520,23 +520,55 @@ def test_no_atr_no_readable_structure_refuses_per_name():
     )
 
 
-def test_no_atr_structural_stop_too_far_is_skipped_on_risk():
-    """A readable level so far below entry that the implied risk exceeds the
-    desk's stop-distance sanity bound is skipped ON RISK, with its own code —
-    not on the missing volatility reading."""
-    from src.portfolio_constructor import STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+def test_no_atr_wide_structural_stop_is_held_not_refused_on_width():
+    """Board item 185. The no-ATR path used to refuse a structural stop more
+    than 50% of entry away, borrowing the midday typo guard's flat fraction.
+    That fraction is gone, and re-picking a width bound with no volatility
+    reading to read it from is what doctrine bars — so the stop is HELD, as
+    board item 56 route (c) already ruled for the width refusal further down
+    the same method: a wide stop is answered by sizing down, not by a
+    refusal here."""
     constructor = PortfolioConstructor()
-    # 40.0 below a 100 entry -> ~60% away, past the 50% sanity bound.
+    # 40.0 below a 100 entry -> ~60% away, past the old 50% bound.
     analysis = _no_atr_analysis(
         computed_levels=[40.0], computed_level_touches={40.0: 6},
     )
     result = constructor._widen_stop_past_noise(
         "FAR", analysis, 100.0, 41.0, direction="long", target_price=None,
     )
-    assert result is None
-    assert constructor.last_refusals["FAR"]["refusal"] == (
-        STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+    assert result is not None
+    assert "FAR" not in constructor.last_refusals
+
+
+def test_widest_reachable_stop_atr_multiple_is_computed_not_chosen():
+    """Board item 185. The widest stop the desk can place is the base
+    multiple scaled by the largest setup and regime scalers — 2.5 x 1.00 x
+    1.20 = 3.00 — and `_stop_atr_multiple` must never return more."""
+    import pytest
+    from types import SimpleNamespace
+    from src.portfolio_constructor import (
+        ConstructorConfig, widest_reachable_stop_atr_multiple,
     )
+    cfg = ConstructorConfig()
+    widest = widest_reachable_stop_atr_multiple(
+        cfg.min_stop_atr_multiple,
+        cfg.stop_atr_setup_scale,
+        cfg.stop_atr_regime_scale,
+    )
+    assert widest == pytest.approx(3.0)
+    assert widest_reachable_stop_atr_multiple() == pytest.approx(widest)
+    constructor = PortfolioConstructor()
+    setups = [None, "", "breakout", "range", "unlabelled"]
+    tapes = [None, "", "risk-off", "risk-on", "transitional", "unlabelled"]
+    for setup in setups:
+        for tape in tapes:
+            got = constructor._stop_atr_multiple(
+                SimpleNamespace(setup_type=setup), tape,
+            )
+            assert got <= widest + 1e-12, (setup, tape, got)
+    assert constructor._stop_atr_multiple(
+        SimpleNamespace(setup_type="breakout"), "risk-off",
+    ) == pytest.approx(widest)
 
 
 def test_no_atr_nothing_typed_derives_and_holds():

@@ -414,3 +414,58 @@ def test_entry_stop_floor_leaves_wide_stop_alone():
     ExecutionStage(pipeline=pipeline).run(ctx)
     submit = pipeline.broker.submit_order.call_args.kwargs
     assert submit["stop_loss_price"] == 90.0
+
+
+# ----------------------------------------------------------------------
+# Board item 185 — the stop-sanity typo guard reads the instrument
+# ----------------------------------------------------------------------
+
+def _unprotected_pipeline() -> TradingPipeline:
+    """A position with NO readable live stop, so the min-ratchet floor cannot
+    run and the typo guard is the only thing between a mistyped price and the
+    broker."""
+    pipeline = _mk_pipeline(GE)
+    pipeline.broker.get_current_stop_price.return_value = None
+    pipeline._atr_for_symbol = lambda s: 8.0
+    from src.portfolio_constructor import ConstructorConfig
+    pipeline.portfolio_constructor = MagicMock()
+    pipeline.portfolio_constructor.cfg = ConstructorConfig()
+    return pipeline
+
+
+def test_trail_typo_floor_is_read_off_the_instrument_not_half_of_price():
+    """GE at $360 with ATR14 $8: the widest stop this desk can place is
+    3.00 x ATR = $24 out, a floor of $336. A $300 stop is past it and is
+    refused as a typo — the old flat rule refused only below $180, so a
+    digit typed in the wrong place walked straight through."""
+    pipeline = _unprotected_pipeline()
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-185",
+        review=_trail_review("GE", 300.0, "TARGET_BREACH — locking in gains"),
+    )
+    assert orders == []
+    pipeline.broker.replace_stop_loss.assert_not_called()
+    # And it is not a blanket refusal: a stop inside the widest the desk can
+    # place, and outside the noise band, still goes through.
+    ok = _unprotected_pipeline()
+    orders = ok._midday_execute_llm_actions(
+        positions=[GE], run_id="r-185",
+        review=_trail_review("GE", 340.0, "TARGET_BREACH — locking in gains"),
+    )
+    assert len(orders) == 1
+
+
+def test_trail_typo_floor_never_refuses_a_protective_raise():
+    """Where the live stop IS readable the min-ratchet floor is strictly
+    stronger than any width bound, so the width guard must not run there as
+    well: a WIDE raise over a low live stop is protection being added, and
+    refusing it would leave the lower stop standing."""
+    pipeline = _mk_pipeline(GE)
+    pipeline._atr_for_symbol = lambda s: 8.0
+    pipeline.broker.get_current_stop_price.return_value = 300.0
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-185",
+        review=_trail_review("GE", 330.0, "TARGET_BREACH — locking in gains"),
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 330.0)

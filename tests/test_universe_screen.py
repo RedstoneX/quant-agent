@@ -43,7 +43,7 @@ def _bars(n=300, *, price=50.0, rng=0.01, end=TODAY, close_drift=0.0):
 
 TH = us.ScreenThresholds(
     min_price_usd=5.0, min_market_cap_usd=30_000_000,
-    max_half_spread_bps=40.0, max_atr_fraction=0.5 / 2.5, min_history_bars=210,
+    max_half_spread_bps=40.0, max_atr_fraction=1.0 / 3.0, min_history_bars=210,
 )
 
 GOOD_ASSET = {
@@ -217,12 +217,35 @@ def test_wide_spread_is_refused_and_the_line_is_the_slippage_belt():
 
 # ----------------------------------------------------------- volatility ----
 
-def test_volatility_ceiling_refuses_a_name_whose_minimum_stop_breaks_the_sanity_floor():
-    # 25% daily range -> ATR/price ~0.5 > 0.2 ceiling. The spread check
-    # would also fire; the volatility one must be among the failures.
+def test_volatility_ceiling_refuses_a_name_whose_widest_stop_cannot_be_placed():
+    # 25% daily range -> ATR/price ~0.5, past the 1/3.00 ceiling: the
+    # desk's widest legitimate stop (3.00 x ATR under price) would sit
+    # below zero. The spread check would also fire; the volatility one
+    # must be among the failures.
     failures, measured = us.check_bars(_bars(300, rng=0.25), TH)
     assert "volatility_above_ceiling" in failures
-    assert measured["atr_pct"] > 20
+    assert measured["atr_pct"] > 100.0 / 3.0
+
+
+def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
+    """Board item 185. The ceiling used to be `0.5 / min_stop_atr_multiple`
+    = 20%, which admitted names the desk's own widest stop (3.00 x ATR, the
+    base scaled by the 1.20 risk-off scaler) could not be placed under. The
+    ceiling is now 1 / that widest multiple, so the screen and the stop
+    rules cannot disagree by construction."""
+    from src.portfolio_constructor import widest_reachable_stop_atr_multiple
+    config = SimpleNamespace(
+        universe_screen=UniverseScreenConfig(),
+        execution=SimpleNamespace(max_entry_slippage_bps=40.0),
+        risk=SimpleNamespace(min_stop_atr_multiple=2.5),
+    )
+    th = us.ScreenThresholds.from_config(config)
+    widest = widest_reachable_stop_atr_multiple(2.5)
+    assert widest == pytest.approx(3.0)
+    assert th.max_atr_fraction == pytest.approx(1.0 / widest)
+    # At the ceiling the widest stop sits at exactly zero, so the ceiling
+    # itself must FAIL, not pass.
+    assert 1.0 - widest * th.max_atr_fraction == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------- size/sector ----
@@ -286,7 +309,7 @@ def test_thresholds_are_read_from_existing_desk_numbers():
     assert th.min_price_usd == 5.0
     assert th.min_market_cap_usd == 30_000_000
     assert th.max_half_spread_bps == 40.0
-    assert th.max_atr_fraction == pytest.approx(0.2)
+    assert th.max_atr_fraction == pytest.approx(1.0 / 3.0)
     assert th.min_history_bars == 210
 
 

@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 140, (
+    assert MAX_ARBITRARY_ENTRIES == 139, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -319,6 +319,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "level by. Same value, no behaviour change; item 70 requires the two "
         "jobs to become two independently justified numbers and forbids "
         "collapsing them to keep the count down, so the count rises by one."
+"140 -> 139 on 2026-09-30, board item 185: the midday stop-sanity floor 0.5 (`_midday_execute_llm_actions:factor[0]`) was DELETED, not sourced. It was a flat half-of-price bound on a model-proposed TRAIL_STOP, and the universe screen derived its ATR/price volatility ceiling from it, so each of the two was justified by the other and neither was fixed by anything outside the pair. Both now read the same quantity off the instrument and the config instead: the widest stop `PortfolioConstructor._stop_atr_multiple` can actually return (`widest_reachable_stop_atr_multiple`, the base `min_stop_atr_multiple` times the largest setup and regime scalers, 3.00 x ATR14 today). The guard compares a proposal against that multiple of the NAME'S OWN live ATR14 and the screen's ceiling is 1 / that multiple, the point where the widest legitimate stop would sit at or below zero. No new constant exists and the two cannot drift apart again. Measured before changing: the guard fired ZERO times across every retained production log (2026-08-31 to 2026-09-30) and the screen is `enabled: false` and has never run. A row left the ledger, so the count is lowered in the same commit."
     )
 
 
@@ -369,8 +370,8 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     derived_from_base = {
         "src.pipeline.TradingPipeline._force_delever:factor[1]": stop_buffer,
         "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
-        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
         "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
@@ -858,7 +859,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
-    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids
+    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]" in ids
 
 
 def test_a_parameter_default_is_a_site() -> None:

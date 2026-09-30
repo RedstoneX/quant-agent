@@ -12250,15 +12250,6 @@ class TradingPipeline:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
-                    # Sanity: stop < 50% of current price is almost certainly
-                    # an LLM typo. Leaving the old stop is safer than
-                    # replacing it with a non-protective one.
-                    if new_stop < existing[0].current_price * 0.5:
-                        logger.warning(
-                            "Midday: TRAIL_STOP %s skipped — new_stop $%.2f is <50%% of current $%.2f (likely LLM error)",
-                            symbol, new_stop, existing[0].current_price,
-                        )
-                        continue
                     # Minimum-ratchet floor: a raise must clear the live stop
                     # by at least MIN_RATCHET_PCT. The position_reviewer prompt
                     # presents `new_stop_price >= old_stop_price × 1.02` as a
@@ -12300,6 +12291,68 @@ class TradingPipeline:
                                 min_new_stop,
                             )
                             continue
+                    # Sanity: a proposed stop further below price than any
+                    # stop this desk's own rules can produce is almost
+                    # certainly an LLM typo. Leaving the old stop is safer
+                    # than replacing it with a non-protective one.
+                    #
+                    # READ OFF THE INSTRUMENT, not a chosen fraction of
+                    # price (board item 185, 2026-09-30). This used to be a
+                    # flat `new_stop < 50% of current price`, checked
+                    # before the ratchet floor. Nothing fixed the 50%: it
+                    # was picked, the universe screen then DERIVED its
+                    # volatility ceiling from it, and each of the two was
+                    # justified by the other. The bound below is instead
+                    # the widest stop `PortfolioConstructor.
+                    # _stop_atr_multiple` can actually return (the base
+                    # `min_stop_atr_multiple` times the largest setup and
+                    # regime scalers, 3.00 x ATR14 at today's settings)
+                    # measured against THIS name's live ATR14 — no constant
+                    # of its own, and it moves with the name's volatility,
+                    # as the owner's standing rule on stops requires.
+                    #
+                    # WHY IT NOW SITS BELOW THE RATCHET FLOOR AND ONLY RUNS
+                    # WHEN THE LIVE STOP COULD NOT BE READ. Where the live
+                    # stop IS readable the ratchet floor above is strictly
+                    # stronger than any width bound: it refuses anything
+                    # that does not clear the live stop by MIN_RATCHET_PCT,
+                    # so a typo far below price is already gone. Running a
+                    # width bound there as well would newly refuse a wide
+                    # but genuinely PROTECTIVE raise and leave a lower stop
+                    # standing — the flat 50% version could not do that
+                    # because it practically never bound (measured: zero
+                    # firings in every retained production log, 2026-08-31
+                    # to 2026-09-30). So this guard keeps exactly the job
+                    # the ratchet cannot do: an unprotected position, where
+                    # nothing else stands between a mistyped price and the
+                    # broker.
+                    #
+                    # `atr` is fetched once here and reused by the
+                    # noise-band clamp below. Unreadable ATR degrades to no
+                    # guard, the same rule the noise band already used.
+                    atr = self._atr_for_symbol(symbol)
+                    if (old_stop is None or old_stop <= 0) and atr is not None:
+                        from src.portfolio_constructor import (
+                            widest_reachable_stop_atr_multiple,
+                        )
+                        _cfg = self.portfolio_constructor.cfg
+                        widest = widest_reachable_stop_atr_multiple(
+                            _cfg.min_stop_atr_multiple,
+                            _cfg.stop_atr_setup_scale,
+                            _cfg.stop_atr_regime_scale,
+                        )
+                        typo_floor = existing[0].current_price - widest * atr
+                        if new_stop < typo_floor:
+                            logger.warning(
+                                "Midday: TRAIL_STOP %s skipped — no live stop "
+                                "was readable and new_stop $%.2f sits further "
+                                "below the $%.2f price than the widest stop "
+                                "this desk can place (%.2f x ATR14 $%.2f = "
+                                "floor $%.2f); read as a model typo.",
+                                symbol, new_stop, existing[0].current_price,
+                                widest, atr, typo_floor,
+                            )
+                            continue
                     # RC1 exit-quality clamps (2026-07-16 forensics: 5 trail
                     # fills missed avg +30.7% post-exit; LLY was whipsawed
                     # twice identically). A hard-trigger citation in the
@@ -12321,7 +12374,8 @@ class TradingPipeline:
                         # the current price sits inside one day's normal
                         # range — it converts routine volatility into a
                         # realized exit. Keep the old stop instead.
-                        atr = self._atr_for_symbol(symbol)
+                        # `atr` was read above for the typo guard; the
+                        # fetch is not repeated.
                         if atr is not None:
                             noise_floor = existing[0].current_price - 1.25 * atr
                             if new_stop > noise_floor:
