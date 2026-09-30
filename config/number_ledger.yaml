@@ -162,6 +162,10 @@ numbers:
       the advisory, or not at all. That retirement touches roughly 187
       references across `src/pipeline.py`, `src/pipeline_stages.py`, the API
       and nine test modules, and is its own job; it was NOT started here.
+      UPDATE 2026-09-30, board item 190 step 1: the deployment-gap advisory no
+      longer reads this row; its band moved, value unchanged, to
+      `DeploymentGapConfig.band_pct`. Only the sweeper and the /account
+      `reserve_usd` display still read this one.
     open_question: >-
       What is the largest observed shortfall between an order's sized cost and
       its settled cost on this account - fees, slippage and partial fills
@@ -169,6 +173,25 @@ numbers:
     cost_while_unanswered: >-
       Too low and a funded order fails for want of cash; too high and equity
       sits in raw cash earning nothing.
+  - id: src.config.DeploymentGapConfig.band_pct
+    value: 1
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Tolerance band, in percentage points under 100% invested, for the
+      `deployment_gap` advisory (PM facts block and pre-trade advisory).
+      Board item 190 step 1 (2026-09-30): carried over UNCHANGED at 1.0 from
+      `CashSweepConfig.reserve_pct` so the advisory no longer reads the
+      retiring cash-sweep feature. It is an owner-appetite number ("how far
+      under 100% still counts as fully invested"), not a measured one; the
+      move sources nothing new and changes no behaviour.
+    open_question: >-
+      How far under fully invested is the book allowed to sit before idle
+      cash is a drag worth flagging, read off this account's actual fee and
+      slippage drag on a full rebalance?
+    cost_while_unanswered: >-
+      Too narrow and the advisory nags on noise; too wide and real idle cash
+      goes unflagged.
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing

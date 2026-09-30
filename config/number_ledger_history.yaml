@@ -884,3 +884,15 @@ changes:
       changes in 400 draws that nudged every correlation by up to 0.03. Clustering
       stays transitive on purpose (a theme transmits by chaining) and
       remains rationing only -- the desk still never buys to diversify.
+
+  - delta: 1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 190 step 1: +1 for
+      `src.config.DeploymentGapConfig.band_pct` (1.0), a MOVE and not a new
+      number. The `deployment_gap` advisory used to read its tolerance band
+      from `CashSweepConfig.reserve_pct`; the band now has its own home so
+      the cash-sweep feature can be deleted. Value is identical (1.0) and no
+      behaviour changed. The old row `CashSweepConfig.reserve_pct` still
+      exists because the /account display and the sweeper still read it; it
+      is deleted in step 4, which takes the count back down by 1.

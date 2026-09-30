@@ -1374,3 +1374,50 @@ def test_rearm_alert_records_durably_and_pages_once_per_day(monkeypatch, tmp_pat
     assert db.evidence[0]["symbol"] == "ABC"
     assert db.evidence[0]["agent_name"] == si.REARM_FAILURE_AGENT_NAME
     assert len(sent) == 1, "at most one page per symbol per trading day"
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — an in-place QUANTITY amend cannot replace the cancel
+# ---------------------------------------------------------------------------
+
+def test_scale_in_never_amends_a_resting_stop_and_survives_42210000(tmp_path):
+    """The cancel is forced by the broker's order model, not by our sequencing.
+
+    A resting protective SELL and a working BUY collide on the same symbol, so
+    the stop must come off. The obvious alternative — leave it resting and
+    amend its QUANTITY in place after the add — is refused by this broker on a
+    FRACTIONAL order (code 42210000), and scale-in adds are routinely
+    fractional. This pins both halves: the path never reaches for
+    `replace_order_by_id`, and a broker that refuses every quantity amend
+    changes nothing about the cancel-confirm sequence.
+    """
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "stop-1", "qty": 10.5, "stop_price": 88.0}],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    broker.wait_for_order_terminal.return_value = "canceled"
+
+    def _refuse_quantity_amend(*a, **k):
+        raise RuntimeError(
+            "{'code':42210000,'message':'qty is not modifiable on a "
+            "fractional order'}",
+        )
+
+    broker.replace_order_by_id.side_effect = _refuse_quantity_amend
+
+    prep = prepare_long_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_cop_position()], intended_stop=90.0,
+    )
+    # The amend was never attempted — so the 42210000 refusal above can never
+    # be reached, and the original stop is never left in an unknown state.
+    broker.replace_order_by_id.assert_not_called()
+    # The cancel-confirm sequence is unchanged and the window is opened on
+    # purpose, with the write-ahead row standing behind a crash.
+    assert prep.cancelled is True
+    assert prep.skip_reason is None
+    assert prep.cancel_confirmed_at is not None
+    broker.cancel_snapshotted_stops.assert_called_once()
+    db.close()
