@@ -188,13 +188,11 @@ DONE WHEN:
   - [x] (b) a series still missing is named, the verdict it produced is visibly partial wherever it travels, and the desk never pays a second time on the same holes — RESTATED and met 2026-09-26. "The economist is not paid on the holes" was DECIDED AGAINST on measurement: the macro seat is bought once a day at the open and nowhere else, so skipping it deletes the regime frame rather than delaying it, and both measured partial runs had already burned the full ceiling so there was nothing bounded to wait for. The economist is paid once on what arrived; `MacroCoverage.verdict_stamp()` stamps `coverage_state`/`coverage_note` onto the verdict from the fetch record, and that stamp now survives `MacroStore.save_last_state`, the carry-forward into midday/close/intra, the PM sheet and the owner's `📊 Market:` line. A second paid call on the same holes was already impossible (`"partial"` is `CATEGORY_REPORTED`, never healable) and is now pinned by a test instead of left to the table. No coverage threshold was picked; 14/15 and 1/15 are both `partial`. Measurement, money and the argument against the other three options: docs/BOARD_NOTES.md (item 119)
 detail: docs/BOARD_NOTES.md (item 119)
 
-**147. A success with no usage data — the filed premise was wrong; only the no-telemetry half remains open.**
+**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
-  - [ ] a success whose provider request DID happen but returned no usage telemetry is charged at a measured rate instead of hard-latching the … (full text: docs/BOARD_NOTES.md item 147)
-  - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unkn … (full text: docs/BOARD_NOTES.md item 147)
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and t … (full text: docs/BOARD_NOTES.md item 147)
-detail: docs/BOARD_NOTES.md (item 147)
+  - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
+detail: docs/BOARD_NOTES.md (item 203)
 
 **157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
 
@@ -264,7 +262,8 @@ detail: docs/BOARD_NOTES.md (item 187)
 
 DONE WHEN:
   - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [ ] the substitute is either measured at the three decision seats through `ops/model_policy/benchmark_models.py`, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
+  - [ ] every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and why it did not — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable)
+  - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
 
 detail: docs/BOARD_NOTES.md (item 188)
 
@@ -361,11 +360,12 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 77
-- retired queue: 183
+- retired queue: 147
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
