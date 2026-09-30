@@ -94,6 +94,11 @@ class ExitTrigger(str, Enum):
     SECTOR_SHOCK = "sector_shock"
     EARNINGS = "earnings"
     REGIME_SHIFT = "regime_shift"
+    #: The desk's own trend-over read agrees on every reading (structure,
+    #: ATR, moving average) — the profit-taking exit, 2026-09-30. Verified
+    #: against `src.risk.trend_alignment.read_trend_alignment` by the
+    #: executor, never by the seat's say-so.
+    TREND_ALIGNMENT = "trend_alignment"
     # `RISK_BREAKER` ("daily loss" / "circuit breaker") was REMOVED
     # 2026-09-20 with the account-level loss alarm itself (WORK.md item 32,
     # docs/INCIDENT_HISTORY.md). Nothing computes the event it named.
@@ -124,6 +129,9 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
         "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
     ),
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
+    ExitTrigger.TREND_ALIGNMENT: (
+        "trend alignment", "trend-alignment", "alignment exit",
+    ),
 }
 
 #: Triggers that assert something happened OUTSIDE the price series and

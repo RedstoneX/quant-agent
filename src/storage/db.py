@@ -3210,6 +3210,120 @@ class Database:
                 break
         return out
 
+    #: Per-session structure flag for the TREND-ALIGNMENT read (2026-09-30):
+    #: whether the close dated `bar_date` had broken the trail's last higher
+    #: low by the break margin. Same shape and same consumer helper
+    #: (`exit_guard._consecutive_prior_break_count`) as the stop-side records
+    #: above, so a gap session ends the streak exactly as it does there.
+    TREND_STRUCTURE_BREAK_KIND = "trend_structure_break"
+    #: The whole trend-alignment read, one row per symbol per review.
+    TREND_ALIGNMENT_READ_KIND = "trend_alignment_read"
+
+    def save_trend_structure_break(
+        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        close: float | None = None,
+    ) -> int:
+        payload: dict = {"raw_broken": bool(raw_broken), "bar_date": str(bar_date)}
+        try:
+            if close is not None:
+                cf = float(close)
+                if math.isfinite(cf):
+                    payload["close"] = cf
+        except (TypeError, ValueError):
+            pass
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.TREND_STRUCTURE_BREAK_KIND, scope="symbol",
+            symbol=str(symbol).upper(), evidence_json=json.dumps(payload),
+        )
+
+    def get_recent_trend_structure_breaks(
+        self, symbol: str, *, before_bar_date: str,
+        exclude_run_id: str | None = None, limit: int = 30,
+    ) -> list[dict]:
+        """The trend-alignment twin of `get_recent_holding_protection_breaks`:
+        per-session records `{bar_date, raw_broken, close}` dated strictly
+        before `before_bar_date`, most recent first, one per session."""
+        return self._recent_break_records(
+            symbol, kind=self.TREND_STRUCTURE_BREAK_KIND,
+            before_bar_date=before_bar_date, exclude_run_id=exclude_run_id,
+            limit=limit,
+        )
+
+    def _recent_break_records(
+        self, symbol: str, *, kind: str, before_bar_date: str,
+        exclude_run_id: str | None, limit: int,
+    ) -> list[dict]:
+        sym = str(symbol).strip().upper()
+        if not sym:
+            return []
+        sql = (
+            "SELECT evidence_json FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol=?"
+        )
+        params: list = [kind, sym]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY timestamp DESC, id DESC"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        out: list[dict] = []
+        seen_dates: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(dict(row).get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            bar_date = str(payload.get("bar_date") or "")
+            if not bar_date or bar_date >= str(before_bar_date):
+                continue
+            if bar_date in seen_dates:
+                continue
+            seen_dates.add(bar_date)
+            rec = {"bar_date": bar_date, "raw_broken": bool(payload.get("raw_broken"))}
+            if payload.get("close") is not None:
+                rec["close"] = payload.get("close")
+            out.append(rec)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
+    def get_last_trend_alignment_read(self, symbols) -> dict[str, dict]:
+        """The NEWEST trend-alignment read row per symbol (payload plus its
+        `timestamp`), so a review can tell whether the state it is about to
+        voice changed since last review."""
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol IN "
+            f"({placeholders}) ORDER BY timestamp DESC, id DESC"
+        )
+        with self._lock:
+            rows = self.conn.execute(
+                sql, (self.TREND_ALIGNMENT_READ_KIND, *wanted),
+            ).fetchall()
+        out: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            sym = row["symbol"]
+            if sym in out:
+                continue
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            payload["timestamp"] = row.get("timestamp")
+            out[sym] = payload
+            if len(out) == len(wanted):
+                break
+        return out
+
     # --- Gross-exposure de-lever ceiling state (docs/WORK.md item 112) ---
     #
     # One boolean per de-lever session: did the book finish STILL over its

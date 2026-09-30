@@ -93,6 +93,24 @@ DETERIORATION_PATTERNS: tuple[str, ...] = (
 
 _DETERIORATION_RE = re.compile("|".join(DETERIORATION_PATTERNS), re.IGNORECASE)
 
+#: The phrases a seat uses to name the TREND-ALIGNMENT exit trigger (owner
+#: 2026-09-30, relayed by the orchestrator: the exit is an alignment of live
+#: readings — structure, ATR and a moving average — never a target). Mirrored
+#: in `src.risk.exit_trigger.TRIGGER_PHRASES` and
+#: `pipeline._HARD_TRIGGER_KEYWORDS`; a test pins the three together. The
+#: read itself lives in `src.risk.trend_alignment`.
+ALIGNMENT_PHRASES: tuple[str, ...] = (
+    "trend alignment", "trend-alignment", "alignment exit",
+)
+
+
+def reason_cites_alignment(reason: object) -> bool:
+    """True when an exit reason names the trend-alignment trigger."""
+    if not isinstance(reason, str) or not reason:
+        return False
+    lower = reason.lower()
+    return any(p in lower for p in ALIGNMENT_PHRASES)
+
 #: Metrics where a HIGHER value means the position is doing better.
 _HIGHER_IS_BETTER = ("thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace")
 
@@ -374,8 +392,25 @@ def is_deterioration_claim(reason: str) -> bool:
 
 def veto_contradicted_exit(
     action: str, reason: str, deltas: MetricDeltas,
+    *, alignment_confirmed: bool = False,
 ) -> str | None:
     """Return a veto message when an exit contradicts its own numbers, else None.
+
+    THE ONE CARVE-OUT (2026-09-30). Until now a SELL/REDUCE on a position
+    whose own metrics had improved was vetoed whenever the reason read as a
+    deterioration claim — which made taking profit on a winner structurally
+    impossible, because "it has run, structure is breaking, take profit"
+    is a deterioration claim about a position whose numbers look better
+    than last review. The veto exists to stop selling healthy positions on
+    narrative ("momentum fading", "looks tired"), and it keeps doing that.
+    What it no longer does is veto an exit that NAMES the trend-alignment
+    trigger when the desk's OWN deterministic read (`src.risk.
+    trend_alignment.read_trend_alignment`, passed in as
+    `alignment_confirmed`) agrees the trend is over: that exit rests on
+    measured readings, not on the seat's narrative, so it cannot be
+    contradicting the reviewer's numbers — the readings ARE numbers. A
+    reason that names the trigger while the read says NOT aligned gets no
+    carve-out here (and is refused by the caller as unconfirmed).
 
     Vetoes only when ALL of these hold:
       - the action actually reduces the position (SELL / REDUCE / COVER —
@@ -415,6 +450,8 @@ def veto_contradicted_exit(
         wrong — it self-heals after one review cycle.
     """
     if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
+        return None
+    if alignment_confirmed and reason_cites_alignment(reason):
         return None
     if not is_deterioration_claim(reason):
         return None

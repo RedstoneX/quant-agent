@@ -334,6 +334,8 @@ class PositionReviewerAgent(BaseAgent):
                 metric_bits.append(f"to_stop={pf['distance_to_stop_pct']:.1f}%")
             if pf.get("distance_to_target_pct") is not None:
                 metric_bits.append(f"to_target={pf['distance_to_target_pct']:.1f}%")
+            if pf.get("trend_alignment"):
+                metric_bits.append(f"trend_alignment={pf['trend_alignment']}")
             # Vol units. The prompt tells the reviewer to reason in ATRs ("a
             # stop <1.25 ATRs away is inside daily noise") and the pipeline
             # pays for an ATR fetch per position to compute these — but they
@@ -732,11 +734,21 @@ class PositionReviewerAgent(BaseAgent):
                     + ", ".join(contradicted)
                     + ". A SELL or REDUCE on one of these citing stalling, "
                     "lack of progress, fading momentum or deterioration will "
-                    "be VETOED by deterministic code — you would be "
-                    "contradicting your own recorded numbers. Exit on NEW "
-                    "INFORMATION (news, earnings, regime shift, correlation "
-                    "breach, triggered thesis_invalid_if) is unaffected and "
-                    "remains entirely your call."
+                    "be VETOED by deterministic code UNLESS it names the "
+                    "`trend alignment` trigger AND the desk's own read of "
+                    "the instrument agrees (shown per position as "
+                    "trend_alignment=ALIGNED / NOT_ALIGNED in Metrics). A "
+                    "narrative that the position is tiring contradicts your "
+                    "own recorded numbers; a trend-alignment exit rests on "
+                    "the desk's measured readings — its last higher low "
+                    "broken and confirmed, price more than the chandelier "
+                    "distance below the run's high, and no longer above a "
+                    "rising MA20 — and is the way profit is taken on a "
+                    "winner. Name it only when the read says ALIGNED; if it "
+                    "says NOT_ALIGNED the exit is refused as unconfirmed. "
+                    "Exit on NEW INFORMATION (news, earnings, regime shift, "
+                    "triggered thesis_invalid_if) is unaffected and remains "
+                    "entirely your call."
                 )
             deltas_section = (
                 "### Your Own Previous Review (metric deltas)\n"

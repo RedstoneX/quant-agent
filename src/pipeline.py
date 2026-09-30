@@ -274,6 +274,12 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "regime flipped",
     "risk-off",
     "risk off",
+    # Trend-alignment profit-taking exit (2026-09-30): the desk's own read of
+    # structure + ATR + moving average agrees the trend is over. Verified by
+    # the executor against `src.risk.trend_alignment`; naming it is not enough.
+    "trend alignment",
+    "trend-alignment",
+    "alignment exit",
     # "daily loss" / "daily-loss" / "circuit breaker" were REMOVED
     # 2026-09-20 (WORK.md item 32), for the same reason and by the same
     # precedent as the correlation phrases below: the owner deleted the
@@ -10012,50 +10018,42 @@ class TradingPipeline:
     def _adjudicate_target_revision_flags(
         self, review, positions, *, run_id: str, seat: str,
     ) -> list[dict]:
-        """Adjudicate this review's take-profit revision flags.
+        """Re-derive EVERY held position's take-profit this review, and file
+        the outcome for each (owner ruling 2026-09-25).
 
-        A seat raises `src.models.TargetRevisionFlag` — SYMBOL AND EVIDENCE,
-        no price; the schema has no price field. This method supplies
-        `src.risk.target_revision.assess_target_revision` with real numbers
-        recomputed straight from bars, using the same deterministic, no-LLM
-        machinery `_structural_protection_for_holding` uses
-        (`compute_indicators` for ATR, `find_structural_levels` for levels,
-        `levels_coverage_for_bars` for whether an empty result is a fault or
-        a reading), and writes the outcome.
+        Until that ruling this ran only over the symbols a seat had flagged
+        with a `src.models.TargetRevisionFlag`. The flag is now EVIDENCE, not
+        the trigger: every held name is re-read off today's bars by
+        `_assess_one_target_revision` (`require_trigger=False`), a flag on a
+        held symbol enriches that symbol's recorded evidence, and a flag on a
+        symbol the broker does not hold is still filed, because a flag on a
+        name not in the book is itself a finding about the seat's view of the
+        book. Every protective refusal inside the assessment still applies,
+        and the target may only ever ratchet AWAY from entry.
 
-        DELIBERATELY runs AFTER `_midday_execute_llm_actions`. Every exit
-        decision this session makes has already been made and vetoed against
-        `metric_deltas` built before this point, so a revision cannot reach
-        them even in principle. That is the second of two independent
-        defences; the first is that progress/pace are measured against the
-        PINNED `initial_take_profit` (see `_build_position_facts`), so a
-        revision cannot move a guarded metric at all.
+        DELIBERATELY runs AFTER `_midday_execute_llm_actions`. Every
+        REVIEWER-DRIVEN exit this session makes has already been made and
+        vetoed against `metric_deltas` built before this point, so a revision
+        cannot reach those; and because progress/pace are measured against the
+        PINNED `initial_take_profit` (see `_build_position_facts`), a revision
+        cannot move a guarded metric at all. Nothing exits on the target: a
+        computed target is not an exit trigger (owner, 2026-09-30, relayed by
+        the orchestrator — "the target is just a made-up number"); it is a
+        reference the desk keeps current, and the trend-alignment sweep that
+        follows reads the instrument, never this number.
 
-        EVERY flag produces a durable row — a re-derivation, a named refusal,
-        or a named data fault. Never a silent no-op and never a blank.
-        Returns the outcome payloads for the session result / cockpit.
-
-        Never raises: a failure here must not take down a review that has
-        already executed its orders.
+        EVERY symbol produces a durable row — a re-derivation, a named refusal,
+        or a named data fault. Never a silent no-op and never a blank. Places
+        no orders. Returns the outcome payloads for the session result /
+        cockpit. Never raises: a failure here must not take down a review that
+        has already executed its orders.
         """
         from src.data.levels import (
             BREAKOUT_PROJECTION_ATR_MULTIPLE,
-            CLUSTER_TOLERANCE_PCT,
-            COVERAGE_UNKNOWN,
             MAX_HORIZON_SESSIONS,
             MAX_REACH_ATR_MULTIPLE,
             MIN_TARGET_ATR_MULTIPLE,
         )
-        from src.risk.target_revision import (
-            assess_target_revision,
-            level_backing_target,
-            target_level_broken,
-        )
-        from src.trading_calendar import et_today
-
-        flags = list(getattr(review, "target_revision_flags", None) or [])
-        if not flags:
-            return []
 
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
@@ -10071,230 +10069,352 @@ class TradingPipeline:
         }
 
         # Direction comes from BROKER TRUTH (the sign of the held qty), never
-        # from the flag — the seat names a symbol, not a side.
+        # from a flag — the seat names a symbol, not a side. Insertion order is
+        # preserved so the every-review sweep is deterministic.
         held: dict[str, object] = {}
+        order: list[str] = []
         for p in positions or []:
-            held[str(getattr(p, "symbol", "")).upper()] = p
+            key = str(getattr(p, "symbol", "")).upper()
+            if not key:
+                continue
+            if key not in held:
+                order.append(key)
+            held[key] = p
+
+        flag_evidence: dict[str, str] = {}
+        for flag in list(getattr(review, "target_revision_flags", None) or []):
+            fsym = str(getattr(flag, "symbol", "") or "").strip().upper()
+            if not fsym:
+                continue
+            flag_evidence.setdefault(
+                fsym, str(getattr(flag, "evidence", "") or ""))
 
         outcomes: list[dict] = []
-        seen: set[str] = set()
-        for flag in flags:
-            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
-            evidence = str(getattr(flag, "evidence", "") or "")
-            if not sym or sym in seen:
-                continue
-            seen.add(sym)
-            position = held.get(sym)
-            if position is None:
-                # The seat flagged something not held. Filed, not silently
-                # dropped, because a flag on a symbol that is not in the
-                # book is itself a finding about the seat's view of the book.
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                    code="REFUSAL_NOT_HELD", applied=False,
-                    detail=(
-                        "the seat flagged a take-profit revision for a symbol "
-                        "the broker does not show as held"
-                    ),
-                ))
-                continue
-
-            is_short = float(getattr(position, "qty", 0) or 0) < 0
+        for sym in order:
+            evidence = flag_evidence.get(sym) or (
+                "every-review re-derivation: the desk re-reads the structural "
+                "target off today's bars each review so a stale target cannot "
+                "sit ignored (owner ruling 2026-09-25)"
+            )
             try:
-                buy = self.db.get_symbol_last_buy(
-                    sym, action="SHORT" if is_short else None,
-                ) if is_short else self.db.get_symbol_last_buy(sym)
+                outcomes.append(self._assess_one_target_revision(
+                    sym=sym, position=held[sym], seat=seat, evidence=evidence,
+                    run_id=run_id, target_cfg=target_cfg,
+                    require_trigger=False,
+                ))
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: opening-row lookup failed for %s (%s)",
+                # A per-symbol raise must still leave a DURABLE machine-readable
+                # reason — nothing on this desk is held on a bare log line. The
+                # stored target stands; no order is placed.
+                logger.error(
+                    "target revision: per-symbol assessment raised for %s "
+                    "(%s) — the stored target stands, no order placed",
                     sym, exc,
                 )
-                buy = None
-            buy = buy or {}
-
-            # Same bars, same window, same helpers as
-            # `_structural_protection_for_holding` — and the same rule that
-            # the price fed to a break test is the latest COMPLETED DAILY
-            # CLOSE, never a live quote.
-            levels: list[float] = []
-            atr = close_price = bar_date = None
-            coverage = None
-            try:
-                bars = self.market.get_ohlcv(
-                    sym, self.config.trading.lookback_days,
-                ) or []
-                from src.data.levels import (
-                    find_structural_levels,
-                    structure_coverage,
-                )
-                from src.data.technical import compute_indicators
-                # What the bar history behind `levels` was, so an empty list
-                # from a dead feed is a DATA fault and one from a measured,
-                # structureless chart is a refusal — the same distinction
-                # `_derive_target` passes at entry.
-                coverage = structure_coverage(bars)
-                if bars:
-                    last_bar = sorted(bars, key=lambda b: b.date)[-1]
-                    close_price = float(last_bar.close)
-                    bar_date = str(last_bar.date)
-                    atr = compute_indicators(sym, bars).atr_14
-                    supports, resistances = find_structural_levels(bars)
-                    levels = sorted(lv.price for lv in (*supports, *resistances))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: bars/indicator fetch failed for %s (%s) "
-                    "— the flag is filed as a data fault, not judged",
-                    sym, exc,
-                )
-
-            stored_target = None
-            try:
-                stored_target = float(buy.get("take_profit") or 0) or None
-            except (TypeError, ValueError):
-                stored_target = None
-
-            # Which level this target was measured against, recovered by the
-            # same identity test the stop side uses. None for a measured-move
-            # target, which is correct: it never sat on a level.
-            target_level = level_backing_target(
-                stored_target=stored_target,
-                computed_levels=levels,
-                # NOT a knob — the exact constant `find_structural_levels`
-                # clustered these zones with (docs/WORK.md item 46).
-                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            )
-
-            # Cross-day confirmation, keyed off THIS READ's own bar_date so
-            # several intraday cycles re-reading one close are never
-            # miscounted as two confirming days.
-            effective_bar_date = bar_date or str(et_today())
-            break_seen_prior_close = False
-            try:
-                prior = self.db.get_prior_target_level_break(
-                    [sym], today_bar_date=effective_bar_date,
-                    exclude_run_id=run_id,
-                )
-                break_seen_prior_close = bool(prior.get(sym, False))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: prior-close read failed for %s (%s) — "
-                    "today's break, if any, starts unconfirmed", sym, exc,
-                )
-
-            # Sessions this position has already spent out of its pinned
-            # horizon — the HOLIDAY-AWARE broker count (item 165), the same
-            # `broker.trading_sessions_held` the reviewer's own facts and
-            # the exit guard's noise band read; never a calendar-day count
-            # and never a default. It is what lets a target the price has
-            # run past be re-anchored on the close over the REMAINING
-            # horizon (item 114); a None here simply means no re-anchor is
-            # attempted and the existing refusal stands.
-            sessions_held: int | None = None
-            entry_ts = (buy.get("timestamp") or "")[:10]
-            if entry_ts:
-                try:
-                    from datetime import date as _date
-                    sessions_held = self.broker.trading_sessions_held(
-                        _date.fromisoformat(entry_ts), et_today(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: sessions-held read failed for %s "
-                        "(%s) — no remaining horizon, so a target behind "
-                        "price is refused rather than re-anchored", sym, exc,
-                    )
-                    sessions_held = None
-
-            outcome = assess_target_revision(
-                symbol=sym,
-                direction="short" if is_short else "long",
-                entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
-                stored_target=stored_target,
-                target_level=target_level,
-                pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
-                setup_type=buy.get("setup_type") or None,
-                levels=levels,
-                atr=atr,
-                close_price=close_price,
-                levels_coverage=coverage or COVERAGE_UNKNOWN,
-                break_seen_prior_close=break_seen_prior_close,
-                sessions_held=sessions_held,
-                # The same ratified derivation bars the constructor passes at
-                # entry, read off `risk_engine.config` (what
-                # `ConstructorConfig` itself mirrors). Read defensively
-                # because this method must survive a lightweight pipeline
-                # double in unit tests that never built a real risk_engine;
-                # the fallbacks are `src.data.levels`' own module constants,
-                # not a second invented set of numbers.
-                **target_cfg,
-            )
-
-            # File today's raw break state for the NEXT trading day to
-            # confirm against — the same read/persist shape as
-            # `_structural_protection_for_holding`. A `None` from the break
-            # test means the question could not be asked; nothing is filed,
-            # so a missing input can never become half of a confirmation.
-            raw_broken = target_level_broken(
-                target_level=target_level, close_price=close_price,
-                atr=atr, is_short=is_short,
-            )
-            if raw_broken is not None and bar_date:
-                try:
-                    self.db.save_target_level_break(
-                        run_id=run_id, symbol=sym,
-                        raw_broken=bool(raw_broken), bar_date=bar_date,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: failed to persist %s break state "
-                        "(%s) — tomorrow's read starts unconfirmed", sym, exc,
-                    )
-
-            applied = False
-            if outcome.revised and outcome.new_price:
-                try:
-                    applied = bool(self.db.update_open_take_profit(
-                        sym, outcome.new_price,
-                        action="SHORT" if is_short else "BUY",
-                    ))
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "target revision: write-back failed for %s (%s) — "
-                        "the stored target stands", sym, exc,
-                    )
-                    applied = False
-                if applied:
-                    logger.info(
-                        "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
-                        "progress/pace stay measured against the pinned "
-                        "entry target",
-                        sym, outcome.prior_price or 0.0, outcome.new_price,
-                        outcome.basis, outcome.trigger,
-                    )
-            if not applied and outcome.revised:
-                # The derivation succeeded but the row did not move. Recorded
-                # as its own outcome so the record can never claim a revision
-                # the trade row does not carry.
                 outcomes.append(self._file_target_revision(
                     run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                    code="FAULT_REVISION_WRITE_FAILED", applied=False,
-                    trigger=outcome.trigger, prior_price=outcome.prior_price,
+                    code="FAULT_ASSESSMENT_RAISED", applied=False,
                     detail=(
-                        f"{outcome.trigger} fired and re-derived "
-                        f"${outcome.new_price:,.2f}, but the opening row could "
-                        f"not be updated — the stored target stands"
+                        f"the take-profit re-derivation raised for this symbol "
+                        f"({exc}); the stored target stands unchanged and no "
+                        f"order was placed"
                     ),
                 ))
-                continue
 
+        for fsym, evidence in flag_evidence.items():
+            if fsym in held:
+                continue
             outcomes.append(self._file_target_revision(
-                run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                code=outcome.code, applied=applied, trigger=outcome.trigger,
-                prior_price=outcome.prior_price, new_price=outcome.new_price,
-                basis=outcome.basis, level_used=outcome.level_used,
-                detail=outcome.detail,
+                run_id=run_id, symbol=fsym, seat=seat, evidence=evidence,
+                code="REFUSAL_NOT_HELD", applied=False,
+                detail=(
+                    "the seat flagged a take-profit revision for a symbol "
+                    "the broker does not show as held"
+                ),
             ))
         return outcomes
+
+    def _reset_review_caches(self) -> None:
+        """Clear everything scoped to ONE review, before that review runs.
+
+        Called UNCONDITIONALLY at the review's own call site, never from inside
+        a sweep: the sweeps that populate these are each wrapped in a
+        try/except by their caller, so a reset that lived inside one of them
+        would be skipped exactly when that sweep raised — and the alignment
+        sweep would then run against the PREVIOUS review's bars and reads.
+        """
+        #: Daily bars per symbol, shared by every per-holding read this review.
+        self._review_bars_cache = {}
+        self._review_bars_date = None
+        #: This review's trend-alignment read per held name
+        #: (`src.risk.trend_alignment`), taken once and shared by the
+        #: reviewer's facts, the exit veto carve-out and the deterministic
+        #: alignment sweep.
+        self._review_alignment_reads = {}
+
+    def _review_ohlcv(self, sym: str) -> list:
+        """Daily bars for one symbol, fetched at most ONCE per review.
+
+        The every-review re-derivation, the holding-protection read and the
+        trend-alignment read all want the same series for every held name;
+        without this cache each held name triggers three identical downloads
+        a review. A fetch failure caches an empty list so a dead feed is not
+        retried per consumer within the review; callers already treat an
+        empty series as a data fault.
+
+        Stamped with the trading day it was filled on: `_reset_review_caches`
+        is the normal boundary, but this is also reached from the morning
+        RiskStage's holding-discipline read, and a process that outlives a
+        session must never be served yesterday's bars because no review
+        happened to run in between.
+        """
+        today = ""
+        try:
+            from src.trading_calendar import et_today
+
+            today = str(et_today())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "review bars: trading-date read failed (%s) — caching for this "
+                "call only", exc,
+            )
+        cache = getattr(self, "_review_bars_cache", None)
+        if cache is None or getattr(self, "_review_bars_date", None) != today:
+            cache = {}
+            self._review_bars_cache = cache
+            self._review_bars_date = today
+        key = str(sym).upper()
+        if key not in cache:
+            try:
+                cache[key] = self.market.get_ohlcv(
+                    key, self.config.trading.lookback_days,
+                ) or []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "review bars: fetch failed for %s (%s) — cached empty for "
+                    "this review", key, exc,
+                )
+                cache[key] = []
+        return cache[key]
+
+    def _assess_one_target_revision(
+        self, *, sym: str, position, seat: str, evidence: str,
+        run_id: str, target_cfg: dict, require_trigger: bool,
+    ) -> dict:
+        """Re-derive ONE held position's take-profit off today's bars and file
+        the outcome (a re-derivation, a named refusal, or a named data fault).
+
+        Uses the same deterministic, no-LLM machinery
+        `_structural_protection_for_holding` uses: `compute_indicators` for
+        ATR, `find_structural_levels` for levels, `structure_coverage` for
+        whether an empty level set is a data fault or a real reading, and the
+        latest COMPLETED DAILY CLOSE (never a live quote) for every break
+        test. Entry price, the pinned horizon and the pinned setup type are
+        held fixed by `assess_target_revision`; only levels/ATR/coverage come
+        from today.
+
+
+        Places NO order and triggers NO exit. Never raises past its caller's
+        per-symbol guard.
+        """
+        from src.data.levels import (
+            CLUSTER_TOLERANCE_PCT,
+            COVERAGE_UNKNOWN,
+            find_structural_levels,
+            structure_coverage,
+        )
+        from src.data.technical import compute_indicators
+        from src.risk.target_revision import (
+            assess_target_revision,
+            level_backing_target,
+            target_level_broken,
+        )
+        from src.trading_calendar import et_today
+
+        is_short = float(getattr(position, "qty", 0) or 0) < 0
+        try:
+            buy = (
+                self.db.get_symbol_last_buy(sym, action="SHORT")
+                if is_short else self.db.get_symbol_last_buy(sym)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: opening-row lookup failed for %s (%s)",
+                sym, exc,
+            )
+            buy = None
+        buy = buy or {}
+
+        levels: list[float] = []
+        atr = close_price = bar_date = None
+        coverage = None
+        try:
+            bars = self._review_ohlcv(sym)
+            # What the bar history behind `levels` was, so an empty list
+            # from a dead feed is a DATA fault and one from a measured,
+            # structureless chart is a refusal — the same distinction
+            # `_derive_target` passes at entry.
+            coverage = structure_coverage(bars)
+            if bars:
+                last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                close_price = float(last_bar.close)
+                bar_date = str(last_bar.date)
+                atr = compute_indicators(sym, bars).atr_14
+                supports, resistances = find_structural_levels(bars)
+                levels = sorted(lv.price for lv in (*supports, *resistances))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: bars/indicator fetch failed for %s (%s) — "
+                "the outcome is filed as a data fault, not judged", sym, exc,
+            )
+
+        stored_target = None
+        try:
+            stored_target = float(buy.get("take_profit") or 0) or None
+        except (TypeError, ValueError):
+            stored_target = None
+
+        # Which level this target was measured against, recovered by the
+        # same identity test the stop side uses. None for a measured-move
+        # target, which is correct: it never sat on a level.
+        target_level = level_backing_target(
+            stored_target=stored_target,
+            computed_levels=levels,
+            # NOT a knob — the exact constant `find_structural_levels`
+            # clustered these zones with (docs/WORK.md item 46).
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+        )
+        # Cross-day confirmation, keyed off THIS READ's own bar_date so
+        # several intraday cycles re-reading one close are never
+        # miscounted as two confirming days.
+        effective_bar_date = bar_date or str(et_today())
+        break_seen_prior_close = False
+        try:
+            prior = self.db.get_prior_target_level_break(
+                [sym], today_bar_date=effective_bar_date,
+                exclude_run_id=run_id,
+            )
+            break_seen_prior_close = bool(prior.get(sym, False))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: prior-close read failed for %s (%s) — "
+                "today's break, if any, starts unconfirmed", sym, exc,
+            )
+
+        # Sessions this position has already spent out of its pinned
+        # horizon — the HOLIDAY-AWARE broker count (item 165), the same
+        # `broker.trading_sessions_held` the reviewer's own facts and
+        # the exit guard's noise band read; never a calendar-day count
+        # and never a default. It is what lets a target the price has
+        # run past be re-anchored on the close over the REMAINING
+        # horizon (item 114); a None here simply means no re-anchor is
+        # attempted and the existing refusal stands.
+        sessions_held: int | None = None
+        entry_ts = (buy.get("timestamp") or "")[:10]
+        if entry_ts:
+            try:
+                from datetime import date as _date
+                sessions_held = self.broker.trading_sessions_held(
+                    _date.fromisoformat(entry_ts), et_today(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "target revision: sessions-held read failed for %s "
+                    "(%s) — no remaining horizon, so a target behind "
+                    "price is refused rather than re-anchored", sym, exc,
+                )
+                sessions_held = None
+
+        outcome = assess_target_revision(
+            symbol=sym,
+            direction="short" if is_short else "long",
+            entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
+            stored_target=stored_target,
+            target_level=target_level,
+            pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
+            setup_type=buy.get("setup_type") or None,
+            levels=levels,
+            atr=atr,
+            close_price=close_price,
+            levels_coverage=coverage or COVERAGE_UNKNOWN,
+            break_seen_prior_close=break_seen_prior_close,
+            sessions_held=sessions_held,
+            require_trigger=require_trigger,
+            # The same ratified derivation bars the constructor passes at
+            # entry, read off `risk_engine.config` (what
+            # `ConstructorConfig` itself mirrors). Read defensively
+            # because this method must survive a lightweight pipeline
+            # double in unit tests that never built a real risk_engine;
+            # the fallbacks are `src.data.levels`' own module constants,
+            # not a second invented set of numbers.
+            **target_cfg,
+        )
+
+        # File today's raw break state for the NEXT trading day to
+        # confirm against — the same read/persist shape as
+        # `_structural_protection_for_holding`. A `None` from the break
+        # test means the question could not be asked; nothing is filed,
+        # so a missing input can never become half of a confirmation.
+        raw_broken = target_level_broken(
+            target_level=target_level, close_price=close_price,
+            atr=atr, is_short=is_short,
+        )
+        if raw_broken is not None and bar_date:
+            try:
+                self.db.save_target_level_break(
+                    run_id=run_id, symbol=sym,
+                    raw_broken=bool(raw_broken), bar_date=bar_date,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "target revision: failed to persist %s break state "
+                    "(%s) — tomorrow's read starts unconfirmed", sym, exc,
+                )
+
+        applied = False
+        if outcome.revised and outcome.new_price:
+            try:
+                applied = bool(self.db.update_open_take_profit(
+                    sym, outcome.new_price,
+                    action="SHORT" if is_short else "BUY",
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "target revision: write-back failed for %s (%s) — "
+                    "the stored target stands", sym, exc,
+                )
+                applied = False
+            if applied:
+                logger.info(
+                    "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
+                    "progress/pace stay measured against the pinned "
+                    "entry target",
+                    sym, outcome.prior_price or 0.0, outcome.new_price,
+                    outcome.basis, outcome.trigger,
+                )
+
+        if not applied and outcome.revised:
+            # The derivation succeeded but the row did not move. Recorded
+            # as its own outcome so the record can never claim a revision
+            # the trade row does not carry.
+            return self._file_target_revision(
+                run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                code="FAULT_REVISION_WRITE_FAILED", applied=False,
+                trigger=outcome.trigger, prior_price=outcome.prior_price,
+                detail=(
+                    f"{outcome.trigger} fired and re-derived "
+                    f"${outcome.new_price:,.2f}, but the opening row could "
+                    f"not be updated — the stored target stands"
+                ),
+            )
+
+        return self._file_target_revision(
+            run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+            code=outcome.code, applied=applied, trigger=outcome.trigger,
+            prior_price=outcome.prior_price, new_price=outcome.new_price,
+            basis=outcome.basis, level_used=outcome.level_used,
+            detail=outcome.detail,
+        )
 
     def _file_target_revision(
         self, *, run_id: str, symbol: str, seat: str, evidence: str,
@@ -10408,7 +10528,9 @@ class TradingPipeline:
         # count toward break confirmation (a gap resets — #3).
         prior_session_dates: list[str] = []
         try:
-            bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
+            # SAME per-review fetch the target re-derivation and the trend-
+            # alignment read use — one download per held name per review.
+            bars = self._review_ohlcv(symbol)
             if bars:
                 from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
@@ -10598,6 +10720,310 @@ class TradingPipeline:
         # acting silently.
         if any_surface_ok:
             seen.add(dedup_key)
+
+    def _trend_alignment_read(
+        self, sym: str, *, position=None, buy: dict | None = None,
+        run_id: str = "", persist: bool = True,
+    ):
+        """This review's trend-alignment read for one held name, taken ONCE.
+
+        The read (`src.risk.trend_alignment.read_trend_alignment`) is the
+        desk's profit-taking exit: structure, ATR and moving average taken
+        live off the latest completed close. Three consumers share it — the
+        reviewer's position facts (so the seat is TOLD what the desk reads),
+        the metric-veto carve-out (so a seat exit naming the trigger is judged
+        against the read, not its own prose) and the deterministic sweep
+        (`_decide_alignment_exits`). Cached per review; reset by
+        `_reset_review_caches`.
+
+        `persist=True` files today's structure flag (so tomorrow can confirm
+        it with adjacency) and the whole read as a durable per-symbol row.
+        The morning facts build passes False: it reads, it does not write.
+        Never raises; an unreadable read comes back with `code=
+        TREND_ALIGNMENT_UNREADABLE` and names what was missing.
+        """
+        from src.data.technical import compute_indicators
+        from src.risk.trend_alignment import (
+            ALIGNMENT_UNREADABLE,
+            TrendAlignmentRead,
+            read_trend_alignment,
+        )
+        from src.trading_calendar import et_today
+
+        key = str(sym).strip().upper()
+        cache = getattr(self, "_review_alignment_reads", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._review_alignment_reads = cache
+        if key in cache:
+            return cache[key]
+
+        is_short = bool(position is not None and float(getattr(position, "qty", 0) or 0) < 0)
+        if buy is None:
+            try:
+                buy = (
+                    self.db.get_symbol_last_buy(key, action="SHORT")
+                    if is_short else self.db.get_symbol_last_buy(key)
+                ) or {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("trend alignment: opening-row lookup failed for %s (%s)", key, exc)
+                buy = {}
+
+        bars = []
+        atr = ma_20 = ma_20_prior = ma_50 = None
+        bar_date = None
+        prior_session_dates: list[str] = []
+        run_start = 0
+        try:
+            bars = sorted(self._review_ohlcv(key), key=lambda b: b.date)
+            if bars:
+                bar_date = str(bars[-1].date)
+                prior_session_dates = [
+                    str(b.date) for b in reversed(bars) if str(b.date) < bar_date
+                ]
+                ind = compute_indicators(key, bars)
+                atr, ma_20, ma_50 = ind.atr_14, ind.ma_20, ind.ma_50
+                if len(bars) > 1:
+                    ma_20_prior = compute_indicators(key, bars[:-1]).ma_20
+                opened = str((buy or {}).get("timestamp") or "")[:10]
+                if opened:
+                    run_start = next(
+                        (i for i, b in enumerate(bars) if str(b.date) >= opened),
+                        len(bars) - 1,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trend alignment: bars/indicator read failed for %s (%s) — "
+                "filed as unreadable, no exit decided", key, exc,
+            )
+
+        records: list = []
+        effective_bar_date = bar_date or str(et_today())
+        try:
+            records = self.db.get_recent_trend_structure_breaks(
+                key, before_bar_date=effective_bar_date, exclude_run_id=run_id or None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trend alignment: prior structure records read failed for %s "
+                "(%s) — today's break, if any, starts unconfirmed", key, exc,
+            )
+
+        read: TrendAlignmentRead = read_trend_alignment(
+            symbol=key, is_short=is_short, bars=bars, run_start_index=run_start,
+            atr=atr, ma_20=ma_20, ma_20_prior=ma_20_prior, ma_50=ma_50,
+            prior_break_records=records, prior_session_dates=prior_session_dates,
+        )
+        cache[key] = read
+
+        if persist and bar_date:
+            if read.structure_broken_today is not None:
+                try:
+                    self.db.save_trend_structure_break(
+                        run_id=run_id, symbol=key,
+                        raw_broken=bool(read.structure_broken_today),
+                        bar_date=bar_date, close=read.close_price,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "trend alignment: structure flag persist failed for %s "
+                        "(%s) — tomorrow's read starts unconfirmed", key, exc,
+                    )
+            try:
+                self.db.insert_specialist_evidence(
+                    run_id=run_id, agent_name="risk_manager",
+                    kind=self.db.TREND_ALIGNMENT_READ_KIND, scope="symbol",
+                    symbol=key,
+                    evidence_json=_json.dumps({
+                        "code": read.code, "aligned": bool(read.aligned),
+                        "bar_date": bar_date, "close_price": read.close_price,
+                        "atr": read.atr,
+                        "structure_level": read.structure_level,
+                        "structure_broken_today": read.structure_broken_today,
+                        "structure_prior_streak": read.structure_prior_streak,
+                        "structure_confirmed": read.structure_confirmed,
+                        "run_extreme": read.run_extreme,
+                        "chandelier_level": read.chandelier_level,
+                        "chandelier_hit": read.chandelier_hit,
+                        "ma_20": read.ma_20, "ma_20_prior": read.ma_20_prior,
+                        "ma_50": read.ma_50, "uptrend_intact": read.uptrend_intact,
+                        "unreadable": list(read.unreadable),
+                        "owner_reason": f"{key}: {read.reason}",
+                    }),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "trend alignment: read row write failed for %s (%s)", key, exc,
+                )
+            if read.code == ALIGNMENT_UNREADABLE:
+                logger.warning("trend alignment: %s %s", key, read.reason)
+        return read
+
+    def _decide_alignment_exits(
+        self, review_positions, run_id: str, *, seat: str,
+        sold_symbols: set | None = None,
+    ) -> list[dict]:
+        """The desk's profit-taking exit (owner 2026-09-30, relayed by the
+        orchestrator): close a position in full when the instrument's own
+        readings ALIGN that the trend is over — the trail's last higher low
+        broken and confirmed, price beyond the chandelier distance from the
+        run's extreme, and no longer above a rising MA20. Never a target,
+        never a P&L figure. Rule and provenance: `src.risk.trend_alignment`.
+
+        Runs after the reviewer's own exits, over every held name, on the
+        shared per-review bars. Skips names already exited this session.
+        Voices the reason on every exit and on every change of state; files
+        the read every review. Returns the SELL/COVER orders placed. Never
+        raises: a per-symbol failure files a durable reason and is skipped.
+        """
+        orders: list[dict] = []
+        sold = {str(s).upper() for s in (sold_symbols or set())}
+        for position in review_positions or []:
+            sym = str(getattr(position, "symbol", "") or "").strip().upper()
+            if not sym or sym in sold:
+                continue
+            try:
+                order = self._decide_one_alignment_exit(
+                    position, sym, run_id=run_id, seat=seat,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "trend alignment: decision raised for %s (%s) — no order "
+                    "placed, the broker-resident stop still protects the "
+                    "position", sym, exc,
+                )
+                try:
+                    self.db.insert_specialist_evidence(
+                        run_id=run_id, agent_name="risk_manager",
+                        kind=self.db.TREND_ALIGNMENT_READ_KIND, scope="symbol",
+                        symbol=sym,
+                        evidence_json=_json.dumps({
+                            "code": "FAULT_TREND_ALIGNMENT_RAISED",
+                            "aligned": False,
+                            "owner_reason": (
+                                f"{sym}: the trend-alignment read raised "
+                                f"({exc}); no order was placed and the stop "
+                                f"still protects the position"
+                            ),
+                        }),
+                    )
+                except Exception as exc2:  # noqa: BLE001
+                    logger.error(
+                        "trend alignment: durable-reason write also failed for "
+                        "%s (%s)", sym, exc2,
+                    )
+                continue
+            if order is not None:
+                orders.append(order)
+                sold.add(sym)
+        return orders
+
+    def _decide_one_alignment_exit(
+        self, position, sym: str, *, run_id: str, seat: str,
+    ) -> dict | None:
+        """Read ONE held position's trend alignment and, if every reading
+        agrees the trend is over, submit the full close. Returns the order or
+        None. See `_decide_alignment_exits`.
+        """
+        is_short = float(getattr(position, "qty", 0) or 0) < 0
+        try:
+            buy = (
+                self.db.get_symbol_last_buy(sym, action="SHORT")
+                if is_short else self.db.get_symbol_last_buy(sym)
+            ) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trend alignment: opening-row lookup failed for %s (%s)", sym, exc,
+            )
+            buy = {}
+
+        read = self._trend_alignment_read(
+            sym, position=position, buy=buy, run_id=run_id, persist=True,
+        )
+        self._voice_alignment_read(sym=sym, run_id=run_id, read=read)
+        if not read.aligned:
+            return None
+
+        # Full close on the SAME protected path the reviewer's own full sells
+        # use, priced off the broker's live quote.
+        current_price = float(getattr(position, "current_price", 0) or 0)
+        ref = current_price if current_price > 0 else float(read.close_price or 0)
+        if ref <= 0:
+            return None
+        if is_short:
+            qty = self._full_sell_qty(abs(float(getattr(position, "qty", 0) or 0)))
+            position_qty = abs(float(getattr(position, "qty", 0) or 0))
+            order_limit = round(ref * 1.005, 2)
+            close_side = "buy"
+            act = "COVER"
+        else:
+            qty = self._full_sell_qty(float(getattr(position, "qty", 0) or 0))
+            position_qty = float(getattr(position, "qty", 0) or 0)
+            order_limit = round(ref * 0.995, 2)
+            close_side = "sell"
+            act = "SELL"
+        if qty is None:
+            return None
+
+        sale = self._submit_protected_sell(
+            symbol=sym, qty=qty, limit_price=order_limit, reference_price=ref,
+            position_qty_before_sell=position_qty, label=act, side=close_side,
+        )
+        if sale is None:
+            return None
+        order, prot = sale
+        try:
+            self.db.insert_trade(
+                symbol=sym, action=act, qty=qty, price=ref,
+                reasoning=f"Trend alignment (profit-taking): {read.reason}",
+                run_id=run_id, broker_order_id=order.get("id"),
+                fill_status="submitted",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("trend alignment: insert_trade failed for %s (%s)", sym, exc)
+        logger.info("Trend alignment %s %s — %s", act, sym, read.reason)
+        if prot is not None:
+            self._finalize_pending_protections(
+                [prot], context="Trend alignment exit",
+            )
+        return order
+
+    def _voice_alignment_read(self, *, sym: str, run_id: str, read) -> None:
+        """Push the read's plain-language reason to Telegram when it is NEWS:
+        an aligned read (an exit), or a code that differs from the last read
+        filed for this symbol. The read row itself is filed every review by
+        `_trend_alignment_read`; this only decides whether to page. Never
+        raises.
+        """
+        message = f"{sym}: {read.reason}".strip() if read.reason else ""
+        if not message:
+            return
+        seen = getattr(self, "_voiced_alignment", None)
+        if seen is None:
+            seen = set()
+            self._voiced_alignment = seen
+        key = (run_id, sym, read.code)
+        if key in seen:
+            return
+        repeat = False
+        try:
+            last = self.db.get_last_trend_alignment_read([sym]).get(sym)
+            repeat = isinstance(last, dict) and last.get("code") == read.code
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trend alignment: last-read lookup failed for %s (%s) — voiced "
+                "as new", sym, exc,
+            )
+        if repeat and not read.aligned:
+            seen.add(key)
+            return
+        try:
+            from src import notifier as _notifier
+
+            if _notifier.send_owner_alert(message, symbols=[sym]):
+                seen.add(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("trend alignment: owner alert send failed for %s (%s)", sym, exc)
 
     def _substantiate_exit_triggers(self, review, *, ctx, run_id: str,
                                     review_kwargs: dict):
@@ -11854,12 +12280,54 @@ class TradingPipeline:
             # see src/risk/exit_guard.py. metric_deltas is already sign-
             # corrected per symbol (see _build_position_facts), so COVER
             # needs no extra handling here.
+            # TREND-ALIGNMENT (2026-09-30). A seat exit that NAMES the
+            # trend-alignment trigger is judged against the desk's OWN read of
+            # the instrument, never its prose: if the read says the trend is
+            # not over the exit is refused by name (durable, per symbol); if
+            # it says aligned, the metric veto below stands aside — the exit
+            # rests on measured readings, so it cannot be contradicting the
+            # reviewer's numbers. The narrative veto itself is untouched.
+            alignment_confirmed = False
+            if act in ("SELL", "REDUCE", "COVER"):
+                from src.risk.exit_guard import reason_cites_alignment
+                from src.risk.exit_trigger import ExitTrigger, normalize_trigger
+                named_alignment = (
+                    normalize_trigger(action_item.get("exit_trigger"))
+                    is ExitTrigger.TREND_ALIGNMENT
+                    or reason_cites_alignment(action_item.get("reason", ""))
+                )
+                if named_alignment:
+                    pos_obj = next(
+                        (p for p in review_positions or []
+                         if str(getattr(p, "symbol", "")).upper() == symbol),
+                        None,
+                    )
+                    read = self._trend_alignment_read(
+                        symbol, position=pos_obj, run_id=run_id, persist=True,
+                    )
+                    alignment_confirmed = bool(read.aligned)
+                    if not alignment_confirmed:
+                        from src.risk.exit_refusal import CODE_ALIGNMENT_NOT_CONFIRMED
+                        logger.warning(
+                            "Position reviewer: refusing %s %s — it names the "
+                            "trend-alignment trigger but the desk's own read "
+                            "says %s: %s", act, symbol, read.code, read.reason,
+                        )
+                        self._record_exit_refusal(
+                            symbol=symbol, run_id=run_id, action=act,
+                            code=CODE_ALIGNMENT_NOT_CONFIRMED, dropped=True,
+                            detail=f"{act}: {read.reason}"[:400],
+                            layer="trend_alignment",
+                        )
+                        continue
+
             if act in ("SELL", "REDUCE", "COVER") and metric_deltas:
                 from src.risk.exit_guard import veto_contradicted_exit
                 deltas = metric_deltas.get(symbol)
                 if deltas is not None:
                     veto = veto_contradicted_exit(
                         act, action_item.get("reason", ""), deltas,
+                        alignment_confirmed=alignment_confirmed,
                     )
                     if veto:
                         logger.warning("Exit guard: %s", veto)
@@ -14857,6 +15325,18 @@ class TradingPipeline:
                 stop=stop_loss or None, initial_stop=initial_stop or None,
             )
 
+            trend_alignment_label = None
+            try:
+                _read = self._trend_alignment_read(sym, position=p, persist=False)
+                trend_alignment_label = {
+                    "TREND_ALIGNMENT_ALIGNED": "ALIGNED",
+                    "TREND_ALIGNMENT_NOT_ALIGNED": "NOT_ALIGNED",
+                }.get(_read.code, "UNREADABLE")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "position facts: trend-alignment read failed for %s (%s)",
+                    sym, exc,
+                )
             facts[sym] = {
                 "days_held": days_held,
                 "sessions_held": sessions_held,
@@ -14871,6 +15351,10 @@ class TradingPipeline:
                 "pace": pace,
                 "distance_to_stop_pct": dist_stop_pct,
                 "distance_to_target_pct": dist_target_pct,
+                # The desk's own trend-over read (2026-09-30), so the seat is
+                # TOLD what the instrument says before it proposes an exit.
+                # Read-only here; the review sweep persists it.
+                "trend_alignment": trend_alignment_label,
                 # Provenance for `distance_to_stop_pct`, not metrics of
                 # their own: that metric is a function of BOTH terms, so
                 # without them a rise caused by the stop being widened is
@@ -15208,12 +15692,16 @@ class TradingPipeline:
         # instrument is doing. The owner removed that class of logic when he
         # removed reward:risk as a universal gate: the reward side of a
         # trade cannot be predetermined because the holding period is
-        # unknown, and profit-taking belongs to the trailing stop
-        # (`src/risk/trailing.py`). The rule predated QAMC and was never
-        # ratified against that doctrine. The ONLY exit rule is the
-        # trailing stop; `tests/test_pipeline.py::
+        # unknown. The rule predated QAMC and was never ratified against
+        # that doctrine. `tests/test_pipeline.py::
         # test_no_fixed_gain_automatic_profit_trim_exists` fails if a
         # fixed-gain trim is reintroduced.
+        #
+        # Profit IS taken since 2026-09-30, but never on a price or a gain:
+        # the trend-alignment exit (`src/risk/trend_alignment.py`,
+        # `_decide_alignment_exits` in the position review) closes a
+        # position when the instrument's own readings — structure, ATR,
+        # moving average — align that the trend is over.
 
         # 1c. Ex-dividend stop adjustment (both sessions — a dividend tomorrow
         # is still a dividend tomorrow no matter which session looks at it).
@@ -15420,6 +15908,10 @@ class TradingPipeline:
             # position was measured against. The horizon is now pinned at entry
             # on the trade row and the calibration query is gone from this
             # path entirely, so there is nothing to accidentally reconnect.
+            # Per-review caches (bars, trend-alignment reads) — reset here,
+            # UNCONDITIONALLY and before anything reads them, so no sweep can
+            # run on the previous review's bars or reads.
+            self._reset_review_caches()
             position_facts = self._build_position_facts(
                 review_positions, morning_trades, total_value,
             )
@@ -15641,14 +16133,42 @@ class TradingPipeline:
                 position_facts=position_facts,
             ))
 
-            # Take-profit revision flags, adjudicated LAST — after every
-            # exit decision this session makes. A re-derived target
-            # therefore cannot reach this session's exits even in
-            # principle; and because progress/pace are measured against
-            # the PINNED entry target, it cannot reach a later session's
-            # exit-guard veto either. Places no orders: nothing here
-            # exits anything, and the trailing stop remains the only
-            # automatic exit (PR #321).
+            # TREND-ALIGNMENT EXIT (owner 2026-09-30, relayed by the
+            # orchestrator): the desk's profit-taking exit, taken after the
+            # reviewer's own exits. Closes a position in full only when the
+            # instrument's readings align that the trend is over — structure,
+            # ATR and moving average (`src.risk.trend_alignment`). Never a
+            # target and never a P&L figure. Skips names already exited this
+            # session. Non-fatal.
+            try:
+                sold_symbols = {
+                    str(o.get("symbol", "")).upper()
+                    for o in orders
+                    if isinstance(o, dict)
+                    and str(o.get("action", "")).upper() in (
+                        "SELL", "COVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
+                        "FORCE_DELEVER",
+                    )
+                }
+                orders.extend(self._decide_alignment_exits(
+                    review_positions, run_id, seat="position_reviewer",
+                    sold_symbols=sold_symbols,
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "trend-alignment sweep failed (non-fatal, no forced exit "
+                    "placed; the broker-resident stops still protect the "
+                    "book): %s", exc,
+                )
+
+            # Take-profit RE-DERIVATION, run LAST. Every held position's
+            # target is re-read off today's bars every review (not only on a
+            # seat flag) so a stale target cannot sit ignored — but nothing
+            # exits on it: a computed target is not an exit trigger. A
+            # re-derived target cannot reach this session's exits (already
+            # decided above) and, because progress/pace are measured against
+            # the PINNED entry target, cannot reach a later session's
+            # exit-guard veto either. Places no orders.
             try:
                 target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,

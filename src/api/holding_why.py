@@ -62,10 +62,13 @@ from typing import Any
 #: list of reasons that can justify an exit (`src/pipeline.py`).
 NOTHING_ACTS_ON_TARGET = (
     "Nothing sells at this price. It is a reference the desk recorded at "
-    "entry, not an instruction. Since 12 September 2026 the trailing stop "
-    "is the only automatic exit, and reaching a profit target is not by "
-    "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+    "entry, not an instruction. Reaching a profit target is not by itself "
+    "an accepted reason to sell — the owner's 2026-09-30 word is that "
+    "a target is a made-up number, so nothing ever sells on it. The desk "
+    "re-derives it from the chart every review (extending it only ever "
+    "further from entry) so it stays current as a reference; profit is "
+    "taken only when the chart's own readings — structure, ATR and moving "
+    "average — align that the trend is over."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry

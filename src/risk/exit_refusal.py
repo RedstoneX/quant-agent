@@ -72,6 +72,9 @@ CODE_UNRECOGNIZED_TRIGGER = "unrecognized_trigger"
 CODE_AI_RISK_REJECT = "ai_risk_reject"
 CODE_NOISE_BAND = "inside_atr_noise_band"
 CODE_CONTRADICTS_METRICS = "contradicts_own_metrics"
+#: The seat named the trend-alignment trigger but the desk's own read of
+#: the instrument does not agree that the trend is over (2026-09-30).
+CODE_ALIGNMENT_NOT_CONFIRMED = "trend_alignment_not_confirmed"
 CODE_HOLDING_DISCIPLINE_FALSE = "holding_discipline_claim_false"
 
 # Uncertainty — recorded, not a drop from that layer.
