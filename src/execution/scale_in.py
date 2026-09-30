@@ -947,6 +947,42 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         logger.error("scale-in rearm-failure owner alert failed: %s", exc)
 
 
+def pending_scale_in_rows_from_path(
+    db_path: str | os.PathLike | None,
+) -> list[dict]:
+    """Read-only lookup of the LIVE scale-in write-ahead rows, with the row's
+    own `created_at` and the quantity the cancel exposed.
+
+    Board item 193. `pending_scale_in_symbols_from_path` answers only "which
+    symbols is the watchdog to stay away from". That is the question the skip
+    needs and the wrong question for the owner, who has to be told WHICH
+    position is deliberately unguarded and for HOW LONG. `created_at` is the
+    row's write time, not the broker's cancel acknowledgement, so a duration
+    derived from it is an approximation of the window and is labelled as one
+    everywhere it is shown; the exact figure is the `unprotected_window_closed`
+    event the session itself emits when the rearm returns. Empty on any
+    failure: this is observability and must never break the sweep.
+    """
+    if not db_path:
+        return []
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT id, symbol, created_at, position_qty_before_sell "
+                "FROM pending_protection_restores WHERE sell_order_id = ? "
+                "ORDER BY created_at ASC",
+                (WAL_SCALE_IN_SENTINEL,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+    return [dict(r) for r in rows if r["symbol"]]
+
+
 def pending_scale_in_symbols_from_path(db_path: str | os.PathLike | None) -> set[str]:
     """Read-only lookup for the coverage watchdog. Empty on any failure."""
     if not db_path:
