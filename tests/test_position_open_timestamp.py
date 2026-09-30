@@ -123,3 +123,85 @@ def test_missing_or_unidentified_row_returns_none_not_a_guess(db):
     assert db.get_position_open_timestamp(
         {"symbol": "AAPL", "action": "SELL", "position_id": "pos-1"},
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# `get_position_open_row` — the date was never the only thing an add corrupts.
+# `take_profit` (the trail's reference target) and `initial_stop_loss` (the
+# denominator of R) are pinned at entry too, and the trailing pass read them
+# off the newest add.
+# ---------------------------------------------------------------------------
+
+
+def test_open_row_carries_the_first_entrys_target_and_stop(db):
+    """An add with a different target/stop must not become the trade's."""
+    db.insert_trade(symbol="MRVL", action="BUY", qty=10, price=242.07,
+                    reasoning="open", run_id="r", stop_loss=218.0,
+                    take_profit=290.0, setup_type="breakout",
+                    fill_status="filled")
+    db.insert_trade(symbol="MRVL", action="BUY", qty=5, price=258.60,
+                    reasoning="add", run_id="r", stop_loss=244.0,
+                    take_profit=310.0, setup_type="range",
+                    fill_status="filled")
+
+    last = db.get_symbol_last_buy("MRVL")
+    assert last["take_profit"] == pytest.approx(310.0), "fixture sanity"
+
+    opened = db.get_position_open_row(last)
+    assert opened is not None
+    assert opened["price"] == pytest.approx(242.07)
+    assert opened["take_profit"] == pytest.approx(290.0)
+    assert opened["initial_stop_loss"] == pytest.approx(218.0)
+    assert opened["setup_type"] == "breakout"
+
+
+def test_open_row_is_none_without_a_position_id(db):
+    """Fail closed: an unchainable row yields None so the caller keeps the
+    row it already had — exactly today's behaviour, never a guess."""
+    assert db.get_position_open_row(None) is None
+    assert db.get_position_open_row({"symbol": "X", "action": "BUY"}) is None
+    assert db.get_position_open_row(
+        {"symbol": "X", "action": "SELL", "position_id": "pos-1"}
+    ) is None
+
+
+def test_trailing_pass_reads_the_open_not_the_add(db):
+    """End to end: with an add on the books, the trail is handed the
+    ORIGINAL target and the ORIGINAL stop, not the add's."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from src.pipeline import TradingPipeline
+
+    db.insert_trade(symbol="MRVL", action="BUY", qty=10, price=242.07,
+                    reasoning="open", run_id="r", stop_loss=218.0,
+                    take_profit=290.0, setup_type="breakout",
+                    fill_status="filled")
+    db.insert_trade(symbol="MRVL", action="BUY", qty=5, price=258.60,
+                    reasoning="add", run_id="r", stop_loss=244.0,
+                    take_profit=310.0, setup_type="range",
+                    fill_status="filled")
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = db
+    p.broker = MagicMock()
+    p.broker.get_current_stop_price.return_value = 244.0
+    p.market = MagicMock()
+    p.market.get_ohlcv.return_value = []
+    p._atr_for_symbol = MagicMock(return_value=5.0)
+    position = SimpleNamespace(symbol="MRVL", avg_entry=247.5,
+                               current_price=265.0, qty=15.0)
+
+    with patch("src.execution.scale_in.pending_protection_symbols",
+               return_value=set()), \
+         patch("src.risk.trailing.evaluate_trailing_stop") as ev:
+        ev.return_value = SimpleNamespace(proposal=None, code="noop")
+        p._apply_deterministic_trails([position], run_id="r1")
+
+    kwargs = ev.call_args.kwargs
+    assert kwargs["reference_target"] == pytest.approx(290.0), (
+        "the add's target would sit above the original and re-open room "
+        "the trade had already closed"
+    )
+    assert kwargs["initial_stop"] == pytest.approx(218.0)
+    assert kwargs["setup_type"] == "breakout"
