@@ -2469,8 +2469,8 @@ class TradingPipeline:
             )
             projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - invested_target_pct
-            # The band is the desk's own sourced cash reserve
-            # (`cash_sweep.reserve_pct`), not an invented number — see
+            # The band is the owner-set advisory band
+            # (`deployment_gap.band_pct`), not an invented number — see
             # `deployment_gap_band_pct`. An UNDER-deployed book beyond that
             # reserve is the drag this advisory exists to surface. The OVER
             # branch that told RM to "consider scale_all_buys" was deleted
@@ -11341,6 +11341,30 @@ class TradingPipeline:
             if not buy:
                 _note(symbol, "no_opening_buy_row")
                 continue
+
+            # Every field read off `buy` below is pinned AT ENTRY — the
+            # reference target (`take_profit`), the denominator of R
+            # (`initial_stop_loss`, via `recorded_initial_stop`), the
+            # setup label and the measured breakout verdict — and a
+            # scale-in writes a SECOND opening row. Reading them off the
+            # newest add let the reference target sit above current price
+            # and measured R from a stop this trade never opened with.
+            # Item 195 fixed only the bar window; these read the same
+            # wrong row. `get_position_open_row` resolves the chain by
+            # `position_id` and returns None when it cannot, so an
+            # unchainable or legacy row keeps exactly today's behaviour.
+            try:
+                _open_row = self.db.get_position_open_row(buy)
+                # Same `isinstance` discipline the bar-window lookup above
+                # uses: anything that is not a real row leaves `buy` alone.
+                if isinstance(_open_row, dict):
+                    buy = _open_row
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "trail: position-open row lookup failed for %s (%s) — "
+                    "falling back to the last opening row",
+                    symbol, e,
+                )
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
