@@ -100,7 +100,10 @@ _DETERIORATION_RE = re.compile("|".join(DETERIORATION_PATTERNS), re.IGNORECASE)
 #: `pipeline._HARD_TRIGGER_KEYWORDS`; a test pins the three together. The
 #: read itself lives in `src.risk.trend_alignment`.
 ALIGNMENT_PHRASES: tuple[str, ...] = (
-    "trend alignment", "trend-alignment", "alignment exit",
+    # `trend_alignment` (the enum token itself) is here because #791 made
+    # every trigger's own enum NAME a recognised phrase; the test pinning
+    # the three lists together fails without it.
+    "trend alignment", "trend-alignment", "trend_alignment", "alignment exit",
 )
 
 

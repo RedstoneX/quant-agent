@@ -29,7 +29,11 @@ computes and uses to move money, read on the latest COMPLETED daily close.
   level by `BREAK_CONFIRMATION_ATR_MULTIPLE` ATRs, CONFIRMED on the next
   session's close, with adjacency — a session with no read ends the streak
   (`exit_guard._consecutive_prior_break_count`), so a gap can never chain
-  two lone closes into a confirmation.
+  two lone closes into a confirmation. The structure reading is ALSO
+  satisfied, without a margin or a close count, when the pivot SEQUENCE
+  itself has turned — the latest confirmed low is below the one before
+  it. The higher low is then not "about to go", it is gone, and the
+  pivot's own `PIVOT_WINDOW` bars either side are its confirmation.
 
 * VOLATILITY (the ATR) — has price given back more than the instrument's
   own volatility allows a live trend? The Chandelier exit the doctrine
@@ -44,8 +48,8 @@ computes and uses to move money, read on the latest COMPLETED daily close.
   reading is the close relative to MA20 and whether MA20 is rising
   (today's MA20 above yesterday's — a comparison, not a number).
 
-THE SHAPE — the two fast readings agree ON THE SAME CLOSE; the lagging
-one can only veto
+THE SHAPE — every reading must agree, and the structure break must be
+CONFIRMED
 ------------------------------------------------------------------------
 The three do not resolve at the same speed. A structural break and an
 ATR-relative giveback are readable the session they happen; a moving-average
@@ -54,35 +58,90 @@ closes. So the two instrument-speed readings carry the decision and the
 lagging one is only a veto — "the analyst would still call this an
 established uptrend, do not sell into it":
 
-    aligned  =  structure_broken_today  AND  chandelier_hit  AND  NOT uptrend_intact
+    aligned  =  structure_CONFIRMED  AND  chandelier_hit  AND  NOT uptrend_intact
 
-"Tight" (the owner's word) is taken as tightness IN TIME: both fast readings
-must agree on ONE completed close. The stop side's two-consecutive-close
-rule exists to guard against a lone close (a spring); here the guard is the
-SECOND, independent reading on the same close, not a second day. The
-two-close confirmation of the structure break is still taken
-(`structure_confirmed`) and filed, so the record shows both.
+CORRECTION 2026-09-30, before this ever ran on money. The first cut of this
+module read `structure_broken_today` — ONE close through the break margin —
+and argued that the owner's word "tight" meant tightness in time, so the
+second independent reading on the same close replaced the second day. That
+is the recurring bug `docs/OUTCOME.md` already names: "a same-day break
+trigger that had to be corrected to a two-trading-day closing confirmation
+once it was pointed out that a one-day dip which reclaims its level is a
+well-known reversal pattern, not evidence of a breakdown... Treat a new
+instance of this shape as the same recurring bug, not a fresh question."
+The owner did not say "tight in time"; that reading was invented here. It
+also discarded the ONE sourced element in this whole stack
+(`TREND_CONFIRMING_CLOSES` = 2, Edwards & Magee) while keeping the
+unsourced ones. The confirmation is required. Measured below, it costs 9
+fires out of 237 — the argument for dropping it was not merely unsourced,
+it was about nothing.
 
-MEASURED, NOT ASSERTED (2026-09-30; 19 of the desk's own instruments, two
-years of daily bars, the run high = highest close since the chandelier last
-fired; full table in docs/INCIDENT_HISTORY.md):
+THE RUN EXTREME IS MEASURED FROM ENTRY AND NEVER RESETS
+-------------------------------------------------------
+`run_start_index` is the first bar on or after the position's entry, and
+the run extreme is the highest high from there to the close under
+judgment. That is deliberate and it matches two things it has to match:
+the incumbent trail's own chandelier, which takes `max(high)` over the
+bars SINCE ENTRY (`trailing.evaluate_trailing_stop`, and its contract
+"`bars` are the daily bars SINCE ENTRY"), and LeBeau's published
+Chandelier Exit, which hangs from the highest high of the move. If this
+module reset the run on each chandelier hit, the desk would read two
+different chandelier levels off the same instrument on the same day.
 
-  * requiring the structure break CONFIRMED on two closes plus the
-    chandelier: 14 fires (0.4 per symbol-year), median giveback from the
-    run high 8.4%, 21% of fires followed by a new high within 60 sessions;
-  * both fast readings on the SAME close (this shape): 44 fires (1.3 per
-    symbol-year), median giveback 9.9%, 25% followed by a new high;
-  * the chandelier alone: 306 fires (9 per symbol-year), 9.4%, 39%;
-  * adding the MA20 veto to any pairing removed NO fires — by the time the
-    two fast readings agree the close is already below a non-rising MA20.
+MEASURED, NOT ASSERTED — and the first measurement described a different
+rule
+------------------------------------------------------------------------
+The measurement this module originally quoted (14 / 44 / 306 fires, 1.3
+per symbol-year, 9.9% giveback, 25% false exits) was taken with a run
+extreme that RESET on every chandelier fire. The code does not reset. So
+those numbers never described this code and they are struck. RE-MEASURED
+2026-09-30 against the shipped definition, on the same 19 instruments and
+the same 9,519 daily bars (2024-09-30 .. 2026-09-29), as a chain of
+synthetic positions — enter, hold until the shape fires, re-enter the next
+session — with the incumbent ratcheting trail simulated alongside. Full
+table and method in docs/INCIDENT_HISTORY.md. Nothing was tuned; the only
+constants are the desk's own.
 
-So the veto is measured inert and kept only as a guard; the confirmed-
-structure variant is three times rarer at the same giveback, i.e. it misses
-run ends rather than catching them later; and on a straight run with no
-confirmed pullback low (META, 2026-09) the structure reading is blind and
-only the chandelier reads at all. On the desk's own positions since
-2026-09-02 (19, all under twelve sessions old) three shapes fired on three
-names — too few cases to tell anything, and said so.
+  * one close through the margin (the shape first proposed): 237 fires,
+    7.1 per symbol-year, median giveback from the run high 10.8%, 56% of
+    fires followed by a new high within 60 sessions;
+  * the break CONFIRMED on two closes (this shape): 228 fires, 6.8 per
+    symbol-year, 11.1% giveback, 55% false;
+  * confirmed OR the higher-low sequence turned (this shape, with the
+    lower-low fix below): 230 fires, 6.9 per symbol-year, 11.0%, 55%.
+
+Read honestly, that table says two uncomfortable things. The rule fires
+about seven times per symbol-year, not 1.3; and more than half of its
+exits are followed by a new high inside a quarter. It is a far more
+active, far less discriminating rule than the record it was merged on
+claimed.
+
+AND IT MOSTLY ARRIVES AFTER THE TRAIL
+-------------------------------------
+The desk already rests a broker stop that ratchets to the SAME two levels
+this read tests — the structural pivot and the chandelier
+(`trailing.evaluate_trailing_stop`). So when this read says "price has
+closed at or below the chandelier", price has by construction traded
+through the level the trail would have ratcheted to, if it had managed to
+ratchet. Simulated over the same bars: 90% of the confirmed shape's fires
+happen on or after the session the trail's own resting stop was already
+taken out, a median 4 sessions earlier. The exit's real scope is the
+remaining tenth — the cases where the trail was blocked by the
+minimum-ratchet clamp, the noise band, or a pivot on the wrong side. That
+is a real gap and this rule closes it; it is not the profit-taking engine
+the first write-up implied, and nothing here should be read as saying it
+is.
+
+STRUCTURE HAS THREE STATES, AND ONLY MISSING DATA IS A FAULT
+------------------------------------------------------------
+`trailing._structural_pivot` returns None both when the latest confirmed
+pivot is a LOWER low and when no pivot is confirmed at all. The first cut
+filed both as UNREADABLE, so the exit became impossible at exactly the
+moment a confirmed lower low says the uptrend is over, and the seat was
+told the data had failed when it had not. See `structure_state` in
+`read_trend_alignment`: a turned sequence is a structure break carrying
+its own two-sided pivot confirmation, no pivot yet is a chart state that
+reads NOT broken, and only a missing close, ATR or MA20 is a fault.
 
 WHAT THIS IS NOT
 ----------------
