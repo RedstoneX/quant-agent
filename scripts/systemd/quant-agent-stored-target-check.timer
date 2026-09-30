@@ -1,0 +1,33 @@
+# Fires the stored take-profit check EVERY DAY at 09:05 ET.
+[Unit]
+Description=quant-agent stored take-profit check — daily 09:05 ET
+
+[Timer]
+# 09:05 ET sits ten minutes after the board-hygiene check (08:55) and still
+# a clear twenty-five minutes before the 09:30 morning session. That gap is
+# the whole point of the time chosen: the check reads the LATEST COMPLETED
+# DAILY CLOSE, so it wants the previous session's bar settled, and its
+# finding wants to be in front of a reader BEFORE the desk spends a morning
+# quoting the target it is complaining about.
+#
+# It is deliberately last in the 08:45 / 08:50 / 08:55 / 09:05 read-only
+# run, because it is the only one of the four that goes to the network for
+# bars and so the only one that can be slow; putting it last means a slow
+# provider delays nothing else.
+#
+# EVERY DAY, not Mon-Fri, matching the other three read-only checks and for
+# the recorded reason given there: a weekend firing costs one Telegram push
+# and no model call, and silence at the weekend is indistinguishable from
+# "nothing is wrong". A held position's stored target does not become
+# correct on a Saturday.
+#
+# systemd resolves the IANA zone, so this stays 09:05 New York across DST.
+OnCalendar=*-*-* 09:05 America/New_York
+# Run a missed firing on boot (server was down at 09:05).
+Persistent=true
+# The comparison does not care about the exact minute; letting systemd batch
+# this with the other morning read-only checks is free.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
