@@ -70,8 +70,50 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config  # noqa: E402
 from src.data.macro import MacroDataProvider  # noqa: E402
+from src.data.event_calendar import MacroEventCalendarProvider  # noqa: E402
 
 logger = logging.getLogger("refresh_macro_series")
+
+
+def _refresh_release_schedules(config, macro_cfg) -> int:
+    """Refresh the macro event calendar's release-schedule cache too.
+
+    Board item 187: the seven `/fred/release/dates` calls were the last FRED
+    work still done on the trading path, and they were still failing there
+    after the fair-share split shipped. They belong on the same pre-open
+    timer as the series fetch, for the same reason and with the same honesty
+    contract — what does not arrive is reported missing, never defaulted.
+
+    A calendar miss never fails the series prefetch: the two caches are
+    independent, and the trading path still falls back to the wire for
+    whatever the cache could not answer.
+    """
+    try:
+        calendar = MacroEventCalendarProvider(
+            api_key=config.api_keys.fred,
+            request_timeout_s=macro_cfg.request_timeout_s,
+            max_retries=macro_cfg.max_retries,
+            retry_backoff_base_s=macro_cfg.retry_backoff_base_s,
+            retry_backoff_max_s=macro_cfg.retry_backoff_max_s,
+            retry_backoff_jitter_s=macro_cfg.retry_backoff_jitter_s,
+            breaker_after_failed_releases=macro_cfg.breaker_after_failed_series,
+            total_fetch_deadline_s=config.event_risk.calendar_deadline_s,
+        )
+        coverage = calendar.prefetch_release_schedules()
+    except Exception as e:  # noqa: BLE001 — never fail the series prefetch
+        logger.warning("Release-schedule prefetch could not run: %s", e)
+        return 1
+    if coverage is None:
+        logger.warning("Release-schedule prefetch recorded no coverage")
+        return 1
+    print(coverage.describe())
+    if not coverage.complete:
+        logger.warning(
+            "Release-schedule prefetch incomplete — the open will fetch the "
+            "missing release schedules live, exactly as it does today"
+        )
+        return 1
+    return 0
 
 
 def main() -> int:
@@ -101,6 +143,8 @@ def main() -> int:
         total_fetch_deadline_s=macro_cfg.total_fetch_deadline_s,
     )
 
+    calendar_rc = _refresh_release_schedules(config, macro_cfg)
+
     coverage = provider.prefetch_series_cache()
     if coverage is None:
         logger.error("FRED prefetch recorded no coverage — cache not refreshed")
@@ -112,7 +156,7 @@ def main() -> int:
             "missing series live, exactly as it did before this job existed"
         )
         return 1
-    return 0
+    return calendar_rc
 
 
 if __name__ == "__main__":
