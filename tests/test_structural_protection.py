@@ -365,7 +365,9 @@ def test_no_basis_flat_or_winning_stays_protected():
         level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.protected is True
-    assert result.basis == "noise_band_intact"
+    # Board item 70: the band is NOT evaluated here, so it may not be named
+    # as the basis — there is no adverse move to compare against it.
+    assert result.basis == "no_adverse_move_from_entry"
 
 
 def test_no_basis_no_price_or_atr_data_fails_toward_protection():
@@ -385,7 +387,7 @@ def test_no_basis_no_price_or_atr_data_fails_toward_protection():
         level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.protected is True
-    assert result.basis == "noise_band_intact"
+    assert result.basis == "noise_band_unevaluable_no_data"
     assert "insufficient price/ATR data" in result.detail
 
 
