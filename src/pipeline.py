@@ -5854,6 +5854,10 @@ class TradingPipeline:
                 [s.get("stop_price") for s in cancelled_specs],
                 self._format_qty(residual_qty),
             )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty,
+                "cancelled stop specs carried no usable trigger price",
+            )
             return False
         best_stop = min(usable) if side == "buy" else max(usable)
 
@@ -5866,6 +5870,33 @@ class TradingPipeline:
         # Audit 2026-05-27: matches the discipline _restore_stop_orders
         # already enforces via its `check_idempotency` flag for the
         # restore-originals branch.
+        #
+        # INCIDENT 2026-09-30 (AAPL): the check as written could not tell
+        # the replay case above from THIS run's own cancel. Alpaca's cancel
+        # is asynchronous and its OPEN order filter includes the
+        # transitional `pending_cancel` state, so a stop cancelled 486ms
+        # earlier in this same run was still listed as open, matched
+        # `best_stop` exactly (it IS the spec best_stop came from), and the
+        # skip returned True — which made the drain caller delete the
+        # recovery intent and left ~$2,500 naked with no record that a stop
+        # was still owed. The distinction is made by IDENTITY, not by
+        # timing and not by a tolerance: `cancelled_specs` already carry the
+        # broker order `id` (stamped by `_snapshot_stop_order`), which is
+        # the same discipline `replace_stop_loss` has enforced since PR #75.
+        # Ambiguity fails toward SUBMITTING: a duplicate stop is
+        # recoverable, a naked position is not.
+        cancelled_ids = {
+            str(spec.get("id")) for spec in cancelled_specs if spec.get("id")
+        }
+        # If ANY cancelled spec arrived without an id we cannot prove that a
+        # matching open stop isn't one of ours, so no open stop may satisfy
+        # the check at all.
+        ids_complete = len(cancelled_ids) == len(cancelled_specs)
+        # Alpaca's OPEN filter includes transitional statuses; an order in
+        # `pending_cancel` (or any non-active state) is not protection. Same
+        # active-status set `replace_stop_loss` already uses — no new number
+        # and no new tolerance is introduced here.
+        _ACTIVE_STATUSES = {"new", "accepted", "held", "partially_filled"}
         try:
             if side == "buy":
                 existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
@@ -5884,18 +5915,63 @@ class TradingPipeline:
             except (TypeError, ValueError):
                 continue
             # Half-penny tolerance covers Alpaca's float<->Decimal round-trip.
-            if existing_sp > 0 and abs(existing_sp - best_stop) < 0.005:
-                logger.info(
-                    "Reprotect skipped for %s — a stop at $%.2f already "
-                    "exists at the broker (idempotent re-run)",
+            if not (existing_sp > 0 and abs(existing_sp - best_stop) < 0.005):
+                continue
+            order_id = str(getattr(o, "id", "") or "")
+            status_attr = getattr(o, "status", None)
+            status = str(
+                getattr(status_attr, "value", status_attr) or ""
+            ).lower()
+            if not ids_complete:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT despite an open stop at "
+                    "$%.2f: %d of %d cancelled spec(s) carried no broker "
+                    "order id, so this run cannot prove the open stop is "
+                    "not the one it just cancelled. A duplicate stop is "
+                    "recoverable; a naked position is not.",
+                    symbol, best_stop,
+                    len(cancelled_specs) - len(cancelled_ids),
+                    len(cancelled_specs),
+                )
+                break
+            if order_id and order_id in cancelled_ids:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
+                    "(order %s) is one THIS run just cancelled and is still "
+                    "being listed as open — not a prior successful attempt. "
+                    "Skipping here is what leaves the position naked.",
+                    symbol, best_stop, order_id,
+                )
+                continue
+            if not order_id:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: an open stop at $%.2f "
+                    "carries no readable order id, so it cannot be "
+                    "distinguished from the stop this run just cancelled.",
                     symbol, best_stop,
                 )
-                from src.execution.stop_records import write_back_stop_loss
-                write_back_stop_loss(
-                    getattr(self, "db", None), symbol, best_stop,
-                    is_short=(side == "buy"),
+                continue
+            if status not in _ACTIVE_STATUSES:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
+                    "(order %s) is in status %r, not a live protective "
+                    "state — a dying order is not coverage.",
+                    symbol, best_stop, order_id, status or "unknown",
                 )
-                return True
+                continue
+            logger.info(
+                "Reprotect skipped for %s — a stop at $%.2f (order %s, "
+                "status %s) placed by a PREVIOUS attempt is live at the "
+                "broker and is not one this run cancelled (idempotent "
+                "re-run)",
+                symbol, best_stop, order_id, status,
+            )
+            from src.execution.stop_records import write_back_stop_loss
+            write_back_stop_loss(
+                getattr(self, "db", None), symbol, best_stop,
+                is_short=(side == "buy"),
+            )
+            return True
 
         side_kwargs = {} if side == "sell" else {"side": side}
         # Spec §11.1: a FRACTIONAL residual is re-protected by the hybrid
@@ -5926,6 +6002,10 @@ class TradingPipeline:
                 "is unprotected until the next session re-attaches a stop",
                 symbol, self._format_qty(residual_qty), best_stop, exc,
             )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty,
+                f"stop submit at ${best_stop:.2f} raised: {exc}",
+            )
             return False
         from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
         if isinstance(last_order, dict) and not accepted_stop_order(last_order):
@@ -5934,12 +6014,46 @@ class TradingPipeline:
                 "not recording a live stop the broker does not hold",
                 symbol, best_stop,
             )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty,
+                f"stop submit at ${best_stop:.2f} returned no accepted "
+                "broker order id",
+            )
             return False
         write_back_stop_loss(
             getattr(self, "db", None), symbol, best_stop,
             is_short=(side == "buy"),
         )
         return True
+
+    def _alert_owner_reprotect_left_naked(
+        self, symbol: str, residual_qty: float, reason: str,
+    ) -> None:
+        """Page the owner when reprotect ends with the residual UNPROTECTED.
+
+        INCIDENT 2026-09-30: reprotect wrongly skipped as an "idempotent
+        re-run", the recovery intent was deleted, and the only trace was a
+        single INFO log line. The desk's rule is that a position left
+        without a stop is never a log line only, so every path out of
+        `_reprotect_residual` that does NOT end with a live stop now goes
+        down the SAME `_alert_owner_no_stop` escalation the coverage sweep
+        uses — no new channel, no new throttle, and the `repair_refusal`
+        field carries the reason so the owner knows which of the three
+        different actions to take. Never raises: the SELL already
+        succeeded and a failed page must not unwind it.
+        """
+        try:
+            self._alert_owner_no_stop([{
+                "symbol": symbol,
+                "held_qty": self._format_qty(residual_qty),
+                "covered_qty": self._format_qty(0),
+                "repair_refusal": f"re-protect after partial exit: {reason}",
+            }])
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "reprotect naked-position alert failed for %s: %s",
+                symbol, exc,
+            )
 
     @staticmethod
     def _order_accepted(order: dict, symbol: str, side: str) -> bool:

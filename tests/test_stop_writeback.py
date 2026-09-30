@@ -465,6 +465,13 @@ def test_reprotect_idempotent_skip_still_writes_back(db):
     pipeline._format_qty = lambda q: str(q)
     existing = MagicMock()
     existing.stop_price = "90.00"
+    # Item 199: the skip is now decided by IDENTITY and live status, not by
+    # price alone. This stands for a stop a PREVIOUS attempt placed, so it
+    # carries an id this run did NOT cancel and an active status. An open
+    # stop whose id IS in `cancelled` is the 2026-09-30 naked-position
+    # incident and must no longer satisfy the check.
+    existing.id = "s-previous-attempt"
+    existing.status = "new"
     pipeline.broker._list_open_sell_stop_orders.return_value = [existing]
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]
     ok = pipeline._reprotect_residual_after_partial_sell("NVDA", 10.0, cancelled)

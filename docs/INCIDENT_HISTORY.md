@@ -17458,3 +17458,72 @@ against `origin/main`'s old shape conflicted in `src/number_sources.py` and
 **No behaviour changed.** The computed count is 137, equal to the live count
 of arbitrary rows on the day of the change, and no number was picked, moved
 or added.
+
+## Item 199 — reprotect skipped on the stop it had just cancelled, and $2,500 sat naked in silence
+
+**This happened in production on 2026-09-30.** From the box's own log:
+
+```
+14:47:23,423  WAL: wrote protection-restore intent for AAPL (row 22, 2 stop(s)) before cancel/submit
+14:47:23,448  Cancelled 2 protective stop(s) for AAPL
+14:47:23,513  Order submitted: sell 2.430987 AAPL @ 336.86
+14:47:23,934  Reprotect skipped for AAPL - a stop at $323.74 already exists at the broker (idempotent re-run)
+```
+
+AAPL then held NO stop at the broker for at least six minutes (confirmed by
+querying Alpaca directly: zero open stop orders), and because the skip
+returned success the drain caller DELETED the `pending_protection_restores`
+row - so the desk no longer had any record that it still owed AAPL a stop.
+Nothing alerted. About $2,500 was unprotected while the desk believed it was
+covered.
+
+**The defect.** The idempotency check in
+`_reprotect_residual_after_partial_sell` exists for a real case: a drain
+replaying a row whose previous attempt already submitted the residual stop
+but could not delete the row, where placing a second stop would double the
+exit on trigger (audit note 2026-05-27). It decided that case on PRICE alone
+- any open stop within half a cent of `best_stop` counted. 486ms earlier the
+same run had cancelled exactly that stop. Alpaca's cancel is asynchronous and
+its `QueryOrderStatus.OPEN` filter includes transitional states such as
+`pending_cancel`, so the just-cancelled order was still listed as open, and
+it matched `best_stop` perfectly for the plain reason that `best_stop` was
+derived from its own spec. The check could not distinguish a stop placed by a
+PREVIOUS successful attempt (skip is right) from the stop THIS run had just
+cancelled (skip leaves the position naked).
+
+**The fix - identity, not timing and not a tolerance.** `cancelled_specs`
+already carry the broker order `id`, stamped by
+`AlpacaBroker._snapshot_stop_order`, so nothing had to be threaded through.
+An open stop now satisfies the check only when its id is NOT one this run
+cancelled, its id is readable, and its status is in the same active set
+`replace_stop_loss` has used since PR #75 (`new`, `accepted`, `held`,
+`partially_filled`) - a `pending_cancel` order is a dying order, not
+coverage. Every other outcome SUBMITS: if any cancelled spec arrived without
+an id, no open stop may satisfy the check at all, because the run cannot
+prove the stop it is looking at is not its own. A duplicate stop is
+recoverable; a naked position is not. The duplicate-stop protection the check
+was written for is unchanged - a genuinely live stop from a previous attempt
+at the same price still skips, and a test pins that direction too.
+
+**The recovery intent survives ambiguity.** The WAL row is deleted only on a
+True return, and True now requires either a successful submit or a stop this
+run can positively identify as live and not-just-cancelled. Losing the
+recovery intent is what turned a thirty-second gap into a silent one.
+
+**The silence was its own defect.** Every path out of the reprotect that
+leaves the residual unprotected - unusable spec prices, a submit that raised,
+a submit that returned no accepted order id - now pages the owner down the
+EXISTING `_alert_owner_no_stop` escalation the coverage sweep already uses,
+with the reason carried in `repair_refusal`. No new channel, no new throttle.
+A position left without a stop is never a log line only.
+
+**No new number.** No new tolerance, no new retry count, no new sleep; the
+active-status set is the one already in `replace_stop_loss` and the
+half-penny price tolerance is untouched. The coverage sweep's schedule is
+unchanged - running it more often would have treated the symptom.
+
+**Proof.** A new test replays the exact production sequence (cancel, then an
+idempotency check that still lists the cancelled order as open in
+`pending_cancel`) and asserts a stop is placed; it fails on the pre-fix code
+and passes after, alongside tests for the previous-attempt skip, the foreign
+dying order, missing ids, and both alert paths.
