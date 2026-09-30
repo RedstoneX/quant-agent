@@ -2126,12 +2126,15 @@ class RiskRuleEngine:
             ))
 
         # 4b. Correlation cluster (advisory) — catches the "all-AI" concentration problem
-        # that sector caps miss. If the proposed BUY plus the held positions highly correlated
-        # with it (|corr| >= 0.7) together exceed max_correlated_cluster_pct, flag.
+        # that sector caps miss. If the proposed BUY plus the held positions that sit in
+        # the SAME correlation cluster as it together exceed max_correlated_cluster_pct,
+        # flag. Cluster membership is read from the book's own correlation geometry
+        # (Mantegna distance MST cut at its own largest gap) — there is no correlation
+        # cutoff any more; the old 0.7 was unsourceable and is removed, not ratified.
         if correlation_matrix:
-            from src.data.correlation import highly_correlated_peers, CLUSTER_CORRELATION_THRESHOLD
+            from src.data.correlation import cluster_peers
             held_symbols = [p.symbol for p in positions]
-            peers = highly_correlated_peers(decision.symbol, held_symbols, correlation_matrix)
+            peers = cluster_peers(decision.symbol, held_symbols, correlation_matrix)
             if peers:
                 # Apply gross multiplier consistently with sector / position
                 # caps below — a 3x inverse ETF (SQQQ) in a cluster consumes
@@ -2159,7 +2162,8 @@ class RiskRuleEngine:
                             f"{decision.symbol} + correlated holdings [{', '.join(peers)}] "
                             f"would total {cluster_pct:.0f}% of book, exceeding "
                             f"{max_correlated_cluster_pct:.0f}% cluster cap (advisory). "
-                            f"Pairwise corr > {CLUSTER_CORRELATION_THRESHOLD}."
+                            f"One correlation cluster by the book's own structure "
+                            f"(correlation-distance tree, cut at its widest gap)."
                         ),
                         value=cluster_pct,
                         limit=max_correlated_cluster_pct,
