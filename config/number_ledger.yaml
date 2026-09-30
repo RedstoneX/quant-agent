@@ -2884,19 +2884,46 @@ numbers:
       not per-order fees. That leaves the number exactly where the
       2026-09-25 adversary ruling put it: a chosen churn-appetite threshold,
       ratified, neither sourceable nor measurable.
+      ATR RE-EXPRESSION ATTEMPTED AND FAILED 2026-09-30. The doctrine
+      objection was tested, not waved through: expressed in each name's own
+      ATR(14), "2% of the live stop" demands 0.31 ATR on MRVL, 0.33 on NET,
+      0.34 on RKLB, 0.47 on AMD, 0.52 on META and 0.91 on AAPL — the same
+      nominal rule asking for a ratchet nearly three times larger on one name
+      than another, which is exactly the incoherence the doctrine names. The
+      repair `k * ATR` was then measured against the seven production
+      refusals whose candidate could be reconstructed from daily bars, and it
+      does not work: every refused tighten fell between 0.12 and 0.50 ATR, so
+      any k >= 0.75 blocks all seven (strictly MORE than the flat 2%, which
+      lets one through) and only k <= 0.5 admits anything — and picking 0.25
+      to admit three of seven is fitting the constant to the outcomes the
+      data liked, the same failure as the 2.0 it would replace. No published
+      work fetched fixes a minimum stop-ADJUSTMENT size; the stop literature
+      addresses distance from price, which the noise band and the chandelier
+      already answer. Deleting the gate was rejected on a measured cost, not
+      a preference: `AlpacaBroker.replace_stop_loss` cannot edit an Alpaca OTO
+      stop leg in place, so every replace is cancel-then-resubmit with a real
+      window in which the position carries no protective order, and removing
+      the gate would have added seven such windows across nine evaluation
+      runs on an eleven-name book. The value stays 2.0 and the failure is on
+      file rather than quietly dropped.
     open_question: >-
-      RATIFIED — no value question remains. One structural question is left,
-      and it is about redundancy, not magnitude: whether
-      this gate is REDUNDANT given the two other clamps already on the same
-      TRAIL_STOP path: the ~2-4-session ratchet cooldown
-      (`_trail_tightened_recently`, 4 calendar days) and the 1.25x-ATR14
-      noise-band clamp — three churn-limiting gates stacked on one action
-      may be doing overlapping work. That is answerable from the desk's own
-      TRAIL_STOP refusal logs — which gate refused each trail — without any
-      new number and without owner input.
+      CLOSED 2026-09-30 — both halves are now answered from the desk's own
+      refusal record, with no new number and no owner input, exactly as this
+      question proposed. (1) The premise was wrong: there are TWO gates on
+      the deterministic path, not three. The ~2-4-session ratchet cooldown
+      (`_trail_tightened_recently`) is reached only from the discretionary
+      midday `TRAIL_STOP` branch in `src/pipeline.py` and never from
+      `_apply_deterministic_trails`, so it has never refused a deterministic
+      trail. (2) The two that ARE stacked are not redundant: all seven
+      reconstructed refusals sat OUTSIDE the 1.25x-ATR noise band, so the
+      noise band would have admitted every one of them and this gate is
+      doing independent work. No value question remains; the number is
+      ratified churn appetite and the ATR re-expression above failed on
+      measurement.
     cost_while_unanswered: >-
-      A genuine ratchet may be skipped by whichever of the three stacked
-      gates binds first, with no record of which one it was.
+      None outstanding. The refusal codes written to `specialist_evidence`
+      (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
+      name which gate refused each trail, which is what this entry wanted.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     value: 1.25
     status: arbitrary
