@@ -832,3 +832,28 @@ changes:
       the far-through reading is recorded as a
       `venue_quote_through_ceiling` pipeline event, which needs no
       threshold because it is a record and not a decision.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 186: -1 for
+      `src.data.correlation.CLUSTER_CORRELATION_THRESHOLD` (0.7), the
+      correlation-cluster cutoff, REMOVED rather than ratified -- the
+      need for it is gone, not the question. The ledger's own research
+      pass had already found no sourceable value (published
+      thresholded-correlation-network cutoffs span roughly 0.3-0.8 and
+      are picked for the network density a study wants; the mainstream
+      portfolio-clustering literature thresholds nothing at all) and had
+      named the structural alternative. The owner's 2026-09-30 ruling --
+      risk tolerance is never a global dial, it is read from structure
+      or per name -- made that alternative mandatory, so the routed
+      appetite question is withdrawn rather than pending. Cluster
+      membership is now read from the held book's own correlation
+      geometry: Mantegna distance d = sqrt(2 * (1 - |corr|)), minimum
+      spanning tree, cut at the largest gap in its own sorted edge
+      lengths. No replacement number enters the count: the only
+      constants are the metric's values at |corr| = 1 and corr = 0,
+      which bracket the gap search and are properties of the formula
+      rather than levels compared against any correlation. Clustering
+      stays transitive on purpose (a theme transmits by chaining) and
+      remains rationing only -- the desk still never buys to diversify.
