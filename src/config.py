@@ -227,6 +227,21 @@ class LLMConfig(BaseModel):
     # attempt-budget check below then stops requiring the extra attempt.
     tertiary_provider: str = "openai"
     tertiary_model: str = "o4-mini"
+    # === ROUTE 3 SECOND-ROAD SUBSTITUTE (2026-09-30) =====================
+    # Used INSTEAD of the tertiary above, per seat, when that seat's routes
+    # 1 and 2 have collapsed onto a single provider and route 3 would land
+    # on it too — measured on 2026-09-29, when all three of
+    # portfolio_manager's routes were OpenRouter and one exhausted balance
+    # (HTTP 402) killed every intraday decision run while Google direct was
+    # answering at $0.00 in the same process. Never adds a rung and never
+    # touches a seat whose ladder already spans two roads (the eight
+    # Google-primary specialists keep the OpenRouter tertiary unchanged).
+    # The full rule, the measurement and the accepted residual are on
+    # src/agents/base.py's `_DEFAULT_TERTIARY_ALT_PROVIDER`; the selection
+    # itself is `select_tertiary_route` in that same file.
+    # Set `tertiary_alt_model` to "" to switch the substitution off.
+    tertiary_alt_provider: str = "google"
+    tertiary_alt_model: str = "gemini-3.5-flash-lite"
     # Global output-ceiling fallback — used by any agent without an explicit
     # override below.
     max_tokens: int
@@ -407,6 +422,32 @@ class LLMConfig(BaseModel):
         # such so the attempt-budget floor drops back to 3 in step.
         if not isinstance(v, str):
             raise ValueError("llm.tertiary_model must be a string model id or \"\"")
+        return v.strip()
+
+    @field_validator("tertiary_alt_provider")
+    @classmethod
+    def _tertiary_alt_provider_is_valid(cls, v: str) -> str:
+        # Same no-escape-hatch rule as `tertiary_provider` above. This field
+        # exists precisely to name a DIFFERENT road, so letting a typo fall
+        # through to prefix inference could silently put the substitute back
+        # on the road it was added to escape.
+        normalized = (v or "").strip().lower()
+        if normalized not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid llm.tertiary_alt_provider {v!r}; must be one of "
+                f"{sorted(VALID_PROVIDERS)}"
+            )
+        return normalized
+
+    @field_validator("tertiary_alt_model")
+    @classmethod
+    def _tertiary_alt_model_is_str(cls, v: str) -> str:
+        # Empty turns the substitution off and restores the pre-2026-09-30
+        # behaviour exactly; it never turns route 3 itself off.
+        if not isinstance(v, str):
+            raise ValueError(
+                "llm.tertiary_alt_model must be a string model id or \"\""
+            )
         return v.strip()
 
     @field_validator(
@@ -2383,6 +2424,23 @@ class AppConfig(BaseModel):
                 "fallback key is precisely how the 2026-08-31 outage's second half "
                 "happened — do not let this ship unnoticed again."
             )
+
+        # DELIBERATELY NOT CHECKED HERE: a missing credential for
+        # `llm.tertiary_alt_provider`. The fallback check above is a hard
+        # error because failover is a route the operator configured and is
+        # relying on; the route-3 second-road substitute is a default-on
+        # improvement nobody asked for, and refusing to BOOT over a key it
+        # needs would turn a resilience feature into an outage of its own —
+        # a single-provider deployment (every seat and the fallback on one
+        # road) is a legal configuration and must still start. Without the
+        # key the substitution simply does not happen and route 3 stays
+        # where it was configured. The guard that matters for THIS
+        # deployment is mechanical and lives in CI instead:
+        # tests/test_route_failover_ladder.py::
+        # test_the_shipped_config_leaves_no_seat_on_a_single_road reads
+        # config/settings.yaml and fails if any seat's routes collapse onto
+        # one provider — which is the 2026-09-29 defect stated as a test
+        # rather than as a runtime hope.
 
         return self
 

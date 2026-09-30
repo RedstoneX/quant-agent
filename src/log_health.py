@@ -383,7 +383,9 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"error during websocket communication",
             r"order-fill stream unavailable",
         ),
-        board_item=86,
+        # Item 86 was retired on live evidence; nothing on the board tracks
+        # this family now. The reporting is unchanged — only the claim goes.
+        board_item=None,
     ),
     FaultFamily(
         key="broker_not_sure_who_we_are",
@@ -420,7 +422,9 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"entry protection:.* placed for",
             r"COVERAGE REPAIRED:",
         ),
-        board_item=86,
+        # Item 86 was retired on live evidence; nothing on the board tracks
+        # this family now. The reporting is unchanged — only the claim goes.
+        board_item=None,
     ),
     FaultFamily(
         key="news_source_dead",
