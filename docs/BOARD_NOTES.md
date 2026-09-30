@@ -817,3 +817,49 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 
 `_repeg_entry_order` in `src/pipeline_stages.py` computes one bound, `reference * (1 + slippage_bps / 10_000)`, calls it `ceiling`, and returns early when `limit_price >= ceiling`. It never reads the spec's side. For a BUY that is right: the ceiling is above the reference and there is room to chase only when the limit sits below it. For a `sell_short` the fillable bound is a FLOOR at `reference * (1 - slippage_bps / 10_000)`, below the reference, and both the arithmetic and the comparison are inverted — a short limit would be judged to have room and walked UP, away from a fill, and the early return that is supposed to mean "already at the bound" would instead fire on exactly the short limits that are furthest from it. NOT INTRODUCED by item 183 and NOT LIVE: `repeg_enabled` is `false` in `config/settings.yaml` and defaults to `False` in `src/config.py`, so this path does not run today, and item 183 deliberately did not touch it. This is filed rather than fixed because the fix is a behaviour change on a money path that nothing currently exercises, and because turning the flag on without it is the real hazard. MEASURED: nothing — there are no re-peg outcomes in the record to measure, which is itself the reason the defect survived review.
 
+
+## item 209 — full-book search throttle, shipped 2026-09-30
+
+WHY IT EXISTS. Owner ask 2026-09-30, unprompted and previously unbuilt and
+undocumented: the desk hunts for new trades several times a day, and that
+hunting is largely wasted paid spend when the portfolio is already full.
+The same day the paid model provider returned 402 Payment Required and the
+owner declined to top it up while the board is full, so cutting wasted paid
+runs was the cheapest available cost win.
+
+THE SHAPE. The SEARCH throttles, the REVIEW never does. Doctrine
+(conviction outranks balance; all five seats must be right to STAY, not
+only to enter) makes throttling the review of a holding unacceptable — a
+name that stops earning its place has to be found on the normal cadence.
+
+READING "FULL". No picked number and no cadence schedule. The book is full
+when it is already at one of its OWN ratified ceilings: deployable cash at
+or below zero, invested share at or above `risk.max_total_position_pct`, or
+gross exposure at or above `risk.max_gross_exposure_x`. The throttle
+therefore releases itself as soon as capital is freed, rather than waiting
+for a timer.
+
+THE URGENCY LANE. Four ways a throttled session still acts:
+1. every deterministic safety step (stop-coverage audit, protection
+   restores, forced de-lever, gross-ceiling enforcement, fill and stop-out
+   reconciliation) runs BEFORE the paid boundary and is untouched;
+2. held names keep full research, so a broken thesis is still found, voiced
+   and sold;
+3. run-scoped admissions (SEC Form 4 smart-money, universe screen) come
+   from free deterministic signals and survive the narrowing, so a
+   genuinely urgent new name still reaches the seats;
+4. anything that frees capital un-throttles the next session.
+
+MEASURED SAVING. One hunting session per trading day — the morning session
+is the only one that researches new candidates (`morning_research`);
+midday and close are position reviews and the intraday check reads held
+names only [measured: main.py mode map + scripts/systemd timers]. Its
+research surface is the 101-symbol configured universe [measured:
+config/settings.yaml trading.universe]. With a full book that surface
+becomes the held names plus free admissions, so the per-symbol paid model
+and paid search work drops by the whole non-held remainder of those 101 —
+typically the large majority of them. The live held count could not be read
+from the development box, so the exact per-day figure is not stated here
+rather than estimated.
+
+FAILS OPEN. Any error in the throttle runs the full hunt.

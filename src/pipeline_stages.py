@@ -5001,6 +5001,64 @@ class MorningResearchStage:
             sorted(ctx.admitted_symbols) + configured_symbols
         ))
 
+        # FULL-BOOK SEARCH THROTTLE (src/research_throttle.py, owner ask
+        # 2026-09-30). Hunting for new trades costs paid model and paid
+        # search on every session; when the book has no room for a new
+        # position that spend buys nothing. When — and only when — the book
+        # is full against its OWN ratified ceilings, the research surface
+        # narrows to the names already held plus this run's free,
+        # deterministic admissions. The REVIEW of every holding keeps its
+        # normal cadence, because all five seats must be right to stay, not
+        # only to enter. Fails open: any problem here runs the full hunt.
+        ctx.search_throttled_reason = None
+        try:
+            from src.research_throttle import full_book_reason, narrow_to_held
+            positions = getattr(ctx, "positions", None) or []
+            equity = float(getattr(ctx, "total_value", 0.0) or 0.0)
+            held, deployed_usd, gross_usd = [], 0.0, 0.0
+            for pos in positions:
+                symbol = getattr(pos, "symbol", None)
+                if symbol is None and isinstance(pos, dict):
+                    symbol = pos.get("symbol")
+                symbol = str(symbol or "").strip().upper()
+                if symbol:
+                    held.append(symbol)
+                value = getattr(pos, "market_value", None)
+                if value is None and isinstance(pos, dict):
+                    value = pos.get("market_value")
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                deployed_usd += abs(value)
+                gross_usd += abs(value)
+            risk_cfg = getattr(self.config, "risk", None)
+            reason = None
+            if equity > 0 and held:
+                reason = full_book_reason(
+                    deployable_cash=getattr(ctx, "deployable_cash", None),
+                    deployed_pct=deployed_usd / equity * 100,
+                    gross_pct=gross_usd / equity * 100,
+                    max_total_position_pct=getattr(
+                        risk_cfg, "max_total_position_pct", None),
+                    max_gross_exposure_x=getattr(
+                        risk_cfg, "max_gross_exposure_x", None),
+                )
+            if reason:
+                before = len(effective_symbols)
+                effective_symbols = narrow_to_held(
+                    effective_symbols, held, getattr(ctx, "admitted_symbols", None),
+                )
+                ctx.search_throttled_reason = reason
+                logger.info(
+                    "Full-book search throttle: %s — research surface %d -> %d "
+                    "symbols (held + free admissions only); holdings review "
+                    "unchanged.",
+                    reason, before, len(effective_symbols),
+                )
+        except Exception as exc:  # noqa: BLE001 - never block research
+            logger.warning("Full-book search throttle failed open: %s", exc)
+
         for observation in smart_money_observations:
             symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
             for field_name, field_value in (
