@@ -2412,31 +2412,63 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md:330 attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
-  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
-    value: 3.0
-    status: sourced
+  - id: src.risk.alignment_exit.SMA_LADDER[20]
+    value: 50
+    status: not-trade-governing
     site: src/risk/alignment_exit.py
     note: >-
-      Give-back below the last CHART MARK (a moving average or a
-      confirmed-broken structural level), in the name's own ATR, before the
-      alignment exit reads the move as over. Deliberately NOT
-      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`: that constant is
-      `arbitrary`, is 1.0, and measures excess over noise FROM ENTRY. Its
-      own ledger note records the 2026-09-26 research finding that every
-      published analogue sits at roughly 2.8-3.5 ATR, and gives exactly one
-      reason for not moving it to 3.0 -- that Wilder's Volatility System ARC
-      (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit (3.0 x
-      ATR default, 2.5 tight, 3.5-4.0 loose) measure give-back from a
-      RUNNING EXTREME rather than from entry, making them the closest
-      analogue but not an exact fit. THIS quantity IS measured from a
-      running reference, so that mismatch does not apply and the published
-      default is an exact fit rather than an approximate one. 3.0 is the
-      named system's own default and the centre of the published band.
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.SMA_LADDER[50]
+    value: 200
+    status: not-trade-governing
+    site: src/risk/alignment_exit.py
+    note: >-
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    value: 3.0
+    status: arbitrary
+    site: src/risk/alignment_exit.py
+    note: >-
+      Give-back below the last CHART MARK (a moving average, or the level
+      `check_structural_protection` confirmed broken), in the name's own
+      ATR, before the alignment exit reads the move as over. AN OWNER
+      APPETITE DIAL, recorded as arbitrary on purpose. A draft of this
+      entry claimed the value was SOURCED to Wilder's Volatility System
+      ARC (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit
+      (3.0 x ATR default). That claim is WITHDRAWN, for three reasons.
+      (1) The `NOISE_BAND_ATR_MULTIPLE` note gives TWO reasons for
+      refusing 3.0 and the draft answered only the anchor one; the other
+      stands -- "how readily the desk blocks a sale is owner appetite".
+      (2) Wilder and Le Beau measure give-back from a running EXTREME
+      (highest high since entry); this measures it from a MOVING AVERAGE,
+      which sits materially below an extreme, so the same multiple is a
+      looser stop and their calibration does not transfer. (3)
+      Chandelier's 3.0 is calibrated on ATR(22); this divides by ATR(14).
+      The published 2.5-3.5 band is retained as CONTEXT for the order of
+      magnitude only. Deliberately NOT reused from
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and
+      measures excess over noise FROM ENTRY.
     open_question: >-
-      The published band is 2.5-3.5; 3.0 is its centre and the Chandelier
-      default. Where inside that band the desk sits is an owner appetite
-      dial, not a research question -- tightening to 2.5 realises gains
-      sooner and whipsaws more often.
+      Where the desk sits is the owner's dial, left at 3.0 until he moves
+      it: tighter realises gains sooner and whipsaws more often, looser
+      gives more back. No research can settle it -- see reason (1).
+    cost_while_unanswered: >-
+      Until the owner sets the dial, every alignment exit realises its
+      gain 3.0 ATR below the last chart mark. Too loose and a finished
+      move hands back more than it needed to before the desk sells; too
+      tight and a live trend is sold into an ordinary pullback and the
+      rest of the move is forgone. The exposure is the whole unrealised
+      gain of any position this exit fires on.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
     value: 1
     status: arbitrary

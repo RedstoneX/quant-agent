@@ -1717,6 +1717,12 @@ class StructuralProtectionCheck:
         "noise_band_unevaluable_no_data",
     ]
     detail: str
+    #: The structural level price this read found CONFIRMED broken, on the
+    #: `structural_level_broken` basis only; None on every other basis.
+    #: Added 2026-09-30 so a caller can name WHICH level broke instead of
+    #: guessing one by proximity to the close (the alignment exit did
+    #: exactly that and could admit an overhead level that never broke).
+    broken_level: float | None = None
     #: True when TODAY's close (independent of the confirmation gate below)
     #: found the thesis/level basis broken. Callers must persist this value
     #: keyed by symbol AND today's close date, so it can be fed back in as
@@ -2089,6 +2095,7 @@ def check_structural_protection(
                 if confirmed:
                     return StructuralProtectionCheck(
                         protected=False, basis="structural_level_broken",
+                        broken_level=_finite(level),
                         detail=(
                             f"structural level {level} backing the stop has "
                             f"closed beyond it on {closes_seen} confirming "

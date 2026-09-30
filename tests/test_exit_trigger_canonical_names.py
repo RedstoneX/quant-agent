@@ -153,7 +153,15 @@ def test_every_sanctioned_trigger_is_classifiable_by_its_canonical_name_in_prose
     """...except the members on the EXPLICIT, NAMED exclusion list, and for
     those this test asserts the exclusion holds rather than skipping it."""
     reason = f"{trigger.value}: recorded today, see the evidence field"
-    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE:
+    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE or trigger in VERIFIED_ON_CHART:
+        # A CHART-VERIFIED TRIGGER IS DELIBERATELY NOT NAMABLE IN PROSE.
+        # `_reason_cites_hard_trigger` is a BYPASS: it waves a reason past
+        # the SELL/REDUCE noise band and past the TRAIL_STOP ratchet
+        # cooldown and 1.25xATR clamp, and the trail path runs no chart
+        # check at all. Letting the alignment exit's own name buy that
+        # bypass would mean model prose alone loosened a live stop. It
+        # stays classifiable via the STRUCTURED field (asserted above),
+        # which is the path the desk actually fills.
         assert _classify(reason) == "unnamed"
     else:
         assert _classify(reason) == "named"
@@ -180,11 +188,18 @@ def test_the_honest_decline_never_passes_the_gate():
 
 def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
     """The gate's vocabulary is the enum's, not a second hand-kept list."""
+    from src.pipeline import _CHART_VERIFIED_TRIGGER_NAMES
+
     for name in CANONICAL_TRIGGER_NAMES:
+        if name in _CHART_VERIFIED_TRIGGER_NAMES:
+            continue  # see the prose-exclusion note above: a bypass, not a name
         assert name in _HARD_TRIGGER_KEYWORDS
     assert "earnings" not in _HARD_TRIGGER_KEYWORDS
     assert "cannot_substantiate" not in _HARD_TRIGGER_KEYWORDS
-    grouped = {p for phrases in TRIGGER_PHRASES.values() for p in phrases}
+    assert not (_CHART_VERIFIED_TRIGGER_NAMES & set(_HARD_TRIGGER_KEYWORDS))
+    grouped = {
+        p for phrases in TRIGGER_PHRASES.values() for p in phrases
+    } - _CHART_VERIFIED_TRIGGER_NAMES
     assert grouped == set(_HARD_TRIGGER_KEYWORDS)
 
 

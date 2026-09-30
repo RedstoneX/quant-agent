@@ -225,6 +225,16 @@ from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 from src.risk.exit_trigger import (  # noqa: E402
     CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
 )
+from src.risk.exit_trigger import (  # noqa: E402
+    VERIFIED_ON_CHART as _VERIFIED_ON_CHART,
+    canonical_prose_names as _canonical_prose_names,
+)
+
+#: Canonical prose spellings of the triggers whose truth is decided by
+#: READING THE CHART. Never hard-trigger keywords — see the note below.
+_CHART_VERIFIED_TRIGGER_NAMES: frozenset[str] = frozenset(
+    n for t in _VERIFIED_ON_CHART for n in _canonical_prose_names(t)
+) | {"trend alignment over", "alignment exit"}
 
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
@@ -275,11 +285,6 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "earnings missed",
     "earnings miss",
     "guidance cut",
-    # Trend alignment ended — the ALIGNMENT EXIT (owner ruling 2026-09-30).
-    # Unlike every other keyword here it is not taken on its word:
-    # `_alignment_exit_for_holding` must confirm it against the chart.
-    "trend alignment over",
-    "alignment exit",
     # Macro regime — sanctioned by spec 3.8, previously unrepresented
     "regime shift",
     "regime flip",
@@ -374,9 +379,20 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
 # untrue of four of them, in the one comment block whose entire job is to
 # record that bar. Overstating a finding is the same failure as understating
 # one, so the claim now lives in a constant a test checks.
+#
+# CHART-VERIFIED TRIGGERS ARE EXCLUDED, AND THIS IS LOAD-BEARING. A name in
+# this tuple is a BYPASS: `_reason_cites_hard_trigger` waves the reason past
+# the SELL/REDUCE noise band AND past the TRAIL_STOP ratchet cooldown and the
+# 1.25xATR trail clamp, on the strength of prose alone. The alignment exit is
+# the one trigger whose whole point is that prose is NOT enough — it is
+# granted its bypass by `_alignment_exit_for_holding` reading the chart, and
+# by nothing else. Letting its canonical name in here would hand a model a
+# second, unverified way to buy the same bypass on the trail path, which runs
+# no chart check at all.
 _HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
     name for name in _CANONICAL_TRIGGER_NAMES
     if name not in _HARD_TRIGGER_KEYWORDS
+    and name not in _CHART_VERIFIED_TRIGGER_NAMES
 )
 
 
@@ -11543,8 +11559,9 @@ class TradingPipeline:
         cross-day confirmation gate passed. This method neither re-derives
         nor shortcuts that gate: it reads the verdict (`persist=False`, so
         consulting it here can never file a break and let a future
-        confirmation land a day early) and, when the verdict is "broken",
-        reads WHICH level that was off the same level set. Never raises; a
+        confirmation land a day early) and takes the level THAT CHECK
+        NAMED as broken (`StructuralProtectionCheck.broken_level`); no
+        level is ever chosen by nearness to the close. Never raises; a
         failure degrades to UNPARSEABLE, which callers treat as HOLD.
         """
         from src.risk.alignment_exit import (
@@ -11557,7 +11574,6 @@ class TradingPipeline:
             atr = None
             broken_level = None
             if sorted_bars:
-                from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
                 atr = compute_indicators(symbol, bars).atr_14
                 protection = self._structural_protection_for_holding(
@@ -11566,21 +11582,16 @@ class TradingPipeline:
                     is_short=is_short, run_id=run_id, persist=False,
                 )
                 if getattr(protection, "basis", "") == "structural_level_broken":
-                    risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
-                    min_touches = getattr(risk_cfg, "min_level_touches_for_stop_honor", 5)
-                    supports, resistances = find_structural_levels(bars)
-                    last_close = closes[-1]
-                    # The level price has just closed THROUGH: for a long,
-                    # the nearest qualifying level now ABOVE the close;
-                    # mirrored for a short.
-                    side = [
-                        lv.price for lv in (*supports, *resistances)
-                        if lv.touches >= min_touches and (
-                            lv.price < last_close if is_short else lv.price > last_close
-                        )
-                    ]
-                    if side:
-                        broken_level = max(side) if is_short else min(side)
+                    # THE LEVEL THAT ACTUALLY BROKE, as named by the check
+                    # that confirmed it. An earlier draft instead pooled
+                    # every support AND resistance and took the nearest
+                    # price on the far side of the close — which could
+                    # admit an overhead resistance that never broke as
+                    # "the confirmed-broken structural level". Nothing is
+                    # re-derived and nothing is guessed by proximity: when
+                    # the check does not name a level there is no
+                    # structural mark.
+                    broken_level = getattr(protection, "broken_level", None)
             return check_alignment_exit(
                 thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
                 broken_structural_level=broken_level, is_short=is_short,
@@ -12211,12 +12222,23 @@ class TradingPipeline:
                 # the fail-open gates below, and deliberately so, because this is
                 # the one exit the desk takes with no external event behind it
                 # and possibly with the other seats still positive.
+                #
+                # THE READING IS TAKEN ON EVERY EXIT OF A HELD POSITION,
+                # not only on the ones whose prose happens to name it. A
+                # sale the model wanted for some other reason still leaves
+                # a durable record of what the chart said about that
+                # position's trend at that moment; without it, a position
+                # the desk exited has no alignment record at all and the
+                # evening review cannot tell an unread chart from a chart
+                # that said hold. Only a sale that CLAIMS the alignment
+                # exit is GATED by the verdict.
                 alignment_verdict = None
-                if held_now is not None and _reason_claims_alignment_exit(
+                alignment_claimed = _reason_claims_alignment_exit(
                     reason_for_band, action_item.get("exit_trigger"),
-                ):
+                )
+                if held_now is not None:
                     facts = (position_facts or {}).get(symbol, {}) or {}
-                    alignment_verdict = self._alignment_exit_for_holding(
+                    verdict = self._alignment_exit_for_holding(
                         symbol=symbol,
                         thesis_invalid_if=getattr(held_now, "thesis_invalid_if", None)
                         or facts.get("thesis_invalid_if"),
@@ -12236,41 +12258,49 @@ class TradingPipeline:
                     # without pinning it the record would not say which average
                     # actually decided this one.
                     det = (
-                        f"{act}: {alignment_verdict.status} "
-                        f"ma_period={alignment_verdict.thesis_ma_period} "
-                        f"breach_atr={alignment_verdict.breach_atrs} "
-                        f"tolerance_atr={alignment_verdict.band_atrs} "
-                        f"sessions_since_mark_lost={alignment_verdict.sessions_since_mark_lost} "
-                        f"thesis={alignment_verdict.thesis_text!r} "
-                        f"| {alignment_verdict.reason}"
+                        f"{act}: {verdict.status} "
+                        f"claimed={alignment_claimed} "
+                        f"ma={verdict.thesis_ma_kind}{verdict.thesis_ma_period} "
+                        f"breach_atr={verdict.breach_atrs} "
+                        f"tolerance_atr={verdict.band_atrs} "
+                        f"sessions_since_mark_lost={verdict.sessions_since_mark_lost} "
+                        f"thesis={verdict.thesis_text!r} "
+                        f"| {verdict.reason}"
                     )[:1200]
                     self._record_exit_refusal(
                         symbol=symbol, run_id=run_id, action=act,
-                        code=alignment_verdict.code,
-                        dropped=not alignment_verdict.exit_cleared,
-                        detail=det, layer="alignment_exit",
+                        code=verdict.code,
+                        dropped=alignment_claimed and not verdict.exit_cleared,
+                        detail=det,
+                        layer=(
+                            "alignment_exit" if alignment_claimed
+                            else "alignment_exit_observed"
+                        ),
                     )
                     try:
                         self.db.record_intraday_evaluation(
                             symbol=symbol, run_id=run_id,
-                            status=f"alignment_exit_{alignment_verdict.status.lower()}",
+                            status=f"alignment_exit_{verdict.status.lower()}",
                             detail=det[:400],
                         )
                     except Exception as e:  # noqa: BLE001
                         logger.warning("alignment exit: audit write failed: %s", e)
                     logger.info(
-                        "Alignment exit %s %s: %s — %s", act, symbol,
-                        alignment_verdict.status, alignment_verdict.reason,
+                        "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
+                        verdict.status, alignment_claimed, verdict.reason,
                     )
-                    if not alignment_verdict.exit_cleared:
-                        continue
-                    # Carry the chart's own words into the order reason so the
-                    # owner and the other seats read WHY, not just THAT.
-                    if alignment_verdict.owner_reason:
-                        action_item["reason"] = (
-                            f"{action_item.get('reason', '')} | "
-                            f"{alignment_verdict.owner_reason}"
-                        )[:2000]
+                    if alignment_claimed:
+                        alignment_verdict = verdict
+                        if not verdict.exit_cleared:
+                            continue
+                        # Carry the chart's own words into the order reason
+                        # so the owner and the other seats read WHY, not
+                        # just THAT.
+                        if verdict.owner_reason:
+                            action_item["reason"] = (
+                                f"{action_item.get('reason', '')} | "
+                                f"{verdict.owner_reason}"
+                            )[:2000]
 
                 # The ALIGNMENT EXIT above is the one non-news sale allowed
                 # past this band. The band STAYS for everything else: it is a

@@ -23,24 +23,32 @@ averages can exit on it. Neither waits for the other.
 It never exits on a price TARGET, never summarises the instrument's past
 into a statistic, and is never anchored to what the desk paid.
 
-WHY THIS DOES NOT REUSE `exit_guard.NOISE_BAND_ATR_MULTIPLE`
-------------------------------------------------------------
-The first attempt at this module (PR 837, closed on review) inherited that
-constant as its whole exit tolerance. It is the wrong number for this job,
-on the desk's own record. `config/number_ledger.yaml` classifies it
-`arbitrary`, states that it measures "how far an adverse move must travel
-FROM ENTRY", and records the 2026-09-26 research finding that every
-published analogue sits between roughly 2.8 and 3.5 ATR while this
-constant is 1.0. The ledger declined to move it to 3.0 for one stated
-reason: the published systems measure give-back from a RUNNING EXTREME,
-not excess over noise from ENTRY, so they were "the closest published
-analogue, not an exact fit".
+WHY THE TOLERANCE IS AN OWNER APPETITE DIAL, NOT A SOURCED NUMBER
+-----------------------------------------------------------------
+An earlier draft of this module claimed 3.0 was SOURCED to Wilder's
+Volatility System and Le Beau's Chandelier Exit. That claim was
+overstated, and it is withdrawn. Three things are wrong with it:
 
-That mismatch does not apply here. This module measures give-back from a
-RUNNING REFERENCE — a moving average or a structural level as it stands
-now — which is precisely the quantity those systems measure. The reason
-the ledger gave for leaving the entry-anchored constant alone is the
-reason a chart-referenced tolerance may be sourced to them directly.
+  1. The ledger gives TWO reasons for refusing to move the entry-anchored
+     noise band to 3.0, and the draft answered only one. The second
+     stands as written: "how readily the desk blocks a sale is owner
+     appetite". Reading a value off a published band does not convert an
+     appetite question into a research one.
+  2. Wilder and Le Beau measure give-back from a running EXTREME — the
+     highest high since entry. This module measures it from a MOVING
+     AVERAGE, which in any trend sits materially BELOW the extreme. The
+     same multiple off a lower reference is a different, looser stop, so
+     their calibration does not transfer.
+  3. Chandelier's 3.0 is calibrated on ATR(22). This module divides by
+     ATR(14). Even the unit differs.
+
+So: the published band (roughly 2.5-3.5 ATR across Wilder, Le Beau and
+their variants) is real and is recorded as CONTEXT for what order of
+magnitude is sane. The value 3.0 itself is the desk's appetite, left
+where it stands, and logged in `config/number_ledger.yaml` as arbitrary
+with the owner dial named. It is NOT reused from
+`exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and measures excess
+over noise FROM ENTRY — a different quantity from a different anchor.
 """
 
 from __future__ import annotations
@@ -57,23 +65,26 @@ __all__ = [
     "SMA_LADDER",
     "ChartMark",
     "check_alignment_exit",
+    "exponential_moving_average",
+    "moving_average",
     "simple_moving_average",
     "thesis_ma_period",
+    "thesis_ma_ref",
 ]
 
 
 #: Give-back below the last chart mark, in this name's own ATR, before the
 #: desk reads the move as over.
 #:
-#: SOURCED, not picked, and deliberately NOT `exit_guard`'s 1.0 (see the
-#: module note). Wilder's Volatility System sets its ARC at roughly
-#: 2.8-3.1 ATR (New Concepts in Technical Trading Systems, 1978); Chuck Le
-#: Beau's Chandelier Exit uses 3.0 x ATR as its published default, with 2.5
-#: quoted as a tight variant and 3.5-4.0 as loose. Both measure give-back
-#: from a RUNNING REFERENCE, which is what a chart mark is. 3.0 is the
-#: default of the named system and the centre of the published band; the
-#: band itself, not this module, is the appetite dial, and moving inside
-#: 2.5-3.5 is an owner setting rather than a new invention.
+#: AN OWNER APPETITE DIAL, recorded honestly as such — NOT sourced. See
+#: the module note: the published 2.5-3.5 ATR band (Wilder 1978; Le Beau's
+#: Chandelier) measures give-back from a running EXTREME on ATR(22), while
+#: this measures it from a MOVING AVERAGE on ATR(14), so the citation does
+#: not transfer and cannot be used to license the value. The band is kept
+#: only as context for the order of magnitude. 3.0 is where the desk sits
+#: until the owner moves it; tightening realises gains sooner and whipsaws
+#: more often. It is deliberately NOT `exit_guard`'s 1.0, which is
+#: anchored to ENTRY rather than to the chart.
 #:
 #: NO sqrt(sessions) widening is applied. That scaling belongs to the
 #: entry-anchored band, where the question is how long a position has had
@@ -134,6 +145,10 @@ class AlignmentExitCheck:
     #: which price decides a sale, and without this field the record of the
     #: sale would not say which average actually decided it.
     thesis_ma_period: int | None = None
+    #: "SMA" or "EMA" — WHICH KIND of average the thesis named, recorded
+    #: because the two are different prices and the thesis only ever named
+    #: one of them. "" when the thesis named no average.
+    thesis_ma_kind: str = ""
     #: Verbatim thesis text the period was parsed from, truncated. Pins the
     #: input so a later reword is visible as a difference.
     thesis_text: str = ""
@@ -163,23 +178,62 @@ def simple_moving_average(closes: list[float], period: int) -> float | None:
     return sum(vals[-period:]) / float(period)
 
 
-def thesis_ma_period(thesis_invalid_if: str | None) -> int | None:
-    """The average this position's OWN thesis names, if any.
+def exponential_moving_average(closes: list[float], period: int) -> float | None:
+    """Standard EMA of the last closes: alpha = 2/(period+1), seeded with the
+    simple mean of the first `period` values.
+
+    Exists because the thesis regex accepts "EMA50" and an EMA is NOT an
+    SMA. An earlier draft judged a thesis that named an EMA against an SMA
+    of the same period — a price the thesis never named, and in a trend a
+    materially different one. The desk either computes what the thesis
+    said or admits it cannot; it does not substitute.
+    """
+    if period <= 0:
+        return None
+    vals = [v for v in (_finite(c) for c in closes) if v is not None]
+    if len(vals) < period:
+        return None
+    alpha = 2.0 / (period + 1.0)
+    ema = sum(vals[:period]) / float(period)
+    for v in vals[period:]:
+        ema = alpha * v + (1.0 - alpha) * ema
+    return ema
+
+
+def moving_average(closes: list[float], period: int, kind: str) -> float | None:
+    """The average of the KIND the caller names: "EMA" or "SMA"."""
+    if (kind or "").upper() == "EMA":
+        return exponential_moving_average(closes, period)
+    return simple_moving_average(closes, period)
+
+
+def thesis_ma_ref(thesis_invalid_if: str | None) -> tuple[int, str] | None:
+    """The average this position's OWN thesis names: (period, "SMA"|"EMA").
 
     Same regex `exit_guard.check_thesis_invalid_if` reads, so the alignment
     exit and the invalidation check can never disagree about which average
-    a position is riding. See `AlignmentExitCheck.thesis_ma_period` for why
-    the answer is recorded with every verdict.
+    a position is riding. The KIND is read from the same match, because
+    "close below the EMA50" and "close below the SMA50" are different
+    prices and only one of them is the thesis.
     """
     m = _MA_REF_RE.search(thesis_invalid_if or "")
     if not m:
         return None
     period = int(m.group(1) or m.group(2))
-    return period if period in (20, 50, 200) else None
+    if period not in (20, 50, 200):
+        return None
+    return period, ("EMA" if "ema" in m.group(0).lower() else "SMA")
+
+
+def thesis_ma_period(thesis_invalid_if: str | None) -> int | None:
+    """The period of `thesis_ma_ref`, or None. See `thesis_ma_ref`."""
+    ref = thesis_ma_ref(thesis_invalid_if)
+    return ref[0] if ref else None
 
 
 def _sessions_since_mark_lost(
-    series: list[float], mark: ChartMark, period: int | None, *, is_short: bool
+    series: list[float], mark: ChartMark, ma: tuple[int, str] | None, *,
+    is_short: bool,
 ) -> int:
     """How many completed sessions price has been on the wrong side of this
     mark.
@@ -198,10 +252,10 @@ def _sessions_since_mark_lost(
     n = len(series)
     sessions = 0
     for i in range(n - 1, -1, -1):
-        if period is None:
+        if ma is None:
             ref: float | None = mark.price
         else:
-            ref = simple_moving_average(series[: i + 1], period)
+            ref = moving_average(series[: i + 1], ma[0], ma[1])
             if ref is None:
                 break  # series too short to know; stop counting rather than guess
         close = series[i]
@@ -234,34 +288,40 @@ def check_alignment_exit(
     gate; None simply means the chart offered no structural mark.
     """
     a = _finite(atr)
-    fast = thesis_ma_period(thesis_invalid_if)
+    ref = thesis_ma_ref(thesis_invalid_if)
+    fast = ref[0] if ref else None
+    kind = ref[1] if ref else ""
     thesis_text = (thesis_invalid_if or "")[:400]
     series = [v for v in (_finite(c) for c in closes) if v is not None]
     if not series:
         return AlignmentExitCheck(
             "UNPARSEABLE", CODE_NO_CLOSES, (), None, None, None,
             "no completed closes to read the chart from",
-            thesis_ma_period=fast, thesis_text=thesis_text,
+            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         )
     last = series[-1]
 
     # --- the marks the chart actually presents --------------------------
     marks: list[ChartMark] = []
-    mark_periods: dict[str, int | None] = {}
+    mark_periods: dict[str, tuple[int, str] | None] = {}
     lvl = _finite(broken_structural_level)
     if lvl is not None:
         m = ChartMark(lvl, "confirmed-broken structural level")
         marks.append(m)
         mark_periods[m.source] = None
     if fast is not None:
-        for period in (fast, SMA_LADDER.get(fast)):
+        # The thesis mark is computed as the KIND THE THESIS NAMED. The
+        # ladder mark is the next longer average the desk itself computes
+        # upstream, which is a simple average, and is labelled as one — so
+        # no mark is ever a price the chart was not asked for.
+        for period, k in ((fast, kind), (SMA_LADDER.get(fast), "SMA")):
             if period is None:
                 continue
-            v = simple_moving_average(series, period)
+            v = moving_average(series, period, k)
             if v is not None:
-                m = ChartMark(v, f"MA{period} (thesis rides the MA{fast})")
+                m = ChartMark(v, f"{k}{period} (thesis rides the {kind}{fast})")
                 marks.append(m)
-                mark_periods[m.source] = period
+                mark_periods[m.source] = (period, k)
 
     if not marks:
         return AlignmentExitCheck(
@@ -269,14 +329,14 @@ def check_alignment_exit(
             "the chart presents no mark for this position — no confirmed "
             "structural break and no thesis-named average — so there is "
             "nothing to read; refusing to invent one",
-            thesis_ma_period=fast, thesis_text=thesis_text,
+            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         )
     if a is None or a <= 0:
         return AlignmentExitCheck(
             "UNPARSEABLE", CODE_NO_ATR, tuple(marks), None, None, None,
             "no ATR for this name — the tolerance that judges a give-back "
             "cannot be read off the instrument",
-            thesis_ma_period=fast, thesis_text=thesis_text,
+            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         )
 
     breached = [m for m in marks if (last > m.price if is_short else last < m.price)]
@@ -288,7 +348,7 @@ def check_alignment_exit(
             "HOLD", CODE_HOLD, tuple(marks), None, None, None,
             f"close {last:.4f} is still holding against {held.price:.4f} "
             f"[{held.source}] — the move is not over",
-            thesis_ma_period=fast, thesis_text=thesis_text,
+            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         )
 
     # THE LAST THING HOLDING THE TREND UP: of the marks price has given up,
@@ -314,7 +374,7 @@ def check_alignment_exit(
     if breach > band:
         return AlignmentExitCheck(
             "EXIT", CODE_EXIT, tuple(marks), last_mark, breach_atrs, band_atrs,
-            detail, thesis_ma_period=fast, thesis_text=thesis_text,
+            detail, thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
             sessions_since_mark_lost=sessions,
             owner_reason=(
                 f"Trend alignment over: the last line this position was "
@@ -331,6 +391,6 @@ def check_alignment_exit(
         "HOLD", CODE_HOLD, tuple(marks), last_mark, breach_atrs, band_atrs,
         f"holding — the slip through the last mark is inside the give-back "
         f"tolerance. {detail}",
-        thesis_ma_period=fast, thesis_text=thesis_text,
+        thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         sessions_since_mark_lost=sessions,
     )

@@ -859,3 +859,21 @@ changes:
       changes in 400 draws that nudged every correlation by up to 0.03. Clustering
       stays transitive on purpose (a theme transmits by chaining) and
       remains rationing only -- the desk still never buys to diversify.
+  - delta: +1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, the ALIGNMENT EXIT: +1 for
+      `src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` (3.0),
+      the give-back below the last chart mark that reads a move as over.
+      It enters as ARBITRARY on purpose, correcting a draft of the same
+      branch that entered it as `sourced` to Wilder's Volatility System
+      and Le Beau's Chandelier Exit. That citation does not hold: both
+      measure give-back from a running EXTREME (highest high since
+      entry) while this measures it from a MOVING AVERAGE, which sits
+      materially below an extreme, and Chandelier's 3.0 is calibrated on
+      ATR(22) while this divides by ATR(14). The `NOISE_BAND_ATR_MULTIPLE`
+      note also gives a second, independent reason the draft never
+      answered -- how readily the desk blocks a sale is owner appetite,
+      which no published band can settle. The value is left exactly where
+      it stands; only the honesty of its label changes. Overstating a
+      finding is the same failure as understating one.
