@@ -967,6 +967,32 @@ def _record_alert_attempt(
             return -1
 
 
+def _durable_alert_surface_ok(latch_path: Path | None) -> bool:
+    """True when a mandatory alert can be DURABLY RECORDED and SURFACED.
+
+    The mandatory-alert requirement is that an operator can always find out
+    that paid analysis was suspended -- not that one particular transport is
+    switched on.  The durable JSON latch sidecar written by
+    `mark_unavailable` (and folded with delivery attempts by
+    `_record_alert_attempt`) is that record, and it is already surfaced to
+    the operator by the API/dashboard: `src/api/db_reads.py`
+    `get_llm_circuit_health()` reads this very file and `routes_live.py`
+    reports it as `decision_path_status=degraded_cost_circuit_unavailable`.
+
+    So the precondition is "this sidecar can be written", never "Telegram is
+    enabled".  Muting a notification channel must not be able to suspend the
+    desk; having nowhere at all to record a mandatory alert still must.
+    """
+
+    if latch_path is None:
+        return False
+    try:
+        parent = latch_path.parent
+        return parent.is_dir() and os.access(parent, os.W_OK)
+    except OSError:
+        return False
+
+
 class UnavailableLLMCostCircuit:
     """Fail-closed sentinel when persistent breaker infrastructure is broken.
 
@@ -1224,14 +1250,27 @@ class LLMCostCircuitBreaker:
         self._sync_emergency_latch()
         if self._unavailable_sentinel is not None:
             return
-        if (getattr(self.config, "require_telegram_alerts", True) is True
-                and getattr(self.notifier, "enabled", True) is not True):
-            self.mark_unavailable(
-                RuntimeError(
-                    "mandatory cost-circuit Telegram alerts are not configured/enabled"
+        if getattr(self.config, "require_telegram_alerts", True) is True:
+            transport_enabled = getattr(self.notifier, "enabled", True) is True
+            durable_ok = _durable_alert_surface_ok(self._emergency_latch_path)
+            if not transport_enabled and not durable_ok:
+                # Genuine case only: nowhere to deliver AND nowhere to record.
+                self.mark_unavailable(
+                    RuntimeError(
+                        "mandatory cost-circuit alerts can be neither delivered "
+                        "nor durably recorded: the notification transport is "
+                        "disabled and no durable latch record can be written"
+                    )
                 )
-            )
-            return
+                return
+            if not transport_enabled:
+                logger.warning(
+                    "Cost-circuit notification transport is disabled; mandatory "
+                    "alerts will be recorded durably at %s and surfaced through "
+                    "the API/dashboard decision-path health instead. Paid "
+                    "analysis is NOT suspended for this reason.",
+                    self._emergency_latch_path,
+                )
         try:
             self._run_with_infra_retry(
                 self._initialize, agent_name="circuit_startup",

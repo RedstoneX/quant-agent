@@ -3344,7 +3344,7 @@ def test_smart_money_cache_hit_reports_zero_cost_not_unknown():
 
 
 # ============================================================================
-# Item 208 (2026-09-30): a self-clearing fault is ONE episode, not two pages
+# Item 211 (2026-09-30): a self-clearing fault is ONE episode, not two pages
 # ============================================================================
 
 
@@ -3461,3 +3461,41 @@ def test_a_trigger_needing_an_operator_is_never_held(tmp_path, monkeypatch):
             conn, {"trigger_code": "failed_call_unknown_cost",
                    "suspended_at": "2000-01-01 00:00:00"},
         ) is False
+
+
+class _MutedNotifier(_Notifier):
+    """A notification transport the operator deliberately switched off."""
+
+    enabled = False
+
+    def send(self, message: str) -> bool:
+        self.messages.append(message)
+        return False
+
+
+def test_muted_transport_does_not_suspend_paid_analysis(tmp_path):
+    """Muting alerts must never halt the desk while the durable record works.
+
+    Regression: TELEGRAM_DISABLED took the whole desk offline because the
+    circuit's precondition was "Telegram is enabled" rather than "a mandatory
+    alert is durably recorded and surfaced".
+    """
+
+    db_path = tmp_path / "qamc.db"
+    circuit = LLMCostCircuitBreaker(str(db_path), _config(), notifier=_MutedNotifier())
+
+    # No suspension, and the paid boundary is usable.
+    assert circuit.status().get("suspended") is not True
+    circuit.require_paid_analysis("analysis")
+    # The durable, dashboard-visible record surface is writable.
+    assert circuit._emergency_latch_path is not None
+    assert circuit._emergency_latch_path.exists() is False
+
+
+def test_no_durable_record_surface_still_latches(tmp_path):
+    """The genuine case keeps failing closed: nowhere to deliver OR record."""
+
+    circuit = LLMCostCircuitBreaker(":memory:", _config(), notifier=_MutedNotifier())
+
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.require_paid_analysis("analysis")

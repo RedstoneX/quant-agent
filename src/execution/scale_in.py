@@ -125,11 +125,6 @@ def held_signed_qty(positions: list | None, symbol: str) -> float:
     return 0.0
 
 
-def short_add_is_blocked(positions: list | None, symbol: str) -> bool:
-    """True when SHORT would add to an existing short. Item 73 must land first."""
-    return held_signed_qty(positions, symbol) < 0
-
-
 def most_protective_long_stop(prices: list[float]) -> float:
     """Tightest long stop: highest trigger below price. 0 if none usable."""
     usable = [float(p) for p in prices if isinstance(p, (int, float)) and p > 0]
@@ -706,6 +701,21 @@ def restore_after_failed_add(
         "rearm; OWNER must be alerted",
         symbol, prep.wal_row_id,
     )
+    alert_rearm_failed(
+        symbol=symbol,
+        qty=abs(float(prep.held_qty_before or 0)),
+        stop_price=(
+            most_protective_short_stop if prep.side == "buy"
+            else most_protective_long_stop
+        )([float(spec.get("stop_price") or 0) for spec in (prep.specs or [])]),
+        order_id=None,
+        detail=(
+            "The add itself never landed, so the position is the size it "
+            "already was — but the protective sell that was cancelled to "
+            "make room for it could not be put back."
+        ),
+        db=db,
+    )
 
 
 def cover_qty_for_rearm(
@@ -796,20 +806,6 @@ def pending_protection_symbols(db: Any) -> set[str]:
     except Exception:  # noqa: BLE001
         return set()
     return {str(r["symbol"]) for r in (rows or []) if r.get("symbol")}
-
-
-def scale_in_symbols_to_skip(broker: Any, db: Any) -> set[str]:
-    """Scale-in symbols the watchdog/repair must not touch right now."""
-    symbols = pending_scale_in_symbols(db)
-    if not symbols:
-        return set()
-    if trading_session_lock_held():
-        return set(symbols)
-    skip: set[str] = set()
-    for symbol in symbols:
-        if list_open_entry_ids(broker, symbol):
-            skip.add(symbol)
-    return skip
 
 
 def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
@@ -918,6 +914,16 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
             "scale-in drain: rearm FAILED for %s qty=%.4f stop=$%.2f",
             symbol, held, stop_price,
         )
+        alert_rearm_failed(
+            symbol=symbol, qty=held, stop_price=stop_price,
+            order_id=(entry_ids[0] if entry_ids else None),
+            detail=(
+                "Crash-recovery drain could not place the protective "
+                f"{stop_side} over the held {held:.4f}. The WAL row is kept "
+                "so the next drain and the coverage sweep retry."
+            ),
+            db=db,
+        )
         return False
     uncovered = 0.0
     if isinstance(placed, dict):
@@ -928,9 +934,78 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
     return uncovered <= 0
 
 
+#: Agent name on the durable `specialist_evidence` row this alert writes.
+#: The API/dashboard evidence surface already reads that table, so the
+#: record survives Telegram being muted (it is, as of 2026-09-30).
+REARM_FAILURE_AGENT_NAME = "scale_in_rearm_failure"
+
+#: Claim key for the once-per-symbol-per-trading-day page. One naked
+#: position must not page 44 times, which is what muted the channel.
+REARM_FAILURE_ALERT_KIND = "scale_in_rearm_failed"
+
+
+def record_rearm_failure(
+    db: Any, *, symbol: str, qty: float, stop_price: float,
+    order_id: str | None, detail: str = "", run_id: str | None = None,
+) -> bool:
+    """Durable record that a post-add protective stop did not go back on.
+
+    Written on EVERY occurrence (a record is not a page), into the existing
+    `specialist_evidence` table the health/journal surface already reads, so
+    the fault is visible with the alert channel muted. Never raises: a
+    record is never trading authority.
+    """
+    if db is None:
+        return False
+    try:
+        db.insert_specialist_evidence(
+            run_id=str(run_id or ""),
+            agent_name=REARM_FAILURE_AGENT_NAME,
+            kind="pipeline_event",
+            scope="symbol",
+            symbol=str(symbol).upper() or None,
+            evidence_json=json.dumps(
+                {
+                    "event": "scale_in_rearm_failed",
+                    "symbol": str(symbol).upper(),
+                    "qty": qty,
+                    "stop_price": stop_price,
+                    "entry_order_id": order_id,
+                    "detail": detail,
+                    "position_protected": False,
+                },
+                sort_keys=True, default=str,
+            ),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "scale-in rearm-failure record for %s could not be written: %s",
+            symbol, exc,
+        )
+        return False
+
+
 def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
-                       order_id: str | None, detail: str = "") -> None:
-    """Fail-closed owner page when the post-add protective sell did not land."""
+                       order_id: str | None, detail: str = "",
+                       db: Any = None, run_id: str | None = None) -> None:
+    """Fail-closed owner page when the post-add protective sell did not land.
+
+    Two channels, deliberately different cadences: the durable record goes
+    down every time, the Telegram page at most once per symbol per trading
+    day.
+    """
+    record_rearm_failure(
+        db, symbol=symbol, qty=qty, stop_price=stop_price,
+        order_id=order_id, detail=detail, run_id=run_id,
+    )
+    try:
+        from src.coverage_watchdog import claim_typed_alert
+        if not claim_typed_alert(REARM_FAILURE_ALERT_KIND, [symbol]):
+            return
+    except Exception as exc:  # noqa: BLE001 — never swallow the page on a
+        # state-file fault; err towards telling the owner twice.
+        logger.warning("rearm-failure alert claim failed (%s); sending anyway", exc)
     body = (
         "STOP NOT REARMED AFTER A SCALE-IN\n"
         f"{symbol}: the desk cancelled the resting protective sell so it "

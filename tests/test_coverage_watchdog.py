@@ -1039,27 +1039,124 @@ def test_item193_summary_and_log_line_name_the_unguarded_position():
     assert status.should_alert_unguarded is True
 
 
+# ---------------------------------------------------------------------------
+# board item 193 — the session-lock skip is BOUNDED by measured history
+# ---------------------------------------------------------------------------
+
+class _EntryBroker:
+    """Broker double whose only job is to say what entry orders are working."""
+
+    def __init__(self, working):
+        self.working = list(working)
+
+    def get_orders(self, *a, **k):  # pragma: no cover - shape varies
+        return list(self.working)
+
+
+def _lock_held(monkeypatch, held):
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "trading_session_lock_held", lambda: held)
+
+
+def test_item193_lock_held_within_measured_bound_still_skips(tmp_path, monkeypatch):
+    """A normal live window is untouched: the skip is the correct behaviour."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 0, 5, tzinfo=timezone.utc)  # 5s < 9s measured
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
+    tmp_path, monkeypatch,
+):
+    """Past every window ever measured, the lock is no longer reason to look
+    away: with no entry order working there is nothing to collide with, so the
+    position becomes repairable instead of staying naked indefinitely."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)  # 300s > 9s
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == set()
+
+
+def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
+    tmp_path, monkeypatch,
+):
+    """The collision is real — a stop would be blocked — so the skip stands."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: ["entry-1"])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker(["entry-1"]), db, now=now) == {"AAPL"}
+
+
+def test_item193_no_measured_history_leaves_the_old_behaviour_exactly(
+    tmp_path, monkeypatch,
+):
+    """With nothing measured there is no bound, so nothing is called overdue
+    and the lock-held skip behaves exactly as it did before."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")  # no windows
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_unreadable_write_time_is_never_treated_as_overdue(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="not-a-timestamp", windows=[9.0])
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
 # ============================================================================
-# Item 208 (2026-09-30): the generic per-TYPE alert claim
+# Item 211 (2026-09-30): the generic per-TYPE alert claim still SPEAKS UP
 # ============================================================================
 
 
-def test_typed_alert_claim_is_per_type_and_per_key(tmp_path):
+def test_typed_alert_claim_is_per_type_and_records_what_it_held_back(tmp_path):
+    """The owner-alert path must not get quieter than it already is.
+
+    A first finding of any type still returns its keys, so the caller still
+    pages. Only an exact repeat of the SAME finding on the SAME ET day is
+    held, and a different alert type is never silenced by a noisy one --
+    that is the failure a global throttle would introduce. What was held
+    back is written down rather than dropped.
+    """
     from src.coverage_watchdog import claim_typed_alert, load_state
 
     path = tmp_path / "state.json"
 
-    assert claim_typed_alert("deploy_drift", ["main@abc"], path=path) == ["main@abc"]
+    # It fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
     # The same finding again is one finding, not two pages.
-    assert claim_typed_alert("deploy_drift", ["main@abc"], path=path) == []
-    # A different deployed SHA is a different finding.
-    assert claim_typed_alert("deploy_drift", ["main@def"], path=path) == ["main@def"]
-    # A DIFFERENT alert type must never be silenced by a noisy one -- that is
-    # the failure a global throttle would introduce.
-    assert claim_typed_alert("pricing_cache", ["main@abc"], path=path) == ["main@abc"]
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == []
+    # A different deployed SHA is a different finding, and it fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@DEF"], path=path) == ["MAIN@DEF"]
+    # A DIFFERENT alert type is never silenced by a noisy one.
+    assert claim_typed_alert("pricing_cache", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
 
     # Nothing was silently dropped.
-    state = load_state(path)
-    suppressed = state["suppressed_alerts"]["deploy_drift"]
+    suppressed = load_state(path)["suppressed_alerts"]["deploy_drift"]
     assert suppressed["count"] == 1
-    assert suppressed["events"][-1]["key"] == "main@abc"
+    assert suppressed["events"][-1]["key"] == "MAIN@ABC"

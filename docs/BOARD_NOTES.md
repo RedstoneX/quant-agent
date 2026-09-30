@@ -118,7 +118,7 @@ this line, one heading per item.
 
 **Moved from WORK.md (2026-09-24) —** Recommendation: `docs/BOARD_NOTES.md` ("item 17").
 
-## item 18
+## item 18 — RETIRED 2026-09-30, the prompt-bulk defect it was opened for is resolved and re-measured; its three unrelated residuals moved to item 208
 
 **Plain language —** The AI that picks the trades reads a long briefing built from every other seat's work. Two separate things were wrong with it. The first was bulk: it opened with a wall of raw earnings-report text before ever reaching the list of stocks worth buying. That is fixed — the earnings step now hands over a short conclusion and keeps the full detail on file. The second was subtler and is fixed as of today: one section of the briefing told the AI to check the economics seat's reasoning for mistakes in logic, but there was no box anywhere in its answer sheet where it could report finding one. It was being asked to do a job and given nowhere to write the answer.
 **Example —** Before the first fix, of about 200,000 characters read each session, 70% was raw earnings text and the buy-worthy list was buried in under half a percent of it. That 70% was re-counted from the real briefing and was exactly right. It is now about a fifth of a briefing that is well under half the original size — re-counted again today, from scratch, before anything was changed, so the figure is this desk's own and not a quote.
@@ -135,6 +135,14 @@ this line, one heading per item.
 **Example —** Five runs with stock names hidden and five with them shown produced answers identical to four decimal places; a later batch of five runs failed the same check four times out of five, always flagging the same two stock names.
 
 **Moved from WORK.md (2026-09-24) —** (a) Use it as a test instrument — any change in its answer proves a pipeline change reached the model. (b) Stop paying for repeats where the answer does not vary; measure first. (c) Subtract the stable famous-name bias arithmetically in the ratified weighted composite (three prompt-wording fixes measured no-change).
+
+## item 208
+
+**Plain language —** Item 18 was about the trade-picking AI's briefing being stuffed with raw earnings text. That is fixed and re-counted. Three odds and ends were still filed under it, none of which have anything to do with earnings text, and leaving them there was holding up a separate piece of work. They now live here on their own.
+
+**What the three are —** (a) Whether two more pieces of evidence, reward-to-risk and net evidence, should be folded into the scoring system that ranks ideas; this changes what the ranking seat decides, so it needs a recorded decision rather than a quiet code change. (b) A spending cap set on the AI-provider account itself, which lives in that provider's console and not in our code, so it can only be closed by someone looking at the console. (c) Reordering the buy-eligibility section of the briefing, which cannot be judged without paying for a benchmark run the owner has forbidden unless he asks for it — so it stays untouched.
+
+**Why it was split (2026-09-30) —** Item 19 carried a "do not start before item 18" blocker. The only part of item 18 that item 19 ever depended on was the briefing-bulk work, which merged on 2026-09-04 and was re-measured on 2026-09-30 (earnings share 18.6%, not the original 70%). The three residuals above share no subject with item 19, so the blocker was removed and item 18 retired.
 
 ## item 20
 
@@ -239,6 +247,8 @@ agent has widened the rule to work around it.
 **Technical detail, moved from `docs/WORK.md` 2026-09-24 —** The mandate is declared in `evidence_gate.BLOCKING_SEATS` and may only be widened by the owner's ruling; every other seat's lost answer is still recorded, logged, and reaches the unsuppressible data-quality alert, but no longer halts. Two things shipped with it: (a) `expired` is no longer classified as LOST — it means the desk holds a good answer and knows a newer one exists, which is neither absence nor a lost answer, and is still counted as degraded; (b) every decision now discloses its own evidence freshness — how many seats were read on this tick versus carried from earlier versus absent — durably in the decision's record and in the owner's message, with no threshold invented. Also open, surfaced by the mandate change and not acted on: on the intraday scan the technical seat's status is hard-coded to `partial`/`ok` (`src/pipeline.py`, the intra `data_status` literal), so the only blocking seat can never be lost there — a consequence of the mandate, not a defect, needing the owner's ruling rather than an agent's second blocking seat.
 
 **Moved from WORK.md (2026-09-24) —** The categorical half is live on morning and the intraday scan since 2026-09-14. **MANDATE CHANGE, owner, 2026-09-18: "Only technical analysis can stop the desk"** — declared in `evidence_gate.BLOCKING_SEATS`, every other seat advisory. **Still open and still his:** the counting half — no published source gives a minimum count of usable reads, and fitting one to the desk's history is forbidden. Settles with his ratified number, or a ruling that partial coverage never gates. Never ship a placeholder. **Also open, surfaced by the mandate change and NOT acted on:** the intraday scan's technical-seat status is hard-coded, so the only blocking seat can never be lost there — needs his ruling, not an agent's second blocking seat.
+
+**Re-verified against live code, 2026-09-30 — nothing here has rotted, and no agent may close either box.** Both halves were checked on `origin/main`, not from the note above. The CATEGORICAL half is live and firing: `TradingPipeline._evidence_gate_skip` calls `evidence_gate.evaluate` before the paid decision step on morning and on the intraday scan, and the production log line "EVIDENCE GATE — decision skipped: N blocking seat(s) were asked and their answers were unusable" is that call and no other mechanism. The COUNTING half exists as DATA and as REPORTING only: per-seat freshness (`evidence_gate.freshness`, read-this-tick vs carried vs absent) is computed, attached to every decision and named to the owner through the feed and the alerts, and per-symbol coverage is counted in `RunContext.tech_bars_coverage` and `TechAnalysisResult.levels_coverage`. NOTHING COMPARES ANY OF THOSE COUNTS AGAINST A BAR, deliberately — `partial` classifies as an answer that ARRIVED, so partial coverage cannot refuse a decision today. So the state is "the counting exists, nothing acts on it", which is exactly what the two open boxes say. The unsourceable number, named precisely so it is not re-derived a third time: the minimum fraction of a seat's own intended scope that must come back usable before that seat's answer may be leaned on (the "40 of 65 companies" case). Nothing published gives it, the desk's own history cannot supply it without fitting, and it is a risk-appetite dial. Deliberately NOT done in this pass: no threshold invented, no seat added to `BLOCKING_SEATS`, and the existing refusal left exactly as strong as it was.
 
 ## item 55
 
@@ -378,6 +388,8 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Split out of item 99 on 2026-09-30:** the prompt-only numbers and unsourced market claims (old 99(a)), the render-or-pin requirement (old 99(g)) and the (f) residue belong to item 107(b)/(c), which already tracks them; the PM/RM/position-reviewer dead-weight prose (old 99(c)) belongs to item 109(c). Item 99 keeps the analyst seats' own prompts and their enforcement.
 
+**Analyst-seat falsifier slot BUILT 2026-09-30 —** The four seats that were never asked what would prove their call wrong (news, earnings, macro, smart money) now state it themselves at the moment they make the call: News, Earnings and Macro per nomination, Smart Money per finding, using the same field name and the same plain-string shape the technical seat already uses, so the existing exit checker reads all five unchanged. Honest limit, stated rather than papered over: that checker can only evaluate a price level or a 20/50/200-day average, so a macro or news condition phrased in words comes back as UNEVALUATED with a reason — it is never counted as passed. A seat that names no condition leaves the slot empty; the gap is recorded as a gap on the nomination event and nothing downstream substitutes a template. A neutral smart-money stance keeps the slot empty, the same rule the technical sheet already holds. A test now pins all five seats, so a seat that silently stops being asked fails the build.
+
 ## item 112 — RETIRED 2026-09-30
 
 **Verified against live code, not rebuilt: both halves already shipped.** `_record_delever_shortfall` (`src/pipeline.py`) has written the durable `specialist_evidence` row (`stage='gross_delever'`) since 2026-09-19. `_alert_owner_delever_incomplete` (`src/pipeline.py`) already pages the owner via a standalone `send_owner_alert`, edge-triggered on the transition into still-over-ceiling, shipped 2026-09-25 (#697, "Item 112: promote `_alert_owner_delever_incomplete` from a one-line session bullet to a standalone `send_owner_alert`"). WORK.md's "the alert decision stays open" clause was stale — the alert was built the same week the clause was written and the item text was never updated. `tests/test_gross_exposure_ladder.py` (11 relevant cases) pass on main. No code change made; item removed from the open queue.
@@ -407,9 +419,9 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Moved from WORK.md (2026-09-24) —** Settles with a before/after benchmark of whether the PM uses `reasoning_chain.macro_audit`, which needs the owner's go. Do NOT reopen as a size problem.
 
-## item 77
+## item 77 — RETIRED 2026-09-30, bare pointer at the model-seat decision line
 
-**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15.
+**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15. **Retired 2026-09-30:** the board item was a bare pointer with no criteria of its own; its only criterion was closing with the `DECIDE BY 2026-10-31` model-seat line, which now names it as absorbed and keeps the owner ruling that nobody proposes the run. Items 17, 76 and 78 were checked the same day and stay open: 17 is a deferred owner decision with no backup channel built, 76 is blocked on a paid benchmark with its own criteria, 78 still has the live temporary isolate in the pipeline.
 
 ## item 81 — RETIRED 2026-09-24
 
@@ -444,7 +456,7 @@ Why option 1 (pay once, label it partial) and not the other three:
 
 What shipped, and what the gap actually was. The desk already named the holes on the INPUT side (`MacroCoverage.describe()` in the economist's own prompt) and already raised the operator's degraded banner (`data_status["macro"] = "partial"`). It also already refused to pay twice: `"partial"` maps to `CATEGORY_REPORTED` in `src/evidence_gate.py`, never into `HEALABLE_CATEGORIES`, so the one-paid-retry seat heal cannot buy a second opinion on the same holes — that is now pinned by a test rather than left as an accident of the table. The real gap was the OUTPUT side: the verdict outlives the run and carried no trace. It is persisted by `MacroStore.save_last_state` (an explicit key whitelist, which silently dropped anything not listed), read back by midday/close/intra as `carried_from_morning` and by later days as `remembered`, rendered into the PM's sheet and the 7-day regime trajectory, and sent to the owner as the `📊 Market:` line. A 7/15 read looked identical to a 15/15 read on every one of them. `MacroCoverage.verdict_stamp()` now stamps `coverage_state`/`coverage_note` onto `MacroAnalysis` straight after validation — from the deterministic fetch record, never from the model's own self-assessment — and the stamp travels through all of those surfaces. `unknown` is the default and is deliberately not a claim in either direction, so pre-existing snapshots are neither laundered into "complete" nor given a caveat nothing supports.
 
-## item 147
+## item 147 — RETIRED 2026-09-30
 
 **Moved from WORK.md (2026-09-24) —** An inexact day blocks the quota rearm, so a provider omitting usage costs budget never spent.
 
@@ -456,15 +468,11 @@ The real defect that remained is the day seeder, not `complete_call`: `_seed_day
 
 Still open and unchanged on purpose: a success whose provider request DID happen and returned no telemetry. No rate source exists to charge it at, so it keeps booking unknown and latching. Charging it anything invented would be the reservation layer under a new name, which item 14 deleted for cause.
 
-## item 152 — RETIRED 2026-09-30, both halves already shipped (#538 technical, #742/#695 news-seat salvage)
+Retired from the queue 2026-09-30: the filed premise (a full reservation eating budget on an untelemetered success) never existed in the data, and the only real defect it uncovered (the day seeder latching legacy_unknown_cost on a proven-zero cache hit) shipped 2026-09-26 per item 14's cost_circuit.py fix. What remains — a success whose provider request truly happened with no usable cost or token telemetry — has zero measured occurrences across the full agent_logs history, so there is no defect left to build against; it stays a documented edge case above, not a queue item.
 
-**Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19).
+## item 203
 
-**News-seat LOSS closed 2026-09-26; the RATE is what keeps this item open.** Re-measured against the retained production logs before building: 7 of the item's 11 news-seat failures still reproduce (2026-08-21..09-02; the other 4 sat in rotations that have aged out). All 7 are schema-validation failures and none are the whole-answer non-JSON case — 5 are the single `market_sentiment` field carrying "mixed" (x4) or "mixed-to-bearish" (x1), 2 are `macro_narrative` + `pm_briefing` both missing. This corrected #695's conclusion that there was nothing salvageable: #695 read the three retained forensic dumps, and those only capture the non-JSON path. What shipped: an unreadable top-level field now costs the seat a paid re-ask FIRST, and only if the re-ask is unreadable too is the field dropped so the rest of the report survives; the dropped value is never coerced to "neutral" and renders as an explicit ABSENT marker in every prompt and on the dashboard; the run's news status becomes `field_unreadable`, which counts as degraded; an unsalvageable answer files one queryable `analysis_drop` row per affected stock with its reason.
-
-**Why it is NOT closed.** The DONE WHEN asks for the failure RATE brought down or shown to recover cleanly on retry, and neither is established. The seat can still emit "mixed" — nothing prevents it at source. The technical seat's cure (item 157, PR #568) works because its answer became a wrapper object with no free-form field and so qualifies for `strict: true`; the news answer cannot, because `stock_news` is a ticker-keyed free-form map, which strict mode cannot express (the 2026-09-14 rejection recorded in `_response_format_for`, `src/agents/base.py`). Curing it at source therefore means reshaping the news answer and every consumer of it, which is a separate decision. Note also that the last news-seat parse failure in the retained logs is 2026-09-02 — 24 days and two subsequent fixes before this pass — so there is no live bleed here; the salvage was built on reproducible history, not on a recurring symptom.
-
-**Retired 2026-09-30 — both halves are done within this item's own scope.** Technical half settled by #538 (2026-09-19). News-seat half: the salvage that closed the LOSS (#742/#695) is live in `src/agents/news_analyst.py` (`_drop_invalid_market_sentiment`) and covered by `tests/test_news.py` and `tests/test_pipeline_stages.py` — verified against current code before retiring, not assumed. The residual RATE question this note previously kept the item open for requires reshaping the news answer to a strict schema at the source, which is not a salvage fix and is already its own filed line, item 157 — carrying it here too would just duplicate that scope. Nothing here was rebuilt; nothing new was found broken.
+Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
 ## item 157
 
@@ -493,6 +501,16 @@ The calendar had already been given item 187's fair-share split, and it was **no
 **Fixed by moving the wire off the trading path**, not by widening the deadline and not by dropping releases from `MACRO_RELEASES`. Both of those were considered and refused explicitly: the pre-open prefetch already times the same class of work at 0.4-1.9 s per call under no pressure, so the ceiling was never the binding constraint, and every release in the list is a single-day volatility event the desk is supposed to see coming. `ReleaseScheduleCache` stores each release's published forward dates on disk; only the new `prefetch_release_schedules()` writes it, run from the existing `quant-agent-macro-prefetch` job (08:45 and 18:30 ET weekdays) at the SAME `total_fetch_deadline_s` the trading path uses — a prefetch needing a bigger ceiling than the thing it replaces would be the widened timeout this item exists to refuse.
 
 Honesty contract, unchanged and pinned by tests: a cached answer is reported as cached with its age in the coverage prose the seat reads, a cache entry whose query window cannot reach the horizon asked about is a miss rather than a silent "nothing scheduled", an exhausted schedule is a miss, and a release that neither the cache nor the wire could answer stays a named failure. No new threshold was introduced — the age test reuses `FOMCCalendar`'s existing `cache_ttl_days` on the same class of data, and the coverage test reuses the existing `RELEASE_SCHEDULE_LOOKAHEAD_DAYS`.
+
+**MEASURED 2026-09-30 against the production database (`agent_logs`, 2026-08-14 to 2026-09-30) — the quality half cannot be answered from the record, and that is the finding.**
+
+Exposure at the three decision seats: the free model has produced exactly THREE answers there in the whole history — portfolio manager 1 (2026-09-30 14:47, tier-3 Google-direct after the HTTP 402), risk manager 1 (same run), position reviewer 1 (2026-09-21, the OpenRouter-served copy). All three parsed as JSON, all three carried the seat's reasoning chain, the portfolio-manager one carried a falsifier; none was truncated (`finish_reason` = `stop`). Three answers is an existence proof, not a rate, and no honest usable-rate can be quoted from it [measured].
+
+Why a rate cannot be computed for ANY model, free or paid: `agent_logs` records the responding model, but nothing records whether the seat ACCEPTED that answer. The only usability-shaped `status` in the whole table is the risk manager's `agent_failure`/`ok` pair (17 rows); every other row is `success`, which means the provider call returned, not that the seat could use the reply. The distortion is visible: 15 of 15 portfolio-manager rows and 19 of 55 risk-manager rows are stored as `success` while their `full_response` is not JSON at all, so the record cannot separate "the seat refused this" from "this seat stores prose" [measured]. A seat that rejects an answer and refuses leaves no row tying that rejection to the model that caused it.
+
+So the second DONE WHEN box cannot be closed by reading the record, and the benchmark route is closed too (the owner has ruled out paid credits while the board is full). The fix is the recording: every decision seat must persist, beside the model that answered, whether its answer passed the seat's own acceptance gate and, when it did not, why — then the rate falls out of the database on the next total-OpenRouter outage instead of needing a paid benchmark. Until that exists the desk is running its decision seats on an unmeasured model as a matter of course, and the true state is "unknown", not "degraded".
+
+
 
 ## item 190
 
@@ -598,6 +616,35 @@ by this broker on a fractional order (42210000), and scale-in adds are routinely
 fractional. The window is a property of the broker's order model, not of the
 desk's sequencing, so the remaining work is detection and bounding, not removal.
 
+**2026-09-30 — the lock-held skip is now BOUNDED, which is the only part of
+this that was ever removable.** The coverage sweep's skip had two arms. The
+crash arm was already safe: with no session lock it skips a symbol only while a
+working entry order still rests, so a dead session's naked position is repaired.
+The session-lock arm was not: while the wrapper's lock directory existed, every
+symbol holding a scale-in write-ahead row was skipped for as long as that row
+survived, so a session that cancelled the protective stop and then HUNG without
+releasing the lock left the whole held position naked with the one watchdog that
+could re-protect it deliberately looking away, with no end. The lock arm now
+defers to the desk's own measurement: within the longest window it has ever
+closed and recorded — and always when it has measured nothing at all, or cannot
+read a row's write time — behaviour is byte-for-byte what it was, because that
+is a normal live window. Past that bound the lock stops being reason enough, and
+the symbol falls back to the same collision test the crash arm uses: a working
+entry order still resting keeps the skip, nothing resting hands the position to
+the sweep to re-protect. No number was chosen and none was changed. The residual
+risk is taken deliberately and on the conservative side: a live session slower
+than every window ever measured may have its add blocked by the stop the sweep
+places, and the add's own failure path restores from the write-ahead row — an
+add refused with the position protected beats a position left naked.
+
+**The amend question, answered for the last time.** A quantity amend on the
+resting stop cannot replace the cancel, for two independent reasons: the resting
+protective SELL collides with the working BUY whatever its quantity says, and
+this broker refuses a quantity amend on a fractional order (42210000), which
+scale-in adds routinely are. A test now pins that the path never reaches for
+`replace_order_by_id` at all, so the refusal cannot be hit and the resting stop
+is never left in an unknown state.
+
 **Still open.** The second DONE WHEN (explaining the historical write-ahead-log
 row-id gap, so the 14-pair count is known complete rather than a floor) is
 unaddressed: the new event makes FUTURE pairs complete by construction but says
@@ -700,6 +747,22 @@ It also fails on `origin/main` today, taking ~196 seconds of live fetching
 caused by it.
 ## items 182 / 183 / 185 / 186 — consolidation check against item 90 (2026-09-30)
 **Verdict: all four KEPT, none retired.** Each opens with "item 90's half two, surfaced for visibility", but each carries its own DONE WHEN criteria that item 90 does not own: 182 the ladder alert and cash-deficit cushion, 183 the order gates and the dead cash-sweep config removal, 185 the ATR-eligibility question and its two inherited rows, 186 three open owner-appetite answers. Retiring any would lose those criteria. The defect found was in item 90 itself: it claimed the four carry one word-for-word shared criterion, which was false (checked against each block). Item 90's line now names the four tranches and what each covers. No constant, threshold or value was chosen or changed.
+## Item 192 (RETIRED 2026-09-30) — local interpreter pinned to CI's
+Retired because all three DONE WHEN criteria are satisfied on main, not because
+the item was abandoned.
+- `.python-version` on main reads `3.11`, and both CI jobs read it via
+  `python-version-file` rather than each naming a version.
+- A local pytest run aborts and names both versions when the running
+  interpreter is not the pinned one (shipped in #792).
+- The last open criterion — actually rebuilding the dev `.venv`, which measured
+  3.12.3 — was completed 2026-09-30: `pip install uv`, `uv python install 3.11`,
+  `uv venv --python 3.11`. `/home/ubuntu/projects/quant-agent/.venv` now measures
+  **Python 3.11.16** [measured: `.venv/bin/python -V`]. The previous interpreter
+  is preserved at `.venv312` so any session mid-run on it is not broken.
+Why it mattered: the split was the direct cause of two confident, wrong agent
+diagnoses in one session. A prompt-drift check hashed `ast.dump()` of a parsed
+function, 3.12 changed that output, and identical source hashed differently
+locally and in CI.
 ## item 200
 
 **Plain language —** The desk's to-do list lives in one file, and that file had a hard size limit it was about to hit. Once it is nearly full, each change is only allowed to add a few thousand characters, so ordinary work started getting turned away for being too wordy rather than wrong. The fix was to lift the long back-story, old measurements and abandoned proposals out of the still-open entries and park them, word for word, in this file, leaving the to-do list as a short list of what is open and what would finish it.
@@ -816,9 +879,23 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 ## item 197 — detail moved from the board 2026-09-30
 
 `_repeg_entry_order` in `src/pipeline_stages.py` computes one bound, `reference * (1 + slippage_bps / 10_000)`, calls it `ceiling`, and returns early when `limit_price >= ceiling`. It never reads the spec's side. For a BUY that is right: the ceiling is above the reference and there is room to chase only when the limit sits below it. For a `sell_short` the fillable bound is a FLOOR at `reference * (1 - slippage_bps / 10_000)`, below the reference, and both the arithmetic and the comparison are inverted — a short limit would be judged to have room and walked UP, away from a fill, and the early return that is supposed to mean "already at the bound" would instead fire on exactly the short limits that are furthest from it. NOT INTRODUCED by item 183 and NOT LIVE: `repeg_enabled` is `false` in `config/settings.yaml` and defaults to `False` in `src/config.py`, so this path does not run today, and item 183 deliberately did not touch it. This is filed rather than fixed because the fix is a behaviour change on a money path that nothing currently exercises, and because turning the flag on without it is the real hazard. MEASURED: nothing — there are no re-peg outcomes in the record to measure, which is itself the reason the defect survived review.
+## item 183 — RETIRED 2026-09-30, all five order-placement gates resolved: the constructor $500 floor and the 0.5% weight-delta floor deleted, the 2% ask-skip deleted with its SHORT mirror, the 40bp entry-slippage belt ratified as owner appetite inside a measured indifference band, and the 1% cash-reserve band carried to item 190
+2026-09-30. RATIFIED as owner appetite, not sourced and not changed: the 40bp belt
+        (`ExecutionConfig.max_entry_slippage_bps`) is the last of this item's five gates and it is a dial. The
+        2026-09-26 measurement leaves an indifference band of roughly 32bp to 390bp — the belt censors its own
+        tail, every recorded slippage refusal sat 391-1466bp out, and no published reference for an acceptable
+        entry-slippage bound on retail marketable limits exists — so every value in that band would have
+        decided every observed case identically and the data cannot pick one. No replacement number was
+        invented, because choosing again inside a measured indifference band is the same arbitrary act with a
+        newer date. The ledger row now records the ratification and its reason. The two successor routes are
+        NOT closed by this and are deliberately left as named routes rather than as an open criterion here:
+        (a) reformulate the ceiling onto each name's own Corwin & Schultz half-spread, blocked until the
+        reference-to-submission drift term the belt also absorbs has its own instrument-read basis (it was
+        raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
+        possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
+        item 90's half-two re-derivation, not to a gate inventory.
 
-
-## item 208
+## item 211
 
 Why the threshold is not a new number. The circuit already answers "how long
 before this stops being a blip": `_auto_clear_transient_latch_locked` refuses

@@ -936,19 +936,6 @@ FOMC_MEASURED_STALE_CACHE = "measured_from_stale_cache"
 FOMC_UNAVAILABLE_FETCH_FAILED = "unavailable_fetch_failed"
 FOMC_UNAVAILABLE_DEADLINE_EXCEEDED = "unavailable_deadline_exceeded"
 
-#: Deliberately four values and not five. There is no
-#: "source answered but published nothing" status, because there is no path to
-#: it: both parse boundaries raise `FOMCCalendarParseError` on a document with
-#: no readable meeting rather than returning an empty list, so that case
-#: arrives here as a fetch failure with the parser's message attached. A status
-#: nothing can produce is a status nobody can trust.
-FOMC_STATUSES = (
-    FOMC_MEASURED,
-    FOMC_MEASURED_STALE_CACHE,
-    FOMC_UNAVAILABLE_FETCH_FAILED,
-    FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
-)
-
 _FOMC_ABSENCE_TEXT = {
     FOMC_UNAVAILABLE_FETCH_FAILED: (
         "FOMC schedule UNAVAILABLE — the Federal Reserve's calendar did not "

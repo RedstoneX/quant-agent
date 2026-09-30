@@ -1108,6 +1108,12 @@ class Database:
         # agent_logs row to the trades row(s) its decision produced). NULL
         # for every other agent and for all pre-Stage-1 rows.
         _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
+        # Did the SEAT accept this answer, and if not why — the fact `status`
+        # never carried (`status` only ever meant "the call returned"). NULL
+        # on every legacy row and on any site not yet instrumented; readers
+        # must treat NULL as unknown, never as accepted.
+        _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
+        _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
         # Stage 3 (shorts): which side the protective stop being restored
@@ -2588,7 +2594,9 @@ class Database:
                          status: str | None = None,
                          finish_reason: str | None = None,
                          truncated: bool | None = None,
-                         decision_id: str | None = None):
+                         decision_id: str | None = None,
+                         acceptance: str | None = None,
+                         acceptance_reason: str | None = None):
         """`model` remains the ACTUAL responding model (Stage 0.5 contract —
         unchanged). The Stage 1 kwargs below are additive and all default to
         None so every pre-Stage-1 caller keeps working unmodified; omitting
@@ -2601,8 +2609,8 @@ class Database:
                    provider_requests,
                    requested_provider, requested_model, actual_provider,
                    prompt_version, latency_s, status, finish_reason, truncated,
-                   decision_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   decision_id, acceptance, acceptance_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
                  input_tokens, output_tokens, cost_usd,
@@ -2610,7 +2618,7 @@ class Database:
                  requested_provider, requested_model, actual_provider,
                  prompt_version, latency_s, status,
                  finish_reason, None if truncated is None else int(truncated),
-                 decision_id),
+                 decision_id, acceptance, acceptance_reason),
             )
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
@@ -4622,6 +4630,90 @@ class Database:
                 f"AND {predicate} "
                 "ORDER BY timestamp DESC, id DESC LIMIT 1",
                 (symbol, opening),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_position_open_timestamp(self, buy_row: dict | None) -> str | None:
+        """When the POSITION `buy_row` belongs to was first opened.
+
+        `get_symbol_last_buy` returns the MOST RECENT opening row, which is
+        the right answer for "what did the desk last decide about this name"
+        and the wrong one for "how long has this trade been on". A scale-in
+        mints no new position: `_assign_position_ids` hands every add the
+        same `position_id` until net qty returns to flat. So the position's
+        birthday is the EARLIEST executed opening row carrying that id, not
+        the latest.
+
+        Why this exists (measured 2026-09-30, live DB): the deterministic
+        trail sliced its bars from the last buy's date, while taking the
+        entry PRICE from `position.avg_entry`, which is blended across every
+        add. On 2026-09-23 MRVL's position (`pos-08b43df53103`, opened
+        2026-09-17) took a third add at 17:19; the 19:31 trail evaluation
+        therefore saw ZERO bars "since entry" for a position that was four
+        sessions old, and `src/risk/trailing.py::_swing_lows` — which needs
+        `2 * PIVOT_WINDOW + 1` = 7 bars before it can confirm anything — had
+        nothing to read. See `tests/test_position_open_timestamp.py`.
+
+        This lookup makes the trail's window LONGER, and a longer window is
+        not automatically safer — the PR that added this said it was, and
+        that was untrue. A longer window can only raise the chandelier's
+        high-water anchor, and `src/risk/trailing.py::evaluate_trailing_stop`
+        REFUSES outright once the resulting candidate rises through its
+        noise floor instead of falling back to a lower one, so a wider
+        window can cost a tighten the narrower window took. The reason to
+        do it anyway is consistency: the caller takes the entry PRICE from
+        `position.avg_entry`, blended across every add, so slicing bars from
+        the last add alone was incoherent by construction. Measured against
+        all 21 recorded refusals on 2026-09-30, the cost is currently zero;
+        see the `_swing_lows` docstring for that measurement.
+
+        Returns the timestamp string as stored, or None when `buy_row` is
+        missing or carries no `position_id` (legacy rows predating the id,
+        and rows the backfill could not chain). None means "unknown", never
+        a guessed date — the caller keeps its own fallback.
+        """
+        row = self.get_position_open_row(buy_row)
+        return row["timestamp"] if row else None
+
+    def get_position_open_row(self, buy_row: dict | None) -> dict | None:
+        """The FULL row that opened the position `buy_row` belongs to.
+
+        `get_position_open_timestamp` is this lookup's date-only form and
+        now delegates here; the chain rule and every caveat in its docstring
+        apply unchanged. The date was never the only thing an add corrupts:
+        `take_profit` (the trail's reference target) and `initial_stop_loss`
+        (the denominator of R, via `recorded_initial_stop`) are also pinned
+        at entry, and reading them off the newest add lets the reference
+        target sit above current price and measures R from a stop the trade
+        never opened with. `setup_type` and `structural_ceiling` are pinned
+        at entry the same way.
+
+        `get_symbol_last_buy` keeps its "most recent opening row" meaning —
+        PM memory and the stop-coverage repair both want the latest reviewed
+        intent — so this is a separate lookup layered on top of it, not a
+        change to it.
+
+        Returns None when `buy_row` is missing, carries no `position_id`
+        (legacy rows predating the column, and rows the backfill could not
+        chain), or is not an opening row. None means "unknown": the caller
+        FAILS CLOSED onto `buy_row` itself, which is exactly today's
+        behaviour, rather than guessing a chain boundary from timestamps.
+        """
+        if not buy_row:
+            return None
+        pid = buy_row.get("position_id")
+        symbol = buy_row.get("symbol")
+        opening = (buy_row.get("action") or "").upper()
+        if not pid or not symbol or opening not in _POSITION_OPEN_ACTIONS:
+            return None
+        predicate = self._executed_trade_predicate()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM trades WHERE symbol = ? "
+                "AND position_id = ? AND action = ? "
+                f"AND {predicate} "
+                "ORDER BY timestamp ASC, id ASC LIMIT 1",
+                (symbol, pid, opening),
             ).fetchone()
         return dict(row) if row else None
 

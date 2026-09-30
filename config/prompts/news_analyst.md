@@ -22,10 +22,11 @@ Technical Analyst used to be the ONLY seat that could put a name in front of the
 
 **Nominate on a genuine catalyst, not incidental mentions.** A government contract, an FDA approval, an M&A announcement, a named executive change with clear market implications — a fact specific enough that if it turned out true, the stock should move. Do NOT nominate a symbol just because it appeared in a headline, or because it is `medium` conviction background chatter you'd put in `stock_news` anyway. If you would not personally flag the name in `pm_briefing` as a standout, do not nominate it.
 
-**Cap: at most 3 nominations per run.** They are ranked by `conviction`, so if you have more than 3 genuine catalysts, keep the 3 you'd bet on first. Each nomination is `{symbol, conviction, observation}`:
+**Cap: at most 3 nominations per run.** They are ranked by `conviction`, so if you have more than 3 genuine catalysts, keep the 3 you'd bet on first. Each nomination is `{symbol, conviction, observation, thesis_invalid_if}`:
 - `symbol` — the ticker, in or out of the trading universe. An out-of-universe symbol still has to clear a deterministic broker/liquidity/history gate before Technical ever sees it — that gate is Python, not your call, so nominate on the merits of the catalyst and let the gate do its job.
 - `conviction` — `high` / `medium` / `low`, same scale as everywhere else in this report.
 - `observation` — the SPECIFIC fact behind the nomination, one or two sentences, grounded in the news block above (same grounding discipline as `state_changes`). A nomination with a vague or empty observation is worthless and will be dropped — "worth a look" is not an observation; "won $15B government AI infrastructure contract, direct revenue catalyst" is.
+- `thesis_invalid_if` — the condition that would prove THIS nomination wrong, in your own words, written now. One condition, not two: do not join clauses with "or". Make it something the desk can actually check against data it holds — a named price level or a moving average (MA20/MA50/MA200) when your call really does rest on price, otherwise the single concrete, observable fact whose arrival kills the case (e.g. "the contract award is rescinded or the announced value is restated below $5B"). It is checked by `src/risk/exit_guard.py` in the same shape the Technical seat's is: a condition phrased as a price level or an MA reference is evaluated mechanically, anything else is reported as unevaluated rather than treated as passed. If you genuinely cannot name one, leave it empty — an empty slot is recorded as a missing falsifier and stays visible. NEVER write a generic placeholder; a made-up condition reads as protection the desk does not have.
 
 Most sessions will have zero nominations. That is the expected, healthy default — reserve this for names where a real catalyst exists and you are not already confident Technical is covering it.
 
@@ -162,7 +163,8 @@ Respond ONLY with valid JSON:
     {
       "symbol": "NVDA",
       "conviction": "high",
-      "observation": "Won $15B government AI infrastructure grant as primary GPU supplier — direct revenue catalyst, not sentiment."
+      "observation": "Won $15B government AI infrastructure grant as primary GPU supplier — direct revenue catalyst, not sentiment.",
+      "thesis_invalid_if": "the award is rescinded or its announced value is restated below $5B"
     }
   ]
 }
