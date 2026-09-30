@@ -43,6 +43,207 @@ Readings from the table: (1) the MA20 veto removed no fires from any pairing —
 
 **What would make it tighter, and why it is not done here.** Every remaining dial is a number the repo already carries: the trail's pivot window (3), the chandelier multiple (3 ATR), the break margin (1.0 ATR). Changing any of them to make this exit fire sooner would be retuning a ratified constant to a desired outcome — the fitting this desk bars — so none was touched. If the owner wants the exit faster than the table above, the honest route is a re-derivation of one of those three from a source, not a new agreement rule.
 
+### 2026-09-30 — the nightly unprotected figure was the one thing the owner asked to keep, and it had stopped being printed anywhere
+
+**In plain words.** Every night a handful of holdings carry a part-share that has no stop on it until the next morning. The owner agreed to that trade-off on one condition: that he could always see the dollar amount. On the night of 2026-09-29 the amount was $2,264 across nine holdings, and it appeared in no message and on no screen — only in a log file nobody reads. The condition he attached to his own agreement had quietly stopped being met.
+
+**The reported symptom was not the defect.** The 30-minute sweep logged "gaps 9, repairs attempted 0" fourteen times in a row overnight and that reads like a repair path that is broken. It is not. The same sweep reported nine gaps and zero repairs for a simple reason: the market was shut, and the sweep refuses to send an order into a shut market. Its own state file recorded exactly that ("the session has closed (closed 16:00 EDT)"). The earlier sweeps of the same afternoon, while the market was open, reported zero gaps — so both stop legs, the durable whole-share one and the part-share one, were resting at the broker together all session. The gaps appear at 16:30 and not before, which is the part-share order expiring at the close exactly as the broker forces it to.
+
+**The standing hypothesis was wrong and is now refuted.** The desk's records suspected the repair could not place a part-share stop while a whole-share stop already rested on the same name, because the broker would count the resting order against available quantity. The 2026-09-29 tape says otherwise: nine names held both legs simultaneously for a full session with no gap reported. Whatever else may be true of that broker behaviour, it is not what produced this log line, and nothing here should be built on it.
+
+**Where the number actually went.** Two owner rulings collided and the later one silently won. The first accepted the overnight exposure on the explicit condition that the dollars stay visible. The second, on 2026-09-17, switched off the evening banner that carried them, because a banner repeating the same sentence every night is not information. That ruling was right about the banner and took the number with it, and nothing else ever picked it up: the dashboard and the read-only interface render no stop-coverage information at all.
+
+**What was done.** The figure goes back inside the evening message's collapsed detail section — not a banner, no severity mark, nothing to act on. It names every holding and its dollars rather than the first six, because a count of nine followed by six names is a sentence that does not add up. Rows that are genuinely abnormal, such as a holding smaller than one whole share with nothing covering it at all, keep their existing red banner and are deliberately excluded from this total so the same shares are never counted twice.
+
+**What would catch it next time.** A rule ratified as "X is acceptable *provided* Y is observable" needs the Y half written down as a test, not as a sentence in a docstring. The 2026-09-17 change passed every test it ran because the only test guarding the number asserted that the whole message said nothing about it. A test written as "stays quiet" cannot tell a deliberate silence from a lost one.
+
+### 2026-09-30 — a practice run against history cannot be made to fund the same trades the live desk would (item 64 retired)
+
+**In plain words:** the live desk spends its risk budget on its best-ranked trade ideas first when there is not enough budget for all of them. The practice run against history cannot do that, and after checking how it is built, it never will be able to: it does not ask any analyst anything, so there is no ranked list to spend down. Making one up was already refused once. The honest answer is that this kind of practice run cannot grade "which trades get funded when the budget runs out" at all — only the parts of the trade it does simulate (stop placement, position size, trailing).
+
+**What was checked before deciding this, not taken on the board's word.** `src/backtest/engine.py` and its module docstring (`src/backtest/__init__.py`) both say outright that this backtester replays only the deterministic layer — stop placement, sizing, trailing — and never calls the five analyst seats, because an LLM's answer on a past day is not reproducible (`docs/QAMC_REMEDIATION_SPEC.md` §7.1, done 2026-08-30 on exactly that scope). Live's rationing order comes from `src/verdicts.py::rank_verdicts`, which takes a list of `AnalystVerdict` objects — the analysts' own outputs — and is passed into `src/risk/budget.py::allocate_risk_budget` as `priority=[c.symbol for c in rank_verdicts(...)]` (see `PortfolioConstructor._plan_risk_targets`). The backtest's own call to `allocate_risk_budget` in `run_backtest` passes no `priority` at all (`RiskRequest(c["symbol"], config.risk.max_position_risk_pct)`, no `rank_verdicts` import, nothing computed to rank by), so the allocator falls back to its documented "no ranking supplied" behaviour, which is alphabetical. That is not a bug in the allocator or an oversight in the engine; there are no verdicts in this code path to rank by, by the backtester's own design.
+
+**Why the two stand-ins already on record stay refused.** Copying live analyst ratings onto historical rows is not replaying them, since the LLM was never asked about that day; it would grade the desk against opinions manufactured after the fact. Ranking by the engine's own reward:risk number was ruled out 2026-09-16 for the same reason live never uses it as the rank — it is a tie-break under the real ranking there, not the ranking itself, so promoting it in the backtest would score a different, invented selection rule and still look like a ranking fix.
+
+**The decision, per item 64's own done-criteria (docs/WORK.md, "Not an owner call").** This engine cannot evaluate rationing. It is closed on that basis, not as a ranking fix. Every backtest result keeps printing how many of its days the risk ceiling bound and that the tie-break is alphabetical (shipped 2026-09-16), so its numbers can never be read as evidence about how the live desk picks among trades on a binding day. `tests/test_backtest.py` already locks the shape in: `run_backtest`'s source is asserted to contain the unranked `RiskRequest(...)` call and to contain neither `priority=` nor `rank_verdicts`, while `PortfolioConstructor._plan_risk_targets`'s source is asserted to contain `priority=ranking` — so a future change that quietly added ranking to one side without the other, or added a stand-in score, fails that test.
+
+**What would reopen this.** Only a change to what this backtester scopes to simulate — teaching it to call the analyst seats over historical data, which the spec's own reproducibility requirement (§7.1) currently rules out — would ever let it evaluate rationing for real. Nothing short of that is a fix; it is a disguised version of the stand-in score this item, and 2026-09-16 before it, already refused.
+
+---
+
+### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 191 retired)
+
+**In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
+
+**Why this happened.** Two other legitimate reasons the portfolio manager can be skipped (`no_data`, `evidence_gate_skip`) already leave a marker the evening check reads to stay quiet about them. The cost-circuit suspension path never left that marker, so it fell through to the probe's "unexplained kill" branch every time it happened.
+
+**What was checked, not assumed.** The production log and `journalctl` for `quant-agent-morning.service` on 2026-09-29 show a clean exit (`Result=success`, exit code 0) roughly 24 seconds after starting, immediately after `src.cost_circuit` logged two provider 503s and two charged-but-unprovable 402s on the technical-analysis call — not a kill signal, not an OOM, not an unhandled crash. The suspension had two independent causes that morning, not one: the free Google model genuinely returned two 503 "high demand" responses of its own before the OpenRouter fallback route hit its credit wall, so the credit exhaustion was not the whole story. The code path that produces this (`TradingPipeline._paid_suspension_after_late_safety`) is unchanged in shape since before 2026-09-26, so this is not new breakage; it is a pre-existing gap the finding surfaced.
+
+**Verified on main.** `_paid_suspension_after_late_safety` in `src/pipeline.py` now calls `decision_checkpoint.write_status("morning", "paid_analysis_suspended")` when `session == "morning"`, the same mechanism the `no_data`/`evidence_gate_skip` paths already use a few hundred lines above it. `tests/test_pipeline.py::test_paid_suspension_marks_morning_for_the_evening_dead_man_probe` and `::test_paid_suspension_does_not_mark_non_morning_sessions` cover the new behaviour and its scope. The single DONE WHEN criterion was met.
+
+### 2026-09-30 — the desk aimed META above the wall, because a level too close to trade toward was deleted instead of reported
+
+**In plain words:** the desk works out where a stock is likely to run into
+trouble on the way up, and calls that the target. It had a rule saying a
+level almost on top of the current price is not worth aiming at, because the
+profit would be smaller than an ordinary day's wobble. That rule was right.
+What it then did was wrong: instead of saying "this trade has very little
+room", it threw that level away and aimed at the NEXT one up — on the far
+side of the very wall it had just decided not to mention. So the closer the
+wall, the further past it the desk aimed.
+
+META on 2026-09-21 is the measured case. The desk added to the position at
+$728.41 with a typical daily range of $21.22, which set the "too close"
+distance at $749.63. Its own chart scan had found resistance at $730.41 and
+at $739.84, the second of which the stock had been turned back from in
+January. Both sat under $749.63, so both were deleted, and the target was set
+at $785.20 — above both of those rejections and above the highest price the
+stock had traded in a year. The stock reached $779.82 and turned around.
+
+**What was ruled out, by reproducing it rather than reasoning about it.**
+Three explanations were checked against the desk's own code and five years of
+real bars, and all three were wrong. The scan does not look at too little
+history: it reads roughly five years and it found the relevant levels. It did
+not throw them away for being weak: they carried two and three touches, above
+the minimum. It does not ignore levels overhead. The level scan was correct
+throughout — the fault was entirely in which of its answers the target picked.
+
+**What the number was never doing, and what it was.** The target is not, and
+since the owner's ruling of 2026-09-30 is explicitly not, a signal to sell.
+Nothing sells because a target is reached. So aiming too high did not cost a
+sale. What it did cost is honesty in two places that do use the number: the
+reward-versus-risk figure calculated at entry, which is a live tie-break when
+the desk ranks which candidates to buy, and the owner's own messages, where
+the target is stated as what the desk expects. On the three affected
+positions the reward figure was overstated by 5.7x, 1.9x and 28.4x against
+the first real wall. Two of those three were the kind of setup whose reward
+figure does feed ranking, so a worse trade could outrank a better one.
+
+**What changed.** The "too close" distance no longer decides WHICH level the
+desk aims at. It only labels the answer: the target is the nearest wall,
+full stop, and when the room under that wall is smaller than a day's range
+the trade now carries a recorded flag saying exactly that. Nothing is
+refused that was not refused before — the desk ruled in 2026-09-17 that a
+reward figure ranks a trade and never blocks one — so this makes the desk
+honest about thin trades rather than blind to them.
+
+**What would catch it next time.** The test that used to guard this
+behaviour asserted the bug: it said in so many words "skip it and take the
+next real level out". A test can pin a defect as confidently as it pins a
+fix, and this one did for weeks. It is now inverted and carries the META
+numbers, so the specific chart that produced the error is the thing under
+test.
+
+**Why the rule was there in the first place, which is the real lesson.**
+It was not carelessness. When it was written on 2026-09-01 the desk refused
+any trade whose reward was under 1.5x its risk, and that refusal was hard.
+Dropping a close wall and aiming at the next one was the only way a trade
+with a wall just overhead could be admitted at all, so the filter was doing
+real work FOR that gate. The gate was later removed — the desk now ranks on
+reward rather than refusing on it — and nothing went back to ask whether the
+filter still had a reason to exist. That is this desk's most familiar
+failure: a number outliving its own justification quietly, because nothing
+is attached to the justification that fails when it dies.
+
+**One thing this also changes, which is a real change and not a tidy-up.**
+Whether a name counts as a "nothing standing in the way" trade is decided by
+whether the desk found a level overhead. Before, a name whose only overhead
+level sat inside a day's range recorded NO level found — because the level
+had just been deleted — and was therefore classified as a clear-run trade,
+exempt from any reward comparison, and given a target projected from
+volatility alone. It now records the level it actually found, so the same
+name is classified as trading into a level and does get a reward figure.
+That is the correct classification and it was previously the opposite of the
+measured fact, but it is a behaviour change that reaches both model prompts
+and the ranking, so it is written down here rather than described as
+housekeeping. No trade is refused either way: the desk ruled on 2026-09-17
+that a reward figure ranks a trade and never blocks one.
+
+**The three affected positions are NOT repaired by this change.** META's
+2026-09-21 purchase still holds $785.20 as both its live and its entry
+target, and nothing will correct it on its own: the only automatic
+re-derivation triggers on the target drifting outside what the instrument can
+reach, and $785.20 is still inside that, so the desk will go on quoting
+$785.20 to the owner until a level above the 52-week high breaks. AMD and UPS
+are in the same position with their own numbers. Repairing stored targets on
+open positions is a separate, deliberate action on live records and is not
+being done as a side effect of a code fix.
+
+**Still open, deliberately not fixed here.** A rejection only counts as a
+wall when at least two turning points sit within one percent of each other,
+so META's third rejection at $756.59 is a single touch and is invisible. The
+two-touch part of that is settled and sourced and must not be loosened. The
+one-percent part is an open measurement the desk has already scheduled, not a
+settled preference, so it is left alone rather than guessed at. Separately, a
+position built in two purchases carries a target per purchase with the last
+one written winning — META holds $730.99 and $785.20 against one position.
+
+**Follow-up, 2026-09-30 — the stored numbers, and what could and could not be
+repaired.** The deliberate action the paragraph above called for was taken the
+same day. Every one of the eleven open positions was checked, not the three
+that were assumed: the target each one would have been given at entry was
+recomputed twice from the same five years of bars, once with the old code and
+once with the fixed code, and the two answers were compared. They differ for
+exactly three names — META, AMD and UPS — and agree for the other eight, which
+independently confirms the count the fix itself reported and rules the rest
+out rather than taking it on trust.
+
+Of those three, only UPS could be repaired. Its live target moved from $90.79
+to $92.82, the nearest wall under its entry, which the old code had stepped
+over because that wall stood inside a day's range. META and AMD were both
+refused, and a refusal here is the right answer rather than a failure: the
+corrected target is re-measured from the ORIGINAL entry over the ORIGINAL
+expected holding period — anything else would make the target a function of
+how far the price has since moved, which is the one thing it must never be —
+and on both names every level reachable from that entry now sits behind the
+price. Nothing was substituted in their place, so META continues to carry
+$785.20 and AMD $614.60, now flagged rather than quietly wrong. The number
+recorded at entry was not touched on any of them: that is the historical
+record of what the desk decided at the time, and it is also the denominator
+progress and pace are measured against.
+
+Each of the three carries a durable record saying which happened and why,
+under a code of its own that a reader cannot mistake for an ordinary
+evidence-driven revision. That distinction is the point: a code deploy is not
+a market event, and the record must not let one look like the other.
+
+**What now catches this class of thing.** `scripts/check_stored_targets.py`
+asks, for every held position, whether its stored target sits beyond a
+structural level that is still standing between that position's entry and the
+target. That is this defect's exact signature, it is a doctrine violation in
+its own right, and it is stable — a target with no wall in front of it does
+not acquire one because volatility moved. The script re-derives through the
+same shared body the live revision path uses, so it cannot drift away from
+what the desk actually computes. It separately reports, without treating it
+as an error, any target that merely differs from today's derivation: the
+derivation reads today's bars, so that differs constantly and by design, and
+a check that fires every session is a check nobody reads. On the day it was
+written it found three names aiming past a standing wall — META from this
+bug, and AAPL and NOK from levels that formed after those positions were
+opened, which is a real state the desk had no way to see before.
+
+### 2026-09-30 — item 189 renumbered to item 190; a genuine three-way number race, not a closure (item 189 retired)
+
+**In plain words:** the cash-sweep-retirement item was filed and merged as item 188, collided with a parallel PR that had also claimed 188, was renumbered to 189 and merged again, then collided a second time with a different parallel PR that filed and closed item 189 in one change. Three branches independently read `docs/WORK.md`'s own "next free number" line at nearly the same moment and each got a truthful answer that stopped being true before it landed. Nothing about the item's content changed at any step.
+
+**What closes it.** Item 189's two DONE WHEN criteria carry no new work of their own — they are the same cash-sweep-retirement criteria, unstarted, now living under item 190. Both are deferred rather than met.
+
+**Verified on main.** `docs/WORK.md` no longer carries a `**189.` block; `docs/BOARD_NOTES.md`'s `## item 189` heading is renamed `## item 190` in the same change, so the owner-facing prose is not orphaned. No code, ledger or test file was touched by the renumber.
+### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
+
+**In plain words:** the desk pays models to read standing instruction sheets. Since 2026-09-17 the build fails when a sheet still describes something the code deleted — but only after a person adds that deletion to a list. Nothing made them. The list was the last link in the chain and it was held together by memory, which is the one thing this desk has established does not hold.
+
+**What was built.** The same registry gained a second section naming LIVE machinery that the sheets currently describe, together with the exact sentences that describe it. Delete or rename one of those pieces of machinery and the build goes red where the deletion happens, prints every sentence that has just become untrue, and tells the reader to write the retirement entry. The entry nobody was remembering to write is now the only way to get the build green again.
+
+**It deliberately points at code-assembled text, not at the prompt files.** Both drift cases this desk has actually confirmed lived in text that Python builds while the session runs, not in any prompt file, so a check anchored on prompt files would have missed both. Four pieces of machinery are registered to start and every one of them is described in code-assembled text; three are described nowhere else.
+
+**What was measured and rejected.** Scanning the prompt files for anything that looks like a code name: 430 candidate names, 151 of which match nothing in the code at all, because they are the vocabulary the seats are required to answer in rather than references to machinery. That is 151 false alarms on the first run, and a check that cries wolf gets turned off, which is worse than not having it. The explicit list stays explicit, for the same reason the older half is explicit.
+
+**What it still cannot do, said plainly.** It covers only what somebody registered. It cannot tell a prose fix from a prose regression. Registering an entry and never reading the sentence again defeats it. Those are the same limits the two neighbouring checks accept, and naming them is not an argument for a worse check — it is the reason there are three narrow checks rather than one that claims to do everything.
+
+**A second finding, filed rather than fixed.** The trade-picking sheet instructs the seat to cut every purchase by a quarter after two "too big" verdicts in a row. Nothing in the code does that. Worse, the risk manager's own sheet states the loop as a live fact and tells that seat to treat a cautious-looking plan as the first seat flinching from its history rather than as genuine conviction. So one seat follows an instruction nothing enforces, and a second discounts the first because of it. The quarter has no source anywhere. It is left open: removing a sizing instruction from the sheet that sizes trades changes what the desk buys, which is not a documentation pass.
+
+
 ### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
 
 **In ordinary words.** When the desk decides which stock ideas get money, each
@@ -16975,10 +17176,3 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
-### 2026-09-30 — item 189 renumbered to item 190; a genuine three-way number race, not a closure (item 189 retired)
-
-**In plain words:** the cash-sweep-retirement item was filed and merged as item 188, collided with a parallel PR that had also claimed 188, was renumbered to 189 and merged again, then collided a second time with a different parallel PR that filed and closed item 189 in one change. Three branches independently read `docs/WORK.md`'s own "next free number" line at nearly the same moment and each got a truthful answer that stopped being true before it landed. Nothing about the item's content changed at any step.
-
-**What closes it.** Item 189's two DONE WHEN criteria carry no new work of their own — they are the same cash-sweep-retirement criteria, unstarted, now living under item 190. Both are deferred rather than met.
-
-**Verified on main.** `docs/WORK.md` no longer carries a `**189.` block; `docs/BOARD_NOTES.md`'s `## item 189` heading is renamed `## item 190` in the same change, so the owner-facing prose is not orphaned. No code, ledger or test file was touched by the renumber.

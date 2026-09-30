@@ -219,6 +219,13 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
 # imports, and moving the import site would be churn with no benefit.
 from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
+# The canonical names of the sanctioned exit triggers, so the phrase gate
+# below cannot name a different set of triggers from `ExitTrigger` itself.
+# `src.risk.exit_trigger` imports only the stdlib, so this cannot cycle.
+from src.risk.exit_trigger import (  # noqa: E402
+    CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
+)
+
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
 #
@@ -308,6 +315,69 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     # Protection already fired
     "stop hit",
     "stopped out",
+)
+
+# THE ENUM IS THE SINGLE SOURCE OF TRUTH FOR WHICH TRIGGERS EXIST
+# (2026-09-30, live defect on META).
+#
+# On 2026-09-25 17:06:23 the position reviewer emitted a REDUCE on META whose
+# reason began, verbatim, "bearish_state_change: [HIGH] U.S. 10-year Treasury
+# yield crosses 5% ...". `src/risk/exit_trigger.py` DECLARES
+# `ExitTrigger.BEARISH_STATE_CHANGE` as a sanctioned trigger and
+# `src/risk/exit_guard.py::claims_bearish_state_change` accepts the phrase,
+# but the tuple above only ever carried the WORDINGS "high bearish" /
+# "high(-)conviction bearish" — so the seat naming a sanctioned trigger by its
+# own canonical name was refused with `exit_blocked_no_named_trigger` for
+# "naming no recognised trigger". Two modules disagreed about whether the same
+# sanctioned trigger existed.
+#
+# The fix is structural rather than another hand-maintained phrase: the
+# canonical `ExitTrigger` values are appended here, derived from the enum, so
+# the two vocabularies cannot diverge again without the enum itself changing.
+#
+# WHAT THIS DOES AND DOES NOT CLAIM ABOUT THE BAR ABOVE. Every name added
+# here is a trigger this tuple already accepted under another wording, with
+# ONE exception, and the bar the comment above sets — "names something the
+# desk records" — is met by THREE of the six, not by all of them. Measured
+# member by member 2026-09-30, and kept true mechanically by
+# `exit_trigger.EVENT_TRIGGERS` / `exit_trigger.NO_VERIFIER_EXISTS`, which
+# `tests/test_exit_trigger_canonical_names.py` requires every enum member to
+# appear in exactly one of:
+#
+#   VERIFIER EXISTS — some branch of `holding_discipline_claim_check` is
+#   reached for the claim and can CONTRADICT it:
+#     bearish_state_change - the same-day `state_change` rows for the symbol.
+#     adverse_news         - routed into that same branch deliberately.
+#     regime_shift         - the day's macro regime read, when trusted.
+#
+#   NO VERIFIER — accepted on its wording alone. Recorded, not excused:
+#     thesis_invalid - `check_structural_protection` is CONSULTED, with
+#                      `advisory_only=True, persist=False`, and its own
+#                      comment says it cannot change which exits execute.
+#                      Consulted is not judged.
+#     sector_shock   - the desk records no sector-scope row;
+#                      `holding_discipline_claim_check` says so where it
+#                      declines to route it.
+#     stop_fired     - nothing asks the broker whether a stop filled. This is
+#                      also the one genuinely NEW spelling here rather than a
+#                      re-spelling of a phrase already accepted above.
+#
+# `earnings` is deliberately NOT added to the prose vocabulary: its canonical
+# spelling is a bare common word that occurs in prose naming no event, and
+# admitting it would be the widening this comment block forbids. It has no
+# verifier either, and it stays reachable through the structured field.
+# `cannot_substantiate` is not a trigger and is never accepted. Both prose
+# exclusions are the named constant
+# `exit_trigger.CANONICAL_NAME_NOT_MATCHED_IN_PROSE`, pinned by
+# `tests/test_exit_trigger_canonical_names.py`.
+#
+# An earlier draft of this comment asserted a verifier for all six. That was
+# untrue of four of them, in the one comment block whose entire job is to
+# record that bar. Overstating a finding is the same failure as understating
+# one, so the claim now lives in a constant a test checks.
+_HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
+    name for name in _CANONICAL_TRIGGER_NAMES
+    if name not in _HARD_TRIGGER_KEYWORDS
 )
 
 
@@ -11347,13 +11417,22 @@ class TradingPipeline:
         # (a) thesis invalidation. Until 2026-09-14 this fell through the
         # short-circuit above and the structural check was NEVER consulted
         # on it — on the one exit class where "did the level backing this
-        # stop actually break?" is the whole question, and the only exit
-        # class for which the ATR noise band is not already redundant (21
-        # of the 26 hard-trigger keywords also match
-        # `EXTERNAL_INFORMATION_PATTERNS` and skip the band outright, so
-        # these five are its entire non-redundant domain). The desk already
-        # computes the answer; it simply was not asked here.
-        # docs/WORK.md item 60.
+        # stop actually break?" is the whole question, and the exit class
+        # for which the ATR noise band is least redundant: most
+        # hard-trigger keywords ALSO match `EXTERNAL_INFORMATION_PATTERNS`
+        # and so skip the band outright, while the thesis-invalidation
+        # wordings never have. The desk already computes the answer; it
+        # simply was not asked here. docs/WORK.md item 60.
+        #
+        # NO COUNT IS WRITTEN HERE ON PURPOSE (2026-09-30). This comment
+        # used to read "21 of the 26 hard-trigger keywords", and the 26 was
+        # already wrong before this change — the tuple held 23 — so the
+        # sentence reasoned from a number that had outlived its derivation.
+        # The figures are now RECOMPUTED FROM THE CODE, every run, by
+        # `tests/test_exit_trigger_canonical_names.py::
+        # test_clamp_bypass_divergence_is_pinned_per_trigger`, which also
+        # pins WHICH keywords diverge. A digit in prose here can only go
+        # stale again.
         #
         # This branch is STRICTLY ADDITIVE and is designed so that it
         # cannot change which exits execute:
@@ -11891,6 +11970,8 @@ class TradingPipeline:
             # execute is not reached; the executor still drops.
             judgment = classify_trigger_reason(
                 action.reason, cites=_reason_cites_hard_trigger,
+                trigger=getattr(action, "exit_trigger", None),
+                trigger_evidence=getattr(action, "trigger_evidence", None),
             )
             if judgment == "unnamed":
                 logger.info(
@@ -12464,6 +12545,8 @@ class TradingPipeline:
                 )
                 trigger_judgment = classify_trigger_reason(
                     reason_text, cites=_reason_cites_hard_trigger,
+                    trigger=action_item.get("exit_trigger"),
+                    trigger_evidence=action_item.get("trigger_evidence"),
                 )
                 if trigger_judgment == "unnamed":
                     logger.warning(
@@ -14279,6 +14362,19 @@ class TradingPipeline:
         )
         if extra:
             payload.update(extra)
+        # 2026-09-30 (item 191): this is the third legit PM-less completion
+        # alongside `no_data` and `evidence_gate_skip` above, both of which
+        # already call `_dc.write_status` so the evening dead-man probe
+        # skips its "research ran, PM never did — killed mid-run?" guess.
+        # This path never did, so a same-day cost-circuit suspension the
+        # owner was already told about at the time (the morning session's
+        # own "SUSPENDED" push) re-arrived ~16h later relabelled as a
+        # mystery kill. Morning-only: `read_status`/the sharper probes in
+        # `_expected_sessions_missing_today` only ever key on "morning".
+        if session == "morning":
+            from src import decision_checkpoint as _dc
+
+            _dc.write_status("morning", "paid_analysis_suspended")
         return payload
 
     def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
@@ -15215,12 +15311,50 @@ class TradingPipeline:
             # (spec Phase 3.7). The breakout verdict is pinned at entry: the
             # analyst's `setup_type` OR the constructor's measured
             # `structural_ceiling` — either sufficient, see `is_trend_trade`.
+            # ALSO DISABLED when the whole distance from entry to the target
+            # is smaller than one ordinary session's range (2026-09-30).
+            #
+            # Same defect as the breakout case directly above, reached by a
+            # different road. `progress_target - entry` is the denominator,
+            # so when the target sits on a wall a fraction of an ATR
+            # overhead, `progress_pct` measures the denominator's smallness
+            # and not the thesis. META's 2026-09-21 add has $2.00 of room
+            # against a $21.22 ATR: a third of one ATR reads as 354%
+            # progress, and `target_breach_flag` (>150%) would render
+            # "TARGET_BREACH" into the position reviewer's prompt — a seat
+            # that can answer SELL or REDUCE. `pace` shares the denominator
+            # and sits in `exit_guard._HIGHER_IS_BETTER`, so it moves
+            # `MetricDeltas.net_improved` and with it
+            # `veto_contradicted_exit`.
+            #
+            # The owner ruled on 2026-09-30 that a computed target is never
+            # an exit trigger. A warning glyph driven off that target is
+            # that trigger wearing a different hat, and on a sub-noise
+            # denominator it fires on movement that means nothing.
+            #
+            # This is not a new threshold: it is `MIN_TARGET_ATR_MULTIPLE`,
+            # the same noise floor `derive_structural_target` labels the
+            # target with, read against the live ATR rather than pinned.
+            # Live is correct here and deliberate — the question is whether
+            # today's movement can be read as progress, which is a question
+            # about today's volatility. It also self-heals the three rows
+            # already carrying a pre-fix target.
             from src.risk.constants import is_trend_trade
+            from src.data.levels import MIN_TARGET_ATR_MULTIPLE
+            live_atr = self._atr_for_symbol(sym)
+            target_room_is_noise = bool(
+                progress_target and entry
+                and live_atr and live_atr > 0
+                and abs(progress_target - entry)
+                < live_atr * MIN_TARGET_ATR_MULTIPLE
+            )
             progress_pct = None
             pace = None
             pace_status = "unavailable"
             if is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
                 pace_status = "n/a_breakout"
+            elif target_room_is_noise:
+                pace_status = "n/a_target_inside_noise"
             else:
                 if progress_target and entry and progress_target != entry:
                     progress_pct = (cur - entry) / (progress_target - entry) * 100

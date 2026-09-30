@@ -784,7 +784,10 @@ class RiskConfig(BaseModel):
     # derivation that replaced it — see the target-derivation section of
     # src/data/levels.py for the rule and the arithmetic.
     #
-    # A target inside this many ATRs of entry is not a destination.
+    # Flags a target inside this many ATRs of entry as thin reward — the
+    # whole payoff sits inside one ordinary session's range. It LABELS the
+    # derived target and never selects it (changed 2026-09-30; it used to
+    # drop such a level and take the next one out, past real structure).
     min_target_atr_multiple: float = Field(default=1.0, gt=0, le=5)
     # Measured move claimed when no structural level stands in the way, in
     # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the stated

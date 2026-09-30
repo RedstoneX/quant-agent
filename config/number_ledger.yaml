@@ -642,9 +642,9 @@ numbers:
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
     note: >-
-      A target inside this many ATRs of entry is not a destination - price is
-      already there and the reward is one ordinary session's noise
-      (src/config.py:876-878).
+      Flags a target inside this many ATRs of entry as thin reward - price is
+      barely off it and the whole payoff is one ordinary session's noise.
+      Labels the derived target; does not select it (changed 2026-09-30).
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
     status: arbitrary
@@ -2058,29 +2058,6 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta
-    value: 0.5
-    status: arbitrary
-    site: src/portfolio_constructor.py
-    note: >-
-      How large a weight change must be before the desk bothers to trade it. A
-      round half a percent with no measurement of cost against it.
-      MEASURED 2026-09-26, the cost half of the question below (board item 183;
-      method in docs/INCIDENT_HISTORY.md). Commission is zero -- Alpaca charges
-      none on stock -- so the whole cost of a small trade is execution
-      slippage, and on this desk's own 30 filled BUY entries that ran at a
-      median +2.6bp with a 90th percentile of +26.4bp. On a $10k book a 0.5%
-      weight change is a $50 order whose measured expected cost is about a
-      cent. The measurement therefore says the cost side cannot justify a
-      floor of this size; it does NOT say what the floor should be, because
-      the other half of the question -- how much pointless order churn the
-      desk is willing to create -- is appetite and was never measured.
-    open_question: >-
-      Given a measured cost of roughly a cent on a $50 order, how much order
-      churn is the desk willing to accept to stop skipping genuine small
-      rebalances? Appetite, not measurement.
-    cost_while_unanswered: >-
-      Small genuine rebalances are skipped, or the desk churns.
   - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
     value: 5
     status: arbitrary
@@ -3174,6 +3151,24 @@ numbers:
       well below a real fractional remainder (which is never smaller than a
       broker-tradable fraction of one share) produces identical behaviour,
       so this is a precision guard rather than a policy choice.
+  - id: src.portfolio_constructor._NO_REAL_WEIGHT_DELTA_PCT
+    value: 1.0e-9
+    status: not-trade-governing
+    site: src/portfolio_constructor.py
+    note: >-
+      Floating-point tolerance, added 2026-09-30 (owner ruling, board item
+      183) when the picked `min_trade_weight_delta` churn floor (0.5%) was
+      DELETED rather than resized. `signed_target` and `current_pct` are
+      independent float divisions (a live price against total_value vs. a
+      model-typed percent), so a delta the desk did not actually request —
+      "hold exactly what is held" — can land a few ULPs off zero instead of
+      bit-exact. This recognises that as no request at all, the same role
+      `src.execution.broker._FRACTIONAL_QTY_EPSILON` plays for share
+      quantities; it is nine orders of magnitude below the finest weight a
+      model or a human types, so any value in a wide band below that
+      produces identical behaviour — a precision guard, not a policy
+      choice. It decides nothing about whether or how much to trade: a real
+      nonzero delta of any size, however small, is now attempted.
   - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
     value: 5
     status: not-trade-governing
