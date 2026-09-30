@@ -838,11 +838,26 @@ class Nomination(LLMOutputModel):
     seat: str = ""
     conviction: Literal["low", "medium", "high"]
     observation: str
+    thesis_invalid_if: str = ""
 
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
+
+    @field_validator("thesis_invalid_if")
+    @classmethod
+    def strip_falsifier(cls, value: str) -> str:
+        # Whitespace only. Item 99: a nomination whose seat gave no
+        # falsifier stays EMPTY here and is recorded as missing by the
+        # caller (`_collect_seat_nominations`'s event carries
+        # `falsifier_missing`). Nothing downstream may substitute a
+        # template — an invented condition reads as protection the desk
+        # does not have. `src/risk/exit_guard.py::check_thesis_invalid_if`
+        # consumes this string in exactly the shape it consumes the
+        # technical seat's, and returns UNPARSEABLE (visibly, with a
+        # reason) for a condition it cannot evaluate.
+        return (value or "").strip()
 
     @field_validator("observation")
     @classmethod
@@ -2221,6 +2236,14 @@ class SmartMoneyFinding(LLMOutputModel):
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
     summary: str = Field(min_length=1)
     why_now: str = Field(min_length=1)
+    # Item 99: the smart-money seat's own falsifier, in its own words,
+    # written at call time. Same field name and same plain-string shape
+    # the technical seat uses, so `exit_guard.check_thesis_invalid_if`
+    # reads it unchanged. Not required: a seat that gives none leaves it
+    # empty and the gap is recorded as a gap. A `neutral` stance is the
+    # absence of a call, so it carries nothing to disprove — see
+    # `clear_falsifier_on_neutral` below.
+    thesis_invalid_if: str = ""
     # All four are `SkipJsonSchema`: the desk fills every one of them itself,
     # and before this they were REQUIRED output under strict structured
     # output. `SmartMoneyAnalystAgent._parse_findings` overwrites
@@ -2243,6 +2266,23 @@ class SmartMoneyFinding(LLMOutputModel):
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
+
+    @field_validator("thesis_invalid_if")
+    @classmethod
+    def strip_falsifier(cls, value: str) -> str:
+        return (value or "").strip()
+
+    @model_validator(mode="after")
+    def clear_falsifier_on_neutral(self):
+        # Same rule the technical sheet and `TechAnalysisResult` already
+        # hold: a neutral is the absence of a call, so the falsifier slot
+        # must be empty. This only REMOVES text the seat should not have
+        # written; it never writes any. Findings parse per-entry in
+        # isolation, so raising here would discard an otherwise good
+        # neutral finding for a cosmetic breach.
+        if self.stance == "neutral" and self.thesis_invalid_if:
+            object.__setattr__(self, "thesis_invalid_if", "")
+        return self
 
     @model_validator(mode="after")
     def deterministic_eligibility(self):

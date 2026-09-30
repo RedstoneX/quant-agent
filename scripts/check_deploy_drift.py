@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from datetime import date, datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -234,6 +235,71 @@ def format_alert(report: DriftReport, remote_ref: str) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# durable state — the board reads this, and it is what stops the alert
+# repeating unchanged
+# ---------------------------------------------------------------------------
+
+def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
+                 state_path=None, today: date | None = None) -> bool:
+    """Write the drift snapshot where /health can read it.
+
+    Written on EVERY run, in sync or not, so the board can tell "checked and
+    clean" from "never checked". Reuses `save_state` from
+    `src.coverage_watchdog` — the same atomic writer the three stop-coverage
+    alerts already use — rather than adding a fourth state writer.
+    """
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state, save_state
+
+    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    day = (today or datetime.now(timezone.utc).date()).isoformat()
+    state = load_state(target)
+    if report.head_sha is None or report.remote_sha is None:
+        status = "unknown"
+    elif report.is_behind:
+        status = "behind"
+    else:
+        status = "in_sync"
+    state["deploy_drift"] = {
+        "status": status,
+        "behind_count": report.behind_count,
+        "head_sha": report.head_sha,
+        "remote_sha": report.remote_sha,
+        "remote_ref": remote_ref,
+        "deployed_path": report.deployed_path,
+        "fetch_ok": report.fetch_ok,
+        "missing_commits": [
+            {"sha": sha, "subject": subject}
+            for sha, subject in report.missing_commits
+        ],
+        "unexpected_dirty_files": list(report.unexpected_dirty_files),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if alerted:
+        state["drift_alerted_for"] = {"day": day, "remote_sha": report.remote_sha}
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return save_state(state, target)
+
+
+def already_alerted(report: "DriftReport", *, state_path=None,
+                    today: date | None = None) -> bool:
+    """True when this exact drift (same day, same origin/main tip) was already
+    pushed. Five identical "QAMC deploy drift" messages went out in one day and
+    changed nothing; a message that repeats unchanged is noise, and the board
+    carries the state for as long as it lasts."""
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
+
+    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    day = (today or datetime.now(timezone.utc).date()).isoformat()
+    prior = load_state(target).get("drift_alerted_for") or {}
+    return bool(
+        isinstance(prior, dict)
+        and prior.get("day") == day
+        and prior.get("remote_sha")
+        and prior.get("remote_sha") == report.remote_sha
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deployed-path", default=DEFAULT_DEPLOYED_PATH)
@@ -287,23 +353,42 @@ def main(argv: list[str] | None = None) -> int:
     if not report.is_behind:
         print(f"check_deploy_drift: in sync with {args.remote_ref} "
               f"({report.head_sha[:10]})")
+        record_state(report, args.remote_ref, alerted=False)
         return 0
 
     message = format_alert(report, args.remote_ref)
     print(message)
 
-    if not args.no_telegram:
+    # The board is the primary surface. It is written FIRST and
+    # unconditionally, because alerts can be (and currently are) muted, and a
+    # drift nobody can see is the failure this whole check exists to stop.
+    sent = False
+    repeat = already_alerted(report)
+    if not args.no_telegram and not repeat:
         from src.notifier import TelegramNotifier
 
         notifier = TelegramNotifier()
         if notifier.enabled:
             notifier.send(message)
+            sent = True
         else:
             print(
                 "check_deploy_drift: Telegram not configured; alert printed "
                 "above only",
                 file=sys.stderr,
             )
+    elif repeat:
+        print(
+            "check_deploy_drift: same drift already alerted today — not "
+            "repeating the message; the state is on /health until it clears",
+            file=sys.stderr,
+        )
+    if not record_state(report, args.remote_ref, alerted=sent or repeat):
+        print(
+            "check_deploy_drift: WARNING could not write the drift state "
+            "file — /health will not show this drift",
+            file=sys.stderr,
+        )
 
     return 1
 
