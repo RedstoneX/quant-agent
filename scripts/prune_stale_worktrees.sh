@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Extended worktree cleanup: removes stale registrations AND abandoned scratch.
 #
-# Conservative approach: only removes /tmp session-scratch worktrees that are:
-#   - 5+ days old (measured session lifetime: 1-2 days; 5d = definite abandon)
-#   - Clean (no uncommitted/untracked files)
-#   - Merged into origin/main (safe to discard)
-#   - Owned by ubuntu (safety: shared box with other tenants)
+# Conservative approach based on measured discriminators:
+#   - MERGED branches: remove regardless of age (safe; PR already landed)
+#   - UNMERGED branches with ACTIVE REMOTES: keep, even if old (active work)
+#   - UNMERGED with GONE remotes: remove if 7+ days old (abandoned PRs)
+#   - Require clean working tree (no uncommitted/untracked files) always
 #
-# NEVER touches /home/ubuntu/worktrees/ (active sessions) or other tenants.
+# Never touches /home/ubuntu/worktrees/ (active sessions) or other tenants.
+# Measurement: 2 merged branches (b143, b174) are safe to remove now;
+# 48 unmerged with active remotes should be kept (ages 0-4 days, pending).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-MIN_AGE_SECS=$((5 * 86400))  # 5 days: observed session lifetime is 1-2 days
+MIN_AGE_SECS=$((7 * 86400))  # 7 days: secondary guard for abandoned unmerged PRs
 NOW=$(date +%s)
 
 cd "$PROJECT_ROOT"
@@ -21,8 +23,8 @@ cd "$PROJECT_ROOT"
 echo "==> Pruning stale registrations (missing directories)..."
 git worktree prune --verbose 2>&1 | head -20 || true
 
-# Second: collect and remove clean/merged /tmp scratch older than 5 days.
-echo "==> Scanning for abandoned session-scratch worktrees (5+ days old)..."
+# Second: collect and remove merged/abandoned scratch.
+echo "==> Scanning for finished scratch worktrees (merged or remote gone)..."
 
 bytes_freed=0
 count_removed=0
@@ -44,22 +46,35 @@ while IFS= read -r wt_path; do
   owner=$(stat -c %U "$wt_path" 2>/dev/null || echo "unknown")
   [ "$owner" = "ubuntu" ] || { count_skipped=$((count_skipped + 1)); continue; }
   
-  # Check age: must be 5+ days old to be considered abandoned.
-  mtime=$(stat -c %Y "$wt_path" 2>/dev/null || echo 0)
-  age_secs=$((NOW - mtime))
-  age_days=$((age_secs / 86400))
-  [ "$age_secs" -ge "$MIN_AGE_SECS" ] || continue
+  # Check if working tree is clean (no uncommitted/untracked files).
+  status=$(cd "$wt_path" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l || echo 999)
+  [ "$status" -eq 0 ] || continue  # Skip if dirty
   
-  # Check if working tree is clean.
-  if ! (cd "$wt_path" && git status --porcelain 2>/dev/null | grep -q .); then
-    # Check if merged: if HEAD is an ancestor of origin/main, it's safe to discard.
-    if (cd "$wt_path" && git merge-base --is-ancestor HEAD origin/main 2>/dev/null); then
-      echo "  Removing: $(basename "$wt_path") (${age_days}d old, merged into main)"
-      size=$(du -sb "$wt_path" 2>/dev/null | awk '{print $1}' || echo 0)
-      rm -rf "$wt_path" 2>/dev/null && git worktree remove "$wt_path" --force 2>/dev/null || true
-      bytes_freed=$((bytes_freed + size))
-      count_removed=$((count_removed + 1))
-    fi
+  # PRIMARY DISCRIMINATOR: Is the branch already merged into origin/main?
+  if (cd "$wt_path" 2>/dev/null && git merge-base --is-ancestor HEAD origin/main 2>/dev/null); then
+    # Merged: safe to remove regardless of age.
+    echo "  Removing: $(basename "$wt_path") (merged into main)"
+    size=$(du -sb "$wt_path" 2>/dev/null | awk '{print $1}' || echo 0)
+    rm -rf "$wt_path" 2>/dev/null && git worktree remove "$wt_path" --force 2>/dev/null || true
+    bytes_freed=$((bytes_freed + size))
+    count_removed=$((count_removed + 1))
+    continue
+  fi
+  
+  # SECONDARY DISCRIMINATOR: Is the remote branch gone?
+  branch=$(cd "$wt_path" 2>/dev/null && git branch --show-current 2>/dev/null || echo "unknown")
+  if ! (cd "$wt_path" 2>/dev/null && git rev-parse --verify "origin/$branch" >/dev/null 2>&1); then
+    # Remote gone: branch was deleted (likely force-pushed or PR deleted).
+    # Only remove if also old enough (7+ days) to confirm truly abandoned.
+    mtime=$(stat -c %Y "$wt_path" 2>/dev/null || echo 0)
+    age_secs=$((NOW - mtime))
+    [ "$age_secs" -ge "$MIN_AGE_SECS" ] || continue
+    
+    echo "  Removing: $(basename "$wt_path") (remote gone, $((age_secs / 86400)) days old)"
+    size=$(du -sb "$wt_path" 2>/dev/null | awk '{print $1}' || echo 0)
+    rm -rf "$wt_path" 2>/dev/null && git worktree remove "$wt_path" --force 2>/dev/null || true
+    bytes_freed=$((bytes_freed + size))
+    count_removed=$((count_removed + 1))
   fi
 done < "$tmpfile"
 
