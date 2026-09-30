@@ -13809,6 +13809,19 @@ class TradingPipeline:
         )
         if extra:
             payload.update(extra)
+        # 2026-09-30 (item 191): this is the third legit PM-less completion
+        # alongside `no_data` and `evidence_gate_skip` above, both of which
+        # already call `_dc.write_status` so the evening dead-man probe
+        # skips its "research ran, PM never did — killed mid-run?" guess.
+        # This path never did, so a same-day cost-circuit suspension the
+        # owner was already told about at the time (the morning session's
+        # own "SUSPENDED" push) re-arrived ~16h later relabelled as a
+        # mystery kill. Morning-only: `read_status`/the sharper probes in
+        # `_expected_sessions_missing_today` only ever key on "morning".
+        if session == "morning":
+            from src import decision_checkpoint as _dc
+
+            _dc.write_status("morning", "paid_analysis_suspended")
         return payload
 
     def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
