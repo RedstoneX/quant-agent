@@ -983,9 +983,11 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
 
     **What this does NOT close, stated plainly.** The BUY submit loop can
     still refuse an entry for reasons no pre-check can evaluate in advance:
-    the latency window (`latency_window`), an unfillable marketable limit
-    against the NBBO at submit time, the borrow gate on a SHORT, and any
-    broker rejection. Those are not knowable before the sale, and the tape
+    the latency window (`latency_window`), the borrow gate on a SHORT, and
+    any broker rejection. (Board item 183, 2026-09-30: a displayed quote
+    through the entry ceiling is no longer one of them — it is recorded as
+    `venue_quote_through_ceiling` and the order is still sent, because the
+    limit is its own protection.) Those are not knowable before the sale, and the tape
     can also move between this projection and the real check. This gate
     removes the deterministic, knowable refusals — the ones that made the
     naked-sale outcome reproducible — and the residual is recorded in the
@@ -9296,41 +9298,60 @@ class ExecutionStage:
                     offer_limit = round(cap, 2 if cap >= 1 else 4)
                     ask_premium_bps = (ask - market_price) / market_price * 10_000.0
 
-                    # The IEX ask is too unreliable to gate on directly, but a
-                    # far-through reading is still information: either the
-                    # market has genuinely run, or the venue is quoting
-                    # nonsense. Either way this is not a book to cross blind.
-                    # The multiple is deliberately loose because the input is.
-                    if ask > cap * 1.02:
-                        skip_reason = (
-                            "latency_window"
-                            if getattr(ctx, "desk_latency_stall", False)
-                            else "slippage_gated"
-                        )
+                    # THE IEX ASK DOES NOT DECIDE ANYTHING HERE (board item
+                    # 183, 2026-09-30). It used to: an entry was refused when
+                    # `ask > cap * 1.02`, a multiple its own comment called
+                    # "deliberately loose because the input is" — a number
+                    # chosen to absorb how wrong this venue's top of book can
+                    # be, which is not a quantity anyone had measured.
+                    #
+                    # Measured now, against every firing the gate has on
+                    # record (8 rows, `execution_skip` evidence, 2026-09-15 to
+                    # 2026-09-24 — the whole life of the telemetry): in all 8
+                    # the reference was RIGHT and the ask was garbage. The
+                    # reference matched the price the name was actually
+                    # trading at to within a few bp, while the quoted ask sat
+                    # 392 to 669bp above the HIGHEST price that name traded
+                    # anywhere in a +/-15 minute window around the refusal,
+                    # and 6 of the 8 were trading strictly INSIDE this ceiling
+                    # at the instant they were refused. The gate turned away 8
+                    # risk-approved entries and caught zero runaway books.
+                    # `src/trader_feed.py` already refuses to render this code
+                    # to the owner for the same reason.
+                    #
+                    # It was never protecting money either. A limit at `cap`
+                    # cannot fill above `cap`, whatever the ask claims. When
+                    # the market really has run through the ceiling the order
+                    # simply rests unfilled inside the bounded entry window
+                    # and the entry-protection sweep cancels it — the same
+                    # no-trade the skip produced, minus the refusals of names
+                    # that had not moved. So the gate is gone and no multiple
+                    # replaces it: the ceiling is its own protection.
+                    #
+                    # The far-through reading is still WRITTEN DOWN, because a
+                    # venue quoting hundreds of bp away from the tape is a
+                    # real data fact. A record needs no threshold — it fires
+                    # on the ceiling itself.
+                    if ask > cap:
                         logger.warning(
-                            "BUY %s NOT SUBMITTED — the displayed offer has run "
-                            "beyond the slippage ceiling%s. Ask $%.4f is %.1fbp "
-                            "above the $%.4f reference; the %.0fbp ceiling is "
-                            "$%.4f. (Quote is IEX, not NBBO, so it may also "
-                            "simply be a stale venue print — either way, not a "
-                            "book to cross blind.)",
-                            decision.symbol,
-                            " after a desk-caused stall; latency blew the window"
-                            if skip_reason == "latency_window" else "",
-                            ask, ask_premium_bps,
+                            "BUY %s submitted anyway — the displayed IEX offer "
+                            "$%.4f is %.1fbp above the $%.4f reference and "
+                            "through the %.0fbp ceiling $%.4f. IEX is not the "
+                            "NBBO the order fills against; the limit cannot "
+                            "pay more than the ceiling either way.",
+                            decision.symbol, ask, ask_premium_bps,
                             market_price, slippage_bps, cap,
                         )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol, skip_reason,
-                            f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
-                            f"above reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp ceiling ${cap:.4f}"
-                            + (
-                                " — latency blew the window"
-                                if skip_reason == "latency_window" else ""
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "venue_quote_through_ceiling", "buy_ask_above_cap",
+                            detail=(
+                                f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
+                                f"above reference ${market_price:.4f}, through "
+                                f"the {slippage_bps:.0f}bp ceiling ${cap:.4f}; "
+                                f"order submitted at the ceiling"
                             ),
                         )
-                        continue
 
                     if limit_price is None or abs(limit_price - offer_limit) > 0.000001:
                         logger.info(
@@ -9384,41 +9405,35 @@ class ExecutionStage:
                         (market_price - bid) / market_price * 10_000.0
                     )
 
-                    # Same IEX-noise tolerance as the BUY `cap * 1.02`
-                    # skip: invert the multiple so a far-through bid
-                    # (genuinely run, or a stale venue print) refuses
-                    # rather than submitting an unfillable or unbound
-                    # short. Not a new percentage.
-                    if bid < floor / 1.02:
-                        skip_reason = (
-                            "latency_window"
-                            if getattr(ctx, "desk_latency_stall", False)
-                            else "slippage_gated"
-                        )
+                    # Mirror of the BUY side above, and it goes for the same
+                    # measured reason: the IEX bid does not decide anything
+                    # here either. The old `bid < floor / 1.02` inverted the
+                    # BUY multiple, so it inherited an unmeasured tolerance
+                    # for venue noise rather than adding a second one. A sell
+                    # -short limit at `floor` cannot fill below `floor`, so
+                    # refusing on a quote this account's own code calls
+                    # routinely absurd only loses the entries where the venue
+                    # was wrong. Recorded, not refused; no multiple.
+                    if bid < floor:
                         logger.warning(
-                            "SHORT %s NOT SUBMITTED — the displayed bid has "
-                            "run beyond the slippage floor%s. Bid $%.4f is "
-                            "%.1fbp below the $%.4f reference; the %.0fbp "
-                            "floor is $%.4f. (Quote is IEX, not NBBO, so it "
-                            "may also simply be a stale venue print — either "
-                            "way, not a book to cross blind.)",
-                            decision.symbol,
-                            " after a desk-caused stall; latency blew the window"
-                            if skip_reason == "latency_window" else "",
-                            bid, bid_discount_bps,
+                            "SHORT %s submitted anyway — the displayed IEX bid "
+                            "$%.4f is %.1fbp below the $%.4f reference and "
+                            "through the %.0fbp floor $%.4f. IEX is not the "
+                            "NBBO the order fills against; the limit cannot "
+                            "sell below the floor either way.",
+                            decision.symbol, bid, bid_discount_bps,
                             market_price, slippage_bps, floor,
                         )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol, skip_reason,
-                            f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
-                            f"below reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp floor ${floor:.4f}"
-                            + (
-                                " — latency blew the window"
-                                if skip_reason == "latency_window" else ""
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "venue_quote_through_ceiling", "short_bid_below_floor",
+                            detail=(
+                                f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
+                                f"below reference ${market_price:.4f}, through "
+                                f"the {slippage_bps:.0f}bp floor ${floor:.4f}; "
+                                f"order submitted at the floor"
                             ),
                         )
-                        continue
 
                     if limit_price is None or abs(limit_price - bid_limit) > 0.000001:
                         logger.info(

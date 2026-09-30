@@ -22,6 +22,30 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
+
+**In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
+
+**What the desk could see.** This account is entitled to quotes from IEX only, one venue carrying a small share of US trading, while its orders are matched against the consolidated national best price. The repo has known for a while that IEX's displayed prices are unreliable — an in-code note records a moment when it showed a 15% gap between its buy and sell price on an ordinary day. What nobody had done was ask how often that matters, or check whether the rule built to cope with it was doing anything useful.
+
+**The rule.** An entry was abandoned when the displayed offer sat more than 2% past the highest price the desk was willing to pay. The 2% was not read off anything; the comment beside it said the number was "deliberately loose because the input is", which is an honest way of saying nobody knew how wrong the input could be.
+
+**What the record actually shows.** The rule has fired eight times in its whole recorded life. For every one of those eight, the price the desk had captured as its reference was compared against the minute-by-minute record of what the stock actually traded at in the fifteen minutes either side. The reference was right every time — matching the real traded price to within a few hundredths of a percent. The displayed offer was wrong every time, sitting 4% to 6.7% above the highest price the stock traded anywhere in that half hour. And six of the eight stocks were trading *below* the desk's own ceiling at the instant it refused them: the trades would have gone through at a price the desk had already approved.
+
+**And it was never protecting anything.** The order the desk sends is a limit — a ceiling, not a price. It cannot pay more than that ceiling no matter what any screen displays. So in the case the rule was supposedly built for, a market that has genuinely run away, deleting the rule changes nothing: the order goes out, nobody sells at that price, it sits, and the existing end-of-session sweep cancels it. The rule was buying no protection; it was only removing the cases where the venue was wrong.
+
+**How common is the venue being wrong?** Measured live on 2026-09-30 between 13:47 and 13:58 UTC — 32 snapshots of 55 of the desk's own names, 3,630 observations. The typical name's displayed spread implies a cost of about 19 basis points to cross, but 25 of those 55 names showed a typical figure above 40 basis points, and the deleted rule's condition was true on 17.2% of the observations. In an ordinary session this rule stood to refuse roughly one entry in six on a bad display alone.
+
+**What changed.** The rule is gone, and no replacement percentage was put in its place. A displayed price sitting through the ceiling is now written down as a fact about the data feed, not treated as a decision about the trade, and a record needs no threshold. The desk's own owner-facing feed had already refused to show this refusal code to Rex on exactly this evidence back on 2026-09-23 — the finding existed, it had just never been acted on.
+
+**Ruled out.** That the market had genuinely run: eight for eight against the traded record, not one case. That the reference price was stale: it matched the tape every time. That the four simultaneous refusals on 2026-09-15 were a real market event: four unrelated companies — a software firm, a refiner, an oil major and a storage maker — do not all jump 4-6% in the same second.
+
+**Side-effect, stated and not buried.** An entry that now rests unfilled and gets cancelled at the end of the session sends Rex a Telegram alert. Cases the old rule swallowed in silence will become visible messages. That is the desk reporting its true state, but it is also more alerts.
+
+**What is NOT fixed.** The 40-basis-point ceiling itself is still a number nobody can source, and deleting the rule above makes it the only thing bounding what an entry pays. It stays on the board.
+
+---
+
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
 **In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.

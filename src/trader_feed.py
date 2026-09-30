@@ -291,7 +291,15 @@ def _skip_who(reason: str) -> str:
 # WHAT IS NOT ON IT, AND WHY — each of these was proposed for this set and
 # thrown out against the production database on 2026-09-23:
 #
-#   slippage_gated / latency_window  Every one of the six `slippage_gated`
+#   slippage_gated / latency_window  NO LONGER PRODUCED on the quote path
+#     (board item 183, 2026-09-30): the far-through-quote skip that emitted
+#     them was deleted after all 8 recorded firings measured as venue noise
+#     rather than a market that had run, and a displayed quote through the
+#     entry ceiling is now recorded as `venue_quote_through_ceiling` with
+#     the order still sent. `latency_window` survives on its own, separate
+#     submit-window-overrun path. Both codes stay mapped below because
+#     stored runs re-render through this table. The original finding, which
+#     this deletion acts on: every one of the six `slippage_gated`
 #     rows in the database is a venue-data problem wearing a policy code:
 #     IEX asks 391, 405, 437, 488, 580 bp above reference against a 40bp
 #     ceiling, on an account whose own code comments record that IEX
