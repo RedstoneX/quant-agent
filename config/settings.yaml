@@ -225,6 +225,32 @@ llm:
   # route 3 off; the attempt-budget floor drops back in step.
   tertiary_provider: "openrouter"
   tertiary_model: "anthropic/claude-haiku-4.5"
+  # === ROUTE 3's SECOND ROAD (2026-09-30) ================================
+  # The three rungs above are all OpenRouter for the three DECISION seats
+  # (portfolio_manager, risk_manager, position_reviewer — every one of them
+  # `provider: openrouter`). On 2026-09-29 19:46:45-19:47:46 that cost the
+  # desk the whole intraday decision run: route 1 HTTP 402 Payment Required
+  # (OpenRouter credits exhausted), route 2 skipped on the demoted same
+  # account, route 3 HTTP 402 again, "Every route is down." At 19:46:08 the
+  # SAME PROCESS had completed tech_analyst on Google AI Studio direct,
+  # HTTP 200, $0.00. One account balance was a single point of failure for
+  # every decision the desk could make, with a healthy free road unused.
+  #
+  # When a seat's routes 1 and 2 resolve to the SAME provider and route 3
+  # would too, route 3 is swapped for this pair instead. It adds no rung
+  # and does not touch the eight Google-primary specialist seats, whose
+  # ladder already spans two roads and for whom the haiku tertiary above is
+  # still the right answer (their route 1 IS Google, so a Google route 3
+  # would retry a road that just failed twice). No new host and no new paid
+  # dependency: this is the same endpoint and the same credential those
+  # eight seats already run as their PRIMARY.
+  #
+  # Set tertiary_alt_model to "" to switch the substitution off entirely.
+  # Full reasoning, the accepted quality residual and the selection rule:
+  # `_DEFAULT_TERTIARY_ALT_PROVIDER` and `select_tertiary_route` in
+  # src/agents/base.py.
+  tertiary_alt_provider: "google"
+  tertiary_alt_model: "gemini-3.5-flash-lite"
 
 # How aggressively an entry may cross the spread. Bounds EXECUTION cost, not
 # position risk. A too-tight cap does not make the book safer — it silently
