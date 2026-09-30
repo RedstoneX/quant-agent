@@ -71,7 +71,7 @@ def test_a_low_conviction_directional_call_still_states_its_direction():
     v = news_verdict_for_symbol("XOM", items)
     assert v.direction == "bearish"
     assert v.conviction == "low"
-    assert v.magnitude == NO_STATED_STRENGTH == 0.0
+    assert v.magnitude is NO_STATED_STRENGTH is None
     assert v.invalidation           # still falsifiable
     assert v.evidence               # still cited
 
@@ -81,8 +81,9 @@ def test_news_magnitude_does_not_track_conviction():
     While news's magnitude was a table on its own conviction, the composite
     was one signal counted twice at an unsourced spacing. Magnitude is flat
     now, so conviction enters the score exactly once — this test is the
-    mechanical guard against the table coming back. (And flat means ZERO,
-    not Technical's 0.5 rung borrowed — see `NO_STATED_STRENGTH`.)"""
+    mechanical guard against the table coming back. (And flat means ABSENT —
+    None, item 65 2026-09-26 — not zero and not Technical's 0.5 rung
+    borrowed; see `NO_STATED_STRENGTH`.)"""
     low = news_verdict_for_symbol("XOM", [_item("bearish", "low")])
     high = news_verdict_for_symbol("XOM", [_item("bearish", "high")])
     assert low.conviction == "low" and high.conviction == "high"
@@ -114,7 +115,7 @@ def test_mixed_items_that_are_all_positive_polarity_collapse_to_bullish():
     assert collapse_stances(i.sentiment for i in items) == "mixed"
     v = news_verdict_for_symbol("TSLA", items)
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
 
 
 def test_two_against_one_still_resolves_to_neutral_not_majority():
@@ -132,7 +133,7 @@ def test_two_against_one_still_resolves_to_neutral_not_majority():
     assert collapse_stances(i.sentiment for i in items) == "mixed"
     v = news_verdict_for_symbol("META", items)
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -158,7 +159,7 @@ def test_all_neutral_items_produce_a_neutral_verdict():
     assert collapse_stances(i.sentiment for i in items) == "neutral"
     v = news_verdict_for_symbol("SPY", items)
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -168,7 +169,7 @@ def test_empty_items_fail_soft_to_neutral():
     the function itself fails soft rather than raising."""
     v = news_verdict_for_symbol("ORCL", [])
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.evidence == []
 
 
@@ -223,7 +224,10 @@ def test_evidence_is_capped_and_headline_plus_summary_are_both_present():
 def test_result_is_a_real_analystverdict_and_validates():
     v = news_verdict_for_symbol("GOOG", [_item("bearish", "high")])
     assert isinstance(v, AnalystVerdict)
-    assert v.signed_magnitude == -v.magnitude
+    # News states no strength, so there is no signed strength either — the
+    # absence propagates instead of arriving downstream as a signed zero
+    # (item 65, 2026-09-26).
+    assert v.magnitude is None and v.signed_magnitude is None
 
 
 # ==========================================================================

@@ -33,8 +33,8 @@ the `agent_secrets` table.
   `PA3DFXH9FF5V` (the same account already named elsewhere in this repo's
   incident history).
 - `Rehearsal Harness` (`identifier=rehearsal`) → a separate paper account,
-  `PA30V8QHEW1C`, funded at $10,000, with its secrets pinned specifically to
-  `paper-api.alpaca.markets`.
+  `<redacted-rehearsal-account-id>`, funded at $10,000, with its secrets
+  pinned specifically to `paper-api.alpaca.markets`.
 
 Verified directly: the same URL called through each of the two tokens returns
 data for a different account. When OneCLI cannot resolve a token to a grant
