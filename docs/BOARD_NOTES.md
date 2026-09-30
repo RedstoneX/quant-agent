@@ -275,7 +275,7 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Same round number, two questions, no source, nothing tying them. The first job blocked 7 of 8 recorded discretionary exits. Settles with, for each independently, a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant. How readily the desk should block a sale at all is the owner's appetite, not this item.
 
-## item 75 — RETIRED 2026-09-30 (superseded by the exit-on-alignment ruling; the retirement note is at the end of this file and item 205 carries the successor)
+## item 75 — RETIRED 2026-09-30, superseded by the exit-on-alignment ruling (item 205 carries the successor)
 
 **Plain language —** When the desk bought Oracle on 2 September, the chart analyst set a profit target of $159.52 — a price Oracle had already failed at twice. Every seat saw that number: the portfolio manager used it to justify buying, the risk manager saw it, and the position reviewer was shown it every session with the words "soft — you manage exit". But nothing ever used it to sell. The reviewer is told it manages the exit, while its sell rules refuse "taking profit" as a reason, and the "past target" warning only appears at 150% of the way there. Oracle traded above the target on 4 and 8 September. Selling at target would have made about 9%; the desk would have ended slightly below its purchase price.
 **Example —** A target is written down before the trade opens, used to say the trade is worth taking, then ignored for the rest of the trade's life.
@@ -563,7 +563,53 @@ Full heading text, moved for the same reason:
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** This constant belongs to no tranche (182 is the ladder, 183 the order gates, 185 the trailing numbers, 186 the portfolio ceilings), so it was taken here. A first pass refused it; an adversary pass found that refusal rested on a false history and wrong arithmetic, and what follows is the corrected result. Full reasoning is in `config/number_ledger.yaml` under its id rather than duplicated here. **(a) A false history is deleted from five files, not softened.** The first pass asserted a "3.0 -> 1.5 move on 2026-09-04" and built an argument on it. There was no such move: `config/settings.yaml` went 3.0 (2026-08-27) straight to 2.5 (2026-09-10) and never deployed 1.5, because the commit that carried it squashes PR #269's two legs (3.0 -> 1.5, then 1.5 -> 2.5) into one merge. The wrong date was inherited from a settings comment and then copied into four more places by a change whose purpose was removing rot; it is now corrected at the source. **(b) The ledger's own open question was doctrine-barred and is replaced.** It asked what this desk's maximum-adverse-excursion record says about the point inside the band — an MAE study over the desk's own trades is FITTING, which `docs/OUTCOME.md` bars outright, and it is how the 1.5 was produced in the first place. **(c) There is no cited band, so BOTH ends are unsupported.** The entry carries no source field and `config/settings.yaml` offers only "general swing-trading guidance" with no URL, which doctrine explicitly rejects. Searched and recorded: the pages asserting 2.5-3.0x for a fixed multi-day entry stop are vendor content rather than literature, one secondary claim points the other way at 1.5-2.0x, the corroborating Van Tharp and Chandelier figures are trailing mechanisms the settings comment already concedes, and the top search hit for the desk's own phrasing is now the desk's own PR. The quoted band (2.5-3.0) does not even match the one quoted three lines below it (2-3). 2.5 stays as the INTERIM value and is deliberately not re-picked, because with no cited band moving it is one more unsourced choice. **(d) The reformulation is NOT refused — it is specified and filed as item 199.** The first pass refused a sqrt-horizon floor claiming it pins reward:risk at exactly 1.0; that was wrong twice (the setup and regime scalers still multiply in, giving about 1.17 to 0.83, and the target and stop rules fire on opposite sides of price so they do not share a population) and is retracted. More importantly it tested the wrong reformulation: doctrine's worked example is structural, and this desk already computes levels with touch counts and already has owner-ratified machinery that reads a stop from structure. The asymmetry nobody had examined is that the 5-touch bar was measured for justifying a TIGHTER stop, where a level that fails costs a whipsaw; as a WIDENING anchor a level that fails only leaves the stop wider than needed, which under risk-based sizing costs position size and not loss. **(e) One stale constant fixed and the class closed mechanically.** `src/pipeline.py` fell back to 1.5 whenever the configured multiple was absent or not a real number — a half-landed second leg of PR #269, which is exactly the failure `scripts/definition_of_done.py` exists for. Measured: not reachable in production, and the three test modules that build a pipeline give 108 passed with the fallback at either value, so nothing depended on it. `tests/test_risk_setting_fallbacks.py` now pins all fifteen fallbacks to the DEPLOYED value in `config/settings.yaml`. **(f) The screen contradiction was FIXED ON MAIN by item 185, which landed first and went further; this branch drops its own narrower version.** This pass proposed dividing `STOP_SANITY_FLOOR_FRACTION` by the widest reachable stop multiple instead of the base, taking the ceiling from 20% to 16.67%. Item 185 instead deleted the borrowed 0.5 literal outright, so the ceiling is now `1 / widest_reachable_stop_atr_multiple(...)` = 1/3.00 = 33.3%. Main's form is kept. The FINDING survives and item 185 confirms it: dividing by the bare base was false across a band of names, and the divergence was exactly the risk-off scaler 1.20. Also withdrawn as wrong on the facts: the board's note that this "needs the owner's call because it tightens a live screen" — `universe_screen.enabled` is false, so the screen does not ship on. **(g) THE BLAST RADIUS GREW WHILE THIS PASS WAS OPEN, and that strengthens rather than weakens the interim finding.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
 
-## item 75 — RETIRED 2026-09-30, superseded by the exit-on-alignment ruling (item 205 carries the successor)
+## Item 202 — the rehearsal harness reaches the network
+
+Found 2026-09-30 while closing a hole in the test suite's outbound-HTTP guard.
+
+`tests/conftest.py` blocked `requests.get` only. A `requests.Session` bypassed
+it, and yfinance does not use `requests` at all — it ships its own transport on
+curl_cffi [measured: `yfinance.data` references `curl_cffi` and `session.get`,
+and `requests.Session` zero times]. So the guard never applied to the one
+library that actually reached the internet.
+
+Closing both holes exposed five tests that silently depended on a live Yahoo
+Finance response. Four were not about market data and now state their own
+sectors. The fifth is this item: a test whose premise is replaying a RECORDED
+session downloads SPY and per-symbol price history on every run, reports
+`TECH DATA BLIND SPOT`, and never reaches the Portfolio Manager.
+
+It **fails on `origin/main` today** with the network reachable, taking 196
+seconds [measured 2026-09-30], so it is pre-existing rot rather than a
+regression from the guard.
+
+Do NOT fix it by loosening the guard, skipping the test, or marking it flaky.
+That is the same error as raising a safety sweep's frequency instead of fixing
+what the sweep is covering for.
+
+
+### Item 202 update — the isolation was never real (2026-09-30)
+
+`ops/rehearsal/broker.py::blocked_market_data` replaces the market-data
+provider with one that fetches nothing, and `ops/rehearsal/isolation.py`
+describes a socket wall covering "Anthropic, OpenAI, OpenRouter, Alpaca,
+yfinance, FRED and RSS". Neither held: price data still reached the rehearsal
+through **curl_cffi**, which is yfinance's own transport and which the test
+suite's outbound-HTTP guard did not cover.
+
+So the rehearsal has been validating against LIVE market data while claiming
+to be offline, deterministic and free. With the hole closed, the session
+degrades honestly to `status='no_data'` and never reaches the Portfolio
+Manager, which is why `test_the_settled_cost_ceiling_still_suspends_paid_analysis`
+cannot build its 'before' case.
+
+That test is marked `xfail(strict=False)` with the reason above — NOT as a
+flake. It flips to XPASS the moment this item serves recorded market data,
+which is the signal that item 202 is done.
+
+It also fails on `origin/main` today, taking ~196 seconds of live fetching
+[measured 2026-09-30], so the defect predates the guard rather than being
+caused by it.
 
 Item 75 asked for automatic profit-taking: a price target sent to the broker,
 profit-taking made an allowed SELL reason, and a tighter trail. The owner ruled
