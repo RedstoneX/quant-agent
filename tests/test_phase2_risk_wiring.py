@@ -64,9 +64,29 @@ def test_correlation_clusters_group_transitively():
 
 
 def test_correlation_clusters_omit_singletons():
+    """A name with no measured correlation is never dragged into a cluster."""
     from src.data.correlation import correlation_clusters
 
-    assert correlation_clusters(["KO", "PEP"], {"KO": {"PEP": 0.2}}) == []
+    matrix = {"A": {"B": 0.9}, "B": {"A": 0.9}}
+    assert correlation_clusters(["A", "B", "LONE"], matrix) == [["A", "B"]]
+
+
+def test_two_name_book_rations_as_one_cluster():
+    """CHANGED 2026-09-30 (item 186), and deliberately.
+
+    This used to assert that KO/PEP at 0.2 were NOT a cluster, because 0.2
+    sat under a 0.7 cutoff. There is no cutoff any more: a two-name tree has
+    exactly one edge and therefore no jump of its own to read, so the
+    structural method falls back to its conservative answer and treats them
+    as one bet. That over-rations rather than under-rations — the pair share
+    a budget they may not need to share, instead of a real single bet being
+    counted as two.
+    """
+    from src.data.correlation import correlation_clusters
+
+    assert correlation_clusters(["KO", "PEP"], {"KO": {"PEP": 0.2}}) == [
+        ["KO", "PEP"]
+    ]
 
 
 def test_correlation_clusters_are_stable_and_largest_first():

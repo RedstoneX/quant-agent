@@ -59,6 +59,12 @@ class HealthResponse(BaseModel):
     # of ok / broken / stale / unknown — "unknown" means no check has been
     # recorded, which is deliberately NOT the same as healthy.
     alert_channel: dict | None = None
+    # Is the code running here the code that was merged? Written by
+    # scripts/check_deploy_drift.py on its timer, never inferred here.
+    # `status` is one of in_sync / behind / unknown. Telegram alerts can be
+    # muted and a repeated message changed nothing five times in one day, so
+    # the drift state must live on the board the desk already looks at.
+    deploy_drift: dict | None = None
     timestamp: str
 
 
