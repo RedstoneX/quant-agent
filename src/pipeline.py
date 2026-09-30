@@ -14943,18 +14943,6 @@ class TradingPipeline:
             if conviction_delever:
                 orders = list(conviction_delever) + list(orders)
 
-            # Bookend: park idle cash above the reserve into the sweep vehicle.
-            # After the BUY phase so open BUY limits are subtracted from the
-            # parkable excess (see CashSweeper.park_excess).
-            sweeper = self._sweeper()
-            if sweeper is not None:
-                try:
-                    sweep_order = sweeper.park_excess(ctx)
-                    if sweep_order:
-                        orders.append(sweep_order)
-                except Exception as e:
-                    logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
-
             # Truthful terminal status. 2026-08-19: three risk-approved BUYs
             # were skipped as unfunded (the funding sell filled 36s after the
             # session gave up), yet the run reported status='executed' with
@@ -16173,20 +16161,6 @@ class TradingPipeline:
         # Reconcile everything still marked submitted (today's new orders +
         # any lingering from morning that didn't reach terminal in time).
         self._reconcile_fills()
-
-        # Bookend: park cash freed by this session's sells (and any still-idle
-        # excess) — without this, midday/close SELL proceeds sit unswept until
-        # tomorrow's morning bookend. park_excess refreshes account state and
-        # subtracts open-BUY holds itself; emergency paths returned earlier and
-        # deliberately skip parking.
-        sweeper = self._sweeper()
-        if sweeper is not None:
-            try:
-                sweep_order = sweeper.park_excess(ctx)
-                if sweep_order:
-                    orders.append(sweep_order)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
 
         # Session execution (reviewer exits, sweep) may have changed the
         # book since the start-of-session snapshot.

@@ -738,7 +738,7 @@ def evaluate_rotation(
             f"{floor_pct:.2f}% floor, and "
             + (
                 f"${entry_budget_usd:,.2f} deployable is at or above the "
-                f"${min_order_usd:,.2f} minimum order — real room on every "
+                "the smallest order the desk will place — real room on every "
                 "constraint"
                 if measured else
                 "the funding view was NOT MEASURED this session, so no "
@@ -1093,7 +1093,7 @@ def rotation_constraint_clause(
         )
         return (
             f"{risk}${float(entry_budget_usd):,.0f} deployable, under the "
-            f"${float(min_order_usd):,.0f} minimum order."
+            "the smallest order the desk will place."
         )
     return (
         f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk "

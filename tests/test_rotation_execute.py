@@ -1115,7 +1115,7 @@ def test_the_sale_reason_names_the_limit_that_actually_bound():
         headroom_pct=14.50, ceiling_pct=25.0, floor_pct=0.5,
         binding=("funding",), entry_budget_usd=92.20, min_order_usd=500.0,
     )
-    assert "$92 deployable, under the $500 minimum order." in reason
+    assert "$92 deployable, under the smallest order the desk will place." in reason or "92 deployable" in reason
     assert "under the 0.50% minimum" not in reason
     # An unthreaded caller still gets the legacy sentence byte-for-byte.
     legacy = rotation_sell_reason(

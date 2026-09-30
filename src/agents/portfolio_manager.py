@@ -2399,7 +2399,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "below the smallest order the desk will place — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float))
@@ -2476,8 +2476,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     f"{headroom_pct:.2f}% risk headroom left against the "
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
-                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
-                    "minimum order — real room exists on every constraint, "
+                    "for new entries, above the smallest order the desk will "
+                    "place — real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )
             # Adversary review 2026-09-23: do NOT tell a seat that can sell
