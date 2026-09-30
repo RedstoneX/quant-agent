@@ -894,3 +894,4 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
         raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
         possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
         item 90's half-two re-derivation, not to a gate inventory.
+## item 182 — RETIRED 2026-09-30, both criteria met: the cash-deficit cushion was reformulated away (sized off the order's own live limit floor) and GROSS_LADDER_ALERT_PCT is now SOURCED from the MiFID Article 62(1) / COBS 16A.4.3UK 10% depreciation-notification threshold, moving the owner alert from -20% to -10%

@@ -219,14 +219,6 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender: **$13.93 of $22.18 all-time, 62.8%**, over 211 sessions of which 106 were paid, against morning's $7.66 over 31. 13 paid ticks a day since the timer moved, 14 before. A tick carrying the held book costs **1.54x** a movers-only tick ($0.167 vs $0.108 mean). **80% of paid ticks (85 of 106) produced no order**, and the whole record attributes 21 new positions to intraday discovery — **$0.66 of model spend per position opened**. The mover cap binds on 21.5% of runs and drops the excess with no record. Figures and method in `docs/BOARD_NOTES.md`.
 detail: docs/BOARD_NOTES.md (item 177)
 
-**182. The de-levering ladder's rungs and cash-deficit cushion are made-up money numbers with no board item — filed 2026-09-25, TIER 1.**
-
-DONE WHEN:
-  - [x] the forced cash-deficit cushion is sourced, measured, owner-ratified as appetite, or reformulated away — 2026-09-30, reformulated away (sized off the order's own limit floor; no replacement constant)
-  - [ ] `GROSS_LADDER_ALERT_PCT` is sourced, measured or owner-ratified as appetite — at what drawdown must the owner be told, independently of what the ladder does to exposure? (deduplication against the ladder was attempted and reverted)
-
-detail: docs/BOARD_NOTES.md (item 182)
-
 **185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
 
 DONE WHEN:
@@ -353,13 +345,14 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
-- retired queue: 77
 - retired queue: 152
-- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 192
 - retired queue: 147
+- retired queue: 77
+- retired queue: 183
+- retired queue: 182
+- retired queue: 192
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
