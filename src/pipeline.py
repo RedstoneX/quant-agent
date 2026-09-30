@@ -755,7 +755,28 @@ def build_constructor_config(config, risk_engine_config):
     object, not only against `RiskConfig`.
     """
     from src.portfolio_constructor import ConstructorConfig
+    from src.config import RiskConfig
     _risk_cfg = getattr(config, "risk", None)
+
+    def _declared_default(name: str, literal: float) -> float:
+        """The default `RiskConfig` itself declares for `name`.
+
+        The fallback literals below used to be hand-copied from
+        `src/config.py`, and one of them silently rotted: this function
+        passed 1.5 for `min_stop_atr_multiple` long after the declared
+        default became 2.5 (2026-09-10), so any path reaching here with the
+        setting ABSENT sized live stops against a floor nobody ratified. A
+        literal repeated in two files is drift waiting to happen, so the
+        declared default now WINS; the literal survives only as the last
+        resort for a field `RiskConfig` declares with no default of its own
+        (`max_position_pct` is required, so it has none).
+        """
+        field = RiskConfig.model_fields.get(name)
+        if field is not None:
+            declared = getattr(field, "default", None)
+            if not isinstance(declared, bool) and isinstance(declared, (int, float)):
+                return float(declared)
+        return float(literal)
 
     def _risk_setting(name: str, default: float, allow_zero: bool = False) -> float:
         """Read a risk ceiling, or the ratified default.
@@ -772,6 +793,7 @@ def build_constructor_config(config, risk_engine_config):
         means "no floor". Swallowing it into the default would size under a
         floor nobody configured while the sizing seat's sheet rendered the 0.
         """
+        default = _declared_default(name, default)
         value = getattr(_risk_cfg, name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return default
