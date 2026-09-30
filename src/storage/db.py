@@ -1202,6 +1202,44 @@ class Database:
         _ensure_column(
             "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
         )
+        # `max_adverse_overnight_gap` — SHORT-SIDE GAP EVIDENCE, the worst
+        # ADVERSE overnight gap (session open minus the prior session's
+        # close, in price units, positive = against the short) observed on
+        # any session this short was held. Its sibling
+        # `overnight_gap_sessions` counts the sessions on which a gap was
+        # actually observed, so a NULL/absent reading is distinguishable
+        # from "held, and never gapped against".
+        #
+        # WHY IT EXISTS (item 186): the short-side sizing haircut
+        # (`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and TWO
+        # attempts to read it off the instrument have failed — see the
+        # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
+        # same underlying reason: the desk has never recorded what a short
+        # actually suffers overnight. Bars are fetched live and discarded;
+        # no OHLCV table exists. This column, joined to the `entry_atr` and
+        # `initial_stop_loss` already pinned on the same opening row, is the
+        # evidence that would let the question ever be settled.
+        #
+        # WHAT IT MAY NOT BE USED FOR: the same hard limit the
+        # `max_adverse_excursion` note above states. RECORDING ONLY. Nothing
+        # reads it back into a sizing, stop or exit decision, and it may not
+        # be swept for the multiple that would have been optimal — doctrine
+        # bars fitting a number to this desk's own history. Carries the same
+        # snapshot-frequency caveat: a session on which no snapshot ran
+        # contributes nothing, so the stored figure is a FLOOR on the worst
+        # adverse gap, never an overstatement.
+        _ensure_column(
+            "trades", "max_adverse_overnight_gap", "max_adverse_overnight_gap REAL",
+        )
+        _ensure_column(
+            "trades", "overnight_gap_sessions", "overnight_gap_sessions INTEGER",
+        )
+        # `last_overnight_gap_date` — the session date of the most recently
+        # recorded gap, so a second sync in the same session cannot count
+        # the same gap twice. Idempotence by date, not by call count.
+        _ensure_column(
+            "trades", "last_overnight_gap_date", "last_overnight_gap_date TEXT",
+        )
         _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
         _ensure_column("trades", "conviction", "conviction TEXT")
@@ -2547,6 +2585,65 @@ class Database:
                 "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
                 (excursion, position.symbol, excursion, position.symbol),
             )
+
+    def record_overnight_gap(
+        self, symbol: str, prev_close: float, open_price: float,
+        session_date: str,
+    ) -> bool:
+        """Record one session's ADVERSE overnight gap against an open SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY. Read the
+        `max_adverse_overnight_gap` migration note in `_migrate` for why
+        this exists (item 186 — the sizing haircut cannot be read off the
+        instrument because the evidence was never kept) and for the hard
+        limit on its use: nothing may read it back into a sizing, stop or
+        exit decision, and it may not be swept for an optimal multiple.
+
+        The stored figure is the WORST (largest) adverse gap seen on any
+        session the short was held, `open - prev_close` in price units,
+        positive when the name gapped UP against the short. It is stored
+        SIGNED and unfiltered: a short every one of whose gaps ran in its
+        favour records a negative worst, which is a real and different fact
+        from "never observed". `overnight_gap_sessions` counts the sessions
+        observed so the two stay distinguishable.
+
+        Written onto the OPENING rows of the position (the `SHORT` rows
+        carrying `entry_atr`), which is where a later reader joins the gap
+        to the volatility read and the stop distance pinned at entry —
+        `entry_atr` and `initial_stop_loss` on the same row — and, once the
+        position closes, to its realised outcome.
+
+        Idempotent per session: `last_overnight_gap_date` gates the write,
+        so a second position sync on the same date cannot count one gap
+        twice. Returns True when a row was updated.
+        """
+        try:
+            prev_close = float(prev_close)
+            open_price = float(open_price)
+        except (TypeError, ValueError):
+            return False
+        if prev_close <= 0 or open_price <= 0 or not session_date:
+            return False
+        gap = open_price - prev_close
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE trades SET "
+                "  max_adverse_overnight_gap = CASE "
+                "    WHEN max_adverse_overnight_gap IS NULL "
+                "      OR max_adverse_overnight_gap < ? THEN ? "
+                "    ELSE max_adverse_overnight_gap END, "
+                "  overnight_gap_sessions = COALESCE(overnight_gap_sessions, 0) + 1, "
+                "  last_overnight_gap_date = ? "
+                "WHERE symbol = ? AND action = 'SHORT' "
+                "AND entry_atr IS NOT NULL "
+                "AND (last_overnight_gap_date IS NULL OR last_overnight_gap_date < ?) "
+                "AND position_id IN ("
+                "  SELECT position_id FROM trades WHERE symbol = ? "
+                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
+                (gap, gap, session_date, symbol, session_date, symbol),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
 
     def sync_positions(self, positions) -> None:
         """Replace positions table with a fresh broker snapshot.

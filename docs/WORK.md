@@ -236,7 +236,7 @@ detail: docs/BOARD_NOTES.md (item 185)
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined
   - [x] WITHDRAWN 2026-09-30 — the pairwise-correlation appetite question is moot: the cutoff is removed, not set. Cluster membership is now read from the book's own correlation-distance tree (Mantegna MST cut at its widest gap), per the owner's ruling that risk tolerance is never a global dial. Still transitive, still rationing only.
-  - [x] WITHDRAWN 2026-09-30 — the short-size ratio is not an appetite dial: a short's risk-per-share is read as stop distance + that name's own gap-inclusive volatility (Wilder ATR, whose true range contains the overnight gap by construction), and a name with no read is refused rather than sized on the disowned 1.5.
+  - [ ] the short-side haircut CLOSES ON RECORDED EVIDENCE, NOT ON A THIRD DERIVATION. Two attempts to read the 1.5 off the instrument were made and both withdrawn 2026-09-30, with NO sizing change shipped: (1) worst historical gap over the fetch lookback — dead, that lookback is a 5-year window chosen for chart structure and a max over a fixed window can only grow, so one old gap governs size for years and a regime change cannot update it; (2) stop distance plus one ATR — dead on algebra, the stop is itself 2.5 ATR so the multiple is (2.5+1)/2.5 = 1.40 for every name, the per-name ATR cancels, and it is LOWER than the 1.5 it replaced. Do not attempt a third derivation. The criterion is now that the desk has RECORDED, for shorts it opened and closed, the adverse overnight gaps actually suffered beside the entry volatility read and the stop distance — shipped 2026-09-30 as `trades.max_adverse_overnight_gap` / `overnight_gap_sessions` joined to `entry_atr` and `initial_stop_loss` — and that enough closed shorts exist to read the distribution. Recording only: nothing reads it back into sizing. Separately, this number binds at EXECUTION, not in the constructor (see item 215)
   - [ ] ***OWNER APPETITE*** how much of total equity may the desk lose overnight on ONE name whose just-filed report nobody has read, accepting the stop does not hold through a gap? Answer that tolerance L and the cap stops being chosen: it reads L divided by the expected absolute earnings-day move, and L = 0.25% reproduces today's 5%
 
 detail: docs/BOARD_NOTES.md (item 186)
@@ -328,6 +328,28 @@ DONE WHEN:
   - [ ] (b) the OpenRouter key carries a provider-side spend cap, or its absence is recorded as accepted — the account is outside this repo, so it closes on an observation in the provider console, never on a test
   - [ ] (c) BLOCKED and cannot close by building — the BUY-eligibility section reorder needs a paid benchmark run the owner has forbidden unless he asks for it (same blocker as items 76 and 77); it stays open and untouched until he raises it
 detail: docs/BOARD_NOTES.md (item 208)
+
+
+**215. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
+
+Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
+applies the short-side haircut on the allocation leg; the risk-budget leg in
+`src/pipeline_stages.py` reads `RiskConfig.short_gap_risk_multiple` and applies
+it again. Whenever the risk leg is the binding one, the number that actually
+sizes the live short is the execution-side read, not the constructor's. This
+was found 2026-09-30 when a proposed constructor-only change was about to ship
+a ledger line claiming the number no longer sized any short — which would have
+been untrue. Latent, not live-breaking: today both sites hold the same value,
+so the two agree by coincidence of configuration rather than by construction.
+The defect is that a future change to one is silently a no-op, or worse, a
+half-change.
+
+DONE WHEN:
+  - [ ] it is established by reading the code which leg binds in practice, and recorded, rather than assumed
+  - [ ] the short-side haircut has ONE definition site that both legs read, or the two sites are documented as deliberately distinct with the reason and a check that fails when they diverge
+  - [ ] no statement anywhere in docs or the number ledger claims a constructor-side change has retired this number unless the execution-side read changed with it
+
+detail: docs/BOARD_NOTES.md (item 215)
 
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.

@@ -42,27 +42,6 @@ from src.risk.rules import RiskRuleEngine
 # Shared fixtures
 # ==========================================================================
 
-def _gap_read_bars_fn(symbol, _price=100.0):
-    """A bars source whose Wilder ATR is exactly $2.00 per share.
-
-    Board item 186: a short is sized on stop distance + this name's own
-    gap-inclusive volatility read (ATR, whose true range contains the
-    overnight gap by construction), and a constructor handed NO bars source
-    refuses the short by name rather than falling back on the disowned flat
-    1.5. Every test below that expects a SHORT to come out therefore hands
-    the constructor bars, exactly as `src/pipeline.py` hands it the live
-    provider. True range is a flat 2.0 on every bar here, and Wilder's
-    average of a constant is that constant, so the read is an exact $2.00
-    and the sizing arithmetic in these tests stays checkable by hand.
-    """
-    from types import SimpleNamespace
-    return [
-        SimpleNamespace(open=_price, high=_price + 1.0, low=_price - 1.0,
-                        close=_price)
-        for _ in range(60)
-    ]
-
-
 def _pos(symbol: str, qty: float, entry: float, price: float,
          sector: str = "Technology") -> Position:
     return Position(
@@ -206,7 +185,7 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
     decision; ExecutionStage submits it with side='sell_short' and places
     the mandatory protective stop with side='sell_short' too (so
     `place_entry_protection` mirrors it to a BUY stop ABOVE entry)."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[], analyses=[_short_analysis()],
         total_value=100_000, price_map={"TSLA": 250.0},
@@ -313,7 +292,7 @@ def test_cover_short_full_buys_back_everything():
 def test_long_to_short_target_emits_only_the_flattening_sell():
     """A held LONG with a SHORT target must not flip in one order. The
     constructor emits ONLY a full-close SELL this session."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="NVDA", direction="short",
                                 target_weight_pct=5.0, conviction="high",
@@ -329,7 +308,7 @@ def test_long_to_short_target_emits_only_the_flattening_sell():
 
 def test_short_to_long_target_emits_only_the_flattening_cover():
     """The mirror: a held SHORT with a LONG target emits ONLY a full COVER."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="TSLA", direction="long",
                                 target_weight_pct=5.0, conviction="high",
@@ -350,7 +329,7 @@ def test_short_to_long_target_emits_only_the_flattening_cover():
 def test_short_stop_at_or_below_entry_is_rejected():
     """D4: a short's stop must sit strictly ABOVE entry. A PM-suggested
     stop below entry is refused, not silently accepted."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target(suggested_stop=240.0)],  # BELOW entry $250
         positions=[], analyses=[_short_analysis()],
@@ -395,7 +374,7 @@ def test_long_stop_breached_by_live_price_since_analysis_is_rejected():
     rejected` above covers) refuses cleanly rather than shipping a stop
     that can no longer protect anything.
     """
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     analysis = _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0)
     target = TargetPosition(
         symbol="NVDA", direction="long", target_weight_pct=5.0,
@@ -422,7 +401,7 @@ def test_short_stop_inside_noise_band_is_widened_upward():
     2026-09-04; 1.35 x ATR = 6.75 -> $256.75 until 2026-09-10; 2.25 x ATR =
     11.25 -> $261.25 since, when the base went 1.5 -> 2.5 on published
     swing-trading doctrine."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     widened = constructor._widen_stop_past_noise(
         "TSLA",
         _short_analysis(entry=250.0, stop=252.0, target=200.0, atr_14=5.0),
@@ -444,7 +423,7 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
     setup the real ratio is a ranking signal, never a refusal or a
     size-cap, and it is mirrored for a short exactly as it is for a long. The
     STOP the function returns is the assertion now."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     widened = constructor._widen_stop_past_noise(
         "TSLA",
         _short_analysis(entry=250.0, stop=252.0, target=241.0, atr_14=5.0),
@@ -508,7 +487,7 @@ def test_short_level_backed_tight_stop_is_honoured_not_widened():
 
     Worked by hand: risk 260.00 - 250.00 = $10.00 against reward 250.00 -
     220.00 = $30.00, so R/R 3.00 — comfortably over the 1.5 floor."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[],
         analyses=[_short_analysis(
@@ -530,7 +509,7 @@ def test_short_unbacked_tight_stop_is_still_widened_to_the_band():
     ATR above entry). Reward $30.00 over the widened risk of $11.25 is 2.67,
     which still clears the floor, so the trade ships WIDENED rather than
     being refused — the assertion is on the stop price, not on survival."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[],
         analyses=[_short_analysis(
@@ -556,7 +535,7 @@ def test_short_reward_risk_is_measured_against_the_stop_that_will_ship():
     band, 3.00 vs 2.67 now at 2.25 ATRs. §12.1's exemption exists to stop a
     fabricated band stop from destroying the ratio, so the gap is SUPPOSED to
     track how much ratio the band has to destroy. It is not a threshold."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
 
     def stop_for(computed):
         return constructor._widen_stop_past_noise(
@@ -585,7 +564,7 @@ def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
     whipsaw, so the stop moves out to exactly 1x ATR — not to the 2.25x
     band. (The gap between the two has narrowed and widened again as the base
     floor moved 3.0 -> 1.5 -> 2.5, but the destination rule is unchanged.)"""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[],
         analyses=[_short_analysis(
@@ -619,7 +598,7 @@ def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
     claimed to cover. This fixture is the case that was too GENEROUS: at
     $5 ATR on a $260 level, ATR is 1.92% of price, so 0.25 ATR was 1.3x the
     zone. The fixture level, band and floor are unchanged.)"""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
 
     def stop_for(stop):
         return constructor._widen_stop_past_noise(
@@ -640,7 +619,7 @@ def test_short_level_the_model_asserted_does_not_earn_the_exemption():
     exactly. `computed_levels`, which only Python writes, does not. The band
     applies — a model must not be able to buy an exemption from the noise
     floor by asserting a level beside its stop."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     analysis = _short_analysis(
         entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
         computed=[_S_TARGET_LEVEL],
@@ -659,7 +638,7 @@ def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
     `min_level_touches_for_stop_honor` (5, derived in
     docs/RESEARCH_FINDINGS.md §7), so the stop widens to the band exactly as
     an unbacked short stop does."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[],
         analyses=[_short_analysis(
@@ -674,7 +653,7 @@ def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
 
 
 def test_short_a_level_at_the_touch_bar_earns_the_exemption():
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[],
         analyses=[_short_analysis(
@@ -692,7 +671,7 @@ def test_short_a_level_below_entry_cannot_back_a_shorts_stop():
     """Side discipline, mirrored. A short's stop sits above entry, so only
     structure at or above entry can be what it rests on. The $220.00 computed
     support is a target, not a backstop."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     analysis = _short_analysis(
         entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
         computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
@@ -711,7 +690,7 @@ def test_short_a_level_below_entry_cannot_back_a_shorts_stop():
 # ==========================================================================
 
 def _borrow_gated_ctx_and_pipeline(borrow_result_or_exc):
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[], analyses=[_short_analysis()],
         total_value=100_000, price_map={"TSLA": 250.0},
@@ -765,7 +744,7 @@ def test_borrow_gate_refuses_when_flags_are_unreadable():
 # ==========================================================================
 
 def test_protective_stop_failure_on_a_short_triggers_immediate_market_cover():
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target()], positions=[], analyses=[_short_analysis()],
         total_value=100_000, price_map={"TSLA": 250.0},
@@ -807,8 +786,8 @@ def test_short_gap_risk_haircut_produces_a_strictly_smaller_position_than_a_long
     """Same risk allocation (0.5%), same $12.50/share stop distance, same
     entry $250 and gross multiplier (1x) for both a long and a short. The
     only difference is direction, and the only thing that should differ is
-    the short's gap-inclusive sizing read (board item 186)."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    the short's sizing haircut (default short_gap_risk_multiple=1.5)."""
+    constructor = PortfolioConstructor()
 
     long_decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="LONGX", direction="long",
@@ -832,23 +811,11 @@ def test_short_gap_risk_haircut_produces_a_strictly_smaller_position_than_a_long
     long_alloc = long_decisions[0].allocation_pct
     short_alloc = short_decisions[0].allocation_pct
 
-    # THE numeric assertion, board item 186: same risk allocation, same
-    # $12.50 stop distance, so the short is sized on 12.50 + the $2.00 ATR
-    # this name's own bars read (true range contains the overnight gap by
-    # construction) = $14.50/share. The multiple is 14.50/12.50 = 1.16 — it
-    # is READ, not chosen, and it is strictly above 1.0 for every name
-    # because the ATR read is strictly positive.
-    gap_atr = 2.0          # `_gap_read_bars_fn`, by construction
-    stop_distance = 12.50  # 262.5 - 250.0
-    expected_multiple = (stop_distance + gap_atr) / stop_distance
+    # THE numeric assertion: same risk allocation, same stop distance —
+    # the short is sized at exactly long / short_gap_risk_multiple (1.5).
     assert long_alloc == 10.0
-    assert expected_multiple > 1.0
-    assert short_alloc == round(long_alloc / expected_multiple, 2)
-    assert short_alloc == 8.62
-    # And the order CARRIES the read it was sized on — it cost a fetch and
-    # cannot be recomputed later.
-    assert short_decisions[0].short_gap_atr == gap_atr
-    assert short_decisions[0].short_gap_multiple == expected_multiple
+    assert short_alloc == round(long_alloc / 1.5, 2)
+    assert short_alloc == 6.67
     assert short_alloc < long_alloc, (
         "a short must open strictly smaller than an equivalent long at the "
         "same risk allocation"
@@ -986,7 +953,7 @@ def test_constructor_long_only_output_unchanged_with_no_shorts_anywhere():
     tests/test_shorts_countable.py's `*_long_only_unchanged` tests. A
     book with no `direction='short'` target and no short position anywhere
     produces exactly the pre-Stage-3 BUY."""
-    constructor = PortfolioConstructor(bars_fn=_gap_read_bars_fn)
+    constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="NVDA", target_weight_pct=15.0,
                                 conviction="high", thesis="add")],

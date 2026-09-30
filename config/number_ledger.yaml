@@ -841,13 +841,6 @@ numbers:
       same risk allocation opens a SMALLER short than an equivalent long
       (src/config.py:961-965). The direction is reasoned; the 1.5 magnitude is
       not measured against any gap distribution.
-      ITEM 186 BUILT 2026-09-30 — NO LONGER SIZES ANY SHORT. The
-      constructor sizes a short on stop distance + that name's own Wilder
-      ATR (true range contains the overnight gap by construction), and
-      refuses the name outright when no read is available; the constructor
-      mirror of this number was deleted with that change. This row survives
-      as the execution-time belt in src/pipeline_stages.py only, which is a
-      cap on construction's size, never the sizing itself.
       ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
       no citation: a short's loss above its stop is unbounded while a long's
       below its stop is bounded by zero, which is arithmetic, not an
@@ -876,6 +869,35 @@ numbers:
       CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
+      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
+      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
+      before this pass. Record of the two failures so nobody spends a third
+      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
+      dead because that lookback is a 5-year window chosen for CHART
+      STRUCTURE, and a maximum over a fixed window can only grow until the
+      bar ages out — one old gap would govern every short's size for years
+      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
+      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
+      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
+      name — the per-name ATR cancels out. It is a flat haircut in a
+      per-name costume, and LOWER than the 1.5 it claimed to replace.
+      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
+      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
+      path in src/pipeline_stages.py multiplies by this number. So this
+      row, not the constructor's mirror of it, is the one that sizes a live
+      short whenever the risk path is the binding leg. Any future statement
+      that a constructor-side change has "retired" this number is false
+      unless the execution-side read changes with it. That construction /
+      execution split is a latent defect in its own right and is filed as
+      board item 215.
+      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
+      it holds accumulates the worst adverse overnight gap actually
+      suffered against it, beside the volatility read and the stop distance
+      already pinned at entry (`trades.max_adverse_overnight_gap`,
+      `overnight_gap_sessions`, joined to `entry_atr` and
+      `initial_stop_loss`). Recording only — no threshold, no gate, no
+      sizing change, and it may NOT be swept for the multiple that would
+      have been optimal, which would be fitting to this desk's history.
     open_question: >-
       Unchanged in substance, now with its blocker named: by how much does
       overnight gap risk on a short exceed a long's, measured at a matched
@@ -888,14 +910,6 @@ numbers:
     cost_while_unanswered: >-
       Shorts are sized by a haircut whose direction is arithmetic and whose
       magnitude is neither sourced nor measured.
-      ITEM 186 BUILT 2026-09-30 — NO LONGER THE NORMAL PATH. A short's sized
-      risk-per-share is now the distance to its stop PLUS that name's own
-      worst upward overnight gap over the lookback the desk already fetches
-      (`PortfolioConstructor._short_gap_fraction`), so the magnitude is read
-      off the instrument instead of dialled. No percentile is picked: the
-      read is the worst gap the name actually printed. This 1.5 survives ONLY
-      as the fail-closed fallback for a name whose bars cannot be fetched,
-      and is still not measured against any gap distribution.
   - id: src.config.RiskConfig.target_divergence_warn_pct
     value: 25
     status: arbitrary
@@ -2285,6 +2299,22 @@ numbers:
     cost_while_unanswered: >-
       Owner-ratified at 5% on 2026-08-27 but not sourced; it caps every real
       position.
+  - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
+    value: 1.5
+    status: derived
+    site: src/portfolio_constructor.py
+    derived_from: src.config.RiskConfig.short_gap_risk_multiple
+    base_value: 1.5
+    note: >-
+      Mirror of src.config.RiskConfig.short_gap_risk_multiple, the deployed
+      value. Recorded as `derived` rather than as a second arbitrary number:
+      it is ONE number with two definition sites, so counting it twice would
+      inflate the arbitrary total the same way this ledger's first version
+      claimed the 0.50% floor existed in one place while listing it in two.
+      Base-drift now fails the build if the pair stops agreeing, which nothing
+      previously checked. CORRECTION 2026-09-18: the first version quoted
+      "until a separate pass re-examines it" as text at this site; that phrase
+      is in docs/, not in src/portfolio_constructor.py.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary

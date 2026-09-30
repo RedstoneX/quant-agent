@@ -738,6 +738,7 @@ def build_risk_config(config) -> RiskConfig:
                 # mechanism, so they carry the same parity requirement.
                 "max_cluster_risk_share_pct",
                 "max_gross_exposure_x",
+                "short_gap_risk_multiple",
             ),
     )
 
@@ -751,7 +752,7 @@ def build_constructor_config(config, risk_engine_config):
 
     This is the enforcement home for four settings the Portfolio Manager's
     standing sheet renders — `min_position_risk_pct`, `max_portfolio_risk_pct`,
-    `max_cluster_risk_share_pct` — none of which
+    `max_cluster_risk_share_pct` and `short_gap_risk_multiple` — none of which
     `src/risk/rules.py` reads at all. The sizing seat's parity is against THIS
     object, not only against `RiskConfig`.
     """
@@ -825,7 +826,8 @@ def build_constructor_config(config, risk_engine_config):
             # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
-                # Spec §11.2 — same "size under the hard block" pattern again.
+            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
             # breaches the ceiling would be DROPPED rather than taken
             # smaller without this. The per-session ladder step is passed to
@@ -1418,13 +1420,6 @@ class TradingPipeline:
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
-            # Board item 186: the short-side gap read. Same provider call and
-            # same lookback the trailing-stop path already uses each session
-            # — no second data source, and the constructor holds no provider
-            # of its own.
-            bars_fn=lambda symbol: self.market.get_ohlcv(
-                symbol, self.config.trading.lookback_days,
-            ),
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
@@ -9850,8 +9845,45 @@ class TradingPipeline:
                 else self.broker.get_positions()
             )
             self.db.sync_positions(snapshot)
+            self._record_short_overnight_gaps(snapshot)
         except Exception as exc:  # noqa: BLE001
             logger.error("local positions table refresh failed: %s", exc)
+
+    def _record_short_overnight_gaps(self, positions) -> None:
+        """Store the adverse overnight gap suffered by each held SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY — item 186. The short-side
+        sizing haircut is unsourced and two attempts to read it off the
+        instrument have failed; both failed because this desk has never
+        kept a record of what a short actually suffers overnight. Bars are
+        fetched live and discarded and there is no OHLCV table, so the
+        evidence has to be captured beside the trade while the trade is
+        open. Nothing reads this back: no threshold, no gate, no sizing
+        change. See `TradeStore.record_overnight_gap` for the hard limit on
+        its use.
+
+        Shorts only, because only a short's loss above its stop is
+        unbounded and only the short-side multiple is the open question.
+        Held shorts are a handful at most, so the two-bar fetch per name is
+        cheap. Fail-soft per symbol and as a whole: a recording problem
+        must never disturb a trading session.
+        """
+        for p in positions or []:
+            try:
+                if float(getattr(p, "qty", 0) or 0) >= 0:
+                    continue
+                bars = self.market.get_ohlcv(p.symbol, 7) or []
+                if len(bars) < 2:
+                    continue
+                prev_bar, today = bars[-2], bars[-1]
+                self.db.record_overnight_gap(
+                    p.symbol, prev_bar.close, today.open, str(today.date),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "overnight-gap recording skipped for %s",
+                    getattr(p, "symbol", "?"), exc_info=True,
+                )
 
     def _run_news_update(
         self, run_id: str, session: str = "morning",

@@ -860,25 +860,8 @@ def test_buy_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning():
     assert embedded is None or embedded != _LONG_INVALID_IF
 
 
-def _gap_read_bars(price: float = 250.0, span: float = 2.0):
-    """Bars whose only job is to give the short-sizing path a real ATR.
-
-    Board item 186: a short is sized on stop distance + this name's own
-    gap-inclusive volatility read, and a constructor with no bars source
-    REFUSES the short by name rather than falling back on the disowned 1.5.
-    Any test that expects a SHORT order to come out must therefore hand the
-    constructor bars, exactly as `src/pipeline.py` hands it the provider.
-    """
-    from types import SimpleNamespace
-    return [
-        SimpleNamespace(open=price, high=price + span, low=price - span,
-                        close=price)
-        for _ in range(60)
-    ]
-
-
 def test_short_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning():
-    constructor = PortfolioConstructor(bars_fn=lambda s: _gap_read_bars())
+    constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="TSLA", direction="short", target_weight_pct=5.0,
         conviction="high", thesis="overvalued",
