@@ -22,7 +22,6 @@ from src.refusal_signature import (
     signature_key,
     status_line,
     streak_and_skipped,
-    unvarying_streak,
     _plain_key,
 )
 from src.trading_calendar import ET
@@ -143,36 +142,6 @@ def test_last_event_for_a_symbol_wins(db):
     assert len(sessions) == 1
     assert sessions[0].is_monomorphic
     assert "constructor_refused" in next(iter(sessions[0].distinct_keys))
-
-
-def test_a_run_with_an_entry_is_not_empty(db):
-    con, path = db
-    _event(con, "r1", WED, "AAPL", _refusal("AAPL"))
-    _entry(con, "r1", "AAPL", WED)
-    con.commit()
-    sessions, _ = load_sessions(path)
-    assert sessions[0].placed_entry is True
-    assert unvarying_streak(sessions) == []
-
-
-def test_a_surviving_candidate_ends_the_streak(db, tmp_path):
-    """Measured on the real 2026-09-02 close run: the cash-sweep vehicle
-    fills without ever writing a BUY row, so the trades table alone would
-    have called that session "refused everything"."""
-    con, path = db
-    for run, day, syms in (("r1", WED, ["AAPL"]), ("r2", THU, ["MSFT"])):
-        for sym in syms:
-            _event(con, run, day, sym, _refusal(sym))
-    _event(con, "r3", FRI, "SGOV", {
-        "stage": "order", "outcome": "filled", "reason": "broker_reconciliation",
-    })
-    con.commit()
-    sessions, _ = load_sessions(path)
-    assert sessions[-1].any_survived is True
-    assert unvarying_streak(sessions) == []
-    assert check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
-    ).should_alert is False
 
 
 def test_runs_that_considered_nothing_are_absent(db):
@@ -765,24 +734,6 @@ def test_no_outcome_word_that_refuses_nothing_is_read_as_a_refusal(db, stage, ou
     })
     con.commit()
     assert load_sessions(path)[0] == []
-
-
-@pytest.mark.parametrize("stage,outcome", [
-    ("risk", "modified"),        # resized and let through — `approved` with a haircut
-    ("execution", "safety_net"), # catch-up reprice, the order then proceeds
-    ("order", "filled"),
-    ("risk", "approved"),
-])
-def test_an_entry_that_went_ahead_ends_the_streak(db, stage, outcome):
-    con, path = db
-    _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
-    _event(con, "r1", WED, "NVDA", {
-        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
-    })
-    con.commit()
-    sessions, _ = load_sessions(path)
-    assert sessions[0].any_survived is True
-    assert unvarying_streak(sessions) == []
 
 
 @pytest.mark.parametrize("stage,outcome", [

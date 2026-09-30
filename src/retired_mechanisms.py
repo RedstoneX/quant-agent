@@ -292,10 +292,6 @@ def resurrected_symbols(
     return back
 
 
-def format_findings(findings: list[Finding]) -> str:  # pragma: no cover
-    return "\n\n".join(str(f) for f in findings)
-
-
 # ===========================================================================
 # THE OTHER HALF: the TRIGGER, not the scan.
 # ===========================================================================

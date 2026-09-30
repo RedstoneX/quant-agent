@@ -272,25 +272,6 @@ def insider_reuse(
     )
 
 
-def chart_reuse(payload, *, same_session: bool) -> KindReuse:
-    """Chart: remember a GOOD TA; always re-read live price/levels at submit.
-
-    A full paid TA is not due every tick. Live price is never remembered.
-    """
-    quality = payload_quality(payload)
-    if quality != QUALITY_GOOD:
-        return _lost(
-            KIND_CHART, quality, same_session=same_session,
-            why="chart payload is blank, missing, or unreadable — not reusable TA",
-        )
-    return KindReuse(
-        kind=KIND_CHART, quality=quality, decision=DECISION_REREAD_LIVE,
-        status=STATUS_CARRIED_FROM_MORNING if same_session else STATUS_REMEMBERED,
-        reason="GOOD TA remembered; live price/levels must be re-read",
-        same_session=same_session,
-    )
-
-
 def covered_news_headlines(report) -> frozenset[str]:
     """Headlines already in a remembered news report. Empty on anything else."""
     out: set[str] = set()
