@@ -245,6 +245,7 @@ def run_rehearsal(
     base_settings: Path | None = None,
     pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS,
     provider_faults=None,
+    market_recording=None,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
 
@@ -393,7 +394,24 @@ def run_rehearsal(
         trading_stub = install_rehearsal_broker(
             pipeline.broker, snapshot, now=now_et, fill_model=fill_model,
         )
-        pipeline.market = blocked_market_data(unavailable)
+        from ops.rehearsal.market_recording import load as _load_recording
+        from ops.rehearsal.market_recording import recorded_market_data
+
+        _recording = _load_recording(market_recording) if market_recording else _load_recording()
+        if _recording:
+            pipeline.market = recorded_market_data(unavailable, _recording)
+            checks.append(
+                "market data is served from the recording captured "
+                f"{_recording.get('captured_utc')} "
+                f"({len(_recording.get('bars') or {})} symbols), not downloaded"
+            )
+        else:
+            pipeline.market = blocked_market_data(unavailable)
+            notes.append(
+                "no recorded market data on this box, so every technical read is "
+                "empty — capture one with `python -m ops.rehearsal.market_recording "
+                "SYM ...` (board item 202)"
+            )
         checks.append(assert_broker_is_stubbed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
