@@ -432,7 +432,7 @@ The real defect that remained is the day seeder, not `complete_call`: `_seed_day
 
 Still open and unchanged on purpose: a success whose provider request DID happen and returned no telemetry. No rate source exists to charge it at, so it keeps booking unknown and latching. Charging it anything invented would be the reservation layer under a new name, which item 14 deleted for cause.
 
-## item 152
+## item 152 — RETIRED 2026-09-30, both halves already shipped (#538 technical, #742/#695 news-seat salvage)
 
 **Moved from WORK.md (2026-09-24) —** The technical seat now parses its answer row-by-row and salvages every well-formed stock instead of discarding the whole answer (`docs/INCIDENT_HISTORY.md`, 2026-09-19).
 
