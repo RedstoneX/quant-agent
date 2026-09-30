@@ -342,13 +342,16 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 197)
 
-**205. The alignment exit the owner ruled for is not built: nothing asks whether structure, ATR and a moving-average cross AGREE the trend is over — filed 2026-09-30, carried out of item 75 when the 2026-09-30 ruling retired that item's target framing. Filed only; deliberately not built in that pass.**
+**205. The alignment exit the owner ruled for is not built: nothing asks whether structure, ATR and a moving-average cross AGREE the trend is over — filed 2026-09-30, carried out of item 75 when the 2026-09-30 ruling retired that item's target framing. Filed only; deliberately not built in that pass. UNTIL THIS IS BUILT THE DESK HAS NO SANCTIONED WAY TO REALISE A GAIN EXCEPT THE TRAILING STOP, whose structural leg has never fired in production — that is a live-money gap, not a backlog entry. detail: docs/BOARD_NOTES.md (item 205)**
 
 DONE WHEN:
   - [ ] the three agreeing conditions are each defined off the instrument in front of the desk, with a cited source or an owner appetite dial for any span or multiple they need — never a fitted or invented value
   - [ ] no single one of the three can exit a position on its own, and the exit path refuses an exit that cites only one of them
   - [ ] nothing in the change sends a price target to the broker or makes profit-taking at a target an allowed exit reason, which the owner ruled against on 2026-09-30
-  - [ ] the trail constants stay out of scope: they are item 90's half two and item 185's tranche and must not be re-derived here
+  - [ ] the trail constants stay out of scope: they are item 90's half two
+  - [ ] a PARTIAL sell driven by the alignment test is decided one way or the other and written down: the 2026-09-30 ruling bars a pre-set PRICE, not a partial exit, and item 75 carried this as "sell half and trail the rest" with no successor until now
+  - [ ] the four candidate exit rules are still tracked on every trade WITHOUT placing orders, with today's desk as the control — carried verbatim from item 75, whose retirement note wrongly treated a measurement harness as a request for target-based exits; swap the candidate set to the alignment rules, do not delete the measurement
+  - [ ] the refusal to send a target is MECHANICAL, not prose: a test or a ledger row fails the build if a price target reaches the broker, because a DONE WHEN line binds only this change and the desk's own record says everything relying on remembering a rule slips and item 185's tranche and must not be re-derived here
 detail: docs/BOARD_NOTES.md (item 205)
 
 **202. The rehearsal harness is not hermetic — a test that replays a RECORDED session downloads live market data — filed 2026-09-30.** `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` reaches yfinance for price history on every run and takes ~196s doing it; it FAILS on main today [measured 2026-09-30, `origin/main`, network reachable]. Pre-existing, not caused by the conftest network guard that exposed it. detail: docs/BOARD_NOTES.md (item 202)
@@ -357,6 +360,13 @@ DONE WHEN:
   - [ ] the rehearsal harness serves its market data from the recorded session rather than from the network, so the test passes with outbound HTTP fully blocked
   - [ ] the test is not skipped, not retried and not marked flaky to achieve that, and its runtime drops because it no longer waits on a live fetch
   - [ ] any OTHER test that still reaches the network is named, because the conftest guard now makes such a dependency fail loudly instead of silently
+
+**206. An 8-K results release is not visible to the exit path — filed 2026-09-30, carried out of item 75 so it is not lost with that item's retirement.** Item 75 held this clause and the 2026-09-30 exit-on-alignment ruling does not touch it: a results release is an instrument fact, not a price target. Nothing on the board owned it after 75 was retired.
+
+DONE WHEN:
+  - [ ] the exit path can see that an 8-K results release has landed for a held name, from the filing feed the desk already consumes rather than a new paid source
+  - [ ] what the exit path DOES with that fact is decided and written down before it is wired, and it never becomes a single-signal exit, which the 2026-09-30 ruling bars
+
 
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.

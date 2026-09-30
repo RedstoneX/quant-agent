@@ -647,3 +647,45 @@ test. Item 205 files that work; this pass deliberately did not build it.
 One gap worth recording: the 2026-09-30 ruling has no entry of its own in
 `docs/INCIDENT_HISTORY.md`. Its only in-repo trace is the docstring in
 `src/risk/exit_refusal.py`. That was not fixed here.
+
+## item 205 — the alignment exit, and what item 75 left behind
+
+Filed 2026-09-30 when item 75 was retired. The owner ruled that a price target
+is a made-up number and the desk sells only when structure, ATR and a
+moving-average cross AGREE the trend is over. Recorded in
+`docs/INCIDENT_HISTORY.md`.
+
+**The live-money gap, stated plainly:** VERIFIED 2026-09-30 that there is no
+moving-average-cross exit condition anywhere in `src/` (searched `sma_cross`,
+`ema_cross`, `golden_cross`, `death_cross`, `crossed_below`, `crossed_above` —
+zero hits), and `ExitTrigger` has no profit or target member. So until item 205
+is built the desk has no sanctioned way to realise a gain except the trailing
+stop, whose structural leg has never fired in production. That sentence is on
+the board item itself, not only here.
+
+**Three of item 75's six DONE WHEN clauses had no successor** when it was
+retired — the retirement note counted three clauses where there were six, which
+is how they disappeared without being argued. Two are now carried into 205 and
+one into item 206:
+
+- *Partial sell.* Item 75 asked for "sell half and trail the rest". The ruling
+  bars a pre-set PRICE, not a partial exit driven by the alignment test itself,
+  so this was not obsolete and is now a 205 criterion.
+- *Shadow tracking.* Item 75's own words were "four exit rules are tracked on
+  every trade WITHOUT placing orders", with today's desk as the control. That
+  is a measurement harness, not a request for target-based exits; the
+  retirement note never engaged with "WITHOUT placing orders". The correct
+  response to the ruling is to swap the candidate rule set, not delete the
+  measurement. Now a 205 criterion.
+- *8-K visibility.* A results release is an instrument fact, not a price
+  target, and the ruling does not touch it. Filed as item 206.
+
+**Also fixed:** 205's `detail:` pointer had nowhere to land — BOARD_NOTES had no
+`## item 205` heading and the successor's reasoning sat under the retired item's
+note, which a triage pass is meant to skip. This heading is that landing place.
+
+**The no-target constraint was prose only.** A DONE WHEN line binds the change
+it is written for, not a later one. 205 now requires the refusal to be
+mechanical — a test or ledger row that fails the build if a price target
+reaches the broker — because the desk's own record says everything relying on
+remembering a rule slips.
