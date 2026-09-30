@@ -160,7 +160,8 @@ detail: docs/BOARD_NOTES.md (item 90)
 
 DONE WHEN:
   - [x] the analyst seats' real falsifier coverage is measured from recorded production output rather than inferred from prompt text, and pinned by a test that fails when the contract changes — 2026-09-30
-  - [ ] a recorded decision on whether the four uncovered seats must state their own falsifier, or whether a synthesised one is accepted and labelled synthesised wherever it travels — the live-money half, because it is what the conviction bar counts
+  - [x] the four uncovered seats state their OWN falsifier at the moment they make the call, stored with that call and readable by the existing exit checker in the same shape the technical seat's is — News/Earnings/Macro on `Nomination.thesis_invalid_if`, Smart Money on `SmartMoneyFinding.thesis_invalid_if`; a seat that names none leaves it empty and the nomination event records `falsifier_missing`, with no template substituted anywhere — 2026-09-30
+  - [ ] KNOWN LIMIT, not a gap to paper over: `exit_guard.check_thesis_invalid_if` evaluates only a numeric price level or MA20/MA50/MA200, so a news, earnings, macro or Form 4 condition stated in words returns UNPARSEABLE with a reason and is never treated as passed; whether the desk builds an evaluator for any non-price falsifier class is a separate, unfiled decision
   - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
   - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
   - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
