@@ -84,6 +84,53 @@ def _isolate_cwd(tmp_path, monkeypatch):
 
     monkeypatch.setattr(requests, "get", _no_network)
 
+    # `requests.get` is NOT the only way out. Two holes let live traffic
+    # escape this guard, and one of them reached Yahoo Finance from CI and
+    # failed two tests in tests/test_shorts_stage3.py with HTTP 401 "Invalid
+    # Crumb" -- a failure that had nothing to do with the change under test
+    # and blocked every open PR (2026-09-30).
+    #
+    #   * a Session bypasses the module-level function entirely;
+    #   * yfinance does not use `requests` at all -- it ships its own
+    #     transport on curl_cffi (verified: `yfinance.data` references
+    #     curl_cffi and `session.get`, and `requests.Session` zero times).
+    #
+    # Close both. A test that genuinely needs a response still overrides
+    # these itself, exactly as the refresh_pricing tests already override
+    # `requests.get`.
+    monkeypatch.setattr(requests.Session, "request", _no_network)
+
+    try:
+        import curl_cffi.requests as _curl_requests
+    except Exception:  # pragma: no cover - absent in a minimal env
+        _curl_requests = None
+    if _curl_requests is not None:
+        for _attr in ("get", "post", "request"):
+            if hasattr(_curl_requests, _attr):
+                monkeypatch.setattr(_curl_requests, _attr, _no_network)
+        _curl_session = getattr(_curl_requests, "Session", None)
+        if _curl_session is not None:
+            monkeypatch.setattr(_curl_session, "request", _no_network)
+
+    # With the network genuinely closed, `_get_sector` can no longer reach
+    # Yahoo, so EVERY symbol resolves to the same unknown sector and the
+    # sector/cluster rules fire in tests that are not about sectors at all.
+    # Five tests across four files depended on that live fetch without ever
+    # saying so (2026-09-30).
+    #
+    # Default every symbol to its OWN sector, which is what those tests
+    # always assumed. A test that is genuinely about sector crowding, or
+    # about the lookup FAILING, overrides this with its own monkeypatch --
+    # and now has to say so rather than inherit it from whether Yahoo
+    # happened to answer.
+    try:
+        monkeypatch.setattr(
+            "src.execution.broker._get_sector",
+            lambda symbol: f"sector-{symbol}",
+        )
+    except Exception:  # pragma: no cover - module not importable in a stub env
+        pass
+
     # Clear OPENAI_BASE_URL / OPENAI_CA_BUNDLE so a developer who `source .env`'d
     # a relay endpoint into their shell doesn't change client-construction
     # assertions. Tests that exercise relay routing set them via monkeypatch.
