@@ -246,10 +246,11 @@ def test_the_limit_is_a_ceiling_not_a_haggled_price():
 
 
 def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
-    """25bp still clears this offer once the limit stops being haggled:
-    349.99 * 1.0025 = $350.86... which is BELOW the $350.96 ask, so the idea
-    is genuinely priced out of its own ceiling and must be skipped, not
-    submitted."""
+    """25bp gives $350.86, BELOW the $350.96 displayed ask. The limit is
+    still set at its own ceiling and still sent (board item 183): IEX is not
+    the book the order fills against, and a limit at $350.86 cannot pay more
+    than $350.86 whatever the displayed offer says. What must NOT happen is
+    a limit shaved below its own ceiling."""
     pipeline = _pipeline(live_price=349.99)
     pipeline.config.execution.max_entry_slippage_bps = 25.0
     pipeline.broker.get_latest_quote.return_value = {
@@ -264,16 +265,24 @@ def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    # Ceiling $350.86 is under the offer but within the 2% IEX-noise tolerance,
-    # so it is still submitted — it may fill against a better NBBO than IEX
-    # shows. What must NOT happen is a limit shaved below its own ceiling.
-    if pipeline.broker.submit_order.called:
-        limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
-        assert limit_price == pytest.approx(350.86, abs=0.01)
+    assert pipeline.broker.submit_order.called
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(350.86, abs=0.01)
+    assert ctx.execution_skips == []
 
 
-def test_price_protection_still_refuses_a_genuinely_abnormal_book():
-    """The cap is not a formality. A 3% gap must still be refused, loudly."""
+def test_a_quote_far_through_the_cap_is_recorded_and_still_submitted():
+    """Board item 183, 2026-09-30. A displayed ask 300bp through a 40bp
+    ceiling used to refuse this BUY as `slippage_gated`. It no longer does.
+
+    Every one of the 8 firings that gate had on record was the venue, not
+    the market: the reference matched what the name was actually trading at
+    to within a few bp, the quoted ask sat 392-669bp above the highest price
+    it traded anywhere in a +/-15 minute window, and 6 of the 8 were trading
+    strictly inside the ceiling they were refused against. The protection
+    that remains is the one that was always doing the work — a limit at the
+    ceiling cannot fill through the ceiling.
+    """
     pipeline = _pipeline(live_price=100.0)
     pipeline.config.execution.max_entry_slippage_bps = 40.0
     pipeline.broker.get_latest_quote.return_value = {
@@ -288,8 +297,33 @@ def test_price_protection_still_refuses_a_genuinely_abnormal_book():
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    pipeline.broker.submit_order.assert_not_called()
-    assert ctx.execution_skips[0]["reason"] == "slippage_gated"
+    assert pipeline.broker.submit_order.called
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(100.4, abs=0.01)
+    assert ctx.execution_skips == []
+
+
+def test_the_far_through_quote_skip_is_gone_from_the_source():
+    """Guard, not decoration: the deleted gate was a constant nobody could
+    source, and re-introducing any multiple on the displayed quote would
+    silently restore a refusal the desk's own record says was wrong 8 times
+    out of 8. No `cap * <n>` or `floor / <n>` comparison may come back.
+    """
+    import inspect
+    import re
+
+    from src.pipeline_stages import ExecutionStage as _Stage
+
+    src = "\n".join(
+        line.split("#", 1)[0]
+        for line in inspect.getsource(_Stage._run_session).splitlines()
+    )
+    assert not re.search(r"cap\s*\*\s*\d", src), (
+        "an entry BUY must not be gated on a multiple of its own ceiling"
+    )
+    assert not re.search(r"floor\s*/\s*\d", src), (
+        "a SHORT must not be gated on a divisor of its own floor"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +392,12 @@ def test_short_uses_the_configured_bps_not_a_new_constant():
     assert limit_price == pytest.approx(99.75, abs=0.01)
 
 
-def test_short_skips_when_bid_is_beyond_the_slippage_floor():
-    """A 300bp gap must refuse, loudly — same `slippage_gated` as BUY."""
+def test_short_records_and_still_submits_when_the_bid_is_through_the_floor():
+    """Mirror of the BUY case. The old `bid < floor / 1.02` inherited the
+    BUY multiple rather than adding a second one, and it goes for the same
+    reason: a sell-short limit at the floor cannot fill below the floor, so
+    refusing on this account's routinely-absurd IEX quote only loses the
+    entries where the venue was wrong."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
     pipeline.broker.get_latest_quote.return_value = {
         "bid_price": 97.00, "ask_price": 97.10,  # 300bp below reference
@@ -368,10 +406,10 @@ def test_short_skips_when_bid_is_beyond_the_slippage_floor():
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    pipeline.broker.submit_order.assert_not_called()
-    assert ctx.execution_skips[0]["reason"] == "slippage_gated"
-    assert "floor" in ctx.execution_skips[0]["detail"]
-    assert "97.0000" in ctx.execution_skips[0]["detail"]
+    assert pipeline.broker.submit_order.called
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(99.60, abs=0.01)
+    assert ctx.execution_skips == []
 
 
 def test_short_within_iex_noise_still_submits_at_the_floor():

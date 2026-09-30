@@ -293,16 +293,6 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Plain-language account: `docs/BOARD_NOTES.md` ("item 78"). Permanent fix: heal, then one paid retry; still blank → refuse before the book. Never invent. Delete the isolate when a live session proves never-blank.
 
-## item 86
-
-**Plain language —** The live feed that tells the desk instantly when an order has filled has never once worked. The trading process deliberately holds a fake key; a local helper swaps in the real one for ordinary requests, but the live feed does not go through that helper — it dials the broker directly and offers the fake key. Two separate things block a quick fix: the library the desk uses cannot be pointed at that helper at all, and the broker checks the key inside the conversation rather than in the connection header, which the helper cannot reach.
-**Example —** Five rounds of work were spent making this path faster before anyone checked whether it had ever worked.
-**Nothing is at risk —** Orders are placed over the ordinary connection, which works, and fills are detected by asking the broker every few seconds instead. The feed is now switched off. The only loss is a few seconds of speed. Today's failure count was about 45, not the 147 first quoted — that figure counted log lines, several per failure.
-**The decision — no longer yours to wait on; the orchestrator decides after an adversary run, and the decision and its reason are recorded before anything is built.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
-**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption. **Standing exception:** if the eventual choice is option (2) or anything else that amounts to new credential-handling code, that is a credential redesign — one of the categories still escalated to the owner directly, regardless of who chose it.
-
-**Moved from WORK.md (2026-09-24) —** Cause: the process holds a 29-character placeholder credential, the credential-injecting gateway rewrites HTTP headers only, and this socket authenticates with an in-band MESSAGE; the installed client has no proxy support either. `execution.fill_stream_enabled` is true on main and NO attempt has been logged since. Trading is not harmed — REST placement works and fill detection falls back to polling. Options, the corrected episode count (~45, not 147) and the credential research: `docs/BOARD_NOTES.md` ("item 86"); do not re-derive it. If a future fix is itself a credential redesign, that stays a standing escalation to the owner.
-
 ## item 90
 
 **Plain language —** About thirty numbers that govern real trades were never read off anything — they were chosen because they sounded sensible. They were catalogued on 11 September and then filed as "an inventory, not a job", with a note saying never to re-audit. Nothing was assigned, nothing had a date, and a week later all thirty were still live. There is no mechanical check of any kind that would catch the next one.
@@ -406,13 +396,9 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Retired 2026-09-24** — decided: delete. `SUBFLOOR_SIZE_CAPPED_STATUS`, `RiskConfig.min_reward_risk_after_widening` and `ConstructorConfig.min_reward_risk_after_widening` were removed as zero-reader dead code, each re-verified against the current tree first. `REWARD_RISK_FLOOR` itself was NOT deleted — `ops/model_policy/deterministic_selection.py` still reads it in a real comparison for the model-selection benchmark. Full writeup in `docs/INCIDENT_HISTORY.md` (2026-09-24 entry).
 
-## item 173
-
-**Moved from WORK.md (2026-09-24) —** Inside the 7-day lookback the next pass writes it back; past ~2026-09-28 it turns unexplained, and `send_owner_alert` has NO dedup or throttle, so it pages CRITICAL at all five session entries, daily. Nothing shows the exit was a stop, so writing it back as one stamps an unevidenced cause onto owner P&L. **(b)** `_reconcile_stop_out_fills` runs BEFORE `_reconcile_fills` at every session entry, so the desk's own unreconciled sale pages a false CRITICAL (NUE 2026-09-21). **(c)** Signed from the action name, so a COVER — and a filled buy-to-cover TRAIL_STOP — subtracts from a short instead of retiring it (36 short, fully covered, reads -72). Silent today; pinned by a test saying it is wrong.
-
-**Update (2026-09-25) — (c) FIXED, (b) verified as already-handled, (a) still open.** (c): `get_symbols_with_open_ledger_qty` now signs a share-moving row by the SIDE of the position it acts on. A COVER-family action (COVER / EMERGENCY_COVER / PARTIAL_COVER, `(pct)` label normalised) is a buy-to-cover and adds; a FILLED TRAIL_STOP has no side in its name so its side is read from the running net, and one resting on a short adds too. A 36-share short covered in full now reads 0, not -72; both routes fixed together and the pinning known-defect test was deleted per its own instruction. Long-side signs are unchanged (SELL/REDUCE/STOP_OUT/SWEEP_SELL and a long's fired TRAIL_STOP still subtract). No live behaviour changed: the caller is LONG-only and skips negatives — this only makes the ledger's own belief correct for the day shorts are enabled. (b): all four call sites were re-checked against origin/main. Intraday and evening already run `_reconcile_fills` first (PR #697), which closes the false-CRITICAL gap. Morning and the midday/close position review deliberately keep the old order — their `_reconcile_fills` runs later and only over THIS session's own just-submitted / FORCE_DELEVER rows, so no stale 'submitted' SELL exists to raise a false page there (both sites carry the Item 173(2) rationale in-code). No false-alarm site remains in the old order, so NOTHING was changed for (b). (a): the EQNR share-count data gap is a live-data issue and stays open — item NOT retired.
-
 ## item 107
+
+**2026-09-26 — (a) and (c) shipped; (b) is the whole of what remains.** What was built and what it still cannot do: `docs/INCIDENT_HISTORY.md`, 2026-09-26. Three corrections to the filing below, each verified against the code that day: the evening tilt it lists was removed from the formula on 2026-09-17, the same day this item was filed — only a dangling mention of it survived, now gone; the 12 had NINE homes across five files, not three — five in Python (two comparisons, a flag label, a dataclass comment and a rendered summary line) and four in prompt prose — and now has one definition with one literal site left in `src/pipeline.py`; and the rendering mechanism reached three sheets, not two, because the technical sheet is rendered by its own module rather than by the shared one. The prompt-only arithmetic in (b) was re-checked symbol by symbol: nothing in `src/` computes any of it and none of it is in the number ledger.
 
 **Moved from WORK.md (2026-09-24) —** Three gaps, none a wording fix: **(a) Behaviour that changed without being deleted** — nothing is registered, so nothing is scanned, and the shipped check is blind to the whole class. The live instance is item 108. **(b) Numbers that exist ONLY in prompt prose** — invisible to a code audit and to any drift check: the PM's whole sizing arithmetic (bases 3.0/1.75/0.75, +0.25 R/R bonus, ±0.20/±0.10 evening tilt, 0.5 stale halving at age ≥8d) and Tech's "3+ aligned signals", 1-3/4-7/8+ freshness tiers and forward-PE 40/60 + P/S 15/25 levels. Trade-governing, unsourced; source, derive or delete each. A DIFFERENT shape added 2026-09-18: the reviewer's `weight_pct > 12%` escalation and the `DRIFT` flag's matching 12 are bare inline literals in `src/pipeline.py` and `src/agents/portfolio_manager.py`, with no settings key and no named constant, so the number has three homes and the rendering mechanism can reach none of them. Name it, or move it to settings, before it can be rendered. **(c) Rendering coverage** — `prompt_limits.py` renders limits from live settings in 2 of 10 prompt files; the other eight hand-type every number. Mechanical where a number has a settings key; otherwise it is (b). It raises at agent construction, so a bad placeholder halts the desk — fail-closed, and a new way a settings edit stops trading.
 
@@ -459,6 +445,8 @@ Still open and unchanged on purpose: a success whose provider request DID happen
 
 ## item 157
 
+**Live-call criterion is BLOCKED on a credential grant, not on effort (measured 2026-09-26).** The rehearsal identity the desk uses for live proofs is granted the broker, economics, messaging and general-model credentials and is NOT granted the Google one, so the only identity that can make the confirming call is production — a live attempt spends real money on the shared account. Either grant the Google credential to the rehearsal identity or accept one production-billed call; until then this box cannot be ticked from a rehearsal. Evidence: `docs/INCIDENT_HISTORY.md` (2026-09-26).
+
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
 
 ## item 174
@@ -484,6 +472,16 @@ That earlier review found one small piece of this dormant feature — a reserve 
 Right now nobody owns that job. It is only described inside another item's writeup, where it risks being forgotten once that item's narrower question is answered. This item exists so the cleanup has its own visible line on the board until it is actually done.
 
 **No owner decision needed here** — this is an engineering bookkeeping fix (remove dead, switched-off code) rather than a money or risk-appetite question.
+
+## item 194
+
+**Filed 2026-09-30.** When the desk buys something it works out, from the chart, the nearest price level the stock has to get through on the way up, and that becomes the profit target it quotes you. The number is then frozen for the life of the position.
+
+Until now the desk only revisited that number when the level it was measured against **disappeared** — the stock jumped clean over it and the ceiling was gone. It never revisited it when the opposite happened: the stock spent a few weeks building a **new** ceiling somewhere between where the desk bought and the number it was quoting. In that case the desk carries on quoting a target with a wall in front of it, which is exactly the thing the target is supposed to be. That is now fixed — a new wall counts as a reason to work the number out again, the same way a broken wall does. The number is still always **worked out from the chart**, never typed in, and still measured from the original buy price so it cannot drift upwards just because the stock went up.
+
+What is left open is the **way in**. The recalculation only runs on a stock one of the desk's analysts has specifically raised a hand about. A stock that quietly grows a wall while nobody mentions it gets reported every morning and never recalculated. Two positions are in exactly that state right now: Apple and Nokia. Whether the morning report should be allowed to trigger the recalculation by itself is the open question — it would mean an automatic change to a live position's record, which is not something to switch on without a decision.
+
+**No owner decision needed on the fix itself** — it is the same measurement the desk already does, run in one more circumstance. The open question above may need one, because it changes live position records without a human in the loop.
 
 ## item 177
 
@@ -526,3 +524,27 @@ Measurement only. No production code was written or changed for it; both events 
 **Method.** Both events land in `specialist_evidence` with `kind='pipeline_event'` (via `_record_pipeline_event` -> `_persist_evidence` -> `Database.insert_specialist_evidence`); there is no `pipeline_events` table. The live file was copied out with its `-wal` and `-shm` sidecars and the counts agreed with and without them. Exposure per event is `abs(held_qty_before)` from the cancel event's own payload multiplied by the add's fill price from the `trades` row for the same run and symbol. Volatility is the standard deviation of the last 20 daily close-to-close log returns strictly before the event date, from daily bars for that name, scaled to the window by `sigma_daily * sqrt(seconds / 23400)`. No volatility number was assumed or carried over from anywhere.
 
 **What was deliberately not done.** No fix, no alert, no change to `scale_in.py` — including the docstring's "~15 s", which the measurement contradicts but which is a code change and not this pass's mandate.
+
+## item 197
+
+The re-peg path (`_repeg_entry_order`, `src/pipeline_stages.py`) was written for
+the BUY side and never generalised. It builds a single bound —
+`reference * (1 + slippage_bps / 10_000)` — names it `ceiling`, stores it on the
+spec, and returns `no_room` when the submitted `limit_price` is already at or
+above it. No `side`, `action` or `is_short` is read anywhere in the function.
+
+For a BUY the logic is correct and, since the submitted limit IS the ceiling, it
+almost always returns `no_room` immediately. For a `sell_short` the same
+arithmetic produces a number ABOVE the reference when the fillable bound is
+BELOW it, so two things break together: the room test fires backwards (a short
+limit far from the floor reads as "already there"), and any walk it did perform
+would move the limit UP, away from where a short can fill.
+
+Not live. `repeg_enabled` is `false` in `config/settings.yaml` and defaults to
+`False` in `src/config.py`. Board item 183 found this while removing the
+far-through-quote entry skip and deliberately left it alone: it predates that
+work and fixing it is a behaviour change on a money path with no live exercise
+and no recorded outcomes to measure against.
+
+The hazard to watch is ordering: the flag being turned on before the side fix
+lands would put the defect straight into production on the short book.
