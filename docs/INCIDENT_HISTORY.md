@@ -29,6 +29,17 @@ what would catch it next time.
 **`gaps 0` while `repairs attempted 1` is a display defect, NOT two code paths disagreeing.** Detection and the repair trigger read the same list. After a successful placement `check_coverage` RE-READS the broker and rebinds the same `gaps` variable to what is STILL uncovered - so the name silently changes meaning from "found" to "left" mid-function, and the summary counted the second. One variable doing two jobs. The gap count is the number an operator scans for, so the line actively concealed the event it was reporting. `gaps_detected` is now captured before the repair block can rebind anything, and the log line prints both: `gaps 1 found / 0 still open`.
 
 **`alert none sent` on a repair.** The last line of defence put a stop back on a position that had been unprotected for 13 minutes 22 seconds and told nobody. A COVERAGE REPAIRED event is never routine - for the sweep to find a gap at all, something earlier (an entry, a trailing ratchet, a re-protect after a partial exit) failed without saying so. It now pages on the same owner channel every other message from this unit uses; no second channel was invented. A sweep that repairs nothing stays silent exactly as before, and a repair already covered by the existing all-clear does not page twice.
+### 2026-09-30 — muting the notification transport took the whole desk offline; the cost circuit's mandatory-alert precondition is now "durably recorded", not "Telegram enabled"
+
+**In plain words:** the owner muted Telegram (`TELEGRAM_DISABLED`, no code change) and the mandatory paid-analysis circuit refused to start, latching durably at 2026-09-30T15:45:42Z with "mandatory cost-circuit Telegram alerts are not configured/enabled". Every session since returned `paid_analysis_suspended` — no paid analysis at all for hours. The circuit's real requirement is that a mandatory alert is durably recorded and visible to the owner, which the `.llm-circuit-unavailable` sidecar already provides and which `src/api/db_reads.py::get_llm_circuit_health()` already surfaces to the dashboard as `decision_path_status=degraded_cost_circuit_unavailable`. The precondition now checks that that record can be written; a muted transport downgrades to a warning and cannot suspend trading, while having nowhere at all to deliver or record still fails closed.
+
+**Verified on main.** `src/cost_circuit.py::_durable_alert_surface_ok` gates the startup check; `tests/test_cost_circuit.py::test_muted_transport_does_not_suspend_paid_analysis` fails on the previous code and `test_no_durable_record_surface_still_latches` keeps the genuine latch. Clearing the existing production latch requires `scripts/cost_circuit.py reset` AFTER this deploy, because the reset path itself builds a breaker and would re-latch on the old precondition.
+
+### 2026-09-30 — the scale-in "stop did not go back on" owner alert existed and was never called
+
+**In plain words:** the scale-in path must cancel the resting protective sell to add to a holding (the broker will not hold a protective sell and a new buy on the same symbol at once). Its own design says a failed rearm is a fail-closed owner page. The page — `src/execution/scale_in.py::alert_rearm_failed` — had ZERO callers, so both real failure paths only wrote a log line: the crash-recovery drain's "rearm FAILED", and `restore_after_failed_add` whose own comment reads "OWNER must be alerted". A position could sit at the broker with nothing standing watch and nobody told.
+
+**Fixed.** Both paths now call it. The alert writes a durable `specialist_evidence` row (`agent_name="scale_in_rearm_failure"`, `position_protected: false`) on EVERY occurrence, so the fault survives Telegram being muted (it is, as of today) and shows on the surface the API/journal already reads; the Telegram page itself is claimed at most once per symbol per trading day through the new `src/coverage_watchdog.py::claim_typed_alert`, the generic form of the existing per-type claim helpers, so one naked position cannot page 44 times. `tests/test_scale_in.py::test_drain_rearm_failure_pages_the_owner` was confirmed to FAIL with the call removed.
 ### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
 
 **In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
@@ -100,6 +111,142 @@ what would catch it next time.
 **Ledger.** One row left `config/number_ledger.yaml` (the 1.02 cushion) and `MAX_ARBITRARY_ENTRIES` moved 139 → 138 [measured: `yaml.safe_load` count of `status: arbitrary` entries = 138]. The `GROSS_LADDER_ALERT_PCT` row is restored with its open question intact. The surviving 0.97 haircut is unchanged in value and derivation, renumbered `factor[1]` → `factor[0]`, and its note is corrected: it is now solely the no-quote accounting haircut, applied per share sold.
 
 **Criterion status.** 182/1 (the cushion) is met. 182/2 (the owner alert) is DEFERRED and the item does not close.
+
+### 2026-09-30 — the anti-collision number tool failed open and let item 192 be claimed twice; it now fails closed
+
+**In plain words:** `scripts/next_board_number.py` exists so that two changes cannot claim the same board item number. Its open-pull-request read is the half that catches the parallel-agent race, because a number is claimed on a branch long before it reaches `docs/WORK.md`. That read hit a GitHub request limit, the script printed a WARNING and returned a number anyway with exit 0, and two pull requests then both claimed item 192 — caught by hand, not by a machine. The 192 double-claim is reported by the session that caught it and is no longer directly verifiable, because the hand fix renumbered one of the two: [measured 2026-09-30, `gh pr diff` over the last 60 pull requests] only PR 792 now adds item 192. What IS independently verifiable is the pattern and the defect: PR 783 is titled "Renumber item 189 to 190 — third parallel-PR number collision", and the fail-open behaviour was plainly in the script's own code and exit-code table. The desk's standing rule is that everything mechanically enforced holds and everything relying on somebody noticing a warning slips; the old output was a warning.
+
+It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
+
+**What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
+
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
+
+## Item 201 — reprotect skipped on the stop it had just cancelled, and $2,500 sat naked in silence
+
+(Filed as item 199 on this branch; renumbered to 201 when main landed its own item 199 — the unbacked-stop floor — first.)
+
+**This happened in production on 2026-09-30.** From the box's own log:
+
+```
+14:47:23,423  WAL: wrote protection-restore intent for AAPL (row 22, 2 stop(s)) before cancel/submit
+14:47:23,448  Cancelled 2 protective stop(s) for AAPL
+14:47:23,513  Order submitted: sell 2.430987 AAPL @ 336.86
+14:47:23,934  Reprotect skipped for AAPL - a stop at $323.74 already exists at the broker (idempotent re-run)
+```
+
+AAPL then held NO stop at the broker for at least six minutes (confirmed by
+querying Alpaca directly: zero open stop orders), and because the skip
+returned success the drain caller DELETED the `pending_protection_restores`
+row - so the desk no longer had any record that it still owed AAPL a stop.
+Nothing alerted. About $2,500 was unprotected while the desk believed it was
+covered.
+
+**The defect.** The idempotency check in
+`_reprotect_residual_after_partial_sell` exists for a real case: a drain
+replaying a row whose previous attempt already submitted the residual stop
+but could not delete the row, where placing a second stop would double the
+exit on trigger (audit note 2026-05-27). It decided that case on PRICE alone
+- any open stop within half a cent of `best_stop` counted. 486ms earlier the
+same run had cancelled exactly that stop. Alpaca's cancel is asynchronous and
+its `QueryOrderStatus.OPEN` filter includes transitional states such as
+`pending_cancel`, so the just-cancelled order was still listed as open, and
+it matched `best_stop` perfectly for the plain reason that `best_stop` was
+derived from its own spec. The check could not distinguish a stop placed by a
+PREVIOUS successful attempt (skip is right) from the stop THIS run had just
+cancelled (skip leaves the position naked).
+
+**The fix - identity, not timing and not a tolerance.** `cancelled_specs`
+already carry the broker order `id`, stamped by
+`AlpacaBroker._snapshot_stop_order`, so nothing had to be threaded through.
+An open stop now satisfies the check only when its id is NOT one this run
+cancelled, its id is readable, and its status is in the same active set
+`replace_stop_loss` has used since PR #75 (`new`, `accepted`, `held`,
+`partially_filled`) - a `pending_cancel` order is a dying order, not
+coverage. Every other outcome SUBMITS: if any cancelled spec arrived without
+an id, no open stop may satisfy the check at all, because the run cannot
+prove the stop it is looking at is not its own. A duplicate stop is
+recoverable; a naked position is not. The duplicate-stop protection the check
+was written for is unchanged - a genuinely live stop from a previous attempt
+at the same price still skips, and a test pins that direction too.
+
+**The recovery intent survives ambiguity.** The WAL row is deleted only on a
+True return, and True now requires either a successful submit or a stop this
+run can positively identify as live and not-just-cancelled. Losing the
+recovery intent is what turned a thirty-second gap into a silent one.
+
+**The silence was its own defect.** Every path out of the reprotect that
+leaves the residual unprotected - unusable spec prices, a submit that raised,
+a submit that returned no accepted order id - now pages the owner down the
+EXISTING `_alert_owner_no_stop` escalation the coverage sweep already uses,
+with the reason carried in `repair_refusal`. No new channel, no new throttle.
+A position left without a stop is never a log line only.
+
+**No new number.** No new tolerance, no new retry count, no new sleep; the
+active-status set is the one already in `replace_stop_loss` and the
+half-penny price tolerance is untouched. The coverage sweep's schedule is
+unchanged - running it more often would have treated the symptom.
+
+**Proof.** A new test replays the exact production sequence (cancel, then an
+idempotency check that still lists the cancelled order as open in
+`pending_cancel`) and asserts a stop is placed; it fails on the pre-fix code
+and passes after, alongside tests for the previous-attempt skip, the foreign
+dying order, missing ids, and both alert paths.
+
+**Adversary pass, 2026-09-30 — five further defects, all fixed in the same change.**
+
+1. *A freshly placed stop was not counted as protection.* The skip required the open stop's status to be in `PROTECTIVE_ORDER_ACTIVE_STATUSES`, a set written for a path that reads AGED orders. This path reads stops a PRIOR attempt placed seconds ago, and such a stop can still report `pending_new` - so a replay submitted a SECOND live stop. Nothing in this repository reconciles a duplicate protective stop: `src/coverage_watchdog.py` states at its top that it never cancels or modifies, and the only duplicate handling anywhere is a message asking the owner to cancel one by hand. `PROTECTIVE_ORDER_ALIVE_STATUSES` is now named alongside the original set - the same frozenset extended by name, not a copied literal - with the reason the two differ written between them. `pending_cancel` is excluded from both.
+
+2. *The in-code claim "a duplicate stop is recoverable, a naked position is not" was an assertion with nothing behind it,* and it has been corrected rather than repeated. Two sell stops resting over one long, both elected on a gap, sell the shares twice; the second fill opens a SHORT of the position's size that no stop covers. That is a new unbounded position, not a recoverable state. What is true is that a naked position is worse than a duplicate AND both are bad enough that the check avoids each by identity rather than choosing which to accept.
+
+3. *UNANSWERED, and designed for both ways.* Whether Alpaca ACCEPTS or REFUSES a second stop while the first is in `pending_cancel` and still reserving the shares was not established - it is answerable only against a broker, and the rehearsal account could not be reached from this worktree (no agent token present; nothing in this repository wires that account). The change is therefore built so that either answer is safe: a duplicate is PREVENTED by counting the alive-but-not-yet-working stop as protection, and if the broker refuses instead, the shared submit path's existing `held_for_orders` reconciliation treats the already-live stop as coverage rather than reporting a naked position.
+
+4. *`str(None)` is `"None"`, which is truthy.* `_snapshot_stop_order` stamps `"id": str(order.id)`, so a spec that arrived without a broker id carried the four-character string "None" - counted toward `ids_complete`, then matched no open order at the broker, ever. Every such replay went straight to the submit branch, entering the duplicate case through the wrong door. `real_broker_order_id` now judges the value, and both readers of the id set use it.
+
+5. *The alert reported `covered_qty` as a hardcoded 0.* When the whole-share leg landed and only the fractional sliver failed, the owner was told the position had ZERO coverage - an untrue statement about his exposure, on the one alert whose entire job is to state that exposure. The submit path's own covered/uncovered figures are now reported.
+
+6. *The reprotect submit loop was the raw one.* It called `_submit_stop_limit_order` directly: no retry burst, no `held_for_orders` reconciliation, and it placed the whole-share GTC leg BEFORE the fractional sliver - which was MEASURED bad on 2026-09-16, when the GTC hold reserved the position and Alpaca refused the 0.4393 BRK-B DAY sliver. It now submits through `_submit_protective_stop_retrying`, the desk's one protective submit, which places the remainder first. `_submit_stop_legs` (the all-or-nothing variant) was deliberately NOT used here: rolling a landed whole-share GTC leg back to zero coverage because the sliver was refused would make the residual fully naked, which is the worse state. The partial is reported with the quantity actually covered instead.
 
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
@@ -17424,139 +17571,3 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
-### 2026-09-30 — the anti-collision number tool failed open and let item 192 be claimed twice; it now fails closed
-
-**In plain words:** `scripts/next_board_number.py` exists so that two changes cannot claim the same board item number. Its open-pull-request read is the half that catches the parallel-agent race, because a number is claimed on a branch long before it reaches `docs/WORK.md`. That read hit a GitHub request limit, the script printed a WARNING and returned a number anyway with exit 0, and two pull requests then both claimed item 192 — caught by hand, not by a machine. The 192 double-claim is reported by the session that caught it and is no longer directly verifiable, because the hand fix renumbered one of the two: [measured 2026-09-30, `gh pr diff` over the last 60 pull requests] only PR 792 now adds item 192. What IS independently verifiable is the pattern and the defect: PR 783 is titled "Renumber item 189 to 190 — third parallel-PR number collision", and the fail-open behaviour was plainly in the script's own code and exit-code table. The desk's standing rule is that everything mechanically enforced holds and everything relying on somebody noticing a warning slips; the old output was a warning.
-
-It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
-
-**What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
-
-## Item 198 — the number-ledger ratchet stops being one hand-edited line
-
-**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
-retired a trade-governing number rewrote the SAME physical line — an
-11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
-`src/number_sources.py` carrying the running count AND the entire
-append-only narrative of every past move — mirrored by one assertion message
-in `tests/test_number_sources.py`. Two such branches therefore always
-conflicted, and every conflict was resolved by hand; two were resolved by
-hand on 2026-09-30 alone. This is the same throughput cost the item-aware
-merge driver removed from the three board documents, on the other file every
-parallel branch touches.
-
-**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
-the per-change deltas in `config/number_ledger_history.yaml`, whose 25
-entries are the whole previous narrative reproduced verbatim — `why` from
-the test-side assertion message, `detail` from the source-side comment
-block, both kept because neither was complete on its own and they did not
-agree in granularity. Each change is its own YAML entry, and the file is
-registered `merge=union` in `.gitattributes`, which is a git built-in and
-needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
-record a DELTA and never an absolute count, so union-merged appends sum
-correctly whatever order they land in.
-
-**What still guards the ledger.** The equality is unchanged and is still a
-cross-check between two independently edited files: the live count of
-`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
-of the deltas, so a ledger edit with no history entry fails and a history
-entry with no ledger edit fails. A new test fails any entry that moves the
-count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
-written back as a literal.
-
-**Demonstrated, not asserted.** Two throwaway branches off the new base, each
-sourcing a DIFFERENT ledger row and each appending its own history entry,
-merged with no conflict; the merged tree's arbitrary-row count and computed
-ratchet both read 135 and both entries survived. The same two changes made
-against `origin/main`'s old shape conflicted in `src/number_sources.py` and
-`tests/test_number_sources.py`.
-
-**No behaviour changed.** The computed count is 137, equal to the live count
-of arbitrary rows on the day of the change, and no number was picked, moved
-or added.
-
-## Item 201 — reprotect skipped on the stop it had just cancelled, and $2,500 sat naked in silence
-
-(Filed as item 199 on this branch; renumbered to 201 when main landed its own item 199 — the unbacked-stop floor — first.)
-
-**This happened in production on 2026-09-30.** From the box's own log:
-
-```
-14:47:23,423  WAL: wrote protection-restore intent for AAPL (row 22, 2 stop(s)) before cancel/submit
-14:47:23,448  Cancelled 2 protective stop(s) for AAPL
-14:47:23,513  Order submitted: sell 2.430987 AAPL @ 336.86
-14:47:23,934  Reprotect skipped for AAPL - a stop at $323.74 already exists at the broker (idempotent re-run)
-```
-
-AAPL then held NO stop at the broker for at least six minutes (confirmed by
-querying Alpaca directly: zero open stop orders), and because the skip
-returned success the drain caller DELETED the `pending_protection_restores`
-row - so the desk no longer had any record that it still owed AAPL a stop.
-Nothing alerted. About $2,500 was unprotected while the desk believed it was
-covered.
-
-**The defect.** The idempotency check in
-`_reprotect_residual_after_partial_sell` exists for a real case: a drain
-replaying a row whose previous attempt already submitted the residual stop
-but could not delete the row, where placing a second stop would double the
-exit on trigger (audit note 2026-05-27). It decided that case on PRICE alone
-- any open stop within half a cent of `best_stop` counted. 486ms earlier the
-same run had cancelled exactly that stop. Alpaca's cancel is asynchronous and
-its `QueryOrderStatus.OPEN` filter includes transitional states such as
-`pending_cancel`, so the just-cancelled order was still listed as open, and
-it matched `best_stop` perfectly for the plain reason that `best_stop` was
-derived from its own spec. The check could not distinguish a stop placed by a
-PREVIOUS successful attempt (skip is right) from the stop THIS run had just
-cancelled (skip leaves the position naked).
-
-**The fix - identity, not timing and not a tolerance.** `cancelled_specs`
-already carry the broker order `id`, stamped by
-`AlpacaBroker._snapshot_stop_order`, so nothing had to be threaded through.
-An open stop now satisfies the check only when its id is NOT one this run
-cancelled, its id is readable, and its status is in the same active set
-`replace_stop_loss` has used since PR #75 (`new`, `accepted`, `held`,
-`partially_filled`) - a `pending_cancel` order is a dying order, not
-coverage. Every other outcome SUBMITS: if any cancelled spec arrived without
-an id, no open stop may satisfy the check at all, because the run cannot
-prove the stop it is looking at is not its own. A duplicate stop is
-recoverable; a naked position is not. The duplicate-stop protection the check
-was written for is unchanged - a genuinely live stop from a previous attempt
-at the same price still skips, and a test pins that direction too.
-
-**The recovery intent survives ambiguity.** The WAL row is deleted only on a
-True return, and True now requires either a successful submit or a stop this
-run can positively identify as live and not-just-cancelled. Losing the
-recovery intent is what turned a thirty-second gap into a silent one.
-
-**The silence was its own defect.** Every path out of the reprotect that
-leaves the residual unprotected - unusable spec prices, a submit that raised,
-a submit that returned no accepted order id - now pages the owner down the
-EXISTING `_alert_owner_no_stop` escalation the coverage sweep already uses,
-with the reason carried in `repair_refusal`. No new channel, no new throttle.
-A position left without a stop is never a log line only.
-
-**No new number.** No new tolerance, no new retry count, no new sleep; the
-active-status set is the one already in `replace_stop_loss` and the
-half-penny price tolerance is untouched. The coverage sweep's schedule is
-unchanged - running it more often would have treated the symptom.
-
-**Proof.** A new test replays the exact production sequence (cancel, then an
-idempotency check that still lists the cancelled order as open in
-`pending_cancel`) and asserts a stop is placed; it fails on the pre-fix code
-and passes after, alongside tests for the previous-attempt skip, the foreign
-dying order, missing ids, and both alert paths.
-
-**Adversary pass, 2026-09-30 — five further defects, all fixed in the same change.**
-
-1. *A freshly placed stop was not counted as protection.* The skip required the open stop's status to be in `PROTECTIVE_ORDER_ACTIVE_STATUSES`, a set written for a path that reads AGED orders. This path reads stops a PRIOR attempt placed seconds ago, and such a stop can still report `pending_new` - so a replay submitted a SECOND live stop. Nothing in this repository reconciles a duplicate protective stop: `src/coverage_watchdog.py` states at its top that it never cancels or modifies, and the only duplicate handling anywhere is a message asking the owner to cancel one by hand. `PROTECTIVE_ORDER_ALIVE_STATUSES` is now named alongside the original set - the same frozenset extended by name, not a copied literal - with the reason the two differ written between them. `pending_cancel` is excluded from both.
-
-2. *The in-code claim "a duplicate stop is recoverable, a naked position is not" was an assertion with nothing behind it,* and it has been corrected rather than repeated. Two sell stops resting over one long, both elected on a gap, sell the shares twice; the second fill opens a SHORT of the position's size that no stop covers. That is a new unbounded position, not a recoverable state. What is true is that a naked position is worse than a duplicate AND both are bad enough that the check avoids each by identity rather than choosing which to accept.
-
-3. *UNANSWERED, and designed for both ways.* Whether Alpaca ACCEPTS or REFUSES a second stop while the first is in `pending_cancel` and still reserving the shares was not established - it is answerable only against a broker, and the rehearsal account could not be reached from this worktree (no agent token present; nothing in this repository wires that account). The change is therefore built so that either answer is safe: a duplicate is PREVENTED by counting the alive-but-not-yet-working stop as protection, and if the broker refuses instead, the shared submit path's existing `held_for_orders` reconciliation treats the already-live stop as coverage rather than reporting a naked position.
-
-4. *`str(None)` is `"None"`, which is truthy.* `_snapshot_stop_order` stamps `"id": str(order.id)`, so a spec that arrived without a broker id carried the four-character string "None" - counted toward `ids_complete`, then matched no open order at the broker, ever. Every such replay went straight to the submit branch, entering the duplicate case through the wrong door. `real_broker_order_id` now judges the value, and both readers of the id set use it.
-
-5. *The alert reported `covered_qty` as a hardcoded 0.* When the whole-share leg landed and only the fractional sliver failed, the owner was told the position had ZERO coverage - an untrue statement about his exposure, on the one alert whose entire job is to state that exposure. The submit path's own covered/uncovered figures are now reported.
-
-6. *The reprotect submit loop was the raw one.* It called `_submit_stop_limit_order` directly: no retry burst, no `held_for_orders` reconciliation, and it placed the whole-share GTC leg BEFORE the fractional sliver - which was MEASURED bad on 2026-09-16, when the GTC hold reserved the position and Alpaca refused the 0.4393 BRK-B DAY sliver. It now submits through `_submit_protective_stop_retrying`, the desk's one protective submit, which places the remainder first. `_submit_stop_legs` (the all-or-nothing variant) was deliberately NOT used here: rolling a landed whole-share GTC leg back to zero coverage because the sliver was refused would make the residual fully naked, which is the worse state. The partial is reported with the quantity actually covered instead.
-

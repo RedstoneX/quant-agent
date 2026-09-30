@@ -459,7 +459,7 @@ def run_coverage_check(now: datetime | None = None) -> str:
     from src.coverage_watchdog import (
         SWEEP_AGENT_NAME, SWEEP_LOG_NAME, alert_text, check_coverage,
         record_sweep_run, repair_failure_text, status_line, sweep_log_line,
-        sweep_summary, unreadable_stop_text,
+        sweep_summary, unguarded_text, unreadable_stop_text,
     )
 
     # Board item 131: every run leaves a named line in the desk's log and
@@ -511,18 +511,37 @@ def run_coverage_check(now: datetime | None = None) -> str:
         told = {
             str(s).strip().upper() for s in status.resolution_notice_symbols
         }
-        names = [
-            r.symbol for r in status.repaired
-            if str(r.symbol).strip().upper() not in told
-        ]
-        ok = bool(_send_repaired(text, symbols=names))
-        sent.append(
-            f"stop-repaired alert "
-            f"{'delivered' if ok else 'could NOT be delivered'}"
+        # Durable, not in-memory: this unit is a timer-run process, so a
+        # set built here lives only for one run and the same repair pages
+        # again on the next sweep. `claim_typed_alert` reserves today's
+        # page for each symbol in the watchdog state file, the same
+        # per-ET-day store `claim_repair_failure_alert` already uses, and
+        # errs towards telling the owner twice over not at all when the
+        # file cannot be read.
+        from src.coverage_watchdog import claim_typed_alert
+
+        names = claim_typed_alert(
+            "repair_performed",
+            [
+                r.symbol for r in status.repaired
+                if str(r.symbol).strip().upper() not in told
+            ],
         )
+        if names:
+            ok = bool(_send_repaired(text, symbols=names))
+            sent.append(
+                f"stop-repaired alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
+        else:
+            sent.append(
+                "stop-repaired alert suppressed — every repaired name was "
+                "already reported to the owner today"
+            )
     if (
         status.should_alert or status.should_alert_repair_failure
         or status.should_alert_unreadable
+        or status.should_alert_unguarded
     ):
         from src.notifier import send_owner_alert
 
@@ -558,6 +577,21 @@ def run_coverage_check(now: datetime | None = None) -> str:
             sent.append(
                 f"unreadable-stop alert "
                 f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
+        if status.should_alert_unguarded:
+            # Board item 193. Sent on its own footing, never folded into the
+            # coverage gap alert: this position is unguarded BY DESIGN and
+            # the finding is its duration, so describing it as a coverage
+            # gap would tell the owner the desk failed to place a stop it in
+            # fact cancelled deliberately. `unguarded_fresh` is what
+            # `check_coverage` already claimed for today.
+            rows = status.unguarded_fresh
+            ok = bool(send_owner_alert(
+                unguarded_text(rows), symbols=[r.symbol for r in rows],
+            ))
+            sent.append(
+                f"unguarded-window alert "
+                f"{'sent' if ok else 'FAILED'} ({len(rows)} symbol(s))"
             )
         if status.should_alert_repair_failure:
             text = repair_failure_text(status)

@@ -20,7 +20,9 @@ from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
-from src.agents.base import AgentResult, BaseAgent, agent_log_kwargs
+from src.agents.base import (
+    AgentResult, BaseAgent, agent_log_kwargs, seat_acceptance_kwargs,
+)
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -755,7 +757,28 @@ def build_constructor_config(config, risk_engine_config):
     object, not only against `RiskConfig`.
     """
     from src.portfolio_constructor import ConstructorConfig
+    from src.config import RiskConfig
     _risk_cfg = getattr(config, "risk", None)
+
+    def _declared_default(name: str, literal: float) -> float:
+        """The default `RiskConfig` itself declares for `name`.
+
+        The fallback literals below used to be hand-copied from
+        `src/config.py`, and one of them silently rotted: this function
+        passed 1.5 for `min_stop_atr_multiple` long after the declared
+        default became 2.5 (2026-09-10), so any path reaching here with the
+        setting ABSENT sized live stops against a floor nobody ratified. A
+        literal repeated in two files is drift waiting to happen, so the
+        declared default now WINS; the literal survives only as the last
+        resort for a field `RiskConfig` declares with no default of its own
+        (`max_position_pct` is required, so it has none).
+        """
+        field = RiskConfig.model_fields.get(name)
+        if field is not None:
+            declared = getattr(field, "default", None)
+            if not isinstance(declared, bool) and isinstance(declared, (int, float)):
+                return float(declared)
+        return float(literal)
 
     def _risk_setting(name: str, default: float, allow_zero: bool = False) -> float:
         """Read a risk ceiling, or the ratified default.
@@ -772,6 +795,7 @@ def build_constructor_config(config, risk_engine_config):
         means "no floor". Swallowing it into the default would size under a
         floor nobody configured while the sizing seat's sheet rendered the 0.
         """
+        default = _declared_default(name, default)
         value = getattr(_risk_cfg, name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return default
@@ -9569,8 +9593,10 @@ class TradingPipeline:
             # It is not a ledgered number: `trading.lookback_days` carries no
             # numeric default (`Field(ge=1)` in src/config.py), so it is not a
             # definition site the number-ledger scanner can attach an entry to;
-            # the 0.7 cutoff beside it (CLUSTER_CORRELATION_THRESHOLD) IS
-            # ledgered arbitrary.
+            # the 0.7 cutoff that used to sit beside it is GONE (item 186,
+            # 2026-09-30): clusters are now read from the correlation
+            # geometry itself, so the window is the only unjustified input
+            # left on this path.
             pool_bars = dict(ctx.symbols_bars)
             for p in positions:
                 if p.symbol not in pool_bars:
@@ -10168,6 +10194,7 @@ class TradingPipeline:
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
                 agent_name=f"news_analyst_{session}", run_id=run_id,
                 input_summary=(
                     f"{len(news_items)} news items "
@@ -11126,6 +11153,7 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if not reasked else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -11576,10 +11604,59 @@ class TradingPipeline:
 
             # Only bars SINCE ENTRY matter: a swing low from before the
             # position existed is not a level this trade ever defended.
+            #
+            # "Since entry" means since the POSITION opened, not since the
+            # most recent add. `get_symbol_last_buy` returns the LATEST
+            # opening row, so slicing from it made a scale-in erase the
+            # trade's whole bar history — while the entry PRICE handed to
+            # the trail below is `position.avg_entry`, blended across every
+            # add. The window and the price disagreed by construction.
+            #
+            # Measured 2026-09-30 against the live DB: the structural pivot
+            # has produced ZERO of the 9 deterministic stops ever placed
+            # (all 9 came from the chandelier or the breakeven ratchet),
+            # and in all 11 recorded `no_structure_and_no_usable_chandelier`
+            # refusals the window held 0-6 bars against the 7 that
+            # `src/risk/trailing.py::_swing_lows` needs before it can
+            # confirm a single pivot. MRVL on 2026-09-23 is the clearest
+            # case: a position opened 2026-09-17 was evaluated with zero
+            # bars because it had been added to that morning.
+            #
+            # This is NOT a risk-free change, and an earlier version of
+            # this comment claimed it was. A longer window can only RAISE
+            # `highest`, which raises `chandelier = highest - 3*ATR`; a
+            # higher candidate can rise THROUGH the noise floor, and
+            # `evaluate_trailing_stop` then refuses OUTRIGHT
+            # (`inside_noise_band`) rather than falling back to a lower
+            # candidate the shorter window would have accepted. Worked
+            # case: price 100, ATR 4, live stop 90. A window whose high is
+            # 106 proposes 94 and the stop tightens 90 -> 94; a longer
+            # window that sees a pre-add high of 108 proposes 96, which is
+            # above the 95 noise floor, so nothing is placed and the stop
+            # stays at 90. The wider window LOSES a tighten the narrower
+            # one took.
+            #
+            # The justification is therefore consistency, not safety: the
+            # old window disagreed BY CONSTRUCTION with the entry price the
+            # same call uses (`position.avg_entry`, blended across every
+            # add). Measured 2026-09-30 against all 21 recorded refusals,
+            # the exposure is currently zero — see `_swing_lows` in
+            # `src/risk/trailing.py` for that measurement. No new constant.
             bars = []
             try:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
-                entry_ts = (buy or {}).get("timestamp") or ""
+                try:
+                    opened_ts = self.db.get_position_open_timestamp(buy)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "trail: position-open lookup failed for %s (%s) — "
+                        "falling back to the last opening row's date",
+                        symbol, e,
+                    )
+                    opened_ts = None
+                if not isinstance(opened_ts, str):
+                    opened_ts = None
+                entry_ts = opened_ts or (buy or {}).get("timestamp") or ""
                 entry_day = entry_ts[:10]
                 bars = [
                     b for b in all_bars
@@ -12362,24 +12439,59 @@ class TradingPipeline:
                             else held_now.avg_entry - held_now.current_price
                         )
                         band_multiple = noise_band_atr(sessions_held_for_band)
+                        # Board item 70, 2026-09-30 — TRUTH OF THE RECORD.
+                        # `noise_band_atr` SILENTLY FLOORS a missing, non-finite
+                        # or sub-1 session count to 1 session. The old line
+                        # printed `sessions_held=None` beside a concrete
+                        # multiple, so the record asserted a band width without
+                        # saying the width came from a default rather than from
+                        # a measured hold length. Say which it was.
+                        try:
+                            _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
+                        except (TypeError, ValueError):
+                            _sess = None
+                        sessions_measured = (
+                            _sess is not None and math.isfinite(_sess) and _sess >= 1.0
+                        )
+                        sessions_text = (
+                            f"{_sess:g} (measured)" if sessions_measured
+                            else f"{sessions_held_for_band!r} unusable — floored to 1 session"
+                        )
+                        band_width = band_multiple * float(atr or 0.0)
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
-                            "$%.2f move from entry $%.2f, which is inside the "
-                            "%.2fxATR noise band (ATR14 $%.2f, sessions_held=%s). "
-                            "A price-derived failure this small has not "
-                            "distinguished itself from this position's normal "
-                            "range so far. External-information triggers "
-                            "bypass this. Reason: %r",
+                            "$%.2f move from entry $%.2f is smaller than "
+                            "$%.2f, which is %.2f x ATR14 $%.2f with "
+                            "sessions_held=%s. That comparison, and nothing "
+                            "else, is what refused this exit. "
+                            "External-information triggers bypass this. "
+                            "Reason: %r",
                             act, symbol, adverse_move,
-                            held_now.avg_entry, band_multiple, atr or 0.0,
-                            sessions_held_for_band,
+                            held_now.avg_entry, band_width, band_multiple,
+                            atr or 0.0, sessions_text,
                             reason_for_band[:160],
+                        )
+                        # The durable per-symbol rows used to carry ONLY the
+                        # model's own words, so nothing persisted said which
+                        # rule fired or on what numbers. Both rows now carry a
+                        # machine-readable rule=... payload ahead of the reason.
+                        band_detail = (
+                            f"rule=atr_noise_band side={close_side} "
+                            f"adverse={adverse_move:.4f} "
+                            f"entry={held_now.avg_entry:.4f} "
+                            f"price={held_now.current_price:.4f} "
+                            f"atr14={float(atr or 0.0):.4f} "
+                            f"band_multiple={band_multiple:.4f} "
+                            f"band_width={band_width:.4f} "
+                            f"sessions_held={_sess if sessions_measured else 1.0:g} "
+                            f"sessions_measured={str(sessions_measured).lower()} "
+                            f"| {act}: {reason_for_band[:400]}"
                         )
                         try:
                             self.db.record_intraday_evaluation(
                                 symbol=symbol, run_id=run_id,
                                 status="exit_blocked_inside_atr_noise_band",
-                                detail=f"{act}: {reason_for_band[:400]}",
+                                detail=band_detail,
                             )
                         except Exception as e:  # noqa: BLE001
                             logger.warning("noise band: audit write failed: %s", e)
@@ -12387,7 +12499,7 @@ class TradingPipeline:
                         self._record_exit_refusal(
                             symbol=symbol, run_id=run_id, action=act,
                             code=CODE_NOISE_BAND, dropped=True,
-                            detail=f"{act}: {reason_for_band[:400]}",
+                            detail=band_detail,
                             layer="noise_band",
                         )
                         continue
@@ -16191,6 +16303,7 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if review is None else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
@@ -16536,6 +16649,7 @@ class TradingPipeline:
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment", "?")
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if not analysis else None),
                     agent_name="earnings_analyst_preprocess",
                     run_id=run_id,
                     input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
@@ -18959,6 +19073,7 @@ class TradingPipeline:
         if ta_result:
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
@@ -19501,6 +19616,7 @@ class TradingPipeline:
         elif analysis is None:
             _ev_log_kwargs["status"] = "evening_parse_error"
         self.db.insert_agent_log(
+            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
             input_message=ev_result.user_message,

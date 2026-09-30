@@ -136,6 +136,17 @@ STATE_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
 )
 
+#: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
+#: by the /health API so a checkout that is behind origin/main is VISIBLE on
+#: the desk's own board, not only in a Telegram message. Alerts can be muted;
+#: the board cannot. It lives beside the other alerting state and is read and
+#: written with the same `load_state`/`save_state` helpers, so the per-day
+#: dedup that stops a repeating alert is the one already in use here rather
+#: than a fourth private implementation.
+DEPLOY_DRIFT_STATE_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
+)
+
 TABLE = "alert_channel_checks"
 
 #: How many weekdays back to look for the most recent trading day. A long
@@ -180,6 +191,43 @@ class UnreadableStop:
     held_qty: float
     reason: str
     is_short: bool = False
+
+
+@dataclass(frozen=True)
+class UnguardedWindow:
+    """A position the coverage sweep DELIBERATELY did not check, because a
+    live scale-in holds its protective stop cancelled on purpose.
+
+    Board item 193. The skip is correct and stays: re-placing the stop here
+    re-creates the opposite-side block the cancel just cleared. What was
+    wrong is that the skipped symbol then vanished from the coverage report
+    entirely, so the one moment the desk is naked was the one moment the
+    report said nothing at all. This row is that symbol said out loud.
+
+    `seconds_open` is measured from the write-ahead row's own `created_at`,
+    which is a WRITE time, not the broker's cancel acknowledgement — so it
+    approximates the window rather than measuring it, and every rendering of
+    it says so. `bound_seconds` is not a chosen number: it is the LONGEST
+    window the desk has actually measured and closed, read back out of its
+    own recorded events. With no measured history there is no bound and
+    nothing is called overdue.
+    """
+
+    symbol: str
+    held_qty: float
+    is_short: bool
+    since_utc: str
+    seconds_open: float | None
+    bound_seconds: float | None
+    bound_observations: int
+
+    @property
+    def over_bound(self) -> bool:
+        return (
+            self.seconds_open is not None
+            and self.bound_seconds is not None
+            and self.seconds_open > self.bound_seconds
+        )
 
 
 @dataclass(frozen=True)
@@ -268,6 +316,30 @@ class CoverageStatus:
     #: None means the status was assembled by hand rather than by
     #: `check_coverage`; readers fall back to len(gaps).
     gaps_detected: int | None = None
+    #: Board item 193. Positions this run DELIBERATELY did not check because
+    #: a live scale-in holds their protective stop cancelled on purpose.
+    #: Deliberately NOT folded into `gaps`: a gap is a defect the sweep tries
+    #: to repair, and repairing one of these re-creates the opposite-side
+    #: block the cancel just cleared. They are reported, never acted on.
+    unguarded: list[UnguardedWindow] = field(default_factory=list)
+    #: The subset of `unguarded` whose symbols this run is entitled to page
+    #: about — over the longest measured window and not already reported
+    #: today. Claimed inside `check_coverage`, exactly as `unreadable_fresh`
+    #: is, so the caller sends what was claimed instead of re-claiming and
+    #: silencing its own message.
+    unguarded_fresh: list[UnguardedWindow] = field(default_factory=list)
+
+    @property
+    def unguarded_over_bound(self) -> list[UnguardedWindow]:
+        """Deliberate windows that have outlived every window the desk has
+        measured. Empty whenever no window has ever been measured: with no
+        bound there is nothing to be over, and inventing one would be a
+        guessed number governing an owner page."""
+        return [r for r in self.unguarded if r.over_bound]
+
+    @property
+    def should_alert_unguarded(self) -> bool:
+        return bool(self.unguarded_fresh)
 
     @property
     def unprotected_total(self) -> float:
@@ -1407,6 +1479,157 @@ def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     return skip
 
 
+def measured_window_bound_seconds(
+    db_path: str | Path | None,
+) -> tuple[float | None, int]:
+    """The longest scale-in unprotected window the desk has MEASURED, and how
+    many measurements that is drawn from.
+
+    Board item 193. Nothing here is a chosen threshold. Every closed window
+    files an `unprotected_window_closed` event carrying its own
+    `window_seconds`, both ends read from the broker's acknowledgements; the
+    bound is the maximum of those. `(None, 0)` when no window has ever been
+    measured, and the caller must then decline to call anything overdue
+    rather than invent a figure to compare against.
+    """
+    if not db_path:
+        return None, 0
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT evidence_json FROM specialist_evidence "
+                "WHERE kind = 'pipeline_event' "
+                "AND evidence_json LIKE '%unprotected_window_closed%' "
+                "ORDER BY id DESC LIMIT 2000",
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return None, 0
+    best: float | None = None
+    seen = 0
+    for (raw,) in rows:
+        try:
+            payload = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            continue
+        if payload.get("outcome") != "unprotected_window_closed":
+            continue
+        value = payload.get("window_seconds")
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        seen += 1
+        best = value if best is None else max(best, value)
+    return best, seen
+
+
+def deliberately_unguarded(
+    broker: Any, db_path: str | Path | None, *,
+    skip_symbols: set[str] | None = None,
+    now: datetime | None = None,
+) -> list[UnguardedWindow]:
+    """Every symbol the sweep skipped for a live scale-in, named, with how
+    long its protection has been deliberately down.
+
+    Board item 193's live-risk half. Reports only symbols that were ACTUALLY
+    skipped this run (`skip_symbols`, the same set handed to
+    `uncovered_positions`), so the report can never describe a position the
+    sweep in fact checked. Places no order and changes no state.
+    """
+    skip = skip_symbols if skip_symbols is not None else _scale_in_skip(broker, db_path)
+    if not skip:
+        return []
+    try:
+        from src.execution.scale_in import pending_scale_in_rows_from_path
+        rows = pending_scale_in_rows_from_path(
+            db_path if db_path is not None else DB_PATH,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    bound, observations = measured_window_bound_seconds(
+        db_path if db_path is not None else DB_PATH,
+    )
+    moment = now or _utc_now()
+    out: list[UnguardedWindow] = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol or symbol not in skip:
+            continue
+        created = str(row.get("created_at") or "")
+        seconds: float | None = None
+        try:
+            stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            seconds = round(
+                max(0.0, (moment - stamp).total_seconds()), 1,
+            )
+        except Exception:  # noqa: BLE001
+            seconds = None
+        try:
+            qty = float(row.get("position_qty_before_sell") or 0.0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        out.append(UnguardedWindow(
+            symbol=symbol, held_qty=abs(qty), is_short=qty < 0,
+            since_utc=created, seconds_open=seconds,
+            bound_seconds=bound, bound_observations=observations,
+        ))
+    return out
+
+
+def unguarded_text(rows: list[UnguardedWindow]) -> str:
+    """The owner message for a deliberate unguarded window that has outlived
+    every window the desk has ever measured.
+
+    Two marks, not three: the desk put this position in this state on
+    purpose and a live session is mid-sequence on it. What is wrong is the
+    DURATION — a window still open past the longest one ever measured is a
+    session that probably died holding the stop down, and nobody is going to
+    put it back without being told.
+    """
+    detail = "\n".join(
+        f"  {r.symbol}: {r.held_qty:.4f}{' (short)' if r.is_short else ''} "
+        f"held with protection deliberately down for about "
+        f"{r.seconds_open:.0f}s (since {r.since_utc} UTC), against a longest "
+        f"measured window of {r.bound_seconds:.1f}s over "
+        f"{r.bound_observations} measurement(s)"
+        for r in rows
+    )
+    return (
+        "🛑🛑 POSITION UNGUARDED LONGER THAN EVER MEASURED\n"
+        f"{len(rows)} position(s) have their protective stop cancelled ON "
+        "PURPOSE for a scale-in that has not finished. The cancel is "
+        "correct — the resting stop holds the shares and blocks the add — "
+        "and the coverage sweep leaves these alone by design so it cannot "
+        "re-create that block. What is not correct is how long it has "
+        "lasted.\n"
+        f"{detail}\n"
+        "The duration is taken from the write-ahead row's write time, so "
+        "treat it as approximate; the exact figure is the window event the "
+        "session files when it rearms. Nothing has been sold, resized or "
+        "placed. Check the position's open orders at the broker and place a "
+        "stop by hand if the adding session is gone. At most once per "
+        "symbol per trading day."
+    )
+
+
+def _unguarded_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    raw = state.get("unguarded_alerted_symbols") or {}
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+
 # ---------------------------------------------------------------------------
 # the broker-write lock shared with intra_check (board item 127)
 # ---------------------------------------------------------------------------
@@ -1479,9 +1702,17 @@ def check_coverage(
 
     counts: dict[str, int] = {}
     unreadable: list[UnreadableStop] = []
+    # Board item 193. Read ONCE and reused everywhere below: the set the
+    # sweep skipped has to be the same set the report names, or the report
+    # could describe a position the sweep actually checked (or miss one it
+    # did not), which is exactly the untruth this item exists to remove.
+    scale_in_skip = _scale_in_skip(broker, db_path)
     gaps, broker_error = uncovered_positions(
-        broker, sweep_symbol=sweep_symbol, skip_symbols=_scale_in_skip(broker, db_path),
+        broker, sweep_symbol=sweep_symbol, skip_symbols=scale_in_skip,
         counts=counts, unreadable=unreadable,
+    )
+    unguarded = deliberately_unguarded(
+        broker, db_path, skip_symbols=scale_in_skip, now=moment,
     )
     positions_checked = (
         None if broker_error else int(counts.get("positions_checked", 0))
@@ -1543,7 +1774,7 @@ def check_coverage(
                 if any(r.placed for r in repairs):
                     refreshed, refresh_error = uncovered_positions(
                         broker, sweep_symbol=sweep_symbol,
-                        skip_symbols=_scale_in_skip(broker, db_path),
+                        skip_symbols=scale_in_skip,
                         unreadable=unreadable,
                     )
                     if refresh_error is None:
@@ -1589,7 +1820,7 @@ def check_coverage(
             mismatches = reconcile_recorded_stop_levels(
                 broker=broker, last_buy=last_buy, positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=_scale_in_skip(broker, db_path),
+                skip_symbols=scale_in_skip,
             )
             # Log every pass; do not page from this 30-minute unit. An
             # out-of-band mismatch is never write-back-cleared, so paging
@@ -1668,6 +1899,16 @@ def check_coverage(
         if str(r.symbol).strip()
     ]
 
+    # Board item 193. Same day-keyed, per-symbol claim the unreadable page
+    # uses, and claimed HERE rather than by the caller for the same reason:
+    # the marker is written inside this function, so a caller that re-claimed
+    # would find this run's own marker and silence the message it wrote.
+    already_unguarded = _unguarded_alerted_symbols(state, failure_day)
+    unguarded_fresh = [
+        r for r in unguarded
+        if r.over_bound and str(r.symbol).strip().upper() not in already_unguarded
+    ]
+
     status = CoverageStatus(
         trading_day=day.isoformat(),
         session_ran=ran,
@@ -1699,11 +1940,21 @@ def check_coverage(
             and str(r.symbol).strip().upper() not in already_unreadable
         ],
         resolution_notice_symbols=resolution_symbols,
+        unguarded=list(unguarded),
+        unguarded_fresh=unguarded_fresh,
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
     if status.should_alert_repair_failure:
         _record_repair_failure_alert(state, failure_day, failing_symbols)
+    if status.should_alert_unguarded:
+        state["unguarded_alerted_symbols"] = {
+            "day": failure_day,
+            "symbols": sorted(
+                already_unguarded
+                | {str(r.symbol).strip().upper() for r in unguarded_fresh}
+            ),
+        }
     if status.should_alert_unreadable:
         state["unreadable_stop_alerted_symbols"] = {
             "day": failure_day,
@@ -1719,6 +1970,7 @@ def check_coverage(
         "market_reason": market_reason,
         "repairs": [r.__dict__ for r in repairs],
         "unreadable": [r.__dict__ for r in unreadable],
+        "unguarded": [r.__dict__ for r in unguarded],
     }
     state["updated_at"] = moment.replace(microsecond=0).isoformat()
     save_state(state, state_path)
@@ -1988,6 +2240,23 @@ def sweep_summary(
         # numbers together say how much of the book was actually settled.
         "unreadable_count": len(status.unreadable),
         "unreadable_symbols": [r.symbol for r in status.unreadable],
+        # Board item 193. A skipped symbol used to be absent from this
+        # record entirely, so "is anything unguarded right now" had no
+        # answer anywhere. These four keys are that answer, and they are
+        # observability: nothing decides on them.
+        "unguarded_count": len(status.unguarded),
+        "unguarded": [
+            {
+                "symbol": r.symbol, "held_qty": r.held_qty,
+                "is_short": r.is_short, "since_utc": r.since_utc,
+                "approx_seconds_open": r.seconds_open,
+                "measured_bound_seconds": r.bound_seconds,
+                "bound_observations": r.bound_observations,
+                "over_measured_bound": r.over_bound,
+            }
+            for r in status.unguarded
+        ],
+        "unguarded_over_bound": [r.symbol for r in status.unguarded_over_bound],
         "alerts": list(alerts),
     }
 
@@ -2018,6 +2287,23 @@ def sweep_log_line(summary: dict[str, Any]) -> str:
             + ", ".join(summary.get("unreadable_symbols") or [])
             if summary.get("unreadable_count") else ""
         )
+        # Board item 193: printed on EVERY run that has one, not only when
+        # it is over the bound. A deliberate unguarded window that never
+        # appears in the line is the silence this item was filed about.
+        + (
+            ", DELIBERATELY UNGUARDED (mid scale-in): "
+            + ", ".join(
+                f"{row.get('symbol')} ~"
+                + (
+                    f"{float(row['approx_seconds_open']):.0f}s"
+                    if row.get("approx_seconds_open") is not None
+                    else "age unknown"
+                )
+                + (" OVER LONGEST MEASURED" if row.get("over_measured_bound") else "")
+                for row in (summary.get("unguarded") or [])
+            )
+            if summary.get("unguarded_count") else ""
+        )
     )
 
 
@@ -2036,3 +2322,53 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
+
+
+# --- Generic per-symbol, per-trading-day alert claim -------------------------
+# Same state file, same trading-day key and the same claim-before-send
+# discipline as `claim_repair_failure_alert`, but keyed by an arbitrary
+# `kind` so a new fail-closed page does not need its own pair of helpers.
+# Callers that page the owner about a per-symbol condition use this; the
+# older named helpers keep their own keys so their history is unaffected.
+
+def _typed_alerted_symbols(
+    state: dict[str, Any], day: str, kind: str,
+) -> set[str]:
+    raw = state.get(f"typed_alerted_symbols::{kind}")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def claim_typed_alert(
+    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's `kind` alert for `symbols`; return those NOT yet
+    alerted today, in the order given.
+
+    Same contract as `claim_repair_failure_alert`, including that a state
+    file that cannot be read errs towards telling the owner twice over not
+    at all.
+    """
+    key = str(kind).strip() or "unspecified"
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _typed_alerted_symbols(state, day, key)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    state[f"typed_alerted_symbols::{key}"] = {
+        "day": day, "symbols": sorted(already | set(fresh)),
+    }
+    save_state(state, path)
+    return fresh

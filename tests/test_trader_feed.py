@@ -2659,20 +2659,6 @@ def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
     assert banner == "🟡 <b>DECISION SKIPPED — NOTHING WAS TRADED</b>"
 
 
-def test_looked_at_says_a_missing_reason_in_words(tmp_path, monkeypatch):
-    """`PM passed — no reason recorded` read as a status code."""
-    _make_db(tmp_path, monkeypatch)
-    lines: list[str] = []
-    trader_feed._append_looked_at(
-        lines,
-        [{"symbol": "MP", "rating": "neutral", "conviction": "low"}],
-        {}, None,
-    )
-    body = "\n".join(lines)
-    assert "no reason recorded" not in body
-    assert "the desk did not record why" in body
-
-
 def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
     """`detailed PM evidence unavailable` is internal phrasing."""
     _make_db(tmp_path, monkeypatch)

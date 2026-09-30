@@ -538,6 +538,33 @@ def no_network(record: list[str] | None = None):
             return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
         _blocked(address, "socket.create_connection")
 
+    # The socket layer is NOT the only way out, and the docstring above was
+    # wrong about yfinance for as long as this wall has existed (board item
+    # 202). yfinance ships its own transport on `curl_cffi`, which is libcurl
+    # in C: it never calls `socket.socket.connect`, so every rehearsal went on
+    # downloading live prices through a wall that reported itself intact
+    # (~196s of fetching, measured 2026-09-30). The test suite's own outbound
+    # guard had the identical hole and was closed the same day in
+    # tests/conftest.py; this is that fix, in the same shape.
+    restore: list = []
+
+    def _blocked_call(*args, **kwargs):
+        _blocked(("curl_cffi", 0), "http request")
+
+    try:
+        import curl_cffi.requests as _curl_requests
+    except Exception:  # pragma: no cover - absent in a minimal env
+        _curl_requests = None
+    if _curl_requests is not None:
+        for _attr in ("get", "post", "request"):
+            if hasattr(_curl_requests, _attr):
+                restore.append((_curl_requests, _attr, getattr(_curl_requests, _attr)))
+                setattr(_curl_requests, _attr, _blocked_call)
+        _curl_session = getattr(_curl_requests, "Session", None)
+        if _curl_session is not None:
+            restore.append((_curl_session, "request", _curl_session.request))
+            _curl_session.request = _blocked_call
+
     socket.socket.connect = guarded_connect
     socket.socket.connect_ex = guarded_connect_ex
     socket.create_connection = guarded_create_connection
@@ -547,6 +574,8 @@ def no_network(record: list[str] | None = None):
         socket.socket.connect = _REAL_SOCKET_CONNECT
         socket.socket.connect_ex = _REAL_SOCKET_CONNECT_EX
         socket.create_connection = _REAL_CREATE_CONNECTION
+        for _owner, _attr, _original in reversed(restore):
+            setattr(_owner, _attr, _original)
 
 
 # --------------------------------------------------------- production guard
