@@ -4509,6 +4509,50 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_position_open_timestamp(self, buy_row: dict | None) -> str | None:
+        """When the POSITION `buy_row` belongs to was first opened.
+
+        `get_symbol_last_buy` returns the MOST RECENT opening row, which is
+        the right answer for "what did the desk last decide about this name"
+        and the wrong one for "how long has this trade been on". A scale-in
+        mints no new position: `_assign_position_ids` hands every add the
+        same `position_id` until net qty returns to flat. So the position's
+        birthday is the EARLIEST executed opening row carrying that id, not
+        the latest.
+
+        Why this exists (measured 2026-09-30, live DB): the deterministic
+        trail sliced its bars from the last buy's date, while taking the
+        entry PRICE from `position.avg_entry`, which is blended across every
+        add. On 2026-09-23 MRVL's position (`pos-08b43df53103`, opened
+        2026-09-17) took a third add at 17:19; the 19:31 trail evaluation
+        therefore saw ZERO bars "since entry" for a position that was four
+        sessions old, and `src/risk/trailing.py::_swing_lows` — which needs
+        `2 * PIVOT_WINDOW + 1` = 7 bars before it can confirm anything — had
+        nothing to read. See `tests/test_position_open_timestamp.py`.
+
+        Returns the timestamp string as stored, or None when `buy_row` is
+        missing or carries no `position_id` (legacy rows predating the id,
+        and rows the backfill could not chain). None means "unknown", never
+        a guessed date — the caller keeps its own fallback.
+        """
+        if not buy_row:
+            return None
+        pid = buy_row.get("position_id")
+        symbol = buy_row.get("symbol")
+        opening = (buy_row.get("action") or "").upper()
+        if not pid or not symbol or opening not in _POSITION_OPEN_ACTIONS:
+            return None
+        predicate = self._executed_trade_predicate()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT timestamp FROM trades WHERE symbol = ? "
+                "AND position_id = ? AND action = ? "
+                f"AND {predicate} "
+                "ORDER BY timestamp ASC, id ASC LIMIT 1",
+                (symbol, pid, opening),
+            ).fetchone()
+        return row["timestamp"] if row else None
+
     def get_recent_insights(self, limit: int = 7) -> list[dict]:
         """Last N evening insights, newest first. PM reads to build 7-day narrative."""
         with self._lock:

@@ -11300,10 +11300,43 @@ class TradingPipeline:
 
             # Only bars SINCE ENTRY matter: a swing low from before the
             # position existed is not a level this trade ever defended.
+            #
+            # "Since entry" means since the POSITION opened, not since the
+            # most recent add. `get_symbol_last_buy` returns the LATEST
+            # opening row, so slicing from it made a scale-in erase the
+            # trade's whole bar history — while the entry PRICE handed to
+            # the trail below is `position.avg_entry`, blended across every
+            # add. The window and the price disagreed by construction.
+            #
+            # Measured 2026-09-30 against the live DB: the structural pivot
+            # has produced ZERO of the 9 deterministic stops ever placed
+            # (all 9 came from the chandelier or the breakeven ratchet),
+            # and in all 11 recorded `no_structure_and_no_usable_chandelier`
+            # refusals the window held 0-6 bars against the 7 that
+            # `src/risk/trailing.py::_swing_lows` needs before it can
+            # confirm a single pivot. MRVL on 2026-09-23 is the clearest
+            # case: a position opened 2026-09-17 was evaluated with zero
+            # bars because it had been added to that morning.
+            #
+            # This only ever LENGTHENS the window, so it cannot remove
+            # protection: it can hand structure bars it previously lacked,
+            # and it anchors the chandelier on the position's real
+            # high-water mark rather than the latest add's. No new constant.
             bars = []
             try:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
-                entry_ts = (buy or {}).get("timestamp") or ""
+                try:
+                    opened_ts = self.db.get_position_open_timestamp(buy)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "trail: position-open lookup failed for %s (%s) — "
+                        "falling back to the last opening row's date",
+                        symbol, e,
+                    )
+                    opened_ts = None
+                if not isinstance(opened_ts, str):
+                    opened_ts = None
+                entry_ts = opened_ts or (buy or {}).get("timestamp") or ""
                 entry_day = entry_ts[:10]
                 bars = [
                     b for b in all_bars

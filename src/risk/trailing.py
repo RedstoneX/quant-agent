@@ -105,6 +105,55 @@ __all__ = [
 #: A proposed stop must sit at least this far above the live stop. Mirrors the
 #: reviewer's historical ">= 1.02x old stop" min-bump rule so the deterministic
 #: path does not churn orders the discretionary one would have skipped.
+#:
+#: **2026-09-30: an attempt to re-express this as a reading off the instrument
+#: FAILED, and the constant stays at 2.0 with the failure recorded.** The desk's
+#: standing doctrine bars a flat picked percentage on a stop or exit, and this
+#: one is squarely in scope — so the attempt was made, measured, and is written
+#: down here rather than quietly abandoned.
+#:
+#: The complaint is real and is now MEASURED, not asserted. Expressing "2% of
+#: the live stop" in each name's own ATR(14), over the six positions this gate
+#: actually refused in production between 2026-09-21 and 2026-09-29:
+#:   MRVL 0.31 ATR | NET 0.33 ATR | RKLB 0.34 ATR | AMD 0.47 ATR
+#:   META 0.52 ATR | AAPL 0.91 ATR
+#: The same nominal rule demands a ratchet nearly three times larger on AAPL
+#: than on MRVL. That is exactly the incoherence the doctrine names.
+#:
+#: The natural repair is `k * ATR`, the unit this module already uses for
+#: `NOISE_BAND_ATR_MULTIPLE` and `CHANDELIER_ATR_MULTIPLE`. It was measured
+#: against the same production record — the seven refused tightens whose
+#: candidate could be reconstructed from daily bars — and it does not work:
+#:   * every refused tighten fell between 0.12 and 0.50 ATR;
+#:   * any k >= 0.75 blocks ALL SEVEN, strictly MORE than the flat 2% blocks
+#:     (which lets one through), so the change would tighten the gate, not
+#:     loosen it;
+#:   * only k <= 0.5 lets anything through, and choosing 0.25 to admit three
+#:     of seven is fitting a constant to the outcomes the data happened to
+#:     like. That is barred outright, and it is the same failure mode as the
+#:     2.0 it would replace — a picked multiple re-imported through the ATR
+#:     door.
+#: No published work fetched fixes a minimum stop-adjustment size; the
+#: literature on stop placement addresses DISTANCE from price (which is what
+#: `NOISE_BAND_ATR_MULTIPLE` and the chandelier already answer), not the
+#: minimum INCREMENT worth replacing a resting order for.
+#:
+#: Deleting the gate instead was considered and rejected on a measured cost,
+#: not a preference: `AlpacaBroker.replace_stop_loss` cannot edit an Alpaca
+#: OTO stop leg in place, so every replace is a cancel-then-resubmit with a
+#: real window in which the position carries no protective order. Removing
+#: the gate would have added seven such windows across nine evaluation runs
+#: on an eleven-name book. The money cost of a replace is zero (the ledger
+#: entry establishes this); the naked-window cost is not.
+#:
+#: What the same pass DID settle is the redundancy question the ledger left
+#: open. On THIS deterministic path there are two gates, not three: the
+#: ~2-4-session ratchet cooldown (`_trail_tightened_recently`) is reached
+#: only from the discretionary midday `TRAIL_STOP` branch and never from
+#: `_apply_deterministic_trails`. And the two that are here are NOT
+#: redundant — all seven reconstructed refusals sat OUTSIDE the 1.25-ATR
+#: noise band, so the noise band would have admitted every one of them and
+#: this gate is doing independent work.
 MIN_RATCHET_PCT = 2.0
 
 #: Chandelier distance below the highest high since entry, used only where
@@ -260,6 +309,27 @@ def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
     most recent `window` bars can never produce one. That lag is the point: an
     unconfirmed low is just today's price, and trailing under today's price is
     how a stop ends up inside the noise band.
+
+    **Measured 2026-09-30, live production DB: this function has never once
+    produced a stop.** All nine deterministic trails ever placed came from the
+    chandelier fallback (eight) or the Type A breakeven ratchet (one); the
+    structural leg has contributed zero. The cause is arithmetic, not a bug:
+    `window * 2 + 1` = 7 bars are needed before a single low can be confirmed,
+    and this desk's positions were 4-9 sessions old when evaluated, with a
+    scale-in additionally resetting the caller's bar window to zero until
+    `src/pipeline.py::_apply_deterministic_trails` was changed to slice from
+    the POSITION OPEN (`Database.get_position_open_timestamp`) instead of the
+    latest add. That change lengthens the window and cannot remove protection,
+    but it was measured against all 21 recorded refusals and flipped NONE of
+    them — the 7-bar floor, not the window start, is what binds.
+
+    So on today's holding periods the chandelier IS the trail, and the
+    "trail under each successive higher low" rule in the module docstring
+    describes an intent rather than observed behaviour. Shortening
+    `PIVOT_WINDOW` would make structure fire, and that is precisely why it
+    has not been done: the constant is documented above as unsourceable in
+    the literature, and moving it to obtain a result the data would like is
+    picking a number.
     """
     lows: list[float] = []
     n = len(bars)
