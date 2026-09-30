@@ -2750,32 +2750,38 @@ numbers:
     cost_while_unanswered: >-
       As above.
   - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
-    value: -20
-    status: arbitrary
+    value: -10
+    status: sourced
     site: src/risk/rules.py
+    source: >-
+      Article 62(1) of Commission Delegated Regulation (EU) 2017/565 (the
+      MiFID Org Regulation), reproduced in the FCA Handbook as COBS
+      16A.4.3UK: a firm providing portfolio management "shall inform the
+      client where the overall value of the portfolio ... depreciates by
+      10 % and thereafter at multiples of 10 %, no later than the end of the
+      business day in which the threshold is exceeded". Fetched 2026-09-30
+      via https://www.fca.org.uk/news/statements/10-per-cent-depreciation-notifications
+      and the FCA Handbook COBS 16A.4. This is the only published standard
+      found that fixes a LOSS-NOTIFICATION threshold to the owner of the
+      money, independently of what the manager does to exposure -- which is
+      exactly the question this row carried open. Value moved -20 -> -10.
     note: >-
-      The drawdown at which the OWNER IS TOLD (resolve_gross_ceiling sets
-      alert_owner). A round percentage, not read off the account or off a
-      cited source. It happens to equal the de-levering ladder's deepest
-      rung, but it answers a different question from the ladder -- the same
-      function also sets alert_owner=True on the unmeasurable-drawdown
-      branch, where no rung fires at all. A 2026-09-30 change (board item
-      182) deleted this row and set the constant to min(GROSS_LADDER
-      thresholds); it was REVERTED the same day because the trigger
-      (drawdown <= this) is monotone, so freezing the value can never
-      produce silence at a deeper drawdown, while tying it to the deepest
-      rung WOULD go silent across any band between -20% and a newly added
-      deeper rung. Setting one arbitrary number equal to another arbitrary
-      number is deduplication, not sourcing, so the question below stays
-      open either way. The stale-prose defect that change was really
-      chasing is fixed in the reason string instead, which now names the
-      rung the ladder is actually on.
-    open_question: >-
-      At what drawdown must the owner be told, independently of what the
-      ladder does to exposure?
-    cost_while_unanswered: >-
-      The owner either hears about ordinary volatility or first hears at the
-      floor rung.
+      Three differences from the cited rule are recorded rather than hidden.
+      (a) The rule measures depreciation from the START of the reporting
+      period; this desk measures peak-to-trough drawdown, which is always at
+      least as deep, so -10% peak-to-trough fires no later than the rule
+      would. (b) It is a RETAIL investor-protection rule and the UK FCA
+      revoked COBS 16A.4.3UK from 23 October 2025 as a firm-burden measure,
+      not as a finding that 10% is wrong; the EU Article 62 text stands. It
+      is cited as published practice, not as a rule binding this desk. (c)
+      The desk alerts on every session past the threshold, more often than
+      "thereafter at multiples of 10%" demands, so it clears the floor. The
+      change is strictly LOUDER: the trigger is monotone and -10 is
+      shallower than -20, so no drawdown that alerted before stops
+      alerting. This row no longer equals the ladder's deepest rung, which
+      removes the coincidence that made the two look like one number; the
+      six GROSS_LADDER values remain owner-ratified appetite and are
+      untouched.
   - id: src.risk.rules.SEAT_WEIGHT
     value: 1
     status: sourced
