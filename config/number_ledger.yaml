@@ -625,90 +625,126 @@ numbers:
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
       That phrase is at src/portfolio_constructor.py, not here.
-      ITEM 90 PASS 2026-09-30 — the value is UNCHANGED and the 2026-09-25
-      ratification stands; what changed is the question, which was asking
-      for something this desk's doctrine forbids. Four findings.
-      (a) THE OLD QUESTION WAS DOCTRINE-BARRED. It read "what in this
+      ITEM 90 PASS 2026-09-30, REVISED after an adversary pass found the
+      first version of this note asserted a false history. The VALUE is
+      unchanged and stays `arbitrary`. What changed: the old open question
+      was doctrine-barred and is replaced; a false provenance is deleted;
+      and the reformulation route is NOT refused but specified and filed.
+      (a) A FALSE HISTORY IS DELETED, NOT SOFTENED. The first version of
+      this note, following a wrong comment in config/settings.yaml, said
+      the base moved "3.0 -> 1.5 on 2026-09-04" and built an argument on
+      it. Read from git instead: config/settings.yaml went 3.0
+      (3dff9408, 2026-08-27) straight to 2.5 (0088328c, 2026-09-10) and
+      NEVER held 1.5 — `git log --all -S'min_stop_atr_multiple: 1.5' --
+      config/settings.yaml` returns nothing. 0088328c is a SQUASH of PR
+      #269's three sub-commits; the 1.5 existed only inside that branch,
+      between sub-commit one (3.0 -> 1.5, Sweeney MAE) and sub-commit two
+      (1.5 -> 2.5, published doctrine). No deployed value was ever 1.5 and
+      there was no 2026-09-04 base move.
+      (b) THE OLD QUESTION WAS DOCTRINE-BARRED. It read "what in this
       desk's own maximum-adverse-excursion record picks the point inside
       it?" An MAE study over this desk's own trades is FITTING, and
       docs/OUTCOME.md ("No arbitrary numbers, ever", the 2026-09-12
       correction) says fitting a threshold to past outcomes "is not the
       opposite of an arbitrary number; it is an arbitrary number with a
-      backtest stapled to it". Answering it as written would not have
-      sourced this number, it would have re-created the abandoned 1.5 —
-      which came from exactly such an MAE fit. The question is replaced,
-      not softened.
-      (b) THE REFORMULATION ROUTE WAS EXAMINED AND IS REFUSED, recorded so
-      it is not re-proposed. docs/OUTCOME.md orders reformulation first, and
-      the obvious one is to drop the constant and read the floor off the
-      instrument and the trade the way the TARGET side already does:
-      1.0 x ATR x sqrt(horizon sessions), whose 1.0 needs no pick because
-      it means "one typical excursion over the stated hold and nothing
-      more" — the identical justification the ledger already grades
-      `sourced` for `min_target_atr_multiple` and
-      `breakout_projection_atr_multiple`. It is refused on arithmetic, not
-      taste: the unbacked-stop target IS
-      `breakout_projection_atr_multiple` x ATR x sqrt(H) with the same 1.0,
-      so a stop built the same way equals the target at every horizon and
-      pins reward:risk at exactly 1.0 by construction. Today the ratio
-      instead RISES with the hold (~0.98 at H=6, ~1.79 at H=20, against the
-      flat 2.5 base), so the reformulation would destroy a real
-      horizon-sensitivity rather than add one. Any sqrt(H) stop floor
-      either equals the target (ratio fixed at 1.0) or needs a fresh
-      unsourced multiple to separate them, so this route cannot produce a
-      number that is both live-read and free of a new pick.
-      (c) THE ARGUMENT THAT PUSHED THE BASE DOWN IS VOID. The 3.0 -> 1.5
-      move of 2026-09-04 rested on the arithmetic that a 3.0 ATR stop needs
-      a 4.5 ATR target to clear a 1.5 reward:risk floor. That floor was
-      `min_reward_risk_after_widening`, DELETED on 2026-09-24 as dead code
-      (board item 81) after it was found never to have refused or shrunk a
-      single trade, and config/settings.yaml's own comment at this key
-      already admits as much. So the case against the top of the published
-      band no longer exists, and the owner's dial below is the full
-      2.5-3.0, not a defence of the bottom of it.
-      (d) A CAVEAT THAT SURVIVES, stated rather than papered over. A stop
-      floor with no horizon term is defensible where the entry stop is
-      quickly replaced by the trail — true for Type B (breakout), which
-      trails from entry. It is NOT true for Type A (range), this desk's
-      most common setup, whose stop is static at its entry placement until
-      price reaches +1R (src/risk/trailing.py). For those trades the entry
-      stop does bear the whole early hold, and noise accumulates over it.
-      That is an argument for the WIDE end of the band under (e); it is not
-      itself a derivation of any number.
-      (e) EFFECT ON THE UNIVERSE SCREEN: NONE, deliberately. The value is
-      untouched, so `universe_screen.STOP_SANITY_FLOOR_FRACTION` / 2.5
-      still gives the same 20% ATR/price ceiling and the known
-      16.67%-to-20% contradiction is neither widened nor narrowed by this
-      pass. Recorded for whoever answers the dial: that contradiction is
-      the risk-off regime scaler 1.20 and nothing else — the screen divides
-      by the BASE while the midday guard binds on the WIDEST REACHABLE
-      multiple (base x 1.20), so the mismatched band is a factor of 1.20
-      wide at any base. Moving this number to 3.0 would move the ceiling to
-      16.67% (a TIGHTENING of the screen, fewer names admitted) without
-      closing that gap.
+      backtest stapled to it". Answering it as written would have
+      re-created the abandoned 1.5, which came from exactly such a fit.
+      (c) THERE IS NO CITED BAND, so "the range is sourced and only the
+      point is not" — the claim this entry made since 2026-09-25 — is
+      WITHDRAWN. This entry carries no `source:` field and never did.
+      config/settings.yaml offers only "general swing-trading guidance"
+      with no URL, which docs/OUTCOME.md explicitly rejects: "a citation is
+      not a number that sounds authoritative — it is a URL a later reader
+      can open and check". Searched 2026-09-30 and recorded so nobody
+      repeats it: the sources that assert 2.5-3.0x for a fixed multi-day
+      entry stop are vendor and content-marketing pages, not literature;
+      one secondary claim attributed to Technical Analysis of Stocks &
+      Commodities points the OTHER way (1.5-2.0x best risk-adjusted for
+      3-15 session swings); Van Tharp's and the Chandelier's 2-3x are
+      TRAILING-stop mechanisms, which this file's own comment already
+      concedes are "never on a fixed entry stop"; and the top search hit
+      for the desk's own phrasing is now the desk's own PR #269, so the
+      "published doctrine" is partly self-referential in the index. The
+      honest position is that BOTH ends are unsupported, not just the
+      bottom, and the band quoted at the definition site (2.5-3.0) does
+      not even match the 2-3 quoted three lines below it.
+      (d) THE REFORMULATION IS NOT REFUSED. An earlier draft refused it on
+      the claim that a `1.0 x ATR x sqrt(horizon)` floor would pin
+      reward:risk at exactly 1.0. That arithmetic was wrong twice and is
+      retracted: `_stop_atr_multiple` multiplies by a setup and a regime
+      scaler, so the ratio would sit at 1/(setup x regime) — about 1.17
+      range/risk-on and 0.83 breakout/risk-off, not 1.0; and the two rules
+      do not govern one population, since the measured-move target fires
+      when no level sits ABOVE entry while this floor fires when no
+      5-touch level sits BELOW it, which are independent conditions on
+      opposite sides of price. What survives is narrower and is kept as a
+      caution, not a refusal: any sqrt(horizon) floor built from the
+      target side's own 1.0 makes reward:risk horizon-INVARIANT and always
+      near one, where today it rises with the hold.
+      (e) THE ROUTE WITH THE MOST MONEY IN IT WAS NEVER TESTED, and is now
+      filed as item 191. docs/OUTCOME.md ranks reformulation first and its
+      worked example is structural ("does the last higher low still hold?"
+      needs no number because the chart supplies the level). This desk
+      already computes structural levels with touch counts, and
+      `_derive_structural_stop_no_atr` — owner-ratified under item 80 and
+      already using the ratified `structural_stop_buffer_pct` — already
+      reads a stop from structure; only its trigger condition would
+      change. The asymmetry that makes it viable is measured IN THIS REPO
+      and is not fitting, because it is measured off bars rather than off
+      the desk's own trades: `src/data/levels.py` records pooled bounce
+      probability rising from 0.516 at first touch to 0.644 at 5+ touches
+      against a flat ~0.48-0.51 shuffled control (7,218 touch episodes,
+      101 symbols, 5 years; docs/RESEARCH_FINDINGS.md section 7). The
+      5-touch bar exists because below it the real and shuffled intervals
+      overlap — which matters when a level justifies a TIGHTER stop, where
+      a level that fails costs a whipsaw. As a WIDENING anchor the bet is
+      inverted: the stop sits beyond the level, so a level that fails
+      leaves the stop merely wider than needed, which under risk-based
+      sizing costs a smaller position and NOT a larger loss. A 2-touch
+      level (MIN_TOUCHES = 2) still sits above the shuffled control. That
+      asymmetry was never examined and it is where this constant's blast
+      radius actually shrinks.
+      (f) EFFECT ON THE UNIVERSE SCREEN. The value is untouched, so the
+      dial does not move the ceiling in this change. The 16.67%-to-20%
+      contradiction is FIXED here rather than parked: `src/universe_screen.py`
+      now divides `STOP_SANITY_FLOOR_FRACTION` by
+      `ConstructorConfig.widest_reachable_stop_atr_multiple(base)` instead
+      of by the base. That adds no number — the gap was the risk-off
+      scaler 1.20 and nothing else — and needed no owner decision. The
+      board's note that it "needs the owner's call because it tightens a
+      live screen" was itself wrong on the facts: `universe_screen.enabled`
+      is False in config/settings.yaml, so the screen does not ship on.
     open_question: >-
-      OWNER APPETITE, and no evidence can settle it — routed rather than
-      picked. Everything answerable has been answered: the published
-      2.5-3.0x fixed-entry-stop consensus for multi-day holds is a source
-      for the RANGE and not for any point in it; this desk's own trade
-      record cannot pick the point because fitting is barred; and the
-      reformulation that would remove the constant altogether pins
-      reward:risk at 1.0 (see note (b)). What separates the two ends is a
-      trade-off the owner owns, not a fact: because position size is
-      derived as risk / |entry - stop|, a WIDER floor does not increase the
-      dollar loss if the stop fills — it buys fewer stop-outs inside
-      ordinary volatility and less gap-exposed notional, and pays for them
-      with a smaller position and a smaller dollar win when the trade
-      works. In answerable form: within the published 2.5-3.0x band, how
-      much size is worth giving up to be stopped out by noise less often?
-      The answer is one number in [2.5, 3.0] and nothing else is needed.
+      NOT a point-inside-a-band question any more; that framing is
+      withdrawn with the band (see note (c) — there is no citation, so
+      both ends are unsupported). The answerable question is now whether
+      this constant can be reformulated away for most of the names it
+      governs, and it is answered by BUILDING item 191, not by a ruling:
+      when no 5-touch level backs the stop, does the nearest computed
+      level below entry at any touch count (>= MIN_TOUCHES = 2), plus the
+      already-ratified `structural_stop_buffer_pct`, give a floor read off
+      the chart instead of off this multiple? Item 191 settles what
+      fraction of real candidates that covers and what the stop does when
+      no computed level exists below entry at all, which is the only
+      population an ATR multiple would still govern. 2.5 is the INTERIM
+      value meanwhile and is deliberately not re-picked: with no cited
+      band, moving it would be one more unsourced choice.
     cost_while_unanswered: >-
-      Every unbacked stop, and therefore every position size derived from
-      it, rests on a point value chosen inside a cited range. The band is
-      narrow and the sizing rule absorbs the difference in dollar risk, so
-      the live cost is bounded: at the ends of the band the same idea is
-      taken at 2.5/3.0 = 83% versus 100% of the size, with a
-      correspondingly different chance of being stopped by noise.
+      Two costs, and the second was omitted from this field until
+      2026-09-30. FIRST, every unbacked stop and every position size
+      derived from it rests on an uncited number; because sizing is
+      risk-based the dollar loss if the stop fills does not change with
+      it, so what moves is position size and how often noise stops the
+      trade out. SECOND, and this is the one that is invisible: this
+      number also sets the universe screen's volatility ceiling
+      (`STOP_SANITY_FLOOR_FRACTION` divided by the widest reachable
+      multiple), so it removes names from consideration ENTIRELY, before
+      any seat analyses them. A name screened out is never seen, never
+      logged as a refusal, and never appears in any review — so the cost
+      of this number is paid mostly where nobody can observe it. That gate
+      ships disabled today (`universe_screen.enabled: false`), which
+      bounds the live cost to sizing alone; it does not bound the cost if
+      the screen is ever switched on.
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced

@@ -286,7 +286,14 @@ def test_thresholds_are_read_from_existing_desk_numbers():
     assert th.min_price_usd == 5.0
     assert th.min_market_cap_usd == 30_000_000
     assert th.max_half_spread_bps == 40.0
-    assert th.max_atr_fraction == pytest.approx(0.2)
+    # 0.2 -> 1/6 on 2026-09-30 (board item 90). The ceiling divides by the
+    # WIDEST multiple `_stop_atr_multiple` can reach (2.5 x 1.20 = 3.00),
+    # not by the bare 2.5. Dividing by the base claimed a name "fails by
+    # construction" across 16.67-20% when it did not: the midday guard this
+    # gate predicts binds on the multiple actually used, so those names
+    # passed the screen and then had a legitimate stop refused as a typo.
+    # No number was added — 1.20 is the existing risk-off scaler.
+    assert th.max_atr_fraction == pytest.approx(0.5 / 3.0)
     assert th.min_history_bars == 210
 
 

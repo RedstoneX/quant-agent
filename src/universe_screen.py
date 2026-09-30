@@ -44,11 +44,19 @@ THE CRITERIA, and where each threshold comes from (every number is in
               this account sees IEX quotes only and those are routinely
               absurd (src/pipeline_stages.py, the CCJ 15%-spread note).
   volatility  ATR(14) / price <= STOP_SANITY_FLOOR_FRACTION /
-              `risk.min_stop_atr_multiple`. Past it, the desk's own
+              `ConstructorConfig.widest_reachable_stop_atr_multiple(
+              risk.min_stop_atr_multiple)`. Past it, the desk's own
               minimum unbacked stop (k x ATR under price) sits below half
               the price, which the midday stop-sanity rule refuses as a
               typo — the name fails by construction, so it is screened at
-              the door.
+              the door. It divides by the WIDEST multiple the scalers can
+              reach (2.5 x 1.20 = 3.00, giving 16.67%) and not by the bare
+              base (which gave 20%): board item 90, 2026-09-30. The guard
+              this gate is predicting binds on the multiple actually used,
+              so over the 16.67-20% band a name passed here and then had a
+              legitimate stop refused — "fails by construction" was untrue
+              exactly there. No number was added; the two figures were
+              always two expressions for one quantity.
   size        market capitalisation >= `min_market_cap_usd` ($30M, the
               Russell US indexes' eligibility floor).
   sector      resolves to a real sector — the sector cap needs one. Kept
@@ -188,13 +196,32 @@ class ScreenThresholds:
         from src.data.context import _SLOPE_LOOKBACK
         from src.data.technical import LONGEST_INDICATOR_WINDOW
 
+        # Imported here rather than at module scope because
+        # `src.portfolio_constructor` imports THIS module for
+        # `STOP_SANITY_FLOOR_FRACTION`; at call time both are loaded.
+        from src.portfolio_constructor import ConstructorConfig
+
         screen = config.universe_screen
         return cls(
             min_price_usd=float(screen.min_price_usd),
             min_market_cap_usd=float(screen.min_market_cap_usd),
             max_half_spread_bps=float(config.execution.max_entry_slippage_bps),
+            # Divides by the WIDEST REACHABLE unbacked-stop multiple, not by
+            # the base. Board item 90, 2026-09-30: dividing by the base gave
+            # 0.5 / 2.5 = 20% while the midday stop-sanity guard binds on the
+            # multiple actually used, which the regime scaler can push to
+            # 2.5 x 1.20 = 3.00 and therefore 16.67%. Names between the two
+            # passed this screen and then had their widest legitimate stop
+            # refused as a typo, so this gate's own "fails by construction"
+            # rationale was false across that band. This introduces no
+            # number — `widest_reachable_stop_atr_multiple` is the base times
+            # the scaler maxima already in the tree — and it TIGHTENS the
+            # screen from 20% to 16.67%, admitting fewer names.
             max_atr_fraction=(
-                STOP_SANITY_FLOOR_FRACTION / float(config.risk.min_stop_atr_multiple)
+                STOP_SANITY_FLOOR_FRACTION
+                / ConstructorConfig.widest_reachable_stop_atr_multiple(
+                    float(config.risk.min_stop_atr_multiple),
+                )
             ),
             min_history_bars=int(LONGEST_INDICATOR_WINDOW + _SLOPE_LOOKBACK),
         )

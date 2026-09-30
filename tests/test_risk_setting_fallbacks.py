@@ -1,119 +1,210 @@
-"""Every `_risk_setting` fallback in the pipeline must be the ratified default.
+"""Every `_risk_setting` fallback must equal the value the desk trades on.
 
 WHY THIS EXISTS
 ---------------
 `TradingPipeline.__init__` wires the constructor's risk inputs with
-`_risk_setting("<field>", <literal>)`. The literal is the value used when the
-configured one is absent or is not a real number, and `_risk_setting`'s own
-docstring calls it "the ratified default". Nothing enforced that.
+`_risk_setting("<field>", <literal>)`. The literal is used when the
+configured value is absent or is not a real number, and `_risk_setting`'s
+own docstring calls it "the ratified default". Nothing enforced that.
 
 On 2026-09-30 (board item 90) exactly one of the fifteen disagreed:
-`min_stop_atr_multiple` still read 1.5 after the ratified base moved to 2.5
-on 2026-09-10. 1.5 is not a stale-but-harmless neighbour of 2.5 — it is the
-value this desk deliberately ABANDONED, a Sweeney MAE fit to its own
-~two-week trade history, dropped both because that window's seat outputs
-were later found to misreport confidence and data quality and because
-fitting a threshold to past outcomes is barred outright
-(`docs/OUTCOME.md`, "No arbitrary numbers, ever", the 2026-09-12
-correction). A minimum stop distance decides both where an unbacked stop
-sits and, through `shares = risk / |entry - stop|`, how large the resulting
-position is.
+`min_stop_atr_multiple` fell back to 1.5 while the desk trades 2.5.
 
-WHAT IT DOES AND DOES NOT CLAIM
--------------------------------
+HOW THE 1.5 GOT THERE — read from git, not inferred
+---------------------------------------------------
+Commit `0088328c` (PR #269, 2026-09-10) is a SQUASH of three sub-commits.
+The first re-derived the stop floor 3.0 -> 1.5 and correctly moved this
+fallback 3.0 -> 1.5 with it. The second moved the base 1.5 -> 2.5 in
+`config/settings.yaml` and `src/config.py` and did not move the fallback.
+So this is a half-landed second sub-commit — precisely the failure
+`scripts/definition_of_done.py` was built for ("the half in front of the
+author got fixed") — and NOT, as was briefly supposed, a transcription
+slip from the neighbouring `min_reward_risk_after_widening", 1.5` line.
+The diff shows the deliberate matched 3.0 -> 1.5 edit in sub-commit one.
+
+Note also what `config/settings.yaml` never held: the deployed value went
+3.0 -> 2.5 and was never 1.5. `git log --all -S'min_stop_atr_multiple: 1.5'
+-- config/settings.yaml` returns nothing. The 1.5 era existed only inside
+PR #269's branch.
+
+WHAT THIS CLAIMS, AND WHAT IT DOES NOT
+--------------------------------------
 The 1.5 was NOT reachable on the production path: a real `RiskConfig`
-always carries the attribute and pydantic coerces the deployed YAML, so
-`_risk_setting` returned the configured 2.5 every session. This test is
-therefore a guard against a class of defect, not the repair of a live one,
-and it is written down that way rather than oversold.
+always carries the attribute and pydantic coerces the deployed YAML.
+Measured 2026-09-30: the three test modules that construct a
+`TradingPipeline` (`test_pipeline`, `test_agent_log_attribution`,
+`test_credential_outage_fail_closed`) give 108 passed with the fallback at
+either 1.5 or 2.5, so no test outcome depended on it either. It is a stale
+constant, not a live defect, and it is written down that way rather than
+oversold.
 
-The ledger gate cannot cover this. `src/number_sources.py` names "fallback
-arguments (`_risk_number(x, 25.0)`, `kwargs.get(k, 25.0)`)" among the shapes
-it structurally cannot scan, and suggests hoisting each literal to a named
-constant. That would work but would add a ledger row — and therefore a new
-number to account for — per fallback. Pinning each fallback to the field
-default it claims to mirror closes the same hole and introduces no number
-at all: the assertion is an equality between two things already in the tree.
+WHY NOT THE LEDGER GATE
+-----------------------
+`src/number_sources.py` names "fallback arguments (`_risk_number(x, 25.0)`,
+`kwargs.get(k, 25.0)`)" among the shapes it structurally cannot scan, and
+suggests hoisting each literal to a named constant — which would work but
+would add a ledger row, and therefore a new number to account for, per
+fallback. Pinning each fallback to the deployed value closes the same hole
+and introduces no number: every assertion here is an equality between two
+things already in the tree.
 
-Fields whose `RiskConfig` declaration has no default (`max_position_pct` is
-required and comes from `config/settings.yaml`) cannot be checked this way.
-They are listed explicitly below rather than skipped silently, so a field
-that stops having a default cannot quietly leave the check.
+THREE THINGS THIS CHECKS THAT AN EARLIER DRAFT DID NOT
+------------------------------------------------------
+1. It compares against `config/settings.yaml`, the file the desk actually
+   trades, falling back to the `RiskConfig` field default only where the
+   YAML does not carry the key. Comparing two code defaults to each other
+   would have passed while the deployed value diverged from both.
+2. The expected field list is an EQUALITY, not `len(...) >= 10`. A wiring
+   line that disappears fails here instead of silently shrinking coverage.
+3. The scan resolves a fallback written as a NAME as well as one written
+   as a bare numeric literal, so hoisting a literal to a constant cannot
+   make it invisible to this test.
 """
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
+import yaml
 from pydantic_core import PydanticUndefined
 
 from src.config import RiskConfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIPELINE = REPO_ROOT / "src" / "pipeline.py"
+SETTINGS = REPO_ROOT / "config" / "settings.yaml"
 
-#: Fields wired through `_risk_setting` whose `RiskConfig` declaration is
-#: REQUIRED (no default), so there is no ratified default to compare the
-#: fallback against. Named, not skipped by silence.
-NO_FIELD_DEFAULT = {"max_position_pct"}
+#: Every `risk.*` field wired through `_risk_setting` in
+#: `TradingPipeline.__init__`. An EQUALITY: adding a wiring line without
+#: adding it here fails, and so does removing one.
+EXPECTED_FIELDS = {
+    "max_position_risk_pct",
+    "min_position_risk_pct",
+    "max_portfolio_risk_pct",
+    "max_cluster_risk_share_pct",
+    "max_position_pct",
+    "short_gap_risk_multiple",
+    "max_gross_exposure_x",
+    "min_stop_atr_multiple",
+    "absolute_min_stop_atr_multiple",
+    "min_level_touches_for_stop_honor",
+    "min_target_atr_multiple",
+    "breakout_projection_atr_multiple",
+    "max_target_reach_atr_multiple",
+    "max_target_horizon_sessions",
+    "target_divergence_warn_pct",
+}
 
-#: `_risk_setting("<name>", <number>)`, the `allow_zero=` keyword ignored.
-_CALL = re.compile(r"_risk_setting\(\s*\"(\w+)\",\s*([0-9]+(?:\.[0-9]+)?)")
+
+def _scan_fallbacks() -> dict[str, float]:
+    """`{field: fallback}` for every `_risk_setting(...)` call in the file.
+
+    An AST walk rather than a regex, so a fallback hoisted to a named
+    module constant resolves to its value instead of vanishing.
+    """
+    tree = ast.parse(PIPELINE.read_text())
+    module_consts: dict[str, float] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, (int, float)) and not isinstance(
+                node.value.value, bool,
+            ):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        module_consts[tgt.id] = float(node.value.value)
+
+    found: dict[str, float] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (isinstance(fn, ast.Name) and fn.id == "_risk_setting"):
+            continue
+        if len(node.args) < 2 or not isinstance(node.args[0], ast.Constant):
+            continue
+        name = node.args[0].value
+        arg = node.args[1]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)):
+            found[name] = float(arg.value)
+        elif isinstance(arg, ast.Name) and arg.id in module_consts:
+            found[name] = module_consts[arg.id]
+        else:  # pragma: no cover - a shape this test cannot resolve
+            raise AssertionError(
+                f"`_risk_setting(\"{name}\", ...)` has a fallback this test "
+                "cannot resolve to a number. Teach `_scan_fallbacks` the new "
+                "shape rather than leaving the fallback unchecked.",
+            )
+    return found
 
 
-def _fallbacks() -> list[tuple[str, float]]:
-    return [
-        (name, float(literal))
-        for name, literal in _CALL.findall(PIPELINE.read_text())
-    ]
+def _deployed_risk() -> dict[str, float]:
+    data = yaml.safe_load(SETTINGS.read_text()) or {}
+    risk = data.get("risk") or {}
+    return {
+        k: float(v)
+        for k, v in risk.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
 
 
-def test_the_block_is_still_here() -> None:
-    """A rename that emptied this check would otherwise pass it silently."""
-    found = _fallbacks()
-    assert len(found) >= 10, (
-        "Fewer than ten `_risk_setting` fallbacks found in src/pipeline.py "
-        f"(found {len(found)}). Either the helper was renamed or the wiring "
-        "block moved; this test then asserts nothing. Update the regex."
+def test_the_expected_field_set_is_exactly_what_is_wired() -> None:
+    found = set(_scan_fallbacks())
+    assert found == EXPECTED_FIELDS, (
+        "The set of risk fields wired through `_risk_setting` in "
+        "src/pipeline.py changed.\n"
+        f"  wired but not expected: {sorted(found - EXPECTED_FIELDS)}\n"
+        f"  expected but not wired: {sorted(EXPECTED_FIELDS - found)}\n"
+        "Update EXPECTED_FIELDS deliberately. This is an equality precisely "
+        "so a wiring line cannot disappear and quietly shrink the check."
     )
-    names = {name for name, _ in found}
-    assert "min_stop_atr_multiple" in names, (
-        "`min_stop_atr_multiple` is no longer wired through `_risk_setting`. "
-        "That is the field this test was written for (board item 90); if the "
-        "wiring genuinely changed, retarget the test rather than deleting it."
-    )
 
 
-def test_every_fallback_equals_its_ratified_field_default() -> None:
-    mismatches = []
-    unchecked = []
-    for name, literal in _fallbacks():
+def test_every_fallback_equals_the_value_the_desk_trades() -> None:
+    """The fallback must equal the DEPLOYED value, not merely a code default.
+
+    `config/settings.yaml` is what the desk runs on. Where it carries the
+    key, that is the comparison. Where it does not, the ratified
+    `RiskConfig` field default is, and a field with neither is reported
+    rather than skipped.
+    """
+    deployed = _deployed_risk()
+    problems: list[str] = []
+
+    for name, fallback in sorted(_scan_fallbacks().items()):
+        if name in deployed:
+            if deployed[name] != fallback:
+                problems.append(
+                    f"{name}: src/pipeline.py falls back to {fallback} but "
+                    f"config/settings.yaml deploys {deployed[name]}",
+                )
+            continue
+
         field = RiskConfig.model_fields.get(name)
         if field is None:
-            mismatches.append(
-                f"{name}: wired through `_risk_setting` but not a "
-                "`RiskConfig` field at all",
+            problems.append(
+                f"{name}: wired through `_risk_setting` but is neither a "
+                "`RiskConfig` field nor a key in config/settings.yaml",
             )
             continue
         default = field.default
         if default is PydanticUndefined or default is None:
-            unchecked.append(name)
+            problems.append(
+                f"{name}: absent from config/settings.yaml AND has no "
+                "RiskConfig default, so the pipeline fallback is the only "
+                f"thing deciding it ({fallback}). Deploy it or give it a "
+                "default; do not leave it resolved by a fallback alone",
+            )
             continue
-        if float(default) != literal:
-            mismatches.append(
-                f"{name}: src/pipeline.py falls back to {literal} but the "
-                f"ratified RiskConfig default is {default}",
+        if float(default) != fallback:
+            problems.append(
+                f"{name}: src/pipeline.py falls back to {fallback} but the "
+                f"ratified RiskConfig default is {default} (key absent from "
+                "config/settings.yaml)",
             )
 
-    assert not mismatches, (
-        "A `_risk_setting` fallback disagrees with the ratified default it "
-        "claims to mirror. The fallback is what the desk sizes on whenever "
-        "the configured value is absent or is not a real number, so the two "
-        "must not drift:\n  " + "\n  ".join(mismatches)
-    )
-    assert set(unchecked) == NO_FIELD_DEFAULT, (
-        "The set of `_risk_setting` fields with no RiskConfig default "
-        f"changed: expected {sorted(NO_FIELD_DEFAULT)}, found "
-        f"{sorted(unchecked)}. A field that gains a default should be "
-        "checked; one that loses a default should be named here on purpose."
+    assert not problems, (
+        "A `_risk_setting` fallback disagrees with the value the desk "
+        "trades on. The fallback is what sizing uses whenever the "
+        "configured value is absent or is not a real number, so the two "
+        "must not drift:\n  " + "\n  ".join(problems)
     )

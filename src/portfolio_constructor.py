@@ -722,6 +722,35 @@ class ConstructorConfig:
         ("transitional", 1.10),
         ("risk-on", 0.95),
     )
+
+    @classmethod
+    def widest_reachable_stop_atr_multiple(cls, base: float) -> float:
+        """The widest unbacked-stop multiple `_stop_atr_multiple` can return.
+
+        Introduces NO number. It is `base` times the largest factor each
+        scaler axis can contribute, and `1.0` is included on each axis
+        because an unrecognised `setup_type` or `regime` applies no scaler
+        at all — so the bare base is always reachable too. At today's
+        settings that is `2.5 x 1.00 x 1.20 = 3.00`, which is exactly the
+        top of the range `_stop_atr_multiple`'s own docstring states.
+
+        WHY THIS EXISTS (board item 90, 2026-09-30). `src/universe_screen.py`
+        derived its ATR/price ceiling as `STOP_SANITY_FLOOR_FRACTION /
+        base`, i.e. off the BASE, while the midday stop-sanity guard binds
+        on the multiple actually used — which the scalers can push to
+        `base x 1.20`. The two disagreed by exactly the risk-off scaler, so
+        names whose ATR/price sat between the two figures passed the screen
+        and then had their widest legitimate stop refused as a model typo.
+        The screen's own stated rationale for the gate is "the name fails by
+        construction"; over that band it did not fail by construction, so
+        the rationale was false there. Dividing by this instead of by the
+        base makes the claim true again and needs no decision from anyone:
+        the discrepancy was never an appetite question, it was two
+        expressions for one quantity.
+        """
+        widest_setup = max([1.0, *(s for _, s in cls.stop_atr_setup_scale)])
+        widest_regime = max([1.0, *(s for _, s in cls.stop_atr_regime_scale)])
+        return float(base) * widest_setup * widest_regime
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
     # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
