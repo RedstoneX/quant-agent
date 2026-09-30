@@ -2576,6 +2576,59 @@ class Database:
                 count += 1
         return count
 
+    def record_acted_exit_trigger(
+        self, *, run_id: str, payload_json: str, symbol: str,
+    ) -> int:
+        """Persist WHAT authorised a sell-side action the desk submitted.
+
+        Board item 74. The trades table carries only free-text `reasoning`,
+        so nothing durable said which `exit_trigger` fired or which record
+        it rested on — and a later session therefore could not tell a
+        second cut on the SAME event from one on a new event. This row is
+        that memory. Append-only, read back by
+        `get_acted_exit_triggers_today`; the trading path never mutates it.
+        """
+        from src.risk.spent_trigger import ACTED_TRIGGER_KIND
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="position_reviewer",
+            kind=ACTED_TRIGGER_KIND, scope="symbol", symbol=symbol,
+            evidence_json=payload_json,
+        )
+
+    def get_acted_exit_triggers_today(
+        self, *, trading_day: date | None = None,
+    ) -> list[dict] | None:
+        """Every sell-side action submitted today (ET), with its trigger.
+
+        Returns None — NOT [] — when the read fails, so the caller can tell
+        "nothing acted today" apart from "I could not find out". Those need
+        different answers: the first permits the cut, the second is
+        uncertainty and fails OPEN without pretending to have checked.
+        """
+        import json as _json
+        from src.risk.spent_trigger import ACTED_TRIGGER_KIND
+        start, end = self._et_day_utc_bounds(trading_day)
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT evidence_json FROM specialist_evidence "
+                    "WHERE kind = ? AND timestamp >= ? AND timestamp < ? "
+                    "ORDER BY id ASC",
+                    (ACTED_TRIGGER_KIND, start, end),
+                ).fetchall()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("get_acted_exit_triggers_today failed: %s", e)
+            return None
+        out: list[dict] = []
+        for row in rows:
+            try:
+                payload = _json.loads(row[0])
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(payload, dict):
+                out.append(payload)
+        return out
+
     def latest_news_analysis_today(
         self, *, trading_day: date | None = None,
     ) -> str | None:
