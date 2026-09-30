@@ -12132,24 +12132,59 @@ class TradingPipeline:
                             else held_now.avg_entry - held_now.current_price
                         )
                         band_multiple = noise_band_atr(sessions_held_for_band)
+                        # Board item 70, 2026-09-30 — TRUTH OF THE RECORD.
+                        # `noise_band_atr` SILENTLY FLOORS a missing, non-finite
+                        # or sub-1 session count to 1 session. The old line
+                        # printed `sessions_held=None` beside a concrete
+                        # multiple, so the record asserted a band width without
+                        # saying the width came from a default rather than from
+                        # a measured hold length. Say which it was.
+                        try:
+                            _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
+                        except (TypeError, ValueError):
+                            _sess = None
+                        sessions_measured = (
+                            _sess is not None and math.isfinite(_sess) and _sess >= 1.0
+                        )
+                        sessions_text = (
+                            f"{_sess:g} (measured)" if sessions_measured
+                            else f"{sessions_held_for_band!r} unusable — floored to 1 session"
+                        )
+                        band_width = band_multiple * float(atr or 0.0)
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
-                            "$%.2f move from entry $%.2f, which is inside the "
-                            "%.2fxATR noise band (ATR14 $%.2f, sessions_held=%s). "
-                            "A price-derived failure this small has not "
-                            "distinguished itself from this position's normal "
-                            "range so far. External-information triggers "
-                            "bypass this. Reason: %r",
+                            "$%.2f move from entry $%.2f is smaller than "
+                            "$%.2f, which is %.2f x ATR14 $%.2f with "
+                            "sessions_held=%s. That comparison, and nothing "
+                            "else, is what refused this exit. "
+                            "External-information triggers bypass this. "
+                            "Reason: %r",
                             act, symbol, adverse_move,
-                            held_now.avg_entry, band_multiple, atr or 0.0,
-                            sessions_held_for_band,
+                            held_now.avg_entry, band_width, band_multiple,
+                            atr or 0.0, sessions_text,
                             reason_for_band[:160],
+                        )
+                        # The durable per-symbol rows used to carry ONLY the
+                        # model's own words, so nothing persisted said which
+                        # rule fired or on what numbers. Both rows now carry a
+                        # machine-readable rule=... payload ahead of the reason.
+                        band_detail = (
+                            f"rule=atr_noise_band side={close_side} "
+                            f"adverse={adverse_move:.4f} "
+                            f"entry={held_now.avg_entry:.4f} "
+                            f"price={held_now.current_price:.4f} "
+                            f"atr14={float(atr or 0.0):.4f} "
+                            f"band_multiple={band_multiple:.4f} "
+                            f"band_width={band_width:.4f} "
+                            f"sessions_held={_sess if sessions_measured else 1.0:g} "
+                            f"sessions_measured={str(sessions_measured).lower()} "
+                            f"| {act}: {reason_for_band[:400]}"
                         )
                         try:
                             self.db.record_intraday_evaluation(
                                 symbol=symbol, run_id=run_id,
                                 status="exit_blocked_inside_atr_noise_band",
-                                detail=f"{act}: {reason_for_band[:400]}",
+                                detail=band_detail,
                             )
                         except Exception as e:  # noqa: BLE001
                             logger.warning("noise band: audit write failed: %s", e)
@@ -12157,7 +12192,7 @@ class TradingPipeline:
                         self._record_exit_refusal(
                             symbol=symbol, run_id=run_id, action=act,
                             code=CODE_NOISE_BAND, dropped=True,
-                            detail=f"{act}: {reason_for_band[:400]}",
+                            detail=band_detail,
                             layer="noise_band",
                         )
                         continue

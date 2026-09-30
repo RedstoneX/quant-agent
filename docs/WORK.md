@@ -109,13 +109,15 @@ detail: docs/BOARD_NOTES.md (item 63)
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14.**
 
 DONE WHEN:
-  - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or … (full text: docs/BOARD_NOTES.md item 70)
-  - [ ] the absolute minimum stop multiple carries its OWN independent source or derivation, as a separate ledger entry: the two may not be collapsed into one shared constant … (full text: docs/BOARD_NOTES.md item 70)
-  - [ ] the measured over-refusal is re-measured after whichever change lands, against the same recorded exits (today: 7 of 8 discretionary exits the reviewer approved were … (full text: docs/BOARD_NOTES.md item 70)
-  - [ ] neither value is retuned to make sales easier or harder in the same pass — how readily the desk should block a sale at all is the owner's appetite and is NOT this item
-  - [ ] 2026-09-26, PARTIAL: the SPLIT is built and the research is recorded (docs/INCIDENT_HISTORY.md, 2026-09-26). The single `1.0` is now two named constants — … (full text: docs/BOARD_NOTES.md item 70)
-  - [ ] 2026-09-30: the owner ruling that risk tolerance is read PER NAME from the instrument's own behaviour and the seats' conviction, never as a global dial, closes the … (full text: docs/BOARD_NOTES.md item 70)
-
+  - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stop … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] the absolute minimum stop multiple carries its OWN independent source or derivation, as a separate ledger entry: the two may not be co … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] the measured over-refusal is re-measured after whichever change lands, against the same recorded exits (today: 7 of 8 discretionary ex … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] neither value is retuned to make sales easier or harder in the same pass — how readily the desk should block a sale at all is the owne … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] 2026-09-26, PARTIAL: the SPLIT is built and the research is recorded (docs/INCIDENT_HISTORY.md, 2026-09-26). The single `1.0` is now t … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] 2026-09-30: the owner ruling that risk tolerance is read PER NAME from the instrument's own behaviour and the seats' conviction, never … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] 2026-09-30, CLOSED ROUTE: a per-name statistical band (each name's own median historical adverse move) was built, reviewed and REJECTE … (full text: docs/BOARD_NOTES.md item 70)
+  - [ ] 2026-09-30, REDUNDANCY QUESTION ANSWERED (code, not prose): the band is NOT redundant with the alignment test, and it has two homes do … (full text: docs/BOARD_NOTES.md item 70)
+  - [x] 2026-09-30, DONE (record truth, no behaviour change): the refusal log asserted the move was inside the band without disclosing that th … (full text: docs/BOARD_NOTES.md item 70)
 detail: docs/BOARD_NOTES.md (item 70)
 
 **75. The desk has no automatic profit-taking: its target never reaches the broker, a trim for profit is not an allowed exit reason, and the trail sits too loose — OPEN, filed 2026-09-14 after an owner question on ORCL.**
@@ -162,21 +164,16 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
-**99. Analyst-seat prompt audit and enforcement gap — TIER 2, filed 2026-09-18; not yet placed in the owner's priority order. (d) and (f) SHIPPED 2026-09-26; (a), (b), (c), (g) still open. Detail: `docs/BOARD_NOTES.md` ("item 99").** **Do not build a fourth prompt-drift grep.**
+**99. The analyst seats' falsifier: only one of five states one — TIER 2, filed 2026-09-18, re-scoped and MEASURED 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 99").** Measured read-only on the production database 2026-09-30: `tech_analyst` states a falsifier on 195 of 195 actionable ratings since 2026-09-25 and on 1,664 of 1,665 before — the "blank on about 6 in 10" figure is entirely NEUTRAL ratings, where prompt and schema both REQUIRE it empty, and is not a defect. `news_analyst`, `earnings_analyst`, `macro_analyst` and `smart_money_analyst` state none at all: no prompt asks, no answer schema carries the field, and 0 of 103 recorded nominations have one. Their invalidation is SYNTHESISED downstream, so a name whose only backer is one of those seats clears the conviction bar on a templated falsifier. Pinned by `tests/test_analyst_seat_falsifier_contract.py`.
 
 DONE WHEN:
-  - [ ] (a) the ~55 numbers that exist only as prompt prose and the ~20 unsourced market-structure claims are each sourced, rendered from the code value, or deleted. Part of … (full text: docs/BOARD_NOTES.md item 99)
+  - [x] the analyst seats' real falsifier coverage is measured from recorded production output rather than inferred from prompt text, and pinned by a test that fails when the contract changes — 2026-09-30
+  - [ ] a recorded decision on whether the four uncovered seats must state their own falsifier, or whether a synthesised one is accepted and labelled synthesised wherever it travels — the live-money half, because it is what the conviction bar counts
   - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
-  - [ ] (c) the dead-weight prose — roughly a third of the PM's sheet, a quarter of the risk manager's and a quarter of the position reviewer's — is stripped, with load-bearing … (full text: docs/BOARD_NOTES.md item 99)
-  - [x] (d) DONE 2026-09-26 — the deletion-site check is now a TRIGGER, not a convention. `config/retired_mechanisms.yaml` gained a `described:` section pinning live code … (full text: docs/BOARD_NOTES.md item 99)
-  - [x] (f) the "2+ oversized → cut every BUY 25%" claim stops being unenforced prose — DELETED 2026-09-26, not enforced and not replaced. The 2026-09-26 re-audit found a … (full text: docs/BOARD_NOTES.md item 99)
-  - [ ] (f, residue) the other unsourced numbers in the SAME PM section — the 0.25 sizing grid, the `2+ occurrences` trigger threshold, the conviction-to-base midpoints — are … (full text: docs/BOARD_NOTES.md item 99)
-  - [ ] (g) every prompt sentence stating a code- or config-controlled fact is either rendered from that value or pinned by a drift test, per item 168's pattern — the … (full text: docs/BOARD_NOTES.md item 99)
+  - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
   - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
   - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
-  - [ ] a de-lever pass that finishes with the book still over its gross ceiling reaches the owner in its OWN Telegram message, severity carried in text. Not an owner decision: … (full text: docs/BOARD_NOTES.md item 99)
-  - [ ] no further automatic selling is added in the same pass — changing what a failed de-lever DOES is a ladder change and needs its own item and its own adversary run
-
+  - [ ] SPLIT OUT 2026-09-30, do not re-file here: the ~55 prompt-only numbers and ~20 unsourced market claims (was 99(a)), the render-or-pin-every-code-controlled-sentence requirement (was 99(g)) and the (f) residue are item 107(b)/(c), which already carries them; the PM/RM/reviewer dead-weight prose (was 99(c)) is item 109(c). Item 99 is now the ANALYST seats' own prompts and their enforcement only.
 detail: docs/BOARD_NOTES.md (item 99)
 
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
@@ -208,10 +205,9 @@ detail: docs/BOARD_NOTES.md (item 119)
 **147. A success with no usage data — the filed premise was wrong; only the no-telemetry half remains open.**
 
 DONE WHEN:
-  - [ ] a success whose provider request DID happen but returned no usage telemetry is charged at a measured rate instead of hard-latching the desk — still open and deliberately … (full text: docs/BOARD_NOTES.md item 147)
-  - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unknown_cost_row_expr` in … (full text: docs/BOARD_NOTES.md item 147)
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and the LOSS is closed (the seat is … (full text: docs/BOARD_NOTES.md item 147)
-
+  - [ ] a success whose provider request DID happen but returned no usage telemetry is charged at a measured rate instead of hard-latching the … (full text: docs/BOARD_NOTES.md item 147)
+  - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unkn … (full text: docs/BOARD_NOTES.md item 147)
+  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and t … (full text: docs/BOARD_NOTES.md item 147)
 detail: docs/BOARD_NOTES.md (item 147)
 
 **157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
@@ -233,11 +229,10 @@ detail: docs/BOARD_NOTES.md (item 174)
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.**
 
 DONE WHEN:
-  - [ ] all 3 leave `status: arbitrary`, `MAX_ARBITRARY_ENTRIES` falls by 3 — NOT MET, and now precisely blocked rather than merely unstarted. `move_threshold_pct` cannot be … (full text: docs/BOARD_NOTES.md item 177)
-  - [x] the cadence ledgered and test-covered — the "unledgered" half was STALE: `src.config.INTRA_CHECK_TICK_MINUTES` has carried `status: sourced` since the item was filed. … (full text: docs/BOARD_NOTES.md item 177)
-  - [ ] every intra-preamble job on its own schedule — NOT MET, not attempted. This is the precondition for ever cutting the paid cadence: the free safety work (fill reconcile, … (full text: docs/BOARD_NOTES.md item 177)
-  - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender: **$13.93 of $22.18 all-time, … (full text: docs/BOARD_NOTES.md item 177)
-
+  - [ ] all 3 leave `status: arbitrary`, `MAX_ARBITRARY_ENTRIES` falls by 3 — NOT MET, and now precisely blocked rather than merely unstarted. … (full text: docs/BOARD_NOTES.md item 177)
+  - [x] the cadence ledgered and test-covered — the "unledgered" half was STALE: `src.config.INTRA_CHECK_TICK_MINUTES` has carried `status: so … (full text: docs/BOARD_NOTES.md item 177)
+  - [ ] every intra-preamble job on its own schedule — NOT MET, not attempted. This is the precondition for ever cutting the paid cadence: the … (full text: docs/BOARD_NOTES.md item 177)
+  - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender … (full text: docs/BOARD_NOTES.md item 177)
 detail: docs/BOARD_NOTES.md (item 177)
 
 **182. The de-levering ladder's rungs and cash-deficit cushion are made-up money numbers with no board item — filed 2026-09-25, TIER 1.**
@@ -252,13 +247,12 @@ detail: docs/BOARD_NOTES.md (item 182)
 
 DONE WHEN:
   - [ ] each constant is sourced, measured, owner-ratified as appetite, or reformulated away
-  - [ ] DEAD CONFIG, remove rather than source: the T-bill cash-sweep was retired 2026-09-17 (`cash_sweep.enabled: false`), so its still-`arbitrary` constants `_BUY_LIMIT_PAD` … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] 2026-09-26, PARTIAL. RESOLVED: the constructor's `$500` floor is DELETED — nothing in the constructor read it and the one call that forwarded it reached a parameter … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] 2026-09-30, PARTIAL. RESOLVED: the owner ruled the desk has autonomy to nudge a position whenever its own reasoning calls for it, unless doing so is illogical … (full text: docs/BOARD_NOTES.md item 183)
-  - [x] 2026-09-30. The 2% ask-skip is DELETED, not sourced and not ratified — with its SHORT mirror (`bid < floor / 1.02`), which was a derived copy of the same number. The … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] STILL UNMET, the 40bp belt (`ExecutionConfig.max_entry_slippage_bps`). It is now the ONLY bound on what an entry pays, and it is still not identified: the 2026-09-26 … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] CHECKED 2026-09-26, the reserve-band question: the deployment-gap advisory (`sweep_reserve_usd` / `cash_above_reserve`, surfaced on /account) is display-only with no … (full text: docs/BOARD_NOTES.md item 183)
-
+  - [ ] DEAD CONFIG, remove rather than source: the T-bill cash-sweep was retired 2026-09-17 (`cash_sweep.enabled: false`), so its still-`arbi … (full text: docs/BOARD_NOTES.md item 183)
+  - [ ] 2026-09-26, PARTIAL. RESOLVED: the constructor's `$500` floor is DELETED — nothing in the constructor read it and the one call that fo … (full text: docs/BOARD_NOTES.md item 183)
+  - [ ] 2026-09-30, PARTIAL. RESOLVED: the owner ruled the desk has autonomy to nudge a position whenever its own reasoning calls for it, unle … (full text: docs/BOARD_NOTES.md item 183)
+  - [x] 2026-09-30. The 2% ask-skip is DELETED, not sourced and not ratified — with its SHORT mirror (`bid < floor / 1.02`), which was a deriv … (full text: docs/BOARD_NOTES.md item 183)
+  - [ ] STILL UNMET, the 40bp belt (`ExecutionConfig.max_entry_slippage_bps`). It is now the ONLY bound on what an entry pays, and it is still … (full text: docs/BOARD_NOTES.md item 183)
+  - [ ] CHECKED 2026-09-26, the reserve-band question: the deployment-gap advisory (`sweep_reserve_usd` / `cash_above_reserve`, surfaced on /a … (full text: docs/BOARD_NOTES.md item 183)
 detail: docs/BOARD_NOTES.md (item 183)
 
 **185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
@@ -303,13 +297,12 @@ detail: docs/BOARD_NOTES.md (item 188)
 **190. The disabled cash-sweep / T-bill feature needs full retirement, not just its reachable band — filed 2026-09-30, carried out of item 183's dead-config finding. Detail: `docs/BOARD_NOTES.md` ("item 190").**
 
 DONE WHEN:
-  - [ ] every reference to the cash-sweep / T-bill feature (`CashSweeper`, `CashSweepConfig` and its fields, the dead pad/buffer constants, and the deployment-gap advisory … (full text: docs/BOARD_NOTES.md item 190)
+  - [ ] every reference to the cash-sweep / T-bill feature (`CashSweeper`, `CashSweepConfig` and its fields, the dead pad/buffer constants, an … (full text: docs/BOARD_NOTES.md item 190)
   - [ ] `config/number_ledger.yaml` rows for the constants that die with it are deleted rather than left describing code that no longer exists
-  - [ ] MEASURED 2026-09-30, the premise is PARTLY WRONG and the scope is corrected here: this is not a pure deletion of switched-off code. `CashSweepConfig.reserve_pct` has a … (full text: docs/BOARD_NOTES.md item 190)
-  - [ ] MEASURED 2026-09-30, `cash_sweep.min_order_usd` is vestigial as a trade gate but NOT as prose: `src.pipeline_stages._min_order_usd` records (2026-09-24) that none of the … (full text: docs/BOARD_NOTES.md item 190)
-  - [ ] MEASURED 2026-09-30, the 187-reference estimate is LOW. A live count over the checkout is ~550 mentions of `cash_sweep` / `CashSweeper` / `cash_sweeper` / … (full text: docs/BOARD_NOTES.md item 190)
-  - [ ] the retirement is sequenced so no step leaves a half-wired feature: (1) settle the `reserve_pct` band and the `deployment_gap` advisory, (2) rewrite the … (full text: docs/BOARD_NOTES.md item 190)
-
+  - [ ] MEASURED 2026-09-30, the premise is PARTLY WRONG and the scope is corrected here: this is not a pure deletion of switched-off code. `C … (full text: docs/BOARD_NOTES.md item 190)
+  - [ ] MEASURED 2026-09-30, `cash_sweep.min_order_usd` is vestigial as a trade gate but NOT as prose: `src.pipeline_stages._min_order_usd` re … (full text: docs/BOARD_NOTES.md item 190)
+  - [ ] MEASURED 2026-09-30, the 187-reference estimate is LOW. A live count over the checkout is ~550 mentions of `cash_sweep` / `CashSweeper … (full text: docs/BOARD_NOTES.md item 190)
+  - [ ] the retirement is sequenced so no step leaves a half-wired feature: (1) settle the `reserve_pct` band and the `deployment_gap` advisor … (full text: docs/BOARD_NOTES.md item 190)
 detail: docs/BOARD_NOTES.md (item 190)
 
 **192. The local Python interpreter could silently drift from the one CI runs, with nothing checking it — filed 2026-09-30.**
