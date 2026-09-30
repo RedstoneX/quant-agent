@@ -1051,6 +1051,11 @@ cash_sweep:
   reserve_pct: 1.0      # % of equity kept as raw cash for fees/slippage
   min_order_usd: 500    # don't churn sub-$500 parking orders
 
+# Board item 190 step 1: tolerance band (pp under 100% invested) for the
+# `deployment_gap` advisory. Was read from cash_sweep.reserve_pct; same value.
+deployment_gap:
+  band_pct: 1.0
+
 # 2026-08-19 intraday opportunity-discovery fix — bounded, cheap trigger
 # added onto the existing intra_check cadence (every 30 min): a single bulk
 # current-session snapshot flags symbols that moved materially since the

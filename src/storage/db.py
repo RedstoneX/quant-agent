@@ -4672,6 +4672,33 @@ class Database:
         and rows the backfill could not chain). None means "unknown", never
         a guessed date — the caller keeps its own fallback.
         """
+        row = self.get_position_open_row(buy_row)
+        return row["timestamp"] if row else None
+
+    def get_position_open_row(self, buy_row: dict | None) -> dict | None:
+        """The FULL row that opened the position `buy_row` belongs to.
+
+        `get_position_open_timestamp` is this lookup's date-only form and
+        now delegates here; the chain rule and every caveat in its docstring
+        apply unchanged. The date was never the only thing an add corrupts:
+        `take_profit` (the trail's reference target) and `initial_stop_loss`
+        (the denominator of R, via `recorded_initial_stop`) are also pinned
+        at entry, and reading them off the newest add lets the reference
+        target sit above current price and measures R from a stop the trade
+        never opened with. `setup_type` and `structural_ceiling` are pinned
+        at entry the same way.
+
+        `get_symbol_last_buy` keeps its "most recent opening row" meaning —
+        PM memory and the stop-coverage repair both want the latest reviewed
+        intent — so this is a separate lookup layered on top of it, not a
+        change to it.
+
+        Returns None when `buy_row` is missing, carries no `position_id`
+        (legacy rows predating the column, and rows the backfill could not
+        chain), or is not an opening row. None means "unknown": the caller
+        FAILS CLOSED onto `buy_row` itself, which is exactly today's
+        behaviour, rather than guessing a chain boundary from timestamps.
+        """
         if not buy_row:
             return None
         pid = buy_row.get("position_id")
@@ -4682,13 +4709,13 @@ class Database:
         predicate = self._executed_trade_predicate()
         with self._lock:
             row = self.conn.execute(
-                "SELECT timestamp FROM trades WHERE symbol = ? "
+                "SELECT * FROM trades WHERE symbol = ? "
                 "AND position_id = ? AND action = ? "
                 f"AND {predicate} "
                 "ORDER BY timestamp ASC, id ASC LIMIT 1",
                 (symbol, pid, opening),
             ).fetchone()
-        return row["timestamp"] if row else None
+        return dict(row) if row else None
 
     def get_recent_insights(self, limit: int = 7) -> list[dict]:
         """Last N evening insights, newest first. PM reads to build 7-day narrative."""
