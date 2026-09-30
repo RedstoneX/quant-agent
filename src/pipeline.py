@@ -5976,8 +5976,10 @@ class TradingPipeline:
                     "Reprotect for %s will SUBMIT despite an open stop at "
                     "$%.2f: %d of %d cancelled spec(s) carried no broker "
                     "order id, so this run cannot prove the open stop is "
-                    "not the one it just cancelled. A duplicate stop is "
-                    "recoverable; a naked position is not.",
+                    "not the one it just cancelled. Submitting risks a "
+                    "duplicate stop, which nothing in this desk reconciles; "
+                    "skipping risks a naked position. Neither is safe and "
+                    "this branch cannot tell them apart.",
                     symbol, best_stop, missing_ids, len(cancelled_specs),
                 )
                 break
