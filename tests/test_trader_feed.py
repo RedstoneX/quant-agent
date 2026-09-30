@@ -1336,6 +1336,62 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert lines[footer_idx - 1] == ""
 
 
+def test_footer_never_claims_free_when_the_cost_circuit_marked_it_inexact(
+    tmp_path, monkeypatch,
+):
+    """2026-09-29 log defect: five intraday Telegram messages ended with
+    "AI cost: none -- this run used only free models" while, seconds
+    earlier in the SAME run, the cost circuit logged a charged 402 it
+    could not prove was free ("cost-circuit charging a failed call: not
+    every attempt is provably $0 -- [...CHARGED]") and stamped that run's
+    `llm_budget_sessions.costs_exact=0`. The footer used to sum only
+    `agent_logs.cost_usd` (all $0 here -- the failed call writes no
+    agent_logs row at all), so it never saw the circuit's own inexact
+    flag and reported the run as free when the desk's own ledger did not
+    know that.
+
+    `_read_run` must prefer the circuit's ledger (`_canonical_run_cost`,
+    src/api/db_reads.py) exactly as Mission Control's run list already
+    does, so an inexact run reports "not available", never "none".
+    """
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-charged-failure"
+    # The only agent_logs row is a genuinely free successful call -- this
+    # is what made the old sum-of-agent_logs approach land on exactly
+    # $0.00 and therefore "none ... free models".
+    _agent_log(db, run, "tech_analyst", "free-tier pass", cost=0.0)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE llm_budget_sessions ("
+            "run_id TEXT PRIMARY KEY, day TEXT, mode TEXT, "
+            "actual_cost_usd REAL, costs_exact INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO llm_budget_sessions "
+            "(run_id, day, mode, actual_cost_usd, costs_exact) VALUES (?, ?, ?, ?, ?)",
+            (run, "2026-09-29", "intra_check", 0.0, 0),
+        )
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 0.0, "daily_return_pct": 0.0,
+        "total_pnl": 0.0, "total_return_pct": 0.0, "total_pnl_since": "2026-09-02",
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": [], "orders": [],
+        },
+    }
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with patch.object(
+        trader_feed, "_intraday_tick_actionable",
+        lambda result, nested, snap: True,
+    ):
+        msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+
+    assert msg is not None
+    assert "AI cost: not available" in msg
+    assert "used only free models" not in msg
+    assert "AI cost: none" not in msg
+
+
 def test_every_formatter_header_uses_a_12_hour_clock(tmp_path, monkeypatch):
     """Owner ratified 2026-09-17: no 24-hour clock anywhere in a Telegram
     message. Checks all four header-producing paths at a genuinely
