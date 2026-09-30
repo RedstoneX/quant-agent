@@ -213,11 +213,11 @@ DONE WHEN:
   - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and the LOSS is closed (the seat is re-asked on an unreadable field and, only if the re-ask fails too, the field is dropped and reads ABSENT while the rest of the report survives; an unsalvageable answer files an `analysis_drop` row per affected stock), but the RATE itself is neither brought down nor shown to recover: the seat can still emit "mixed", the cure at source needs `strict: true`, and the news answer cannot have it while `stock_news` is a ticker-keyed free-form map. Needs either live evidence that the re-ask recovers, or a decision on reshaping the answer so the enum can be enforced.
 detail: docs/BOARD_NOTES.md (item 152)
 
-**200. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
+**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
   - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
-detail: docs/BOARD_NOTES.md (item 200)
+detail: docs/BOARD_NOTES.md (item 203)
 
 **157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
 

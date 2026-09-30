@@ -437,7 +437,7 @@ Still open and unchanged on purpose: a success whose provider request DID happen
 
 Retired from the queue 2026-09-30: the filed premise (a full reservation eating budget on an untelemetered success) never existed in the data, and the only real defect it uncovered (the day seeder latching legacy_unknown_cost on a proven-zero cache hit) shipped 2026-09-26 per item 14's cost_circuit.py fix. What remains — a success whose provider request truly happened with no usable cost or token telemetry — has zero measured occurrences across the full agent_logs history, so there is no defect left to build against; it stays a documented edge case above, not a queue item.
 
-## item 200
+## item 203
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
