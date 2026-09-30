@@ -52,7 +52,7 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 ### Ordered backlog — RESUME POINT
 
 **PRIORITY ORDER, set 2026-09-17 (the owner authorised the ordering). Work it top-down — it overrides item-number order.**
-- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
+- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127, 199. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
 - **Tier 2, wastes money or opportunity:** 91, 82, 81, 92.
 - **Tier 3, clarity and hygiene:** 89 (its thirteen clarity defects), 94. (93 retired 2026-09-25.)
 - **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109 stays on the board for its part (c) only. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
@@ -150,6 +150,8 @@ detail: docs/BOARD_NOTES.md (item 78)
 
 **90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails.
 
+**2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
+
 DONE WHEN:
   - [ ] half two: every `status: arbitrary` row in `config/number_ledger.yaml` is sourced, measured, owner-ratified as appetite, or reformulated away, and `MAX_ARBITRARY_ENTRIES` — an EQUALITY, not a ceiling — reaches zero
   - [ ] SHARED CRITERION: that is word-for-word the single criterion items 182, 183, 185 and 186 carry, because those four are this item's half two split into tranches. Item 90 ticks when they all do; do not re-derive a constant here that belongs to one of them.
@@ -223,12 +225,6 @@ DONE WHEN:
   - [ ] a live call confirms whether the Google route enforces a sent response schema
   - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
 detail: docs/BOARD_NOTES.md (item 157)
-
-**163. The PM's narrative and its own emitted number disagree with nothing checking it — filed and verified 2026-09-19 against the stored reasoning and target rows.** Run `601011e0` (09-16): `sizing_logic` prose says "RSG and AAPL get 2.5% risk each," but RSG's own emitted `risk_allocation_pct` is 0.5.
-
-DONE WHEN:
-  - [x] a check flags a mismatch between the PM's reasoning and its own emitted number — a standalone validator (`src/risk_narrative_check.py`, wired once in `DecisionStage`) reads the stored PM decision and flags a symbol whose `sizing_logic` prose names an explicit risk % that materially differs from that symbol's emitted `risk_allocation_pct`, recording each mismatch to the pipeline evidence stream as `sizing_narrative_check / mismatch`. DETECTION ONLY: it never changes a target, size, price or exit; `risk_allocation_pct` stays authoritative. It reuses the tolerance and the narrow risk-% matcher the existing per-symbol `TargetPosition.thesis` check uses, and stays silent on any prose it cannot pair to a symbol with confidence (no false positives). NOTE: the pre-existing `TargetPosition._flag_risk_narrative_mismatch` checked each position's own `thesis`, NOT the whole-book `sizing_logic` this item was filed against — so this closes the actual filed surface.
-  - [ ] the RSG case is re-examined to see which value the seat meant — STILL OPEN: this needs the stored run `601011e0` (09-16) rows read back to judge whether the seat meant 2.5% or 0.5% for RSG; the detector above surfaces the disagreement but does not decide which side was right.
 
 **174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
@@ -341,6 +337,13 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 193)
 
+**199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
+DONE WHEN:
+  - [ ] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed
+  - [ ] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening
+  - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
+detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
+
 **197. The entry re-peg is side-blind and would walk a short's limit the wrong way — filed 2026-09-30, found by item 183's adversary pass. Detail: `docs/BOARD_NOTES.md` ("item 197").**
 
 DONE WHEN:
@@ -367,6 +370,7 @@ detail: docs/BOARD_NOTES.md (item 200)
 - retired queue: 64
 - retired queue: 86, 173
 - retired queue: 198
+- retired queue: 163
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 

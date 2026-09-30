@@ -751,6 +751,33 @@ class RiskConfig(BaseModel):
     # distance regardless of this number. Full derivation and caveats:
     # `config/settings.yaml` (this key) and docs/INCIDENT_HISTORY.md
     # 2026-09-10. Keep the three in sync.
+    #
+    # 2026-09-30, board item 90 — value UNCHANGED. Reasons live in
+    # `config/number_ledger.yaml` under this id rather than copied here;
+    # two corrections belong at the definition site itself.
+    #
+    # FIRST, the "3.0 -> 1.5 -> 2.5 (2026-09-10)" line above is CORRECT and
+    # is confirmed here because its counterpart in config/settings.yaml is
+    # not: that file says the first leg happened on 2026-09-04, and no such
+    # move exists. Read from git, the DEPLOYED value went 3.0 (3dff9408,
+    # 2026-08-27) straight to 2.5 (0088328c, 2026-09-10) and was never 1.5
+    # — `git log --all -S'min_stop_atr_multiple: 1.5' -- config/settings.yaml`
+    # returns nothing. 0088328c squashes PR #269, whose sub-commit one moved
+    # 3.0 -> 1.5 and whose sub-commit two moved 1.5 -> 2.5 on the same day;
+    # the 1.5 never left that branch. Both legs, one merge, one date.
+    #
+    # SECOND, "2.5 comes from published swing-trading doctrine" is NOT a
+    # citation and this number is not sourced. docs/OUTCOME.md requires a
+    # URL a later reader can open. Searched 2026-09-30: no such source
+    # exists for a FIXED entry stop, the corroborating 2-3x figures are
+    # trailing-stop mechanisms (which the comment below already concedes),
+    # and one secondary claim points the other way entirely. Both ends of
+    # the quoted band are unsupported, not merely the point inside it.
+    # 2.5 is therefore the INTERIM value and is deliberately not re-picked:
+    # with no cited band, moving it would be one more unsourced choice.
+    # The route that removes this constant for most names it governs is
+    # board item 199 (read the floor off the nearest computed level rather
+    # than off an ATR multiple).
     min_stop_atr_multiple: float = Field(default=2.5, gt=0, le=10)
     # NO `min_reward_risk_after_widening` HERE ANY MORE — removed 2026-09-24
     # (board item 81). It refused nothing and capped nothing: no code in
