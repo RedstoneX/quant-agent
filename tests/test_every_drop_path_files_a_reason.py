@@ -110,6 +110,23 @@ def test_the_replay_verdicts_are_pinned_so_a_reason_fix_cannot_move_one(archive)
     leave every one of these untouched. If a future change to this module
     moves one of them, that is a trading-behaviour change and it must be
     argued for on its own terms, not slipped in beside a logging fix.
+
+    ONE entry moved, 2026-09-30, board item 183, and it is argued here
+    rather than quietly re-pinned. `run-e9432693` lost CMCSA. The owner
+    ruled the picked `min_trade_weight_delta` churn floor is DELETED, so the
+    0.196%-of-book add this session asked for on CMCSA (target 5.0% against
+    a held 4.804%) is now ATTEMPTED instead of being converted into a
+    do-nothing HOLD row. Replayed against the pre-ruling code that add came
+    out as `action="HOLD", allocation_pct=0.0` [measured: the archive
+    decision replayed through `origin/main`'s constructor]; replayed against
+    today's it reaches `_build_buy` and is refused by an unrelated,
+    pre-existing data fault — `price_history_unusable`, no structural levels
+    computable for CMCSA in that session. So the name did not lose a trade
+    it would otherwise have got: it stopped being silently held and started
+    being honestly refused, and it carries a machine-readable fault either
+    way (the test above checks that). This is the ruling doing exactly what
+    it was made to do, not a regression, and it is the ONLY verdict in the
+    archive that moves.
     """
     positions = [Position.model_validate(p) for p in archive["positions"]]
     built_by_run = {}
@@ -136,7 +153,8 @@ def test_the_replay_verdicts_are_pinned_so_a_reason_fix_cannot_move_one(archive)
         "run-a933b4da": [],
         "run-bba4d4f3": ["EPD", "NVDA", "V"],
         "run-c2f42b39": [],
-        "run-e9432693": ["CMCSA", "MSFT"],
+        # CMCSA dropped here 2026-09-30 — see the argument in the docstring.
+        "run-e9432693": ["MSFT"],
     }
 
 
