@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 137, (
+    assert MAX_ARBITRARY_ENTRIES == 136, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -347,6 +347,22 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "deepest rung would have silenced the band between -20% and any new "
         "deeper rung. Its open question is still unanswered and its row is "
         "still counted."
+        "138 -> 137 on 2026-09-30, board item 185 (the item STAYS OPEN): "
+        "the midday stop-sanity floor 0.5 "
+        "(`_midday_execute_llm_actions:factor[0]`) was DELETED, not sourced. "
+        "It was a flat half-of-price bound on a model-proposed TRAIL_STOP, "
+        "and the universe screen derived its ATR/price volatility ceiling "
+        "from it, so each of the two was justified by the other and neither "
+        "was fixed by anything outside the pair. Both now read "
+        "`widest_reachable_stop_atr_multiple` instead -- the midday path "
+        "CLAMPS an over-wide proposal to that multiple of the name's own "
+        "live ATR14 rather than refusing it, and the screen's ceiling is "
+        "1 / that multiple. That composition is itself built from two rows "
+        "that are still `arbitrary` with open questions (the 2.5 base and "
+        "the 1.20 risk-off scaler), so one literal is gone but the desk's "
+        "arbitrary content is not reduced, and item 185's own question -- "
+        "how volatile a name may this desk hold -- is not answered. "
+        "A row left the ledger, so the count is lowered in the same commit."
         "138 -> 137 on 2026-09-30, board item 183: "
         "`src.pipeline_stages.ExecutionStage._run_session:factor[2]` (1.02), "
         "the far-through-quote entry skip, was DELETED rather than sourced or "
@@ -413,8 +429,8 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     derived_from_base = {
         "src.pipeline.TradingPipeline._force_delever:factor[0]": stop_buffer,
         "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
-        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
         "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
@@ -904,7 +920,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
-    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids
+    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]" in ids
 
 
 def test_a_parameter_default_is_a_site() -> None:

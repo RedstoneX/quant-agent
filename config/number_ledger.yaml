@@ -636,6 +636,20 @@ numbers:
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
       That phrase is at src/portfolio_constructor.py, not here.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
     open_question: >-
       The published 2.5-3.0x swing-stop consensus is a source for the RANGE.
       What in this desk's own maximum-adverse-excursion record picks the point
@@ -2055,6 +2069,20 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
   - id: src.portfolio_constructor.ConstructorConfig.min_target_atr_multiple
     value: 1
     status: derived
@@ -2112,6 +2140,14 @@ numbers:
       removed, because removing them would narrow risk-off stops. Ratified, not
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
+      ITEM 185, 2026-09-30 — this scaler is now also the widest factor in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (2.5 x 1.00
+      x 1.20 = 3.00), which sets the midday TRAIL_STOP clamp and the
+      universe screen's volatility ceiling (1 / 3.00) after the flat 0.5
+      literal they shared was deleted. That composition is not a derivation:
+      it replaces one arbitrary literal with a live dependency on this row
+      and on `min_stop_atr_multiple`, both still arbitrary and both still
+      carrying open questions. Board item 185 stays open.
     open_question: >-
       By how much should stop width scale with volatility regime, measured on
       this desk's own maximum adverse excursion by regime?
@@ -4602,62 +4638,6 @@ numbers:
       Decides which names the technical seat ever looks at; a name filtered
       out here cannot be traded that session.
   - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
-    value: 0.5
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      A non-binding sanity GUARD in the midday path: it refuses a TRAIL_STOP
-      whose proposed stop sits below 50% of current price as a likely model
-      typo, and a real trail never approaches this floor (the noise-band and
-      ratchet clamps in the same routine bind first). It is kept `arbitrary`
-      rather than reclassified `not-trade-governing`, because the same 0.5 IS
-      reused as a genuine trade-governing gate: STOP_SANITY_FLOOR_FRACTION in
-      src/universe_screen.py derives from this entry to set the screen's
-      ATR/price volatility ceiling (0.5 / min_stop_atr_multiple), which screens
-      real names out. So the number can reach a trade decision and the debt
-      stands.
-      ITEM 185 PASS 2026-09-26 — CATEGORY, stated rather than forced into
-      one: at its own site this is a SANITY BOUND on model output (does this
-      look like a digit typed in the wrong place), not a trading number. It
-      is not read off the instrument, it expresses no risk appetite, and no
-      trading literature bears on it. It is trade-governing only through the
-      screen row derived from it, which is the whole reason it is still
-      counted here.
-      Its old open question is now ANSWERED, from this repo rather than from
-      outside it: the widest stop the desk's own rules can legitimately
-      produce is 3.00 x ATR14 under price. `PortfolioConstructor` scales
-      `min_stop_atr_multiple` (2.5) by setup and regime; the reachable range
-      is [2.1375, 3.00] and the widest case is a breakout (1.00) on a
-      risk-off tape (1.20). A legitimate stop therefore falls below half of
-      price exactly when ATR14/price exceeds 1/6 = 16.67%.
-      DEFECT FOUND, NOT FIXED HERE — pre-existing, reported to the owner
-      rather than self-authorised: `src.universe_screen.
-      STOP_SANITY_FLOOR_FRACTION` divides by `min_stop_atr_multiple` (2.5),
-      giving a 20% ATR/price ceiling, but the widest REACHABLE multiple is
-      3.00, not 2.5. Names with ATR14/price between 16.67% and 20% pass the
-      screen while their widest legitimate stop would be refused by this
-      guard as a typo, so the screen's stated "fails by construction"
-      rationale does not hold across that band. The fix is to divide by the
-      widest reachable multiple rather than the base one; that tightens a
-      live screen and is the owner's call, not this pass's.
-      What remains is a genuine CIRCULARITY, and it is why no value is
-      picked: the floor fraction and the screen's volatility ceiling each
-      derive from the other (floor = 1 - widest_multiple x ceiling; ceiling
-      = floor / multiple). One of the two must be chosen independently;
-      nothing external fixes either.
-    open_question: >-
-      OWNER APPETITE, and one number settles both ends: what is the highest
-      ATR14/price a name may carry and still be allowed into this desk's
-      universe? Set that ceiling C and this floor stops being a choice — it
-      reads 1 - 3.00 x C. C = 16.67% reproduces today's 0.5; C = 20%, the
-      screen's current effective ceiling, would make it 0.40. Until C is set
-      independently, picking either end only relocates the arbitrary number
-      to the other end.
-    cost_while_unanswered: >-
-      Across the 16.67-20% ATR/price band a name is admitted by the screen
-      and then has its widest legitimate stop refused as a typo, leaving the
-      old, less protective stop in place.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
     value: 1.25
     status: derived
     site: src/pipeline.py
@@ -4667,7 +4647,7 @@ numbers:
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
       refused (src/pipeline.py:11313-11320). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
     value: 1.005
     status: derived
     site: src/pipeline.py
@@ -4677,7 +4657,7 @@ numbers:
       Board item 138: the midday COVER limit, price x 1.005
       (src/pipeline.py:11365-11372). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
     value: 0.995
     status: derived
     site: src/pipeline.py
@@ -5053,18 +5033,6 @@ numbers:
       between the first and last bar, and this only has to reach past a
       year. It never decides a verdict unless set BELOW a year, which would
       fail every symbol's history test visibly.
-  - id: src.universe_screen.STOP_SANITY_FLOOR_FRACTION
-    value: 0.5
-    status: derived
-    site: src/universe_screen.py
-    derived_from: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
-    base_value: 0.5
-    note: >-
-      The midday stop-sanity floor (a stop under half the price is refused
-      as a typo), restated so the screen's volatility ceiling can be read
-      from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
-      20% at today's values). Inherits that entry's arbitrary status and
-      open question.
   - id: src.risk.metrics.DRIFT_WEIGHT_PCT
     value: 12.0
     status: not-trade-governing
