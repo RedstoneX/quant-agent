@@ -444,14 +444,28 @@ def stale_reach_trigger(
     """Re-apply the derivation's OWN two acceptance tests to the stored
     target using TODAY's ATR; return the trigger code, or "".
 
-    `derive_structural_target` accepts a level only when its distance from
-    entry is both (a) beyond `atr * min_target_atr_multiple` — the noise
-    floor — and (b) within `horizon_reach(atr, horizon)`. Those two bounds
-    are functions of ATR, so a large enough change in ATR moves the stored
-    target outside them. That, and nothing else, is this desk's definition
-    of "ATR has changed enough that the reach measurement is measuring
-    something different": no new constant is introduced, because the
-    derivation already owns both bounds.
+    **ONE test since 2026-09-30, not two.** `derive_structural_target`
+    used to accept a level only when its distance from entry was both (a)
+    beyond `atr * min_target_atr_multiple` — the noise floor — and (b)
+    within `horizon_reach(atr, horizon)`. The noise floor is no longer an
+    acceptance test there: it was filtering the candidate set, so a wall
+    inside one ATR was deleted and the target promoted to the next level
+    out, past structure price had been rejected from (META, 2026-09-21).
+    It now only LABELS the result (`TargetDerivation.target_inside_noise`).
+
+    This function's whole contract is to re-apply the derivation's own
+    tests, so it has to follow. Leaving the noise arm in place made the
+    two modules disagree every session about what the derivation accepts:
+    a sub-noise target fired `TRIGGER_TARGET_INSIDE_NOISE`, the
+    re-derivation returned the identical price, and the outcome was
+    `REVISION_NO_CHANGE` — no write and no harm, but a trigger whose
+    stated premise ("the derivation would no longer accept this") had
+    become false. A trigger that is always wrong is not a safe trigger to
+    leave running.
+
+    Reach remains, and it is still a function of ATR, so a large enough
+    change in ATR still moves the stored target outside it. No constant is
+    introduced; one was retired.
     """
     entry = _finite(entry_price)
     target = _finite(stored_target)
@@ -466,8 +480,12 @@ def stale_reach_trigger(
     distance = abs(target - entry)
     if reach is not None and distance > reach:
         return TRIGGER_TARGET_BEYOND_REACH
-    if distance <= vol * min_target_atr_multiple:
-        return TRIGGER_TARGET_INSIDE_NOISE
+    # No noise-floor arm — see this function's docstring. The derivation
+    # no longer refuses a sub-noise level, so a sub-noise stored target is
+    # not evidence that the measurement went stale. `min_target_atr_multiple`
+    # is kept in the signature because callers pass it and the constant
+    # still governs the LABEL; it no longer gates anything here.
+    del min_target_atr_multiple
     return ""
 
 
