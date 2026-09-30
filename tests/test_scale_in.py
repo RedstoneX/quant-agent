@@ -1032,3 +1032,141 @@ def test_scale_in_symbols_to_skip_when_an_entry_is_still_working():
         "src.execution.scale_in.trading_session_lock_held", return_value=False,
     ):
         assert scale_in_symbols_to_skip(broker, db) == {"COP"}
+
+
+# --------------------------------------------------------------------------
+# D7 emergency cover: a NON-RAISING broker rejection is still a FAILED cover
+# --------------------------------------------------------------------------
+
+def test_emergency_cover_rejected_by_broker_pages_operator_and_writes_no_trade():
+    """Board item 183 follow-up. `AlpacaBroker.submit_order` stopped RAISING
+    on a terminal broker rejection and now returns
+    `{"id": None, "status": "rejected_by_broker"}`. On the D7 path — a SHORT
+    filled, its protective stop did NOT place, so the position is a naked
+    short with unbounded loss — the old code read only `cover_order["id"]`
+    and therefore wrote a `fill_status="submitted"` EMERGENCY_COVER row plus
+    a SUCCESS `emergency_cover` event for an order that does not exist, and
+    paged nobody. A non-accept must take the SAME path a raised submit took:
+    the CRITICAL operator page, the `emergency_cover_failed` event, and NO
+    trade row."""
+    held = [_short_cop_position(qty=-10.0)]
+    pipeline = _shortable(_pipeline(positions=held))
+    # The real accept test, not the blanket True the shared fixture installs:
+    # the whole point is that an id-less payload must be judged unaccepted.
+    pipeline._order_accepted.side_effect = (
+        lambda order, symbol, side: TradingPipeline._order_accepted(
+            order, symbol, side,
+        )
+    )
+    stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
+    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.wait_for_order_terminal.side_effect = (
+        lambda oid, *a, **k: "canceled" if "stop" in str(oid) else "filled"
+    )
+
+    def _submit(*args, **kwargs):
+        if kwargs.get("side") == "buy":            # the emergency cover leg
+            return {
+                "id": None, "status": "rejected_by_broker",
+                "symbol": "COP", "detail": "wash trade detected",
+            }
+        return {                                   # the SELL entry leg
+            "id": "sell-cop", "status": "accepted", "symbol": "COP",
+            "pending_stop_price": 110.0,
+        }
+
+    pipeline.broker.submit_order.side_effect = _submit
+    pipeline.broker.place_entry_protection.return_value = None   # stop FAILED
+    pipeline.broker.get_order_fill_info.return_value = {"filled_qty": 10.0}
+    pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-10.0)]
+    pipeline.db.insert_pending_protection_restore.return_value = 7
+    pipeline.db.insert_trade.return_value = 1
+
+    ctx = _ctx([_short_cop()], positions=held)
+    with patch("src.pipeline_stages._record_pipeline_event") as rec:
+        ExecutionStage(pipeline=pipeline).run(ctx)
+
+    cover_rows = [
+        c for c in pipeline.db.insert_trade.call_args_list
+        if c.kwargs.get("action") == "EMERGENCY_COVER"
+    ]
+    assert not cover_rows, (
+        "a rejected emergency cover was recorded as a submitted trade — the "
+        "desk now believes a naked short is being covered when it is not"
+    )
+    outcomes = [c.args[4] for c in rec.call_args_list if len(c.args) > 4]
+    assert "emergency_cover_failed" in outcomes, (
+        "a rejected emergency cover filed no emergency_cover_failed event, "
+        "so nobody is paged about an unbounded-loss naked short"
+    )
+    assert "emergency_cover" not in outcomes, (
+        "a rejected emergency cover still reported success"
+    )
+
+
+def test_emergency_cover_source_guards_its_submit_result():
+    """MECHANICAL guard, not a behaviour probe. Every other `submit_order`
+    caller in this repo tests the RESULT via `_order_accepted`; the D7
+    emergency cover was the one that did not, and the cost of that omission
+    is a silently-uncovered naked short. This reads the source of the D7
+    block and fails if a future edit removes the guard, moves it after the
+    `insert_trade`, or drops the `emergency_cover_failed` escalation — none
+    of which any single behaviour test would necessarily notice."""
+    import ast
+    import pathlib
+
+    import src.pipeline_stages as stages_mod
+
+    src = pathlib.Path(stages_mod.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    blocks = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        segment = ast.get_source_segment(src, node) or ""
+        if '"EMERGENCY_COVER"' in segment and "submit_order" in segment:
+            blocks.append((node, segment))
+    assert blocks, "the D7 EMERGENCY_COVER submit block has disappeared"
+    # Enclosing `try`s match too (the whole protection phase is wrapped);
+    # the INNERMOST match is the cover's own guard, so take the shortest.
+    node, segment = min(blocks, key=lambda b: len(b[1]))
+
+    submit_lines = [
+        n.lineno for n in ast.walk(ast.Module(body=node.body, type_ignores=[]))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute) and n.func.attr == "submit_order"
+    ]
+    guard_lines = [
+        n.lineno for n in ast.walk(ast.Module(body=node.body, type_ignores=[]))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute) and n.func.attr == "_order_accepted"
+    ]
+    insert_lines = [
+        n.lineno for n in ast.walk(ast.Module(body=node.body, type_ignores=[]))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute) and n.func.attr == "insert_trade"
+    ]
+    assert submit_lines and insert_lines, "D7 block no longer submits/records"
+    assert guard_lines, (
+        "the emergency cover submits an order and records it without ever "
+        "testing the result with `_order_accepted` — a `rejected_by_broker` "
+        "return would be written down as a submitted cover"
+    )
+    assert min(guard_lines) > max(submit_lines), (
+        "the `_order_accepted` guard must come AFTER the submit it judges"
+    )
+    assert max(guard_lines) < min(insert_lines), (
+        "the `_order_accepted` guard must come BEFORE the trade row it gates"
+    )
+
+    handler_src = "\n".join(
+        ast.get_source_segment(src, h) or "" for h in node.handlers
+    )
+    assert "emergency_cover_failed" in handler_src, (
+        "the failure branch no longer files emergency_cover_failed"
+    )
+    assert "logger.critical" in handler_src, (
+        "the failure branch no longer pages the operator"
+    )

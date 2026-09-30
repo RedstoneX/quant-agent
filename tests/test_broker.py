@@ -962,8 +962,9 @@ def test_submit_order_returns_structured_rejection_on_terminal_broker_error(
     desk-requested nudge can now reach `submit_order` for the first time —
     and hit a broker limit this desk never chose, such as Alpaca's own $1
     minimum notional for a BUY entry. `submit_order` must fail SOFT on a
-    deterministic broker rejection (APIError 400/404/422, the same test
-    board item 129 already uses for stop placement) rather than let the
+    rejection Alpaca's own create-order documentation establishes as a
+    rejection — APIError 422, "Input parameters are not recognized"
+    (https://docs.alpaca.markets/reference/postorder) — rather than let the
     exception propagate and crash the caller."""
     mock_client = MagicMock()
     mock_client.submit_order.side_effect = _FakeAPIError(
@@ -978,6 +979,48 @@ def test_submit_order_returns_structured_rejection_on_terminal_broker_error(
     assert result["id"] is None
     assert result["status"] == "rejected_by_broker"
     assert "notional" in result["detail"]
+
+
+@patch("src.execution.broker.TradingClient")
+def test_submit_order_does_not_swallow_a_404_from_the_create_endpoint(
+    mock_tc_cls,
+):
+    """The 404 question, answered 2026-09-30. #786 first reused the
+    STOP-PLACEMENT retry classifier's 400/404/422 set on the ORDER-SUBMISSION
+    endpoint without re-checking that those codes mean the same thing there.
+    They do not. Alpaca's own reference for POST /v2/orders
+    (https://docs.alpaca.markets/reference/postorder) documents exactly three
+    responses — 200, 403 ("Buying power or shares is not sufficient.") and
+    422 ("Input parameters are not recognized.") — and its own
+    troubleshooting guide
+    (https://alpaca.markets/learn/how-to-fix-common-trading-api-errors-at-alpaca)
+    lists 422 and 403 for order errors, naming 400 only in a FUNDING flow.
+    Neither establishes 404 for a creation POST; where 404 does appear in
+    this API it addresses a resource by id, which on a submission reads as
+    "created, then not found", not "definitely rejected". Swallowing that
+    would tell the desk an order is dead while the broker may be holding it
+    — live exposure nobody is watching. So an unestablished code keeps the
+    pre-#786 behaviour and PROPAGATES."""
+    from src.execution.broker import AlpacaBroker
+
+    mock_tc_cls.return_value = MagicMock()
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    for code in (400, 404):
+        mock_tc_cls.return_value.submit_order.side_effect = _FakeAPIError(
+            f"status {code}", code,
+        )
+        try:
+            broker.submit_order(
+                symbol="NVDA", qty=1, side="buy", limit_price=100.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            assert getattr(exc, "status_code", None) == code
+        else:
+            assert False, (
+                f"a {code} was swallowed as a broker rejection; Alpaca does "
+                f"not document it as a create-order rejection"
+            )
 
 
 @patch("src.execution.broker.TradingClient")
