@@ -148,6 +148,12 @@ KNOWN_OFFENDERS = [
     ("tests/fixtures/pm_response_11_targets_20260817.txt", "desk-prose"),
     ("tests/fixtures/pm_response_17_targets_20260820.txt", "desk-prose"),
     ("tests/test_stop_out_reconciliation.py", "broker-order-id"),
+    # No real broker-account-id specimen is kept on disk on purpose — both
+    # real account numbers that ever appeared here (rehearsal and main) are
+    # now redacted rather than preserved as allow-listed proof. The
+    # broker-account-id detector's regression coverage instead comes from
+    # test_detector_fires_on_a_freshly_invented_offender below, which fires
+    # it on an invented value shaped exactly like a real one.
 ]
 
 
@@ -173,7 +179,8 @@ def test_detector_fires_on_a_freshly_invented_offender() -> None:
 
     The values below are invented, but they are shaped exactly like the real
     thing: a real ticker, cent-precision levels, the desk's own field names, a
-    broker order id and a production log line. Every signal must fire.
+    broker order id, a broker account number and a production log line. Every
+    signal must fire.
     """
     new_fixture = '''{
   "symbol": "NVDA",
@@ -185,11 +192,14 @@ def test_detector_fires_on_a_freshly_invented_offender() -> None:
   "setup_type": "breakout",
   "thesis_invalid_if": "Price closes below MA50 ($176.12) on expanding volume",
   "broker_order_id": "3f81c0aa-91b4-4d02-ae15-7c9d2e6f08b3",
+  "account_number": "PA7QXM4KT9",
   "log": "2026-09-22 14:31:55,689 [ERROR] src.execution.broker: stop rejected for NVDA at 176.12",
   "pm_note": "Trimming NVDA and AAPL into strength while adding MSFT and AVGO on the pullback, and holding XOM as the energy hedge because the macro read still calls crude bid. The book is 62% invested and the cash drag is acceptable here, so no further deployment is warranted before the close."
 }'''
     signals = {f.signal for f in guard.scan_text(new_fixture, "tests/fixtures/new.json")}
-    assert signals == {"broker-order-id", "production-log", "desk-decision", "desk-prose"}, signals
+    assert signals == {
+        "broker-order-id", "broker-account-id", "production-log", "desk-decision", "desk-prose",
+    }, signals
 
     findings = guard.scan_text(new_fixture, "tests/fixtures/new.json")
     assert all(f.line > 0 for f in findings)

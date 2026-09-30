@@ -14758,12 +14758,50 @@ class TradingPipeline:
             # (spec Phase 3.7). The breakout verdict is pinned at entry: the
             # analyst's `setup_type` OR the constructor's measured
             # `structural_ceiling` — either sufficient, see `is_trend_trade`.
+            # ALSO DISABLED when the whole distance from entry to the target
+            # is smaller than one ordinary session's range (2026-09-30).
+            #
+            # Same defect as the breakout case directly above, reached by a
+            # different road. `progress_target - entry` is the denominator,
+            # so when the target sits on a wall a fraction of an ATR
+            # overhead, `progress_pct` measures the denominator's smallness
+            # and not the thesis. META's 2026-09-21 add has $2.00 of room
+            # against a $21.22 ATR: a third of one ATR reads as 354%
+            # progress, and `target_breach_flag` (>150%) would render
+            # "TARGET_BREACH" into the position reviewer's prompt — a seat
+            # that can answer SELL or REDUCE. `pace` shares the denominator
+            # and sits in `exit_guard._HIGHER_IS_BETTER`, so it moves
+            # `MetricDeltas.net_improved` and with it
+            # `veto_contradicted_exit`.
+            #
+            # The owner ruled on 2026-09-30 that a computed target is never
+            # an exit trigger. A warning glyph driven off that target is
+            # that trigger wearing a different hat, and on a sub-noise
+            # denominator it fires on movement that means nothing.
+            #
+            # This is not a new threshold: it is `MIN_TARGET_ATR_MULTIPLE`,
+            # the same noise floor `derive_structural_target` labels the
+            # target with, read against the live ATR rather than pinned.
+            # Live is correct here and deliberate — the question is whether
+            # today's movement can be read as progress, which is a question
+            # about today's volatility. It also self-heals the three rows
+            # already carrying a pre-fix target.
             from src.risk.constants import is_trend_trade
+            from src.data.levels import MIN_TARGET_ATR_MULTIPLE
+            live_atr = self._atr_for_symbol(sym)
+            target_room_is_noise = bool(
+                progress_target and entry
+                and live_atr and live_atr > 0
+                and abs(progress_target - entry)
+                < live_atr * MIN_TARGET_ATR_MULTIPLE
+            )
             progress_pct = None
             pace = None
             pace_status = "unavailable"
             if is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
                 pace_status = "n/a_breakout"
+            elif target_room_is_noise:
+                pace_status = "n/a_target_inside_noise"
             else:
                 if progress_target and entry and progress_target != entry:
                     progress_pct = (cur - entry) / (progress_target - entry) * 100

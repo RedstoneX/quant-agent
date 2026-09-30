@@ -5040,6 +5040,27 @@ class MorningResearchStage:
                 fomc_meetings=fomc_meetings,
                 fomc_coverage=fomc_coverage,
             )
+            if analysis is not None and macro_coverage is not None:
+                # Board item 119, second criterion. Stamp the fetch record
+                # onto the verdict BEFORE anything persists, carries or
+                # renders it — `save_last_state` below is the first of those
+                # and the reason the stamp has to happen here rather than at
+                # any single display site. See
+                # `MacroCoverage.verdict_stamp()` for why the run-scoped
+                # `data_status["macro"]` a few hundred lines down does not
+                # already cover this.
+                try:
+                    state, note = macro_coverage.verdict_stamp()
+                    analysis.coverage_state = state
+                    analysis.coverage_note = note
+                    if state != "complete":
+                        logger.warning(
+                            "Macro verdict formed on an incomplete set — "
+                            "regime=%s confidence=%s stamped coverage_state=%s (%s)",
+                            analysis.regime, analysis.confidence, state, note,
+                        )
+                except Exception as e:  # noqa: BLE001 — a stamp must never lose the verdict
+                    logger.warning("Could not stamp macro coverage onto verdict: %s", e)
             if analysis:
                 try:
                     from src.data.macro_store import series_prints_from_summary

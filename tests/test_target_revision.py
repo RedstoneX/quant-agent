@@ -372,13 +372,20 @@ def test_a_target_now_beyond_todays_reach_is_a_trigger():
     assert trigger == tr.TRIGGER_TARGET_BEYOND_REACH
 
 
-def test_a_target_now_inside_todays_noise_floor_is_a_trigger():
-    """Volatility exploded, so the stored target no longer clears the
-    instrument's own daily range."""
-    trigger = tr.stale_reach_trigger(
+def test_a_target_inside_todays_noise_floor_is_no_longer_a_trigger():
+    """**Inverted 2026-09-30.** This used to assert
+    `TRIGGER_TARGET_INSIDE_NOISE` on the reasoning that a target inside the
+    daily range is one the derivation would no longer accept.
+
+    It would. The noise floor stopped being an acceptance test in
+    `derive_structural_target` when it was found to be deleting walls and
+    promoting targets past them; it only labels the result now. Re-deriving
+    here returned the identical price and the outcome was
+    `REVISION_NO_CHANGE` every session — a trigger whose premise was always
+    false. Reach is the one remaining test and is unaffected."""
+    assert tr.stale_reach_trigger(
         entry_price=100.0, stored_target=101.0, atr=8.0, horizon_sessions=10,
-    )
-    assert trigger == tr.TRIGGER_TARGET_INSIDE_NOISE
+    ) == ""
 
 
 def test_an_unchanged_target_under_unchanged_volatility_is_not_a_trigger():

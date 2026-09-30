@@ -218,3 +218,35 @@ retired:
       - docs/WORK.md
       - docs/BOARD_NOTES.md
       - tests/test_retired_mechanisms.py
+
+  - name: the noise floor as a target-level filter ("not a destination")
+    retired: 2026-09-30
+    why: >-
+      `derive_structural_target` used `min_target_atr_multiple` to FILTER its
+      candidate levels, so a structural level inside one ATR of entry left
+      the candidate set entirely and the target was taken from the next level
+      out — on the far side of the wall price had just been rejected from.
+      The closer the wall, the further past it the desk aimed. META's
+      2026-09-21 add is the measured case: floor $749.63 swallowed computed
+      resistance at $730.41 and $739.84 and the stored target became $785.20,
+      above both rejections and above the then 52-week high. The filter was
+      load-bearing when a 1.5 reward:risk floor was a hard refusal (2026-09-01
+      — dropping a sub-noise level was the only way a trade with a close wall
+      could be admitted); that gate is now inert and nothing re-checked the
+      filter when its reason died. The constant survives and still means what
+      it said, but it now LABELS the derived target
+      (`TargetDerivation.target_inside_noise`) instead of selecting it. The
+      retired thing is the SELECTION, and the prose that described it: four
+      sites still told a reader the target is the nearest level "more than N
+      ATRs away" / that a nearer one "is not a destination", which now
+      describes machinery the desk does not have.
+    symbols: []
+    phrases:
+      - "is not a destination"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
