@@ -381,6 +381,28 @@ STOP_REFUSAL_GROSS_EXPOSURE_CEILING = "gross_exposure_ceiling_refused"
 #: fixture data exercising the generic refusal-reporting path, which is
 #: unaffected by this constant's retirement — NOTHING EMITS IT ANY MORE.
 CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA = "delta_below_min_trade_weight"
+#: The two reasons that REPLACE it — both read off the request itself, and
+#: neither is a threshold. Deleting `min_trade_weight_delta` deleted the only
+#: reason this loop ever filed, and two things still reach its no-op arm
+#: without producing an order. `tests/test_every_drop_path_files_a_reason.py`
+#: fails if either goes back to being silent.
+#:
+#: 1. The desk named a candidate and asked for a weight of ZERO on a name it
+#:    holds none of. Measured in the production archive this repo already
+#:    ships (`tests/fixtures/constructor_drop_paths_archive.json`): all 8 of
+#:    the candidates left anonymous by the floor's removal are this exact
+#:    case — `target_weight_pct == 0.0` against a zero holding, not a small
+#:    request. The old message called these "smaller than the desk's
+#:    minimum", which was never true of a zero. Nothing was judged wrong
+#:    with the idea; the desk asked for no position.
+CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD = "target_weight_zero_nothing_held"
+#: 2. A held SHORT whose target equals what is already short. The long side
+#:    of this arm emits a HOLD row and the symbol survives; the short side
+#:    emits none, because HOLD's audit bookkeeping in this stage is long-only
+#:    (pre-existing, unchanged here), so without this the position silently
+#:    produced nothing. This is "already where the desk wants it", NOT a
+#:    refusal of the idea — the prose says so.
+CONSTRUCTOR_SHORT_ALREADY_AT_TARGET = "short_already_at_target_weight"
 #: NOT a replacement for `min_trade_weight_delta`. `signed_target` and
 #: `current_pct` are both floats built from independent divisions (a live
 #: price against total_value vs. a model-typed percent), so a delta the
@@ -1261,15 +1283,42 @@ class PortfolioConstructor:
             # here. Only a delta that is not really there at all — floating-
             # point noise below `_NO_REAL_WEIGHT_DELTA_PCT` — is a no-op.
             if not closing and abs(delta_pct) < _NO_REAL_WEIGHT_DELTA_PCT:
-                # No action — emit HOLD for audit continuity so PM's intent
-                # to keep this position at its current level is recorded.
-                # (A held short with no delta gets no HOLD row — HOLD's
-                # audit bookkeeping stays long-only for this stage. A
-                # brand-new position asked for at essentially zero weight
-                # is not a real request either way, so it gets neither a
-                # HOLD row nor a refusal — there is nothing to report.)
+                # No action. Three arms, one per thing that actually gets
+                # here — and every one of them leaves a record, because
+                # deleting `min_trade_weight_delta` deleted the only reason
+                # this loop used to file and board item 10 does not allow a
+                # candidate to end anonymously.
                 if current_pct > 0:
+                    # Held LONG already at its target: emit HOLD for audit
+                    # continuity so the desk's intent to keep this position
+                    # at its current level is recorded. The symbol survives,
+                    # so this is not a drop.
                     buys.append(self._hold_decision(target))
+                elif current_pct < 0:
+                    # Held SHORT already at its target. HOLD's audit
+                    # bookkeeping stays long-only for this stage, so unlike
+                    # the arm above this one produces nothing and must say
+                    # why in its own words.
+                    self._note_refusal(
+                        sym, target.direction,
+                        CONSTRUCTOR_SHORT_ALREADY_AT_TARGET,
+                        "this short is already the size the desk wants it, "
+                        "so there was nothing to buy or sell. Nothing was "
+                        "judged wrong with the position and nothing about "
+                        "it was changed.",
+                    )
+                else:
+                    # Nothing held, and the weight the desk asked for is
+                    # zero. Not a size judgement and not a refusal of the
+                    # idea: there is no position to place.
+                    self._note_refusal(
+                        sym, target.direction,
+                        CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD,
+                        "the desk named this stock but asked for a position "
+                        "of zero, and nothing is held in it, so there was no "
+                        "trade to place. Nothing was judged wrong with the "
+                        "idea and nothing already held was touched.",
+                    )
                 continue
 
             if delta_pct < 0:
