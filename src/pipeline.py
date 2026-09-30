@@ -1420,6 +1420,13 @@ class TradingPipeline:
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
+            # Board item 186: the short-side gap read. Same provider call and
+            # same lookback the trailing-stop path already uses each session
+            # — no second data source, and the constructor holds no provider
+            # of its own.
+            bars_fn=lambda symbol: self.market.get_ohlcv(
+                symbol, self.config.trading.lookback_days,
+            ),
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.

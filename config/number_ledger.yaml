@@ -881,6 +881,14 @@ numbers:
     cost_while_unanswered: >-
       Shorts are sized by a haircut whose direction is arithmetic and whose
       magnitude is neither sourced nor measured.
+      ITEM 186 BUILT 2026-09-30 — NO LONGER THE NORMAL PATH. A short's sized
+      risk-per-share is now the distance to its stop PLUS that name's own
+      worst upward overnight gap over the lookback the desk already fetches
+      (`PortfolioConstructor._short_gap_fraction`), so the magnitude is read
+      off the instrument instead of dialled. No percentile is picked: the
+      read is the worst gap the name actually printed. This 1.5 survives ONLY
+      as the fail-closed fallback for a name whose bars cannot be fetched,
+      and is still not measured against any gap distribution.
   - id: src.config.RiskConfig.target_divergence_warn_pct
     value: 25
     status: arbitrary
@@ -2286,6 +2294,9 @@ numbers:
       previously checked. CORRECTION 2026-09-18: the first version quoted
       "until a separate pass re-examines it" as text at this site; that phrase
       is in docs/, not in src/portfolio_constructor.py.
+      ITEM 186 BUILT 2026-09-30 — this mirror is now READ ONLY WHEN THE BARS
+      ARE MISSING; `_short_risk_per_share` adds the name's own worst
+      overnight gap instead. Kept, and kept in sync, as the fallback.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary

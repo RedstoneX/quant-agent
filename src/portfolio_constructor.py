@@ -951,8 +951,17 @@ def widest_reachable_stop_atr_multiple(
 class PortfolioConstructor:
     """Stateless translator: target state → concrete orders."""
 
-    def __init__(self, config: ConstructorConfig | None = None):
+    def __init__(self, config: ConstructorConfig | None = None,
+                 bars_fn=None):
         self.cfg = config or ConstructorConfig()
+        # Board item 186. `bars_fn(symbol) -> list[OHLCV]` is the SAME
+        # `MarketDataProvider.get_ohlcv` the trailing-stop path already
+        # calls every session, injected rather than imported so the
+        # constructor stays a stateless translator and so the backtest
+        # shim and the tests can leave it None. It is the only data
+        # source for the short gap read; nothing new is fetched.
+        self._bars_fn = bars_fn
+        self._short_gap_cache: dict[str, float | None] = {}
         # Populated fresh by every `construct_orders` call — see
         # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
         # ..."} for every target dropped THIS call. Empty, never absent, so
@@ -1009,6 +1018,77 @@ class PortfolioConstructor:
         # `last_refusals` ever saw it, and the only trace was a log line.
         # Reset per call; `pipeline_stages.DecisionStage` persists it.
         self.last_side_flips: dict[str, dict] = {}
+
+    def _short_gap_fraction(self, symbol: str) -> float | None:
+        """This name's own worst ADVERSE overnight gap, as a fraction of the
+        prior close, read off the bars the desk already fetches.
+
+        Board item 186. The short-side haircut used to be a flat x1.5 on
+        risk-per-share: an appetite constant governing per-name risk, which
+        the owner's ruling makes a defect. The DIRECTION it encoded is
+        arithmetic and survives — a short's loss above its stop is unbounded
+        because the gap opens through it — but the MAGNITUDE belongs to the
+        instrument, not to a dial.
+
+        The read is the largest upward open-to-prior-close gap this symbol
+        actually printed over the window: the worst overnight move it has
+        demonstrated it can make against a short. No percentile is chosen
+        (a percentile would be a new constant); max over the window is the
+        instrument's own demonstrated worst, and the window is the lookback
+        the caller's fetch already uses. A name that never gapped up reads
+        0.0, which is the honest answer for that name.
+
+        Returns None when the bars are unavailable or too short to contain a
+        single overnight transition, so the caller can fail closed.
+        """
+        if symbol in self._short_gap_cache:
+            return self._short_gap_cache[symbol]
+        result: float | None = None
+        if self._bars_fn is not None:
+            try:
+                bars = self._bars_fn(symbol) or []
+            except Exception as exc:  # provider down, symbol unknown, timeout
+                logger.warning(
+                    "Constructor: short gap read unavailable for %s (%s); "
+                    "falling back to the configured haircut", symbol, exc,
+                )
+                bars = []
+            worst = None
+            for prev, cur in zip(bars, bars[1:]):
+                try:
+                    prev_close = float(prev.close)
+                    cur_open = float(cur.open)
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if prev_close <= 0:
+                    continue
+                gap = (cur_open - prev_close) / prev_close
+                if gap <= 0:
+                    gap = 0.0
+                worst = gap if worst is None else max(worst, gap)
+            result = worst
+        self._short_gap_cache[symbol] = result
+        return result
+
+    def _short_risk_per_share(
+        self, symbol: str, entry: float, base_risk_per_share: float,
+    ) -> tuple[float, float, bool]:
+        """(risk-per-share to size on, the effective multiple, read_used).
+
+        A short that gaps opens ABOVE its stop, so the loss actually taken is
+        the distance to the stop PLUS the gap it opened through. That sum is
+        the sized risk. Fail closed: with no usable bars the configured
+        haircut applies exactly as before this item.
+        """
+        frac = self._short_gap_fraction(symbol)
+        if frac is None or entry <= 0 or base_risk_per_share <= 0:
+            return (
+                base_risk_per_share * self.cfg.short_gap_risk_multiple,
+                self.cfg.short_gap_risk_multiple,
+                False,
+            )
+        sized = base_risk_per_share + frac * entry
+        return sized, sized / base_risk_per_share, True
 
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
@@ -1930,12 +2010,15 @@ class PortfolioConstructor:
             # this an unsigned magnitude exactly like the long case (D4).
             risk_per_share = abs(entry - stop)
             if directions.get(sym) == "short":
-                # D8: gap-risk sizing haircut — SIZING ONLY, never applied
-                # to the stop placed above (already resolved). A short gaps
-                # through its stop with no bound, so the same nominal risk
-                # allocation must open a SMALLER short than an equivalent
-                # long at the same stop distance.
-                risk_per_share *= self.cfg.short_gap_risk_multiple
+                # D8: gap risk — SIZING ONLY, never applied to the stop
+                # placed above (already resolved). A short gaps through its
+                # stop with no bound, so the same nominal risk allocation
+                # must open a SMALLER short than an equivalent long at the
+                # same stop distance. Board item 186: HOW MUCH smaller is now
+                # read off this name's own worst overnight gap, not a dial.
+                risk_per_share, _gap_mult, _gap_read = (
+                    self._short_risk_per_share(sym, entry, risk_per_share)
+                )
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
@@ -3981,8 +4064,11 @@ class PortfolioConstructor:
         # equivalent long at the same stop distance. Paper trading fills
         # unrealistically through a gap on IEX data with no borrow-cost
         # model, so this haircut is what keeps the measured size honest
-        # relative to what live capital would actually risk.
-        risk_per_share *= self.cfg.short_gap_risk_multiple
+        # relative to what live capital would actually risk. Board item 186:
+        # the amount is this name's own worst overnight gap, not a dial.
+        risk_per_share, gap_mult, _gap_read = self._short_risk_per_share(
+            target.symbol, entry_price, risk_per_share,
+        )
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:
@@ -3995,13 +4081,13 @@ class PortfolioConstructor:
                     "(delta %.2f%% → %.2f%% at %.1f%% risk budget, %.1fx "
                     "gap-risk haircut)",
                     target.symbol, allocation_pct, alloc_cap_by_risk,
-                    self.cfg.risk_budget_pct, self.cfg.short_gap_risk_multiple,
+                    self.cfg.risk_budget_pct, gap_mult,
                 )
                 cap_note = (
                     f" [constructor: PM target delta {allocation_pct:.2f}% "
                     f"capped to {alloc_cap_by_risk:.2f}% by the "
                     f"{self.cfg.risk_budget_pct:.1f}% risk budget (x"
-                    f"{self.cfg.short_gap_risk_multiple:.1f} gap-risk haircut) "
+                    f"{gap_mult:.1f} gap-risk haircut) "
                     f"— the size difference vs PM's stated weight is "
                     f"deterministic, not PM inconsistency]"
                 )
