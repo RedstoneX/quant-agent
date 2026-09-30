@@ -6105,6 +6105,16 @@ class MorningResearchStage:
                     "research_seat_nomination", seat=seat,
                     conviction=nomination.conviction,
                     observation=nomination.observation,
+                    # Item 99: the nominating seat's own falsifier, kept
+                    # verbatim, plus an explicit flag when it gave none.
+                    # A missing condition is recorded AS missing — never
+                    # replaced with a template, because a synthesised
+                    # falsifier reads like exit protection the desk does
+                    # not actually have.
+                    thesis_invalid_if=nomination.thesis_invalid_if,
+                    falsifier_missing=missing_stated_falsifier(
+                        nomination.thesis_invalid_if
+                    ),
                 )
                 # §9.5: keep what the seat DECLARED so DecisionStage can
                 # RECORD it on the stance. It is a label, not a multiplier —
