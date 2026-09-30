@@ -58,11 +58,25 @@ which is the one thing a target must never be. The derivation itself is
 the live revision path runs — this script implements no derivation of its
 own, on purpose.
 
+HOW IT RUNS, AND WHY IT IS NOT A MERGE GATE
+-------------------------------------------
+On a timer, `quant-agent-stored-target-check.timer`, through
+`scripts/run_stored_target_check.sh` — the same shape as every other
+read-only scheduled check on this box, and it pushes to the SAME Telegram
+channel they do rather than inventing a reporting path of its own.
+
+It is deliberately NOT a required CI check. It is legitimately red today,
+on real findings about real held positions that the desk cannot correct,
+and a permanently-red required check blocks every unrelated merge and gets
+switched off inside a day. A check that is switched off reports nothing;
+one that speaks once a day reports the truth.
+
 Usage:
     scripts/check_stored_targets.py
     scripts/check_stored_targets.py --db data/quant_agent.db
     scripts/check_stored_targets.py --symbol UPS --symbol META
     scripts/check_stored_targets.py --json
+    scripts/check_stored_targets.py --no-telegram
 
 Exit codes:
     0  no position aims past a wall (drift and refusals may still be
@@ -93,62 +107,13 @@ FINDING_AGREES = "TARGET_AGREES_WITH_TODAYS_DERIVATION"
 FINDING_NO_BARS = "NO_BARS_FOR_SYMBOL"
 
 
-def walls_between(
-    *,
-    stored_target: float | None,
-    reference_price: float | None,
-    surviving_levels: list[float] | tuple[float, ...] | None,
-    is_short: bool,
-) -> list[float]:
-    """Every structural level standing BETWEEN the position and its stored
-    target, nearest first. Empty is the healthy answer.
-
-    PURE, and deliberately separate from the derivation so it can be
-    tested without bars. `surviving_levels` must already have been put
-    through `src.risk.target_revision.levels_still_in_the_way`, because a
-    level price has closed decisively beyond is not a wall any more and
-    counting it would manufacture a finding out of a broken ceiling.
-
-    `reference_price` is where the position is measured FROM, and the
-    caller passes the ENTRY, not the current price. That is the bug's own
-    geometry: the noise filter dropped levels sitting close to ENTRY, so a
-    wall between the entry and the stored target is exactly what it left
-    behind. It is also what keeps this finding stable — measuring from the
-    latest close would flag every position that has moved away from its
-    entry, which is a statement about the price, not about the target, and
-    a target must never be a function of the price move.
-
-    Whether a level still counts at all IS a question about today: the
-    caller filters with `levels_still_in_the_way` first, so a ceiling price
-    has closed decisively through is not counted as a wall.
-
-    A level exactly ON the target is not between anything and is excluded
-    — that is the target sitting on its own wall, which is the correct
-    outcome, not a finding. Strict inequalities on both ends do that.
-    """
-    try:
-        target = float(stored_target)  # type: ignore[arg-type]
-        ref = float(reference_price)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return []
-    if not target > 0 or not ref > 0:
-        return []
-    out: list[float] = []
-    for raw in surviving_levels or ():
-        try:
-            level = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if not level > 0:
-            continue
-        if is_short:
-            # A short's target sits below; a wall is a floor it must get
-            # through on the way down.
-            if target < level < ref:
-                out.append(level)
-        elif ref < level < target:
-            out.append(level)
-    return sorted(out, reverse=bool(is_short))
+# `walls_between` was MOVED to `src.risk.target_revision` and is imported
+# here rather than re-declared. It is now the trigger test the live
+# revision path runs as well as the test this report runs, and two copies
+# would let the scheduled report and the live path disagree about the same
+# chart. Re-exported under this module's name because that is where the
+# desk's tests and callers already reach for it.
+from src.risk.target_revision import walls_between  # noqa: E402
 
 
 def _open_positions(conn, wanted: set[str] | None) -> list[dict]:
@@ -319,6 +284,66 @@ def run(*, db_path: str, symbols: set[str] | None, lookback_days: int) -> list[d
         conn.close()
 
 
+def format_message(results: list[dict]) -> str:
+    """The owner-facing sentence(s) for the scheduled run. Plain English,
+    no file paths, no machine codes, no jargon — he reads this on a phone
+    and is not a developer.
+
+    THE WORDING RULE THIS OBEYS: a finding the desk cannot correct is
+    reported as exactly that — the true state, named. So the two cases are
+    written differently on purpose.
+
+    * A target with a wall in front of it AND a derivable replacement is
+      reported with both numbers, because the desk knows what the right
+      answer is and the reader can check it.
+    * A target with a wall in front of it and NO derivable replacement is
+      reported as a number that is wrong and cannot be corrected. It is
+      not softened into "drift", not dressed up as an error in the check,
+      and not left out. No number is substituted — the derivation refused,
+      and a substituted number would be the made-up target this whole
+      module exists to keep out of the book.
+
+    Returns "" when there is nothing to say, so the caller stays silent
+    rather than sending a daily all-clear nobody reads.
+    """
+    bad = [r for r in results if r.get("finding") == FINDING_AIMS_PAST_WALL]
+    if not bad:
+        return ""
+
+    correctable = [r for r in bad if r.get("derived_target") is not None]
+    stuck = [r for r in bad if r.get("derived_target") is None]
+
+    parts: list[str] = []
+    if correctable:
+        lines = "; ".join(
+            f"{r['symbol']} is quoted at ${r['stored_target']:,.2f} but the "
+            f"nearest level it has to get through is "
+            f"${r['derived_target']:,.2f}"
+            for r in correctable
+        )
+        parts.append(
+            f"{len(correctable)} held position(s) are quoting a profit "
+            f"target with a price level still standing in front of it, so "
+            f"the number on screen is further away than the chart says: "
+            f"{lines}."
+        )
+    if stuck:
+        lines = "; ".join(
+            f"{r['symbol']} (quoted ${r['stored_target']:,.2f})"
+            for r in stuck
+        )
+        parts.append(
+            f"{len(stuck)} held position(s) are quoting a target with a "
+            f"level still in front of it that the desk CANNOT recompute: "
+            f"{lines}. Those numbers are wrong and there is no correct "
+            f"replacement to put in their place — the position has already "
+            f"run past everything the chart offers within reach of its "
+            f"entry. Reporting it, not fixing it, and not inventing a "
+            f"number to fill the gap."
+        )
+    return " ".join(parts)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=DEFAULT_DB)
@@ -327,6 +352,10 @@ def main(argv=None) -> int:
                         help="bar history for the level scan; matches "
                              "config/settings.yaml trading.lookback_days")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--no-telegram", action="store_true",
+        help="Print findings but don't push a Telegram alert.",
+    )
     args = parser.parse_args(argv)
 
     wanted = {s.strip().upper() for s in args.symbol if s.strip()} or None
@@ -349,6 +378,26 @@ def main(argv=None) -> int:
     if not args.json:
         print(f"\nchecked {len(results)} held position(s); "
               f"{len(bad)} aiming past a standing wall")
+
+    # The scheduled run's whole point: a false target on screen becomes
+    # something the desk SAYS, not something someone has to remember to
+    # look for. Silence when there is nothing to say — a check that speaks
+    # every session is a check nobody reads.
+    message = format_message(results)
+    if message and not args.no_telegram:
+        print(message)
+        from src.notifier import TelegramNotifier
+
+        notifier = TelegramNotifier()
+        if notifier.enabled:
+            notifier.send(message)
+        else:
+            print(
+                "check_stored_targets: Telegram not configured; message "
+                "printed above only",
+                file=sys.stderr,
+            )
+
     return 1 if bad else 0
 
 

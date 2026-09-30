@@ -324,7 +324,7 @@ Flags the pipeline may attach:
 - `⚠️ PARABOLIC` — +15% in <3d, momentum confirmation advised. Ask: is volume
   still confirming? If yes, keep running. If no (declining volume on new
   highs), consider TRAIL_STOP tight.
-- `⚠️ DRIFT` — weight > 12% + PnL > 10%. Concentration risk; trim is reasonable.
+- `⚠️ DRIFT` — weight > {{flags.drift_weight_pct}}% + PnL > {{flags.drift_pnl_pct}}%. Concentration risk; trim is reasonable.
 - `⚠️ TARGET_BREACH` — thesis_progress > 150%. Thesis has over-delivered; if
   momentum is fading, TRAIL_STOP tight or REDUCE.
 
@@ -444,7 +444,7 @@ are raising an OBSERVATION, not setting a price.
   "correlation cluster rebalance"** — that phrase has not matched the
   executor's trigger gate since 2026-09-13 and an exit written on it is
   silently dropped. Every one of these still needs a named trigger in
-  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > 12%`
+  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > {{flags.drift_weight_pct}}%`
   on a triggered concentration, escalate to SELL** — half-measures on
   oversized positions just delay the same review next session.
 - **SELL** — closes a full LONG position. Use only when a named thesis

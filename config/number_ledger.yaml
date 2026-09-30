@@ -2599,10 +2599,22 @@ numbers:
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The drawdown at which the OWNER IS TOLD (resolve_gross_ceiling sets
+      alert_owner). A round percentage, not read off the account or off a
+      cited source. It happens to equal the de-levering ladder's deepest
+      rung, but it answers a different question from the ladder -- the same
+      function also sets alert_owner=True on the unmeasurable-drawdown
+      branch, where no rung fires at all. A 2026-09-30 change (board item
+      182) deleted this row and set the constant to min(GROSS_LADDER
+      thresholds); it was REVERTED the same day because the trigger
+      (drawdown <= this) is monotone, so freezing the value can never
+      produce silence at a deeper drawdown, while tying it to the deepest
+      rung WOULD go silent across any band between -20% and a newly added
+      deeper rung. Setting one arbitrary number equal to another arbitrary
+      number is deduplication, not sourcing, so the question below stays
+      open either way. The stale-prose defect that change was really
+      chasing is fixed in the reason string instead, which now names the
+      rung the ladder is actually on.
     open_question: >-
       At what drawdown must the owner be told, independently of what the
       ladder does to exposure?
@@ -4536,20 +4548,6 @@ numbers:
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
-    value: 1.02
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      The 2% cushion on how much of the T-bill sweep vehicle is sold to cover
-      a cash deficit (src/pipeline.py:11524-11531): needed = deficit x 1.02.
-    open_question: >-
-      How far does a sweep-vehicle sale's realised proceeds fall short of
-      price x qty on this account, measured from its own SWEEP_SELL fills?
-    cost_while_unanswered: >-
-      Too small and a de-lever leaves a residual deficit for the next session;
-      too large and more of the cash park is sold, and re-parked, than the
-      deficit needs.
-  - id: src.pipeline.TradingPipeline._force_delever:factor[1]
     value: 0.97
     status: derived
     site: src/pipeline.py
@@ -4565,7 +4563,28 @@ numbers:
       (the same must-fill slippage STOP_LIMIT_BUFFER_PCT budgets for a gapping
       exit) so the loop never stops one position too early and leaves a
       residual deficit. Under-counting proceeds is the safe error. 0.97 =
-      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number.
+      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number. Was factor[1] until
+      2026-09-30 (board item 182): the 1.02 sweep-sizing cushion that used to
+      precede it in this function was reformulated away, so this literal is
+      now the first factor-band literal in source order. Positional id only --
+      the number and its derivation are unchanged. Its APPLICATION was
+      narrowed in the same commit: it now covers WHOLE-position sells only.
+      A partial sweep slice is credited at the live SELL limit it was sized
+      off, because crediting the whole park's market_value for a slice
+      overstated proceeds by everything left parked -- the figure this
+      loop's break-early guard and its owner-facing incompleteness alert
+      both read. Under a full fill that overstatement changed no decision,
+      since the slice is sized to cover the deficit by construction; it
+      corrupted the REPORTED figure, and it stops being harmless the moment
+      proceeds are booked from an actual filled quantity.
+      SCOPE LIMIT, unfixed and pre-existing: proceeds are still booked at
+      broker ACCEPTANCE, not at fill. _submit_protected_sell returns an
+      accepted order and nothing reads filled_qty, so a PARTIAL FILL still
+      leaves a residual deficit this loop cannot see. Alpaca documents
+      partially_filled as an order status and the limit rests at the live
+      bid, whose displayed size is finite, so this is a reachable state, not
+      a theoretical one. Booking from the filled quantity and continuing to
+      sell while the deficit stands would delete this haircut entirely.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
@@ -5046,3 +5065,34 @@ numbers:
       from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
       20% at today's values). Inherits that entry's arbitrary status and
       open question.
+  - id: src.risk.metrics.DRIFT_WEIGHT_PCT
+    value: 12.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Board item 107. One of the drift flag's two thresholds (weight percent
+      of book). Consolidates three bare inline literals (src/pipeline.py's
+      `_build_position_facts`, src/agents/portfolio_manager.py's
+      `_fmt_position`, src/agents/position_reviewer.py's label string) that
+      already existed on main before this change and were never a ledger
+      site because a bare comparison literal inside a function body matches
+      none of this scanner's five structural shapes. Naming the constant
+      does not source it: it is still hand-chosen and unmeasured. `drift_flag`
+      only sets a `⚠️DRIFT`/`positions_drift_flagged` decoration read by the
+      Portfolio Manager and Position Reviewer prompts; no Python path sizes,
+      prices, stops or exits a position from it, so it is informational, not
+      trade-governing, exactly like the seats' other contextual read-outs
+      (news, technicals). Not reclassified as `arbitrary`: that status is
+      for a number a debt-tracked owner appetite call still has to settle,
+      and this one decides nothing to settle.
+  - id: src.risk.metrics.DRIFT_PNL_PCT
+    value: 10.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Board item 107. The drift flag's other threshold (unrealized P&L
+      percent). Same consolidation and the same reasoning as
+      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file: pre-existing bare
+      inline literal, newly named, still unsourced, informational-only (see
+      that entry for the full reasoning; not repeated to avoid two owners of
+      one explanation).
