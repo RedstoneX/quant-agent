@@ -123,7 +123,7 @@ def _uncounted(macro: MacroAnalysis, registry: dict, *, sector: str | None) -> d
 
 def _v(seat, *, direction="bullish", conviction="medium"):
     return AnalystVerdict(
-        seat=seat, symbol="XOM", direction=direction, magnitude=0.0,
+        seat=seat, symbol="XOM", direction=direction, magnitude=None,
         conviction=conviction,
         evidence=[VerdictEvidence(label="ev", text="a checkable observed fact")],
         invalidation="closes back below the breakout level",

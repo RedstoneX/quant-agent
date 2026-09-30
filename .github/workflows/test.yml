@@ -157,3 +157,41 @@ jobs:
             exit 1
           fi
           echo "every test shard passed"
+
+  # ADVISORY, NOT REQUIRED — deliberately absent from branch protection's
+  # required-status-check list (`contexts: ["pytest"]`, verified 2026-09-18).
+  # `scripts/check_board_number_claims.py` asks GitHub what OTHER open pull
+  # requests currently claim, to catch the exact race that produced three
+  # board-item-number collisions in an hour on 2026-09-29/30 (188 twice, then
+  # 189 twice) before it reaches `main` rather than after. That read is a
+  # live network call to the GitHub API and can rate-limit, time out, or be
+  # stale the instant it returns — turning it into a REQUIRED check would
+  # convert an ordinary GitHub hiccup into a blocked merge queue, which is
+  # its own outage. So this job runs for visibility only: a real collision
+  # is printed loudly and the job goes red in the run log, but a failed
+  # GitHub read is not a collision and exits 0 — see the script's own
+  # module docstring. The two locally-verifiable halves (no duplicate
+  # number on the board, no live number that is also retired) ARE required:
+  # they run inside the `shard`/`pytest` jobs above as ordinary tests
+  # (`tests/test_board_item_numbers.py`), because they need no network call
+  # and can never be flaky.
+  board-number-advisory:
+    name: board-number-advisory (not required to merge)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check this PR's board item numbers against other open PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python scripts/check_board_number_claims.py --pr-number "${{ github.event.pull_request.number }}"
