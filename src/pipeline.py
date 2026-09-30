@@ -219,6 +219,13 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
 # imports, and moving the import site would be churn with no benefit.
 from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
+# The canonical names of the sanctioned exit triggers, so the phrase gate
+# below cannot name a different set of triggers from `ExitTrigger` itself.
+# `src.risk.exit_trigger` imports only the stdlib, so this cannot cycle.
+from src.risk.exit_trigger import (  # noqa: E402
+    CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
+)
+
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
 #
@@ -302,6 +309,48 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     # Protection already fired
     "stop hit",
     "stopped out",
+)
+
+# THE ENUM IS THE SINGLE SOURCE OF TRUTH FOR WHICH TRIGGERS EXIST
+# (2026-09-30, live defect on META).
+#
+# On 2026-09-25 17:06:23 the position reviewer emitted a REDUCE on META whose
+# reason began, verbatim, "bearish_state_change: [HIGH] U.S. 10-year Treasury
+# yield crosses 5% ...". `src/risk/exit_trigger.py` DECLARES
+# `ExitTrigger.BEARISH_STATE_CHANGE` as a sanctioned trigger and
+# `src/risk/exit_guard.py::claims_bearish_state_change` accepts the phrase,
+# but the tuple above only ever carried the WORDINGS "high bearish" /
+# "high(-)conviction bearish" — so the seat naming a sanctioned trigger by its
+# own canonical name was refused with `exit_blocked_no_named_trigger` for
+# "naming no recognised trigger". Two modules disagreed about whether the same
+# sanctioned trigger existed.
+#
+# The fix is structural rather than another hand-maintained phrase: the
+# canonical `ExitTrigger` values are appended here, derived from the enum, so
+# the two vocabularies cannot diverge again without the enum itself changing.
+#
+# THIS DOES NOT LOWER THE BAR THE COMMENT ABOVE SETS. Every name added here
+# is a trigger this module already accepted under another wording, and each
+# names something the desk RECORDS:
+#   thesis_invalid        - the holding's `thesis_invalid_if` level, judged by
+#                           `check_structural_protection`.
+#   bearish_state_change  - a same-day `state_change` row naming the symbol
+#                           with a recorded direction, which
+#                           `exit_guard.holding_discipline_claim_check` already
+#                           reads and can CONTRADICT (branch (c)).
+#   adverse_news          - a news row.
+#   sector_shock          - a news row at sector scope.
+#   regime_shift          - the day's macro regime read.
+#   stop_fired            - a broker fill.
+# `earnings` is deliberately NOT added: its canonical spelling is a bare
+# common word that occurs in prose naming no event, and admitting it would be
+# the widening this comment block forbids. `cannot_substantiate` is not a
+# trigger and is never accepted. Both exclusions are the named constant
+# `exit_trigger.CANONICAL_NAME_NOT_MATCHED_IN_PROSE`, pinned by
+# `tests/test_exit_trigger_canonical_names.py`.
+_HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
+    name for name in _CANONICAL_TRIGGER_NAMES
+    if name not in _HARD_TRIGGER_KEYWORDS
 )
 
 
@@ -11463,6 +11512,7 @@ class TradingPipeline:
             # execute is not reached; the executor still drops.
             judgment = classify_trigger_reason(
                 action.reason, cites=_reason_cites_hard_trigger,
+                trigger=getattr(action, "exit_trigger", None),
             )
             if judgment == "unnamed":
                 logger.info(
@@ -11994,6 +12044,7 @@ class TradingPipeline:
                 )
                 trigger_judgment = classify_trigger_reason(
                     reason_text, cites=_reason_cites_hard_trigger,
+                    trigger=action_item.get("exit_trigger"),
                 )
                 if trigger_judgment == "unnamed":
                     logger.warning(

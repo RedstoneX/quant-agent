@@ -61,6 +61,9 @@ from typing import Literal
 __all__ = [
     "ExitTrigger",
     "TRIGGER_PHRASES",
+    "CANONICAL_TRIGGER_NAMES",
+    "CANONICAL_NAME_NOT_MATCHED_IN_PROSE",
+    "canonical_prose_names",
     "EVENT_TRIGGERS",
     "derive_trigger_from_reason",
     "normalize_trigger",
@@ -101,12 +104,17 @@ class ExitTrigger(str, Enum):
     CANNOT_SUBSTANTIATE = "cannot_substantiate"
 
 
-#: Trigger -> the prose phrases that name it. Every phrase here is already
-#: in `pipeline._HARD_TRIGGER_KEYWORDS`; nothing is added and nothing is
-#: dropped, so an exit that passed the phrase gate before still passes it.
-#: Ordered longest-first inside each group only for readability — matching
-#: uses substring containment exactly as the phrase gate does.
-TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
+#: Trigger -> the prose phrases that name it. Ordered longest-first inside
+#: each group only for readability — matching uses substring containment
+#: exactly as the phrase gate does.
+#:
+#: `_LEGACY_TRIGGER_PHRASES` is the vocabulary as it stood before
+#: 2026-09-30: the wordings an LLM produces in free prose. The CANONICAL
+#: ENUM NAME of each trigger is added to it below by
+#: `canonical_prose_names`, so `TRIGGER_PHRASES` (and therefore
+#: `pipeline._HARD_TRIGGER_KEYWORDS`) cannot name a different set of
+#: triggers from `ExitTrigger` itself.
+_LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     ExitTrigger.THESIS_INVALID: (
         "thesis_invalid", "thesis invalid", "invalidation triggered",
         "broken thesis", "thesis broken",
@@ -124,6 +132,72 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
         "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
     ),
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
+}
+
+#: THE ONE DIVERGENCE THIS MODULE STILL ALLOWS, AND WHY (2026-09-30).
+#:
+#: A sanctioned `ExitTrigger` named by its own canonical value is accepted
+#: as naming that trigger. Two members are deliberately NOT matched that
+#: way in free prose, and the exclusion is a named constant rather than an
+#: accident so a test can pin it:
+#:
+#: * `CANNOT_SUBSTANTIATE` is not a trigger at all. It is the seat's
+#:   honest "I cannot support this exit". Accepting it as a named trigger
+#:   would turn the one safe way to decline into a way to pass the gate.
+#: * `EARNINGS` has the bare word "earnings" as its canonical value, and
+#:   that word occurs constantly in prose that names no event at all
+#:   ("earnings in three days", "pre-earnings drift"). Substring-matching
+#:   it would WIDEN the gate to a non-event, which the long comment above
+#:   `pipeline._HARD_TRIGGER_KEYWORDS` forbids. The earnings EVENT is
+#:   already named by "earnings miss" / "guidance cut" / "bearish
+#:   earnings", and the STRUCTURED field (`PositionAction.exit_trigger`)
+#:   carries `earnings` exactly, so nothing is unreachable — only the bare
+#:   word in prose is not enough.
+CANONICAL_NAME_NOT_MATCHED_IN_PROSE: frozenset[ExitTrigger] = frozenset({
+    ExitTrigger.CANNOT_SUBSTANTIATE,
+    ExitTrigger.EARNINGS,
+})
+
+
+def canonical_prose_names(trigger: ExitTrigger) -> tuple[str, ...]:
+    """The canonical spellings of `trigger` accepted in free prose.
+
+    Empty for a member in `CANONICAL_NAME_NOT_MATCHED_IN_PROSE`. Otherwise
+    the enum value as written (`bearish_state_change`) and, when it has
+    separators, its spaced form (`bearish state change`) — the same two
+    spellings `normalize_trigger` already folds together, and the same
+    spaced form `exit_guard.claims_bearish_state_change` already accepts.
+    """
+    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE:
+        return ()
+    value = trigger.value
+    if "_" not in value:
+        return (value,)
+    return (value, value.replace("_", " "))
+
+
+#: Every canonical name the prose gate accepts, derived from the enum.
+CANONICAL_TRIGGER_NAMES: tuple[str, ...] = tuple(
+    name
+    for trigger in ExitTrigger
+    for name in canonical_prose_names(trigger)
+)
+
+def _phrases_for(trigger: ExitTrigger) -> tuple[str, ...]:
+    legacy = _LEGACY_TRIGGER_PHRASES.get(trigger, ())
+    return legacy + tuple(
+        name for name in canonical_prose_names(trigger) if name not in legacy
+    )
+
+
+#: Iterated over `ExitTrigger` rather than over `_LEGACY_TRIGGER_PHRASES`
+#: deliberately: a member added to the enum with no prose wording of its own
+#: still gets its canonical name here, so it is namable the day it is
+#: declared. That is the divergence this whole block exists to prevent.
+TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
+    trigger: phrases
+    for trigger in ExitTrigger
+    if (phrases := _phrases_for(trigger))
 }
 
 #: Triggers that assert something happened OUTSIDE the price series and

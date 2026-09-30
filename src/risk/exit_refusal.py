@@ -90,10 +90,28 @@ def classify_trigger_reason(
     reason: object,
     *,
     cites: Callable[[str], bool],
+    trigger: object = None,
 ) -> TriggerJudgment:
-    """Classify a reason against the named-trigger recogniser.
+    """Classify an exit against the named-trigger recogniser.
 
-    * ``named`` — the matcher ran and found a recognised trigger.
+    `trigger` is the STRUCTURED field (`PositionAction.exit_trigger`) when
+    the caller has it. A recognised `ExitTrigger` in that field IS the seat
+    naming a sanctioned trigger — it is the typed, unambiguous form of the
+    same claim the prose gate hunts for in words — so it settles the
+    judgment as ``named`` without consulting the prose (2026-09-30; the
+    prose gate and `ExitTrigger` had drifted apart and refused a REDUCE
+    that named a sanctioned trigger by its own canonical name).
+
+    This does NOT weaken substantiation. Naming a trigger and SUPPORTING
+    it are two different gates: `exit_trigger.check_exit_trigger` still
+    demands `trigger_evidence` that says something beyond the trigger's own
+    phrases, still re-asks when it does not, and
+    `exit_guard.holding_discipline_claim_check` still blocks a trigger the
+    desk's records affirmatively contradict. `cannot_substantiate` is not a
+    trigger and never settles the judgment here.
+
+    * ``named`` — a sanctioned `ExitTrigger` is in the structured field, or
+      the matcher ran and found a recognised trigger in the prose.
     * ``unnamed`` — the matcher ran, or the reason is missing/not a
       string, and no recognised trigger was found. A missing reason is a
       completed "no", not uncertainty: nothing was named. The owner
@@ -104,6 +122,11 @@ def classify_trigger_reason(
       posture, not a new owner ratification of a broader fail-open.
     """
     try:
+        if trigger is not None:
+            from src.risk.exit_trigger import ExitTrigger, normalize_trigger
+            named = normalize_trigger(trigger)
+            if named is not None and named is not ExitTrigger.CANNOT_SUBSTANTIATE:
+                return "named"
         if not isinstance(reason, str) or not reason:
             return "unnamed"
         if cites(reason):
