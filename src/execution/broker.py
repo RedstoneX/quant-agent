@@ -1775,6 +1775,20 @@ def _get_sector(symbol: str) -> str:
 #: `place_entry_protection`. "sell" and "sell_short" both open/extend a short.
 _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
+#: Broker order states in which a resting order is REAL protection.
+#:
+#: One definition, two readers. `AlpacaBroker`'s scale-in reprotect used a
+#: local literal set; `TradingPipeline._finalize_protection_restore` needed
+#: exactly the same judgement and, on 2026-09-30, was given a second copy of
+#: the same four strings. Two copies of one rule is how this desk ended up
+#: with four different spellings of "a trigger was named", so they are one
+#: name now. Anything outside this set -- notably `pending_cancel`, which is
+#: what a just-cancelled stop still reports for a moment -- is a dying order
+#: and must never be counted as a stop that protects the position.
+PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
+    {"new", "accepted", "held", "partially_filled"}
+)
+
 
 class AlpacaBroker:
     #: Set in __init__. Declared here so an instance built without __init__
@@ -6402,14 +6416,13 @@ class AlpacaBroker:
             #   2. the order's status is in an active state, not pending_*
             #   3. the *sum* of active stop qtys covers the current position
             # Miss any of those and `cancelled_specs` must be restored.
-            ACTIVE_STATUSES = {"new", "accepted", "held", "partially_filled"}
 
             def _is_live_protection(order) -> bool:
                 if str(getattr(order, "id", "")) in cancelled_ids:
                     return False
                 status_attr = getattr(order, "status", None)
                 status = str(getattr(status_attr, "value", status_attr) or "").lower()
-                return status in ACTIVE_STATUSES
+                return status in PROTECTIVE_ORDER_ACTIVE_STATUSES
 
             def _stop_qty(order) -> float:
                 try:

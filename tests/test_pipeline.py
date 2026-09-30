@@ -1008,9 +1008,16 @@ def test_reprotect_residual_is_idempotent_against_existing_broker_stop():
     pipeline._format_qty = lambda q: str(q)
 
     # Broker already has a SELL stop at $90 on this symbol (residual of a
-    # prior reprotect that survived the kill).
+    # prior reprotect that survived the kill). It is a DIFFERENT order from
+    # the one this run cancelled ("s1") and it is in a live state — both
+    # matter since 2026-09-30: a stop is only proof of protection when it
+    # can be shown not to be the one this same run just cancelled, and not
+    # to be dying. Without an id and a status this order is unidentifiable,
+    # and unidentifiable now means submit.
     existing = MagicMock()
     existing.stop_price = "90.00"
+    existing.id = "prior-attempt-order"
+    existing.status = "accepted"
     pipeline.broker._list_open_sell_stop_orders.return_value = [existing]
 
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]

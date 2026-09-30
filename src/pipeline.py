@@ -5896,7 +5896,9 @@ class TradingPipeline:
         # `pending_cancel` (or any non-active state) is not protection. Same
         # active-status set `replace_stop_loss` already uses — no new number
         # and no new tolerance is introduced here.
-        _ACTIVE_STATUSES = {"new", "accepted", "held", "partially_filled"}
+        from src.execution.broker import (
+            PROTECTIVE_ORDER_ACTIVE_STATUSES as _ACTIVE_STATUSES,
+        )
         try:
             if side == "buy":
                 existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
