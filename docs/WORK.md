@@ -188,17 +188,11 @@ DONE WHEN:
   - [x] (b) a series still missing is named, the verdict it produced is visibly partial wherever it travels, and the desk never pays a second time on the same holes — RESTATED and met 2026-09-26. "The economist is not paid on the holes" was DECIDED AGAINST on measurement: the macro seat is bought once a day at the open and nowhere else, so skipping it deletes the regime frame rather than delaying it, and both measured partial runs had already burned the full ceiling so there was nothing bounded to wait for. The economist is paid once on what arrived; `MacroCoverage.verdict_stamp()` stamps `coverage_state`/`coverage_note` onto the verdict from the fetch record, and that stamp now survives `MacroStore.save_last_state`, the carry-forward into midday/close/intra, the PM sheet and the owner's `📊 Market:` line. A second paid call on the same holes was already impossible (`"partial"` is `CATEGORY_REPORTED`, never healable) and is now pinned by a test instead of left to the table. No coverage threshold was picked; 14/15 and 1/15 are both `partial`. Measurement, money and the argument against the other three options: docs/BOARD_NOTES.md (item 119)
 detail: docs/BOARD_NOTES.md (item 119)
 
-**147. A success with no usage data — the filed premise was wrong, the cache-hit half is FIXED 2026-09-26, the no-telemetry half stays open.** Measured on the production DB read-only 2026-09-26: `agent_logs` holds 667 rows over 2026-08-14..2026-09-26 and exactly 7 have a NULL cost — six on 2026-08-31, one on 2026-09-17, every one of them a `smart_money_analyst` synthesis-cache HIT that issued no provider request at all (`provider_requests=0`, `latency_s=0.0`, `input_message='[cached evidence hash]'`). There is no "full reservation": item 14 deleted the reservation layer on 2026-09-02, and neither affected day was ever marked inexact (`unknown_cost_rows=0`, `costs_exact=1` on both). A cache hit now books its real, exact zero instead of a NULL, and the day seeder no longer counts a provably request-free success as unknown spend — which had left a latent operator-only `legacy_unknown_cost` hard latch reachable on any day whose budget row is seeded after such a row lands (a mid-day deploy, the case the seeder exists for). What is left is the case that has never once occurred: a call that really did reach a provider and came back with no usable token or cost telemetry. Also measured: zero rows have tokens > 0 with a NULL cost, so BOARD_NOTES' open case (b) — known tokens, model missing from the pricing table — has never fired either.
+**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
-  - [ ] a success whose provider request DID happen but returned no usage telemetry is charged at a measured rate instead of hard-latching the desk — still open and deliberately not guessed at: `complete_call` sees only `cost is None`, the missing thing is the per-token rate, and the pricing table is the same one that failed, so there is no defensible basis to multiply by. Unchanged until either a rate source or a real occurrence exists.
-  - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unknown_cost_row_expr` in `src/cost_circuit.py` excludes a row proven free by its own record (`cost_usd IS NULL AND provider_requests = 0 AND status = 'success'`) from the seeded day's `unknown_cost_rows`. All three conditions are required; 194 legacy rows with a NULL `provider_requests` keep counting as unknown. Six tests in `tests/test_cost_circuit.py`.
-detail: docs/BOARD_NOTES.md (item 147)
-
-
-DONE WHEN:
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and the LOSS is closed (the seat is re-asked on an unreadable field and, only if the re-ask fails too, the field is dropped and reads ABSENT while the rest of the report survives; an unsalvageable answer files an `analysis_drop` row per affected stock), but the RATE itself is neither brought down nor shown to recover: the seat can still emit "mixed", the cure at source needs `strict: true`, and the news answer cannot have it while `stock_news` is a ticker-keyed free-form map. Needs either live evidence that the re-ask recovers, or a decision on reshaping the answer so the enum can be enforced.
-detail: docs/BOARD_NOTES.md (item 152)
+  - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
+detail: docs/BOARD_NOTES.md (item 203)
 
 **157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
 
@@ -232,7 +226,6 @@ DONE WHEN:
   - [ ] `GROSS_LADDER_ALERT_PCT` is sourced, measured or owner-ratified as appetite — at what drawdown must the owner be told, independently of what the ladder does to exposure? (deduplication against the ladder was attempted and reverted)
 
 detail: docs/BOARD_NOTES.md (item 182)
-
 
 **185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
 
@@ -269,7 +262,8 @@ detail: docs/BOARD_NOTES.md (item 187)
 
 DONE WHEN:
   - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [ ] the substitute is either measured at the three decision seats through `ops/model_policy/benchmark_models.py`, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
+  - [ ] every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and why it did not — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable)
+  - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
 
 detail: docs/BOARD_NOTES.md (item 188)
 
@@ -281,18 +275,10 @@ DONE WHEN:
   - [ ] MEASURED 2026-09-30, the premise is PARTLY WRONG and the scope is corrected here: this is not a pure deletion of switched-off code. `CashSweepConfig.reserve_pct` has a live non-sweep consumer — `src.risk.rules.deployment_gap_band_pct` reads it as the tolerance band for the `deployment_gap` advisory on EVERY session, and `/account` renders it as `reserve_usd` / `cash_above_reserve` via `src.api.deps.get_cash_sweep_reserve_pct`. Deleting the sweeper therefore cannot delete the band by default: the band must either die with the advisory (a separate call, since "how far under 100% still counts as fully invested" is appetite-shaped, not bookkeeping) or be given a home outside the retired feature. Item 183's band question is NOT resolved by this item as filed
   - [ ] MEASURED 2026-09-30, `cash_sweep.min_order_usd` is vestigial as a trade gate but NOT as prose: `src.pipeline_stages._min_order_usd` records (2026-09-24) that none of the three paths that used to reject a small trade still do, and `apply_gross_ceiling` accepts it only as an ignored parameter — but `src.agents.portfolio_manager` still SPEAKS it to the owner in the funding narrative ("under the $N minimum order worth placing"). It dies with the feature, and those owner-facing strings must be rewritten rather than merely dropped
   - [ ] MEASURED 2026-09-30, the 187-reference estimate is LOW. A live count over the checkout is ~550 mentions of `cash_sweep` / `CashSweeper` / `cash_sweeper` / `_sweep_symbol` / `SGOV` / `reserve_pct` across 88 files, including four frontend components (`LiquidityPanel`, `HoldingsStrip`, `DecisionStateBanner`, `funnelShared`), the Mission Control API schema and routes, `ops/preview/branch_preview.py`, and ~30 test modules rather than the nine item 183 named. The `sweep-vehicle liquidation before a BUY` entry already in `config/retired_mechanisms.yaml` is the registry hook the deletion must extend
+  - [x] STEP 1 DONE 2026-09-30 (PR item190-step1): the `deployment_gap` advisory band now reads `deployment_gap.band_pct` (1.0, value unchanged) instead of `cash_sweep.reserve_pct`; the band stays as owner-appetite, ledgered `arbitrary`. Remaining: steps 2-4 below. `reserve_pct` itself is still read by the sweeper and the /account `reserve_usd` display until step 3/4.
   - [ ] the retirement is sequenced so no step leaves a half-wired feature: (1) settle the `reserve_pct` band and the `deployment_gap` advisory, (2) rewrite the portfolio-manager funding prose off `min_order_usd`, (3) delete `CashSweeper`, its pipeline/stage wiring and its tests-of-the-dead-path, (4) drop the ledger rows and the frontend/API surface
 
 detail: docs/BOARD_NOTES.md (item 190)
-
-**192. The local Python interpreter could silently drift from the one CI runs, with nothing checking it — filed 2026-09-30.**
-
-DONE WHEN:
-  - [x] the exact CI version is written in one place (`.python-version`) that both CI jobs read via `python-version-file`, instead of each job carrying its own literal
-  - [x] any local pytest run, including a single test file, fails immediately and names both versions plus which one CI uses, if the running interpreter doesn't match the pin (`tests/conftest.py`, fires at collection so it can't be skipped by running one file)
-  - [ ] the existing `.venv` (measured 3.12.3) actually gets rebuilt on the pinned 3.11 — deliberately NOT done here: other sessions run against that `.venv` right now, so a live rebuild is a scheduling call, not something this change should force mid-flight
-
-detail: docs/BOARD_NOTES.md (item 192)
 
 **194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").**
 
@@ -372,6 +358,8 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 183
 - retired queue: 197
 - retired queue: 18
+- retired queue: 192
+- retired queue: 147
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
