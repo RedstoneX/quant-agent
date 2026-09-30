@@ -958,6 +958,48 @@ def _reconciled_exit_action(order_type: str | None) -> str:
     return "RECONCILED_EXIT"
 
 
+def _actions_with_scan_fallback(items, displaced: dict, orders: list):
+    """The midday action queue, with the SAFETY FALLBACK for scan-raised
+    sales.
+
+    A sale the alignment scan raised REPLACED whatever the review proposed
+    for that symbol. Every layer below may refuse it — an unnamed trigger,
+    the metric-contradiction veto, the AI Risk seat, the qty-sign gate, the
+    confirmer's own verdict. If that happens the symbol must not be left
+    with nothing: the action the scan displaced (in practice a TRAIL_STOP,
+    the only thing besides HOLD it may overwrite) goes back on the queue and
+    is executed normally, so a REFUSED scan sale leaves the position exactly
+    as well protected as the scan found it — never worse.
+
+    "Refused" is read off the only durable evidence available at this level:
+    the sale appended no order to `orders`. A submitted sale always appends
+    one; were it somehow not to, the fallback re-protects a position that is
+    closing, which is the harmless direction to be wrong in.
+
+    A generator so the executor loop is unchanged: it resumes here after the
+    body has run, whichever `continue` the body took to get out.
+    """
+    queue = list(items)
+    while queue:
+        item = queue.pop(0)
+        orders_before = len(orders)
+        yield item
+        if not item.get("_alignment_scan_raised"):
+            continue
+        if len(orders) > orders_before:
+            continue
+        fallback = displaced.pop((item.get("symbol") or "").strip().upper(), None)
+        if fallback is None:
+            continue
+        logger.warning(
+            "Alignment scan: the %s it raised for %s was refused downstream "
+            "— restoring the %s the review asked for, so the position is not "
+            "left unprotected",
+            item.get("action"), item.get("symbol"), fallback.get("action"),
+        )
+        queue.append(fallback)
+
+
 def _reason_claims_alignment_exit(reason: str, exit_trigger: object = None) -> bool:
     """Does this sale claim the TREND IS OVER (the alignment exit)?
 
@@ -11575,6 +11617,7 @@ class TradingPipeline:
     def _alignment_exit_scan(
         self, positions, best_by_symbol: dict, *, run_id: str,
         position_facts: dict | None, priority: dict,
+        displaced: dict | None = None,
     ) -> None:
         """Read EVERY held position's own chart and raise a sale on the ones
         the chart says are finished — whether or not any model mentioned them.
@@ -11595,15 +11638,43 @@ class TradingPipeline:
         exit gets: the same-day-trim discipline, the spent-trigger layer, the
         named-trigger phrase gate, the exit guard's metric-contradiction
         veto, the AI Risk seat's veto, the qty-sign gate, and the alignment
-        verdict itself re-read as the confirmer. Nothing here bypasses any of
-        them, and a sale this scan raises can be refused by any one of them.
+        verdict itself re-read as the confirmer. A sale this scan raises can
+        be refused by any one of them.
+
+        ONE PROTECTION IS DELIBERATELY BYPASSED, and only one: the
+        entry-anchored noise band, which asks how far price has travelled
+        from WHAT THE DESK PAID. Under the owner's 2026-09-30 ruling the
+        alignment exit sells because the move ended on the chart, and what
+        the desk paid says nothing about that, so a chart-verified
+        alignment sale is not judged against it. Every other layer applies
+        unchanged. (Chosen over keeping the band for scan-raised sales
+        because a band anchored to the entry would silently veto exactly
+        the exits the ruling exists to allow — the ones taken at a gain.)
+
+        WHEN A REFUSAL HAPPENS, THE DISPLACED ACTION COMES BACK. Raising a
+        sale overwrites whatever the review proposed for that symbol; if
+        that was a TRAIL_STOP and the sale is then refused downstream, the
+        position would end the session neither sold nor re-protected —
+        strictly worse than the state the scan found. The displaced item is
+        therefore kept in `displaced` and re-queued by the executor when a
+        scan-raised sale produces no order.
 
         A model action of EQUAL OR HIGHER priority always wins: the scan
         never overwrites a SELL, COVER or REDUCE the review asked for, and
         never rewrites its reason. It supersedes only HOLD and TRAIL_STOP,
-        because the owner's ruling is that the chart, not the prose, decides
-        whether a move is over — and a stop adjustment on a position that is
-        being closed is moot.
+        because under the owner's ruling the END OF A MOVE is decided by
+        reading the chart rather than by whether a model mentioned it — and
+        a stop adjustment on a position being closed is moot. The prose is
+        not irrelevant: when a thesis names an average the desk computes,
+        that average is the first mark. It is no longer REQUIRED — a thesis
+        naming none falls back to the chart's own averages, so coverage no
+        longer depends on model wording.
+
+        A POSITION OPENED IN TODAY'S SESSION IS NOT ELIGIBLE. Nothing in the
+        entry path requires a candidate to be above any average, so a name
+        can be bought while already below one, and without this the scan
+        could close it the same session on a chart the entry seats had
+        already read. Date equality only, on the recorded buy.
 
         FAIL CLOSED. Only `status == "EXIT"` raises a sale. Missing bars, a
         missing ATR, an unresolvable chart mark and every other degraded
@@ -11650,6 +11721,14 @@ class TradingPipeline:
                 )
                 if not verdict.exit_cleared:
                     continue
+                if self._position_opened_today(symbol):
+                    logger.info(
+                        "Alignment scan: %s was opened in today's session — "
+                        "no same-session close is raised for it", symbol,
+                    )
+                    continue
+                if existing is not None and isinstance(displaced, dict):
+                    displaced[symbol] = existing
                 # The reason NAMES the trigger in the desk's own accepted
                 # wording, and the structured trigger says the same thing, so
                 # the confirmer downstream recognises the claim and appends
@@ -11665,6 +11744,9 @@ class TradingPipeline:
                     ),
                     "exit_trigger": ExitTrigger.TREND_ALIGNMENT_OVER.value,
                     "trigger_evidence": (verdict.reason or "")[:2000],
+                    # Read by the executor: if this item produces no order,
+                    # the action it displaced is put back on the queue.
+                    "_alignment_scan_raised": True,
                 }
                 logger.info(
                     "Alignment scan: raising %s %s — %s",
@@ -11676,6 +11758,28 @@ class TradingPipeline:
                     "is raised for it",
                     getattr(position, "symbol", "?"), e,
                 )
+
+    def _position_opened_today(self, symbol: str) -> bool:
+        """Was this position bought in TODAY's session? DATE EQUALITY ONLY.
+
+        No recorded buy at all means the position predates the desk's own
+        record (or was opened outside it), which cannot be evidence that it
+        was bought today, so it stays eligible. A FAILED read is different:
+        the age is unknown, and an unknown age holds rather than sells,
+        which is the same fail-closed posture the rest of this path takes.
+        """
+        try:
+            row = self.db.get_symbol_last_buy(symbol) or {}
+        except Exception as e:  # noqa: BLE001 — unknown age HOLDS
+            logger.warning(
+                "alignment scan: could not read %s's entry date (%s) — it is "
+                "treated as opened today, so no sale is raised", symbol, e,
+            )
+            return True
+        ts = ((row or {}).get("timestamp") or "")[:10]
+        if not ts:
+            return False
+        return ts == str(et_today())
 
     def _alignment_exit_for_holding(
         self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
@@ -12197,9 +12301,11 @@ class TradingPipeline:
         # owner-ratified alignment exit here, before the early return below,
         # because a review that proposed nothing at all is exactly the
         # session in which the chart must still be allowed to speak.
+        _scan_displaced: dict[str, dict] = {}
         self._alignment_exit_scan(
             positions, best_by_symbol, run_id=run_id,
             position_facts=position_facts, priority=_priority,
+            displaced=_scan_displaced,
         )
 
         if not best_by_symbol:
@@ -12251,7 +12357,10 @@ class TradingPipeline:
         # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
         # review must not buy the DB reads.
         hd_position_history: dict | None = None
-        for action_item in best_by_symbol.values():
+
+        for action_item in _actions_with_scan_fallback(
+            best_by_symbol.values(), _scan_displaced, orders,
+        ):
             act = action_item.get("action")
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
@@ -12389,7 +12498,14 @@ class TradingPipeline:
                         or facts.get("thesis_invalid_if"),
                         is_short=(act == "COVER"),
                         entry_price=getattr(held_now, "avg_entry", None),
-                        stop_loss=getattr(held_now, "stop_loss", None),
+                        # IDENTICAL to the scan's inputs, including the
+                        # position-facts fallback. `stop_loss` decides
+                        # whether a broken-level mark exists, and both
+                        # callers key the SAME memo — resolving it
+                        # differently would let one of them read a verdict
+                        # built from a stop the other never passed.
+                        stop_loss=getattr(held_now, "stop_loss", None)
+                        or facts.get("stop_loss"),
                         run_id=run_id,
                     )
                     # EVERY verdict leaves a durable, machine-readable, per-symbol
