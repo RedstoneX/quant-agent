@@ -773,6 +773,15 @@ def format_levels_block(
 
 #: A target closer than this many ATRs is not a destination. Price is
 #: already there and the "reward" is one ordinary session's noise.
+#:
+#: **What it does NOT do, since 2026-09-30: choose the level.** It used to
+#: filter the candidate set, so a level inside this distance was dropped and
+#: the target promoted to the next level out — past the very structure the
+#: instrument had been rejected from. It now only LABELS the outcome
+#: (`TargetDerivation.target_inside_noise`), which is the question it was
+#: always asking: is the reward worth anything? Where that reward is
+#: measured to is a separate fact about the chart, and a wall does not stop
+#: being a wall by standing close.
 MIN_TARGET_ATR_MULTIPLE = 1.0
 
 #: Measured move, in sqrt(session)-scaled ATRs, claimed when no level stands
@@ -916,6 +925,15 @@ class TargetDerivation:
     model_target: float | None = None       # the LLM's guess, kept as evidence
     divergence_pct: float | None = None     # computed vs. the model's guess
     fault: str = ""          # one of the FAULT_* codes; "" otherwise
+    #: The target sits on a real structural level, but CLOSER to entry than
+    #: ``atr * min_target_atr_multiple`` — the whole reward is inside one
+    #: ordinary session's movement. A recorded FACT about the geometry, never
+    #: a refusal: the desk's ratified position is that reward:risk ranks a
+    #: trade and does not gate it (`src/risk/constants.py::
+    #: reward_risk_floor_applies`, owner 2026-09-17). Before 2026-09-30 this
+    #: condition was invisible, because such a level was dropped from the
+    #: candidate set and the target was promoted past it instead.
+    target_inside_noise: bool = False
 
     @property
     def refused(self) -> bool:
@@ -1107,15 +1125,59 @@ def derive_structural_target(
             guess,
         )
 
+    # THE WALL: the nearest structural level standing in this trade's way,
+    # partitioned against the ENTRY and with NO noise filter applied.
+    #
+    # **The noise floor used to select the level, and that is the defect
+    # this block fixes (META, 2026-09-21).** The filter was
+    # ``p > entry + noise``, so a level inside one ATR of entry did not
+    # merely fail to be a destination — it vanished from the candidate set,
+    # and `min(...)` then promoted the target to the NEXT level up, on the
+    # far side of the wall price had just been rejected from.
+    #
+    # Measured on the desk's own record: the intraday add at $728.41
+    # carried ATR $21.22, so the floor sat at $749.63 and swallowed the
+    # computed resistances at $730.41 (2 touches) and $739.84 (3 touches,
+    # the 2026-01-29 rejection). The target was set at $784.58 — above BOTH
+    # rejections and above the then 52-week high. Price stalled at $779.82
+    # and reversed. The level detector was never at fault: it found that
+    # structure over its 1800-day history and reported it. The selection
+    # threw it away.
+    #
+    # A level is not made irrelevant by being close. A wall two dollars
+    # overhead is the most relevant fact on the chart — it is simply a wall
+    # with very little room under it, which is a statement about the
+    # REWARD, not about where the level is. So the noise floor keeps its
+    # real job (`target_inside_noise` below: saying the reward is inside one
+    # ordinary session's movement) and loses the job it was never meant to
+    # do (choosing which level the desk trades toward).
+    #
+    # This is the rule this module already applied one step further out:
+    # `tests/test_target_derivation.py::
+    # test_a_nearer_shelf_still_fails_the_floor_and_that_is_the_answer`
+    # pins that a nearer shelf giving a WORSE payoff is the answer and the
+    # floor does not move to accommodate it. The same is true when the
+    # shelf is nearer still.
     if is_short:
-        directional = [p for p in usable if p < entry - noise]
-        nearest = max(directional) if directional else None
+        in_the_way = [p for p in usable if p < entry]
+        wall = max(in_the_way) if in_the_way else None
     else:
-        directional = [p for p in usable if p > entry + noise]
-        nearest = min(directional) if directional else None
+        in_the_way = [p for p in usable if p > entry]
+        wall = min(in_the_way) if in_the_way else None
 
-    if nearest is not None and abs(nearest - entry) <= reach:
-        price = round(nearest, 2)
+    # Kept under the old name for the branches below, whose meaning is
+    # unchanged: "the level this derivation measured itself against".
+    nearest = wall
+
+    if wall is not None and abs(wall - entry) <= reach:
+        price = round(wall, 2)
+        crowded = abs(wall - entry) < noise
+        room = (
+            f"; the reward is ${abs(wall - entry):,.2f}, INSIDE the "
+            f"${noise:,.2f} one-session noise floor — a wall with little "
+            f"room under it, recorded as such rather than stepped over"
+            if crowded else ""
+        )
         return TargetDerivation(
             price=price,
             basis="structural_level",
@@ -1124,12 +1186,13 @@ def derive_structural_target(
                 f"entry ${entry:,.2f} is ${price:,.2f} "
                 f"({(price - entry) / entry * 100:+.1f}%), reachable inside "
                 f"{horizon} sessions (ATR ${volatility:,.2f} x sqrt({horizon})"
-                f" x {max_reach_atr_multiple:g} = ${reach:,.2f})"
+                f" x {max_reach_atr_multiple:g} = ${reach:,.2f}){room}"
             ),
             level_used=price,
             horizon_reach=round(reach, 4),
             model_target=guess,
             divergence_pct=_divergence(price),
+            target_inside_noise=crowded,
         )
 
     # Past this point no level stands in the way within the horizon.
@@ -1171,6 +1234,16 @@ def derive_structural_target(
             guess,
         )
     raw = entry - projection if is_short else entry + projection
+    # A projection may never cross a wall either. This branch is reached
+    # only when `wall` is out of REACH, and the projection multiple is
+    # below the reach multiple at this module's own defaults, so the clamp
+    # is inert on the default path. It is not decoration: both multiples
+    # are caller-supplied parameters, so a caller passing a projection
+    # multiple at or above the reach multiple would otherwise reintroduce
+    # exactly the defect fixed above — an ATR target on the far side of a
+    # level the instrument has been rejected from.
+    if wall is not None:
+        raw = max(raw, wall) if is_short else min(raw, wall)
     if raw <= 0:
         # Only reachable on an extreme ATR-to-price ratio, but a short whose
         # projection runs through zero is arithmetic, not a trade.

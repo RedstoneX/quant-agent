@@ -3037,13 +3037,35 @@ class PortfolioConstructor:
             # (owner 2026-09-11, restated 2026-09-17). Nothing overhead is
             # expected to stop this stock. The RISK side is unchanged and
             # has already run above.
+            # The sentence used to end "There is no overhead level to
+            # measure a reward against" UNCONDITIONALLY. That is a claim
+            # about the chart, and on the label branch nothing had measured
+            # it: `is_trend_trade` returns True on `setup_type="breakout"`
+            # before it ever consults `structural_ceiling`. META,
+            # 2026-09-21, is the measured case — the derivation had found a
+            # real level and recorded `basis="structural_level"`, and this
+            # line asserted in the same record that no such level existed.
+            # Both cannot be true; the derivation was the true one. The log
+            # now states which of the two grounds the exemption rests on
+            # and never denies structure the desk itself computed.
+            ceiling = (
+                target_price is not None
+                and math.isfinite(target_price)
+                and target_price > 0
+            )
+            why = (
+                f"the desk's own level scan found a level overhead "
+                f"(target ${target_price:,.2f}), but a breakout is managed "
+                f"by trailing rather than to that level"
+                if ceiling else
+                "the desk's own level scan found nothing overhead to "
+                "measure a reward against"
+            )
             logger.info(
                 "Constructor: %s %s stop $%.2f [%s] shipped with NO "
-                "reward:risk check — breakout setup. There is no overhead "
-                "level to measure a reward against and the position is "
-                "managed by trailing, so approval rests on the risk side "
-                "alone.",
-                side_label, symbol, honoured, rule,
+                "reward:risk check — breakout setup: %s, so approval rests "
+                "on the risk side alone.",
+                side_label, symbol, honoured, rule, why,
             )
             return honoured
         reward_risk = self._reward_risk_at(

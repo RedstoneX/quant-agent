@@ -22,6 +22,67 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk aimed META above the wall, because a level too close to trade toward was deleted instead of reported
+
+**In plain words:** the desk works out where a stock is likely to run into
+trouble on the way up, and calls that the target. It had a rule saying a
+level almost on top of the current price is not worth aiming at, because the
+profit would be smaller than an ordinary day's wobble. That rule was right.
+What it then did was wrong: instead of saying "this trade has very little
+room", it threw that level away and aimed at the NEXT one up — on the far
+side of the very wall it had just decided not to mention. So the closer the
+wall, the further past it the desk aimed.
+
+META on 2026-09-21 is the measured case. The desk added to the position at
+$728.41 with a typical daily range of $21.22, which set the "too close"
+distance at $749.63. Its own chart scan had found resistance at $730.41 and
+at $739.84, the second of which the stock had been turned back from in
+January. Both sat under $749.63, so both were deleted, and the target was set
+at $785.20 — above both of those rejections and above the highest price the
+stock had traded in a year. The stock reached $779.82 and turned around.
+
+**What was ruled out, by reproducing it rather than reasoning about it.**
+Three explanations were checked against the desk's own code and five years of
+real bars, and all three were wrong. The scan does not look at too little
+history: it reads roughly five years and it found the relevant levels. It did
+not throw them away for being weak: they carried two and three touches, above
+the minimum. It does not ignore levels overhead. The level scan was correct
+throughout — the fault was entirely in which of its answers the target picked.
+
+**What the number was never doing, and what it was.** The target is not, and
+since the owner's ruling of 2026-09-30 is explicitly not, a signal to sell.
+Nothing sells because a target is reached. So aiming too high did not cost a
+sale. What it did cost is honesty in two places that do use the number: the
+reward-versus-risk figure calculated at entry, which is a live tie-break when
+the desk ranks which candidates to buy, and the owner's own messages, where
+the target is stated as what the desk expects. On the three affected
+positions the reward figure was overstated by 5.7x, 1.9x and 28.4x against
+the first real wall. Two of those three were the kind of setup whose reward
+figure does feed ranking, so a worse trade could outrank a better one.
+
+**What changed.** The "too close" distance no longer decides WHICH level the
+desk aims at. It only labels the answer: the target is the nearest wall,
+full stop, and when the room under that wall is smaller than a day's range
+the trade now carries a recorded flag saying exactly that. Nothing is
+refused that was not refused before — the desk ruled in 2026-09-17 that a
+reward figure ranks a trade and never blocks one — so this makes the desk
+honest about thin trades rather than blind to them.
+
+**What would catch it next time.** The test that used to guard this
+behaviour asserted the bug: it said in so many words "skip it and take the
+next real level out". A test can pin a defect as confidently as it pins a
+fix, and this one did for weeks. It is now inverted and carries the META
+numbers, so the specific chart that produced the error is the thing under
+test.
+
+**Still open, deliberately not fixed here.** Two residues, both reported
+rather than quietly handled. A rejection only counts as a wall when at least
+two turning points sit within one percent of each other, so META's third
+rejection at $756.59 is a single touch and is invisible; widening that would
+mean inventing a number, which is the thing this desk forbids. And a
+position built in two purchases carries a target per purchase, with the last
+one written winning — META holds $730.99 and $785.20 against one position.
+
 ### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 stays open on its own criterion, item 119's attempt half closed)
 
 **In plain words:** the desk fetches fifteen economic readings before it decides anything. It gives that whole job ninety seconds. Whoever went first was allowed to spend as much of the ninety seconds as it liked, so on a bad morning one reading that hung on a dead connection would use the lot and the desk simply never asked for the last five or eight at all. Nobody chose that; it fell out of sharing one stopwatch with no rule about whose turn it was. Each reading now has its own reserved slice of the ninety seconds, and nothing — not a retry, not a second attempt, not the little lookup that only decides how to LABEL a reading — can spend a slice that belongs to a reading still waiting in line.
