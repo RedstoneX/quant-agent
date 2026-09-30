@@ -458,8 +458,18 @@ def prepare_short_add(
         is restored and the caller must NOT fall through to open a new short.
 
     KNOWN LIMITATIONS, shared with the long path (do not re-solve here):
-      * the cancel→rearm window (~15s) is unprotected; a short's upside is
-        unbounded there, but the WAL row + cancel-confirm cover a crash;
+      * the cancel→rearm window is unprotected and exposes the WHOLE
+        position, not just the dollars being added; a short's upside is
+        unbounded there, but the WAL row + cancel-confirm cover a crash.
+        MEASURED 2026-09-30 over the complete production record of this
+        feature (14 cancel/rearm pairs, board item 193): median 1s, worst
+        4s, ZERO unpaired cancels, median $1,209 of position exposed and a
+        median expected adverse move of $0.24. This line used to say "~15s",
+        which no measurement ever supported and which overstated the window
+        by roughly four times. The figures bound the window rather than
+        measure it: they are database write times at whole-second
+        resolution, not broker acknowledgements, and they price an ordinary
+        few-second drift, NOT the gap or halt a protective stop exists for;
       * the borrow gate is a lifetime-cached per-asset boolean, not a locate
         count, so borrow is not re-verified at the add size;
       * borrow-fee / dividend / Reg-SHO are not modeled in paper.
