@@ -314,13 +314,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 190)
 
-**192. The local Python interpreter could silently drift from the one CI runs, with nothing checking it — filed 2026-09-30.** CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured 3.12.3, and nothing anywhere pinned or checked the two against each other. The drift already cost real time once: a prompt-drift check hashed `ast.dump()` of a parsed function, and Python 3.12 added a `type_params` field to `FunctionDef`/`AsyncFunctionDef`/`ClassDef` that 3.11 doesn't have, so the same unchanged source hashed differently under the two interpreters — CI went red, local ran green, and two agents produced confident but wrong diagnoses before the version skew itself was found.
-
-DONE WHEN:
-  - [x] the exact CI version is written in one place (`.python-version`) that both CI jobs read via `python-version-file`, instead of each job carrying its own literal
-  - [x] any local pytest run, including a single test file, fails immediately and names both versions plus which one CI uses, if the running interpreter doesn't match the pin (`tests/conftest.py`, fires at collection so it can't be skipped by running one file)
-  - [ ] the existing `.venv` (measured 3.12.3) actually gets rebuilt on the pinned 3.11 — deliberately NOT done here: other sessions run against that `.venv` right now, so a live rebuild is a scheduling call, not something this change should force mid-flight
-
 **194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").** `src.risk.target_revision` gained `TRIGGER_WALL_IN_FRONT_OF_TARGET`: a structural level still in the way standing between the entry and the stored target is now a structural event that legitimises a re-derivation, the mirror of `TRIGGER_LEVEL_BROKEN`. The residue is the way in, not the trigger. `assess_target_revision` only ever runs on a symbol a seat has raised a `TargetRevisionFlag` for, so a position whose chart grows a wall while no seat happens to mention it is reported daily by `quant-agent-stored-target-check.timer` and never re-derived. Measured on the live book 2026-09-30, that is AAPL (stored $359.93, wall $344.81) and NOK (stored $12.25, wall $11.09), neither of which any seat had flagged. Whether the guard's own finding should itself be a way in — a deterministic, non-LLM path into the same adjudication — is the open question, and it writes to live position records, so it is not self-authorised.
 
 DONE WHEN:
@@ -362,6 +355,7 @@ detail: docs/BOARD_NOTES.md (item 197)
 - retired queue: 163
 - retired queue: 86, 173
 - retired queue: 198
+- retired queue: 192
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
