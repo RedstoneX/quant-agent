@@ -718,6 +718,22 @@ It also fails on `origin/main` today, taking ~196 seconds of live fetching
 caused by it.
 ## items 182 / 183 / 185 / 186 — consolidation check against item 90 (2026-09-30)
 **Verdict: all four KEPT, none retired.** Each opens with "item 90's half two, surfaced for visibility", but each carries its own DONE WHEN criteria that item 90 does not own: 182 the ladder alert and cash-deficit cushion, 183 the order gates and the dead cash-sweep config removal, 185 the ATR-eligibility question and its two inherited rows, 186 three open owner-appetite answers. Retiring any would lose those criteria. The defect found was in item 90 itself: it claimed the four carry one word-for-word shared criterion, which was false (checked against each block). Item 90's line now names the four tranches and what each covers. No constant, threshold or value was chosen or changed.
+## Item 192 (RETIRED 2026-09-30) — local interpreter pinned to CI's
+Retired because all three DONE WHEN criteria are satisfied on main, not because
+the item was abandoned.
+- `.python-version` on main reads `3.11`, and both CI jobs read it via
+  `python-version-file` rather than each naming a version.
+- A local pytest run aborts and names both versions when the running
+  interpreter is not the pinned one (shipped in #792).
+- The last open criterion — actually rebuilding the dev `.venv`, which measured
+  3.12.3 — was completed 2026-09-30: `pip install uv`, `uv python install 3.11`,
+  `uv venv --python 3.11`. `/home/ubuntu/projects/quant-agent/.venv` now measures
+  **Python 3.11.16** [measured: `.venv/bin/python -V`]. The previous interpreter
+  is preserved at `.venv312` so any session mid-run on it is not broken.
+Why it mattered: the split was the direct cause of two confident, wrong agent
+diagnoses in one session. A prompt-drift check hashed `ast.dump()` of a parsed
+function, 3.12 changed that output, and identical source hashed differently
+locally and in CI.
 ## item 200
 
 **Plain language —** The desk's to-do list lives in one file, and that file had a hard size limit it was about to hit. Once it is nearly full, each change is only allowed to add a few thousand characters, so ordinary work started getting turned away for being too wordy rather than wrong. The fix was to lift the long back-story, old measurements and abandoned proposals out of the still-open entries and park them, word for word, in this file, leaving the to-do list as a short list of what is open and what would finish it.

@@ -280,15 +280,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 190)
 
-**192. The local Python interpreter could silently drift from the one CI runs, with nothing checking it — filed 2026-09-30.**
-
-DONE WHEN:
-  - [x] the exact CI version is written in one place (`.python-version`) that both CI jobs read via `python-version-file`, instead of each job carrying its own literal
-  - [x] any local pytest run, including a single test file, fails immediately and names both versions plus which one CI uses, if the running interpreter doesn't match the pin (`tests/conftest.py`, fires at collection so it can't be skipped by running one file)
-  - [ ] the existing `.venv` (measured 3.12.3) actually gets rebuilt on the pinned 3.11 — deliberately NOT done here: other sessions run against that `.venv` right now, so a live rebuild is a scheduling call, not something this change should force mid-flight
-
-detail: docs/BOARD_NOTES.md (item 192)
-
 **194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").**
 
 DONE WHEN:
@@ -362,12 +353,13 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
+- retired queue: 192
 - retired queue: 147
-- retired queue: 77
-- retired queue: 183
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
