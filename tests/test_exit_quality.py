@@ -433,33 +433,66 @@ def _unprotected_pipeline() -> TradingPipeline:
     return pipeline
 
 
-def test_trail_typo_floor_is_read_off_the_instrument_not_half_of_price():
-    """GE at $360 with ATR14 $8: the widest stop this desk can place is
-    3.00 x ATR = $24 out, a floor of $336. A $300 stop is past it and is
-    refused as a typo — the old flat rule refused only below $180, so a
-    digit typed in the wrong place walked straight through."""
+def test_an_unprotected_position_is_always_left_WITH_a_stop():
+    """Board item 185 + board item 80. GE at $360 with ATR14 $8: the widest
+    stop this desk can place is 3.00 x ATR = $24 out, a floor of $336. A
+    $300 proposal is past it and reads as a typed digit in the wrong place.
+
+    The FIRST draft of this change REFUSED it — and the branch it runs on
+    is the one where the live broker stop could not be read, i.e. exactly
+    where the position may have no protection at all, so refusing ended the
+    loop with the name naked. That is the owner's board-item-80 ruling
+    inverted. The proposal is CLAMPED to $336 and placed instead.
+    """
     pipeline = _unprotected_pipeline()
+    pipeline._record_exit_refusal = MagicMock()
     orders = pipeline._midday_execute_llm_actions(
         positions=[GE], run_id="r-185",
         review=_trail_review("GE", 300.0, "TARGET_BREACH — locking in gains"),
     )
-    assert orders == []
-    pipeline.broker.replace_stop_loss.assert_not_called()
-    # And it is not a blanket refusal: a stop inside the widest the desk can
-    # place, and outside the noise band, still goes through.
-    ok = _unprotected_pipeline()
-    orders = ok._midday_execute_llm_actions(
+    # A stop IS placed, at the widest the desk's own rules can produce.
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 336.0)
+    # And the substitution is durable and per-symbol, not just a log line.
+    from src.risk.exit_refusal import CODE_TRAIL_CLAMPED_TO_WIDEST
+    kwargs = pipeline._record_exit_refusal.call_args.kwargs
+    assert kwargs["symbol"] == "GE"
+    assert kwargs["code"] == CODE_TRAIL_CLAMPED_TO_WIDEST
+    assert kwargs["dropped"] is False
+    assert "336" in kwargs["detail"]
+
+
+def test_a_stop_the_desk_could_legitimately_place_is_left_alone():
+    """The clamp is not a blanket rewrite: a proposal inside the widest
+    stop, and outside the noise band, reaches the broker untouched."""
+    pipeline = _unprotected_pipeline()
+    orders = pipeline._midday_execute_llm_actions(
         positions=[GE], run_id="r-185",
         review=_trail_review("GE", 340.0, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 340.0)
 
 
-def test_trail_typo_floor_never_refuses_a_protective_raise():
+def test_the_clamped_stop_cannot_then_be_thrown_out_by_the_noise_band():
+    """The clamped price is 3.00 x ATR below price and the noise floor is
+    1.25 x ATR below it, so the clamp can never hand the noise-band clamp a
+    stop it will reject — which would put the naked position back."""
+    pipeline = _unprotected_pipeline()
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[GE], run_id="r-185",
+        # No hard trigger in the reason, so the RC1 clamps below DO run.
+        review=_trail_review("GE", 10.0, "trimming risk into the close"),
+    )
+    assert len(orders) == 1
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 336.0)
+
+
+def test_a_readable_live_stop_is_governed_by_the_ratchet_not_the_clamp():
     """Where the live stop IS readable the min-ratchet floor is strictly
-    stronger than any width bound, so the width guard must not run there as
-    well: a WIDE raise over a low live stop is protection being added, and
-    refusing it would leave the lower stop standing."""
+    stronger than any width bound, so the clamp must not run there as well:
+    a WIDE raise over a low live stop is protection being added, and
+    narrowing or refusing it would work against the raise."""
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
     pipeline.broker.get_current_stop_price.return_value = 300.0

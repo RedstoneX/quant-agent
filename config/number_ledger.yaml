@@ -625,6 +625,20 @@ numbers:
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
       That phrase is at src/portfolio_constructor.py, not here.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
     open_question: >-
       The published 2.5-3.0x swing-stop consensus is a source for the RANGE.
       What in this desk's own maximum-adverse-excursion record picks the point
@@ -2044,6 +2058,20 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
   - id: src.portfolio_constructor.ConstructorConfig.min_target_atr_multiple
     value: 1
     status: derived
@@ -2101,6 +2129,14 @@ numbers:
       removed, because removing them would narrow risk-off stops. Ratified, not
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
+      ITEM 185, 2026-09-30 — this scaler is now also the widest factor in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (2.5 x 1.00
+      x 1.20 = 3.00), which sets the midday TRAIL_STOP clamp and the
+      universe screen's volatility ceiling (1 / 3.00) after the flat 0.5
+      literal they shared was deleted. That composition is not a derivation:
+      it replaces one arbitrary literal with a live dependency on this row
+      and on `min_stop_atr_multiple`, both still arbitrary and both still
+      carrying open questions. Board item 185 stays open.
     open_question: >-
       By how much should stop width scale with volatility regime, measured on
       this desk's own maximum adverse excursion by regime?

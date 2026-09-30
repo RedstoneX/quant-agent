@@ -248,6 +248,81 @@ def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
     assert 1.0 - widest * th.max_atr_fraction == pytest.approx(0.0)
 
 
+
+def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
+    """Board item 185, finding 8. The two sides used to resolve the base stop
+    multiple by DIFFERENT routes — the screen straight off
+    `config.risk.min_stop_atr_multiple`, the midday clamp off the live
+    `ConstructorConfig` that `pipeline.build_constructor_config` builds with
+    its own (different) fallback — and neither passed the setup/regime
+    scalers, so they agreed only because both landed on the class defaults.
+
+    The pipeline now hands the screen the SAME live `ConstructorConfig` the
+    clamp reads. This pins that: a divergence has to fail here rather than
+    pass silently.
+    """
+    from src.portfolio_constructor import (
+        ConstructorConfig, widest_reachable_stop_atr_multiple,
+    )
+    cfg = ConstructorConfig()
+    # What the midday clamp computes, from the live constructor config.
+    clamp_multiple = widest_reachable_stop_atr_multiple(
+        cfg.min_stop_atr_multiple,
+        cfg.stop_atr_setup_scale,
+        cfg.stop_atr_regime_scale,
+    )
+    config = SimpleNamespace(
+        universe_screen=UniverseScreenConfig(),
+        execution=SimpleNamespace(max_entry_slippage_bps=40.0),
+        risk=SimpleNamespace(min_stop_atr_multiple=cfg.min_stop_atr_multiple),
+    )
+    th = us.ScreenThresholds.from_config(config, cfg)
+    assert th.max_atr_fraction == pytest.approx(1.0 / clamp_multiple)
+
+    # And the wiring is real: both live call sites pass the constructor's
+    # own config object, so this cannot be satisfied by coincidence.
+    import re
+    from pathlib import Path
+    src = Path(us.__file__).resolve().parent / "pipeline.py"
+    calls = re.findall(
+        r"ScreenThresholds\.from_config\(\s*([^)]*?)\)",
+        src.read_text(encoding="utf-8"),
+    )
+    assert calls, "no ScreenThresholds.from_config call found in pipeline.py"
+    for call in calls:
+        assert "_constructor_cfg_or_none" in call, call
+
+    # A moved base multiple must move BOTH sides together.
+    moved = ConstructorConfig(min_stop_atr_multiple=4.0)
+    moved_config = SimpleNamespace(
+        universe_screen=UniverseScreenConfig(),
+        execution=SimpleNamespace(max_entry_slippage_bps=40.0),
+        risk=SimpleNamespace(min_stop_atr_multiple=4.0),
+    )
+    moved_th = us.ScreenThresholds.from_config(moved_config, moved)
+    moved_clamp = widest_reachable_stop_atr_multiple(
+        moved.min_stop_atr_multiple,
+        moved.stop_atr_setup_scale,
+        moved.stop_atr_regime_scale,
+    )
+    assert moved_clamp == pytest.approx(4.8)
+    assert moved_th.max_atr_fraction == pytest.approx(1.0 / moved_clamp)
+
+
+def test_the_volatility_ceiling_is_not_an_appetite_number():
+    """Board item 185 STAYS OPEN. 1/3.00 is the point where the widest
+    legitimate stop lands at or below zero — arithmetic non-degeneracy, not
+    a statement about how volatile a name this desk will hold. It is far
+    past anything the desk has recorded (max observed ATR14/price 8.11%,
+    median 2.97% [measured 2026-09-30, n=46 constructor stop lines across
+    every retained production log 2026-08-31 to 2026-09-30]), so it has
+    never bound and would not. This test exists so that a future reader who
+    finds 33.3% does not mistake it for an answered question.
+    """
+    assert TH.max_atr_fraction == pytest.approx(1.0 / 3.0)
+    max_observed_atr_fraction = 0.0811
+    assert max_observed_atr_fraction < TH.max_atr_fraction
+
 # ---------------------------------------------------------- size/sector ----
 
 def test_small_company_is_refused():

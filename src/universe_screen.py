@@ -180,7 +180,23 @@ class ScreenThresholds:
     min_history_bars: int
 
     @classmethod
-    def from_config(cls, config) -> "ScreenThresholds":
+    def from_config(cls, config, constructor_cfg=None) -> "ScreenThresholds":
+        """`constructor_cfg` is the LIVE `ConstructorConfig` the desk places
+        stops with; the pipeline passes `self.portfolio_constructor.cfg`.
+
+        It is a parameter rather than something re-resolved here because the
+        volatility ceiling below is 1 / the widest stop the desk can place,
+        and "the desk" means the constructor that will actually place it. The
+        two used to resolve the base multiple by DIFFERENT routes -- the
+        screen straight off `config.risk.min_stop_atr_multiple`, the
+        constructor through `pipeline.build_constructor_config`'s
+        `_risk_setting` (whose own fallback is a different number) -- and
+        neither passed the setup/regime scalers at all, so the two agreed
+        only because both happened to land on the class defaults. Passing the
+        live object removes the second route. When it is absent (tests, and
+        any caller with no constructor to hand) the old route is used and
+        the values are the class defaults.
+        """
         from src.data.context import _SLOPE_LOOKBACK
         from src.data.technical import LONGEST_INDICATOR_WINDOW
         # Imported here, not at module scope: `portfolio_constructor` is a
@@ -203,8 +219,16 @@ class ScreenThresholds:
             # the guard now reads the instrument, and this ceiling is the
             # arithmetic point where the widest legitimate stop would sit
             # at or below zero.
-            max_atr_fraction=1.0 / widest_reachable_stop_atr_multiple(
-                float(config.risk.min_stop_atr_multiple),
+            max_atr_fraction=1.0 / (
+                widest_reachable_stop_atr_multiple(
+                    constructor_cfg.min_stop_atr_multiple,
+                    constructor_cfg.stop_atr_setup_scale,
+                    constructor_cfg.stop_atr_regime_scale,
+                )
+                if constructor_cfg is not None
+                else widest_reachable_stop_atr_multiple(
+                    float(config.risk.min_stop_atr_multiple),
+                )
             ),
             min_history_bars=int(LONGEST_INDICATOR_WINDOW + _SLOPE_LOOKBACK),
         )
