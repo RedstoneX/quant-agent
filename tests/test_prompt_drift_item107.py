@@ -15,6 +15,7 @@ No test here makes a model call.
 """
 from __future__ import annotations
 
+import ast
 import re
 import textwrap
 from pathlib import Path
@@ -45,6 +46,41 @@ def test_the_live_registry_agrees_with_the_live_tree():
     and has not yet re-read the sentences that describe it."""
     problems = prompt_bindings.check(REPO_ROOT)
     assert problems == [], "\n\n".join(problems)
+
+
+def test_the_code_digest_does_not_depend_on_the_interpreter():
+    """A pin is worthless if two Pythons disagree about what it should be.
+
+    [measured 2026-09-30, by digesting this sample under both field sets
+    on CPython 3.12.3] the earlier `ast.dump` recipe gave this sample
+    `01e861ad46f60ab8` with 3.12's `FunctionDef._fields` and
+    `1ff80bdc562a7cee` with 3.11's, because 3.12 added `type_params` to
+    that tuple and `ast.dump` prints every field it finds. CI runs 3.11; a
+    developer on 3.12 pinned the registry from 3.12 and CI then reported
+    that two untouched mechanisms had changed their behaviour. Under
+    `_canonical_source` both field sets give `83ff4a113158a3dc`.
+
+    If this assertion ever fails, the digest recipe moved. EVERY digest in
+    `config/prompt_bindings.yaml` is then meaningless and must be re-pinned
+    deliberately — do NOT read a failure of the live-registry test above as
+    a real behaviour change until this one is green.
+    """
+    sample = textwrap.dedent(
+        '''
+        def sample(a, b=2, *args, **kwargs):
+            """A docstring the digest must drop."""
+            if a > b:
+                return [x * 2 for x in args]
+            return {k: v for k, v in kwargs.items()}
+        ''',
+    )
+    node = prompt_bindings._strip_docstring(ast.parse(sample).body[0])
+    assert prompt_bindings._canonical_source(node) == (
+        "def sample(a, b=2, *args, **kwargs):\n"
+        "    if a > b:\n"
+        "        return [x * 2 for x in args]\n"
+        "    return {k: v for k, v in kwargs.items()}"
+    )
 
 
 def test_the_registry_is_not_empty():

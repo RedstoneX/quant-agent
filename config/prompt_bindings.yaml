@@ -44,7 +44,7 @@ bindings:
         contains:
           - "| 5 | Drift trim >"
           - "`positions_drift_flagged` — holdings with Weight >"
-    code_digest: "6a9859462f024c49"
+    code_digest: "56f62680e3d044a9"
     prose_digest: "dae1d24c36df9247"
 
   - name: constructor_stop_widening
@@ -70,5 +70,5 @@ bindings:
           - "the stop is honoured exactly as you placed it"
           - "pushed out to a deterministic minimum distance"
           - "Absolute backstop, applied in code even to a level-backed stop"
-    code_digest: "2d35148fddbc181a"
+    code_digest: "cad395456f1b3480"
     prose_digest: "95abcef3c955d171"

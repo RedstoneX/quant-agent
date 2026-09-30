@@ -34,10 +34,13 @@ nobody writes a rule a machine has to understand. The registry is a list of
 at the second when you touch the first.
 
 THE CODE DIGEST IGNORES COSMETICS ON PURPOSE. It is taken over the parsed
-syntax tree with docstrings dropped and without source positions, so
-reformatting, renaming a local, moving the function, or rewriting its
-docstring does not fire. What fires is a change to what the function
-computes — which is precisely when somebody should re-read the prose.
+syntax tree with docstrings dropped, re-rendered to source by
+`ast.unparse`, so comments, blank lines, line breaks, quote style, moving
+the function, or rewriting its docstring do not fire. What fires is a
+change to what the function computes — which is precisely when somebody
+should re-read the prose. It must also not fire on the INTERPRETER: see
+`_canonical_source` for the 3.11-versus-3.12 failure that rule is there to
+prevent.
 
 IT IS STILL A CONVENTION AT THE EDGES, SAID PLAINLY. It only covers pairs
 somebody registered. It cannot tell a prose fix from a prose regression; it
@@ -138,6 +141,31 @@ def _find_symbol(tree: ast.AST, symbol: str) -> ast.AST | None:
     return node
 
 
+def _canonical_source(node: ast.AST) -> str:
+    """The one text this module digests. It MUST NOT vary by interpreter.
+
+    `ast.dump` was the obvious choice and is the wrong one. It prints every
+    name in `node._fields`, and that tuple GROWS between Python releases:
+    3.12 added `type_params` to `FunctionDef`, `AsyncFunctionDef` and
+    `ClassDef`, so the same unchanged function digests differently on 3.11
+    and on 3.12. That is not a hypothetical — it is what made this check
+    green on a developer's 3.12 and red on CI's 3.11, reporting "the
+    BEHAVIOUR changed" about code nobody had touched. A check that accuses
+    the wrong edit is worse than no check, because the next person re-pins
+    to silence it and the pin then means nothing.
+
+    `ast.unparse` renders the tree back to source instead of enumerating
+    fields, so a field added to a node type in a later release changes
+    nothing here. It keeps the property the digest is for: positions,
+    blank lines, comments and formatting are already gone by the time it
+    runs, so reformatting does not fire and a changed computation does.
+    `tests/test_prompt_drift_item107.py` pins the digest of a fixed sample
+    so that if a future release does move this output, the build says so in
+    those words rather than blaming an innocent binding.
+    """
+    return ast.unparse(node)
+
+
 def code_digest(root: Path, anchors: tuple[CodeAnchor, ...]) -> str:
     """A digest of WHAT the bound functions compute, not how they are typed."""
     parts: list[str] = []
@@ -160,7 +188,7 @@ def code_digest(root: Path, anchors: tuple[CodeAnchor, ...]) -> str:
                 f"function or class. A rename is a change: update the "
                 f"binding and re-read the prose it is paired with.",
             )
-        parts.append(ast.dump(_strip_docstring(node), include_attributes=False))
+        parts.append(_canonical_source(_strip_docstring(node)))
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
