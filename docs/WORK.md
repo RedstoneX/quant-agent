@@ -330,7 +330,7 @@ detail: docs/BOARD_NOTES.md (item 194)
 **193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
 
 DONE WHEN:
-  - [ ] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping
+  - [x] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping — every scale-in now emits its own measured window (2026-09-30)
   - [ ] the gap between write-ahead-log row ids and filed cancel events is explained, so the pair count is known to be complete rather than a floor
   - [ ] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check
 

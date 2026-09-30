@@ -522,6 +522,38 @@ Measurement only. No production code was written or changed for it; both events 
 
 **Method.** Both events land in `specialist_evidence` with `kind='pipeline_event'` (via `_record_pipeline_event` -> `_persist_evidence` -> `Database.insert_specialist_evidence`); there is no `pipeline_events` table. The live file was copied out with its `-wal` and `-shm` sidecars and the counts agreed with and without them. Exposure per event is `abs(held_qty_before)` from the cancel event's own payload multiplied by the add's fill price from the `trades` row for the same run and symbol. Volatility is the standard deviation of the last 20 daily close-to-close log returns strictly before the event date, from daily bars for that name, scaled to the window by `sigma_daily * sqrt(seconds / 23400)`. No volatility number was assumed or carried over from anywhere.
 
+**2026-09-30 — the window is now self-measuring, and amending cannot remove it.**
+Each scale-in that cancels a protective stop emits one `scale_in` /
+`unprotected_window_closed` event (or `unprotected_window_still_open` when the
+rearm did not land) at the moment the rearm attempt returns. Both ends are
+`time.monotonic()` readings taken inside the run — the broker's cancel
+acknowledgement and the broker's rearm acknowledgement — so the figure never
+reflects a row's write time, which was the first DONE WHEN. The event carries
+`window_seconds`, the WHOLE `held_qty_before` the cancel exposed (abs()ed, so a
+short reads positive), `exposed_notional` (None, never a fabricated 0, when the
+reference price is unknowable) and the same `wal_row_id` as the cancel event, so
+an unpaired cancel is a visibly missing partner rather than something inferred
+from row-id arithmetic. Both new outcome words joined `UNDECIDED_OUTCOMES`:
+they are mid-add bookkeeping and rule on nothing.
+
+**Amending does not close this window.** The desk measured on the rehearsal
+account that Alpaca amends a resting stop's price in place, and `broker.py`
+grew an amend path. It does not apply here. The cancel exists because a resting
+protective SELL holds the shares and collides with the BUY add; a price amend
+leaves that SELL open, so the collision — and the reason for the cancel — is
+unchanged. The quantity amend that WOULD cover an enlarged position is refused
+by this broker on a fractional order (42210000), and scale-in adds are routinely
+fractional. The window is a property of the broker's order model, not of the
+desk's sequencing, so the remaining work is detection and bounding, not removal.
+
+**Still open.** The second DONE WHEN (explaining the historical write-ahead-log
+row-id gap, so the 14-pair count is known complete rather than a floor) is
+unaddressed: the new event makes FUTURE pairs complete by construction but says
+nothing about the rows already filed. The third (answering "is any position
+naked right now, and for how long" without a one-off query) is also unmet — the
+new event is still something you have to go and read, and the coverage watchdog
+deliberately skips symbols mid-scale-in, which is exactly this window.
+
 **What was deliberately not done.** No fix, no alert, no change to `scale_in.py` — including the docstring's "~15 s", which the measurement contradicts but which is a code change and not this pass's mandate.
 
 ## item 197
