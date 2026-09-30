@@ -911,11 +911,19 @@ def assess_bugfix_backfill(
     atr: float | None,
     close_price: float | None,
     levels_coverage: str = COVERAGE_UNKNOWN,
-    min_target_atr_multiple: float = MIN_TARGET_ATR_MULTIPLE,
-    breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
-    max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
-    max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
-    break_margin_atr_multiple: float = BREAK_CONFIRMATION_ATR_MULTIPLE,
+    # DELIBERATELY `None`-defaulted rather than repeating the constants as
+    # defaults here. Written the other way these five would be five NEW
+    # numeric definition sites on the trade-governing path
+    # (`config/number_ledger.yaml`, `tests/test_number_sources.py`) — five
+    # more places a ratified bar could be changed in one and not the other.
+    # A caller that has read them off `risk_engine.config` passes them; a
+    # caller that has not gets `src.data.levels`' own module constants,
+    # which is where these values live and the only place they are stated.
+    min_target_atr_multiple: float | None = None,
+    breakout_projection_atr_multiple: float | None = None,
+    max_reach_atr_multiple: float | None = None,
+    max_horizon_sessions: int | None = None,
+    break_margin_atr_multiple: float | None = None,
 ) -> TargetRevisionOutcome:
     """Re-derive a held position's target because the DERIVATION was wrong,
     not because the chart changed.
@@ -1008,9 +1016,26 @@ def assess_bugfix_backfill(
         levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
         trigger=TRIGGER_DERIVATION_CORRECTED, sessions_held=None,
         allow_reanchor=False,
-        min_target_atr_multiple=min_target_atr_multiple,
-        breakout_projection_atr_multiple=breakout_projection_atr_multiple,
-        max_reach_atr_multiple=max_reach_atr_multiple,
-        max_horizon_sessions=max_horizon_sessions,
-        break_margin_atr_multiple=break_margin_atr_multiple,
+        min_target_atr_multiple=(
+            MIN_TARGET_ATR_MULTIPLE if min_target_atr_multiple is None
+            else min_target_atr_multiple
+        ),
+        breakout_projection_atr_multiple=(
+            BREAKOUT_PROJECTION_ATR_MULTIPLE
+            if breakout_projection_atr_multiple is None
+            else breakout_projection_atr_multiple
+        ),
+        max_reach_atr_multiple=(
+            MAX_REACH_ATR_MULTIPLE if max_reach_atr_multiple is None
+            else max_reach_atr_multiple
+        ),
+        max_horizon_sessions=(
+            MAX_HORIZON_SESSIONS if max_horizon_sessions is None
+            else max_horizon_sessions
+        ),
+        break_margin_atr_multiple=(
+            BREAK_CONFIRMATION_ATR_MULTIPLE
+            if break_margin_atr_multiple is None
+            else break_margin_atr_multiple
+        ),
     )
