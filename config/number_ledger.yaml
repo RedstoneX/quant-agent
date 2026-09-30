@@ -296,6 +296,21 @@ numbers:
       rests unfilled at the ceiling is now a recorded outcome rather than a
       refusal, so the rate at which 40bp is too tight to fill becomes
       measurable from the desk's own orders for the first time.
+      RATIFIED 2026-09-30 as owner appetite, board item 183, the last of
+      that item's five order-placement gates: the 2026-09-26 measurement
+      leaves a band of roughly 32bp to 390bp inside which the desk's own
+      filled and refused orders decide every observed case identically,
+      so nothing in the data or in published practice picks a figure and
+      40 is a choice, not a derivation. It is recorded as a dial rather
+      than changed, because inventing a replacement inside an
+      indifference band would be the same arbitrary act with a newer
+      date. Two successor routes stay open and are written into the
+      board item rather than lost here: reading the ceiling off each
+      name's own Corwin & Schultz half-spread once the reference-to-
+      submission drift term has its own instrument-read basis, and re-
+      measuring the untruncated fill rate now that the deleted 2% ask-
+      skip lets a too-tight entry rest and be recorded instead of being
+      pre-refused.
     open_question: >-
       The distribution is now measured and it does not pick a percentile,
       because the belt censors its own tail. Answering this needs data the
@@ -497,7 +512,11 @@ numbers:
       appetite 2026-09-25 (delegated to the adversary). Ratified, not sourced:
       40% is the crowding the owner accepts in one correlated cluster, but it
       still depends on a cluster definition whose own threshold
-      (CLUSTER_CORRELATION_THRESHOLD) is unsourced and NOT ratified here.
+      is unsourced and NOT ratified here. RESOLVED 2026-09-30: the cluster
+      definition no longer uses a correlation cutoff at all — membership is
+      read from the book's own correlation-distance tree (see the removal
+      note further down this file), so the 40% now applies to a structural
+      cluster rather than to a 0.7-threshold one.
     open_question: >-
       What share of the total risk budget can one correlated cluster take
       before the book stops being several bets and becomes one?
@@ -1308,59 +1327,56 @@ numbers:
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
-      much to trade. A wrong value degrades data availability, which is a
-      separate failure the seats already see as missing evidence.
-  - id: src.data.correlation.CLUSTER_CORRELATION_THRESHOLD
-    value: 0.7
-    status: arbitrary
-    site: src/data/correlation.py
-    note: >-
-      Called "the traditional finance cutoff" at the definition site with no
-      citation (2026-09-14 verification). It decides which names count as one
-      cluster, and therefore what max_cluster_risk_share_pct applies to.
-      ITEM 186 PASS 2026-09-26 — RESEARCHED, NOT SOURCEABLE, and the claim at
-      the definition site is corrected in the same commit because it was
-      untrue. There is no "traditional finance cutoff" for correlation-cluster
-      membership. The mainstream portfolio-clustering literature does not
-      threshold a correlation at all: it clusters hierarchically on a
-      correlation DISTANCE (Mantegna's correlation-based hierarchical
-      clustering and minimum spanning tree, and the risk-parity work built on
-      it), producing clusters with no cutoff to choose. Where thresholded
-      correlation NETWORKS are used instead, published cutoffs span roughly
-      0.3 to 0.8 and are selected for the network density a given study
-      wants, not from theory; correlation-network work reports 0.7 both as a
-      point where network structure changes abruptly and as a point where
-      noise starts to dominate the surviving edges — a description of what
-      0.7 does, not an endorsement of it. Adopting any of those numbers would
-      mean adopting a figure that measures a different quantity (the network
-      topology of some study's universe) than this desk's use (which of MY
-      held names are one bet).
-      The old open question below was also the wrong question and is
-      replaced: "above what correlation do two of this desk's names actually
-      FAIL together" is a question about past outcomes, and fitting a
-      threshold to realised joint losses is barred by the desk's own
-      no-fitting doctrine.
-      NO VALUE PICKED. The literature gives a RANGE and nothing inside it,
-      which is precisely the case the doctrine reserves for owner-ratified
-      appetite — and the owner has already flagged it once: the 40% cluster
-      share was ratified 2026-09-25 with the explicit caveat that the cluster
-      DEFINITION was "unsourced and NOT ratified here".
-    open_question: >-
-      OWNER APPETITE, routed and not answered: at what pairwise |correlation|
-      do you want two names treated as ONE bet for risk rationing? Lower
-      (0.5-0.6) merges more names into a cluster and rations harder, refusing
-      ideas as duplicates; higher (0.8) splits themes apart and lets a
-      crowded book pass. The mechanism amplifies whatever is picked, so this
-      matters more than the number looks: clustering here is TRANSITIVE, so
-      A~B and B~C puts A, B and C in one cluster even when A and C are
-      unrelated, and a lower cutoff grows clusters faster than the number
-      alone suggests. If you would rather not set a number at all, the
-      alternative is structural — replace the cutoff with distance-based
-      hierarchical clustering, which has no threshold to choose. That is a
-      build, not a value.
-    cost_while_unanswered: >-
-      Risk rationing across correlated clusters - the mechanism that stops one
-      theme taking the whole budget - keys off this one number.
+  # REMOVED 2026-09-30 (board item 186): the entry for
+  # src.data.correlation.CLUSTER_CORRELATION_THRESHOLD = 0.7 is gone because
+  # THE NUMBER IS GONE. It is not ratified, not re-derived and not replaced by
+  # another number. The research pass recorded here had already concluded the
+  # cutoff was not sourceable (published thresholded-correlation-network
+  # values span roughly 0.3-0.8, chosen for the network density a study
+  # wants; the mainstream portfolio-clustering literature thresholds nothing
+  # at all) and had named the structural alternative. The owner's 2026-09-30
+  # ruling — risk tolerance is never a global dial, it is read from structure
+  # or per name — made that alternative the required answer rather than an
+  # option, so the routed owner-appetite question is WITHDRAWN, not pending.
+  #
+  # WHAT SHIPPED. src/data/correlation.py now clusters on Mantegna's
+  # correlation distance d = sqrt(2 * (1 - |corr|)): build the minimum
+  # spanning tree of the held book and cut it at the largest gap in its own
+  # sorted edge lengths. The cut is read from the book in front of the desk,
+  # not picked. The only constant left is one fixed point of the metric
+  # itself — the distance at corr = 0, "no relationship" — which closes the
+  # top of the gap search and is never compared against a correlation to
+  # decide membership; it is a property of the formula, not a level, so it is
+  # deliberately NOT ledgered as appetite.
+  #
+  # STABILITY, MEASURED 2026-09-30 because a small book's tree has few edges
+  # and a moving cut would swing rationing with no market event behind it. On
+  # an 11-name book with three real themes (within-theme corr 0.78-0.90,
+  # cross-theme 0.35-0.50, three loners), nudging every correlation by up to
+  # 0.03 moved the partition in 0 of 400 draws. An earlier version of the cut
+  # also bracketed the edge lengths at the other end (d = 0, "identical");
+  # that version flipped in 11.8% of the same 400 draws AND returned no
+  # clusters at all on that book — a false negative in the exact case this
+  # code exists for — so the lower bracket was removed rather than guarded.
+  # The cost of having only the upper bracket is that a book with no
+  # structure at all, including any two-name book, comes back as ONE cluster
+  # instead of none. That is the conservative direction (it rations harder,
+  # never softer) and it is pinned by test.
+  #
+  # STILL TRANSITIVE, and that is the correct behaviour here: single linkage
+  # chains, so A~B and B~C is one bet even when A and C are apart, which is
+  # how a theme actually transmits (the nuclear names are one bet whether or
+  # not every pair inside is tight). The difference from the old cutoff is
+  # that a chain now only forms through links that are tight RELATIVE TO THE
+  # REST OF THE BOOK instead of as far as a fixed number allowed.
+  #
+  # This is rationing only. It never asks the desk to buy to diversify;
+  # conviction still outranks balance.
+  #
+  # The risk rule feeding max_cluster_risk_share_pct now asks for cluster
+  # membership (`cluster_peers`) instead of "who is above 0.7". The old
+  # pairwise helper survives only for callers supplying an explicit level of
+  # their own, and it no longer has a default.
   - id: src.data.levels.BREAKOUT_PROJECTION_ATR_MULTIPLE
     value: 1
     status: derived
@@ -2442,8 +2458,18 @@ numbers:
       Does the owner accept a noise band read from the published
       volatility-stop literature (~3 ATR, against today's 1.0), knowing it
       makes the desk markedly slower to accept that an adverse move is real?
-      That is a risk-appetite question, not a measurement, and it is the only
-      remaining route -- the literature offers a range, not a value.
+      That is a risk-appetite question, not a measurement.
+      SUPERSEDED 2026-09-30 by the owner ruling that risk tolerance is read
+      per name from that instrument's own behaviour and the seats'
+      conviction, never set as a global dial: asking the owner to pick one
+      global multiple is no longer an available route, and neither is
+      adopting 3.0 as a new global literal. The remaining route is therefore
+      to replace this constant with a per-name read of how far THIS
+      instrument ordinarily travels against a holding -- a reformulation of
+      the exit path, not a retune -- which was NOT built here because it
+      changes live selling behaviour and no measurement of that per-name
+      quantity has been taken yet. The literature (~3 ATR) bounds the answer;
+      it does not supply it.
     cost_while_unanswered: >-
       The band that decides whether an adverse move is real sits below every
       published volatility multiple, and it is the measured cause of the
@@ -2477,6 +2503,15 @@ numbers:
       short-term -- or accept an ATR margin nobody can source? The first is a
       real reformulation of the exit path and changes behaviour; the second is
       owner appetite. Nothing measurable decides between them.
+      SUPERSEDED 2026-09-30: the owner ruling that risk tolerance is read per
+      name, never as a global dial, closes the second option. NO BASIS
+      EXISTS, plainly stated: this margin is unidentifiable in ATRs, and no
+      replacement ATR figure is proposed here. What would give it one, and
+      the only remaining route, is re-expressing the margin in the units the
+      published work uses -- a percentage of price scaled by whether the
+      level is major or short-term (Edwards & Magee ~3% / ~1%) -- read per
+      name rather than set globally. That is a separate build; it was not
+      done here because it changes which positions keep their protection.
     cost_while_unanswered: >-
       Whether a structural level counts as broken, and therefore whether a
       position keeps its protection, turns on an ATR distance no published
@@ -2870,19 +2905,46 @@ numbers:
       not per-order fees. That leaves the number exactly where the
       2026-09-25 adversary ruling put it: a chosen churn-appetite threshold,
       ratified, neither sourceable nor measurable.
+      ATR RE-EXPRESSION ATTEMPTED AND FAILED 2026-09-30. The doctrine
+      objection was tested, not waved through: expressed in each name's own
+      ATR(14), "2% of the live stop" demands 0.31 ATR on MRVL, 0.33 on NET,
+      0.34 on RKLB, 0.47 on AMD, 0.52 on META and 0.91 on AAPL — the same
+      nominal rule asking for a ratchet nearly three times larger on one name
+      than another, which is exactly the incoherence the doctrine names. The
+      repair `k * ATR` was then measured against the seven production
+      refusals whose candidate could be reconstructed from daily bars, and it
+      does not work: every refused tighten fell between 0.12 and 0.50 ATR, so
+      any k >= 0.75 blocks all seven (strictly MORE than the flat 2%, which
+      lets one through) and only k <= 0.5 admits anything — and picking 0.25
+      to admit three of seven is fitting the constant to the outcomes the
+      data liked, the same failure as the 2.0 it would replace. No published
+      work fetched fixes a minimum stop-ADJUSTMENT size; the stop literature
+      addresses distance from price, which the noise band and the chandelier
+      already answer. Deleting the gate was rejected on a measured cost, not
+      a preference: `AlpacaBroker.replace_stop_loss` cannot edit an Alpaca OTO
+      stop leg in place, so every replace is cancel-then-resubmit with a real
+      window in which the position carries no protective order, and removing
+      the gate would have added seven such windows across nine evaluation
+      runs on an eleven-name book. The value stays 2.0 and the failure is on
+      file rather than quietly dropped.
     open_question: >-
-      RATIFIED — no value question remains. One structural question is left,
-      and it is about redundancy, not magnitude: whether
-      this gate is REDUNDANT given the two other clamps already on the same
-      TRAIL_STOP path: the ~2-4-session ratchet cooldown
-      (`_trail_tightened_recently`, 4 calendar days) and the 1.25x-ATR14
-      noise-band clamp — three churn-limiting gates stacked on one action
-      may be doing overlapping work. That is answerable from the desk's own
-      TRAIL_STOP refusal logs — which gate refused each trail — without any
-      new number and without owner input.
+      CLOSED 2026-09-30 — both halves are now answered from the desk's own
+      refusal record, with no new number and no owner input, exactly as this
+      question proposed. (1) The premise was wrong: there are TWO gates on
+      the deterministic path, not three. The ~2-4-session ratchet cooldown
+      (`_trail_tightened_recently`) is reached only from the discretionary
+      midday `TRAIL_STOP` branch in `src/pipeline.py` and never from
+      `_apply_deterministic_trails`, so it has never refused a deterministic
+      trail. (2) The two that ARE stacked are not redundant: all seven
+      reconstructed refusals sat OUTSIDE the 1.25x-ATR noise band, so the
+      noise band would have admitted every one of them and this gate is
+      doing independent work. No value question remains; the number is
+      ratified churn appetite and the ATR re-expression above failed on
+      measurement.
     cost_while_unanswered: >-
-      A genuine ratchet may be skipped by whichever of the three stacked
-      gates binds first, with no record of which one it was.
+      None outstanding. The refusal codes written to `specialist_evidence`
+      (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
+      name which gate refused each trail, which is what this entry wanted.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     value: 1.25
     status: arbitrary

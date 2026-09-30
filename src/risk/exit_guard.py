@@ -1706,6 +1706,15 @@ class StructuralProtectionCheck:
         "structural_level_intact",
         "noise_band_intact",
         "noise_band_broken",
+        # Board item 70, 2026-09-30. These two used to be reported as
+        # `noise_band_intact`, which was untrue in the machine-readable
+        # field even though the prose `detail` was honest: on neither path
+        # is the noise band evaluated at all. One is a position that has
+        # not moved against entry (nothing to compare to a band); the other
+        # is missing price/ATR (the band cannot be computed). A refusal must
+        # say which rule actually fired, so they now have their own names.
+        "no_adverse_move_from_entry",
+        "noise_band_unevaluable_no_data",
     ]
     detail: str
     #: True when TODAY's close (independent of the confirmation gate below)
@@ -2160,11 +2169,12 @@ def check_structural_protection(
         if adverse <= 0:
             # Flat or in profit — never this fallback's business.
             return StructuralProtectionCheck(
-                protected=True, basis="noise_band_intact",
+                protected=True, basis="no_adverse_move_from_entry",
                 detail=(
                     "no thesis_invalid_if and no verified structural level "
                     "under the stop, but price is flat/favourable versus "
-                    "entry — protected"
+                    "entry — protected; the noise band was NOT evaluated "
+                    "(there is no adverse move to compare against it)"
                 ),
                 raw_broken=False,
             )
@@ -2197,11 +2207,12 @@ def check_structural_protection(
     # protection rather than manufacture a block out of missing data (same
     # posture `adverse_move_is_noise` itself takes).
     return StructuralProtectionCheck(
-        protected=True, basis="noise_band_intact",
+        protected=True, basis="noise_band_unevaluable_no_data",
         detail=(
             "no thesis_invalid_if, no verified structural level under the "
             "stop, and insufficient price/ATR data to evaluate the noise "
-            "band — treated as protected"
+            "band — the band was NOT evaluated; treated as protected "
+            "because missing data must never manufacture a block"
         ),
         raw_broken=False,
     )

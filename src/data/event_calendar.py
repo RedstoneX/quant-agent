@@ -112,6 +112,7 @@ What the FREE path still does not cover is declared in `UNCOVERED_EVENTS`.
 import html as html_module
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -227,6 +228,113 @@ class ReleaseFailure:
     reason: str
 
 
+#: On-disk schema tag for the release-schedule cache. An unrecognised tag is
+#: a miss, which degrades to the live fetch this cache exists to relieve.
+RELEASE_SCHEDULE_CACHE_SCHEMA = "fred-release-schedule-cache/1"
+
+#: Default location of that cache. Sits beside the FRED series cache because
+#: it is written by the same pre-open job, for the same reason.
+RELEASE_SCHEDULE_CACHE_PATH = "data/macro/release_schedule_cache.json"
+
+
+class ReleaseScheduleCache:
+    """Forward release schedules written ahead of the open, read at the open.
+
+    WHY THIS EXISTS — board items 187 / 119
+    ---------------------------------------
+    Item 187's fair-share split (below, in `get_upcoming_events`) stopped one
+    slow release from eating the whole 20 s ceiling, and it stopped the tail of
+    `MACRO_RELEASES` starving on every single run. It did not make the fetch
+    fast enough to belong on the trading path, and the production log says so:
+    on 2026-09-30, with the split deployed, the 13:33 morning run still came
+    back 1/7 and the 14:04 run 0/7 [measured, `/home/qamc/quant-agent/
+    quant_agent.log`]. Seven serial HTTPS round trips to FRED, started inside
+    the first minutes after the opening bell — the same minute the fifteen-
+    series macro fetch used to fail in — cannot be made reliable by dividing
+    the same twenty seconds more fairly.
+
+    The fix is the one that already worked for the series fetch
+    (`src/data/macro_series_cache.py`): move the wire off the trading path.
+    A forward release schedule is the most cacheable thing this desk fetches
+    — FRED publishes CPI, PPI, PCE, GDP, Retail Sales, the Employment
+    Situation and Initial Jobless Claims months ahead, and the dates change
+    rarely. Nothing about "when is the next CPI" requires being asked at
+    09:30:49.
+
+    WHAT MAKES A CACHED COPY USABLE — two conditions, both existing numbers
+    ----------------------------------------------------------------------
+    Exactly the pair `FOMCCalendar` already uses on the same class of data (a
+    published forward calendar from a government source), for the same
+    reasons, with the same constant:
+
+    1. The entry was written no more than `cache_ttl_days` ago.
+    2. Its schedule still reaches the horizon being asked about. A young entry
+       whose last date stops short of the horizon cannot answer the question
+       and is a miss, not a near-enough hit.
+
+    No new threshold is introduced here.
+
+    WHAT IT DOES NOT DO
+    -------------------
+    It never invents a schedule. A release that is in neither the cache nor
+    the wire's answer stays a named failure in `EventCalendarCoverage`, and a
+    release answered from cache is reported as cached, with its age, wherever
+    the coverage prose travels. Only the prefetch writes: a trading session
+    can never turn its own partial run into tomorrow's cached answer.
+    """
+
+    def __init__(self, path: str = RELEASE_SCHEDULE_CACHE_PATH):
+        self.path = Path(path)
+
+    def _read(self) -> dict:
+        try:
+            if not self.path.exists():
+                return {}
+            raw = json.loads(self.path.read_text()) or {}
+        except Exception as e:  # noqa: BLE001 — a broken cache is a miss
+            logger.warning("Release-schedule cache unreadable (%s) — ignoring", e)
+            return {}
+        if raw.get("schema") != RELEASE_SCHEDULE_CACHE_SCHEMA:
+            return {}
+        entries = raw.get("releases")
+        return entries if isinstance(entries, dict) else {}
+
+    def load(self, release_id: int) -> tuple[list[date], date] | None:
+        """`(dates, fetched_on)` for one release, or None on any miss."""
+        entry = self._read().get(str(release_id))
+        if not isinstance(entry, dict):
+            return None
+        try:
+            fetched_on = date.fromisoformat(str(entry.get("fetched_on")))
+            dates = sorted(
+                date.fromisoformat(str(d)) for d in (entry.get("dates") or [])
+            )
+        except Exception:  # noqa: BLE001 — a malformed entry is a miss
+            return None
+        if not dates:
+            return None
+        return dates, fetched_on
+
+    def save(self, release_id: int, label: str, dates: list[date], today: date) -> None:
+        """Never raises: an unwritable cache costs a live fetch, not a session."""
+        try:
+            entries = self._read()
+            entries[str(release_id)] = {
+                "label": label,
+                "fetched_on": today.isoformat(),
+                "dates": [d.isoformat() for d in sorted(dates)],
+            }
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text(json.dumps({
+                "schema": RELEASE_SCHEDULE_CACHE_SCHEMA,
+                "releases": entries,
+            }, indent=2))
+            os.replace(tmp, self.path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Release-schedule cache unwritable: %s", e)
+
+
 @dataclass
 class MacroEvent:
     """One scheduled macro release date.
@@ -279,6 +387,10 @@ class EventCalendarCoverage:
     #: Next scheduled date for each release that HAS a published schedule but
     #: nothing inside the horizon. Never a failure; never rendered as one.
     next_beyond_horizon: list[MacroEvent] = field(default_factory=list)
+    #: `(label, age_in_days)` for each release answered out of the pre-open
+    #: schedule cache rather than the wire this run. A success, and a stated
+    #: one — never silently indistinguishable from a live read.
+    from_cache: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def failed_count(self) -> int:
@@ -303,6 +415,30 @@ class EventCalendarCoverage:
         return "ok"
 
     def describe(self) -> str:
+        """Coverage prose plus, when any release came off the pre-open cache,
+        an explicit sentence saying so.
+
+        A cached forward schedule is real published data, but it is not a
+        reading taken this run, and the desk's standing rule is that the seat
+        is told what it is actually looking at.
+        """
+        return self._describe_coverage() + self._describe_cache()
+
+    def _describe_cache(self) -> str:
+        if not self.from_cache:
+            return ""
+        served = ", ".join(
+            f"{label} (cached {age}d ago)" if age else f"{label} (cached today)"
+            for label, age in self.from_cache
+        )
+        return (
+            f" SERVED FROM THE PRE-OPEN SCHEDULE CACHE, not fetched this run: "
+            f"{served}. Published release schedules change rarely, so a cached "
+            f"copy is real data — but it is stated, never passed off as a live "
+            f"read."
+        )
+
+    def _describe_coverage(self) -> str:
         if self.configured == 0:
             return (
                 "Macro event calendar: NO releases configured (misconfiguration)."
@@ -358,6 +494,8 @@ class MacroEventCalendarProvider:
         breaker_after_failed_releases: int = 1,
         total_fetch_deadline_s: float = 20.0,
         releases: tuple[MacroRelease, ...] = MACRO_RELEASES,
+        schedule_cache_path: str = RELEASE_SCHEDULE_CACHE_PATH,
+        cache_ttl_days: float = 7.0,
     ):
         # Fail fast on a missing key, exactly as MacroDataProvider does: an
         # unset key would otherwise fail every request and present as an empty
@@ -396,6 +534,70 @@ class MacroEventCalendarProvider:
         #: call sites and changing its shape has a wider blast radius than the
         #: fix warrants.
         self.last_coverage: EventCalendarCoverage | None = None
+        self.schedule_cache = ReleaseScheduleCache(schedule_cache_path)
+        #: Same constant, same meaning and same justification as
+        #: `FOMCCalendar.cache_ttl_days` — see `ReleaseScheduleCache`.
+        self.cache_ttl_days = max(0.0, float(cache_ttl_days))
+        #: True only inside `prefetch_release_schedules()`. The prefetch never
+        #: READS the cache (its whole job is to refresh it) and the trading
+        #: path never WRITES it (so a partial session cannot become tomorrow's
+        #: cached answer).
+        self._prefetch_mode = False
+
+    # --- cache -------------------------------------------------------------
+
+    def _serve_from_cache(
+        self, release: MacroRelease, today: date, horizon_end: date,
+    ) -> tuple[list[date], int] | None:
+        """`(dates, age_days)` from the pre-open cache, or None to go to the
+        wire. Both conditions in `ReleaseScheduleCache` must hold."""
+        if self._prefetch_mode:
+            return None
+        loaded = self.schedule_cache.load(release.release_id)
+        if loaded is None:
+            return None
+        dates, fetched_on = loaded
+        age_days = (today - fetched_on).days
+        if age_days < 0 or age_days > self.cache_ttl_days:
+            return None
+        # The entry must still be able to ANSWER the question. Its query
+        # window ran `RELEASE_SCHEDULE_LOOKAHEAD_DAYS` forward from the day it
+        # was written, so it speaks for dates up to that point and no further;
+        # asked about a horizon beyond it, it cannot say whether a release
+        # lands there, and silence would read as "nothing scheduled".
+        covered_through = fetched_on + timedelta(days=RELEASE_SCHEDULE_LOOKAHEAD_DAYS)
+        if covered_through < horizon_end:
+            return None
+        # An entry whose every known date is already past is an exhausted
+        # schedule, not a forward one.
+        if max(dates) < today:
+            return None
+        return dates, age_days
+
+    def _collect(
+        self, release: MacroRelease, dates: list[date], today: date,
+        end: date, events: list[MacroEvent], beyond: list[MacroEvent],
+    ) -> None:
+        """Sort one release's published dates into inside-horizon events and,
+        failing that, the next date beyond it."""
+        def _event(event_date: date) -> MacroEvent:
+            return MacroEvent(
+                release_id=release.release_id,
+                label=release.label,
+                why=release.why,
+                event_date=event_date,
+                days_away=(event_date - today).days,
+            )
+
+        inside = [d for d in dates if today <= d <= end]
+        if inside:
+            events.extend(_event(d) for d in inside)
+            return
+        # Published, but nothing imminent. Name the next date rather than
+        # going quiet about a release the desk is still covering.
+        ahead = [d for d in dates if d > end]
+        if ahead:
+            beyond.append(_event(min(ahead)))
 
     # --- fetch plumbing ----------------------------------------------------
 
@@ -583,11 +785,25 @@ class MacroEventCalendarProvider:
         self._deadline = global_deadline
         self._consecutive_failed = 0
         succeeded = 0
+        from_cache: list[tuple[str, int]] = []
         failures: list[ReleaseFailure] = []
         events: list[MacroEvent] = []
         beyond: list[MacroEvent] = []
         try:
             for idx, release in enumerate(self.releases):
+                # The CACHE comes before the deadline check, because a release
+                # answered off the pre-open cache costs no wall clock at all
+                # and therefore hands its whole share forward to the releases
+                # that do have to go to the wire.
+                cached = self._serve_from_cache(release, today, end)
+                if cached is not None:
+                    dates, age_days = cached
+                    self._consecutive_failed = 0
+                    succeeded += 1
+                    from_cache.append((release.label, age_days))
+                    self._collect(release, dates, today, end, events, beyond)
+                    continue
+
                 # Hard wall-clock check FIRST — if earlier releases in this same
                 # call ate the whole budget, skip without even attempting. This
                 # is what actually bounds the worst case; retry/backoff below is
@@ -634,25 +850,11 @@ class MacroEventCalendarProvider:
                 # whether or not anything lands inside the horizon.
                 self._consecutive_failed = 0
                 succeeded += 1
-
-                def _event(event_date: date, _r: MacroRelease = release) -> MacroEvent:
-                    return MacroEvent(
-                        release_id=_r.release_id,
-                        label=_r.label,
-                        why=_r.why,
-                        event_date=event_date,
-                        days_away=(event_date - today).days,
+                if self._prefetch_mode and dates:
+                    self.schedule_cache.save(
+                        release.release_id, release.label, dates, today,
                     )
-
-                inside = [d for d in dates if today <= d <= end]
-                if inside:
-                    events.extend(_event(d) for d in inside)
-                    continue
-                # Published, but nothing imminent. Name the next date rather
-                # than going quiet about a release the desk is still covering.
-                ahead = [d for d in dates if d > end]
-                if ahead:
-                    beyond.append(_event(min(ahead)))
+                self._collect(release, dates, today, end, events, beyond)
         finally:
             self._deadline = None
             beyond.sort(key=lambda e: (e.event_date, e.label))
@@ -661,10 +863,33 @@ class MacroEventCalendarProvider:
                 succeeded=succeeded,
                 failed=failures,
                 next_beyond_horizon=beyond,
+                from_cache=from_cache,
             )
 
         events.sort(key=lambda e: (e.event_date, e.label))
         return events
+
+    def prefetch_release_schedules(self) -> EventCalendarCoverage | None:
+        """Refresh the on-disk release-schedule cache ahead of the open.
+
+        Runs from the existing pre-open timer job, off the trading path, where
+        a slow FRED costs nobody a session. It reads no cache (that would make
+        the job a no-op after its first success) and it is the only writer.
+
+        The ceiling here is deliberately the SAME `total_fetch_deadline_s` the
+        trading path uses, not a longer one: the measurement in
+        `get_upcoming_events` says the budget was never the problem, and a
+        prefetch that needs a bigger ceiling than the thing it replaces would
+        be the widened timeout this item exists to refuse. What changes is
+        that a run which misses is retried by the NEXT scheduled prefetch
+        instead of landing on the 09:30 session.
+        """
+        self._prefetch_mode = True
+        try:
+            self.get_upcoming_events()
+        finally:
+            self._prefetch_mode = False
+        return self.last_coverage
 
 
 # --- FOMC meeting calendar -------------------------------------------------
@@ -710,19 +935,6 @@ FOMC_MEASURED = "measured"
 FOMC_MEASURED_STALE_CACHE = "measured_from_stale_cache"
 FOMC_UNAVAILABLE_FETCH_FAILED = "unavailable_fetch_failed"
 FOMC_UNAVAILABLE_DEADLINE_EXCEEDED = "unavailable_deadline_exceeded"
-
-#: Deliberately four values and not five. There is no
-#: "source answered but published nothing" status, because there is no path to
-#: it: both parse boundaries raise `FOMCCalendarParseError` on a document with
-#: no readable meeting rather than returning an empty list, so that case
-#: arrives here as a fetch failure with the parser's message attached. A status
-#: nothing can produce is a status nobody can trust.
-FOMC_STATUSES = (
-    FOMC_MEASURED,
-    FOMC_MEASURED_STALE_CACHE,
-    FOMC_UNAVAILABLE_FETCH_FAILED,
-    FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
-)
 
 _FOMC_ABSENCE_TEXT = {
     FOMC_UNAVAILABLE_FETCH_FAILED: (

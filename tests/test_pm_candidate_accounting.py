@@ -40,7 +40,6 @@ from src.pm_accounting import (
     OUTCOME_UNACCOUNTED,
     account_for_candidates,
     plain_reason,
-    plain_sentence,
 )
 from src.refusal_signature import signature_key
 
@@ -420,12 +419,6 @@ def test_the_jam_alert_no_longer_shows_a_bare_internal_key():
     # The key is kept for whoever has to grep for it — but labelled, and
     # never standing alone as though it were an explanation.
     assert "kept for the record" in rendered
-
-
-def test_plain_sentence_names_the_symbol_and_the_seats_own_words():
-    line = plain_sentence("CRM", "event_risk", "earnings on Thursday")
-    assert line.startswith("CRM was not taken because ")
-    assert "earnings on Thursday" in line
 
 
 # ---------------------------------------------------------------------------

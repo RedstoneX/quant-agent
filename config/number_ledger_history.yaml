@@ -857,3 +857,30 @@ changes:
       insisted on. The six GROSS_LADDER rungs and multiples are untouched
       owner-ratified appetite; only the notification threshold moved, and it
       no longer coincides with the ladder's deepest rung.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 186: -1 for
+      `src.data.correlation.CLUSTER_CORRELATION_THRESHOLD` (0.7), the
+      correlation-cluster cutoff, REMOVED rather than ratified -- the
+      need for it is gone, not the question. The ledger's own research
+      pass had already found no sourceable value (published
+      thresholded-correlation-network cutoffs span roughly 0.3-0.8 and
+      are picked for the network density a study wants; the mainstream
+      portfolio-clustering literature thresholds nothing at all) and had
+      named the structural alternative. The owner's 2026-09-30 ruling --
+      risk tolerance is never a global dial, it is read from structure
+      or per name -- made that alternative mandatory, so the routed
+      appetite question is withdrawn rather than pending. Cluster
+      membership is now read from the held book's own correlation
+      geometry: Mantegna distance d = sqrt(2 * (1 - |corr|)), minimum
+      spanning tree, cut at the largest gap in its own sorted edge
+      lengths. No replacement number enters the count: the only
+      constant is the metric's value at corr = 0, which closes the top
+      of the gap search and is a property of the formula rather than a
+      level compared against any correlation. Cut stability was
+      MEASURED 2026-09-30 on an 11-name three-theme book: 0 partition
+      changes in 400 draws that nudged every correlation by up to 0.03. Clustering
+      stays transitive on purpose (a theme transmits by chaining) and
+      remains rationing only -- the desk still never buys to diversify.
