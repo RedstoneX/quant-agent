@@ -17,13 +17,19 @@ below.
 What "real desk output" means here
 ----------------------------------
 A line of a committed file carries real desk output when it shows at least one
-of four content signals. Each signal was chosen because it is something the
+of five content signals. Each signal was chosen because it is something the
 running desk MINTS and an author inventing a fixture would not produce by
 accident. Each was measured against every tracked file in the repo before
 being switched on, and each produced zero hits on legitimate synthetic
 fixtures at the thresholds used here.
 
   BROKER-ORDER-ID    A UUID. The broker mints these; you cannot invent one.
+  BROKER-ACCOUNT-ID  An Alpaca paper-account number: `PA` plus ten mixed
+                     letters/digits, shaped like PLACEHOLDER_ACCOUNT_ID below
+                     but with real digits and letters mixed in. The broker
+                     mints these too, and one sat on a public branch for
+                     twelve days before anything caught it — this signal
+                     exists because the other three did not.
   PRODUCTION-LOG     A line in the desk's own logger format
                      (`2026-09-18 14:31:55,689 [WARNING] src.data.news: ...`).
   DESK-DECISION      A `symbol` field sitting with four or more of the desk's
@@ -131,13 +137,21 @@ ALLOWED: dict[str, tuple[str, int]] = {
 
     # --- docs that record what the desk actually did ---
     "docs/INCIDENT_HISTORY.md":
-        ("the incident record; naming the real trade is the point of an incident record", 1),
+        ("the incident record; naming the real trade is the point of an incident record", 2),
     "docs/AGENT_ROLE_AUDIT.md":
         ("audit findings quoted from real runs, kept as the evidence trail for those findings", 1),
 
     # --- prompt templates whose worked examples came from real sessions ---
     "config/prompts/news_analyst.md":
         ("its worked example is a real news-analyst briefing, cited to the model as doctrine", 1),
+
+    # --- the production Alpaca account number, named where the architecture
+    # actually depends on knowing it is one specific account (not the
+    # rehearsal one, which is redacted rather than allow-listed here) ---
+    "docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md":
+        ("names the production account twice to prove two distinct accounts share one gateway", 2),
+    "scripts/restore_daily_pnl_history.py":
+        ("docstring names the production account to identify which real backfill this repairs", 1),
 }
 
 # The model-benchmark results. Every one of these replays a real desk input
@@ -247,7 +261,30 @@ def _uuid_is_markup_id(line: str, start: int, end: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Signal 2 — production log line, in the desk's own logger format
+# Signal 2 — broker account identifier
+# ---------------------------------------------------------------------------
+# Alpaca paper-account numbers are `PA` followed by ten mixed letters/digits.
+# What separates one from an all-caps English word of the same shape
+# (`PARAMETERS`, `PARTICULAR`) is that an account number
+# always mixes in at least one digit; a word never does. Both lookaheads below
+# are required so the suffix must carry a digit AND a letter, not just digits
+# alone (which would also catch things like part numbers).
+_ACCOUNT_ID = re.compile(
+    r"\bPA(?=[0-9A-Z]{8,11}\b)(?=[0-9A-Z]*[0-9])(?=[0-9A-Z]*[A-Z])[0-9A-Z]{8,11}\b"
+)
+
+# An account id nobody could mistake for a real one: same shape, degenerate
+# content. The remedy tells authors to use exactly PLACEHOLDER_ACCOUNT_ID.
+PLACEHOLDER_ACCOUNT_ID = "PA00000000"
+
+
+def _is_placeholder_account_id(value: str) -> bool:
+    suffix = value[2:]
+    return len(set(suffix)) <= 2
+
+
+# ---------------------------------------------------------------------------
+# Signal 3 — production log line, in the desk's own logger format
 # ---------------------------------------------------------------------------
 _PRODUCTION_LOG = re.compile(
     r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} "
@@ -257,7 +294,7 @@ _PRODUCTION_LOG = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Signal 3 — a desk decision record
+# Signal 4 — a desk decision record
 # ---------------------------------------------------------------------------
 _SYMBOL_FIELD = re.compile(r"""['"]symbol['"]\s*[:=]\s*['"]([A-Z][A-Z0-9.\-]{0,5})['"]""")
 
@@ -290,7 +327,7 @@ def _measured_prices(window: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# Signal 4 — verbatim desk prose about the real book
+# Signal 5 — verbatim desk prose about the real book
 # ---------------------------------------------------------------------------
 # Real US-listed symbols. This list is NOT exhaustive and is not meant to be:
 # it exists so that an all-caps English word in a design document is not read
@@ -365,6 +402,14 @@ REMEDIES: dict[str, str] = {
         "two sentences the test actually asserts on, and use invented tickers or "
         "a single real one. Do not paste a whole portfolio-manager answer."
     ),
+    "broker-account-id": (
+        "Replace the identifier with a placeholder such as "
+        f"{PLACEHOLDER_ACCOUNT_ID}, or a marker like "
+        "`<redacted-account-id>` if the surrounding prose needs to keep making "
+        "its point without the real value. A broker account number is minted by "
+        "the broker; publishing it says which real account this desk controls. "
+        "No test or document needs the real value to make its point."
+    ),
 }
 
 
@@ -422,6 +467,16 @@ def _scan_pass(text: str, path: str, *, pass_name: str) -> list[Finding]:
             findings.append(Finding(
                 path, i, "broker-order-id",
                 f"a real-looking broker/order identifier ({m.group(0)}){pass_name}",
+                excerpt(line),
+            ))
+            break
+
+        for m in _ACCOUNT_ID.finditer(line):
+            if _is_placeholder_account_id(m.group(0)):
+                continue
+            findings.append(Finding(
+                path, i, "broker-account-id",
+                f"a real-looking broker account number ({m.group(0)}){pass_name}",
                 excerpt(line),
             ))
             break
@@ -541,10 +596,11 @@ LARGE_BLOBS: dict[str, str] = {
 
 # `test_no_real_desk_output.py` has to hold strings shaped exactly like real
 # desk output — a real-looking ticker, cent-precision prices, a broker order
-# id, a production log line — or it cannot prove the four signals actually
-# fire. Those strings are invented for that one purpose; none of them ever
-# came off the desk. Scanning that file for desk output means scanning the
-# detector's own test specimens, which is not what this module is for.
+# id, a broker account number, a production log line — or it cannot prove the
+# five signals actually fire. Those strings are invented for that one purpose;
+# none of them ever came off the desk. Scanning that file for desk output
+# means scanning the detector's own test specimens, which is not what this
+# module is for.
 #
 # This is an exact single-path exclusion, not a directory or a glob:
 # `test_the_specimen_exclusion_is_exactly_this_one_file` pins the set below to
