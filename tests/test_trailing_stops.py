@@ -664,3 +664,48 @@ def test_item82_mislabelled_range_breakout_now_gets_type_b():
     # And it matches the correctly-labelled breakout exactly.
     breakout = _regime_fixture("breakout", None)
     assert (proposal.source, proposal.new_stop) == (breakout.source, breakout.new_stop)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-30: the TARGET is no longer the switch that enables Type A trailing
+# ---------------------------------------------------------------------------
+
+def test_range_past_second_ratchet_trails_structurally_below_its_target():
+    """Entry 100 with a 95 entry stop → 1R = 5, lock 105, trigger 110.
+
+    Price 118 is past +2R but nowhere near the 130 target, and the stop is
+    already sitting on the ratified +1R lock. Before this change the trade
+    ran naked from here to the target; now the ordinary structural trail
+    takes over and tightens to the confirmed higher low at 110.
+    """
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=105.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    )
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+    # Never below the ratified +1R lock, never below where the stop already was.
+    assert proposal.new_stop >= 105.0
+
+
+def test_range_past_second_ratchet_never_moves_the_stop_down():
+    """Same trade with the stop already ABOVE every candidate the trail could
+    offer: the answer must be "no move", never a retreat to a looser level."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=115.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    )
+    assert proposal is None or proposal.new_stop > 115.0
+
+
+def test_range_below_second_ratchet_still_does_not_trail_structurally():
+    """Below the ratified +2R trigger nothing changes: the two R-multiple
+    ratchets remain the whole of Type A protection."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=108.0,
+        current_stop=105.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    ) is None

@@ -20,7 +20,9 @@ from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
-from src.agents.base import AgentResult, BaseAgent, agent_log_kwargs
+from src.agents.base import (
+    AgentResult, BaseAgent, agent_log_kwargs, seat_acceptance_kwargs,
+)
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -9942,6 +9944,7 @@ class TradingPipeline:
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
                 agent_name=f"news_analyst_{session}", run_id=run_id,
                 input_summary=(
                     f"{len(news_items)} news items "
@@ -10956,6 +10959,7 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if not reasked else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -16105,6 +16109,7 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if review is None else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
@@ -16450,6 +16455,7 @@ class TradingPipeline:
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment", "?")
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if not analysis else None),
                     agent_name="earnings_analyst_preprocess",
                     run_id=run_id,
                     input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
@@ -18873,6 +18879,7 @@ class TradingPipeline:
         if ta_result:
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
@@ -19415,6 +19422,7 @@ class TradingPipeline:
         elif analysis is None:
             _ev_log_kwargs["status"] = "evening_parse_error"
         self.db.insert_agent_log(
+            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
             input_message=ev_result.user_message,

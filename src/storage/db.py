@@ -1108,6 +1108,12 @@ class Database:
         # agent_logs row to the trades row(s) its decision produced). NULL
         # for every other agent and for all pre-Stage-1 rows.
         _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
+        # Did the SEAT accept this answer, and if not why — the fact `status`
+        # never carried (`status` only ever meant "the call returned"). NULL
+        # on every legacy row and on any site not yet instrumented; readers
+        # must treat NULL as unknown, never as accepted.
+        _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
+        _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
         # Stage 3 (shorts): which side the protective stop being restored
@@ -2588,7 +2594,9 @@ class Database:
                          status: str | None = None,
                          finish_reason: str | None = None,
                          truncated: bool | None = None,
-                         decision_id: str | None = None):
+                         decision_id: str | None = None,
+                         acceptance: str | None = None,
+                         acceptance_reason: str | None = None):
         """`model` remains the ACTUAL responding model (Stage 0.5 contract —
         unchanged). The Stage 1 kwargs below are additive and all default to
         None so every pre-Stage-1 caller keeps working unmodified; omitting
@@ -2601,8 +2609,8 @@ class Database:
                    provider_requests,
                    requested_provider, requested_model, actual_provider,
                    prompt_version, latency_s, status, finish_reason, truncated,
-                   decision_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   decision_id, acceptance, acceptance_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
                  input_tokens, output_tokens, cost_usd,
@@ -2610,7 +2618,7 @@ class Database:
                  requested_provider, requested_model, actual_provider,
                  prompt_version, latency_s, status,
                  finish_reason, None if truncated is None else int(truncated),
-                 decision_id),
+                 decision_id, acceptance, acceptance_reason),
             )
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
