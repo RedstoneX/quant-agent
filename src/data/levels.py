@@ -789,7 +789,7 @@ def format_levels_block(
 # breakout/risk-off. What is true, and is the reason to be careful rather
 # than to refuse, is that any such floor makes the ratio horizon-INVARIANT
 # where today it rises with the hold. The reformulation actually being
-# pursued is structural, not another ATR multiple: board item 195.
+# pursued is structural, not another ATR multiple: board item 199.
 #
 # One further correction in the same place. The line below credited the
 # stop floor to "real Maximum Adverse Excursion data". That describes the

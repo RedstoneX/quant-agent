@@ -777,7 +777,7 @@ risk:
   # choice — and it stays `arbitrary` in the ledger.
   #
   # The route that removes this constant for most of the names it governs
-  # is board item 195: when no 5-touch level backs the stop, read the floor
+  # is board item 199: when no 5-touch level backs the stop, read the floor
   # off the nearest computed level below entry at any touch count instead
   # of off an ATR multiple. An earlier draft of this pass refused
   # reformulation on arithmetic that was wrong; see

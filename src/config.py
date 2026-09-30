@@ -776,7 +776,7 @@ class RiskConfig(BaseModel):
     # 2.5 is therefore the INTERIM value and is deliberately not re-picked:
     # with no cited band, moving it would be one more unsourced choice.
     # The route that removes this constant for most names it governs is
-    # board item 195 (read the floor off the nearest computed level rather
+    # board item 199 (read the floor off the nearest computed level rather
     # than off an ATR multiple).
     min_stop_atr_multiple: float = Field(default=2.5, gt=0, le=10)
     # NO `min_reward_risk_after_widening` HERE ANY MORE — removed 2026-09-24

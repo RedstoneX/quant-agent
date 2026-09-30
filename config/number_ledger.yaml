@@ -693,7 +693,7 @@ numbers:
       target side's own 1.0 makes reward:risk horizon-INVARIANT and always
       near one, where today it rises with the hold.
       (e) THE ROUTE WITH THE MOST MONEY IN IT WAS NEVER TESTED, and is now
-      filed as item 195. docs/OUTCOME.md ranks reformulation first and its
+      filed as item 199. docs/OUTCOME.md ranks reformulation first and its
       worked example is structural ("does the last higher low still hold?"
       needs no number because the chart supplies the level). This desk
       already computes structural levels with touch counts, and
@@ -750,7 +750,7 @@ numbers:
       withdrawn with the band (see note (c) — there is no citation, so
       both ends are unsupported). The answerable question is now whether
       this constant can be reformulated away for most of the names it
-      governs, and it is answered by BUILDING item 195, not by a ruling:
+      governs, and it is answered by BUILDING item 199, not by a ruling:
       when no 5-touch level backs the stop, does the nearest computed
       level below entry at any touch count (>= MIN_TOUCHES = 2), plus the
       already-ratified `structural_stop_buffer_pct`, give a floor read off

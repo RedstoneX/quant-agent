@@ -1,0 +1,834 @@
+# The number-ledger ratchet, as an APPEND-ONLY record.
+#
+# WHY THIS FILE EXISTS. `MAX_ARBITRARY_ENTRIES` in src/number_sources.py used
+# to be a hand-maintained literal carrying this entire narrative on ONE
+# physical line, and its mirror in tests/test_number_sources.py had the same
+# shape. Every branch that retired a number rewrote that one line, so any two
+# such branches conflicted and the conflict was resolved by hand. The count is
+# now COMPUTED from the deltas below and each change is its own entry, so two
+# branches that each retire a different number touch different lines.
+#
+# HOW TO CHANGE THE COUNT. There is no count to edit. APPEND one entry at the
+# END of this file carrying the `delta` your change makes to the number of
+# `status: arbitrary` rows in config/number_ledger.yaml and a `why` that says
+# what moved and on what grounds. `MAX_ARBITRARY_ENTRIES` is the sum of every
+# `delta` here, and the build fails unless that sum equals the live count of
+# arbitrary rows in the ledger -- so a row cannot leave the ledger without an
+# entry here saying why, which is the same invariant the hand-edited literal
+# enforced. Sourcing a number is a negative delta. Adding an unsourced
+# trade-governing number is a positive one and is an owner decision
+# (docs/OUTCOME.md), not a build fix.
+#
+# DO NOT EDIT AN EXISTING ENTRY. This file is registered `merge=union` in
+# .gitattributes, so two branches that each append an entry merge with no
+# conflict and both entries survive. That holds only while entries are
+# APPENDED WHOLE at the end; rewriting an existing entry re-introduces exactly
+# the conflict this file was written to remove.
+#
+# Every `why` and `detail` below is the previous narrative reproduced
+# verbatim, re-wrapped for width and not otherwise altered: `why` is the text
+# from the assertion message in tests/test_number_sources.py, `detail` the
+# text from the comment block in src/number_sources.py. Two narratives ran in
+# parallel, neither was complete on its own, and both are kept here.
+
+changes:
+  - delta: 86
+    date: unrecorded
+    why: |
+      GENESIS. 86 is the count of `status: arbitrary` rows the ratchet was
+      first recorded at, before any of the changes below. It is the base every
+      later delta is measured against. No per-number narrative was written for
+      the rows already in the ledger at that point, and none is invented here.
+
+  - delta: 1
+    date: "2026-09-18"
+    why: |
+      86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as
+      not-trade-governing, and that day the cap binding is what refused a
+      trading decision -- a misclassification corrected, not a number
+      added.
+
+    detail: |
+      2026-09-18: 86 -> 87. NOT a new number and not a loosened gate --
+      `max_filings_per_refresh` was misclassified `not-trade-governing` on
+      the
+      claim that a fetch cap "never decides whether or how much to trade",
+      and
+      that day the cap binding is what refused a trading decision.
+      Correcting a
+      misclassification upward is the ratchet working; the debt was always
+      there, unrecorded.
+
+  - delta: 1
+    date: "unrecorded"
+    why: |
+      87 -> 88 the same day: `refresh_deadline_s` carried the identical
+      falsified sentence and was what the intraday freshness check ran out
+      of while deciding whether the tick could decide.
+
+    detail: |
+      2026-09-18: 87 -> 88, the SAME correction to the SAME sentence one
+      row
+      over. `refresh_deadline_s` carried that identical claim, and the
+      same day
+      it was the deadline the intraday research-freshness check ran out of
+      while deciding whether the tick could decide at all (measured on the
+      live
+      desk: the check went 39.6s -> 180.3s and hit this deadline on three
+      ticks). Again no number was added and none was loosened -- an
+      unrecorded
+      debt was written down. That the same falsified sentence sat on two
+      rows
+      is itself the finding: it is boilerplate, and boilerplate is not a
+      classification.
+
+  - delta: 18
+    date: "2026-09-19"
+    why: |
+      88 -> 106 on 2026-09-19, board item 130: scoping
+      src/execution/broker.py, src/coverage_watchdog.py, src/pipeline.py
+      and src/agents admitted 47 new sites, 18 of them arbitrary -- see
+      src/number_sources.py's MAX_ARBITRARY_ENTRIES comment for the count
+      by source.
+
+    detail: |
+      2026-09-19: 88 -> 106, board item 130. Scoping
+      `src/execution/broker.py`,
+      `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`
+      admitted
+      47 new structural sites (0 in `src/execution/stop_repair.py`, which
+      still
+      defines no module-level numeric constant); 18 are `arbitrary`: the
+      stop-placement retry ceiling and backoff pair item 129 already found
+      unjustified (3 sites), the smart-money role/freshness/signal-class
+      rank
+      tables that order which insider findings reach synthesis (8 sites --
+      ordering DIRECTION has a research citation, the point values do
+      not),
+      six smart-money prompt-truncation caps that drop findings/text/
+      transactions with no downstream flag that anything was dropped (the
+      same
+      shape as the `max_filings_per_refresh` correction two entries above,
+      so
+      classified the cautious way up front rather than after a counter-
+      example), and the technical seat's bars-per-symbol window (1 site).
+      The
+      other 29 are `not-trade-governing`:
+      reconnect/timeout/retry/batch-size
+      plumbing on a fill-notification socket or an LLM call, and two
+      floating-point epsilons guarding representation error rather than
+      choosing a policy value. No value was changed by this pass.
+
+  - delta: 40
+    date: "2026-09-19"
+    why: |
+      106 -> 146 on 2026-09-19: the scanner learned parameter defaults,
+      attributes on any class and near-one inline multipliers; 98 live
+      sites became visible, 40 of them arbitrary. No number was added.
+
+    detail: |
+      2026-09-19: 106 -> 146. The scanner learned rules (c), (d) and (e)
+      (parameter defaults, attributes on any class, near-one inline
+      multipliers). 98 sites that were always live and never visible now
+      carry
+      entries: 40 arbitrary, 29 derived, 29 not-trade-governing. The 40:
+      fifteen
+      JSON-fragment anchor weights that choose which part of a seat's
+      reply is
+      parsed (a stale table emptied a morning's trades on 2026-08-17/20);
+      fourteen feedback-memory windows and caps that decide what a trading
+      seat
+      is shown; board item 138's buffers (3% stop-limit, 1% de-lever, 0.5%
+      exit, the 2% ask/bid skip multiple and the 2% sweep-sale cushion);
+      the
+      queued-earnings 5% weight cap; the 50% correlated-cluster advisory;
+      the
+      4-day trail cooldown; the 50%-of-price stop sanity floor; the 0.5
+      ATR
+      research pre-filter; and the 5% preview size. No number was added
+      and
+      none changed -- the debt was always there, unrecorded.
+
+  - delta: 1
+    date: "2026-09-20"
+    why: |
+      146 -> 147 on 2026-09-20, board item 124 adversary review:
+      `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was
+      `sourced` against an SSRN URL that returns HTTP 403 to everyone;
+      relabelled `arbitrary` because a citation nobody can open is not a
+      source under this ledger's own rule. No value changed.
+
+  - delta: 1
+    date: "unrecorded"
+    why: |
+      147 -> 148 the same day, cross-symbol crowd-out fix: a genuinely new
+      number, `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS`
+      (the reserved-slot bound for board item 124's fix), recorded
+      honestly as `arbitrary` with its open question stated rather than
+      presented as measured.
+
+  - delta: -6
+    date: "2026-09-20"
+    why: |
+      148 -> 142 on 2026-09-20, retired board item 32: six rows left with
+      the account-level loss alarms the owner removed.
+
+    detail: |
+      2026-09-20, retired board item 32: -6 for the account-level loss
+      alarms removed on the owner's direct instruction --
+      `RiskConfig.drawdown_20d_risk_multiple`,
+      `RiskConfig.drawdown_5d_risk_multiple`,
+      `DEFAULT_DRAWDOWN_VOL_SENSITIVITY`, `DRAWDOWN_BUY_SCALE`,
+      `MIN_REALIZED_VOL_RETURNS` and `REALIZED_VOL_WINDOW_SESSIONS` (the
+      volatility yardstick they were measured against went with them). Was
+      148.
+
+  - delta: 1
+    date: "2026-09-23"
+    why: |
+      142 -> 143 on 2026-09-23, board item 180:
+      `src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the
+      200-day moving average being a standard published trend reference,
+      which sources the MA WINDOW and not the second use of the same
+      constant -- the constructor's outright refusal of any listing under
+      200 bars, for which no citation exists. One status per site, so the
+      row takes the weaker use's status and the split is written into its
+      note. No value changed.
+
+    detail: |
+      2026-09-23: 142 -> 143, board item 180.
+      `src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the
+      200-day moving average being a standard published trend reference.
+      That
+      sources the MA WINDOW; the SAME constant is also the bar count under
+      which `_require_sufficient_history` refuses a trade outright, and no
+      citation anywhere backs 200 as a data-sufficiency test. One status
+      per
+      site, so the row takes the weaker use's status and the split is
+      written
+      into its note -- the same correction shape as 146 -> 147. No value
+      changed and no number was added; an unrecorded debt was written
+      down.
+
+    detail2: |
+      2026-09-23, board item 180: +1 for `LONGEST_INDICATOR_WINDOW`,
+      relabelled `arbitrary` because its refusal-gate use is unsourced
+      (see the comment above).
+
+  - delta: -1
+    date: "2026-09-24"
+    why: |
+      143 -> 142 on 2026-09-24, item 118:
+      `src.pipeline.TradingPipeline._force_delever:factor[1]` (the forced
+      de-lever's must-fill SELL limit) was re-sourced from `arbitrary` to
+      `derived`, pointing at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the
+      3%-through buffer) to match the gross-ceiling de-lever. A number
+      sourced, so the count is lowered in the same commit.
+
+    detail: |
+      2026-09-24, item 118: -1 for
+      `src.pipeline.TradingPipeline._force_delever:factor[1]`, re-sourced
+      from `arbitrary` to `derived` — the forced de-lever's must-fill SELL
+      limit now points at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the
+      3%-through buffer), matching the gross-ceiling de-lever.
+
+    detail2: |
+      2026-09-25, ledger cleanup: -1 for
+      `src.risk.trailing.CHANDELIER_ATR_MULTIPLE`, reclassified
+      `arbitrary`->`sourced` (published Chandelier Exit default multiple
+      3.0; only the multiple, not the desk's lookback/ATR geometry).
+
+  - delta: -1
+    date: "2026-09-24"
+    why: |
+      142 -> 141 on 2026-09-24, board item 81:
+      `src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening`
+      was deleted as dead code -- no code in `PortfolioConstructor` ever
+      read it, confirmed by grep before deleting. A row left the ledger,
+      so the count is lowered in the same commit.
+
+    detail: |
+      2026-09-24, board item 81: -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening`,
+      deleted as zero-reader dead code (nothing in `PortfolioConstructor`
+      ever read it).
+
+    detail2: |
+      2026-09-25, appetite-ratification campaign: -1 for
+      `src.config.RiskConfig.min_level_touches_for_stop_honor`,
+      reclassified `arbitrary`->`sourced` (in-repo measured
+      real-vs-shuffled bounce-probability table, non-overlapping 95% CIs
+      only at 5+ touches; the owner-ratified-appetite numbers in the same
+      campaign stay `arbitrary` per convention and do NOT move the count).
+
+  - delta: 2
+    date: "2026-09-25"
+    why: |
+      141 -> 143 on 2026-09-25, item 142 adversary review:
+      `src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R` (value 2) and
+      `RANGE_SECOND_RATCHET_LOCK_R` (value 1) were recorded `derived` from
+      `RANGE_BREAKEVEN_R_MULTIPLE`, but neither is computed from the +1R
+      breakeven unit -- 2R is a chosen appetite multiple and the 1R lock
+      equals the breakeven unit only by coincidence of appetite, not a
+      derivation -- so both were reclassified `arbitrary`. Owner-ratified
+      appetite is not a source. Two rows changed status, so the count
+      rises by exactly two in the same commit.
+
+    detail: |
+      2026-09-25, item 142: +2 for `RANGE_SECOND_RATCHET_TRIGGER_R` and
+      `RANGE_SECOND_RATCHET_LOCK_R`, both reclassified
+      `derived`->`arbitrary` (chosen appetite multiples, not derivations
+      of the breakeven R-unit).
+
+  - delta: -1
+    date: "2026-09-25"
+    why: |
+      143 -> 142 on 2026-09-25, ledger cleanup:
+      `src.risk.trailing.CHANDELIER_ATR_MULTIPLE` (value 3) was
+      reclassified `arbitrary` -> `sourced`. The Chandelier Exit's
+      published default multiple is 3.0 (Chuck LeBeau; StockCharts
+      ChartSchool; Corporate Finance Institute). Only the MULTIPLE is
+      sourced -- the desk trails off the highest-high-since-entry and a
+      passed-in ATR, not the published 22-bar / ATR(22) geometry -- so the
+      note records the split. A number sourced, so the count is lowered in
+      the same commit. The midday stop-sanity floor 0.5
+      (`_midday_execute_llm_actions:factor[0]`) was considered for the
+      same pass but STAYS `arbitrary`: although its midday use is a
+      non-binding typo guard, the same 0.5 is reused as the universe
+      screen's ATR/price volatility ceiling
+      (`STOP_SANITY_FLOOR_FRACTION`), which reaches a trade decision, so
+      `not-trade-governing` would be false; only its note was corrected.
+
+    detail: |
+      2026-09-24, item 118: -1 for
+      `src.pipeline.TradingPipeline._force_delever:factor[1]`, re-sourced
+      from `arbitrary` to `derived` — the forced de-lever's must-fill SELL
+      limit now points at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the
+      3%-through buffer), matching the gross-ceiling de-lever.
+
+    detail2: |
+      2026-09-25, ledger cleanup: -1 for
+      `src.risk.trailing.CHANDELIER_ATR_MULTIPLE`, reclassified
+      `arbitrary`->`sourced` (published Chandelier Exit default multiple
+      3.0; only the multiple, not the desk's lookback/ATR geometry).
+
+  - delta: -1
+    date: "2026-09-25"
+    why: |
+      142 -> 141 on 2026-09-25, consolidated appetite-ratification
+      campaign (owner delegated to the adversary):
+      `src.config.RiskConfig.min_level_touches_for_stop_honor` (value 5)
+      was reclassified `arbitrary` -> `sourced` against the in-repo
+      measured real-vs-shuffled bounce-probability study
+      (src/config.py:722-740): the 95% confidence intervals separate
+      cleanly only at 5+ touches (real 0.644 [0.590, 0.696] vs shuffled
+      0.505 [0.470, 0.539]) while 3-4 overlap the noise control. A number
+      sourced, so the count is lowered in the same commit. The campaign
+      also RATIFIED several numbers as owner-appetite
+      (max_portfolio_risk_pct 25, max_cluster_risk_share_pct 40,
+      SECTOR_HARD_CEILING_MAX 90, max_target_horizon_sessions 60,
+      min_stop_atr_multiple 2.5, the three stop_atr_regime_scale
+      magnitudes, and the six GROSS_LADDER numbers), but ratified appetite
+      stays `arbitrary`+note by this ledger's convention, so none of those
+      move the count.
+
+    detail: |
+      2026-09-24, board item 81: -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening`,
+      deleted as zero-reader dead code (nothing in `PortfolioConstructor`
+      ever read it).
+
+    detail2: |
+      2026-09-25, appetite-ratification campaign: -1 for
+      `src.config.RiskConfig.min_level_touches_for_stop_honor`,
+      reclassified `arbitrary`->`sourced` (in-repo measured
+      real-vs-shuffled bounce-probability table, non-overlapping 95% CIs
+      only at 5+ touches; the owner-ratified-appetite numbers in the same
+      campaign stay `arbitrary` per convention and do NOT move the count).
+
+  - delta: 1
+    date: "2026-09-25"
+    why: |
+      141 -> 142 on 2026-09-25, board item 148:
+      `src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (value 10), a
+      genuinely new number -- the level-strength formula's `/ 10.0`
+      divisor was an inline literal outside rule (e)'s factor band and so
+      invisible to the scanner (named in this module's own docstring); it
+      is now a named module constant with the same value and the same
+      behaviour, recorded honestly as `arbitrary` with its open question
+      stated. The board item's other literal, a flat 40% max-distance cap,
+      was found already gone from the code -- replaced 2026-09-12 by the
+      ATR-based `horizon_reach` window, which is already ledgered -- so
+      nothing new was added for it.
+
+    detail: |
+      2026-09-25, board item 148: +1 for
+      `src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (10.0), named
+      out of an inline `/ 10.0` in the level-strength formula that rule
+      (e)'s factor band could not see (this module's own docstring names
+      the exact literal). No value or behaviour changed. The board item's
+      other named literal, a flat 40% max-distance cap, no longer exists
+      in the code -- it was replaced 2026-09-12 by the ATR-based
+      `horizon_reach` window, which is already ledgered via
+      `MAX_REACH_ATR_MULTIPLE`/`MAX_HORIZON_SESSIONS`; nothing new to
+      track there.
+
+  - delta: -2
+    date: "2026-09-25"
+    why: |
+      142 -> 140 on 2026-09-25, board item 52:
+      `src.config.SmartMoneyConfig.min_transaction_value_usd` (100,000)
+      and `external_min_transaction_value_usd` (250,000) were deleted, not
+      sourced -- no published study supports single-transaction dollar
+      size as a positive insider-buy predictor (the closest, Cziraki &
+      Gider 2019, finds size inversely related), so the Form 4 insider-buy
+      admission screen no longer gates on size at all. Two rows left the
+      ledger, so the count is lowered by exactly two in the same commit.
+
+    detail: |
+      2026-09-25, board item 52: -2 for
+      `src.config.SmartMoneyConfig.min_transaction_value_usd` and
+      `src.config.SmartMoneyConfig.external_min_transaction_value_usd`,
+      deleted rather than sourced -- no published study supports
+      single-transaction dollar size as a positive insider-buy predictor
+      (the closest, Cziraki & Gider 2019, finds size inversely related),
+      so the size gate on Form 4 insider-buy admission is gone, not
+      re-sourced; size gates nothing now.
+
+  - delta: 1
+    date: "2026-09-25"
+    why: |
+      140 -> 141 on 2026-09-25, board item 80 (reworked): a genuinely new
+      number,
+      `src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct`
+      (0.005) -- the buffer a no-ATR protective stop sits past the
+      structural level it is read from (`_derive_structural_stop_no_atr`),
+      added when the item-80 branch was reworked from an outright refusal
+      into a structural-stop fallback per the owner ruling. No published
+      method fixes a buffer size, so it is recorded honestly as
+      `arbitrary`, ratified as owner-appetite with its open question and
+      cost stated.
+
+    detail: |
+      2026-09-25, board item 80 (reworked): +1 for
+      `src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct`
+      (0.005), the owner-appetite buffer a no-ATR protective stop sits
+      past the structural level it is read from
+      (`_derive_structural_stop_no_atr`); nothing measured fixes a buffer
+      size, so it is arbitrary by convention, ratified as appetite with an
+      open question.
+
+  - delta: -1
+    date: "2026-09-25"
+    why: |
+      141 -> 140 on 2026-09-25, board item 180 (owner ruling):
+      `src.data.technical.LONGEST_INDICATOR_WINDOW` was reclassified
+      `arbitrary` -> `sourced`. Its WEAKER, unsourced use -- the
+      constructor's `_require_sufficient_history` young-listing refusal
+      that read the same 200 as a bar-count data-sufficiency gate -- was
+      removed on the owner's ruling (a young listing is now judged on
+      whether a protective stop is readable, via the existing
+      stop-readability rule, not on a bar count). With that use gone the
+      constant's only remaining use is the sourced 200-day MA window, so
+      the row is `sourced` again. A use was removed, not a value changed,
+      so the count is lowered in the same commit.
+
+    detail: |
+      2026-09-25: 141 -> 140, board item 180 (owner ruling). The
+      `_require_sufficient_history` young-listing refusal -- the WEAKER,
+      unsourced
+      use that forced LONGEST_INDICATOR_WINDOW to `arbitrary` -- was
+      removed; a
+      young listing is now judged on stop readability, not a bar count.
+      The
+      constant's only remaining use is the sourced MA window, so it is
+      `sourced`
+      again and the count drops by one. No value changed.
+
+    detail2: |
+      2026-09-25, board item 180 (owner ruling): -1 for
+      `src.data.technical.LONGEST_INDICATOR_WINDOW`, reclassified
+      `arbitrary`->`sourced` -- its unsourced second use (the constructor
+      young-listing bar-count refusal `_require_sufficient_history`) was
+      removed, leaving only the sourced 200-day MA window.
+
+  - delta: -1
+    date: "2026-09-26"
+    why: |
+      140 -> 139 on 2026-09-26, board item 56 (route (c)):
+      `src.config.RiskConfig.max_stop_width_reach_atr_multiple` was
+      DELETED, not sourced -- the stop-WIDTH refusal it thresholded is
+      gone, and its `derived` mirror on `ConstructorConfig` went with it
+      (a `derived` row never counted, so only one comes off). Measured
+      before deleting: across 648 sized stops recorded in production
+      between 2026-09-13 and 2026-09-26 the gate refused ZERO trades, and
+      the widest stop it ever saw sat at 1.29 x ATR x sqrt(H) against its
+      1.5 cap; arithmetically it could not refuse the desk's own 2.5 ATR
+      fallback stop at any horizon of three sessions or more, and no
+      stated horizon has ever been under six. No published work fixes the
+      touch probability below which a stop stops being a stop, so the
+      number could not be sourced; a wide stop is answered by a smaller
+      position. A row left the ledger, so the count is lowered in the same
+      commit.
+
+    detail: |
+      2026-09-26, board item 56 (route (c)): -1 for
+      `src.config.RiskConfig.max_stop_width_reach_atr_multiple`, DELETED
+      rather than sourced -- the stop-WIDTH refusal it thresholded is
+      gone, and with it its `derived` mirror
+      `src.portfolio_constructor.ConstructorConfig.max_stop_width_reach_atr_multiple`
+      (a `derived` row does not count toward this total, so only one comes
+      off). Measured before deleting: across 648 sized stops recorded in
+      production between 2026-09-13 and 2026-09-26 the gate refused ZERO
+      trades, and the widest stop it ever saw sat at 1.29 x ATR x sqrt(H)
+      against its 1.5 cap; arithmetically it could not refuse the desk's
+      own 2.5 ATR fallback stop at any horizon of three sessions or more,
+      and no stated horizon has ever been under six. No published work
+      fixes the touch probability below which a stop stops being a stop,
+      so the number could not be sourced; what answers a wide stop is the
+      position size (`_plan_risk_targets`, spec 2.1) and, at the extreme,
+      `position_sized_to_zero`. The target-side
+      `max_target_reach_atr_multiple` is a DIFFERENT number and is
+      untouched.
+
+    detail2: |
+      2026-09-30, board item 183 (owner ruling): -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta`
+      (0.5), DELETED rather than sourced -- the owner ruled the desk gets
+      autonomy to nudge position unless doing so is illogical, so a picked
+      percentage that silently refused a small, desk-requested rebalance
+      is gone outright. Its own ledger entry (2026-09-26) had already
+      MEASURED the cost side and found it could not justify any floor of
+      this size (median +2.6bp / 90th pct +26.4bp slippage on 30 filled
+      BUYs; a $50 order on a $10k book costs about a cent), leaving only
+      appetite unmeasured -- and appetite is exactly what this ruling
+      hands to the desk instead of to a constant. No replacement
+      percentage is substituted. The mechanical bounds that remain are
+      read from the broker, not chosen: `AlpacaBroker.get_fractionability`
+      (Alpaca's own per-asset `fractionable` flag) still fails a
+      non-fractionable symbol closed to whole shares, and
+      `_quantize_price` still normalizes to Alpaca's tick size before
+      every submit. `AlpacaBroker.submit_order` now also catches a
+      broker-side rejection (`_is_terminal_submission_rejection`, APIError
+      422 -- the ONE code Alpaca's own create-order reference documents as
+      a refusal, https://docs.alpaca.markets/reference/postorder; the
+      stop-placement retry classifier's inherited 400/404 were re-checked
+      against that source and against
+      https://alpaca.markets/learn/how-to-fix-common-trading-api-errors-at-alpaca,
+      are not documented for POST /v2/orders, and are NOT swallowed here
+      because treating a live order as rejected is the dangerous
+      direction) and returns a structured `rejected_by_broker` result
+      instead of raising, because removing the floor means a genuinely
+      tiny order (e.g. under Alpaca's own documented $1 minimum notional
+      for a BUY entry,
+      https://alpaca.markets/support/can-we-submit-orders-smaller-than-1-usd-in-notional-value)
+      can now reach the broker for the first time and must fail soft, not
+      crash the pipeline.
+
+  - delta: -1
+    date: "2026-09-26"
+    why: |
+      139 -> 138 on 2026-09-26, board item 183:
+      `src.portfolio_constructor.ConstructorConfig.min_order_usd` (500)
+      was deleted as dead code. Nothing in `PortfolioConstructor` read it,
+      and the one call that forwarded it reached an `apply_gross_ceiling`
+      parameter that has been explicitly accepted-and-ignored since
+      2026-09-24, so no order size, refusal or gate changes. The comment
+      at its definition site claiming that gate still read it was false on
+      the day it was written. A row left the ledger, so the count is
+      lowered in the same commit.
+
+    detail: |
+      2026-09-26, board item 183: -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_order_usd` (500),
+      deleted as dead code -- nothing in `PortfolioConstructor` read it,
+      and the one call that forwarded it reached an `apply_gross_ceiling`
+      parameter explicitly accepted-and-ignored since 2026-09-24, so no
+      order size, refusal or gate changes. The sweep's own
+      `cash_sweep.min_order_usd` is a different field and is untouched.
+
+    detail2: |
+      2026-09-30, board item 182 (PARTIAL -- the item does NOT close): -1
+      for `src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02),
+      the cushion on how much of the T-bill sweep vehicle was sold to
+      cover a cash deficit, REFORMULATED AWAY rather than sourced. The
+      partial sale is now sized off the live SELL limit the order actually
+      rests at (`_live_delever_price`, moved above the sizing): a SELL
+      limit fills at or above its limit or not at all, so the limit is the
+      arithmetic floor on what a share raises and `ceil(remaining_deficit
+      / sell_limit)` is the smallest provably-sufficient share count. With
+      NO live quote the order is a MARKET order with no floor, so no
+      partial size can be justified and that branch sells the whole
+      position, as every non-sweep de-lever target already does -- an
+      intermediate draft instead divided by `1 - STOP_LIMIT_BUFFER_PCT`
+      there and described it as reusing an existing number; that is a
+      3.09% pad, LARGER than the 2% it replaced and borrowed from a
+      `status: arbitrary` stop-limit buffer picked for a different job, so
+      it was removed. The surviving 0.97 proceeds haircut is `derived`,
+      unchanged, and renumbered factor[1]->factor[0] because the 1.02
+      ahead of it is gone. `src.risk.rules.GROSS_LADDER_ALERT_PCT` was
+      ALSO removed in the first draft of this commit and has been PUT
+      BACK: the alert trigger is monotone (`drawdown <= threshold`), so
+      freezing it at the owner-ratified -20 can never produce silence at a
+      deeper drawdown, while tying it to the ladder's deepest rung would
+      have gone silent across any band between -20% and a newly added
+      deeper rung -- the change made the desk quieter. Its row, its open
+      question and its cost line are restored and its question is still
+      unanswered.
+
+  - delta: 1
+    date: "2026-09-26"
+    why: |
+      138 -> 139 on 2026-09-26, board item 70:
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` was reclassified
+      `derived` -> `arbitrary`. It was recorded as derived from
+      `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
+      while its own value is 1 -- a derivation that never produced its own
+      figure. It is a second independent flat number and is now counted as
+      one. No value changed.
+
+    detail: |
+      2026-09-26, board item 70: +1 for
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` (1.0), reclassified
+      `derived`->`arbitrary` -- it was recorded as derived from
+      `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
+      while its own value is 1, so the derivation never produced its own
+      figure. It is a second independent flat number and is now counted as
+      one.
+
+  - delta: 1
+    date: "2026-09-26"
+    why: |
+      139 -> 140 on 2026-09-26, board item 70: a genuinely new name,
+      `src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0) -- the
+      second of the two different jobs the single noise-band literal was
+      doing, the margin a completed daily close must clear a structural
+      level by. Same value, no behaviour change; item 70 requires the two
+      jobs to become two independently justified numbers and forbids
+      collapsing them to keep the count down, so the count rises by one.
+
+    detail: |
+      2026-09-26, board item 70: +1 for
+      `src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0), the
+      second of the two jobs the single `NOISE_BAND_ATR_MULTIPLE` literal
+      was doing -- the margin a daily close must clear a structural level
+      by, now its own name with its own entry. No value or behaviour
+      changed; the split exists because the two jobs cannot be sourced
+      separately while they share a constant, and item 70 forbids
+      collapsing them.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      140 -> 139 on 2026-09-30, board item 183 (owner ruling):
+      `src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta`
+      (0.5) was DELETED rather than sourced. The owner ruled the desk gets
+      autonomy to nudge a position whenever its own reasoning calls for
+      it, so a flat, picked percentage that silently overrode that
+      judgement is gone, not resized or lowered. This entry's own
+      2026-09-26 measurement had already shown the cost side (execution
+      slippage; Alpaca charges no stock commission) could not justify any
+      floor of this size -- a $50 order on a $10k book costs about a cent
+      -- leaving only appetite unmeasured, and appetite is exactly what
+      this ruling hands to the desk instead of to a constant. No
+      replacement percentage was substituted. A row left the ledger, so
+      the count is lowered in the same commit.
+
+    detail: |
+      2026-09-26, board item 56 (route (c)): -1 for
+      `src.config.RiskConfig.max_stop_width_reach_atr_multiple`, DELETED
+      rather than sourced -- the stop-WIDTH refusal it thresholded is
+      gone, and with it its `derived` mirror
+      `src.portfolio_constructor.ConstructorConfig.max_stop_width_reach_atr_multiple`
+      (a `derived` row does not count toward this total, so only one comes
+      off). Measured before deleting: across 648 sized stops recorded in
+      production between 2026-09-13 and 2026-09-26 the gate refused ZERO
+      trades, and the widest stop it ever saw sat at 1.29 x ATR x sqrt(H)
+      against its 1.5 cap; arithmetically it could not refuse the desk's
+      own 2.5 ATR fallback stop at any horizon of three sessions or more,
+      and no stated horizon has ever been under six. No published work
+      fixes the touch probability below which a stop stops being a stop,
+      so the number could not be sourced; what answers a wide stop is the
+      position size (`_plan_risk_targets`, spec 2.1) and, at the extreme,
+      `position_sized_to_zero`. The target-side
+      `max_target_reach_atr_multiple` is a DIFFERENT number and is
+      untouched.
+
+    detail2: |
+      2026-09-30, board item 183 (owner ruling): -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta`
+      (0.5), DELETED rather than sourced -- the owner ruled the desk gets
+      autonomy to nudge position unless doing so is illogical, so a picked
+      percentage that silently refused a small, desk-requested rebalance
+      is gone outright. Its own ledger entry (2026-09-26) had already
+      MEASURED the cost side and found it could not justify any floor of
+      this size (median +2.6bp / 90th pct +26.4bp slippage on 30 filled
+      BUYs; a $50 order on a $10k book costs about a cent), leaving only
+      appetite unmeasured -- and appetite is exactly what this ruling
+      hands to the desk instead of to a constant. No replacement
+      percentage is substituted. The mechanical bounds that remain are
+      read from the broker, not chosen: `AlpacaBroker.get_fractionability`
+      (Alpaca's own per-asset `fractionable` flag) still fails a
+      non-fractionable symbol closed to whole shares, and
+      `_quantize_price` still normalizes to Alpaca's tick size before
+      every submit. `AlpacaBroker.submit_order` now also catches a
+      broker-side rejection (`_is_terminal_submission_rejection`, APIError
+      422 -- the ONE code Alpaca's own create-order reference documents as
+      a refusal, https://docs.alpaca.markets/reference/postorder; the
+      stop-placement retry classifier's inherited 400/404 were re-checked
+      against that source and against
+      https://alpaca.markets/learn/how-to-fix-common-trading-api-errors-at-alpaca,
+      are not documented for POST /v2/orders, and are NOT swallowed here
+      because treating a live order as rejected is the dangerous
+      direction) and returns a structured `rejected_by_broker` result
+      instead of raising, because removing the floor means a genuinely
+      tiny order (e.g. under Alpaca's own documented $1 minimum notional
+      for a BUY entry,
+      https://alpaca.markets/support/can-we-submit-orders-smaller-than-1-usd-in-notional-value)
+      can now reach the broker for the first time and must fail soft, not
+      crash the pipeline.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      139 -> 138 on 2026-09-30, board item 182 (PARTIAL, the item stays
+      open): ONE row left, REFORMULATED AWAY rather than sourced.
+      `src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02), the
+      sweep-vehicle sizing cushion, is gone because the partial sale now
+      divides the remaining deficit by the price floor the order itself
+      carries -- the live SELL limit -- so the smallest
+      provably-sufficient share count is computed rather than padded by a
+      guess, and with no quote there is no floor so the whole position is
+      sold. `src.risk.rules.GROSS_LADDER_ALERT_PCT` was removed in the
+      first draft of the same commit and PUT BACK: the alert trigger is
+      monotone, so freezing it at the owner-ratified -20 cannot cause
+      silence at any deeper drawdown, while tying it to the ladder's
+      deepest rung would have silenced the band between -20% and any new
+      deeper rung. Its open question is still unanswered and its row is
+      still counted.
+
+    detail: |
+      2026-09-26, board item 183: -1 for
+      `src.portfolio_constructor.ConstructorConfig.min_order_usd` (500),
+      deleted as dead code -- nothing in `PortfolioConstructor` read it,
+      and the one call that forwarded it reached an `apply_gross_ceiling`
+      parameter explicitly accepted-and-ignored since 2026-09-24, so no
+      order size, refusal or gate changes. The sweep's own
+      `cash_sweep.min_order_usd` is a different field and is untouched.
+
+    detail2: |
+      2026-09-30, board item 182 (PARTIAL -- the item does NOT close): -1
+      for `src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02),
+      the cushion on how much of the T-bill sweep vehicle was sold to
+      cover a cash deficit, REFORMULATED AWAY rather than sourced. The
+      partial sale is now sized off the live SELL limit the order actually
+      rests at (`_live_delever_price`, moved above the sizing): a SELL
+      limit fills at or above its limit or not at all, so the limit is the
+      arithmetic floor on what a share raises and `ceil(remaining_deficit
+      / sell_limit)` is the smallest provably-sufficient share count. With
+      NO live quote the order is a MARKET order with no floor, so no
+      partial size can be justified and that branch sells the whole
+      position, as every non-sweep de-lever target already does -- an
+      intermediate draft instead divided by `1 - STOP_LIMIT_BUFFER_PCT`
+      there and described it as reusing an existing number; that is a
+      3.09% pad, LARGER than the 2% it replaced and borrowed from a
+      `status: arbitrary` stop-limit buffer picked for a different job, so
+      it was removed. The surviving 0.97 proceeds haircut is `derived`,
+      unchanged, and renumbered factor[1]->factor[0] because the 1.02
+      ahead of it is gone. `src.risk.rules.GROSS_LADDER_ALERT_PCT` was
+      ALSO removed in the first draft of this commit and has been PUT
+      BACK: the alert trigger is monotone (`drawdown <= threshold`), so
+      freezing it at the owner-ratified -20 can never produce silence at a
+      deeper drawdown, while tying it to the ladder's deepest rung would
+      have gone silent across any band between -20% and a newly added
+      deeper rung -- the change made the desk quieter. Its row, its open
+      question and its cost line are restored and its question is still
+      unanswered.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      138 -> 137 on 2026-09-30, board item 185 (the item STAYS OPEN): the
+      midday stop-sanity floor 0.5
+      (`_midday_execute_llm_actions:factor[0]`) was DELETED, not sourced.
+      It was a flat half-of-price bound on a model-proposed TRAIL_STOP,
+      and the universe screen derived its ATR/price volatility ceiling
+      from it, so each of the two was justified by the other and neither
+      was fixed by anything outside the pair. Both now read
+      `widest_reachable_stop_atr_multiple` instead -- the midday path
+      CLAMPS an over-wide proposal to that multiple of the name's own live
+      ATR14 rather than refusing it, and the screen's ceiling is 1 / that
+      multiple. That composition is itself built from two rows that are
+      still `arbitrary` with open questions (the 2.5 base and the 1.20
+      risk-off scaler), so one literal is gone but the desk's arbitrary
+      content is not reduced, and item 185's own question -- how volatile
+      a name may this desk hold -- is not answered. A row left the ledger,
+      so the count is lowered in the same commit.
+
+    detail: |
+      2026-09-30, board item 185 (item STAYS OPEN): -1 for
+      `src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]`
+      (0.5), the midday TRAIL_STOP stop-sanity floor, DELETED rather than
+      sourced -- and with it its `derived` mirror
+      `src.universe_screen.STOP_SANITY_FLOOR_FRACTION` (a `derived` row
+      does not count toward this total, so only one comes off). The 0.5
+      was a flat half-of-price bound on a model-proposed trailing stop,
+      and the universe screen's ATR/price volatility ceiling was derived
+      from it, so each end was justified by the other and nothing outside
+      the pair fixed either -- the circularity board item 185 recorded.
+      Both ends now read the same quantity off
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (the base
+      `min_stop_atr_multiple` times the largest setup and regime scalers =
+      3.00 x ATR14 at today's settings): the midday path CLAMPS an
+      over-wide proposal to that multiple of the NAME'S OWN live ATR14
+      rather than refusing it, and the screen's ceiling is 1 / that
+      multiple (33.3%), the ATR/price at which the widest legitimate stop
+      would sit at or below zero. HONEST ACCOUNTING OF WHAT THAT
+      COMPOSITION IS MADE OF: 3.00 = 2.5 x 1.00 x 1.20, where the 2.5
+      (`min_stop_atr_multiple`) is still `status: arbitrary` with a live
+      open question, the 1.00 is only the declared absence of a setup
+      scaler, and the 1.20 (`stop_atr_regime_scale` risk-off) is still
+      `status: arbitrary` with 'no measured regime/MAE breakdown exists in
+      this repo' on its own row. One ledger row is removed and a live
+      dependency on two rows that still carry open questions is created in
+      its place; the arbitrary CONTENT of the desk is not reduced by this
+      change, only the number of independent literals. Board item 185's
+      own question -- how volatile a name may this desk hold -- is NOT
+      answered and the item stays open. Measured before changing: the
+      guard fired ZERO times across every retained production log
+      (2026-08-31 to 2026-09-30, `grep -hc 'likely LLM error'
+      /home/qamc/quant-agent/quant_agent.log*`) and the screen ships
+      `enabled: false` and has never run, so no admitted name and no
+      accepted trail changes.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 183: -1 for
+      `src.pipeline_stages.ExecutionStage._run_session:factor[2]`
+      (1.02), the far-through-quote entry skip, DELETED rather than
+      sourced or ratified -- its `derived` mirror `factor[3]` (the SHORT
+      `bid < floor / 1.02`) went with it and does not move this count.
+      The gate refused an approved entry when the displayed IEX ask sat
+      more than 2% past the slippage ceiling, on a multiple its own
+      comment called "deliberately loose because the input is". MEASURED
+      2026-09-30 against all 8 firings it has on record (the
+      `execution_skip` evidence rows in the production DB, 2026-09-15 to
+      2026-09-24, which is the entire life of that telemetry): in every
+      one of the 8 the reference price was right and the quote was wrong
+      -- the reference matched the price the name was actually trading
+      at to within a few bp, while the quoted ask sat 392-669bp above
+      the HIGHEST price the name traded anywhere in a +/-15 minute
+      window around the refusal (Alpaca 1-minute bars, IEX feed), and 6
+      of the 8 were trading strictly inside the ceiling they were
+      refused against. Zero of the 8 were a market that had run. The
+      gate also protected no money that the ceiling was not already
+      protecting: a limit at the ceiling cannot fill through it, so a
+      genuinely runaway book now simply leaves the order resting
+      unfilled until the entry-protection sweep cancels it -- the same
+      no-trade, without the false refusals. `src/trader_feed.py` had
+      already refused to render this gate's `slippage_gated` code to the
+      owner on the same evidence (2026-09-23). No multiple replaces it;
+      the far-through reading is recorded as a
+      `venue_quote_through_ceiling` pipeline event, which needs no
+      threshold because it is a record and not a decision.

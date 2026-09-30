@@ -14121,7 +14121,7 @@ class TradingPipeline:
         )
         if extra:
             payload.update(extra)
-        # 2026-09-30 (item 195): this is the third legit PM-less completion
+        # 2026-09-30 (item 199): this is the third legit PM-less completion
         # alongside `no_data` and `evidence_gate_skip` above, both of which
         # already call `_dc.write_status` so the evening dead-man probe
         # skips its "research ran, PM never did — killed mid-run?" guess.
