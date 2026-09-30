@@ -123,11 +123,25 @@ def _isolate_cwd(tmp_path, monkeypatch):
     # about the lookup FAILING, overrides this with its own monkeypatch --
     # and now has to say so rather than inherit it from whether Yahoo
     # happened to answer.
+    # WRAP the real lookup, do not replace it: the ETF map and every other
+    # offline branch must keep working, and a test that is ABOUT sector
+    # resolution must still see the real answer. Only substitute where the
+    # real function would have gone to the network and come back "Unknown".
     try:
-        monkeypatch.setattr(
-            "src.execution.broker._get_sector",
-            lambda symbol: f"sector-{symbol}",
-        )
+        from src.execution import broker as _broker
+
+        _real_get_sector = _broker._get_sector
+
+        def _sector_offline(symbol: str) -> str:
+            try:
+                resolved = _real_get_sector(symbol)
+            except Exception:
+                resolved = "Unknown"
+            if resolved and resolved != "Unknown":
+                return resolved
+            return f"sector-{symbol}"
+
+        monkeypatch.setattr(_broker, "_get_sector", _sector_offline)
     except Exception:  # pragma: no cover - module not importable in a stub env
         pass
 
