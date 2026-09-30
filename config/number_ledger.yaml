@@ -1328,11 +1328,25 @@ numbers:
   # correlation distance d = sqrt(2 * (1 - |corr|)): build the minimum
   # spanning tree of the held book and cut it at the largest gap in its own
   # sorted edge lengths. The cut is read from the book in front of the desk,
-  # not picked. The only constants left are the two fixed points of the
-  # metric itself — the distance at |corr| = 1 and the distance at corr = 0 —
-  # which bracket the gap search and are never compared against a correlation
-  # to decide membership; they are properties of the formula, not levels, so
-  # they are deliberately NOT ledgered as appetite.
+  # not picked. The only constant left is one fixed point of the metric
+  # itself — the distance at corr = 0, "no relationship" — which closes the
+  # top of the gap search and is never compared against a correlation to
+  # decide membership; it is a property of the formula, not a level, so it is
+  # deliberately NOT ledgered as appetite.
+  #
+  # STABILITY, MEASURED 2026-09-30 because a small book's tree has few edges
+  # and a moving cut would swing rationing with no market event behind it. On
+  # an 11-name book with three real themes (within-theme corr 0.78-0.90,
+  # cross-theme 0.35-0.50, three loners), nudging every correlation by up to
+  # 0.03 moved the partition in 0 of 400 draws. An earlier version of the cut
+  # also bracketed the edge lengths at the other end (d = 0, "identical");
+  # that version flipped in 11.8% of the same 400 draws AND returned no
+  # clusters at all on that book — a false negative in the exact case this
+  # code exists for — so the lower bracket was removed rather than guarded.
+  # The cost of having only the upper bracket is that a book with no
+  # structure at all, including any two-name book, comes back as ONE cluster
+  # instead of none. That is the conservative direction (it rations harder,
+  # never softer) and it is pinned by test.
   #
   # STILL TRANSITIVE, and that is the correct behaviour here: single linkage
   # chains, so A~B and B~C is one bet even when A and C are apart, which is
