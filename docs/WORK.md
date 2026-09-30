@@ -275,18 +275,10 @@ DONE WHEN:
   - [ ] MEASURED 2026-09-30, the premise is PARTLY WRONG and the scope is corrected here: this is not a pure deletion of switched-off code. `CashSweepConfig.reserve_pct` has a live non-sweep consumer — `src.risk.rules.deployment_gap_band_pct` reads it as the tolerance band for the `deployment_gap` advisory on EVERY session, and `/account` renders it as `reserve_usd` / `cash_above_reserve` via `src.api.deps.get_cash_sweep_reserve_pct`. Deleting the sweeper therefore cannot delete the band by default: the band must either die with the advisory (a separate call, since "how far under 100% still counts as fully invested" is appetite-shaped, not bookkeeping) or be given a home outside the retired feature. Item 183's band question is NOT resolved by this item as filed
   - [ ] MEASURED 2026-09-30, `cash_sweep.min_order_usd` is vestigial as a trade gate but NOT as prose: `src.pipeline_stages._min_order_usd` records (2026-09-24) that none of the three paths that used to reject a small trade still do, and `apply_gross_ceiling` accepts it only as an ignored parameter — but `src.agents.portfolio_manager` still SPEAKS it to the owner in the funding narrative ("under the $N minimum order worth placing"). It dies with the feature, and those owner-facing strings must be rewritten rather than merely dropped
   - [ ] MEASURED 2026-09-30, the 187-reference estimate is LOW. A live count over the checkout is ~550 mentions of `cash_sweep` / `CashSweeper` / `cash_sweeper` / `_sweep_symbol` / `SGOV` / `reserve_pct` across 88 files, including four frontend components (`LiquidityPanel`, `HoldingsStrip`, `DecisionStateBanner`, `funnelShared`), the Mission Control API schema and routes, `ops/preview/branch_preview.py`, and ~30 test modules rather than the nine item 183 named. The `sweep-vehicle liquidation before a BUY` entry already in `config/retired_mechanisms.yaml` is the registry hook the deletion must extend
+  - [x] STEP 1 DONE 2026-09-30 (PR item190-step1): the `deployment_gap` advisory band now reads `deployment_gap.band_pct` (1.0, value unchanged) instead of `cash_sweep.reserve_pct`; the band stays as owner-appetite, ledgered `arbitrary`. Remaining: steps 2-4 below. `reserve_pct` itself is still read by the sweeper and the /account `reserve_usd` display until step 3/4.
   - [ ] the retirement is sequenced so no step leaves a half-wired feature: (1) settle the `reserve_pct` band and the `deployment_gap` advisory, (2) rewrite the portfolio-manager funding prose off `min_order_usd`, (3) delete `CashSweeper`, its pipeline/stage wiring and its tests-of-the-dead-path, (4) drop the ledger rows and the frontend/API surface
 
 detail: docs/BOARD_NOTES.md (item 190)
-
-**192. The local Python interpreter could silently drift from the one CI runs, with nothing checking it — filed 2026-09-30.**
-
-DONE WHEN:
-  - [x] the exact CI version is written in one place (`.python-version`) that both CI jobs read via `python-version-file`, instead of each job carrying its own literal
-  - [x] any local pytest run, including a single test file, fails immediately and names both versions plus which one CI uses, if the running interpreter doesn't match the pin (`tests/conftest.py`, fires at collection so it can't be skipped by running one file)
-  - [ ] the existing `.venv` (measured 3.12.3) actually gets rebuilt on the pinned 3.11 — deliberately NOT done here: other sessions run against that `.venv` right now, so a live rebuild is a scheduling call, not something this change should force mid-flight
-
-detail: docs/BOARD_NOTES.md (item 192)
 
 **194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").**
 
@@ -372,12 +364,13 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
-- retired queue: 77
 - retired queue: 152
-- retired queue: 183
 - retired queue: 197
 - retired queue: 18
 - retired queue: 147
+- retired queue: 77
+- retired queue: 183
+- retired queue: 192
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

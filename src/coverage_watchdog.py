@@ -1411,7 +1411,31 @@ def unreadable_stop_text(rows: Iterable[UnreadableStop]) -> str:
     )
 
 
-def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
+def _scale_in_row_age_seconds(created_at: Any, moment: datetime) -> float | None:
+    """Approximate seconds since a scale-in write-ahead row was written.
+
+    The write-ahead row's `created_at` is a DATABASE WRITE time, not the
+    broker's cancel acknowledgement, so this is an approximation of how
+    long protection has been down and is labelled as one everywhere it is
+    used. The exact figure is the `unprotected_window_closed` event the
+    session files at rearm. `None` when the stamp cannot be read — an
+    unreadable stamp must never be treated as a long window.
+    """
+    text = str(created_at or "")
+    if not text:
+        return None
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return round(max(0.0, (moment - stamp).total_seconds()), 1)
+
+
+def _scale_in_skip(
+    broker: Any, db_path: str | Path | None, *, now: datetime | None = None,
+) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 
     A live cancel-confirm-buy window looks uncovered on purpose. Adding a
@@ -1419,26 +1443,113 @@ def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     cleared. Crash recovery belongs to the session drain; this only
     stays out of the way while a session lock is held or a DAY add is
     still working.
+
+    Board item 193. The session-lock arm of that skip used to be
+    UNBOUNDED: while the wrapper's lock directory existed, every symbol
+    holding a scale-in write-ahead row was skipped for as long as the row
+    survived. A session that cancelled the protective stop and then hung
+    or died WITHOUT releasing the lock therefore left the WHOLE held
+    position naked, with the one watchdog that could re-protect it
+    deliberately looking away, indefinitely. The window is a property of
+    the broker's order model and cannot be removed — a resting protective
+    SELL and a working BUY collide on the same symbol, and the quantity
+    amend that would otherwise resize the resting stop in place is refused
+    by this broker on a fractional order (42210000), which scale-in adds
+    routinely are — but the SKIP does not have to be unbounded.
+
+    So the lock-held skip is now bounded by the desk's OWN MEASUREMENT: the
+    longest unprotected window it has ever closed and recorded
+    (`measured_window_bound_seconds`). Nothing here is a chosen number.
+      * Within that bound, or with no measured history at all, behaviour is
+        exactly as before — skip, because this is a normal live window.
+      * Past that bound, the symbol is no longer taken on the lock's word.
+        It falls back to the same collision test the crash path already
+        uses: a WORKING entry order still rests, so a stop would collide and
+        the skip stands; nothing rests, so the collision that justified the
+        skip is gone and the sweep is allowed to re-protect the position.
+
+    The residual risk is deliberate and is the conservative side of the
+    trade: if a live session is merely slower than every window ever
+    measured and has not yet submitted its add, the sweep may place a stop
+    that then blocks the add, and the add's own failure path restores from
+    the write-ahead row. An add refused with the position protected is a
+    better outcome than a position left naked with no watchdog.
     """
     try:
         from src.execution.scale_in import (
             list_open_entry_ids, pending_scale_in_symbols_from_path,
             trading_session_lock_held,
         )
-        symbols = pending_scale_in_symbols_from_path(
-            db_path if db_path is not None else DB_PATH,
-        )
+        path = db_path if db_path is not None else DB_PATH
+        symbols = pending_scale_in_symbols_from_path(path)
     except Exception:  # noqa: BLE001
         return set()
     if not symbols:
         return set()
     if trading_session_lock_held():
-        return set(symbols)
+        stale = _scale_in_symbols_past_measured_bound(path, symbols, now=now)
+        if not stale:
+            return set(symbols)
+        skip = set(symbols) - stale
+        for symbol in sorted(stale):
+            if list_open_entry_ids(broker, symbol):
+                # The collision is real: a working entry order still rests,
+                # so a protective stop here would be blocked anyway.
+                skip.add(symbol)
+                logger.warning(
+                    "scale-in %s has been unprotected for longer than the "
+                    "longest window this desk has ever measured, but a "
+                    "working entry order still rests on it — the sweep still "
+                    "cannot place a stop without colliding with it",
+                    symbol,
+                )
+            else:
+                logger.error(
+                    "scale-in %s has been unprotected for longer than the "
+                    "longest window this desk has ever measured and NO entry "
+                    "order is working on it — the session lock is no longer "
+                    "reason enough to look away, handing it to the coverage "
+                    "sweep to re-protect",
+                    symbol,
+                )
+        return skip
     skip: set[str] = set()
     for symbol in symbols:
         if list_open_entry_ids(broker, symbol):
             skip.add(symbol)
     return skip
+
+
+def _scale_in_symbols_past_measured_bound(
+    db_path: str | Path | None, symbols: set[str], *,
+    now: datetime | None = None,
+) -> set[str]:
+    """Of `symbols`, those whose window is older than every measured one.
+
+    Empty — meaning "treat them all as normal live windows" — whenever the
+    desk has no measured history to compare against, whenever the rows
+    cannot be read, and for any row whose write time cannot be parsed. Each
+    of those is a case where calling a window overdue would be an invented
+    figure rather than a measured one.
+    """
+    bound, observations = measured_window_bound_seconds(db_path)
+    if bound is None or observations <= 0:
+        return set()
+    try:
+        from src.execution.scale_in import pending_scale_in_rows_from_path
+        rows = pending_scale_in_rows_from_path(db_path)
+    except Exception:  # noqa: BLE001
+        return set()
+    moment = now or _utc_now()
+    stale: set[str] = set()
+    for row in rows or []:
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol or symbol not in symbols:
+            continue
+        age = _scale_in_row_age_seconds(row.get("created_at"), moment)
+        if age is not None and age > bound:
+            stale.add(symbol)
+    return stale
 
 
 def measured_window_bound_seconds(
