@@ -524,3 +524,46 @@ Measurement only. No production code was written or changed for it; both events 
 **Method.** Both events land in `specialist_evidence` with `kind='pipeline_event'` (via `_record_pipeline_event` -> `_persist_evidence` -> `Database.insert_specialist_evidence`); there is no `pipeline_events` table. The live file was copied out with its `-wal` and `-shm` sidecars and the counts agreed with and without them. Exposure per event is `abs(held_qty_before)` from the cancel event's own payload multiplied by the add's fill price from the `trades` row for the same run and symbol. Volatility is the standard deviation of the last 20 daily close-to-close log returns strictly before the event date, from daily bars for that name, scaled to the window by `sigma_daily * sqrt(seconds / 23400)`. No volatility number was assumed or carried over from anywhere.
 
 **What was deliberately not done.** No fix, no alert, no change to `scale_in.py` — including the docstring's "~15 s", which the measurement contradicts but which is a code change and not this pass's mandate.
+
+## item 198
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
