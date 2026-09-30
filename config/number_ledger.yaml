@@ -2443,8 +2443,18 @@ numbers:
       Does the owner accept a noise band read from the published
       volatility-stop literature (~3 ATR, against today's 1.0), knowing it
       makes the desk markedly slower to accept that an adverse move is real?
-      That is a risk-appetite question, not a measurement, and it is the only
-      remaining route -- the literature offers a range, not a value.
+      That is a risk-appetite question, not a measurement.
+      SUPERSEDED 2026-09-30 by the owner ruling that risk tolerance is read
+      per name from that instrument's own behaviour and the seats'
+      conviction, never set as a global dial: asking the owner to pick one
+      global multiple is no longer an available route, and neither is
+      adopting 3.0 as a new global literal. The remaining route is therefore
+      to replace this constant with a per-name read of how far THIS
+      instrument ordinarily travels against a holding -- a reformulation of
+      the exit path, not a retune -- which was NOT built here because it
+      changes live selling behaviour and no measurement of that per-name
+      quantity has been taken yet. The literature (~3 ATR) bounds the answer;
+      it does not supply it.
     cost_while_unanswered: >-
       The band that decides whether an adverse move is real sits below every
       published volatility multiple, and it is the measured cause of the
@@ -2478,6 +2488,15 @@ numbers:
       short-term -- or accept an ATR margin nobody can source? The first is a
       real reformulation of the exit path and changes behaviour; the second is
       owner appetite. Nothing measurable decides between them.
+      SUPERSEDED 2026-09-30: the owner ruling that risk tolerance is read per
+      name, never as a global dial, closes the second option. NO BASIS
+      EXISTS, plainly stated: this margin is unidentifiable in ATRs, and no
+      replacement ATR figure is proposed here. What would give it one, and
+      the only remaining route, is re-expressing the margin in the units the
+      published work uses -- a percentage of price scaled by whether the
+      level is major or short-term (Edwards & Magee ~3% / ~1%) -- read per
+      name rather than set globally. That is a separate build; it was not
+      done here because it changes which positions keep their protection.
     cost_while_unanswered: >-
       Whether a structural level counts as broken, and therefore whether a
       position keeps its protection, turns on an ATR distance no published
