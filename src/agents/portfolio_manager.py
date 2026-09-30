@@ -715,9 +715,15 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             broadcast_here = sorted(s for s in (broadcast or ()) if s in sources)
             if broadcast_here:
                 notes.append(
-                    f"{', '.join(broadcast_here)} stance is the market-wide "
-                    "outlook, not a read on this name's sector — it cannot "
-                    "count FOR the trade; it still counts against one it opposes"
+                    # Item 18, 2026-09-30: the reason this note exists is
+                    # IDENTICAL on every line that carries it, so it is
+                    # stated ONCE under the section instead of ~110 times.
+                    # What stays per line is the only per-line fact: WHICH
+                    # source was broadcast. Prior wording repeated 130-odd
+                    # characters of explanation per symbol, measured at 14.9%
+                    # of the whole briefing.
+                    f"{', '.join(broadcast_here)} stance broadcast — "
+                    "one-sided, see note below"
                 )
             stale_note = f"; {'; '.join(notes)}" if notes else ""
             # The ALIGNED side drops both; the OPPOSED side drops only the
@@ -1705,6 +1711,11 @@ what you write in provenance — is a GO/NO-GO, not a size dial. A source whose
 stance is marked stale is in neither count: an old filing is still worth
 reading, but it has not confirmed anything about today, and it has not
 contradicted anything either.
+
+A source marked `broadcast` above is one-sided, and the rule is the same for
+every name that carries the mark: that stance is the market-wide outlook, not
+a read on this name's sector, so it cannot count FOR the trade — it still
+counts AGAINST one it opposes.
 
 A seat arguing the OTHER way SUBTRACTS from the net.
 **A net score of zero or below produces NO ORDER AT ALL** — not a small

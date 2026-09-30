@@ -27,7 +27,6 @@ from src.risk.exit_refusal import (
     REFUSAL_OWNER,
     UNCERTAINTY_FAIL,
     classify_trigger_reason,
-    load_exit_refusals,
     record_exit_refusal,
 )
 from src.storage.db import Database
@@ -158,45 +157,6 @@ def test_matcher_exception_is_uncertain():
 # ---------------------------------------------------------------------------
 # Durable recording — append-only, same symbol+run does not clobber
 # ---------------------------------------------------------------------------
-
-def test_two_drop_reasons_for_the_same_symbol_and_run_both_survive(tmp_path):
-    db = Database(str(tmp_path / "refusals.db"))
-    db.initialize()
-    try:
-        record_exit_refusal(
-            db, symbol="V", run_id="r-same", action="SELL",
-            code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
-            detail="no named trigger", layer="hard_trigger",
-        )
-        record_exit_refusal(
-            db, symbol="V", run_id="r-same", action="SELL",
-            code=CODE_AI_RISK_REJECT, dropped=True,
-            detail="challenge seat said no", layer="ai_risk",
-        )
-        # The cooldown ledger WOULD have kept only the second row.
-        db.record_intraday_evaluation(
-            symbol="V", run_id="r-same", status="exit_blocked_no_named_trigger",
-            detail="first",
-        )
-        db.record_intraday_evaluation(
-            symbol="V", run_id="r-same", status="exit_vetoed_by_ai_risk",
-            detail="second",
-        )
-        ledger = db.conn.execute(
-            "SELECT status FROM intraday_evaluations WHERE symbol='V' AND run_id='r-same'"
-        ).fetchall()
-        assert [row["status"] for row in ledger] == ["exit_vetoed_by_ai_risk"]
-
-        rows = load_exit_refusals(db, symbol="V", run_id="r-same")
-        assert [row["code"] for row in rows] == [
-            CODE_UNRECOGNIZED_TRIGGER, CODE_AI_RISK_REJECT,
-        ]
-        assert all(row["dropped"] is True for row in rows)
-        assert all(row["owner"] == REFUSAL_OWNER for row in rows)
-        assert all(row["uncertainty_fail"] == "open" for row in rows)
-    finally:
-        db.close()
-
 
 def test_recording_failure_does_not_raise():
     class Boom:

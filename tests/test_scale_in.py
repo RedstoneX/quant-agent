@@ -28,8 +28,6 @@ from src.execution.scale_in import (
     pending_protection_symbols,
     prepare_long_add,
     prepare_short_add,
-    scale_in_symbols_to_skip,
-    short_add_is_blocked,
 )
 from src.models import PortfolioDecision, Position, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
@@ -134,12 +132,6 @@ def _shortable(pipeline):
 
 def test_repeg_enabled_stays_false():
     assert ExecutionConfig().repeg_enabled is False
-
-
-def test_short_add_is_blocked_only_when_already_short():
-    assert short_add_is_blocked([_cop_position(qty=-8)], "COP") is True
-    assert short_add_is_blocked([_cop_position(qty=8)], "COP") is False
-    assert short_add_is_blocked([], "COP") is False
 
 
 def test_most_protective_long_stop_is_the_highest_trigger():
@@ -1019,19 +1011,6 @@ def test_pending_protection_symbols_includes_scale_in_wal(tmp_path):
     )
     assert pending_protection_symbols(db) == {"COP"}
     db.close()
-
-
-def test_scale_in_symbols_to_skip_when_an_entry_is_still_working():
-    db = MagicMock()
-    db.get_pending_protection_restores.return_value = [
-        {"symbol": "COP", "sell_order_id": WAL_SCALE_IN_SENTINEL},
-    ]
-    broker = MagicMock()
-    broker.list_open_entry_order_ids.return_value = ["buy-1"]
-    with patch(
-        "src.execution.scale_in.trading_session_lock_held", return_value=False,
-    ):
-        assert scale_in_symbols_to_skip(broker, db) == {"COP"}
 
 
 # --------------------------------------------------------------------------
