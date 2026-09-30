@@ -227,7 +227,6 @@ DONE WHEN:
   - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
 detail: docs/BOARD_NOTES.md (item 157)
 
-**174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
 DONE WHEN:
   - [x] a self-clear reaches the owner on the same surface the suspension did — the auto-expiry now sends the same Telegram alert the suspension does (🟢 RESUMED, naming the forgiven trigger, when it cleared and why, every number read from the `auto_reset` event row), keeping the DB event and log; durable/retryable like the quota-recovery alert, and suppressed under `QAMC_REHEARSAL=1` at the notifier chokepoint
@@ -362,6 +361,7 @@ detail: docs/BOARD_NOTES.md (item 197)
 - retired queue: 163
 - retired queue: 86, 173
 - retired queue: 198
+- retired queue: 174
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
