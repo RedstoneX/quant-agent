@@ -1234,10 +1234,6 @@ class AnalystScorecardResponse(BaseModel):
 # Generic error envelope (used by exception handlers, not returned inline)
 # ---------------------------------------------------------------------------
 
-class ErrorResponse(BaseModel):
-    detail: str
-
-
 # --- holding "why do we hold this" view (2026-09-18) -------------------
 # Assembled by `src.api.holding_why.build_holding_why` from what is
 # already stored; see that module for every wording rule. The models are

@@ -709,11 +709,6 @@ def streak_and_skipped(
     return streak, skipped
 
 
-def unvarying_streak(sessions: list[SessionShape]) -> list[SessionShape]:
-    """Just the streak — see `streak_and_skipped`."""
-    return streak_and_skipped(sessions)[0]
-
-
 # ---------------------------------------------------------------------------
 # on-box state — one alert per trading day
 # ---------------------------------------------------------------------------

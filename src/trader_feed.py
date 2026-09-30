@@ -1865,20 +1865,6 @@ def _looked_at_block(
     return _tier4()
 
 
-def _append_looked_at(
-    lines: list[str], rows: list[dict], profiles: dict,
-    snap: dict[str, Any] | None = None, budget: int | None = None,
-) -> None:
-    """`_looked_at_block`, appended in place — the `_new_block` shape.
-
-    The two formatters that carry a candidate list no longer call this:
-    they go through `_budgeted_sections`, which has to know the block's
-    size before deciding where to put it. Kept as the in-place form for
-    any caller that wants the block with no budget at all.
-    """
-    lines.extend(_looked_at_block(rows, profiles, snap, budget))
-
-
 def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
     """The opportunity-rotation pre-check, said to the owner.
 
