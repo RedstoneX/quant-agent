@@ -833,6 +833,49 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 
 ## item 186 — detail moved from the board 2026-09-30
 
+UPDATE 2026-09-30 (second pass, owner ruling on global risk dials). Live-code
+inventory of every portfolio- and cluster-level ceiling still standing, each
+verified in source this pass, not from the board:
+
+  * `RiskConfig.max_portfolio_risk_pct` = 25 — total capital at risk across the
+    book. Owner-ratified 2026-09-25, unsourced. AGGREGATE rationing, not a
+    per-name risk read, so the new ruling does not convert it into a defect;
+    there is no instrument to read a book-wide ceiling off. Stays, labelled.
+  * `RiskConfig.SECTOR_HARD_CEILING_MAX` = 90 (mirrored at the constructor as
+    `max_sector_hard_pct`) — terminal sector ceiling. Same shape, same verdict.
+  * `RiskConfig.max_cluster_risk_share_pct` = 40 — share of total risk one
+    correlation cluster may hold. Same shape, same verdict. What defines a
+    cluster is no longer a number (see above); what a cluster may hold still is.
+  * `correlation.CLUSTER_CORRELATION_THRESHOLD` = 0.7 — GONE, confirmed absent
+    from live code this pass; the module keeps only a comment saying it used to
+    be there.
+  * `RiskConfig.short_gap_risk_multiple` = 1.5 (mirrored on ConstructorConfig)
+    — genuine per-name risk appetite, and therefore a defect under the ruling.
+  * `TradingPipeline._clamp_queued_earnings_buys(max_pct)` = 5 — genuine
+    per-name risk appetite, and therefore a defect under the ruling.
+
+NEITHER OF THE TWO DEFECTS WAS REPLACED, AND NEITHER WAS ROUTED TO THE OWNER.
+Plainly, why:
+
+  * The short haircut's honest per-name form is that stock's own overnight-gap
+    magnitude relative to its stop distance. The sizing sites
+    (`_build_short`, and the risk-plan loop) receive `analysis.atr_14` and a
+    stop price; no bar history reaches them and the database holds no OHLCV
+    table, so the gap term cannot be read. Substituting "one ATR of gap" would
+    invent the coefficient, which is the thing doctrine bars, so it was not
+    done. Unblocked by a stored daily-bar build and nothing else.
+  * The queued-earnings clamp's honest per-name form needs that name's expected
+    earnings-day move; the desk has no implied-move or historical-reaction
+    source, so the same blocker applies. There IS a threshold-free alternative
+    that needs no number at all — an unread filing means the fundamental seat
+    is not convicted, and standing doctrine already says all five seats must be
+    right to enter, so the BUY would be refused rather than capped. That turns
+    a size cap into a block on live capital and belongs in front of the
+    adversary first, so it is recorded here and not shipped.
+
+Both numbers keep `status: arbitrary` in the ledger with the blocker named and
+the withdrawn appetite question marked withdrawn. No value was picked.
+
 UPDATE 2026-09-30: the correlation-cluster cutoff (0.7) is REMOVED rather than
 ratified. Cluster membership is read structurally — Mantegna correlation
 distance, minimum spanning tree, cut at the tree's own largest edge-length gap
