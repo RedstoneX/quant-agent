@@ -5090,3 +5090,34 @@ numbers:
       from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
       20% at today's values). Inherits that entry's arbitrary status and
       open question.
+  - id: src.risk.metrics.DRIFT_WEIGHT_PCT
+    value: 12.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Board item 107. One of the drift flag's two thresholds (weight percent
+      of book). Consolidates three bare inline literals (src/pipeline.py's
+      `_build_position_facts`, src/agents/portfolio_manager.py's
+      `_fmt_position`, src/agents/position_reviewer.py's label string) that
+      already existed on main before this change and were never a ledger
+      site because a bare comparison literal inside a function body matches
+      none of this scanner's five structural shapes. Naming the constant
+      does not source it: it is still hand-chosen and unmeasured. `drift_flag`
+      only sets a `⚠️DRIFT`/`positions_drift_flagged` decoration read by the
+      Portfolio Manager and Position Reviewer prompts; no Python path sizes,
+      prices, stops or exits a position from it, so it is informational, not
+      trade-governing, exactly like the seats' other contextual read-outs
+      (news, technicals). Not reclassified as `arbitrary`: that status is
+      for a number a debt-tracked owner appetite call still has to settle,
+      and this one decides nothing to settle.
+  - id: src.risk.metrics.DRIFT_PNL_PCT
+    value: 10.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Board item 107. The drift flag's other threshold (unrealized P&L
+      percent). Same consolidation and the same reasoning as
+      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file: pre-existing bare
+      inline literal, newly named, still unsourced, informational-only (see
+      that entry for the full reasoning; not repeated to avoid two owners of
+      one explanation).
