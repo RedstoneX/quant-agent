@@ -111,6 +111,36 @@ def reason_cites_alignment(reason: object) -> bool:
     lower = reason.lower()
     return any(p in lower for p in ALIGNMENT_PHRASES)
 
+
+def strip_alignment_clauses(reason: object) -> str:
+    """`reason` with the sentences that NAME the alignment trigger removed.
+
+    The carve-out below is for the alignment READ, not for whatever else
+    the seat wrote around it. A reason that is one alignment phrase and
+    four sentences of narrative is four sentences of narrative, and the
+    veto that guards against narrative exits must still see them. So the
+    exemption is scoped to the clause that earns it: sentences naming the
+    trigger are struck, and the RESIDUAL prose is judged exactly as any
+    other exit reason would be.
+
+    Splitting is on ordinary CLAUSE punctuation — sentence ends, semicolons
+    and commas. No number, no threshold, no length test. Clause level, not
+    sentence level, is deliberate: the shape this exists to stop is one
+    alignment phrase carrying a sentence of narrative alongside it
+    ("trend alignment: structure broken, momentum fading, stalling"), and a
+    sentence-level split exempts the whole of that.
+
+    None of `DETERIORATION_PATTERNS` appears anywhere in the read's own
+    generated reason, so scoping this tightly cannot veto the desk's own
+    wording. An empty residual (the reason was ONLY alignment clauses) is
+    exempt by construction, because there is nothing left to judge.
+    """
+    if not isinstance(reason, str) or not reason:
+        return ""
+    parts = re.split(r"(?<=[.!?;,])\s+|(?<=[.!?;,])(?=\S)", reason)
+    kept = [p for p in parts if not reason_cites_alignment(p)]
+    return " ".join(kept).strip()
+
 #: Metrics where a HIGHER value means the position is doing better.
 _HIGHER_IS_BETTER = ("thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace")
 
@@ -412,6 +442,18 @@ def veto_contradicted_exit(
     reason that names the trigger while the read says NOT aligned gets no
     carve-out here (and is refused by the caller as unconfirmed).
 
+    THE CARVE-OUT IS SCOPED, two ways (2026-09-30 adversary correction):
+      * to the CLAUSE, not the whole reason. The exemption applies to the
+        sentences that name the trigger; the residual prose is put back
+        through the deterioration test unchanged, so a reason that is one
+        alignment phrase wrapped in narrative still gets vetoed on the
+        narrative. See `strip_alignment_clauses`.
+      * to a FULL close. The deterministic read's only conclusion is "the
+        trend is over", which is not a statement about a fraction, so it
+        can license a SELL/COVER and nothing else. REDUCE takes no
+        carve-out: a seat-chosen partial has no instrument behind its
+        fraction and must stand on its own reasoning like any other trim.
+
     Vetoes only when ALL of these hold:
       - the action actually reduces the position (SELL / REDUCE / COVER —
         COVER is the short-side twin: it reduces/closes a SHORT exactly as
@@ -449,11 +491,18 @@ def veto_contradicted_exit(
         shorts) values, so a delta spanning that boundary is stale, not
         wrong — it self-heals after one review cycle.
     """
-    if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
+    act = str(action).upper()
+    if act not in ("SELL", "REDUCE", "COVER"):
         return None
-    if alignment_confirmed and reason_cites_alignment(reason):
-        return None
-    if not is_deterioration_claim(reason):
+    judged = reason
+    if alignment_confirmed and reason_cites_alignment(reason) and act != "REDUCE":
+        # Scoped carve-out: the alignment clause is exempt, the rest of the
+        # prose is not. REDUCE gets NO carve-out — the deterministic read's
+        # only conclusion is "close in full", so it can license a full exit
+        # and nothing else; a seat-chosen partial has no instrument behind
+        # its fraction and must stand on its own reasoning like any trim.
+        judged = strip_alignment_clauses(reason)
+    if not is_deterioration_claim(judged):
         return None
     if not deltas.has_prior or not deltas.net_improved:
         return None

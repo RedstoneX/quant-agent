@@ -10866,9 +10866,11 @@ class TradingPipeline:
         """The desk's profit-taking exit (owner 2026-09-30, relayed by the
         orchestrator): close a position in full when the instrument's own
         readings ALIGN that the trend is over — the trail's last higher low
-        broken and confirmed, price beyond the chandelier distance from the
-        run's extreme, and no longer above a rising MA20. Never a target,
-        never a P&L figure. Rule and provenance: `src.risk.trend_alignment`.
+        broken and CONFIRMED on `TREND_CONFIRMING_CLOSES` consecutive closes
+        (or the higher-low sequence itself turned, which carries its own
+        two-sided pivot confirmation), price beyond the chandelier distance
+        from the run's highest high SINCE ENTRY, and no longer above a rising
+        MA20. Never a target, never a P&L figure. Rule and provenance: `src.risk.trend_alignment`.
 
         Runs after the reviewer's own exits, over every held name, on the
         shared per-review bars. Skips names already exited this session.

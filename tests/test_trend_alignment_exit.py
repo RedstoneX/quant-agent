@@ -113,13 +113,16 @@ def test_a_rollover_aligns_only_when_every_reading_agrees():
     assert r.code == ALIGNMENT_ALIGNED and r.aligned is True
     assert "takes profit in full" in r.reason
 
-    # Same collapse, first day the structure breaks: both fast readings agree
-    # on THIS close, so it is aligned — the second reading is the guard the
-    # stop side gets from a second day; the confirmation is filed, not required.
+    # Same collapse, FIRST day the structure breaks, nothing behind it: the
+    # break is unconfirmed, so there is no exit. The desk's standing rule
+    # (docs/OUTCOME.md) is that a same-day break trigger is the recurring
+    # bug, corrected to a two-trading-day closing confirmation; the first
+    # cut of this module reintroduced it and it is required again here.
     r1 = _read(bars, prior_records=[])
     assert r1.structure_broken_today is True and r1.structure_confirmed is False
-    assert r1.aligned is True and "confirmed on a second" not in r1.reason
-    assert "confirmed on a second consecutive close" in r.reason
+    assert r1.aligned is False
+    assert "2 consecutive closes" in r1.reason
+    assert "2 consecutive closes" in r.reason
 
     # Structure confirmed but price still inside the chandelier distance:
     # the volatility reading says the trend is alive -> no exit.
@@ -234,9 +237,77 @@ def _improved():
 
 
 def test_a_confirmed_alignment_exit_is_not_vetoed_as_contradicting_metrics():
-    reason = "trend alignment: last higher low broken and confirmed, momentum fading, stalling"
+    reason = "trend alignment: the last higher low broke and was confirmed on two closes"
     assert veto_contradicted_exit("SELL", reason, _improved(), alignment_confirmed=True) is None
-    assert veto_contradicted_exit("REDUCE", reason, _improved(), alignment_confirmed=True) is None
+    assert veto_contradicted_exit("COVER", reason, _improved(), alignment_confirmed=True) is None
+
+
+def test_the_carve_out_is_scoped_to_the_alignment_clause_and_to_a_full_close():
+    """Adversary finding, 2026-09-30. The carve-out used to stand the WHOLE
+    narrative veto down on one substring anywhere in free text, and it passed
+    REDUCE although the deterministic read's only conclusion is "close in
+    full"."""
+    mostly_narrative = (
+        "trend alignment: last higher low broken and confirmed, momentum "
+        "fading, stalling, dead money"
+    )
+    # The alignment clause is exempt; the narrative around it is not.
+    assert veto_contradicted_exit(
+        "SELL", mostly_narrative, _improved(), alignment_confirmed=True,
+    ) is not None
+    # A reason that is ONLY the alignment clause still passes.
+    clean = "trend alignment: the structure, the ATR and the MA20 all agree"
+    assert veto_contradicted_exit(
+        "SELL", clean, _improved(), alignment_confirmed=True,
+    ) is None
+    # A REDUCE gets no carve-out at all — the read says "the trend is over",
+    # which is not a statement about a fraction.
+    partial = "trend alignment: trim half, the position is stalling"
+    assert veto_contradicted_exit(
+        "REDUCE", partial, _improved(), alignment_confirmed=True,
+    ) is not None
+
+
+def test_a_confirmed_lower_low_is_a_structure_break_not_a_data_fault():
+    """Adversary finding, 2026-09-30. `_structural_pivot` returns None when
+    the latest confirmed pivot is a LOWER low, and the first cut filed that
+    as UNREADABLE — making the exit impossible at the clearest evidence an
+    uptrend has ended, and telling the seat the data had failed when it had
+    not."""
+    up = _run_up()
+    top = up[-1]
+    # A down leg with two clean V troughs, the second BELOW the first, then
+    # four higher bars so that second trough is a CONFIRMED swing low
+    # (window 3 either side) — and a last close still far under the
+    # chandelier, because the whole leg is far larger than the bounce.
+    down = (
+        [top - 6 * k for k in range(1, 8)]        # leg 1 down
+        + [top - 42 + 3 * k for k in range(1, 6)]  # bounce (trough 1 confirmed)
+        + [top - 27 - 7 * k for k in range(1, 9)]  # leg 2 down, deeper
+        + [top - 90 + 2 * k for k in range(1, 6)]  # bounce (trough 2 confirmed)
+    )
+    down = [round(x, 2) for x in down]
+    bars = _bars(up + down)
+    lows = _swing_lows(bars)
+    assert len(lows) >= 2 and lows[-1] < lows[-2], lows[-4:]
+    assert _structural_pivot(lows, is_short=False) is None
+    r = _read(bars, prior_records=[])
+    assert r.code != ALIGNMENT_UNREADABLE
+    assert "structure" not in r.unreadable
+    assert r.structure_state == "sequence_turned"
+    assert r.structure_broken_today is True and r.structure_confirmed is True
+
+
+def test_no_confirmed_pivot_yet_is_reported_as_such_not_as_a_data_fault():
+    """A straight run with no pullback low has nothing for structure to read.
+    That is a chart state, not a missing-data fault."""
+    bars = _bars([100.0 + 1.5 * i for i in range(40)])
+    assert _swing_lows(bars) == []
+    r = _read(bars, prior_records=[])
+    assert r.code == ALIGNMENT_NOT_ALIGNED
+    assert r.structure_state == "no_pivot"
+    assert "structure" not in r.unreadable
+    assert "confirmed pullback low" in r.reason
 
 
 def test_the_narrative_veto_is_untouched():

@@ -286,8 +286,24 @@ for what in this codebase has actually been measured versus merely
 asserted. If a real number cannot yet be derived from data or a measured
 record, mark it explicitly as provisional — never let it read as settled.
 
-**Exits, specifically (owner decision, 2026-09-12).** Profit-taking is
-trailing-stop-driven and nothing else: the reward side of a trade cannot be
+**Exits, specifically (owner decision, 2026-09-12; extended by the owner
+2026-09-30).** Profit-taking is driven by the instrument and nothing else.
+Two mechanisms now do it, and neither is a target. The first is the
+ratcheting trailing stop. The second, added 2026-09-30, is the
+TREND-ALIGNMENT exit (`src/risk/trend_alignment.py`, WORK.md item 75): the
+desk closes a position in full when three readings taken live off the
+latest completed close AGREE the trend is over — the last higher low
+broken and confirmed on two consecutive closes (or the higher-low sequence
+itself turned), price more than the chandelier distance below the run's
+highest high since entry, and the close no longer above a rising MA20. The
+owner's ruling in his own words: "The target is just a made-up number. The
+chart, the ATR, support and resistance, and you should also have an SMA in
+there that if it crosses would be another sign — not just one, but there
+has to be alignment to say the trend is over or take profit needs to be
+done." So: exit on ALIGNMENT, never on a target. The rest of this
+paragraph — the rejection of a preset profit target as a class — is
+unchanged and is what the alignment exit is built to respect: the reward
+side of a trade cannot be
 predetermined because the holding period is unknown, so a preset profit
 target — sell a fixed fraction at a fixed gain, decided in advance with no
 reference to what the instrument is doing — is rejected as a class, exactly

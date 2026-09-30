@@ -2328,6 +2328,19 @@ numbers:
       own units, not merely uncited. The confirmation RULE around it IS
       sourced (`TREND_CONFIRMING_CLOSES` = 2, Edwards & Magee); only the
       margin is not.
+      NEW JOB 2026-09-30, board item 75 — RE-CHECKED, and it is NOT
+      justified in the new job. `src/risk/trend_alignment.py` reuses this
+      margin to decide whether the desk SELLS, where every prior consumer
+      used it to decide whether protection is KEPT. The direction of the
+      error flips: too SMALL a margin used to mean holding a position past
+      a real break, and now means selling a winner on a wobble. The
+      research above rules out an ATR basis for the number in EITHER job,
+      so nothing was found that justifies it here; what the new consumer
+      does instead is refuse to act on the margin alone — the sell needs
+      the two-close confirmation AND an independent chandelier reading AND
+      a non-rising MA20 on the same close, so the margin never decides a
+      sale by itself. Recorded as unjustified in the new job rather than
+      defended as already ratified.
     open_question: >-
       Re-express the break margin in the units the literature actually uses --
       a percentage of price, scaled by whether the level is major or
@@ -2355,6 +2368,14 @@ numbers:
       trend regime adds a STRUCTURAL condition (the prior swing-low must also
       break) on top, never a larger close count. The break MARGIN is always
       NOISE_BAND_ATR_MULTIPLE.
+      NEW JOB 2026-09-30, board item 75 — RE-CHECKED and it HOLDS
+      UNCHANGED. `src/risk/trend_alignment.py` asks the same question
+      of the same object (is this level break real?) and takes the
+      same answer, so the Edwards & Magee citation transfers without
+      reinterpretation. The first cut of the alignment read DROPPED
+      this confirmation and fired on one close; that is the recurring
+      bug docs/OUTCOME.md already names, and the confirmation is
+      required again.
   - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
@@ -2676,6 +2697,17 @@ numbers:
       highest-high / lowest-low since entry (src/risk/trailing.py:624,634),
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
+      NEW JOB 2026-09-30, board item 75 — RE-CHECKED and it HOLDS, on one
+      condition that the code now meets. `src/risk/trend_alignment.py`
+      reuses the multiple to decide whether the desk SELLS rather than
+      where a stop rests. LeBeau's Chandelier Exit is published as an EXIT
+      rule, not as a stop-placement rule, so a sell decision is the
+      indicator's own job and the citation carries over. The geometry must
+      match the incumbent trail's or the two would read different levels
+      off the same instrument: both take the highest HIGH SINCE ENTRY and
+      never reset it (`trailing.evaluate_trailing_stop`, and the alignment
+      read's `run_start_index`). Measured 2026-09-30 against that
+      definition, not against a resetting one — see docs/INCIDENT_HISTORY.md.
   - id: src.risk.trailing.MIN_RATCHET_PCT
     value: 2
     status: arbitrary
@@ -2752,6 +2784,16 @@ numbers:
       converges on a bar count, so this is unidentifiable to a single value
       by the same standard as the level-scan window above, and stays labelled
       `arbitrary` rather than being dressed up as sourced.
+      NEW JOB 2026-09-30, board item 75 — RE-CHECKED, still
+      unjustified, and the new job makes it load-bearing in a second
+      way. `src/risk/trend_alignment.py` uses the same pivots both to
+      find the level a sell reads against AND to decide that the
+      higher-low SEQUENCE has turned, which on its own satisfies the
+      structure reading. A wider window would find fewer pivots and
+      sell later; a narrower one would find more and sell sooner. No
+      source converges on a bar count (above), so nothing justifies
+      it here either; it is recorded as unjustified in the new job
+      rather than carried over on 'already ratified'.
     open_question: >-
       How many bars either side make a swing point a swing point?
       src/risk/trailing.py:107 records that the level scan uses 5 and this
