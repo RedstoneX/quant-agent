@@ -5963,9 +5963,20 @@ class TradingPipeline:
                 existing_sp = float(getattr(o, "stop_price", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            # Half-penny tolerance covers Alpaca's float<->Decimal round-trip.
-            if not (existing_sp > 0 and abs(existing_sp - best_stop) < 0.005):
+            # MEASURED against the broker 2026-09-30 on rehearsal account
+            # PA30V8QHEW1C: immediately after a cancel the dead stop is
+            # STILL LISTED with status "new", and Alpaca ACCEPTS a second
+            # stop placed in that window. So a duplicate is not theoretical
+            # and nothing here reconciles one.
+            #
+            # Price therefore MUST NOT gate this check. Filtering on price
+            # first is the incident's own root filter: a stop resting a
+            # penny away is invisible, and the desk submits a second live
+            # stop on the same shares. Identity decides; price only
+            # decides how loudly we report what is already resting.
+            if existing_sp <= 0:
                 continue
+            price_matches = abs(existing_sp - best_stop) < 0.005
             order_id = _real_order_id(getattr(o, "id", None))
             status_attr = getattr(o, "status", None)
             status = str(
@@ -6008,6 +6019,24 @@ class TradingPipeline:
                     symbol, best_stop, order_id, status or "unknown",
                 )
                 continue
+            if not price_matches:
+                logger.warning(
+                    "Reprotect NOT submitting for %s: a live stop from a "
+                    "PREVIOUS attempt (order %s, status %s) already rests "
+                    "at $%.2f, while this run wanted $%.2f. Submitting "
+                    "would leave TWO live stops on the same shares, which "
+                    "the broker accepts and nothing here reconciles. The "
+                    "resting stop is left in place; the coverage sweep "
+                    "owns any correction.",
+                    symbol, order_id, status or "unknown",
+                    existing_sp, best_stop,
+                )
+                from src.execution.stop_records import write_back_stop_loss
+                write_back_stop_loss(
+                    getattr(self, "db", None), symbol, existing_sp,
+                    is_short=(side == "buy"),
+                )
+                return True
             logger.info(
                 "Reprotect skipped for %s — a stop at $%.2f (order %s, "
                 "status %s) placed by a PREVIOUS attempt is live at the "
