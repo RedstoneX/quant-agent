@@ -42,7 +42,7 @@ def _fmt_news_for_evening(news_intel: NewsIntelligenceReport | None) -> str:
     state_text = "\n".join(state_lines) or "No major state changes."
     return (
         f"PM Briefing: {news_intel.pm_briefing[:400]}\n"
-        f"Sentiment: {news_intel.market_sentiment} ({news_intel.confidence})\n"
+        f"Sentiment: {news_intel.format_market_sentiment()} ({news_intel.confidence})\n"
         f"Top state changes:\n{state_text}"
     )
 

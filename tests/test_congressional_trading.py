@@ -645,6 +645,29 @@ def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
     )
     assert real_finding.support_eligible is True
 
+    # Negative control the other way: the gate itself still works on REAL
+    # dates. A genuinely-late real filing (lag past the statutory ceiling)
+    # must still fail, so the estimated-ness rule above is an ADDITIONAL
+    # condition and has not replaced the lag test with a source check.
+    late_real = [
+        o.model_copy(
+            update={
+                "disclosure_date_estimated": False,
+                "lag_days": 60,
+                "transaction_date": TODAY - timedelta(days=60),
+            }
+        )
+        for o in estimated
+    ]
+    late_finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="Two members bought, real dates, filed late.",
+        why_now="lag_days == 60, past the 45-day statutory ceiling.",
+        observations=late_real,
+    )
+    assert late_finding.support_eligible is False
+    assert late_finding.economic_role == "historical"
+
 
 def test_fetch_marks_congresswatch_observations_as_disclosure_date_estimated(tmp_path):
     """The `disclosure_date_estimated` flag set at normalization time must

@@ -472,9 +472,6 @@ def run_backtest(
         min_target_atr_multiple=config.risk.min_target_atr_multiple,
         breakout_projection_atr_multiple=config.risk.breakout_projection_atr_multiple,
         max_target_reach_atr_multiple=config.risk.max_target_reach_atr_multiple,
-        max_stop_width_reach_atr_multiple=(
-            config.risk.max_stop_width_reach_atr_multiple
-        ),
         max_target_horizon_sessions=config.risk.max_target_horizon_sessions,
         target_divergence_warn_pct=config.risk.target_divergence_warn_pct,
     ))

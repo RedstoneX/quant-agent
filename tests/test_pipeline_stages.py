@@ -3859,20 +3859,15 @@ def _short(symbol, alloc):
     )
 
 
-def _run_mods_then_sweep(decisions, modifications):
-    """Exactly the sequence `RiskStage.run` performs: the pipeline's own
-    `_apply_risk_modifications`, then the entry-size sweep."""
+def _run_mods(decisions, modifications):
+    """Exactly the sequence `RiskStage.run` performs. Board item 155: that
+    is now ONE call — the outer `_revert_entry_size_increases` sweep that
+    used to follow it is deleted, its SHORT coverage folded into guard 1b."""
     from src.pipeline import TradingPipeline
-    from src.pipeline_stages import _revert_entry_size_increases
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
-    pre = {
-        (d.symbol.strip().upper(), d.action): d.allocation_pct
-        for d in decisions if d.action in ("BUY", "SHORT")
-    }
     updated, rejected = pipeline._apply_risk_modifications(decisions, modifications)
-    updated, enlarged = _revert_entry_size_increases(updated, pre)
-    return updated, list(rejected) + enlarged
+    return updated, list(rejected)
 
 
 def test_item135_short_allocation_may_not_be_enlarged_by_a_risk_mod():
@@ -3888,7 +3883,7 @@ def test_item135_short_allocation_may_not_be_enlarged_by_a_risk_mod():
         original_value=12.0, new_value=40.0,
         reason="wants a bigger short",
     )]
-    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+    updated, rejected = _run_mods([_short("XLU", 12.0)], mods)
 
     assert len(updated) == 1
     assert updated[0].allocation_pct == 12.0, (
@@ -3909,26 +3904,81 @@ def test_item135_short_allocation_may_still_be_reduced():
         symbol="XLU", field="allocation_pct",
         original_value=12.0, new_value=5.0, reason="too big",
     )]
-    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+    updated, rejected = _run_mods([_short("XLU", 12.0)], mods)
 
     assert updated[0].allocation_pct == 5.0
     assert rejected == []
 
 
-def test_item135_buy_guard_is_unchanged_by_the_sweep():
-    """Control. The BUY case is already handled inside
-    `_apply_risk_modifications`; the sweep must not double-report it or
-    change the outcome."""
+def test_item135_buy_enlargement_is_refused_exactly_once():
+    """Control, and the BUY half of item 155. The BUY case is handled inside
+    `_apply_risk_modifications` guard 1b and must be refused there exactly
+    once — not double-reported by a second enforcement point."""
     from src.models import RiskModification
 
     mods = [RiskModification(
         symbol="SPY", field="allocation_pct",
         original_value=10.0, new_value=25.0, reason="bigger",
     )]
-    updated, rejected = _run_mods_then_sweep([_buy("SPY", 10.0)], mods)
+    updated, rejected = _run_mods([_buy("SPY", 10.0)], mods)
 
     assert updated[0].allocation_pct == 10.0
     assert len(rejected) == 1, f"exactly one refusal, not two; got {rejected}"
+
+
+def test_item155_entry_enlargement_has_exactly_one_enforcement_point():
+    """Board item 155. The rule "the risk seat may only REDUCE an entry's
+    `allocation_pct`" lives in `_apply_risk_modifications` guard 1b and
+    NOWHERE ELSE. It was duplicated one layer out for months
+    (`_revert_entry_size_increases` in `src/pipeline_stages.py`), placed there
+    only because `src/pipeline.py` was locked by another workstream; this
+    codebase's own comments call exactly that duplication the drift behind
+    the #519 defect.
+
+    This test fails if a second enforcement point reappears, on either of the
+    two ways it can come back:
+
+      (a) a resurrected sweep function in `src/pipeline_stages.py`, or
+      (b) guard 1b silently narrowing back to BUY-only, which is what makes a
+          second point look necessary again.
+    """
+    import inspect
+    import src.pipeline_stages as ps
+    from src.pipeline import TradingPipeline
+
+    # (a) No second enforcement point in the stage layer.
+    stage_src = inspect.getsource(ps)
+    assert "_revert_entry_size_increases" not in stage_src, (
+        "board item 155: the entry-size rule was consolidated onto "
+        "`_apply_risk_modifications` guard 1b. A second enforcement point in "
+        "src/pipeline_stages.py has reappeared — extend guard 1b instead."
+    )
+    for name, obj in vars(ps).items():
+        if callable(obj) and "revert_entry_size" in name:
+            raise AssertionError(
+                f"board item 155: `{name}` duplicates guard 1b's rule"
+            )
+
+    # (b) Guard 1b itself still covers BOTH sides, so no second point is
+    # needed. Read only the guard-1b block, not the whole method: guards 2
+    # and 3 carry their own BUY/SHORT tests.
+    guard_src = inspect.getsource(TradingPipeline._apply_risk_modifications)
+    block = guard_src.split("# Guard 1b")[-1].split("# Guard 2")[0]
+    assert 'decision.action in ("BUY", "SHORT")' in block, (
+        "board item 155: guard 1b no longer tests both sides — if it has "
+        "narrowed back to BUY-only, that is the gap the deleted outer sweep "
+        f"existed to cover. Guard 1b now reads:\n{block}"
+    )
+
+    # And it behaves, on both sides, from one place.
+    from src.models import RiskModification
+    for leg, side in ((_buy("SPY", 10.0), "BUY"), (_short("XLU", 10.0), "SHORT")):
+        updated, rejected = _run_mods([leg], [RiskModification(
+            symbol=leg.symbol, field="allocation_pct",
+            original_value=10.0, new_value=30.0, reason="bigger",
+        )])
+        assert updated[0].allocation_pct == 10.0, side
+        assert len(rejected) == 1, f"{side}: one refusal only; got {rejected}"
 
 
 def test_item134_scale_advisory_records_every_entry_without_dropping_it():
@@ -4102,3 +4152,89 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
     # The hard cap still binds: the second long is blocked.
     assert [d.symbol for d in allowed] == ["SPY"]
     assert any("Net exposure" in r for r in blocked)
+
+
+def test_morning_research_stage_news_unreadable_field_marks_status_field_unreadable():
+    """Board item 152, salvage half. The seat answered and the answer is
+    usable, but `analyze()` had to drop a top-level field it sent in a word
+    the desk cannot read (measured in production: `market_sentiment` =
+    "mixed"). That report is neither clean nor lost, and reading it as "ok"
+    would hide a field the next seat is about to make a decision without."""
+    report = _minimal_news_report(confidence="high")
+    report.market_sentiment = None
+    report.unreadable_fields = {"market_sentiment": "mixed"}
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "field_unreadable"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_dropped_symbol_outranks_unreadable_field():
+    """A per-STOCK loss is the worse fact and keeps the single slot."""
+    report = _minimal_news_report(confidence="high")
+    report.market_sentiment = None
+    report.unreadable_fields = {"market_sentiment": "mixed"}
+    report.dropped_news_symbols = ["AMD"]
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+
+    assert stage.run(ctx).data_status["news"] == "symbol_dropped"
+
+
+def test_morning_research_stage_news_parse_error_files_a_record_per_affected_stock():
+    """Board item 152, unsalvageable half. When the news answer cannot be
+    read at all, the loss must be durable and machine-readable PER STOCK —
+    not a log line that dies at the next rotation plus a count. One
+    `analysis_drop` row per name the seat was asked about, each carrying the
+    reason, through the same writer the technical seat's row drops use."""
+    from src.pipeline_stages import ANALYSIS_DROP_KIND
+
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (None, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.admitted_symbols = {"AAPL", "MSFT"}
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "parse_error"
+    drop_calls = [
+        c for c in stage.db.insert_specialist_evidence.call_args_list
+        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+    ]
+    assert {c.kwargs["symbol"] for c in drop_calls} == {"AAPL", "MSFT"}
+    for call in drop_calls:
+        payload = json.loads(call.kwargs["evidence_json"])
+        assert payload["model"] == "NewsIntelligenceReport"
+        assert payload["outcome"] == "dropped"
+        assert "unreadable" in payload["reason"]
+        # The record must say the seat is ABSENT, never that it is neutral.
+        assert "not neutral" in payload["reason"]
+
+
+def test_morning_research_stage_news_clean_answer_files_no_drop_records():
+    """Control: a readable answer must file nothing."""
+    from src.pipeline_stages import ANALYSIS_DROP_KIND
+
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(
+        lambda run_id, session: (_minimal_news_report(confidence="high"), coverage),
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    ctx.admitted_symbols = {"AAPL"}
+    stage.run(ctx)
+
+    assert not [
+        c for c in stage.db.insert_specialist_evidence.call_args_list
+        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+    ]

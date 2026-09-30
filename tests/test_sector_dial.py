@@ -91,7 +91,7 @@ def _held(symbol: str, market_value: float, sector: str = "Technology") -> Posit
 
 def _constructor() -> PortfolioConstructor:
     return PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=500.0,
+        max_sector_pct=SOFT, max_sector_hard_pct=HARD,
     ))
 
 
@@ -233,7 +233,7 @@ def test_a_295_dollar_2_95_pct_of_equity_trade_is_not_dropped_as_too_small():
     equity = 10_000.0
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         decisions = PortfolioConstructor(ConstructorConfig(
-            max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=500.0,
+            max_sector_pct=SOFT, max_sector_hard_pct=HARD,
         )).construct_orders(
             targets=[TargetPosition(
                 symbol="MRVL", target_weight_pct=8.0,
@@ -250,21 +250,19 @@ def test_a_295_dollar_2_95_pct_of_equity_trade_is_not_dropped_as_too_small():
     assert "commission" not in d.reasoning.lower()
 
 
-def test_min_order_usd_no_longer_moves_the_sector_crowding_refusal():
+def test_the_constructor_has_no_min_order_floor_left_to_set():
     """`min_order_usd` used to gate this path (reusing `cash_sweep.min_order_usd`
-    rather than inventing a second notion of "too small to bother"); since the
-    2026-09-24 fix it no longer does — raising or lowering it must NOT change
-    whether a sector-crowded trade is taken."""
-    generous = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=1.0,
-    ))
-    strict = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=SOFT, max_sector_hard_pct=HARD, min_order_usd=5_000.0,
-    ))
-    # 55% crowding leaves 1.25% of equity = $1,250: over $1, and now also
-    # taken even though it is under the "strict" $5,000 config.
-    assert _build(55.0, constructor=generous) != []
-    assert _build(55.0, constructor=strict) != []
+    rather than inventing a second notion of "too small to bother"). The
+    2026-09-24 fix stopped it gating anything, and board item 183 deleted the
+    field outright on 2026-09-26. The floor cannot come back by someone setting
+    it again: `ConstructorConfig` no longer has it, and a sector-crowded trade
+    is still taken."""
+    assert "min_order_usd" not in ConstructorConfig.__dataclass_fields__
+    with pytest.raises(TypeError):
+        ConstructorConfig(min_order_usd=5_000.0)
+    assert _build(55.0, constructor=PortfolioConstructor(ConstructorConfig(
+        max_sector_pct=SOFT, max_sector_hard_pct=HARD,
+    ))) != []
 
 
 def test_the_hard_ceiling_is_configurable():
@@ -272,7 +270,7 @@ def test_the_hard_ceiling_is_configurable():
     setting rather than a constant — and moving it must actually move the
     refusal boundary."""
     loose = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=SOFT, max_sector_hard_pct=80.0, min_order_usd=500.0,
+        max_sector_pct=SOFT, max_sector_hard_pct=80.0,
     ))
     assert _build(65.0) == []                       # refused at the 60% default
     assert _build(65.0, constructor=loose) != []    # permitted at 80%
@@ -428,7 +426,7 @@ def test_the_pair_trade_stays_legal_long_the_leader_short_the_laggard():
     # neither is touched. 10% per leg is under the `max_position_pct`
     # ceiling, so the short is not silently clamped by an unrelated rule.
     constructor = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=15.0, max_sector_hard_pct=18.0, min_order_usd=500.0,
+        max_sector_pct=15.0, max_sector_hard_pct=18.0,
     ))
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         decisions = constructor.construct_orders(
@@ -925,7 +923,7 @@ def test_at_the_production_limit_crossing_75_scales_and_past_90_refuses():
     constructor = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=risk.max_sector_pct,
         max_sector_hard_pct=risk.sector_hard_ceiling_pct,
-        min_order_usd=500.0,
+       
     ))
 
     scaled = _build(80.0, target_weight_pct=8.0, constructor=constructor)

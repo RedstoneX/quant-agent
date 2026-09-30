@@ -211,7 +211,15 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
                 if symbol in (sc.affected_symbols or [])
             ]
             news_context = NewsBroaderContext(
-                market_sentiment=ni.market_sentiment, confidence=ni.confidence,
+                # Board item 152: `None` here means the seat's own sentiment
+                # word was unreadable and dropped. The dashboard renders this
+                # field verbatim, so send the absence in words — a blank cell
+                # would read as "nothing to say", not as "no answer".
+                market_sentiment=(
+                    ni.market_sentiment
+                    or "ABSENT — no readable sentiment from the seat (not neutral)"
+                ),
+                confidence=ni.confidence,
                 pm_briefing=ni.pm_briefing,
                 era_themes=list(ni.macro_narrative.era_themes),
                 current_regime=ni.macro_narrative.current_regime,

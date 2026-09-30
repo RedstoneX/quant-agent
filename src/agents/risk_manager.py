@@ -624,7 +624,7 @@ State changes today:
 Alerts on PM's traded symbols:
 {alerts_text}{lost_text}
 
-Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
+Overall sentiment: {news_intel.format_market_sentiment()} ({news_intel.confidence})
 """
         else:
             news_section = risk_review_mode.absent_block("news", review_mode)
