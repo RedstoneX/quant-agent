@@ -272,7 +272,7 @@ agent has widened the rule to work around it.
 
 **Structure fix shipped (2026-09-25) —** The deterministic ranking now HAS a sign. `SmartMoneyObservation.signal_direction` (derived from `direction`, never stored) returns +1 for a buy, 0 for a sale/exchange/unknown; both ranking keys in `src/agents/smart_money_analyst.py` (`_symbol_rank`, `_transaction_rank`) multiply the `value * signal_weight` term by it. So a bearish sale can no longer tie or outrank a bullish buy of the same dollar value — the exact identity this item names — and a buy's contribution is unchanged (existing behaviour preserved; covered by `tests/test_smart_money.py`). The desk is long-only on smart-money admission (admission requires `direction == "buy"`), so a sale is NEUTRALISED (0), not counted as bullish; the row still reaches the analyst as evidence, so the LLM can still read it bearish. **What stays open:** signing a sale -1 by magnitude (the sourced >50%-of-holdings band is the hook) is the SIGNED SCORING SCHEME still ruled out above — owner appetite or a published source, not a number to guess.
 
-## item 70
+## item 70 — RETIRED 2026-09-30, the one literal doing two jobs is split and verified in code; the three leftover unsourced values are now item 213
 
 **Plain language —** One made-up number, 1.0, is doing two different jobs in the selling path, and neither job is read off anything. The first job is deciding how far a stock has to move against you before the move counts as real rather than ordinary daily wobble. The second is deciding how tight a stop-loss is allowed to be before the desk refuses it as too close. Both are expressed as "one average day's range". That they are the same figure is a coincidence — nothing ties them — so changing one would not change the other, and changing neither is not a source. The first job is also the only measured over-refusal on this path: of eight proposed sales the reviewer approved, seven were blocked as "too small a move". Closing the plumbing next door did not answer why.
 **Example —** A stock whose average daily range is $4 has to move $4 against you before the desk stops calling it noise, and separately, its stop is refused if it sits closer than $4 away. Those two rules constrain each other in a way nobody chose, because somebody typed 1.0 twice.
@@ -897,3 +897,14 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
         possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
         item 90's half-two re-derivation, not to a gate inventory.
 ## item 182 — RETIRED 2026-09-30, both criteria met: the cash-deficit cushion was reformulated away (sized off the order's own live limit floor) and GROSS_LADDER_ALERT_PCT is now SOURCED from the MiFID Article 62(1) / COBS 16A.4.3UK 10% depreciation-notification threshold, moving the owner alert from -20% to -10%
+
+## item 213 — Three separate ATR multiples, all reading 1.0, are still unsourced
+
+**Plain language —** Item 70 was about one made-up number being typed in two places and quietly doing two different jobs. That is fixed: the jobs now have their own names, and a third related number has its own name too, so changing one no longer moves the others. What is left is simpler and harder — none of the three has anything behind it.
+
+**Why this is a new item and not the old one —** The old item's subject was the collision. The collision is gone, so the item is retired rather than left open forever. The leftover question is about sourcing three numbers, which is a different job with a different test for being finished.
+
+**The decision —** None for you. Your 2026-09-30 ruling that risk is read off each holding's own behaviour, never set once for everything, closed the "ask the owner to pick a figure" route these three were parked on. They now close by being read off the instrument, or by being written down honestly as numbers nobody can source, with the reason.
+
+**Recommendation —** Do not retune any of them while sourcing them, and do not merge them back into one number because they happen to read the same. A test now pins that they stay three separate names.
+
