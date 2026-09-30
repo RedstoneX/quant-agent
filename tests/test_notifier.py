@@ -2677,6 +2677,40 @@ def test_finds_dollar_amount_with_wrong_decimal_places():
 
 
 @pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, "unavailable"),
+        (0.0, "$0.00"),
+        (0.0049, "under a cent"),
+        (0.0102, "$0.01"),
+        (0.9, "$0.90"),
+        (2.75, "$2.75"),
+        (10.567, "$10.57"),
+    ],
+)
+def test_format_settled_money_matches_expected_words(value, expected):
+    """`format_settled_money` is `src/cost_circuit.py`'s replacement for the
+    `f"${x:.4f}"` formatting that produced the exact malformed tokens
+    ("$0.0049", "$0.0000") the 2026-09-29 log shows the notifier redacting
+    out of five straight owner-facing alerts."""
+    from src.notifier import format_settled_money
+
+    assert format_settled_money(value) == expected
+
+
+@pytest.mark.parametrize("value", [0.0, 0.0049, 0.0102, 0.9, 2.75, 10.567, 123456.789])
+def test_format_settled_money_never_produces_a_malformed_token(value):
+    """None of `format_settled_money`'s outputs may ever be something
+    `_find_malformed_numeric_tokens` would flag -- that guard is the
+    backstop, not the fix; the generator itself must stop producing the
+    bad shape."""
+    from src.notifier import _find_malformed_numeric_tokens, format_settled_money
+
+    rendered = format_settled_money(value)
+    assert _find_malformed_numeric_tokens(f"cost: {rendered} today") == []
+
+
+@pytest.mark.parametrize(
     "sentence",
     [
         "closed the position for $1,021.36 net of fees",

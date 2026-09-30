@@ -213,7 +213,7 @@ def test_existing_daily_logs_seed_budget_and_trip_on_activation(tmp_path):
     state = circuit.status()
     assert state["trigger_code"] == "daily_cost_limit"
     assert state["current_daily_cost_usd"] == pytest.approx(1.55)
-    assert "$1.5500 on ET day" in notifier.messages[0]
+    assert "$1.55 on ET day" in notifier.messages[0]
     assert "auto" in notifier.messages[0]
 
 
@@ -3015,8 +3015,13 @@ def test_resume_alert_states_what_resumed_when_and_why(tmp_path, monkeypatch):
     assert "auto-expired" in message
     assert event["detail"] in message
     # Numbers are the event's, not invented: settled spend at resume.
-    assert f"${float(event['session_cost_usd']):.4f}" in message
-    assert f"${float(event['daily_cost_usd']):.4f}" in message
+    # `format_settled_money` (src/notifier.py), not a raw 4-decimal string:
+    # the owner-facing dollar shape is always exactly 2 decimal places, or
+    # else the notifier's own malformed-number guard would redact this line
+    # before it ever reached the owner (2026-09-29 log: it did, repeatedly).
+    from src.notifier import format_settled_money
+    assert format_settled_money(event["session_cost_usd"]) in message
+    assert format_settled_money(event["daily_cost_usd"]) in message
     # And it says the limits still bite, so "resumed" is not read as "all clear".
     assert "remain enforced" in message
 
