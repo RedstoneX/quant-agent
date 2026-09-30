@@ -2237,3 +2237,99 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# the GENERIC per-type alert claim — docs/WORK.md item 208
+# ---------------------------------------------------------------------------
+# Three markers above (`claim_repair_failure_alert`,
+# `claim_elected_unfilled_alert` / `claim_kill_switch_block_alert`,
+# `claim_unreadable_stop_alert`) are the same state machine written out
+# three times: an ET-day-keyed set of keys already alerted, claimed before
+# the send so an unwritable state file errs towards telling the owner twice.
+# Any NEW repeat-suppression need takes this generic form instead of a
+# fourth copy. The three existing ones keep their own storage keys so this
+# change cannot alter what they already suppress; they are candidates to
+# migrate onto this helper in a later pass, which is a refactor, not a fix.
+#
+# It is NOT a new suppression rule and it invents no interval: the window is
+# the same ET day `repair_failure_alert_day` already defines, and a claim
+# that is refused is WRITTEN DOWN (`suppressed_alerts`) rather than
+# dropped, so the count of what the owner was spared is readable from the
+# same state file the watchdog already publishes.
+
+#: How many suppression records to retain per alert type. Bounds the state
+#: file; the running `count` is never truncated, only the per-event list.
+_SUPPRESSION_LOG_LIMIT = 50
+
+
+def _typed_alert_claims(state: dict[str, Any], alert_type: str, day: str) -> set[str]:
+    raw = (state.get("typed_alert_claims") or {}).get(alert_type)
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {str(key).strip() for key in (raw.get("keys") or []) if str(key).strip()}
+
+
+def _record_suppressed_alert(
+    state: dict[str, Any], alert_type: str, day: str, keys: Iterable[str],
+    now: datetime,
+) -> None:
+    """Durably note an alert this helper declined to resend.
+
+    Nothing is silently dropped: the owner not being paged a second time is
+    a presentation decision, and the underlying fact still has to be
+    readable afterwards or the desk has stopped reporting its true state.
+    """
+    log = state.get("suppressed_alerts")
+    if not isinstance(log, dict):
+        log = {}
+    entry = log.get(alert_type)
+    if not isinstance(entry, dict) or entry.get("day") != day:
+        entry = {"day": day, "count": 0, "events": []}
+    events = entry.get("events")
+    if not isinstance(events, list):
+        events = []
+    stamp = now.astimezone(timezone.utc).isoformat()
+    for key in keys:
+        entry["count"] = int(entry.get("count") or 0) + 1
+        events.append({"key": key, "at": stamp})
+    entry["events"] = events[-_SUPPRESSION_LOG_LIMIT:]
+    entry["last_suppressed_at"] = stamp
+    log[alert_type] = entry
+    state["suppressed_alerts"] = log
+
+
+def claim_typed_alert(
+    alert_type: str, keys: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's `alert_type` alert for `keys`; return the unsent ones.
+
+    Per TYPE as well as per key, deliberately. A global "one alert an hour"
+    throttle would let a noisy provider fault hide an unrelated unprotected
+    position, which is the exact failure the per-symbol markers above were
+    written to avoid. Two different faults are two findings.
+
+    An empty return means every key has already been reported today and the
+    caller must stay quiet; the refusal is recorded under
+    `suppressed_alerts` so it can still be read.
+    """
+    day = repair_failure_alert_day(now)
+    moment = now or _utc_now()
+    state = load_state(path)
+    already = _typed_alert_claims(state, alert_type, day)
+    ordered = [str(raw).strip() for raw in keys if str(raw).strip()]
+    fresh = [key for key in dict.fromkeys(ordered) if key not in already]
+    stale = [key for key in dict.fromkeys(ordered) if key in already]
+    if stale:
+        _record_suppressed_alert(state, alert_type, day, stale, moment)
+    if fresh:
+        claims = state.get("typed_alert_claims")
+        if not isinstance(claims, dict):
+            claims = {}
+        claims[alert_type] = {"day": day, "keys": sorted(already | set(fresh))}
+        state["typed_alert_claims"] = claims
+    if fresh or stale:
+        state["updated_at"] = moment.astimezone(timezone.utc).isoformat()
+        save_state(state, path)
+    return fresh

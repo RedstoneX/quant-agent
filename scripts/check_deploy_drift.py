@@ -293,7 +293,24 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
 
     if not args.no_telegram:
+        from src.coverage_watchdog import claim_typed_alert
         from src.notifier import TelegramNotifier
+
+        # docs/WORK.md item 208. This unit runs on a timer, so an unattended
+        # weekend of drift used to send the identical message on every tick
+        # (5 on 2026-09-28/29 [measured, production notifier_sends]). The
+        # drift is real and must stay reported, but it is ONE finding until
+        # the deployed SHA or the target moves — which is exactly what the
+        # claim key is. A refused claim is recorded under `suppressed_alerts`
+        # in the watchdog state file, not dropped.
+        claim_key = f"{args.remote_ref}@{report.head_sha}"
+        if not claim_typed_alert("deploy_drift", [claim_key]):
+            print(
+                "check_deploy_drift: already alerted today for "
+                f"{claim_key}; suppression recorded, Telegram not resent",
+                file=sys.stderr,
+            )
+            return 1
 
         notifier = TelegramNotifier()
         if notifier.enabled:

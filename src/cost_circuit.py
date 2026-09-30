@@ -2527,6 +2527,158 @@ class LLMCostCircuitBreaker:
             )
         return True
 
+    def _self_clear_window_minutes(self) -> float:
+        """The circuit's OWN self-clear timing, not a number chosen here.
+
+        `_auto_clear_transient_latch_locked` will not retire a transient
+        latch until `transient_latch_cooldown_minutes` of wall clock have
+        passed. That is already the desk's ratified answer to "how long
+        before this stops being a blip", so the durability threshold for
+        PAGING the owner is the same quantity read from the same config
+        field. Change one and both move together, which is the point.
+        """
+        return float(
+            getattr(self.config, "transient_latch_cooldown_minutes", 15.0)
+        )
+
+    def _suspension_still_inside_self_clear_window_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> bool:
+        """True while this latch could still retire itself without a human.
+
+        Only for `_SELF_CLEARING_HARD_TRIGGERS`. Every other code needs an
+        operator reset, so there is no window it can expire inside and
+        deferring its alert would only delay a page that has to happen.
+        An unreadable or future `suspended_at` returns False — err towards
+        telling the owner.
+        """
+        if str(state.get("trigger_code") or "") not in _SELF_CLEARING_HARD_TRIGGERS:
+            return False
+        suspended_at = state.get("suspended_at")
+        if not suspended_at:
+            return False
+        row = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
+            (suspended_at,),
+        ).fetchone()
+        elapsed = row["minutes"] if row is not None else None
+        if elapsed is None:
+            return False
+        return 0.0 <= float(elapsed) < self._self_clear_window_minutes()
+
+    def _record_suspension_deferral_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> None:
+        """Write the deferral down once per latch, so it is never invisible.
+
+        Once per latch, not once per authorization boundary: a suspended
+        desk can hit this path many times a minute and a row each time is
+        the same noise moved into the database.
+        """
+        suspended_at = state.get("suspended_at")
+        existing = conn.execute(
+            "SELECT 1 FROM llm_circuit_events WHERE event_type='suspend_alert_deferred' "
+            "AND created_at >= ? LIMIT 1",
+            (suspended_at,),
+        ).fetchone()
+        if existing is not None:
+            return
+        window = self._self_clear_window_minutes()
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd) VALUES "
+            "('suspend_alert_deferred', ?, ?, ?, ?, 'episode_coalescing', ?, ?, ?)",
+            (
+                state.get("trigger_code"),
+                (
+                    f"owner alert held: latch is inside its own {window:.0f}-minute "
+                    "self-clear window and may expire without a human; it pages "
+                    "if it is still suspended after that. Suspension is in force "
+                    "and recorded either way"
+                ),
+                state.get("run_id"), state.get("mode"),
+                int(state.get("session_attempts") or 0),
+                float(state.get("session_cost_usd") or 0.0),
+                float(state.get("daily_cost_usd") or 0.0),
+            ),
+        )
+
+    def _episode_facts_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """How long this fault has been running today and how often it flapped.
+
+        An EPISODE is every suspension and self-clear of one trigger code on
+        one ET budget day. That boundary is not invented here: the auto-clear
+        allowance (`max_transient_latch_auto_clears_per_day`) is already
+        counted per ET day against this same table, so the day is the unit
+        the circuit already reasons about a recurring fault in.
+        """
+        code = str(state.get("trigger_code") or "")
+        if not code:
+            return {}
+        _, utc_start, utc_end = _et_day_and_utc_bounds()
+        row = conn.execute(
+            "SELECT MIN(created_at) AS first_at, COUNT(*) AS events, "
+            "SUM(CASE WHEN event_type='auto_reset' THEN 1 ELSE 0 END) AS clears "
+            "FROM llm_circuit_events WHERE trigger_code=? "
+            "AND created_at BETWEEN ? AND ?",
+            (code, utc_start, utc_end),
+        ).fetchone()
+        if row is None or not row["first_at"]:
+            return {}
+        elapsed = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
+            (row["first_at"],),
+        ).fetchone()
+        return {
+            "episode_first_at": str(row["first_at"]),
+            "episode_self_clears": int(row["clears"] or 0),
+            "episode_events": int(row["events"] or 0),
+            "episode_minutes": (
+                float(elapsed["minutes"]) if elapsed and elapsed["minutes"] is not None
+                else None
+            ),
+            "episode_window_minutes": self._self_clear_window_minutes(),
+        }
+
+    @staticmethod
+    def _format_episode_line(facts: dict[str, Any]) -> str:
+        """One line the owner can read without opening anything."""
+        if not facts.get("episode_first_at"):
+            return ""
+        minutes = facts.get("episode_minutes")
+        clears = int(facts.get("episode_self_clears") or 0)
+        window = float(facts.get("episode_window_minutes") or 0.0)
+        duration = (
+            f"{float(minutes):.0f} min" if minutes is not None else "unknown"
+        )
+        return (
+            f"episode: running {duration} since {facts['episode_first_at']} UTC, "
+            f"{clears} self-clear{'s' if clears != 1 else ''} inside it today; "
+            f"reported now because it outlasted the circuit's own "
+            f"{window:.0f}-minute self-clear window (shorter blips are recorded, "
+            "not sent)\n"
+        )
+
+    @staticmethod
+    def _format_episode_summary(facts: dict[str, Any]) -> str:
+        """The closing line of an episode: how long, and how often it flapped."""
+        if not facts.get("episode_first_at"):
+            return ""
+        minutes = facts.get("episode_minutes")
+        clears = int(facts.get("episode_self_clears") or 0)
+        duration = (
+            f"{float(minutes):.0f} min" if minutes is not None else "an unknown time"
+        )
+        return (
+            f"episode: this fault ran {duration} from "
+            f"{facts['episode_first_at']} UTC and self-cleared {clears} "
+            f"time{'s' if clears != 1 else ''} inside it today; the ones that "
+            "cleared inside the self-clear window were recorded, not sent\n"
+        )
+
     def _notify_if_needed(self) -> None:
         if not self.enabled:
             return
@@ -2542,12 +2694,39 @@ class LLMCostCircuitBreaker:
             self._refresh_latched_snapshot_locked(conn)
             state = self._state_row(conn)
             if int(state.get("suspended") or 0):
-                cur = conn.execute(
-                    "UPDATE llm_circuit_state SET alert_state=-1, updated_at=datetime('now') "
-                    "WHERE singleton=1 AND suspended=1 AND (alert_state=0 OR "
-                    "(alert_state=-1 AND updated_at <= datetime('now', '-2 minutes')))"
-                )
-                claimed = cur.rowcount == 1
+                if self._suspension_still_inside_self_clear_window_locked(
+                    conn, state
+                ):
+                    # === docs/WORK.md item 208 ===
+                    # Do not page yet. A latch of a self-clearing code that
+                    # is still inside its OWN self-clear window has not yet
+                    # been shown to be anything but a provider blip, and
+                    # `_auto_clear_transient_latch_locked` may retire it
+                    # without a human. Paging here and again on the clear
+                    # turned one flapping fault into 44 of the 107 messages
+                    # the owner received between 26 and 29 Sep [measured,
+                    # production `notifier_sends`], and he muted the desk.
+                    #
+                    # This defers; it never cancels. `alert_state` stays 0,
+                    # so the very next authorization boundary after the
+                    # window expires claims and sends it, and the existing
+                    # item-174 pairing reads that same 0 to suppress the
+                    # matching "RESUMED" note — so a blip that self-clears
+                    # inside its window is ONE recorded episode and ZERO
+                    # messages, not two. Nothing is dropped: the trip event,
+                    # the deferral event below and the CRITICAL log line all
+                    # remain.
+                    self._record_suspension_deferral_locked(conn, state)
+                else:
+                    cur = conn.execute(
+                        "UPDATE llm_circuit_state SET alert_state=-1, updated_at=datetime('now') "
+                        "WHERE singleton=1 AND suspended=1 AND (alert_state=0 OR "
+                        "(alert_state=-1 AND updated_at <= datetime('now', '-2 minutes')))"
+                    )
+                    claimed = cur.rowcount == 1
+                    if claimed:
+                        state = dict(state)
+                        state.update(self._episode_facts_locked(conn, state))
             conn.commit()
         if claimed:
             text = self.format_alert(state)
@@ -2718,6 +2897,12 @@ class LLMCostCircuitBreaker:
                     )
                     conn.commit()
                 continue
+            # item 208: the resume note is the END of an episode, so it
+            # carries how long the episode ran and how often the same fault
+            # flapped inside it. Read at send time from the same table the
+            # auto-clear allowance is already counted against.
+            with self._connect() as conn:
+                event.update(self._episode_facts_locked(conn, event))
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
             sent = False
@@ -2751,6 +2936,7 @@ class LLMCostCircuitBreaker:
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
             f"{when}"
+            f"{LLMCostCircuitBreaker._format_episode_summary(event)}"
             f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
             f"settled spend at resume: {_fmt_settled(session_cost)} this run · "
             f"{_fmt_settled(daily_cost)} today\n"
@@ -2836,6 +3022,7 @@ class LLMCostCircuitBreaker:
         return (
             "🔴 QAMC PAID ANALYSIS SUSPENDED\n"
             f"trigger: {state.get('trigger_detail') or state.get('trigger_code') or 'safety limit'}\n"
+            f"{LLMCostCircuitBreaker._format_episode_line(state)}"
             f"affected run: {state.get('run_id') or 'unknown'} "
             f"({state.get('mode') or 'unknown'} / {state.get('agent_name') or 'unknown'})\n"
             f"{attempts_line}\n"

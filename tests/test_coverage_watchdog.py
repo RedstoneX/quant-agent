@@ -1037,3 +1037,29 @@ def test_item193_summary_and_log_line_name_the_unguarded_position():
     text = cw.unguarded_text([row])
     assert "AAPL" in text and "9.0s" in text
     assert status.should_alert_unguarded is True
+
+
+# ============================================================================
+# Item 208 (2026-09-30): the generic per-TYPE alert claim
+# ============================================================================
+
+
+def test_typed_alert_claim_is_per_type_and_per_key(tmp_path):
+    from src.coverage_watchdog import claim_typed_alert, load_state
+
+    path = tmp_path / "state.json"
+
+    assert claim_typed_alert("deploy_drift", ["main@abc"], path=path) == ["main@abc"]
+    # The same finding again is one finding, not two pages.
+    assert claim_typed_alert("deploy_drift", ["main@abc"], path=path) == []
+    # A different deployed SHA is a different finding.
+    assert claim_typed_alert("deploy_drift", ["main@def"], path=path) == ["main@def"]
+    # A DIFFERENT alert type must never be silenced by a noisy one -- that is
+    # the failure a global throttle would introduce.
+    assert claim_typed_alert("pricing_cache", ["main@abc"], path=path) == ["main@abc"]
+
+    # Nothing was silently dropped.
+    state = load_state(path)
+    suppressed = state["suppressed_alerts"]["deploy_drift"]
+    assert suppressed["count"] == 1
+    assert suppressed["events"][-1]["key"] == "main@abc"

@@ -817,3 +817,32 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 
 `_repeg_entry_order` in `src/pipeline_stages.py` computes one bound, `reference * (1 + slippage_bps / 10_000)`, calls it `ceiling`, and returns early when `limit_price >= ceiling`. It never reads the spec's side. For a BUY that is right: the ceiling is above the reference and there is room to chase only when the limit sits below it. For a `sell_short` the fillable bound is a FLOOR at `reference * (1 - slippage_bps / 10_000)`, below the reference, and both the arithmetic and the comparison are inverted — a short limit would be judged to have room and walked UP, away from a fill, and the early return that is supposed to mean "already at the bound" would instead fire on exactly the short limits that are furthest from it. NOT INTRODUCED by item 183 and NOT LIVE: `repeg_enabled` is `false` in `config/settings.yaml` and defaults to `False` in `src/config.py`, so this path does not run today, and item 183 deliberately did not touch it. This is filed rather than fixed because the fix is a behaviour change on a money path that nothing currently exercises, and because turning the flag on without it is the real hazard. MEASURED: nothing — there are no re-peg outcomes in the record to measure, which is itself the reason the defect survived review.
 
+
+## item 208
+
+Why the threshold is not a new number. The circuit already answers "how long
+before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
+to retire a transient latch until `transient_latch_cooldown_minutes` of wall
+clock have passed, and refuses again if the day's
+`max_transient_latch_auto_clears_per_day` allowance is spent. Paging the owner
+the instant the latch is set contradicts the circuit's own stated belief that
+the fault may not be real yet. So the paging threshold IS that field. There was
+no need to invent one, and inventing one would have been a barred arbitrary
+number.
+
+Why an episode is one trigger code on one ET day. The auto-clear allowance is
+already counted per ET day against `llm_circuit_events` for exactly this
+purpose — "a fault recurring this often is not transient". The episode
+boundary reuses that unit rather than defining a second, differently-shaped
+notion of "the same fault again".
+
+What this does NOT do. It does not re-enable Telegram: the owner muted it
+deliberately on 2026-09-30 and it stays muted. It does not make the desk
+quieter about anything an operator must act on — every non-self-clearing
+trigger still pages immediately, because there is no window it can expire
+inside. It does not migrate the three existing per-symbol markers in
+`src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
+working code and was left alone so this change cannot alter what they already
+suppress. And it does not put the suppression record on the API — the counts
+are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
+today means reading those, which is the honest state and is filed above.
