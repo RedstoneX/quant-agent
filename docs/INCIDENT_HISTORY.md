@@ -22,6 +22,13 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the coverage sweep repaired a naked position and its own summary concealed it
+
+`COVERAGE SWEEP ... repaired — positions checked 11, gaps 0, repairs attempted 1 / succeeded 1 / failed 0, alert none sent`. The repair itself was correct: it named AAPL, saw all 7.33 shares uncovered, replaced the stop at the recorded $323.74, and used the right hybrid shape with the DAY sub-share leg placed first. Its reporting was wrong twice.
+
+**`gaps 0` while `repairs attempted 1` is a display defect, NOT two code paths disagreeing.** Detection and the repair trigger read the same list. After a successful placement `check_coverage` RE-READS the broker and rebinds the same `gaps` variable to what is STILL uncovered - so the name silently changes meaning from "found" to "left" mid-function, and the summary counted the second. One variable doing two jobs. The gap count is the number an operator scans for, so the line actively concealed the event it was reporting. `gaps_detected` is now captured before the repair block can rebind anything, and the log line prints both: `gaps 1 found / 0 still open`.
+
+**`alert none sent` on a repair.** The last line of defence put a stop back on a position that had been unprotected for 13 minutes 22 seconds and told nobody. A COVERAGE REPAIRED event is never routine - for the sweep to find a gap at all, something earlier (an entry, a trailing ratchet, a re-protect after a partial exit) failed without saying so. It now pages on the same owner channel every other message from this unit uses; no second channel was invented. A sweep that repairs nothing stays silent exactly as before, and a repair already covered by the existing all-clear does not page twice.
 ### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
 
 **In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
@@ -295,6 +302,15 @@ a check that fires every session is a check nobody reads. On the day it was
 written it found three names aiming past a standing wall — META from this
 bug, and AAPL and NOK from levels that formed after those positions were
 opened, which is a real state the desk had no way to see before.
+
+### 2026-09-26 — the trade-picker never contradicted itself; the desk's own sizing cap did (item 163 retired)
+**In plain words:** the board recorded that the portfolio manager said one thing and emitted another — that it wrote "RSG and AAPL get 2.5% risk each" while emitting 0.5 for RSG. It did not. Reproduced read-only against the stored run: the seat's own raw response asks for RSG 2.5 and ZS 1.75 and contains the string "0.5" nowhere. The 0.5 was written AFTER parsing by the desk's deterministic sub-floor size cap (RSG was a range setup at reward:risk 0.81), whose own log line already said "Deterministic, not PM inconsistency". RSG was then traded at the capped size, correctly.
+
+**So the filed defect was misdiagnosed, and the real one is narration lag:** the story is written before a mechanical adjustment and never restated, so a reader comparing prose to stored numbers sees a contradiction that never happened. The detector shipped earlier reads the stored decision and flags a symbol whose prose names a risk % materially different from its emitted `risk_allocation_pct`, recording each to the evidence stream; detection only, and `risk_allocation_pct` stays authoritative. Its tolerance is read off the emitted field's own precision rather than borrowed from the risk-budget floor, which had called prose "2.5% risk" and an emitted 2.0 the same thing.
+
+**Block versus record:** a blocking gate was built first and then deleted. On the only case the desk has measured, blocking would have refused a correctly-sized, correctly-capped trade over a stale sentence, and nothing available distinguishes "the seat contradicted itself" from "a rule moved the number after the seat wrote about it".
+
+**Both criteria are now met.** The second — which value the seat meant — is answered: 2.5%, and the emitted 0.5 was not an erroneous field. The sub-floor cap that caused it was retired 2026-09-17, so this exact path is no longer live; nothing restates the narrative after any mechanical size change, and that residual lag is what the detector surfaces. An earlier write-up claiming the emitted field was the error was withdrawn and its pull request closed.
 
 ### 2026-09-26 — the drift check could only see a mechanism that was deleted, so one that merely changed went on being described wrongly (item 107, part)
 
@@ -17459,7 +17475,9 @@ against `origin/main`'s old shape conflicted in `src/number_sources.py` and
 of arbitrary rows on the day of the change, and no number was picked, moved
 or added.
 
-## Item 199 — reprotect skipped on the stop it had just cancelled, and $2,500 sat naked in silence
+## Item 201 — reprotect skipped on the stop it had just cancelled, and $2,500 sat naked in silence
+
+(Filed as item 199 on this branch; renumbered to 201 when main landed its own item 199 — the unbacked-stop floor — first.)
 
 **This happened in production on 2026-09-30.** From the box's own log:
 
@@ -17542,10 +17560,3 @@ dying order, missing ids, and both alert paths.
 
 6. *The reprotect submit loop was the raw one.* It called `_submit_stop_limit_order` directly: no retry burst, no `held_for_orders` reconciliation, and it placed the whole-share GTC leg BEFORE the fractional sliver - which was MEASURED bad on 2026-09-16, when the GTC hold reserved the position and Alpaca refused the 0.4393 BRK-B DAY sliver. It now submits through `_submit_protective_stop_retrying`, the desk's one protective submit, which places the remainder first. `_submit_stop_legs` (the all-or-nothing variant) was deliberately NOT used here: rolling a landed whole-share GTC leg back to zero coverage because the sliver was refused would make the residual fully naked, which is the worse state. The partial is reported with the quantity actually covered instead.
 
-### 2026-09-30 — the coverage sweep repaired a naked position and its own summary concealed it
-
-`COVERAGE SWEEP ... repaired — positions checked 11, gaps 0, repairs attempted 1 / succeeded 1 / failed 0, alert none sent`. The repair itself was correct: it named AAPL, saw all 7.33 shares uncovered, replaced the stop at the recorded $323.74, and used the right hybrid shape with the DAY sub-share leg placed first. Its reporting was wrong twice.
-
-**`gaps 0` while `repairs attempted 1` is a display defect, NOT two code paths disagreeing.** Detection and the repair trigger read the same list. After a successful placement `check_coverage` RE-READS the broker and rebinds the same `gaps` variable to what is STILL uncovered - so the name silently changes meaning from "found" to "left" mid-function, and the summary counted the second. One variable doing two jobs. The gap count is the number an operator scans for, so the line actively concealed the event it was reporting. `gaps_detected` is now captured before the repair block can rebind anything, and the log line prints both: `gaps 1 found / 0 still open`.
-
-**`alert none sent` on a repair.** The last line of defence put a stop back on a position that had been unprotected for 13 minutes 22 seconds and told nobody. A COVERAGE REPAIRED event is never routine - for the sweep to find a gap at all, something earlier (an entry, a trailing ratchet, a re-protect after a partial exit) failed without saying so. It now pages on the same owner channel every other message from this unit uses; no second channel was invented. A sweep that repairs nothing stays silent exactly as before, and a repair already covered by the existing all-clear does not page twice.
