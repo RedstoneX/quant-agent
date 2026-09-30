@@ -3112,3 +3112,178 @@ def test_schema_migration_adds_suspension_alert_state_on_an_old_db(tmp_path):
             "PRAGMA table_info(llm_circuit_events)"
         )}
     assert "suspension_alert_state" in cols_after
+
+
+# === docs/WORK.md item 147: a NULL cost that is provably $0, not unknown ===
+
+
+def _seed_agent_log(path, **columns):
+    """Insert one same-ET-day agent_logs row with an explicit timestamp."""
+
+    utc_start = _et_day_and_utc_bounds()[1]
+    columns.setdefault("timestamp", utc_start)
+    names = ", ".join(columns)
+    marks = ", ".join("?" for _ in columns)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            f"INSERT INTO agent_logs ({names}) VALUES ({marks})",
+            tuple(columns.values()),
+        )
+
+
+def test_seeded_day_stays_exact_for_a_cache_hit_that_called_no_provider(tmp_path):
+    """Item 147. A success with provider_requests=0 cost exactly $0.
+
+    This is the shape of all 7 NULL-cost rows in the production DB
+    [measured read-only 2026-09-26]: smart_money_analyst synthesis-cache
+    hits. No provider request was issued, so the row is not unknown spend
+    and must not seed the day inexact or arm legacy_unknown_cost.
+    """
+
+    path = _db_path(tmp_path)
+    _seed_agent_log(
+        path, agent_name="smart_money_analyst", run_id="run-cached",
+        model="google/gemini-2.5-flash-lite", tokens_used=0,
+        input_tokens=0, output_tokens=0, cost_usd=None,
+        provider_requests=0, status="success",
+        input_message="[cached evidence hash]",
+    )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-cached", "morning")
+
+    with sqlite3.connect(path) as conn:
+        unknown, exact = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days"
+        ).fetchone()
+    assert unknown == 0
+    assert exact == 1
+    assert circuit.status()["suspended"] is False
+
+
+def test_seeded_day_goes_inexact_for_a_success_that_did_call_a_provider(tmp_path):
+    """Item 147. The unknown case is untouched: a real request, no price."""
+
+    path = _db_path(tmp_path)
+    _seed_agent_log(
+        path, agent_name="tech_analyst", run_id="run-unpriced",
+        model="some/unpriced-model", tokens_used=900,
+        input_tokens=600, output_tokens=300, cost_usd=None,
+        provider_requests=1, status="success",
+    )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-unpriced", "morning")
+
+    with sqlite3.connect(path) as conn:
+        unknown, exact = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days"
+        ).fetchone()
+    assert unknown == 1
+    assert exact == 0
+    assert circuit.status()["trigger_code"] == "legacy_unknown_cost"
+
+
+def test_seeded_day_goes_inexact_for_a_zero_request_row_that_did_not_succeed(tmp_path):
+    """Item 147. status='success' is load-bearing, not decoration.
+
+    `src/pipeline.py`'s evening exception path also synthesises a result
+    with provider_requests=0 and no cost, after a call that may well have
+    reached the provider. That row stays unknown.
+    """
+
+    path = _db_path(tmp_path)
+    _seed_agent_log(
+        path, agent_name="evening_analyst", run_id="run-exception",
+        model="m", tokens_used=0, cost_usd=None,
+        provider_requests=0, status="error",
+    )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-exception", "morning")
+
+    with sqlite3.connect(path) as conn:
+        unknown, exact = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days"
+        ).fetchone()
+    assert unknown == 1
+    assert exact == 0
+
+
+def test_seeded_day_goes_inexact_for_a_legacy_row_with_no_request_count(tmp_path):
+    """Item 147. 194 production rows predate provider_requests [measured].
+
+    NULL is not a proof of zero, and SQL's `= 0` never matches it, so such
+    a row keeps counting as unknown -- the safe direction.
+    """
+
+    path = _db_path(tmp_path)
+    _seed_agent_log(
+        path, agent_name="news_analyst", run_id="run-legacy",
+        model="m", tokens_used=0, cost_usd=None,
+        provider_requests=None, status="success",
+    )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-legacy", "morning")
+
+    with sqlite3.connect(path) as conn:
+        unknown, exact = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days"
+        ).fetchone()
+    assert unknown == 1
+    assert exact == 0
+
+
+def test_seeded_day_books_a_priced_row_from_its_own_reported_cost(tmp_path):
+    """Item 147. A row WITH usage is still charged what usage says."""
+
+    path = _db_path(tmp_path)
+    _seed_agent_log(
+        path, agent_name="tech_analyst", run_id="run-priced",
+        model="m", tokens_used=500, input_tokens=400, output_tokens=100,
+        cost_usd=0.0042, provider_requests=1, status="success",
+    )
+    _seed_agent_log(
+        path, agent_name="smart_money_analyst", run_id="run-priced",
+        model="m", tokens_used=0, cost_usd=None,
+        provider_requests=0, status="success",
+    )
+    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit.activate_session("run-priced", "morning")
+
+    with sqlite3.connect(path) as conn:
+        baseline, unknown, exact = conn.execute(
+            "SELECT baseline_cost_usd, unknown_cost_rows, costs_exact "
+            "FROM llm_budget_days"
+        ).fetchone()
+        session_exact = conn.execute(
+            "SELECT costs_exact FROM llm_budget_sessions WHERE run_id='run-priced'"
+        ).fetchone()[0]
+    # The cache hit adds nothing and hides nothing: the day is the priced
+    # row's own reported figure, and it is exact.
+    assert baseline == pytest.approx(0.0042)
+    assert unknown == 0
+    assert exact == 1
+    assert session_exact == 1
+
+
+def test_smart_money_cache_hit_reports_zero_cost_not_unknown():
+    """Item 147 root cause: the cache path books $0.00, never NULL."""
+
+    from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
+
+    analyst = SmartMoneyAnalystAgent.__new__(SmartMoneyAnalystAgent)
+    observations = [SimpleNamespace(symbol="AAA")]
+    finding = SimpleNamespace(symbol="AAA")
+    cached = {"findings": [{"symbol": "AAA"}]}
+
+    with patch.object(SmartMoneyAnalystAgent, "_evidence_hash", return_value="h"), \
+         patch.object(SmartMoneyAnalystAgent, "_presented_symbols", return_value={"AAA"}), \
+         patch.object(SmartMoneyAnalystAgent, "_synthesis_cache_key", return_value="k"), \
+         patch.object(SmartMoneyAnalystAgent, "_load_cache", return_value={"k": cached}), \
+         patch.object(SmartMoneyAnalystAgent, "_parse_findings", return_value=([finding], 0)), \
+         patch.object(SmartMoneyAnalystAgent, "run") as ran:
+        _findings, result, error = analyst.analyze(observations)
+
+    ran.assert_not_called()
+    assert error is None
+    assert result.provider_requests == 0
+    # Not None: a call that never happened is priced, not unknown.
+    assert result.cost_usd == 0.0

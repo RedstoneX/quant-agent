@@ -344,14 +344,27 @@ def test_f5_absent_reasoning_chain_is_stated_not_skipped() -> None:
 
 
 def test_f5_rm_prompt_discloses_the_calibration_feedback_loop() -> None:
-    """PM reads RM's last-5 `reason_category` tags and pre-adjusts its
-    sizing before RM ever sees the plan. RM was never told, so it could read
-    its own influence back as evidence of PM's judgement — and a `clean`
-    streak as evidence the plans were good."""
+    """RM must be told that its last-5 `reason_category` tags are rendered
+    into PM's sheet — otherwise it reads its own influence back as evidence
+    of PM's judgement.
+
+    CORRECTED 2026-09-26 (item 99(f)). The original form of this test pinned
+    the sentence "2+ `oversized` tags cut its base allocations 25%" and the
+    instruction to read a conservative plan as "anchoring". No code performs
+    that cut, so the sheet was telling one paid seat to discount another
+    seat's caution on a mechanism that does not run. The disclosure stays;
+    the false mechanism and the discount instruction are gone, and both are
+    now pinned by `config/retired_mechanisms.yaml`.
+    """
     text = (PROMPT_DIR / "risk_manager.md").read_text()
-    assert "PM calibrates against YOU" in text
-    assert "anchoring" in text
-    assert "not** evidence that the plans were good" in text
+    # Disclosed: RM's history reaches PM's sheet before PM sizes.
+    assert "PM is SHOWN your history" in text
+    assert "_build_rm_recent_verdicts" in text
+    # Disclosed: nothing acts on it automatically.
+    assert "no code reads a `reason_category` and resizes anything" in text
+    # The discount instruction is gone, in either direction.
+    assert "anchoring on your history" not in text
+    assert "base allocations 25%" not in text
 
 
 def test_f5_rm_prompt_states_its_model_relationship_to_pm_accurately() -> None:

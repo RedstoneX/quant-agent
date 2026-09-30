@@ -207,6 +207,14 @@ STATUS_CATEGORY: dict[str, str] = {
     "partial": CATEGORY_REPORTED,
     "low_confidence": CATEGORY_REPORTED,
     "symbol_dropped": CATEGORY_REPORTED,
+    # News (board item 152): the seat answered and the answer is usable, but
+    # one top-level field came back in a word the desk cannot read and was
+    # dropped so the rest of the report survives. REPORTED, not LOST — the
+    # seat DID answer. Its own word rather than `partial` (a coverage fact)
+    # or `low_confidence` (the model's self-report): this is a confirmed,
+    # named loss inside an otherwise-good answer, and the dropped field reads
+    # ABSENT everywhere, never as a neutral verdict.
+    "field_unreadable": CATEGORY_REPORTED,
     "degraded": CATEGORY_REPORTED,
     "figures_contradicted": CATEGORY_REPORTED,
     # Smart money: the market-wide Form 4 pass read ZERO filings while
@@ -282,6 +290,9 @@ STATUS_FRESHNESS: dict[str, str] = {
     "partial": FRESHNESS_FRESH,
     "low_confidence": FRESHNESS_FRESH,
     "symbol_dropped": FRESHNESS_FRESH,
+    # Asked on this tick and answered; one field of that answer was
+    # unreadable and dropped. A coverage/quality fact, not a freshness one.
+    "field_unreadable": FRESHNESS_FRESH,
     "degraded": FRESHNESS_FRESH,
     "figures_contradicted": FRESHNESS_FRESH,
     # Asked on this tick and answered; what it could see was narrower than
