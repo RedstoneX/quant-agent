@@ -22,37 +22,119 @@ what would catch it next time.
 
 ---
 
-### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 stays open on its own criterion, item 119's attempt half closed)
+### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 191 retired)
 
-**In plain words:** the desk fetches fifteen economic readings before it decides anything. It gives that whole job ninety seconds. Whoever went first was allowed to spend as much of the ninety seconds as it liked, so on a bad morning one reading that hung on a dead connection would use the lot and the desk simply never asked for the last five or eight at all. Nobody chose that; it fell out of sharing one stopwatch with no rule about whose turn it was. Each reading now has its own reserved slice of the ninety seconds, and nothing — not a retry, not a second attempt, not the little lookup that only decides how to LABEL a reading — can spend a slice that belongs to a reading still waiting in line.
+**In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
 
-**How we know it was the budget and not the data provider.** Two measurements, both off the retained system journal for 2026-09-01 to 09-26.
+**Why this happened.** Two other legitimate reasons the portfolio manager can be skipped (`no_data`, `evidence_gate_skip`) already leave a marker the evening check reads to stay quiet about them. The cost-circuit suspension path never left that marker, so it fell through to the probe's "unexplained kill" branch every time it happened.
 
-First, the counts. The feed logged 91 lines saying it had skipped a reading *without an attempt*, against only 12 errors from readings it actually asked for and 9 timeouts on the label lookup. The overwhelming majority of the failure was never a provider problem; it was requests that were never sent.
+**What was checked, not assumed.** The production log and `journalctl` for `quant-agent-morning.service` on 2026-09-29 show a clean exit (`Result=success`, exit code 0) roughly 24 seconds after starting, immediately after `src.cost_circuit` logged two provider 503s and two charged-but-unprovable 402s on the technical-analysis call — not a kill signal, not an OOM, not an unhandled crash. The suspension had two independent causes that morning, not one: the free Google model genuinely returned two 503 "high demand" responses of its own before the OpenRouter fallback route hit its credit wall, so the credit exhaustion was not the whole story. The code path that produces this (`TradingPipeline._paid_suspension_after_late_safety`) is unchanged in shape since before 2026-09-26, so this is not new breakage; it is a pre-existing gap the finding surfaced.
 
-Second, and this is the part that settles it: *which* readings got skipped. The skip count sorts almost perfectly by the reading's position in the configured list. The last two in the list were skipped 13 times each, the thirteenth 12 times, then 10, 9, 7, 7, 5, 3, 1 — and the first five in the list were never skipped once, not one time in twenty-six days. A provider outage does not sort itself by list index. A single first-come-first-served stopwatch does exactly that.
+**Verified on main.** `_paid_suspension_after_late_safety` in `src/pipeline.py` now calls `decision_checkpoint.write_status("morning", "paid_analysis_suspended")` when `session == "morning"`, the same mechanism the `no_data`/`evidence_gate_skip` paths already use a few hundred lines above it. `tests/test_pipeline.py::test_paid_suspension_marks_morning_for_the_evening_dead_man_probe` and `::test_paid_suspension_does_not_mark_non_morning_sessions` cover the new behaviour and its scope. The single DONE WHEN criterion was met.
 
-**What was ruled out.**
+### 2026-09-30 — item 189 renumbered to item 190; a genuine three-way number race, not a closure (item 189 retired)
 
-*That ninety seconds is too short.* It is not, and this matters because lengthening it was the obvious wrong answer. A separate pre-open job does the identical work — fifteen readings plus fifteen label lookups, thirty connections one after another — under no time pressure at all, and the system timer clocked it at 11, 13 and 16 seconds on three midday runs and 56, 57 and 91 seconds on three evening runs. That is well under half a second to about two seconds per connection. Ninety seconds is generous for the whole job. What consumed it was a single connection hanging for the full fifteen-second per-request limit — one hang costs as much as an entire healthy run, and the retry policy could multiply that to forty-five seconds plus waiting, on one reading.
+**In plain words:** the cash-sweep-retirement item was filed and merged as item 188, collided with a parallel PR that had also claimed 188, was renumbered to 189 and merged again, then collided a second time with a different parallel PR that filed and closed item 189 in one change. Three branches independently read `docs/WORK.md`'s own "next free number" line at nearly the same moment and each got a truthful answer that stopped being true before it landed. Nothing about the item's content changed at any step.
 
-*That the board's own numbers were right.* They were checked rather than trusted, and they are partly wrong. "Worst 5 of 15" is correct. "4 of 12 runs reached full coverage" does not reproduce against the journal under any reading of the stated window. More importantly the board did not record that the picture had already changed: coverage has been 15 of 15 on every single run since 2026-09-23, when the pre-open fetch shipped. That job removed the *common* case by making the trading session read a cache instead of the wire. It did not touch the underlying unfairness, which is still waiting the moment the cache misses — a cold cache, a failed pre-open job, or a reading whose next publication is genuinely due.
+**What closes it.** Item 189's two DONE WHEN criteria carry no new work of their own — they are the same cash-sweep-retirement criteria, unstarted, now living under item 190. Both are deferred rather than met.
 
-*Fetching the readings in parallel.* Already tried and already regretted: a previous attempt at parallel fetching got this machine's address blocked by the provider's abuse detection. The fix here keeps the strictly serial walk and changes only who is allowed to spend what.
+**Verified on main.** `docs/WORK.md` no longer carries a `**189.` block; `docs/BOARD_NOTES.md`'s `## item 189` heading is renamed `## item 190` in the same change, so the owner-facing prose is not orphaned. No code, ledger or test file was touched by the renumber.
+### 2026-09-30 — the desk aimed META above the wall, because a level too close to trade toward was deleted instead of reported
 
-*Rebuilding PR #435.* That branch was closed unmerged and the closing note was read first. Three of its five objections apply to any fix in this area and were avoided deliberately: it proved itself on mid-morning measurements when the defect is at the open (this fix rests on a twenty-six-day journal that includes the bad mornings, plus a worst-case test rather than a healthy sample); it wrote a FIXED line into the file that records what is accepted as true now (nothing here does); and it bundled unrelated changes that had to be argued separately (this change touches the fetch layer only). Its fourth objection — that it had not shown the fix produced the readings rather than just naming the hole — is answered by making the guarantee structural instead of statistical, which is the only kind of answer a test can actually give.
+**In plain words:** the desk works out where a stock is likely to run into
+trouble on the way up, and calls that the target. It had a rule saying a
+level almost on top of the current price is not worth aiming at, because the
+profit would be smaller than an ordinary day's wobble. That rule was right.
+What it then did was wrong: instead of saying "this trade has very little
+room", it threw that level away and aimed at the NEXT one up — on the far
+side of the very wall it had just decided not to mention. So the closer the
+wall, the further past it the desk aimed.
 
-**The rule that replaced the free-for-all.** Each configured reading is reserved an equal share of whatever ceiling is in force: the ceiling divided by the number of configured readings, which is six seconds on the trading path. That is not a new number anybody picked — it is arithmetic over the existing ceiling and the existing list, and it re-derives itself if either changes. A reading in progress may spend whatever is left *above* the reserves of the readings still waiting, capped at the normal per-request limit. Retries, the waiting period between retries, and the label lookup are explicitly second-class: they may only draw on the surplus above those reserves. Six seconds is more than three times the slowest per-connection average ever observed, so the share is ample for a healthy call and only bites a connection that has already hung — which is the failure being removed. And the arithmetic is tight by construction: fifteen readings each spending their entire share is exactly the ceiling, so *every* reading is asked for even in the worst case the budget permits, rather than merely usually.
+META on 2026-09-21 is the measured case. The desk added to the position at
+$728.41 with a typical daily range of $21.22, which set the "too close"
+distance at $749.63. Its own chart scan had found resistance at $730.41 and
+at $739.84, the second of which the stock had been turned back from in
+January. Both sat under $749.63, so both were deleted, and the target was set
+at $785.20 — above both of those rejections and above the highest price the
+stock had traded in a year. The stock reached $779.82 and turned around.
 
-**One defect the new tests found in the new code.** The first version still floored every request's timeout at one second, copying the old code. That floor let a label lookup overshoot into budget belonging to a reading nobody had asked for yet, and the metadata test caught it immediately — the run came back 11 of 15 when it should have been 15 of 15. The floor is gone; a call is either skipped because there is no surplus, or given exactly the surplus there is.
+**What was ruled out, by reproducing it rather than reasoning about it.**
+Three explanations were checked against the desk's own code and five years of
+real bars, and all three were wrong. The scan does not look at too little
+history: it reads roughly five years and it found the relevant levels. It did
+not throw them away for being weak: they carried two and three touches, above
+the minimum. It does not ignore levels overhead. The level scan was correct
+throughout — the fault was entirely in which of its answers the target picked.
 
-**Why the label lookup is singled out.** On three separate bad mornings the last thing in the log before the cascade of skips was the label lookup timing out for fifteen seconds. That lookup only decides whether a reading is described as current, overdue or unknown. Missing it costs a label and the feed says "unknown", which is honest. Missing a reading costs the economics seat an input it cannot get anywhere else. A label was buying readings, and now it cannot.
+**What the number was never doing, and what it was.** The target is not, and
+since the owner's ruling of 2026-09-30 is explicitly not, a signal to sell.
+Nothing sells because a target is reached. So aiming too high did not cost a
+sale. What it did cost is honesty in two places that do use the number: the
+reward-versus-risk figure calculated at entry, which is a live tie-break when
+the desk ranks which candidates to buy, and the owner's own messages, where
+the target is stated as what the desk expects. On the three affected
+positions the reward figure was overstated by 5.7x, 1.9x and 28.4x against
+the first real wall. Two of those three were the kind of setup whose reward
+figure does feed ranking, so a worse trade could outrank a better one.
 
-**What still cannot happen quietly.** A reading that genuinely never reaches the provider is now recorded under its own reason, distinct from one that was asked and timed out, because those are different defects and they had been sharing a name. It is called out in the analyst's own prompt as NOT ATTEMPTED AT ALL, in those words, and nothing stands in for it — not the previous run's value, not the cache, not a neighbouring series. An absent reading must never be readable as a calm one.
+**What changed.** The "too close" distance no longer decides WHICH level the
+desk aims at. It only labels the answer: the target is the nearest wall,
+full stop, and when the room under that wall is smaller than a day's range
+the trade now carries a recorded flag saying exactly that. Nothing is
+refused that was not refused before — the desk ruled in 2026-09-17 that a
+reward figure ranks a trade and never blocks one — so this makes the desk
+honest about thin trades rather than blind to them.
 
-**What was deliberately left open.** Item 119 keeps its second criterion. The desk still pays the economist on a partial set, and there is still no repair that pays again once the set is complete. That is a policy question about what to do with a hole, not a question about how to avoid one, and the owner's note closing PR #435 argued against that branch's answer to it by name. It belongs in its own change.
+**What would catch it next time.** The test that used to guard this
+behaviour asserted the bug: it said in so many words "skip it and take the
+next real level out". A test can pin a defect as confidently as it pins a
+fix, and this one did for weeks. It is now inverted and carries the META
+numbers, so the specific chart that produced the error is the thing under
+test.
 
-**What would catch it again.** The reproduction test makes every single call hang for its whole allowance — strictly worse than any real morning — and asserts all fifteen readings are still asked for. Run against the previous code it asks for two, which is the production shape exactly. A second test pins the reserve as derived arithmetic rather than a typed-in number, so adding a sixteenth reading re-divides the ceiling instead of silently under-reserving.
+**Why the rule was there in the first place, which is the real lesson.**
+It was not carelessness. When it was written on 2026-09-01 the desk refused
+any trade whose reward was under 1.5x its risk, and that refusal was hard.
+Dropping a close wall and aiming at the next one was the only way a trade
+with a wall just overhead could be admitted at all, so the filter was doing
+real work FOR that gate. The gate was later removed — the desk now ranks on
+reward rather than refusing on it — and nothing went back to ask whether the
+filter still had a reason to exist. That is this desk's most familiar
+failure: a number outliving its own justification quietly, because nothing
+is attached to the justification that fails when it dies.
+
+**One thing this also changes, which is a real change and not a tidy-up.**
+Whether a name counts as a "nothing standing in the way" trade is decided by
+whether the desk found a level overhead. Before, a name whose only overhead
+level sat inside a day's range recorded NO level found — because the level
+had just been deleted — and was therefore classified as a clear-run trade,
+exempt from any reward comparison, and given a target projected from
+volatility alone. It now records the level it actually found, so the same
+name is classified as trading into a level and does get a reward figure.
+That is the correct classification and it was previously the opposite of the
+measured fact, but it is a behaviour change that reaches both model prompts
+and the ranking, so it is written down here rather than described as
+housekeeping. No trade is refused either way: the desk ruled on 2026-09-17
+that a reward figure ranks a trade and never blocks one.
+
+**The three affected positions are NOT repaired by this change.** META's
+2026-09-21 purchase still holds $785.20 as both its live and its entry
+target, and nothing will correct it on its own: the only automatic
+re-derivation triggers on the target drifting outside what the instrument can
+reach, and $785.20 is still inside that, so the desk will go on quoting
+$785.20 to the owner until a level above the 52-week high breaks. AMD and UPS
+are in the same position with their own numbers. Repairing stored targets on
+open positions is a separate, deliberate action on live records and is not
+being done as a side effect of a code fix.
+
+**Still open, deliberately not fixed here.** A rejection only counts as a
+wall when at least two turning points sit within one percent of each other,
+so META's third rejection at $756.59 is a single touch and is invisible. The
+two-touch part of that is settled and sourced and must not be loosened. The
+one-percent part is an open measurement the desk has already scheduled, not a
+settled preference, so it is left alone rather than guessed at. Separately, a
+position built in two purchases carries a target per purchase with the last
+one written winning — META holds $730.99 and $785.20 against one position.
 
 ### 2026-09-26 — three items that could only be closed by a real broker event: two are closed on observed evidence, one cannot be attempted without spending on the shared account (items 86 and 173 retired, item 157 stays open)
 
@@ -186,6 +268,109 @@ against $10,000.00 at the start — about ten cents, the spread and fee on a $17
 round trip. The monitored production account was never contacted: every
 call in this exercise asserted the account number and the equity band before
 placing anything, as a hard assertion that would have aborted the script.
+
+### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
+
+**In ordinary words.** When the desk decides which stock ideas get money, each
+specialist contributes two things: which way it leans and how sure it is. Only
+the chart specialist publishes a "how strongly" — it has strong-buy and buy as
+separate ratings. The other four have nothing of the kind. Rather than leave
+that blank, they were each sending the number zero, and the ranking added all
+five numbers together and reported the total to the portfolio manager as
+"strength, added up across every specialist covering this name". Adding zero
+changes nothing, so no stock was ever ranked wrongly and no money moved because
+of it — that was checked against the code before anything was touched. What was
+wrong is what the desk was TELLING itself: a name backed by four agreeing
+specialists displayed a strength of zero, which is exactly what a name whose
+specialists had all measured no enthusiasm would display. Two different states,
+one number. And nothing stopped the next piece of code from averaging those
+four zeros, which would have moved money.
+
+**The decision, which is the substance of this entry, not the code change.**
+The item asked one question: should those four be made to rate their own
+strength, or is "which way, and how sure" genuinely everything they can say?
+The answer recorded here is the second. Each seat's own output was re-checked
+on the day rather than taken from a docstring: the earnings seat's sentiment,
+the news seat's sentiment, the macro seat's equity outlook and the smart-money
+seat's stance are every one of them a single bullish/bearish/neutral rung with
+no graded vocabulary anywhere beside them. The chart specialist is different in
+kind, not in effort — strong-buy versus buy is a distinction it already
+publishes, so transcribing it invents nothing. Asking any of the other four for
+a number between 0 and 1 would be asking it to invent the boundaries too: no
+published source supplies them, no measurement on this desk supplies them, and
+nobody downstream could ever check the answer. That is the desk's standing rule
+against made-up numbers, and it applies to a number a model asserts just as
+much as to one a developer types.
+
+**Ruled out, with reasons, so none of these is re-proposed.** Deriving a
+strength from a field the seat already reports — that was the 2026-09-13 defect
+(one signal counted twice at three different unsourced spacings) and it is
+deleted. Borrowing the chart specialist's 0.5 rung — a number read off another
+seat's scale is not read off this seat's instrument, which is the whole reason
+these four are here. Fitting one to the desk's own past outcomes — forbidden
+outright, and the conviction ledger is far short of the resolved-call minimum
+that would make an own-data reading possible anyway. Dropping the four seats
+from the ranking — explicitly not an answer; they still carry their full
+weighted confidence into the score, unchanged.
+
+**What changed instead.** The marker for "this seat states no strength" is no
+longer the number zero; it is the absence of a number. The ranking's strength
+term is summed only over the seats that actually state one and names them; a
+name where nobody does now carries no strength figure at all rather than a
+zero, and the portfolio manager's own prompt says so in words instead of
+printing "strength 0.00". A directional verdict that arrives carrying a literal
+zero strength is refused where it is built, because a seat claiming to have a
+scale and to have read nothing off it is describing the neutral verdict with a
+direction attached. Every total is arithmetically identical to before — that is
+deliberate and is pinned by its own test, since a fix that quietly reordered
+candidates would have been a far worse outcome than the reporting defect it was
+correcting.
+
+**What would catch it again.** The honesty of the encoding is now enforced by
+the type rather than by a comment: a placeholder cannot be summed by accident,
+and the construction-time refusal fails loudly if one is reintroduced. The
+per-seat tests each assert the absence off the seat's own model, so if any of
+the four is ever given a real graded rung, those tests fail and force the
+ratification rather than allowing a quiet edit.
+
+**Reopen only on one of two triggers**, neither of which is a matter of
+appetite: a seat's own output model gains a graded rung it genuinely observes,
+the way the chart seat has one; or the conviction ledger accumulates enough
+resolved calls for that seat to supply a measured strength. Either is a schema
+change to ratify with its derivation attached and the seat's prompt updated in
+the same pass.
+
+### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 stays open on its own criterion, item 119's attempt half closed)
+
+**In plain words:** the desk fetches fifteen economic readings before it decides anything. It gives that whole job ninety seconds. Whoever went first was allowed to spend as much of the ninety seconds as it liked, so on a bad morning one reading that hung on a dead connection would use the lot and the desk simply never asked for the last five or eight at all. Nobody chose that; it fell out of sharing one stopwatch with no rule about whose turn it was. Each reading now has its own reserved slice of the ninety seconds, and nothing — not a retry, not a second attempt, not the little lookup that only decides how to LABEL a reading — can spend a slice that belongs to a reading still waiting in line.
+
+**How we know it was the budget and not the data provider.** Two measurements, both off the retained system journal for 2026-09-01 to 09-26.
+
+First, the counts. The feed logged 91 lines saying it had skipped a reading *without an attempt*, against only 12 errors from readings it actually asked for and 9 timeouts on the label lookup. The overwhelming majority of the failure was never a provider problem; it was requests that were never sent.
+
+Second, and this is the part that settles it: *which* readings got skipped. The skip count sorts almost perfectly by the reading's position in the configured list. The last two in the list were skipped 13 times each, the thirteenth 12 times, then 10, 9, 7, 7, 5, 3, 1 — and the first five in the list were never skipped once, not one time in twenty-six days. A provider outage does not sort itself by list index. A single first-come-first-served stopwatch does exactly that.
+
+**What was ruled out.**
+
+*That ninety seconds is too short.* It is not, and this matters because lengthening it was the obvious wrong answer. A separate pre-open job does the identical work — fifteen readings plus fifteen label lookups, thirty connections one after another — under no time pressure at all, and the system timer clocked it at 11, 13 and 16 seconds on three midday runs and 56, 57 and 91 seconds on three evening runs. That is well under half a second to about two seconds per connection. Ninety seconds is generous for the whole job. What consumed it was a single connection hanging for the full fifteen-second per-request limit — one hang costs as much as an entire healthy run, and the retry policy could multiply that to forty-five seconds plus waiting, on one reading.
+
+*That the board's own numbers were right.* They were checked rather than trusted, and they are partly wrong. "Worst 5 of 15" is correct. "4 of 12 runs reached full coverage" does not reproduce against the journal under any reading of the stated window. More importantly the board did not record that the picture had already changed: coverage has been 15 of 15 on every single run since 2026-09-23, when the pre-open fetch shipped. That job removed the *common* case by making the trading session read a cache instead of the wire. It did not touch the underlying unfairness, which is still waiting the moment the cache misses — a cold cache, a failed pre-open job, or a reading whose next publication is genuinely due.
+
+*Fetching the readings in parallel.* Already tried and already regretted: a previous attempt at parallel fetching got this machine's address blocked by the provider's abuse detection. The fix here keeps the strictly serial walk and changes only who is allowed to spend what.
+
+*Rebuilding PR #435.* That branch was closed unmerged and the closing note was read first. Three of its five objections apply to any fix in this area and were avoided deliberately: it proved itself on mid-morning measurements when the defect is at the open (this fix rests on a twenty-six-day journal that includes the bad mornings, plus a worst-case test rather than a healthy sample); it wrote a FIXED line into the file that records what is accepted as true now (nothing here does); and it bundled unrelated changes that had to be argued separately (this change touches the fetch layer only). Its fourth objection — that it had not shown the fix produced the readings rather than just naming the hole — is answered by making the guarantee structural instead of statistical, which is the only kind of answer a test can actually give.
+
+**The rule that replaced the free-for-all.** Each configured reading is reserved an equal share of whatever ceiling is in force: the ceiling divided by the number of configured readings, which is six seconds on the trading path. That is not a new number anybody picked — it is arithmetic over the existing ceiling and the existing list, and it re-derives itself if either changes. A reading in progress may spend whatever is left *above* the reserves of the readings still waiting, capped at the normal per-request limit. Retries, the waiting period between retries, and the label lookup are explicitly second-class: they may only draw on the surplus above those reserves. Six seconds is more than three times the slowest per-connection average ever observed, so the share is ample for a healthy call and only bites a connection that has already hung — which is the failure being removed. And the arithmetic is tight by construction: fifteen readings each spending their entire share is exactly the ceiling, so *every* reading is asked for even in the worst case the budget permits, rather than merely usually.
+
+**One defect the new tests found in the new code.** The first version still floored every request's timeout at one second, copying the old code. That floor let a label lookup overshoot into budget belonging to a reading nobody had asked for yet, and the metadata test caught it immediately — the run came back 11 of 15 when it should have been 15 of 15. The floor is gone; a call is either skipped because there is no surplus, or given exactly the surplus there is.
+
+**Why the label lookup is singled out.** On three separate bad mornings the last thing in the log before the cascade of skips was the label lookup timing out for fifteen seconds. That lookup only decides whether a reading is described as current, overdue or unknown. Missing it costs a label and the feed says "unknown", which is honest. Missing a reading costs the economics seat an input it cannot get anywhere else. A label was buying readings, and now it cannot.
+
+**What still cannot happen quietly.** A reading that genuinely never reaches the provider is now recorded under its own reason, distinct from one that was asked and timed out, because those are different defects and they had been sharing a name. It is called out in the analyst's own prompt as NOT ATTEMPTED AT ALL, in those words, and nothing stands in for it — not the previous run's value, not the cache, not a neighbouring series. An absent reading must never be readable as a calm one.
+
+**What was deliberately left open.** Item 119 keeps its second criterion. The desk still pays the economist on a partial set, and there is still no repair that pays again once the set is complete. That is a policy question about what to do with a hole, not a question about how to avoid one, and the owner's note closing PR #435 argued against that branch's answer to it by name. It belongs in its own change.
+
+**What would catch it again.** The reproduction test makes every single call hang for its whole allowance — strictly worse than any real morning — and asserts all fifteen readings are still asked for. Run against the previous code it asks for two, which is the production shape exactly. A second test pins the reserve as derived arithmetic rather than a typed-in number, so adding a sixteenth reading re-divides the ceiling instead of silently under-reserving.
 
 ### 2026-09-26 — eight board items were already finished by merged code but their entries were never deleted (items 125, 127, 138, 148, 154, 165, 179, 180 retired)
 
@@ -5153,7 +5338,7 @@ own `reset_manifest.json` records `{"table": "daily_pnl", "rows": 13,
 "deleting": 13}` — and took a full database snapshot beside the manifest first.
 Those 13 rows run 2026-08-14 to 2026-09-01 and peak at **10005.68 on
 2026-08-20**. The account was not restarted by that reset: it flattened
-positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+positions to cash on the same paper account (`<redacted-main-account-id>` in both
 `book_before.json` and `book_after.json`), with equity running 9870.37 (08-27
 close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74 (09-02
 close) and no capital added or removed. A high-water mark is a property of the
@@ -8776,9 +8961,11 @@ not make 4.0. Evidence adds, measurements average.
 **Defect 2 — 0.5 was not a derivation either.** The flat value was
 Technical's `buy` rung, borrowed by four seats that have no rungs — which is
 the whole reason they were in this fix. Borrowing is not deriving. The four
-seats now carry ZERO stated strength (`NO_STATED_STRENGTH`), which is the
+seats now carry NO stated strength (`NO_STATED_STRENGTH`), which is the
 honest encoding of "states no distance", and they reach the ranking through
-their weighted confidence alone. This only became a coherent option once the
+their weighted confidence alone. (That marker was the literal `0.0` on this
+date and became `None` on 2026-09-26 — see item 65's entry below for why the
+judgement was right and the encoding was not.) This only became a coherent option once the
 aggregation was a sum: under the old average a zero would have dragged an
 agreeing stock down, which is exactly why 0.5 looked necessary at the time.
 

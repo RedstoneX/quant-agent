@@ -24,7 +24,7 @@ Mandate (verbatim intent):
 """
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
-from src.models import AnalystVerdict, VerdictEvidence
+from src.models import RATING_MAGNITUDE, AnalystVerdict, VerdictEvidence
 from src.verdicts import RankedCandidate
 from src.risk.rules import (
     OWN_BAR_REASON_PREFIX,
@@ -39,9 +39,19 @@ from src.rotation import (
 
 def _v(seat, symbol="X", *, direction="bullish", conviction="medium",
        invalidation="closes back below the breakout level", evidence=True):
+    # Strength, item 65 (2026-09-26): every seat but technical states NONE,
+    # which is `NO_STATED_STRENGTH` / `None` — the ABSENCE of a number, not
+    # the number 0.0, which would be a strength read off a scale those seats
+    # do not have. Technical does have one (its rating rungs), so a technical
+    # fixture carries a real rung rather than a placeholder; a directional
+    # verdict at a literal 0.0 is refused at construction now.
+    if seat == "technical" and direction != "neutral":
+        magnitude = RATING_MAGNITUDE["buy"]
+    else:
+        magnitude = None
     return AnalystVerdict(
         seat=seat, symbol=symbol, direction=direction,
-        magnitude=0.0,  # the fundamental seats state no strength (NO_STATED_STRENGTH)
+        magnitude=magnitude,
         conviction=conviction,
         evidence=(
             [VerdictEvidence(label="ev", text="a checkable observed fact")]
@@ -59,7 +69,8 @@ def _macro(symbol="X", *, direction="bearish", sector_specific):
     label = "sector_stance:energy" if sector_specific else "equity_outlook"
     return AnalystVerdict(
         seat="macro", symbol=symbol, direction=direction,
-        magnitude=0.0, conviction="medium",
+        magnitude=None,  # macro states no strength — item 65, see `_v`
+        conviction="medium",
         evidence=[VerdictEvidence(label=label, text="a checkable observed fact")],
         invalidation="the broad regime call reverses",
     )
