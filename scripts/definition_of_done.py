@@ -400,19 +400,22 @@ ITEM_HEADING = re.compile(r"^\*\*(\d+)\.\s", re.M)
 #: description says — the same signal `scripts/work_queue.py` uses.
 RETIRED_LINE_PREFIX = "**Retired item numbers"
 
-#: ONLY the leading comma-separated run of numbers on that line counts.
-#: The rest of the line is prose, and the prose on the live line contains
-#: a SECOND numbering scheme ("1, 2, 3 ... in the PM test gate" — the line
-#: says in so many words that "the two schemes are separate, 3 is live in
-#: this queue while retired in the gate") and half a dozen dates. A loose
-#: `\b\d+\b` sweep over the whole line reads `2026`, `09` and `16` out of
-#: "closed 2026-09-16" as retired item numbers, and any prose edit that
-#: mentions a new number as a closure. Both were caught by
-#: `tests/test_definition_of_done.py::
-#: test_the_real_board_parses_into_items_and_retired_numbers` before this
-#: shipped. Anchoring to the leading run is what keeps the false-positive
-#: rate at zero.
-RETIRED_RUN = re.compile(
+#: As of 2026-09-30 (board-number-allocation work) the retired list is
+#: APPEND-ONLY: `- retired queue: N, N, ...` / `- retired gate: N, N, ...`
+#: bullet lines below the header, one per closure, never a shared single
+#: line. Only the QUEUE scheme counts here, matching this module's own
+#: numbering (`ITEM_HEADING`, `item_blocks`) and the old code's behaviour —
+#: the rest of the header prose is unrelated dates and cross-references
+#: ("62, 63 and 65 were renumbered", "40, 67 and 200 never existed") and
+#: must never be swept in, which is exactly why the numbers now live on
+#: their own strictly-shaped bullet lines instead of embedded in prose.
+#:
+#: Kept ONLY as a fallback for a BASE commit from before 2026-09-30 (this
+#: gate diffs an arbitrary base against the working tree, and a base commit
+#: can predate the append-only migration): without it, a base snapshot in
+#: the old shape would read as zero retired numbers and every migration
+#: commit would look like it closed the entire backlog in one change.
+_LEGACY_RETIRED_RUN = re.compile(
     r"^\*\*Retired item numbers[^*]*\*\*\s*((?:\d+\s*,\s*)*\d+)\b")
 
 #: A filed item's own completion criteria. One label, then one bullet per
@@ -466,11 +469,24 @@ def criteria(block: str) -> list[tuple[int, bool, str]]:
 
 
 def retired_numbers(work_md: str | None) -> set[str]:
+    """The funnel-queue retired numbers, read through `scripts.board_numbers`
+    — never re-parsed here — so this gate can never quietly disagree with
+    the merge driver or `next_board_number.py` about what "retired" means.
+    Returns the empty set (never raises) when the file has no retired
+    section at all, or when a bullet line cannot be parsed; a broken line is
+    a defect `tests/test_board_item_numbers.py` catches on its own, not
+    something this gate should also crash over."""
     if not work_md:
         return set()
+    from scripts.board_numbers import retired_item_numbers
+    result = retired_item_numbers(work_md)
+    if not result.error:
+        return {str(n) for n in result.queue}
+    # Fall back to the pre-2026-09-30 single-line shape — see
+    # `_LEGACY_RETIRED_RUN`'s own comment for why this stays.
     line = next((l for l in work_md.splitlines()
                  if l.startswith(RETIRED_LINE_PREFIX)), "")
-    match = RETIRED_RUN.match(line)
+    match = _LEGACY_RETIRED_RUN.match(line)
     if not match:
         return set()
     return {n.strip() for n in match.group(1).split(",") if n.strip()}
