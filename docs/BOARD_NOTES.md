@@ -446,7 +446,7 @@ Still open and unchanged on purpose: a success whose provider request DID happen
 
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
 
-## item 174
+## item 174 — RETIRED 2026-09-30, the cost-circuit resume alert already shipped in #741
 
 **Retired 2026-09-30 — verified already fixed.** WORK.md still listed this as open, but the resume alert (`_notify_auto_resets_if_needed` in `src/cost_circuit.py`) shipped in PR #741 (commit 004b2c5b) and is on `main`: it sends the same-surface 🟢 RESUMED Telegram alert, paired to whether the owner actually got the suspension alert, with the durable claim/retry state machine the quota-recovery path uses. Nothing left to build; moved to the retired queue instead of reopening it.
 
