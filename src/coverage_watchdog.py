@@ -2248,3 +2248,53 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
+
+
+# --- Generic per-symbol, per-trading-day alert claim -------------------------
+# Same state file, same trading-day key and the same claim-before-send
+# discipline as `claim_repair_failure_alert`, but keyed by an arbitrary
+# `kind` so a new fail-closed page does not need its own pair of helpers.
+# Callers that page the owner about a per-symbol condition use this; the
+# older named helpers keep their own keys so their history is unaffected.
+
+def _typed_alerted_symbols(
+    state: dict[str, Any], day: str, kind: str,
+) -> set[str]:
+    raw = state.get(f"typed_alerted_symbols::{kind}")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def claim_typed_alert(
+    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's `kind` alert for `symbols`; return those NOT yet
+    alerted today, in the order given.
+
+    Same contract as `claim_repair_failure_alert`, including that a state
+    file that cannot be read errs towards telling the owner twice over not
+    at all.
+    """
+    key = str(kind).strip() or "unspecified"
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _typed_alerted_symbols(state, day, key)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    state[f"typed_alerted_symbols::{key}"] = {
+        "day": day, "symbols": sorted(already | set(fresh)),
+    }
+    save_state(state, path)
+    return fresh
