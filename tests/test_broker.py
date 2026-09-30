@@ -2565,3 +2565,98 @@ def test_list_filled_sell_orders_returns_none_on_api_failure(mock_tc_cls):
     mock_client.get_orders.side_effect = None
     mock_client.get_orders.return_value = []
     assert broker.list_filled_sell_orders("ONDS", after) == []
+
+
+def _plain_resting_stop(order_id="old-stop", qty="10", stop_price="185.0"):
+    """A single plain (non-bracket) resting protective sell-stop."""
+    stop = MagicMock()
+    stop.id = order_id
+    stop.order_type = "stop"
+    stop.side = "sell"
+    stop.qty = qty
+    stop.stop_price = stop_price
+    stop.limit_price = None
+    stop.order_class = "simple"
+    stop.legs = None
+    return stop
+
+
+@patch("src.execution.broker.TradingClient")
+def test_replace_stop_loss_amends_single_plain_stop_in_place(mock_tc_cls):
+    """Measured 2026-09-30 (PA30V8QHEW1C): one plain resting stop is moved by
+    Alpaca's replace endpoint atomically — so nothing may be cancelled and no
+    replacement order may be submitted, which is what closed the naked window."""
+    old_stop = _plain_resting_stop()
+
+    amended = MagicMock()
+    amended.id = "amended-stop"
+    amended.status = "new"
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [old_stop]
+    mock_client.replace_order_by_id.return_value = amended
+    mock_client.get_all_positions.return_value = [
+        _make_mock_position("NVDA", 10, 180.0, 200.0, 2000.0, 200.0),
+    ]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.replace_stop_loss("NVDA", 192.0)
+
+    assert result is not None and result["id"] == "amended-stop"
+    assert mock_client.replace_order_by_id.call_args.args[0] == "old-stop"
+    assert float(mock_client.replace_order_by_id.call_args.args[1].stop_price) == 192.0
+    mock_client.cancel_order_by_id.assert_not_called()
+    mock_client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_replace_stop_loss_refused_amend_leaves_original_resting(mock_tc_cls):
+    """A REFUSED amend leaves the original stop resting, so falling back to
+    cancel+resubmit would re-open the naked window for nothing."""
+    old_stop = _plain_resting_stop()
+
+    refusal = RuntimeError("stop price invalid")
+    refusal.status_code = 422
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [old_stop]
+    mock_client.replace_order_by_id.side_effect = refusal
+    mock_client.get_all_positions.return_value = [
+        _make_mock_position("NVDA", 10, 180.0, 200.0, 2000.0, 200.0),
+    ]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.replace_stop_loss("NVDA", 192.0)
+
+    assert result is None
+    mock_client.cancel_order_by_id.assert_not_called()
+    mock_client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_replace_stop_loss_falls_back_for_bracket_leg(mock_tc_cls):
+    """A bracket/OTO leg was never measured, so it keeps the old
+    cancel+resubmit path rather than being amended blind."""
+    leg = _plain_resting_stop()
+    leg.order_class = "bracket"
+
+    new_order = MagicMock()
+    new_order.id = "new-stop"
+    new_order.status = "accepted"
+
+    mock_client = MagicMock()
+    mock_client.get_orders.return_value = [leg]
+    mock_client.submit_order.return_value = new_order
+    mock_client.get_all_positions.return_value = [
+        _make_mock_position("NVDA", 10, 180.0, 200.0, 2000.0, 200.0),
+    ]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.replace_stop_loss("NVDA", 192.0)
+
+    assert result is not None and result["id"] == "new-stop"
+    mock_client.replace_order_by_id.assert_not_called()
+    mock_client.cancel_order_by_id.assert_called_once_with("old-stop")
