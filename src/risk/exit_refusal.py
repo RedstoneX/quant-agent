@@ -83,6 +83,20 @@ CODE_AI_RISK_UNAVAILABLE = "ai_risk_unavailable"
 # only, so this per-symbol record held every outcome except the commonest.
 CODE_AI_RISK_APPROVED = "ai_risk_approved"
 
+# A completed ADJUSTMENT, not a refusal and not a drop (board item 185,
+# 2026-09-30). The midday TRAIL_STOP path used to REFUSE a proposed stop
+# sitting absurdly far below price as a model typo -- and it did so on the
+# one branch where the live broker stop could not be read, i.e. exactly
+# where refusing leaves the position with NO stop at all. That contradicted
+# the owner's board-item-80 ruling ("a missing volatility reading is never a
+# reason to skip protection"), whose shape is: never answer a stop you
+# dislike by placing nothing. The path now CLAMPS such a proposal to the
+# widest stop the desk's own rules can legitimately place -- that multiple
+# of the name's own live ATR14 -- and places it. Protection is always
+# established; this row records that the desk, not the model, chose the
+# price.
+CODE_TRAIL_CLAMPED_TO_WIDEST = "trail_stop_clamped_to_widest_placeable"
+
 _VALID_JUDGMENTS = frozenset({"named", "unnamed", "uncertain"})
 
 

@@ -22,6 +22,54 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
+
+**In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
+
+**What the desk could see.** This account is entitled to quotes from IEX only, one venue carrying a small share of US trading, while its orders are matched against the consolidated national best price. The repo has known for a while that IEX's displayed prices are unreliable — an in-code note records a moment when it showed a 15% gap between its buy and sell price on an ordinary day. What nobody had done was ask how often that matters, or check whether the rule built to cope with it was doing anything useful.
+
+**The rule.** An entry was abandoned when the displayed offer sat more than 2% past the highest price the desk was willing to pay. The 2% was not read off anything; the comment beside it said the number was "deliberately loose because the input is", which is an honest way of saying nobody knew how wrong the input could be.
+
+**What the record actually shows.** The rule has fired eight times in its whole recorded life. For every one of those eight, the price the desk had captured as its reference was compared against the minute-by-minute record of what the stock actually traded at in the fifteen minutes either side. The reference was right every time — matching the real traded price to within a few hundredths of a percent. The displayed offer was wrong every time, sitting 4% to 6.7% above the highest price the stock traded anywhere in that half hour. And six of the eight stocks were trading *below* the desk's own ceiling at the instant it refused them: the trades would have gone through at a price the desk had already approved.
+
+**And it was never protecting anything.** The order the desk sends is a limit — a ceiling, not a price. It cannot pay more than that ceiling no matter what any screen displays. So in the case the rule was supposedly built for, a market that has genuinely run away, deleting the rule changes nothing: the order goes out, nobody sells at that price, it sits, and the existing entry-protection sweep gives it 90 seconds to fill and then cancels the remainder. Said exactly: the wait is 90 seconds, not the rest of the session, and the parent order's own time-in-force is DAY, so an order the sweep never reaches expires at the close rather than resting overnight. The rule was buying no protection; it was only removing the cases where the venue was wrong.
+
+**How common is the venue being wrong?** Measured live on 2026-09-30 between 13:47 and 13:58 UTC — 32 snapshots of 55 of the desk's own names, 3,630 observations. The typical name's displayed spread implies a cost of about 19 basis points to cross, but 25 of those 55 names showed a typical figure above 40 basis points, and the deleted rule's condition was true on 17.2% of the observations. In an ordinary session this rule stood to refuse roughly one entry in six on a bad display alone.
+
+**What changed.** The rule is gone, and no replacement percentage was put in its place. A displayed price sitting through the ceiling is now written down as a fact about the data feed, not treated as a decision about the trade, and a record needs no threshold. The desk's own owner-facing feed had already refused to show this refusal code to Rex on exactly this evidence back on 2026-09-23 — the finding existed, it had just never been acted on.
+
+**Ruled out.** That the market had genuinely run: eight for eight against the traded record, not one case. That the reference price was stale: it matched the tape every time. That the four simultaneous refusals on 2026-09-15 were a real market event: four unrelated companies — a software firm, a refiner, an oil major and a storage maker — do not all jump 4-6% in the same second.
+
+**Side-effect, stated and not buried — and it is CONDITIONAL, not reliable.** An entry that rests unfilled for 90 seconds is cancelled, and *when that cancel succeeds* it sends Rex a Telegram alert. Three ways it stays silent, all true today: the alert only fires when this code did the cancelling, so a cancel request that itself fails logs an error and pages nobody; an accepted entry is only handed to the protection sweep at all when it carries a pending stop price (or is a scale-in whose existing stop was cancelled), and one that does not is never watched, never cancelled and simply expires at the DAY close; and the wait is 90 seconds, not the end of the session. So cases the old rule swallowed in silence will *mostly* become visible messages — more alerts than before, not full coverage.
+
+**Same-loop budget, fixed here.** Deleting the skip also removed the thing that stopped a possibly-unfillable entry from drawing the session's deployment pool: the pool is charged on submission, read by every later candidate in the same submit loop, and never released. A name whose displayed quote reads through its own ceiling is now moved to the BACK of the submit queue, exactly once — still submitted, still sized the same way, just served after the names quoting inside theirs. Releasing the charge when the sweep cancels would not have helped: the pool figure is local to the execution stage and is already dead 90 seconds later, and the next session recomputes it from the broker.
+
+**What is NOT fixed.** The 40-basis-point ceiling itself is still a number nobody can source, and deleting the rule above makes it the only thing bounding what an entry pays. It stays on the board.
+
+---
+
+### 2026-09-30 — two rules each justified themselves by pointing at the other, and neither was anchored to anything (board item 185, circularity FIXED, item STAYS OPEN)
+
+**In plain words.** The desk had a rule saying a trailing stop more than halfway below the share price is a typing mistake, and a second rule refusing to even look at a share whose daily swings are big enough to trip the first one. Each rule's only justification was the other rule. Nobody had ever picked the "half the price" out of anything real, and the two had also drifted apart, so there was a band of shares the screen let in and the typo rule would then have argued with. Both rules now measure the same thing off the share itself — how far the desk's own widest stop would actually sit — so the two cannot disagree again. **The board item is NOT closed by this.** The circular pair is gone, but the question underneath it — how volatile a share may this desk hold — is still unanswered, and the replacement bound answers a different and much weaker question: the point at which the arithmetic stops making sense. A rule may be retired when its question is answered, never when it is declined.
+
+**What the circularity actually was.** The midday guard refused a proposed trailing stop under 50% of the current price — and it did that refusing on the ONE branch where the live broker stop could not be read, i.e. exactly where the position may be carrying no protection at all, so the refusal could end the loop with the name naked. The replacement does not refuse: it CLAMPS an over-wide proposal to the widest legitimate stop and places it, because the owner's board-item-80 ruling is that the desk never answers a stop it dislikes by placing nothing. That is also the shape board item 56 route (c) already gave to stop width — answered by adjusting the trade, never by a refusal. The first draft of this change kept the refusal and was caught by the adversary before merge. The universe screen then set its volatility ceiling as that 50% divided by the base stop multiple. So the floor was justified by "no admitted name can trip it" and the ceiling was justified by "past here a legitimate stop trips the floor". Nothing outside the pair fixed either end. The owner was asked to supply the missing end — the highest ATR14/price a name may carry — and refused it, correctly: a volatility ceiling is a market-structure number and this desk does not put those to the owner. So it had to be reformulated, sourced, or measured, and reformulation was available.
+
+**The reformulation.** Both rules were really asking one question: how far below price can a stop this desk would actually place ever sit? That is computable from constants that already govern stops — the base `min_stop_atr_multiple` times the largest setup scaler and the largest regime scaler, which is 3.00 x ATR14 today and moves by itself if any of the three moves. The midday guard now compares a proposal against that multiple of the NAME'S OWN live ATR14, which is what the owner's standing rule on stops asks for. The screen's ceiling is 1 divided by that same multiple: the ATR/price at which the widest legitimate stop would sit at or below zero, so the name genuinely cannot be given a stop at all. The old ceiling was 20%, the new one is 33.3%; the old one was not a weaker version of the new one, it was a different quantity borrowed from a rule that has now changed.
+
+**Honest limits of the reformulation, recorded so nobody reads it as more than it is.** First, 3.00 is 2.5 x 1.00 x 1.20, and the 2.5 and the 1.20 are BOTH still `status: arbitrary` in the ledger with live open questions (the 1.20's own row says no measured regime/MAE breakdown exists in this repo). One independent literal was removed and a live dependency on two unresolved ones created; the desk's arbitrary content did not fall. Second, neither ceiling has ever bound or ever could at today's volatilities: the highest ATR14/price this desk has recorded is 8.11%, median 2.97% [measured 2026-09-30, n=46 constructor stop lines across every retained production log 2026-08-31 to 2026-09-30]. 20% and 33.3% are both several multiples past anything observed. Third, the arithmetic bound must never be described as a volatility appetite; what would actually answer the question is recorded on the board item, and the published FORM for a volatility eligibility screen appears to be a cross-sectional quantile rather than a constant.
+
+**The mismatch the board had recorded was real.** The screen divided the 50% by the BASE multiple (2.5) rather than the widest one the constructor can actually reach (3.00, the base scaled by the 1.20 risk-off scaler). The two ends of one relationship differed by exactly that scaler. Names with ATR14/price between 16.67% and 20% were therefore admitted by a screen whose stated rationale did not hold for them. The fix was not to change the divisor but to remove the borrowing: neither side reads the other any more.
+
+**Three consumers, and the third one was the awkward one.** A third rule, in the no-ATR branch of the portfolio constructor, had borrowed the same fraction to refuse a structural stop more than 50% of entry away. There is no volatility reading on that branch by construction, so the borrowed fraction could not follow the others onto the instrument, and keeping the gate meant inventing an independent flat width bound — which doctrine bars. It was deleted instead, under the ruling already made about the near-identical width refusal 130 lines further down the same method (board item 56 route (c): a wide stop is answered by sizing down, never by a refusal there). Its own comment had already conceded that per-trade risk stays bounded by fixed-fractional sizing whatever the width; all it added beyond that was a stub-size objection, and that objection was itself ruled a non-reason by board item 183, because the broker charges no stock commission and the desk trades fractional shares. What still judges that stop, stated exactly: the reward:risk gate at the tail of the same method — but ONLY for a Type A / range trade. `reward_risk_floor_applies` returns False for a Type B / breakout trade and its own docstring says that is the whole rule, so on a breakout with no ATR reading NOTHING judges the width of that stop after this deletion. Position sizing is the only answer there. An earlier draft of this entry and of the code comment said the tail still judged it, full stop; that was untrue for the commonest setup on this desk and is corrected here rather than softened.
+
+**Blast radius, measured before changing anything.** The universe screen ships `enabled: false`, has never run in production, and no `universe_state.json` exists anywhere on the box — so the ceiling has never admitted or refused a single name, at either value. The midday 50% guard fired zero times across every retained production log (2026-08-31 to 2026-09-30). The constructor's borrowed width refusal also fired zero times, in those same logs and across the whole live trade and report history in the desk database. Nothing about today's behaviour changes; what changes is that a future name can no longer be admitted by one rule and argued with by another.
+
+**A false compensating control found while doing this, and corrected in place.** The 2026-09-26 entry for board item 56, further down this file, justified deleting that width refusal partly with "the upstream universe screen separately refuses instruments whose daily range is too large a fraction of their price. Nothing was protected that is not still protected." Both sentences were false on the day they were written: the screen is `enabled: false` and has never executed once. The correction is written into that entry. The item-56 deletion still stands on its own reasoning, but it stands on that alone.
+
+**What would catch this class next time.** Not a test — a shape. A number that can only be justified by pointing at a second number, which is in turn justified by the first, is not sourced however carefully each end is written up; the ledger recorded both ends honestly and the circularity still survived two passes. The tell is a `derived` ledger row whose base is itself `arbitrary` and whose base's note cites the derived row back. Where the pair really expresses one quantity, the fix is to compute that quantity once and delete both literals.
+
+---
+
 ### 2026-09-30 — the cash-deficit cushion stops being a number; the de-levering ladder's owner alert was ALSO removed, and that half was reverted. Item 182 stays open.
 
 **In plain words:** one of this item's two remaining constants was reformulated out of existence. The other was too, and it was wrong: removing it made the desk QUIETER, so it was put back and only the false sentence it printed was fixed.
@@ -1004,9 +1052,25 @@ rule already answers a wide stop by holding the risked dollars constant and
 buying fewer shares — twice the stop distance, half the position — which is
 also what the published practice the check cited actually prescribes; and at
 the extreme the position rounds to nothing and is refused by name
-(`position_sized_to_zero`). The upstream universe screen separately refuses
-instruments whose daily range is too large a fraction of their price. Nothing
-was protected that is not still protected.
+(`position_sized_to_zero`).
+
+**CORRECTION, 2026-09-30 (board item 185).** This paragraph originally
+continued: "The upstream universe screen separately refuses instruments whose
+daily range is too large a fraction of their price. Nothing was protected that
+is not still protected." **Both sentences were false when written, and the
+second rested on the first.** The universe screen ships `enabled: false` in
+`config/settings.yaml` and has never executed once — there is no
+`universe_state.json` anywhere on the box (`find / -name universe_state.json`
+returns nothing, re-checked 2026-09-30). So the screen was never a
+compensating control for anything; it is a design that has not run. The
+deletion of the width refusal still stands on its own reasoning — sizing down
+is the ratified answer to a wide stop, and the refusal had fired zero times in
+648 recorded sized stops — but it stands on THAT alone, with no upstream
+backstop behind it. What is genuinely true is narrower and is stated here
+instead: after this deletion and item 185's, nothing in `_widen_stop_past_noise`
+refuses a stop on width, and on a Type B / breakout trade the reward:risk tail
+does not run either, so position sizing is the only thing standing between a
+very wide stop and a filled order.
 
 **What was kept.** The READING survives untouched and is still stamped on every
 stop the desk sizes: the probability, from the reflection principle and the
@@ -17351,4 +17415,3 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
-

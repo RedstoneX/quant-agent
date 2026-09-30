@@ -1902,7 +1902,9 @@ class TradingPipeline:
         deadline = _time.monotonic() + float(self.config.smart_money.request_timeout_s) * 2
         result = screen_symbol(
             symbol, self._universe_screen_sources(deadline),
-            ScreenThresholds.from_config(self.config),
+            ScreenThresholds.from_config(
+                self.config, self._constructor_cfg_or_none(),
+            ),
         )
         if not result.passed:
             logger.info(
@@ -2009,7 +2011,9 @@ class TradingPipeline:
                 get_bars_batch=lambda chunk: self.market.get_ohlcv_batch(
                     chunk, HISTORY_FETCH_DAYS,
                 ),
-                th=ScreenThresholds.from_config(self.config),
+                th=ScreenThresholds.from_config(
+                    self.config, self._constructor_cfg_or_none(),
+                ),
                 today=et_today(),
                 held=held,
                 configured=self.config.trading.universe,
@@ -11497,6 +11501,18 @@ class TradingPipeline:
                 earnings=None, events=None, coverage=None, horizon_days=0,
             )
 
+    def _constructor_cfg_or_none(self):
+        """The LIVE `ConstructorConfig`, for rules that must agree with the
+        stops the desk actually places (board item 185: the universe
+        screen's volatility ceiling is 1 / the widest stop this object can
+        produce). `None` when no constructor has been built -- some tests
+        drive a bare pipeline -- and the caller then falls back to
+        `config.risk` plus the class defaults.
+        """
+        return getattr(
+            getattr(self, "portfolio_constructor", None), "cfg", None,
+        )
+
     def _record_exit_refusal(
         self, *, symbol: str, run_id: str, action: str, code: str,
         dropped: bool, detail: str, layer: str,
@@ -12420,15 +12436,6 @@ class TradingPipeline:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
-                    # Sanity: stop < 50% of current price is almost certainly
-                    # an LLM typo. Leaving the old stop is safer than
-                    # replacing it with a non-protective one.
-                    if new_stop < existing[0].current_price * 0.5:
-                        logger.warning(
-                            "Midday: TRAIL_STOP %s skipped — new_stop $%.2f is <50%% of current $%.2f (likely LLM error)",
-                            symbol, new_stop, existing[0].current_price,
-                        )
-                        continue
                     # Minimum-ratchet floor: a raise must clear the live stop
                     # by at least MIN_RATCHET_PCT. The position_reviewer prompt
                     # presents `new_stop_price >= old_stop_price × 1.02` as a
@@ -12470,6 +12477,104 @@ class TradingPipeline:
                                 min_new_stop,
                             )
                             continue
+                    # WIDTH IS ANSWERED BY ADJUSTING THE STOP, NEVER BY
+                    # PLACING NONE (board item 185, 2026-09-30; board item
+                    # 80's ruling; board item 56 route (c)'s shape).
+                    #
+                    # What used to be here. A flat refusal: a proposed stop
+                    # under 50% of current price was dropped as a model
+                    # typo, and the routine moved on -- placing nothing.
+                    # Nothing fixed the 50%; it was picked, and the
+                    # universe screen then DERIVED its volatility ceiling
+                    # from it, so each end of the pair was justified only
+                    # by the other.
+                    #
+                    # Why a refusal is the wrong answer here whatever the
+                    # bound is. This check can only bind where the live
+                    # broker stop was unreadable or absent -- where the
+                    # stop IS readable the min-ratchet floor above has
+                    # already refused anything that does not clear it, so
+                    # a typo far below price is long gone. "The live stop
+                    # could not be read" is precisely the case where the
+                    # position may be carrying NO protection at all, and a
+                    # refusal there ends the loop with the name still
+                    # naked. That is the owner's board-item-80 failure in
+                    # a different costume -- its ruling, quoted at
+                    # `portfolio_constructor.
+                    # STOP_REFUSAL_NO_STOP_NO_VOLATILITY`, is that "a
+                    # missing volatility reading is never a reason to skip
+                    # protection", and the general shape of it is that the
+                    # desk does not answer a stop it dislikes by placing
+                    # nothing. It is also the same ruling board item 56
+                    # route (c) made about stop WIDTH specifically: a wide
+                    # stop is answered by adjusting the trade (there, by
+                    # sizing down), never by a refusal. There is no sizing
+                    # lever on this path, so the adjustment available is
+                    # the stop price itself.
+                    #
+                    # What happens instead. A proposal further below price
+                    # than any stop this desk's own rules can produce is
+                    # CLAMPED to that widest legitimate stop and PLACED.
+                    # The bound is read off the instrument, not chosen:
+                    # the widest multiple `PortfolioConstructor.
+                    # _stop_atr_multiple` can actually return (the base
+                    # `min_stop_atr_multiple` times the largest setup and
+                    # regime scalers, 3.00 at today's settings) against
+                    # THIS name's live ATR14. The clamped price is below
+                    # the 1.25 x ATR noise floor by construction, so the
+                    # noise-band clamp below cannot then reject it. If the
+                    # name is so volatile that even that widest stop lands
+                    # at or below zero, there is no legitimate stop to
+                    # clamp to, so the proposal stands -- the same
+                    # "something beats nothing" direction, and the case
+                    # the universe screen's ceiling exists to keep out.
+                    #
+                    # The desk, not the model, chose that price, so it is
+                    # recorded per-symbol and durably rather than only
+                    # logged (`dropped=False` -- nothing was dropped).
+                    #
+                    # `atr` is fetched once here and reused by the
+                    # noise-band clamp below. Unreadable ATR degrades to no
+                    # clamp, the same rule the noise band already used;
+                    # the proposal then stands, because placing the model's
+                    # stop still beats placing none.
+                    atr = self._atr_for_symbol(symbol)
+                    if (old_stop is None or old_stop <= 0) and atr is not None:
+                        from src.portfolio_constructor import (
+                            widest_reachable_stop_atr_multiple,
+                        )
+                        _cfg = self.portfolio_constructor.cfg
+                        widest = widest_reachable_stop_atr_multiple(
+                            _cfg.min_stop_atr_multiple,
+                            _cfg.stop_atr_setup_scale,
+                            _cfg.stop_atr_regime_scale,
+                        )
+                        widest_stop = existing[0].current_price - widest * atr
+                        if widest_stop > 0 and new_stop < widest_stop:
+                            from src.risk.exit_refusal import (
+                                CODE_TRAIL_CLAMPED_TO_WIDEST,
+                            )
+                            detail = (
+                                f"TRAIL_STOP {symbol}: no live stop was "
+                                f"readable, and the proposed ${new_stop:,.2f} "
+                                f"sits further below the "
+                                f"${existing[0].current_price:,.2f} price than "
+                                f"the widest stop this desk can place "
+                                f"({widest:.2f} x ATR14 ${atr:,.2f} = "
+                                f"${widest_stop:,.2f}). Read as a model typo "
+                                f"and CLAMPED to ${widest_stop:,.2f} -- the "
+                                f"position may be unprotected, so a stop is "
+                                f"placed, never skipped (board item 80)."
+                            )
+                            logger.warning("Midday: %s", detail)
+                            self._record_exit_refusal(
+                                symbol=symbol, run_id=run_id,
+                                action=act,
+                                code=CODE_TRAIL_CLAMPED_TO_WIDEST,
+                                dropped=False, detail=detail[:400],
+                                layer="midday_trail_width",
+                            )
+                            new_stop = widest_stop
                     # RC1 exit-quality clamps (2026-07-16 forensics: 5 trail
                     # fills missed avg +30.7% post-exit; LLY was whipsawed
                     # twice identically). A hard-trigger citation in the
@@ -12491,7 +12596,8 @@ class TradingPipeline:
                         # the current price sits inside one day's normal
                         # range — it converts routine volatility into a
                         # realized exit. Keep the old stop instead.
-                        atr = self._atr_for_symbol(symbol)
+                        # `atr` was read above for the typo guard; the
+                        # fetch is not repeated.
                         if atr is not None:
                             noise_floor = existing[0].current_price - 1.25 * atr
                             if new_stop > noise_floor:
