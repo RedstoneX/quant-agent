@@ -267,9 +267,14 @@ _LLM_HTTP_TIMEOUT = 300.0
 # Why 480: it must leave room for one full failover call inside the wrapper's
 # 1200s kill. Worst-case failover = one Anthropic call bounded by
 # _LLM_HTTP_TIMEOUT (300s), so 480 + 300 = 780s per agent, ~420s of headroom
-# for the rest of the session. And 480s still allows 2-4 real primary attempts
-# even in the slow-failure mode (~120-380s each), so a transient blip is
-# ridden out before the failover engages.
+# for the rest of the session. How many primary attempts 480s buys depends on
+# the failure mode and is NOT a fixed 2-4 (an earlier version of this comment
+# claimed that while the loop was hard-capped at _max_retries()=2 regardless).
+# In the slow-failure mode each attempt burns ~120-380s, so the deadline is
+# what stops the loop; on a fast capacity refusal the attempts are cheap and
+# `capacity_max_attempts()` derives how many the backoff schedule fits inside
+# this same deadline. Either way the deadline, not a hand-picked count, is the
+# bound.
 #
 # Overridable via QUANT_AGENT_RETRY_DEADLINE_S (read at call time, like
 # _max_retries, so tests can monkeypatch per case).
@@ -406,6 +411,23 @@ def classify_backoff(exc: Exception) -> tuple[str, float | None]:
     return BACKOFF_JITTER, None
 
 
+def is_capacity_refusal(exc: Exception) -> bool:
+    """True when the provider refused because IT was busy, not because the
+    request was bad: an explicit 429 or one of `_CAPACITY_STATUS_CODES`.
+
+    This is the narrow class in which a refused attempt is provably unbilled
+    — the provider produced no tokens — and in which the provider's own
+    statement ("spikes in demand are usually temporary") says waiting is the
+    remedy. A transport blip, a stream cut or a degenerate 200 is NOT in this
+    class: the request may well have been charged, and nothing in it says
+    waiting helps.
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        return False
+    return status == 429 or status in _CAPACITY_STATUS_CODES
+
+
 def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
     """Seconds to sleep before the next attempt, or None to STOP retrying.
 
@@ -426,10 +448,7 @@ def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
     # else — a transport blip, a degenerate 200, a stream cut — gets pure
     # Full Jitter, because no provider publishes a minimum for those and
     # inventing one would be exactly the arbitrary number this desk forbids.
-    status = getattr(exc, "status_code", None)
-    is_capacity = (isinstance(status, int) and not isinstance(status, bool)
-                   and (status == 429 or status in _CAPACITY_STATUS_CODES))
-    if is_capacity:
+    if is_capacity_refusal(exc):
         return max(_MIN_CAPACITY_BACKOFF_S, wait)
     return wait
 
@@ -2398,15 +2417,16 @@ class BaseAgent(ABC):
                 # credit, and the blocking seat produced nothing — while the
                 # same model answered normally later in the same session. Two
                 # attempts two seconds apart is not a measure of whether a
-                # capacity spike has passed. Everything else (a degenerate
-                # 200, a transport blip) keeps the original count. The growing
+                # capacity spike has passed. The class is deliberately
+                # NARROW — `is_capacity_refusal`, i.e. an explicit 429/5xx —
+                # because only there is the refused attempt provably unbilled
+                # and the provider itself saying to wait. Everything else (a
+                # degenerate 200, a transport blip, a stream cut) keeps the
+                # original count, unchanged. The growing
                 # full-jitter sleep and the existing deadline bound this; no
                 # new number is introduced.
-                kind_now, _hint_now = classify_backoff(e)
-                capacity_class = (
-                    kind_now in (BACKOFF_JITTER, BACKOFF_RETRY_AFTER)
-                    and not single_provider_attempt
-                )
+                capacity_class = (is_capacity_refusal(e)
+                                  and not single_provider_attempt)
                 attempt_cap = (capacity_max_attempts() if capacity_class
                                else max_retries)
                 if attempt >= attempt_cap - 1:
