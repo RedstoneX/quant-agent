@@ -707,6 +707,17 @@ class RiskConfig(BaseModel):
     # distance regardless of this number. Full derivation and caveats:
     # `config/settings.yaml` (this key) and docs/INCIDENT_HISTORY.md
     # 2026-09-10. Keep the three in sync.
+    #
+    # 2026-09-30, board item 90 — value UNCHANGED, and the reasons are in
+    # `config/number_ledger.yaml` under this id rather than copied here.
+    # The three that change how this line should be read: the reformulation
+    # that would delete this constant (a sqrt(horizon) stop floor, matching
+    # the target side) pins reward:risk at exactly 1.0 and is refused on
+    # that arithmetic; the reward:risk floor whose arithmetic pushed this
+    # base DOWN from 3.0 was itself deleted as dead code on 2026-09-24
+    # (board item 81), so the case against the top of the published band is
+    # gone; and what remains is a single owner-appetite choice inside the
+    # cited 2.5-3.0x band, routed and deliberately NOT picked here.
     min_stop_atr_multiple: float = Field(default=2.5, gt=0, le=10)
     # NO `min_reward_risk_after_widening` HERE ANY MORE — removed 2026-09-24
     # (board item 81). It refused nothing and capped nothing: no code in

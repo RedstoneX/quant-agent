@@ -750,21 +750,49 @@ def format_levels_block(
 # Interaction with `min_stop_atr_multiple` is arithmetic and worth stating
 # outright, because it is the binding constraint on the measured-move branch.
 # A stop at `k` ATRs and a target at `p * ATR * sqrt(H)` clear a floor `f`
-# only when `sqrt(H) >= f * k / p`. At today's settings (p = 1.0, f = 1.5,
-# and k = 1.5 scaled by setup: 1.35 for a range, 1.5 for a breakout) that
-# is H >= ~6 sessions on the bare base, ~5 for a range setup and ~6 for a
-# breakout. A stated horizon shorter than that cannot clear the floor
-# however the trade is judged — a legitimate refusal about the trade's
-# geometry, reported distinctly from "the model guessed badly".
+# only when `sqrt(H) >= f * k / p`.
+#
+# CORRECTED 2026-09-30, board item 90 — the paragraph that stood here was
+# wrong on both of its inputs and is not softened. It read "at today's
+# settings (p = 1.0, f = 1.5, and k = 1.5 scaled by setup ...) that is
+# H >= ~6 sessions". Neither input was still true. `k` has been 2.5, not
+# 1.5, since 2026-09-10, and the reward:risk floor `f` does not exist at
+# all: `min_reward_risk_after_widening` was deleted as dead code on
+# 2026-09-24 (board item 81) after it was found never to have refused or
+# shrunk a single trade. With no floor there is no `f`, so nothing here
+# binds a minimum horizon any more and the session counts quoted below are
+# history, not live thresholds.
+#
+# What IS live, and what replaces the deleted floor as the thing worth
+# knowing: on the measured-move branch the target is `1.0 * ATR * sqrt(H)`
+# while the unbacked stop is a flat `k * ATR` with no horizon term, so the
+# reward:risk ratio of an unbacked trade RISES with the stated hold —
+# ~0.98 at H = 6 and ~1.79 at H = 20 against the bare 2.5 base. That
+# asymmetry is deliberate and is the reason the stop floor was NOT
+# reformulated as a sqrt(H) reading in item 90's 2026-09-30 pass: built
+# that way with the same 1.0, the stop would equal the target at every
+# horizon and pin the ratio at exactly 1.0. See
+# `config/number_ledger.yaml` under
+# `src.config.RiskConfig.min_stop_atr_multiple`.
+#
+# One further correction in the same place. The line below credited the
+# stop floor to "real Maximum Adverse Excursion data". That describes the
+# ABANDONED 1.5, not the live 2.5: the MAE fit was dropped both because its
+# window's seat outputs were found to misreport confidence and data quality
+# and because fitting a threshold to this desk's own past outcomes is
+# barred (docs/OUTCOME.md, the 2026-09-12 correction). The live 2.5 comes
+# from published swing-trading doctrine instead.
 #
 # THIS IS THE ARITHMETIC THAT WAS CLOSING THE FUNNEL. Until 2026-09-04 the
 # base `k` was 3.0 (range 3.45, breakout 2.55), which put the same thresholds
 # at H >= ~21 / ~27 / ~15 sessions. This desk has never stated a 27-session
 # horizon, so the range branch — the majority setup — could not clear the
 # floor for ANY real signal, and measured against the record it did not: 0 of
-# 222. The stop floor was re-derived from real Maximum Adverse Excursion data
-# (see `risk.min_stop_atr_multiple` in config/settings.yaml); these session
-# counts fall out of that change, they were not tuned to a target.
+# 222. The stop floor was moved off 3.0 in response (see
+# `risk.min_stop_atr_multiple` in config/settings.yaml, and the correction
+# above about what it was and was not re-derived FROM); these session
+# counts fall out of that change, they were not tuned to a target, and per
+# the correction above they no longer threshold anything.
 #
 # The structural-level branch is looser, because the level does not have to
 # be a full projection away: it needs `W >= f*k*ATR` to clear the floor and

@@ -709,7 +709,28 @@ risk:
   # CAVEAT, stated plainly: 2.5 does not by itself resolve the reward:risk
   # arithmetic tension below — it moves the binding horizon requirement into
   # a range this desk's own stated holds can plausibly clear, it does not
-  # guarantee it. Re-measure once honest post-fix trade history exists.
+  # guarantee it.
+  #
+  # THE LAST LINE OF THAT CAVEAT USED TO READ "re-measure once honest
+  # post-fix trade history exists", AND IT IS DELETED (2026-09-30, board
+  # item 90) rather than left standing. It instructed the next reader to do
+  # the one thing docs/OUTCOME.md forbids: re-measuring a threshold against
+  # this desk's own past trades is fitting, "an arbitrary number with a
+  # backtest stapled to it" (the 2026-09-12 correction), and it is how the
+  # abandoned 1.5 was produced in the first place. No quantity of future
+  # trade history will make that route legal.
+  #
+  # WHAT IS ACTUALLY OPEN, 2026-09-30. Nothing here is pickable by
+  # evidence. The published 2.5-3.0x band sources the RANGE only; the
+  # reformulation that would remove this constant entirely (a
+  # sqrt(horizon)-scaled floor, built like the target side) equals the
+  # target at every horizon and pins reward:risk at 1.0, so it is refused;
+  # and the reward:risk arithmetic that pushed this base DOWN from 3.0 in
+  # 2026-09-04 rested on `min_reward_risk_after_widening`, deleted as dead
+  # code on 2026-09-24 (board item 81) after it was found never to have
+  # refused or shrunk a trade. One owner-appetite question remains and is
+  # written out in full in `config/number_ledger.yaml` under
+  # `src.config.RiskConfig.min_stop_atr_multiple`. Do not re-derive it here.
   min_stop_atr_multiple: 2.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level
