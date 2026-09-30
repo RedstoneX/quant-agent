@@ -59,6 +59,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,12 @@ class LongAddPrep:
     #: `restore_after_failed_add` / `restore_cancelled_stops` re-place on
     #: this side so a short's stop is never restored as a sell.
     side: str = "sell"
+    #: `time.monotonic()` at the instant the BROKER acknowledged the cancel
+    #: as terminal (board item 193). The unprotected window is measured from
+    #: here to the broker's acknowledgement of the rearm, so the figure bounds
+    #: real exposure rather than database write times. None when nothing was
+    #: cancelled, which is exactly the case with no window to measure.
+    cancel_confirmed_at: float | None = None
 
     @classmethod
     def not_scale_in(cls) -> "LongAddPrep":
@@ -424,6 +431,7 @@ def prepare_long_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "scale-in: cancelled and confirmed %d protective sell(s) for %s "
         "so a BUY add can submit; WAL row %s covers the unprotected window",
@@ -661,12 +669,25 @@ def prepare_short_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "short scale-in: cancelled and confirmed %d protective buy-stop(s) "
         "for %s so a SELL add can submit; WAL row %s covers the unprotected "
         "window", len(live), symbol, prep.wal_row_id,
     )
     return prep
+
+
+def unprotected_window_seconds(cancel_confirmed_at: float | None) -> float | None:
+    """Seconds since the broker acknowledged the cancel, or None.
+
+    Board item 193. Both ends are `time.monotonic()` readings taken in the
+    session that did the cancelling, so the figure is immune to clock changes
+    and does not depend on when any row was written.
+    """
+    if cancel_confirmed_at is None:
+        return None
+    return round(max(0.0, time.monotonic() - cancel_confirmed_at), 3)
 
 
 def restore_after_failed_add(

@@ -3934,6 +3934,42 @@ def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
     )
 
 
+def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) -> None:
+    """Close the scale-in unprotected window with a measured duration.
+
+    Board item 193. A scale-in cancels the resting protective stop so the add
+    can reach the broker, which leaves the WHOLE held position — not just the
+    add — with no stop until the rearm lands. This emits one event per cancel
+    at the moment the rearm attempt returns, carrying:
+
+      * `window_seconds` — broker cancel acknowledgement to broker rearm
+        acknowledgement, both `time.monotonic()` inside the one run, so it
+        bounds real exposure and never reflects a row's write time;
+      * `held_qty_before` and `exposed_notional` — the size of what was naked;
+      * `covered` — False when the rearm did NOT land, which means the window
+        is still open when the event is written and the fail-closed owner
+        alert below it is the thing that matters.
+
+    Nothing is emitted when no cancel happened: a naked add has no window.
+    """
+    from src.execution.scale_in import unprotected_window_seconds
+    seconds = unprotected_window_seconds(spec.get("cancel_confirmed_at"))
+    if seconds is None:
+        return
+    held = abs(float(spec.get("held_qty_before") or 0.0))
+    price = float(spec.get("reference_price") or 0.0)
+    _record_pipeline_event(
+        pipeline, ctx, spec.get("symbol"), "scale_in",
+        "unprotected_window_closed" if covered else "unprotected_window_still_open",
+        "rearm_acknowledged" if covered else "rearm_did_not_land",
+        window_seconds=seconds,
+        held_qty_before=held,
+        exposed_notional=round(held * price, 2) if price > 0 else None,
+        wal_row_id=spec.get("wal_row_id"),
+        stop_price=spec.get("stop_price"),
+    )
+
+
 def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
                            outcome: str, reason: str = "", **details) -> None:
     """Append one typed lifecycle fact to the existing evidence stream."""
@@ -10185,6 +10221,14 @@ class ExecutionStage:
                         "intended_stop": (
                             add_prep.intended_stop if add_prep else 0.0
                         ),
+                        # Board item 193: the monotonic instant the BROKER
+                        # acknowledged the protective cancel. Carried to the
+                        # rearm so the unprotected window is measured end to
+                        # end inside one run, from broker acknowledgement to
+                        # broker acknowledgement, not from row write times.
+                        "cancel_confirmed_at": (
+                            add_prep.cancel_confirmed_at if add_prep else None
+                        ),
                     })
             except Exception as e:
                 if (
@@ -10257,6 +10301,16 @@ class ExecutionStage:
                     "protective_stop_result",
                     entry_order_id=entry_order_id, stop_price=spec["stop_price"],
                     protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
+                )
+                # Board item 193 — close the measured unprotected window.
+                # Every scale-in cancel that reached the broker emits exactly
+                # one of these, carrying the same `wal_row_id` as its
+                # `protective_sell_cancelled` event, so an unpaired cancel is
+                # visible as a missing partner rather than inferred from row
+                # ids. `held_qty_before` is the WHOLE position the cancel
+                # exposed, not the size of the add.
+                _record_scale_in_window_closed(
+                    pipeline, ctx, spec, covered=bool(protection),
                 )
                 # Spec §11.1 guard 2. The broker has already retried hard and
                 # immediately (guard 1) by the time this is reached, so a
@@ -10453,6 +10507,9 @@ class ExecutionStage:
                     pipeline, ctx, spec["symbol"], "protection", "failed",
                     "protective_stop_exception", detail=str(e),
                     entry_order_id=spec["order_id"],
+                )
+                _record_scale_in_window_closed(
+                    pipeline, ctx, spec, covered=False,
                 )
 
         # Phase 14b — the rotation's outcome, both legs, recorded durably.
