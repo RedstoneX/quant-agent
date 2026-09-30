@@ -213,7 +213,6 @@ DONE WHEN:
   - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unknown_cost_row_expr` in `src/cost_circuit.py` excludes a row proven free by its own record (`cost_usd IS NULL AND provider_requests = 0 AND status = 'success'`) from the seeded day's `unknown_cost_rows`. All three conditions are required; 194 legacy rows with a NULL `provider_requests` keep counting as unknown. Six tests in `tests/test_cost_circuit.py`.
 detail: docs/BOARD_NOTES.md (item 147)
 
-**152. A research seat's answer coming back unreadable — filed 2026-09-18, from the log-health report; the technical-seat half is SETTLED by #538 (2026-09-19), the news-seat half is STILL OPEN on its rate.**
 
 DONE WHEN:
   - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and the LOSS is closed (the seat is re-asked on an unreadable field and, only if the re-ask fails too, the field is dropped and reads ABSENT while the rest of the report survives; an unsalvageable answer files an `analysis_drop` row per affected stock), but the RATE itself is neither brought down nor shown to recover: the seat can still emit "mixed", the cure at source needs `strict: true`, and the news answer cannot have it while `stock_news` is a ticker-keyed free-form map. Needs either live evidence that the re-ask recovers, or a decision on reshaping the answer so the enum can be enforced.
@@ -381,6 +380,7 @@ DONE WHEN:
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 152
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
