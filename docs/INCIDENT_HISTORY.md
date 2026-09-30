@@ -16771,3 +16771,9 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
+
+### 2026-09-30 — session-scratch worktrees are now pruned on a daily schedule; item 139 retired
+
+**In plain words:** roughly 74 of the repo's 90 registered git worktrees were stale session-scratch directories under `/tmp`. When a session's `/tmp` directory is cleaned up, its registration persists. A daily systemd timer now runs `git worktree prune --verbose` to clean up these orphaned registrations.
+
+**Verified on main.** `scripts/systemd/quant-agent-worktree-prune.service` and `.timer` exist, the timer fires daily at 23:30 ET, and `scripts/run_worktree_prune.sh` is the entry point. The single DONE WHEN criterion was met: a swept-on-a-schedule rule exists and is recorded.

@@ -1,26 +1,23 @@
-# Fires the stale-worktree prune EVERY DAY at 04:10 ET.
+# Fires the worktree prune EVERY DAY at 23:30 ET (after trading closes).
 [Unit]
-Description=quant-agent stale session-worktree prune — daily 04:10 ET
+Description=quant-agent git worktree prune — daily 23:30 ET
 
 [Timer]
-# 04:10 ET is deliberately OFF-HOURS: this is the one maintenance sweep that
-# WRITES (it removes worktrees), so it is kept well clear of the 08:4x/08:5x
-# read-only checks and hours before the 09:30 morning session. Nothing else
-# runs at 04:10, so a `git worktree remove` cannot race a live session's use
-# of its own worktree — and even if it did, remove without --force refuses a
-# dirty or unmerged worktree, so an in-use one is kept, not clobbered.
+# 23:30 ET runs after-hours, so it will not interfere with any trading
+# session. Once daily is sufficient to keep the registry clean without
+# imposing any operational overhead. The actual prune operation is instant
+# (only processes the registry, does not touch directories).
 #
-# EVERY DAY, not Mon-Fri, matching the other maintenance timers: sessions are
-# spun up on weekends too, and the 7-day idle floor means a worktree is only
-# ever eligible long after its session ended. Daily just clears eligible ones
-# promptly instead of letting a week's worth pile up.
+# EVERY DAY, matching the board-hygiene and unit-drift checks — the repo can
+# accumulate session scratch at any time, including weekends.
 #
-# systemd resolves the IANA zone, so this stays 04:10 New York across DST.
-OnCalendar=*-*-* 04:10 America/New_York
-# Run a missed firing on boot (server was down at 04:10).
+# systemd resolves the IANA zone, so this stays 23:30 New York across DST.
+OnCalendar=*-*-* 23:30 America/New_York
+# Run a missed firing on boot (server was down at 23:30).
 Persistent=true
-# The sweep does not care about the exact minute.
-AccuracySec=5m
+# The comparison does not care about the exact minute; letting systemd
+# batch this with late-evening services is free.
+AccuracySec=1m
 
 [Install]
 WantedBy=timers.target

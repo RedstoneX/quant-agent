@@ -447,12 +447,6 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Moved from WORK.md (2026-09-24) —** That auditability is a real strength and must not be traded away. The gap is that nothing checks whether the emitted enum is any good, while the desk's own cited literature flags exactly this (`src/verdicts.py:54-59`, Benhenda 2026 — cited in-repo, unverified). **REJECTED, with the evidence:** Loughran-McDonald or a similar lexicon. Kirtac & Germano (arXiv 2412.19245; 965,375 articles 2010-2023) measure LM at 0.501 accuracy against 0.744 for an LLM, and find LM adds nothing incrementally (t = 1.871). Its licence is academic-only; it would need at least three unsourceable constants; it could only REPLACE the shown-arithmetic derivation; and no instance of an accounting word misread as negative is recorded anywhere — it fixes an error class this desk does not produce. That evidence is one study, on news rather than filings.
 
-## item 139
-
-**Moved from WORK.md (2026-09-24) —** The cost is disk and an unreadable registry, not dangling refs.
-
-**Sweep shipped 2026-09-25 —** `scripts/prune_worktrees.py` is the mechanical guard: it clears registrations whose scratch directory is gone (`git worktree prune`) and removes worktrees that are merged into `origin/main`, clean, unlocked, owned by us and idle >= 7 days (`git worktree remove`, never `--force`). Scoped by construction to this repo's own registered worktrees and refuses any path owned by another uid, so it can never touch another tenant on this shared box. Read-only by default; `--prune` acts. The swept-on-a-schedule rule is `scripts/systemd/quant-agent-worktree-prune.{service,timer}` (daily 04:10 ET, off-hours because it is the one maintenance sweep that writes), run through `scripts/run_worktree_prune.sh`. Detection logic is unit-tested against injected git/fs stubs plus a real-git integration test (`tests/test_prune_worktrees.py`).
-
 ## item 147
 
 **Moved from WORK.md (2026-09-24) —** An inexact day blocks the quota rearm, so a provider omitting usage costs budget never spent.
