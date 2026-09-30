@@ -9023,7 +9023,23 @@ class ExecutionStage:
                 entry_budget, budget_note, single_name_cap,
             )
         pending_entry_stops: list[dict] = []
-        for decision in buy_decisions:
+        # A QUEUE, not the decision list. `entry_budget` is drawn on
+        # SUBMISSION and is never given back, so an entry that rests unfilled
+        # holds its slice of the §11.2 pool for the whole burst and every
+        # LATER candidate sizes against the smaller pool. A name whose
+        # displayed quote reads through its own ceiling is therefore moved to
+        # the BACK of this queue exactly once (board item 183, see the
+        # deferral in the limit-price block): it is still submitted, it is
+        # still sized the same way, it simply stops taking the pool ahead of
+        # names whose quotes are clean. Nothing here refuses anything and no
+        # threshold is involved — the test is the ceiling itself.
+        submit_queue = list(buy_decisions)
+        original_entry_count = len(submit_queue)
+        deferred_far_through: set[str] = set()
+        queue_index = 0
+        while queue_index < len(submit_queue):
+            decision = submit_queue[queue_index]
+            queue_index += 1
             if decision.action not in ("BUY", "SHORT"):
                 continue
             is_short = decision.action == "SHORT"
@@ -9323,6 +9339,8 @@ class ExecutionStage:
                     # cannot fill above `cap`, whatever the ask claims. When
                     # the market really has run through the ceiling the order
                     # simply rests unfilled inside the bounded entry window
+                    # — 90 seconds (`_ENTRY_FILL_TIMEOUT_S`), not the rest of
+                    # the session, with the parent order's own tif at DAY —
                     # and the entry-protection sweep cancels it — the same
                     # no-trade the skip produced, minus the refusals of names
                     # that had not moved. So the gate is gone and no multiple
@@ -9332,6 +9350,59 @@ class ExecutionStage:
                     # venue quoting hundreds of bp away from the tape is a
                     # real data fact. A record needs no threshold — it fires
                     # on the ceiling itself.
+                    # THE POOL, NOT THE PRICE (board item 183 rework). The
+                    # reading still decides nothing about WHETHER to submit —
+                    # the order goes either way. What it now decides is
+                    # ORDER OF SERVICE against the deployment pool, because
+                    # deleting the old skip removed the one thing that used
+                    # to stop a possibly-unfillable entry from drawing that
+                    # pool: `entry_budget -= estimated_cost` fires on
+                    # submission, `order_ceiling = min(entry_budget, ...)` is
+                    # read by every later candidate in this same loop, and
+                    # the draw is never released.
+                    #
+                    # Releasing it on cancel would not help and is not what
+                    # this does: `entry_budget` is a local of this stage and
+                    # is already dead by the time the 90s fill timeout
+                    # cancels, and the next session recomputes the pool from
+                    # the broker anyway. The only place the draw can be made
+                    # to matter is inside this loop, so the far-through name
+                    # goes to the BACK of the submit queue, once.
+                    #
+                    # This is strictly LESS authority than the same reading
+                    # carried yesterday, when it refused the entry outright.
+                    # When the quote is noise (8 times out of 8 on record)
+                    # the cost is bounded at being submitted later in the
+                    # same burst; when the market really has run, a resting
+                    # order stops starving a name that could have filled.
+                    if (
+                        ask > cap
+                        and queue_index < original_entry_count
+                        and decision.symbol not in deferred_far_through
+                    ):
+                        deferred_far_through.add(decision.symbol)
+                        submit_queue.append(decision)
+                        logger.info(
+                            "BUY %s deferred to the back of the submit queue "
+                            "— the displayed IEX offer $%.4f is through the "
+                            "%.0fbp ceiling $%.4f, so it draws the deployment "
+                            "pool after the names quoting inside theirs. Not "
+                            "a refusal: it is submitted below.",
+                            decision.symbol, ask, slippage_bps, cap,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "entry_deferred_behind_clean_quotes",
+                            "buy_ask_above_cap",
+                            detail=(
+                                f"IEX ask ${ask:.4f} through the "
+                                f"{slippage_bps:.0f}bp ceiling ${cap:.4f}; "
+                                f"moved to the back of the submit queue so it "
+                                f"draws the deployment pool last"
+                            ),
+                        )
+                        continue
+
                     if ask > cap:
                         logger.warning(
                             "BUY %s submitted anyway — the displayed IEX offer "
@@ -9414,6 +9485,40 @@ class ExecutionStage:
                     # refusing on a quote this account's own code calls
                     # routinely absurd only loses the entries where the venue
                     # was wrong. Recorded, not refused; no multiple.
+                    # Mirror of the BUY deferral above, and it applies only
+                    # when the pool is the ladder's GROSS headroom — a short
+                    # does not draw a settled-cash pool at all (D11), so on
+                    # the cash fallback there is no pool for it to hold and
+                    # nothing to defer.
+                    if (
+                        bid < floor
+                        and budget_is_gross
+                        and queue_index < original_entry_count
+                        and decision.symbol not in deferred_far_through
+                    ):
+                        deferred_far_through.add(decision.symbol)
+                        submit_queue.append(decision)
+                        logger.info(
+                            "SHORT %s deferred to the back of the submit "
+                            "queue — the displayed IEX bid $%.4f is through "
+                            "the %.0fbp floor $%.4f, so it draws the gross "
+                            "deployment pool after the names quoting inside "
+                            "theirs. Not a refusal: it is submitted below.",
+                            decision.symbol, bid, slippage_bps, floor,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "entry_deferred_behind_clean_quotes",
+                            "short_bid_below_floor",
+                            detail=(
+                                f"IEX bid ${bid:.4f} through the "
+                                f"{slippage_bps:.0f}bp floor ${floor:.4f}; "
+                                f"moved to the back of the submit queue so it "
+                                f"draws the gross deployment pool last"
+                            ),
+                        )
+                        continue
+
                     if bid < floor:
                         logger.warning(
                             "SHORT %s submitted anyway — the displayed IEX bid "
