@@ -63,11 +63,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.11
+      # Version comes from .python-version (the single place it's written;
+      # see tests/conftest.py for the matching local-side check) rather than
+      # a literal here, so this and the other setup-python step below can't
+      # drift apart from each other or from what a developer/agent runs.
+      - name: Set up Python (pinned in .python-version)
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ".python-version"
           cache: pip
 
       # Measured 2026-09-19 (runs 35396584309/35395293092/35386277411): with
@@ -184,10 +188,10 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python (pinned in .python-version)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ".python-version"
 
       - name: Check this PR's board item numbers against other open PRs
         env:
