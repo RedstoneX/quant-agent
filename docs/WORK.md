@@ -76,11 +76,11 @@ DONE WHEN:
   - [ ] (c) the stable famous-name bias is subtracted arithmetically inside the ratified weighted composite, or recorded as not worth doing — three prompt-wording fixes already measured no-change, so a fourth wording attempt does not tick this
 detail: docs/BOARD_NOTES.md (item 19)
 
-**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; the COUNTING half is all that is left, and it is his, not an agent's. Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded.
+**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; now asked PER NAME, and the global-coverage question is WITHDRAWN as moot (2026-09-30). Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded; his ruling of 2026-09-30 is that risk tolerance is read per name from that instrument, never off a global dial — so "the news seat returned 40 of 65" is 65 yes/no facts, not a fraction to threshold.
 
 DONE WHEN:
-  - [ ] OWNER'S CALL — the counting half: either his ratified minimum number of usable per-seat reads, or his ruling that partial coverage never gates a decision. Nothing published gives that number and fitting one to the desk's own history is forbidden, so no agent may pick it and a placeholder never ships. This is his own 2026-09-02 ruling that the bar is a risk judgement.
-  - [ ] OWNER'S CALL — whether the intraday scan's hard-coded technical `data_status` (`src/pipeline.py`) should be able to report LOST at all. Today the only blocking seat can never be lost there; that follows from his own `evidence_gate.BLOCKING_SEATS` mandate, so an agent may not widen the gate or add a second blocking seat to work around it.
+  - [x] The counting half is answered by DESIGN, not by a number: coverage is recorded per SYMBOL per seat (`ctx.seat_symbol_gaps`), and the existing categorical check is re-asked for the one name under decision (`EvidenceGateVerdict.for_symbol`). The routed appetite question — how much of a seat's intended scope must come back usable — is WITHDRAWN as moot: there is no global percentage to ratify. Aggregate counts remain REPORTING only and are deliberately compared against nothing.
+  - [ ] RECORDED, NOT WORKED AROUND — on the thirty-minute scan the only seat permitted to stop the desk cannot be recorded as having lost its answer, so there this rule reports but cannot refuse; that follows from the owner's own 2026-09-18 ruling that only technical analysis can stop the desk, and no workaround was invented.
 detail: docs/BOARD_NOTES.md (item 20)
 
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.

@@ -1480,6 +1480,10 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     "provider_error": "could not reach its data provider",
     "release_overdue": "is waiting on a scheduled data release that is overdue",
     "symbol_dropped": "dropped at least one symbol from its answer",
+    "symbol_not_covered": (
+        "answered for the session, but said nothing at all about this "
+        "particular stock — so for this stock the desk has nothing from it"
+    ),
     "field_unreadable": (
         "answered, but part of its answer came back in a word the desk "
         "cannot read — that part was dropped so the rest survived, and it "

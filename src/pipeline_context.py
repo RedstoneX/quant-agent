@@ -151,6 +151,15 @@ class RunContext:
     # (`FAULT_NO_STRUCTURE`), not a refusal — see src/data/levels.py.
     tech_bars_coverage: dict = field(default_factory=dict)
     data_status: dict[str, str] = field(default_factory=dict)
+    # PER-NAME EVIDENCE COVERAGE (board item 20, 2026-09-30).
+    # {seat: {symbol, ...}} — the names each seat's own answer could NOT
+    # speak for on this run. `data_status` says whether a seat answered at
+    # all; this says which stocks that answer left out, so the decision
+    # about ONE name can ask "did this seat answer for THIS name?".
+    # Facts, not a fraction: no coverage percentage exists anywhere and
+    # none may be introduced (owner ruling 2026-09-30 — risk tolerance is
+    # read per name, never as a global dial).
+    seat_symbol_gaps: dict[str, set[str]] = field(default_factory=dict)
     # What this session's LLM-response parsing lost or papered over
     # (src.models.parse_telemetry). Same relationship to `data_status` as
     # `macro_coverage` above: data_status carries the one-word verdict per

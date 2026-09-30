@@ -718,3 +718,46 @@ def test_the_intraday_tick_message_shows_the_disclosure_too():
     empty: list[str] = []
     _append_intraday_evidence_freshness(empty, {}, None)
     assert empty == []
+
+
+# --- board item 20: coverage is asked PER NAME, never as a fraction -------
+
+
+def test_a_seat_that_answered_for_the_run_but_not_for_this_name_is_lost_for_it():
+    """Owner ruling 2026-09-30 — read it per name, not off a global dial."""
+    verdict = evidence_gate.evaluate(
+        {"tech": "ok", "news": "symbol_dropped"},
+        seat_symbol_gaps={"news": {"MSFT"}},
+    )
+    assert not verdict.skip
+    assert verdict.for_symbol("AAPL").lost == []
+    missing = verdict.for_symbol("MSFT")
+    assert missing.lost == ["news"]
+    assert missing.data_status["news"] == "symbol_not_covered"
+    # news is advisory: recorded, reported, does not halt the desk.
+    assert not missing.skip and missing.advisory_lost == ["news"]
+
+
+def test_a_blocking_seat_that_did_not_cover_this_name_still_refuses():
+    verdict = evidence_gate.evaluate(
+        {"tech": "ok"}, seat_symbol_gaps={"tech": {"NVDA"}},
+    )
+    assert not verdict.skip
+    refused = verdict.for_symbol("nvda")  # case-insensitive
+    assert refused.skip and refused.blocking_lost == ["tech"]
+
+
+def test_per_name_coverage_introduces_no_threshold_anywhere():
+    """40 of 65 is 65 yes/no facts, not a percentage to compare to a bar."""
+    gaps = {"news": {f"SYM{i}" for i in range(25)}}
+    verdict = evidence_gate.evaluate({"tech": "ok", "news": "partial"}, gaps)
+    # The aggregate is reporting only — nothing reads it to decide.
+    assert verdict.to_evidence()["seat_symbol_gaps"]["news"]
+    assert verdict.for_symbol("SYM0").lost == ["news"]
+    assert verdict.for_symbol("SYM99").lost == []
+    from pathlib import Path
+
+    src = Path(evidence_gate.__file__).read_text()
+    assert "seat_symbol_gaps" in src
+    for banned in ("MIN_COVERAGE", "COVERAGE_THRESHOLD", "min_coverage"):
+        assert banned not in src, banned

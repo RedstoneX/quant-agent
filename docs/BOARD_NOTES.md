@@ -710,6 +710,37 @@ It also fails on `origin/main` today, taking ~196 seconds of live fetching
 caused by it.
 ## items 182 / 183 / 185 / 186 — consolidation check against item 90 (2026-09-30)
 **Verdict: all four KEPT, none retired.** Each opens with "item 90's half two, surfaced for visibility", but each carries its own DONE WHEN criteria that item 90 does not own: 182 the ladder alert and cash-deficit cushion, 183 the order gates and the dead cash-sweep config removal, 185 the ATR-eligibility question and its two inherited rows, 186 three open owner-appetite answers. Retiring any would lose those criteria. The defect found was in item 90 itself: it claimed the four carry one word-for-word shared criterion, which was false (checked against each block). Item 90's line now names the four tranches and what each covers. No constant, threshold or value was chosen or changed.
+**PER-NAME COVERAGE, 2026-09-30 — the counting half, answered by design and
+not by a number.** The question this item was routing to you ("how much of a
+seat's intended scope must come back usable before the desk may lean on it —
+the news seat covered 40 of 65 companies, is that an answer?") is WITHDRAWN
+as moot. It was the same mistake the correlation cutoff made before that was
+removed: it asks for one global dial, and your ruling of 30 September is
+that risk tolerance is read per name, off that instrument's own behaviour
+and the seats' conviction.
+
+What matters for a decision about ONE stock is whether the seats covered
+THAT stock. "40 of 65" is not a number to threshold; it is 65 separate
+yes-or-no facts. Coverage is now recorded per stock per seat — the exact
+names each seat's answer left out — and the yes/no check that was already
+built is re-asked for the one name being decided: did this seat answer for
+THIS name? If it did, nothing changes. If it did not, that seat is absent
+for that name and the existing rule takes it from there, unchanged: a
+blocking seat with no answer for the name still stops the decision for that
+name, and an advisory seat's gap is recorded and reported without stopping
+anything.
+
+No threshold was introduced anywhere. The aggregate counts stay exactly as
+they were, as REPORTING; they are simply no longer something anyone should
+want to compare against a bar.
+
+**The thirty-minute scan — recorded, NOT worked around.** On that scan the
+only seat permitted to stop the desk can never be recorded as having lost
+its answer, so there this rule reports but cannot refuse. That follows
+directly from your own ruling of 18 September, that only technical analysis
+can stop the desk. Widening that is yours and not an agent's, so nothing was
+invented to route around it.
+
 ## item 200
 
 **Plain language —** The desk's to-do list lives in one file, and that file had a hard size limit it was about to hit. Once it is nearly full, each change is only allowed to add a few thousand characters, so ordinary work started getting turned away for being too wordy rather than wrong. The fix was to lift the long back-story, old measurements and abandoned proposals out of the still-open entries and park them, word for word, in this file, leaving the to-do list as a short list of what is open and what would finish it.

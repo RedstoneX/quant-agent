@@ -119,8 +119,10 @@ logger = logging.getLogger(__name__)
 #: `figures_contradicted` sits here on purpose: a confident wrong number is
 #: a different failure from an absent one (it already pages through
 #: `notifier.maybe_alert_data_quality`), and item 20 is about absence.
-#: `partial` and `symbol_dropped` likewise: judging how much partial is too
-#: much is the counting question that needs the owner's ratified number.
+#: `partial` and `symbol_dropped` likewise: they say the seat's answer did
+#: not cover everything it was asked about, which is a PER-NAME fact, not a
+#: fraction to compare against a bar. Which names are missing is carried in
+#: `seat_symbol_gaps` and applied by `EvidenceGateVerdict.for_symbol`.
 CATEGORY_REPORTED = "reported"
 
 #: The seat answered, and the honest answer is that there is nothing to
@@ -260,6 +262,14 @@ STATUS_CATEGORY: dict[str, str] = {
     # deciding on it would be fabricating the missing seat.
     "carry_forward_empty": CATEGORY_LOST,
     "carry_forward_failed": CATEGORY_LOST,
+    # PER-NAME COVERAGE (board item 20, 2026-09-30). The seat answered for
+    # the run, and its answer does not cover THIS stock — the name is in
+    # the seat's own list of symbols it could not speak for. Only ever
+    # written by `EvidenceGateVerdict.for_symbol`, never by a seat itself,
+    # and only for the one name under decision. LOST because, for that
+    # name, the desk holds nothing from that seat: exactly the absence the
+    # categorical rule already knows what to do with.
+    "symbol_not_covered": CATEGORY_LOST,
     # --- a good answer the desk knows has been superseded ---
     # Kind expired (newer wire, new filing, regime/print change) and this
     # tick did not replace it. The desk HAS an answer; it is simply not the
@@ -278,7 +288,9 @@ STATUS_CATEGORY: dict[str, str] = {
 #: looked exactly like a decision resting on five fresh ones.
 #:
 #: This map CLASSIFIES; it does not judge. There is no minimum fresh count
-#: here and none may be added — that number is the owner's.
+#: here and none may be added. Aggregate counts are REPORTING only; the
+#: decision-bearing question is asked per name (`for_symbol`), never as a
+#: fraction of the universe compared against a picked threshold.
 FRESHNESS_FRESH = "fresh"
 FRESHNESS_CARRIED = "carried"
 FRESHNESS_ABSENT = "absent"
@@ -322,6 +334,8 @@ STATUS_FRESHNESS: dict[str, str] = {
     "content_missing": FRESHNESS_ABSENT,
     "carry_forward_empty": FRESHNESS_ABSENT,
     "carry_forward_failed": FRESHNESS_ABSENT,
+    # Per-name coverage gap: for this stock the seat read nothing at all.
+    "symbol_not_covered": FRESHNESS_ABSENT,
 }
 
 #: Statuses that are NOT an upstream integrity problem for Risk's 2+
@@ -582,6 +596,40 @@ class EvidenceGateVerdict:
     data_status: dict[str, str] = field(default_factory=dict)
     freshness: EvidenceFreshness = field(default_factory=EvidenceFreshness)
 
+    #: Symbols each seat's own answer could NOT speak for, {seat: {symbol}}.
+    #: Facts the seats report about themselves (the news seat's dropped
+    #: symbols, a seat whose whole answer was unreadable for the names it
+    #: was asked about). Never a count, never a fraction.
+    seat_symbol_gaps: dict = field(default_factory=dict)
+
+    def for_symbol(self, symbol) -> "EvidenceGateVerdict":
+        """This same verdict, asked about ONE stock.
+
+        Board item 20, per-name design, 2026-09-30. "The news seat returned
+        40 of 65" is not a number to threshold; it is 65 separate yes/no
+        facts. A seat that answered for the run but not for THIS name has,
+        for this name, given the desk nothing — so it is reclassified LOST
+        here and the existing categorical rule takes it from there,
+        unchanged. A seat with no gap list is unaffected.
+
+        Owner ruling 2026-09-30: risk tolerance is read per name, never as
+        a global dial. No threshold is introduced by this method and none
+        may be added to it.
+        """
+        name = str(symbol or "").upper()
+        if not name or not self.seat_symbol_gaps:
+            return self
+        missing = sorted(
+            seat for seat, syms in self.seat_symbol_gaps.items()
+            if name in {str(s).upper() for s in (syms or ())}
+        )
+        if not missing:
+            return self
+        status = dict(self.data_status)
+        for seat in missing:
+            status[seat] = "symbol_not_covered"
+        return evaluate(status, seat_symbol_gaps=None)
+
     @property
     def blocking_lost(self) -> list[str]:
         """Lost seats that are ALLOWED to stop the desk (`BLOCKING_SEATS`)."""
@@ -640,21 +688,40 @@ class EvidenceGateVerdict:
             "expired_seats": list(self.expired),
             "unclassified_seats": list(self.unclassified),
             "data_status": dict(self.data_status),
+            "seat_symbol_gaps": {
+                seat: sorted(syms) for seat, syms in self.seat_symbol_gaps.items()
+            },
             "reason": self.reason,
         }
         evidence.update(self.freshness.to_evidence())
         return evidence
 
 
-def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
+def evaluate(
+    data_status: dict | None, seat_symbol_gaps: dict | None = None,
+) -> EvidenceGateVerdict:
     """Classify this run's seat statuses. NEVER raises.
 
     A gate that can stop the desk trading must not be able to stop it by
     crashing either: anything unexpected in `data_status` is reported and
     passed, never converted into a refusal.
     """
+    gaps: dict[str, set[str]] = {}
+    if isinstance(seat_symbol_gaps, dict):
+        for seat, syms in seat_symbol_gaps.items():
+            try:
+                names = {str(x).upper() for x in (syms or ()) if str(x).strip()}
+            except TypeError:  # not iterable — report it, never refuse on it
+                logger.error(
+                    "evidence gate: seat_symbol_gaps[%r] is not a set of "
+                    "symbols (%r) — ignoring it.", seat, syms,
+                )
+                continue
+            if names:
+                gaps[str(seat)] = names
+
     if not isinstance(data_status, dict):
-        return EvidenceGateVerdict(data_status={})
+        return EvidenceGateVerdict(data_status={}, seat_symbol_gaps=gaps)
 
     lost: list[str] = []
     nothing: list[str] = []
@@ -694,4 +761,5 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
         unclassified=sorted(unclassified),
         data_status=clean,
         freshness=freshness(data_status),
+        seat_symbol_gaps=gaps,
     )

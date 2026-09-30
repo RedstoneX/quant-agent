@@ -14283,6 +14283,65 @@ class TradingPipeline:
         payload.update(extra)
         return payload
 
+    def _refuse_names_without_evidence(self, ctx, verdict, record) -> None:
+        """Board item 20, per-name half (2026-09-30). Drop from THIS
+        decision any stock a blocking seat did not actually answer for.
+
+        The run-level gate above asks "did this seat answer at all". This
+        asks the same categorical question one name at a time, because a
+        seat can answer for the run and still have nothing to say about a
+        particular stock — and a decision about that stock would then rest
+        on an answer the desk never received for it.
+
+        It is the SAME rule, not a weaker one: only a seat in
+        `evidence_gate.BLOCKING_SEATS` can refuse, the refusal is total for
+        that name, and advisory gaps are recorded and reported without
+        stopping anything. No threshold is read here: a name is either
+        covered by a seat or it is not.
+        """
+        from src import evidence_gate
+
+        gaps = getattr(verdict, "seat_symbol_gaps", None)
+        if not gaps:
+            return
+        kept = []
+        for analysis in ctx.analyses or []:
+            symbol = getattr(analysis, "symbol", None)
+            if not symbol:
+                kept.append(analysis)
+                continue
+            try:
+                per_name = verdict.for_symbol(symbol)
+            except Exception as exc:  # noqa: BLE001 — never break the decision
+                logger.error(
+                    "evidence gate: per-name check raised for %s (%s) — "
+                    "KEEPING the name. Bug in src/evidence_gate.py.",
+                    symbol, exc,
+                )
+                kept.append(analysis)
+                continue
+            if not per_name.skip:
+                if per_name.advisory_lost != verdict.advisory_lost:
+                    record(
+                        symbol, "advisory_gap", "seat_did_not_cover_this_name",
+                        advisory_lost_seats=list(per_name.advisory_lost),
+                        blocking_seats=sorted(evidence_gate.BLOCKING_SEATS),
+                    )
+                kept.append(analysis)
+                continue
+            logger.error(
+                "EVIDENCE GATE (per name) — %s dropped from this decision: "
+                "blocking seat(s) %s answered for the run but not for this "
+                "stock.", symbol, per_name.blocking_lost,
+            )
+            record(
+                symbol, "not_decided", "evidence_gate_skip_symbol",
+                lost_seats=list(per_name.lost),
+                blocking_lost_seats=list(per_name.blocking_lost),
+                data_status=dict(per_name.data_status),
+            )
+        ctx.analyses = kept
+
     def _evidence_gate_skip(
         self, ctx, run_id: str, *, session: str = "morning",
     ) -> dict | None:
@@ -14292,8 +14351,16 @@ class TradingPipeline:
 
         The distinction it rests on is categorical and needs no threshold: a
         seat that had nothing to report answered; a seat whose answer was
-        lost did not. See `src/evidence_gate.py` for why no count is used and
-        why the counting half of the owner's design is deliberately unbuilt.
+        lost did not. See `src/evidence_gate.py` for why no count is used.
+
+        ASKED PER NAME (board item 20, 2026-09-30). A seat can answer for
+        the run and still not answer for one stock in it. What matters for
+        a decision about that stock is whether the seats covered THAT
+        stock, so `ctx.seat_symbol_gaps` names the symbols each seat left
+        out and `verdict.for_symbol` re-asks the same categorical question
+        for the one name under decision. There is still no threshold
+        anywhere: aggregate coverage counts are reporting only and are
+        deliberately not compared against a bar.
 
         WHICH LOST SEAT ACTUALLY STOPS THE RUN is an owner mandate decision
         of 2026-09-18 — "Only technical analysis can stop the desk" — and
@@ -14332,7 +14399,10 @@ class TradingPipeline:
         from src import evidence_gate
 
         try:
-            verdict = evidence_gate.evaluate(ctx.data_status)
+            verdict = evidence_gate.evaluate(
+                ctx.data_status,
+                seat_symbol_gaps=getattr(ctx, "seat_symbol_gaps", None),
+            )
         except Exception as exc:  # noqa: BLE001
             # A gate that can stop the desk trading must not stop it by
             # crashing. `evaluate` is documented never to raise; if it
@@ -14371,6 +14441,7 @@ class TradingPipeline:
         evidence = verdict.to_evidence()
         _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
         if not verdict.skip:
+            self._refuse_names_without_evidence(ctx, verdict, _record)
             if verdict.advisory_lost:
                 # Owner mandate 2026-09-18: only the technical seat halts the
                 # desk. An advisory seat losing its answer is still a real

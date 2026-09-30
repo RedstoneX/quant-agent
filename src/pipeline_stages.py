@@ -5759,6 +5759,13 @@ class MorningResearchStage:
                      for sym in news_symbols_asked},
                     set(),
                 )
+                # Board item 20 (per-name coverage, 2026-09-30): the same
+                # fact, in the form the decision can act on. The whole news
+                # answer is gone, so it covers NONE of the names it was
+                # asked about.
+                ctx.seat_symbol_gaps.setdefault("news", set()).update(
+                    str(sym).upper() for sym in news_symbols_asked
+                )
             # PM TEST GATE item 4, second half (2026-09-14). A structural
             # loss — the seat had real headline coverage for a symbol and
             # its answer for that symbol is missing (see
@@ -5770,6 +5777,13 @@ class MorningResearchStage:
             # already say something is wrong and take priority.
             if data_status["news"] == "ok" and news_intel and news_intel.dropped_news_symbols:
                 data_status["news"] = "symbol_dropped"
+                # Board item 20 (per-name coverage, 2026-09-30). The seat
+                # answered, and these are the exact names it did not answer
+                # FOR. Recorded per symbol rather than as "n of m covered",
+                # so a decision about one stock can ask about that stock.
+                ctx.seat_symbol_gaps.setdefault("news", set()).update(
+                    str(sym).upper() for sym in news_intel.dropped_news_symbols
+                )
                 logger.error(
                     "News parsed cleanly on sufficient coverage but the "
                     "seat's own answer is missing %d symbol(s) it was shown "
