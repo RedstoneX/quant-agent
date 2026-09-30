@@ -61,7 +61,11 @@ from typing import Literal
 __all__ = [
     "ExitTrigger",
     "TRIGGER_PHRASES",
+    "CANONICAL_TRIGGER_NAMES",
+    "CANONICAL_NAME_NOT_MATCHED_IN_PROSE",
+    "canonical_prose_names",
     "EVENT_TRIGGERS",
+    "NO_VERIFIER_EXISTS",
     "derive_trigger_from_reason",
     "normalize_trigger",
     "ExitTriggerCheck",
@@ -101,12 +105,17 @@ class ExitTrigger(str, Enum):
     CANNOT_SUBSTANTIATE = "cannot_substantiate"
 
 
-#: Trigger -> the prose phrases that name it. Every phrase here is already
-#: in `pipeline._HARD_TRIGGER_KEYWORDS`; nothing is added and nothing is
-#: dropped, so an exit that passed the phrase gate before still passes it.
-#: Ordered longest-first inside each group only for readability — matching
-#: uses substring containment exactly as the phrase gate does.
-TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
+#: Trigger -> the prose phrases that name it. Ordered longest-first inside
+#: each group only for readability — matching uses substring containment
+#: exactly as the phrase gate does.
+#:
+#: `_LEGACY_TRIGGER_PHRASES` is the vocabulary as it stood before
+#: 2026-09-30: the wordings an LLM produces in free prose. The CANONICAL
+#: ENUM NAME of each trigger is added to it below by
+#: `canonical_prose_names`, so `TRIGGER_PHRASES` (and therefore
+#: `pipeline._HARD_TRIGGER_KEYWORDS`) cannot name a different set of
+#: triggers from `ExitTrigger` itself.
+_LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     ExitTrigger.THESIS_INVALID: (
         "thesis_invalid", "thesis invalid", "invalidation triggered",
         "broken thesis", "thesis broken",
@@ -126,18 +135,148 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
 }
 
-#: Triggers that assert something happened OUTSIDE the price series and
-#: name a symbol-level or market-level event the desk records. These are
-#: the ones whose truth `exit_guard.holding_discipline_claim_check` can be
-#: pointed at. `THESIS_INVALID` is deliberately absent: it is judged
-#: upstream by `check_structural_protection` and that function's owner
-#: decision leaves it unjudged here (see its docstring).
+#: THE ONE DIVERGENCE THIS MODULE STILL ALLOWS, AND WHY (2026-09-30).
+#:
+#: A sanctioned `ExitTrigger` named by its own canonical value is accepted
+#: as naming that trigger. Two members are deliberately NOT matched that
+#: way in free prose, and the exclusion is a named constant rather than an
+#: accident so a test can pin it:
+#:
+#: * `CANNOT_SUBSTANTIATE` is not a trigger at all. It is the seat's
+#:   honest "I cannot support this exit". Accepting it as a named trigger
+#:   would turn the one safe way to decline into a way to pass the gate.
+#: * `EARNINGS` has the bare word "earnings" as its canonical value, and
+#:   that word occurs constantly in prose that names no event at all
+#:   ("earnings in three days", "pre-earnings drift"). Substring-matching
+#:   it would WIDEN the gate to a non-event, which the long comment above
+#:   `pipeline._HARD_TRIGGER_KEYWORDS` forbids. The earnings EVENT is
+#:   already named by "earnings miss" / "guidance cut" / "bearish
+#:   earnings", and the STRUCTURED field (`PositionAction.exit_trigger`)
+#:   carries `earnings` exactly, so nothing is unreachable — only the bare
+#:   word in prose is not enough.
+CANONICAL_NAME_NOT_MATCHED_IN_PROSE: frozenset[ExitTrigger] = frozenset({
+    ExitTrigger.CANNOT_SUBSTANTIATE,
+    ExitTrigger.EARNINGS,
+})
+
+
+def canonical_prose_names(trigger: ExitTrigger) -> tuple[str, ...]:
+    """The canonical spellings of `trigger` accepted in free prose.
+
+    Empty for a member in `CANONICAL_NAME_NOT_MATCHED_IN_PROSE`. Otherwise
+    the enum value as written (`bearish_state_change`) and, when it has
+    separators, its spaced form (`bearish state change`) — the same two
+    spellings `normalize_trigger` already folds together, and the same
+    spaced form `exit_guard.claims_bearish_state_change` already accepts.
+    """
+    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE:
+        return ()
+    value = trigger.value
+    if "_" not in value:
+        return (value,)
+    return (value, value.replace("_", " "))
+
+
+#: Every canonical name the prose gate accepts, derived from the enum.
+CANONICAL_TRIGGER_NAMES: tuple[str, ...] = tuple(
+    name
+    for trigger in ExitTrigger
+    for name in canonical_prose_names(trigger)
+)
+
+def _phrases_for(trigger: ExitTrigger) -> tuple[str, ...]:
+    legacy = _LEGACY_TRIGGER_PHRASES.get(trigger, ())
+    return legacy + tuple(
+        name for name in canonical_prose_names(trigger) if name not in legacy
+    )
+
+
+#: Iterated over `ExitTrigger` rather than over `_LEGACY_TRIGGER_PHRASES`
+#: deliberately: a member added to the enum with no prose wording of its own
+#: still gets its canonical name here, so it is namable the day it is
+#: declared. That is the divergence this whole block exists to prevent.
+TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
+    trigger: phrases
+    for trigger in ExitTrigger
+    if (phrases := _phrases_for(trigger))
+}
+
+#: Triggers a verifier in this codebase can actually CONTRADICT today.
+#:
+#: Membership is not an aspiration and not a category: a member belongs here
+#: only if some branch of `exit_guard.holding_discipline_claim_check` is
+#: reached for it and can append a contradiction. Verified by grep, member by
+#: member, 2026-09-30:
+#:
+#:   BEARISH_STATE_CHANGE - `_claims_bearish`; contradicted by the same-day
+#:                          `state_change` rows for the symbol.
+#:   ADVERSE_NEWS         - routed into that SAME `_claims_bearish` branch
+#:                          deliberately (see its comment there), so the same
+#:                          record can contradict it.
+#:   REGIME_SHIFT         - `_claims_regime`; contradicted by the day's macro
+#:                          regime read when the macro status is trusted.
+#:
+#: `SECTOR_SHOCK` was REMOVED from this set 2026-09-30. It had never been
+#: verifiable: `holding_discipline_claim_check`'s own comment states it is
+#: deliberately NOT routed to the state-change check because the desk records
+#: no sector-shock row. The set asserted a verifier that the code next to it
+#: said did not exist. Removing it changes no behaviour — see
+#: `NO_VERIFIER_EXISTS` for why this set had drifted unnoticed.
 EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset({
     ExitTrigger.BEARISH_STATE_CHANGE,
     ExitTrigger.ADVERSE_NEWS,
-    ExitTrigger.SECTOR_SHOCK,
     ExitTrigger.REGIME_SHIFT,
 })
+
+#: The other side of the ledger: every `ExitTrigger` for which NO verifier
+#: exists, with the reason, one line each.
+#:
+#: WHY THIS CONSTANT EXISTS (2026-09-30). The comment block above
+#: `pipeline._HARD_TRIGGER_KEYWORDS` sets a bar — an accepted trigger must
+#: name "something the desk records" and must not be re-added "without a
+#: verifier that can answer 'did that happen today?'". That bar was prose,
+#: and prose slips: `EVENT_TRIGGERS` was declared and exported here and read
+#: by NOTHING (grep of `src/` and `tests/` returned only its own definition
+#: and `__all__`), so the set that was supposed to encode which claims are
+#: checkable did nothing at all and had gone wrong on `SECTOR_SHOCK` without
+#: anything noticing.
+#:
+#: `tests/test_exit_trigger_canonical_names.py` now FAILS when an
+#: `ExitTrigger` member is in neither set, so declaring a new trigger forces
+#: whoever declares it to say, in code, whether anything can check it. The
+#: bar is now a test instead of a paragraph. This does NOT make the four
+#: members below verifiable — it records that they are not, which is the
+#: true state, and four of eight is the measured answer, not a target.
+#:
+#: Being here does not make a trigger illegitimate. It makes the gap visible.
+NO_VERIFIER_EXISTS: dict[ExitTrigger, str] = {
+    ExitTrigger.THESIS_INVALID: (
+        "consulted, never judged: `check_structural_protection` is read with "
+        "`advisory_only=True, persist=False` and its own comment states the "
+        "branch cannot change which exits execute."
+    ),
+    ExitTrigger.SECTOR_SHOCK: (
+        "the desk records no sector-scope row of any kind, so there is "
+        "nothing a sector-level assertion could be checked against; "
+        "`holding_discipline_claim_check` says so where it declines to route "
+        "it."
+    ),
+    ExitTrigger.EARNINGS: (
+        "no branch reads an earnings row on the exit path; the claim is "
+        "accepted on its wording alone (and, since 2026-09-30, reachable "
+        "through the structured field even though the bare word is excluded "
+        "from prose)."
+    ),
+    ExitTrigger.STOP_FIRED: (
+        "no branch asks the broker whether a stop actually filled; this is "
+        "also the one member whose canonical spelling is a genuinely NEW "
+        "wording rather than a re-spelling of an accepted phrase."
+    ),
+    ExitTrigger.CANNOT_SUBSTANTIATE: (
+        "not a trigger at all — the seat's honest decline. There is nothing "
+        "to verify, and it is never accepted as naming a trigger."
+    ),
+}
 
 #: Refusal codes for `src.risk.exit_refusal.record_exit_refusal`.
 CODE_UNSUBSTANTIATED_TRIGGER = "unsubstantiated_trigger"
