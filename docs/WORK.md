@@ -106,14 +106,6 @@ DONE WHEN:
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/BOARD_NOTES.md (item 63)
 
-**64. The backtest still rations the risk budget alphabetically when the budget binds — OPEN.** Live spends down the ranked verdicts; this engine has none, so equal asks are served by ticker spelling. **Ruled out, with reasons: `docs/INCIDENT_HISTORY.md`, 2026-09-16**, notably ranking by the engine's own reward:risk, which would silently change who gets capital.
-
-DONE WHEN:
-  - [ ] either the backtest ranks its candidates by the LIVE desk's own ranking rule, or a recorded decision in `docs/INCIDENT_HISTORY.md` states that this engine cannot evaluate rationing at all because it cannot replay the live verdicts. Not an owner call: the no-fitting doctrine already forbids inventing a stand-in score (including the engine's own reward:risk, ruled out 2026-09-16), so those two are the only outcomes left.
-  - [ ] whichever way it goes, every backtest result keeps printing how many of its days the risk ceiling bound and that the tie-break is alphabetical, so the numbers can never be read as evidence about how the live desk picks among trades
-  - [ ] this item is NOT closed as a ranking fix while the tie-break is still ticker spelling
-detail: docs/BOARD_NOTES.md (item 64)
-
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14.** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
 
 DONE WHEN:
@@ -317,6 +309,7 @@ detail: docs/BOARD_NOTES.md (item 190)
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list.
 - retired queue: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 65, 66, 68, 69, 71, 72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 114, 115, 116, 117, 118, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 153, 154, 155, 156, 158, 159, 160, 161, 162, 164, 165, 166, 167, 168, 169, 170, 171, 172, 175, 176, 178, 179, 180, 181, 184, 189
 - retired gate: 1, 2, 3, 4, 5, 6, 7, 8
+- retired queue: 64
 - retired queue: 191
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
