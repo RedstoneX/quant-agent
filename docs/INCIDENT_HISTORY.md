@@ -93,6 +93,84 @@ resolved calls for that seat to supply a measured strength. Either is a schema
 change to ratify with its derivation attached and the seat's prompt updated in
 the same pass.
 
+### 2026-09-26 — eight board items were already finished by merged code but their entries were never deleted (items 125, 127, 138, 148, 154, 165, 179, 180 retired)
+
+**In plain words:** eight jobs on the board had been done — in some cases days earlier — but nobody removed them, so the board kept reporting work that no longer existed. Each one was re-checked against the code that is actually live before it was struck off; nothing was taken on trust from the audit that flagged them.
+
+**Why this keeps happening.** A fix ships and the ticking of the item's own done-boxes is treated as the closure. It is not: the board only shrinks when the body is deleted. Two of these (127 and 138) sat in the Tier 1 "can cost money" list while being fully closed, which distorts every priority call made off that list.
+
+### 2026-09-26 — the desk's earnings sentiment calls can now be shown to have been wrong (item 125 retired)
+
+**In plain words:** the desk's earnings reader says bullish, bearish or neutral about each filing. Until now nothing ever went back and asked whether the stock then went the way it said. It does now.
+
+**How it is scored.** A bullish call counts as wrong only if the stock fell, a bearish one only if it rose — the sign of the move and nothing else. No band, no tuned number, and the five-field "show the arithmetic" derivation the verdict comes from is untouched, which was the item's own guard against turning a measurement into a new gate. Neutral verdicts make no directional claim and are shown but not scored. It is fed by the earnings files and daily bars the desk already pays for, not by a new benchmark or test rig. A finance word list was investigated and rejected earlier; do not re-propose it.
+
+### 2026-09-26 — a repair can no longer put back a protective stop the desk deliberately cancelled in order to sell (item 127 retired, Tier 1)
+
+**In plain words:** two of the desk's own background jobs could write to the broker at the same moment. The dangerous pairing was never two repairs colliding — it was one job re-placing a protective stop during the seconds when a live session had cancelled that exact stop so it could sell the position.
+
+**What closes it.** One advisory lock file beside the database is now taken by all three writers: the half-hourly check's whole housekeeping pass, the standalone coverage sweep's whole repair pass, and the paid opportunity scan. The lock wraps the entire pass, not one symbol at a time — that was the decided shape, and the measured evidence never argued for finer granularity. The half-hourly check additionally stands down whenever a live morning, midday or close session owns the desk, because that session runs the same housekeeping itself and may be mid-sell. Standing down costs nothing: the next tick re-reads the broker.
+
+**Verified, not assumed.** Nothing broker-mutating runs before the lock is taken — the pass begins immediately after the lock opens. Both criteria were checked against the live code, and the named pairing is pinned by a test that fails if the cancelled stop is re-placed, with a positive control proving the same book still gets its stop back when no session owns the desk. A lock that cannot be established fails closed: a job that cannot prove it is alone does not write.
+
+**Residual, reported not fixed.** The safety argument for standing down now rests entirely on the next tick re-reading the broker; the old "and the loss check still runs every tick" half of that argument went away when the account-level loss alarm was removed. A source comment still describes item 127 as open on that exposure — stale prose, not an unmet criterion.
+
+### 2026-09-26 — every order-price buffer that decides whether an order fills is now on the record (item 138 retired, Tier 1)
+
+**In plain words:** small percentage nudges decide what price the desk's orders are sent at, and therefore whether they fill at all. None of them was written down anywhere with a reason. All the surviving ones now are.
+
+**What is covered.** The 0.5% ordinary-exit offset and its mirrored cover and midday siblings, and the 3% stop-limit buffer, each carry a ledger row stating either a source or the open question plus what the desk pays while it stays unanswered. No value was changed in the pass. The 1% ladder offset the item named no longer exists as a site: the de-lever now crosses the live quote or sends a market order instead of pricing off a stale mark, and the accounting haircut left behind is recorded as derived from the 3% buffer.
+
+**Worth carrying.** The 3% buffer no longer governs the stop the desk normally places — primary protective stops are stop-market since the 2026-09-25 ruling — so it now decides only the fallback and de-lever legs.
+
+### 2026-09-26 — two level-ranking numbers and a silently changed correlation window are now visible (item 148 retired)
+
+**In plain words:** the formula that picks which six price levels the analyst ever sees contained numbers typed inline, where the desk's own number scanner could not see them. And the window of history used to decide which stocks move together had quietly grown from four months to five years with no reason recorded anywhere.
+
+**What closes it.** The strength formula's divisor is now a named constant carried in the ledger, and the flat 40% maximum-distance cap it sat beside no longer exists — it was replaced by the volatility-based reach window, which is already tracked. No value changed.
+
+**The honest finding on the window.** It has no correlation-specific justification and never did. It is inherited: the same five years of bars fetched for structural levels, reused here because they were there. The settings file records that raise as "purely for structure". Clustering needs only twenty overlapping returns, so the extra bars add older regimes rather than sharpen anything. That reasoning is now written at the point the matrix is built, because the window rides a setting with no numeric default and so has no definition site the ledger can attach a row to.
+
+### 2026-09-26 — the desk now says out loud when it decided without one of its research seats (item 154 retired)
+
+**In plain words:** when a research seat could not be reached, the desk went ahead anyway and the owner saw nothing saying so. A missing answer read as ordinary.
+
+**What closes it.** A "DECIDED SHORT-HANDED" block names the absent seat in plain words and states the decision was made without it. It appears on every proceed — morning, midday, close, one-off and the half-hourly check — and is suppressed on a skip, so it never doubles up with the existing "nothing was traded" banner. It is disclosure only: no threshold, no new field, and it reuses the absent-seat list already carried in the result and persisted with it. Distinct from the case where a seat's answer is lost entirely, which refuses the decision outright.
+
+### 2026-09-26 — the evening review no longer judges session-scale progress off a calendar-day count, and the made-up waiting period is gone (item 165 retired)
+
+**In plain words:** the desk asks whether a position is making progress fast enough. A weekend adds two days to the calendar and zero trading days, so counting calendar days made every position look slower than it was — worst across a holiday weekend, and worst of all on the short horizons this desk trades. Separately, the desk refused to judge pace at all until a third of the expected holding period had passed.
+
+**What closes it.** The evening snapshot now carries a real trading-session count from the broker's own market calendar alongside the calendar figure, matching the field the reviewer reads. And the one-third wait is deleted, not re-derived: the owner ruled it a made-up clock stacked on a guessed horizon. Pace is now computed from the first review whenever a horizon was pinned, read against current price structure each time. An early reading is naturally extreme; the prompt states it is context and never on its own a reason to exit.
+
+### 2026-09-26 — a paid macro re-read is kept instead of thrown away, and its dead fallback is gone (item 179 retired)
+
+**In plain words:** when the market-backdrop seat failed and the desk paid to ask again, the answer reached that one run and then vanished. Every later reader — the next tick, the evening review, the week's regime history — went back to the stale morning snapshot the desk had already paid to replace.
+
+**What closes it.** A successful paid re-read is now written to the macro store the same way the scheduled morning read is, carrying the data fingerprint it actually saw so a later expiry check compares against real prints. A store-write failure is logged and swallowed, because it must not undo a paid read that succeeded.
+
+**Two findings corrected, not fixed.** The "plain dict loses nominations" alarm was wrong: that shape is canonical and nominations are collected before the re-read ever runs. The real limitation is sequencing — a healed macro's nominations are never collected at all — which is a separate, deeper question. The unused mechanical fallback was removed rather than wired in: the coercion it wrapped is already present at every live consumption point and the live path uses paid retries, so there was nothing to wire it into.
+
+**Still open, report-only:** the scheduled macro save swallows its own failure as a warning. Pre-existing, not part of this item.
+
+### 2026-09-26 — a stock is no longer refused for being young; it is refused when no honest stop can be read (item 180 retired)
+
+**In plain words:** the desk refused to buy anything with fewer than 200 trading days of history. That 200 was not a safety number — it was the same 200 used for the 200-day average line on a chart, doing a second job nobody had justified.
+
+**What closes it.** The bar-count refusal is deleted, and a test now fails if it comes back. Indicators already degrade honestly on short history, so a young listing is judged on what the trade actually needs: whether a defensible protective stop can be read from it. A name too young to read any stop from is still refused, by the existing stop-readability rule. The 200 was not lowered to some other number — the owner ruled that out — and with its unsourced second job gone the constant is now recorded as sourced, purely as the moving-average window.
+
+**The prerequisite that shipped with it:** an exit condition that references the 200-day average is still refused as unreadable when that average does not exist, so admitting young names cannot ship a position whose exit can never be evaluated.
+### 2026-09-26 — finished agent sessions left ~74 registered scratch worktrees behind, and now a scheduled sweep clears them (item 139 retired)
+
+**In plain words:** every automated session that worked on this repo registered a temporary working copy, and nothing ever unregistered it. About 74 of the repo's 90 registrations were leftover session scratch. The cost was disk and a registry nobody could read — not broken git state.
+
+**Why the obvious fix was not the fix.** The item's own filing correction said it plainly: none of those registrations was stale in git's sense, because every path still existed, so `git worktree prune` would have removed nothing. Shipping that prune alone would have looked like a fix and changed nothing.
+
+**What actually closes it.** The sweep does both halves. It clears registrations whose directory has since been deleted — what git's own prune does — and it additionally removes working copies that are merged into the base branch, clean, unlocked, owned by us and untouched for at least seven days, which is the half git will not do on its own. Removal never passes `--force`, so git refuses a dirty or unmerged copy as a second gate if one is dirtied between the check and the removal. It only ever sees this repo's own registrations, and refuses any path owned by a different user, so it cannot reach another tenant on this shared box. It reports by default and only acts when told to.
+
+**The schedule is the recorded rule.** A daily 04:10 ET systemd timer, deliberately off-hours because it is the one maintenance sweep that writes, running through a wrapper with a timeout. The seven-day idle floor means a working copy only becomes eligible long after its session ended, so a live agent's copy is never a candidate.
+
+**Verified, not assumed:** the sweep was read and its tests run, never executed — several agents held live scratch copies at the time, including the one retiring this item.
 ### 2026-09-26 — the desk recorded "we don't know what this cost" for work it never paid anyone to do (item 147, half fixed, half still open)
 
 **In plain words.** Seven times the desk wrote down a model result with the price left blank, as though the bill were a mystery. It was not a mystery. Every one of those seven was a result the desk already had saved from earlier and simply reused — no model was asked anything, so the cost was exactly nothing. A blank price is not the same as a zero price, and the desk treats a blank as a reason to stop trading for the rest of the day and wait for a human. It never actually stopped on one of these, by luck of timing, but it could have.
