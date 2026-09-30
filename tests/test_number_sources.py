@@ -18,6 +18,7 @@ false in four places and passed every test below.
 """
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from src.number_sources import (
     ARBITRARY_REQUIRED_FIELDS,
     MAX_ARBITRARY_ENTRIES,
     MAX_UNSCOPED_NUMERIC_SITES,
+    RATCHET_HISTORY_PATH,
     NEUTRAL_VALUES,
     SCOPED_CONFIG_CLASSES,
     SCOPED_PATHS,
@@ -36,6 +38,7 @@ from src.number_sources import (
     collect_unscoped_sites,
     deployed_values,
     load_ledger,
+    load_ratchet_history,
 )
 
 # --------------------------------------------------------------------------
@@ -52,7 +55,9 @@ def test_every_trade_governing_number_is_accounted_for() -> None:
     If this fails on your branch you have added or moved a number that
     governs a trade. Add it to `config/number_ledger.yaml` with where it came
     from. If nothing backs it, say `arbitrary` — and note that raising
-    `MAX_ARBITRARY_ENTRIES` to fit it is an owner decision, not a build fix.
+    `MAX_ARBITRARY_ENTRIES` to fit it — by appending an entry to
+    `config/number_ledger_history.yaml` — is an owner decision, not a build
+    fix.
     """
     problems = audit()
     assert not problems, "\n".join(
@@ -150,220 +155,83 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     green while the headline arbitrary count FELL — the metric improving while
     the number became less visible than before the gate existed.
 
-    As an equality, a row cannot leave this ledger without the count being
-    edited in the same commit. LOWER it when a number is genuinely sourced.
-    Raising it records an owner decision.
+    As an equality, a row cannot leave this ledger without a reason being
+    written down in the same commit. The count is no longer a hand-edited
+    literal: it is the sum of the deltas in
+    `config/number_ledger_history.yaml`, one appended entry per change. This
+    test is the cross-check between two independently edited files — the
+    ledger's live arbitrary rows and the history's deltas — so it is not
+    satisfied by editing either one alone.
     """
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
-    assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 137, (
-        "the ratchet moved; if a number was sourced, lower it and say which. "
-        "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
-        "not-trade-governing, and that day the cap binding is what refused a "
-        "trading decision -- a misclassification corrected, not a number added. "
-        "87 -> 88 the same day: `refresh_deadline_s` carried the identical "
-        "falsified sentence and was what the intraday freshness check ran out "
-        "of while deciding whether the tick could decide. "
-        "88 -> 106 on 2026-09-19, board item 130: scoping "
-        "src/execution/broker.py, src/coverage_watchdog.py, src/pipeline.py "
-        "and src/agents admitted 47 new sites, 18 of them arbitrary -- see "
-        "src/number_sources.py's MAX_ARBITRARY_ENTRIES comment for the count "
-        "by source. "
-        "106 -> 146 on 2026-09-19: the scanner learned parameter defaults, "
-        "attributes on any class and near-one inline multipliers; 98 live "
-        "sites became visible, 40 of them arbitrary. No number was added. "
-        "146 -> 147 on 2026-09-20, board item 124 adversary review: "
-        "`src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` was "
-        "`sourced` against an SSRN URL that returns HTTP 403 to everyone; "
-        "relabelled `arbitrary` because a citation nobody can open is not a "
-        "source under this ledger's own rule. No value changed. "
-        "147 -> 148 the same day, cross-symbol crowd-out fix: a genuinely new "
-        "number, `src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS` "
-        "(the reserved-slot bound for board item 124's fix), recorded "
-        "honestly as `arbitrary` with its open question stated rather than "
-        "presented as measured. "
-        "148 -> 142 on 2026-09-20, retired board item 32: six rows left with "
-        "the account-level loss alarms the owner removed. "
-        "142 -> 143 on 2026-09-23, board item 180: "
-        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was `sourced` on the "
-        "200-day moving average being a standard published trend reference, "
-        "which sources the MA WINDOW and not the second use of the same "
-        "constant -- the constructor's outright refusal of any listing under "
-        "200 bars, for which no citation exists. One status per site, so the "
-        "row takes the weaker use's status and the split is written into its "
-        "note. No value changed. "
-        "143 -> 142 on 2026-09-24, item 118: "
-        "`src.pipeline.TradingPipeline._force_delever:factor[1]` (the forced "
-        "de-lever's must-fill SELL limit) was re-sourced from `arbitrary` to "
-        "`derived`, pointing at `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` (the 3%-"
-        "through buffer) to match the gross-ceiling de-lever. A number sourced, "
-        "so the count is lowered in the same commit. "
-        "142 -> 141 on 2026-09-24, board item 81: "
-        "`src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening` "
-        "was deleted as dead code -- no code in `PortfolioConstructor` ever "
-        "read it, confirmed by grep before deleting. A row left the ledger, "
-        "so the count is lowered in the same commit. "
-        "141 -> 143 on 2026-09-25, item 142 adversary review: "
-        "`src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R` (value 2) and "
-        "`RANGE_SECOND_RATCHET_LOCK_R` (value 1) were recorded `derived` from "
-        "`RANGE_BREAKEVEN_R_MULTIPLE`, but neither is computed from the +1R "
-        "breakeven unit -- 2R is a chosen appetite multiple and the 1R lock "
-        "equals the breakeven unit only by coincidence of appetite, not a "
-        "derivation -- so both were reclassified `arbitrary`. Owner-ratified "
-        "appetite is not a source. Two rows changed status, so the count rises "
-        "by exactly two in the same commit. "
-        "143 -> 142 on 2026-09-25, ledger cleanup: "
-        "`src.risk.trailing.CHANDELIER_ATR_MULTIPLE` (value 3) was reclassified "
-        "`arbitrary` -> `sourced`. The Chandelier Exit's published default "
-        "multiple is 3.0 (Chuck LeBeau; StockCharts ChartSchool; Corporate "
-        "Finance Institute). Only the MULTIPLE is sourced -- the desk trails off "
-        "the highest-high-since-entry and a passed-in ATR, not the published "
-        "22-bar / ATR(22) geometry -- so the note records the split. A number "
-        "sourced, so the count is lowered in the same commit. The midday "
-        "stop-sanity floor 0.5 (`_midday_execute_llm_actions:factor[0]`) was "
-        "considered for the same pass but STAYS `arbitrary`: although its "
-        "midday use is a non-binding typo guard, the same 0.5 is reused as the "
-        "universe screen's ATR/price volatility ceiling "
-        "(`STOP_SANITY_FLOOR_FRACTION`), which reaches a trade decision, so "
-        "`not-trade-governing` would be false; only its note was corrected. "
-        "142 -> 141 on 2026-09-25, consolidated appetite-ratification campaign "
-        "(owner delegated to the adversary): "
-        "`src.config.RiskConfig.min_level_touches_for_stop_honor` (value 5) was "
-        "reclassified `arbitrary` -> `sourced` against the in-repo measured "
-        "real-vs-shuffled bounce-probability study (src/config.py:722-740): the "
-        "95% confidence intervals separate cleanly only at 5+ touches (real "
-        "0.644 [0.590, 0.696] vs shuffled 0.505 [0.470, 0.539]) while 3-4 "
-        "overlap the noise control. A number sourced, so the count is lowered "
-        "in the same commit. The campaign also RATIFIED several numbers as "
-        "owner-appetite (max_portfolio_risk_pct 25, max_cluster_risk_share_pct "
-        "40, SECTOR_HARD_CEILING_MAX 90, max_target_horizon_sessions 60, "
-        "min_stop_atr_multiple 2.5, the three stop_atr_regime_scale magnitudes, "
-        "and the six GROSS_LADDER numbers), but ratified appetite stays "
-        "`arbitrary`+note by this ledger's convention, so none of those move "
-        "the count."
-        "141 -> 142 on 2026-09-25, board item 148: "
-        "`src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT` (value 10), a "
-        "genuinely new number -- the level-strength formula's `/ 10.0` divisor "
-        "was an inline literal outside rule (e)'s factor band and so invisible "
-        "to the scanner (named in this module's own docstring); it is now a "
-        "named module constant with the same value and the same behaviour, "
-        "recorded honestly as `arbitrary` with its open question stated. The "
-        "board item's other literal, a flat 40% max-distance cap, was found "
-        "already gone from the code -- replaced 2026-09-12 by the ATR-based "
-        "`horizon_reach` window, which is already ledgered -- so nothing new "
-        "was added for it. "
-        "142 -> 140 on 2026-09-25, board item 52: "
-        "`src.config.SmartMoneyConfig.min_transaction_value_usd` (100,000) and "
-        "`external_min_transaction_value_usd` (250,000) were deleted, not "
-        "sourced -- no published study supports single-transaction dollar "
-        "size as a positive insider-buy predictor (the closest, Cziraki & "
-        "Gider 2019, finds size inversely related), so the Form 4 insider-buy "
-        "admission screen no longer gates on size at all. Two rows left the "
-        "ledger, so the count is lowered by exactly two in the same commit."
-        "140 -> 141 on 2026-09-25, board item 80 (reworked): a genuinely new "
-        "number, `src.portfolio_constructor.ConstructorConfig."
-        "structural_stop_buffer_pct` (0.005) -- the buffer a no-ATR protective "
-        "stop sits past the structural level it is read from "
-        "(`_derive_structural_stop_no_atr`), added when the item-80 branch was "
-        "reworked from an outright refusal into a structural-stop fallback per "
-        "the owner ruling. No published method fixes a buffer size, so it is "
-        "recorded honestly as `arbitrary`, ratified as owner-appetite with its "
-        "open question and cost stated."
-        "141 -> 140 on 2026-09-25, board item 180 (owner ruling): "
-        "`src.data.technical.LONGEST_INDICATOR_WINDOW` was reclassified "
-        "`arbitrary` -> `sourced`. Its WEAKER, unsourced use -- the "
-        "constructor's `_require_sufficient_history` young-listing refusal that "
-        "read the same 200 as a bar-count data-sufficiency gate -- was removed "
-        "on the owner's ruling (a young listing is now judged on whether a "
-        "protective stop is readable, via the existing stop-readability rule, "
-        "not on a bar count). With that use gone the constant's only remaining "
-        "use is the sourced 200-day MA window, so the row is `sourced` again. A "
-        "use was removed, not a value changed, so the count is lowered in the "
-        "same commit."
-        "140 -> 139 on 2026-09-26, board item 56 (route (c)): "
-        "`src.config.RiskConfig.max_stop_width_reach_atr_multiple` was "
-        "DELETED, not sourced -- the stop-WIDTH refusal it thresholded is "
-        "gone, and its `derived` mirror on `ConstructorConfig` went with it "
-        "(a `derived` row never counted, so only one comes off). Measured "
-        "before deleting: across 648 sized stops recorded in production "
-        "between 2026-09-13 and 2026-09-26 the gate refused ZERO trades, and "
-        "the widest stop it ever saw sat at 1.29 x ATR x sqrt(H) against its "
-        "1.5 cap; arithmetically it could not refuse the desk's own 2.5 ATR "
-        "fallback stop at any horizon of three sessions or more, and no "
-        "stated horizon has ever been under six. No published work fixes the "
-        "touch probability below which a stop stops being a stop, so the "
-        "number could not be sourced; a wide stop is answered by a smaller "
-        "position. A row left the ledger, so the count is lowered in the "
-        "same commit."
-        "139 -> 138 on 2026-09-26, board item 183: "
-        "`src.portfolio_constructor.ConstructorConfig.min_order_usd` (500) was "
-        "deleted as dead code. Nothing in `PortfolioConstructor` read it, and "
-        "the one call that forwarded it reached an `apply_gross_ceiling` "
-        "parameter that has been explicitly accepted-and-ignored since "
-        "2026-09-24, so no order size, refusal or gate changes. The comment at "
-        "its definition site claiming that gate still read it was false on the "
-        "day it was written. A row left the ledger, so the count is lowered in "
-        "the same commit."
-        "138 -> 139 on 2026-09-26, board item 70: "
-        "`src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` was reclassified "
-        "`derived` -> `arbitrary`. It was recorded as derived from "
-        "`src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25` "
-        "while its own value is 1 -- a derivation that never produced its own "
-        "figure. It is a second independent flat number and is now counted as "
-        "one. No value changed. "
-        "139 -> 140 on 2026-09-26, board item 70: a genuinely new name, "
-        "`src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0) -- the "
-        "second of the two different jobs the single noise-band literal was "
-        "doing, the margin a completed daily close must clear a structural "
-        "level by. Same value, no behaviour change; item 70 requires the two "
-        "jobs to become two independently justified numbers and forbids "
-        "collapsing them to keep the count down, so the count rises by one. "
-        "140 -> 139 on 2026-09-30, board item 183 (owner ruling): "
-        "`src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta` "
-        "(0.5) was DELETED rather than sourced. The owner ruled the desk gets "
-        "autonomy to nudge a position whenever its own reasoning calls for it, "
-        "so a flat, picked percentage that silently overrode that judgement is "
-        "gone, not resized or lowered. This entry's own 2026-09-26 measurement "
-        "had already shown the cost side (execution slippage; Alpaca charges "
-        "no stock commission) could not justify any floor of this size -- a "
-        "$50 order on a $10k book costs about a cent -- leaving only appetite "
-        "unmeasured, and appetite is exactly what this ruling hands to the "
-        "desk instead of to a constant. No replacement percentage was "
-        "substituted. A row left the ledger, so the count is lowered in the "
-        "same commit. "
-        "139 -> 138 on 2026-09-30, board item 182 (PARTIAL, the item stays "
-        "open): ONE row left, REFORMULATED AWAY rather than sourced. "
-        "`src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02), the "
-        "sweep-vehicle sizing cushion, is gone because the partial sale now "
-        "divides the remaining deficit by the price floor the order itself "
-        "carries -- the live SELL limit -- so the smallest provably-"
-        "sufficient share count is computed rather than padded by a guess, "
-        "and with no quote there is no floor so the whole position is sold. "
-        "`src.risk.rules.GROSS_LADDER_ALERT_PCT` was removed in the first "
-        "draft of the same commit and PUT BACK: the alert trigger is "
-        "monotone, so freezing it at the owner-ratified -20 cannot cause "
-        "silence at any deeper drawdown, while tying it to the ladder's "
-        "deepest rung would have silenced the band between -20% and any new "
-        "deeper rung. Its open question is still unanswered and its row is "
-        "still counted."
-        "138 -> 137 on 2026-09-30, board item 185 (the item STAYS OPEN): "
-        "the midday stop-sanity floor 0.5 "
-        "(`_midday_execute_llm_actions:factor[0]`) was DELETED, not sourced. "
-        "It was a flat half-of-price bound on a model-proposed TRAIL_STOP, "
-        "and the universe screen derived its ATR/price volatility ceiling "
-        "from it, so each of the two was justified by the other and neither "
-        "was fixed by anything outside the pair. Both now read "
-        "`widest_reachable_stop_atr_multiple` instead -- the midday path "
-        "CLAMPS an over-wide proposal to that multiple of the name's own "
-        "live ATR14 rather than refusing it, and the screen's ceiling is "
-        "1 / that multiple. That composition is itself built from two rows "
-        "that are still `arbitrary` with open questions (the 2.5 base and "
-        "the 1.20 risk-off scaler), so one literal is gone but the desk's "
-        "arbitrary content is not reduced, and item 185's own question -- "
-        "how volatile a name may this desk hold -- is not answered. "
-        "A row left the ledger, so the count is lowered in the same commit."
+    history = load_ratchet_history()
+    assert MAX_ARBITRARY_ENTRIES == sum(int(c["delta"]) for c in history), (
+        "MAX_ARBITRARY_ENTRIES must be the sum of the recorded deltas; it is "
+        "computed from them, so a mismatch means the constant was hand-edited "
+        "back into existence."
     )
+    assert len(arbitrary) == MAX_ARBITRARY_ENTRIES, (
+        "the ratchet moved. Do NOT edit a number anywhere to fix this: APPEND "
+        "one entry to config/number_ledger_history.yaml with the delta your "
+        "change makes to the count of `status: arbitrary` rows and a `why` "
+        "that says what moved and on what grounds. Lowering it records a "
+        "number that became sourced; raising it records an owner decision, "
+        "not a build fix. Every past move is in that file, one entry each."
+    )
+
+
+def test_every_ratchet_move_records_why_it_moved() -> None:
+    """The half of rule 5 that the count alone cannot enforce. A delta with no
+    reason is the ratchet back as a bare number, so an entry without a `why`
+    fails here rather than being merged and forgotten.
+    """
+    history = load_ratchet_history()
+    assert history, "the ratchet history is empty; the count has no record"
+    for position, change in enumerate(history):
+        assert isinstance(change.get("delta"), int), (
+            f"ratchet history entry {position} has no integer `delta`"
+        )
+        assert str(change.get("why", "")).strip(), (
+            f"ratchet history entry {position} moves the count by "
+            f"{change.get('delta')} and does not say why"
+        )
+        assert str(change.get("date", "")).strip(), (
+            f"ratchet history entry {position} has no `date`"
+        )
+
+
+def test_the_count_is_computed_and_not_a_hand_maintained_literal() -> None:
+    """The regression guard for the merge cost this shape was built to remove.
+
+    `MAX_ARBITRARY_ENTRIES` was a literal carrying the entire ratchet
+    narrative on ONE physical line of 11,853 characters, mirrored by one
+    assertion message here. Two branches that each retired a different number
+    both rewrote that line, so they always conflicted and every conflict was
+    resolved by hand. If anybody writes the literal back, this fails.
+    """
+    source = (RATCHET_HISTORY_PATH.parent.parent / "src" / "number_sources.py")
+    text = source.read_text(encoding="utf-8")
+    assert "MAX_ARBITRARY_ENTRIES = arbitrary_ratchet()" in text
+    assert not re.search(r"MAX_ARBITRARY_ENTRIES\s*=\s*\d", text), (
+        "the arbitrary count is computed from config/number_ledger_history.yaml; "
+        "writing it back as a literal re-creates the line every parallel "
+        "branch conflicts on"
+    )
+
+
+def test_the_ratchet_history_merges_without_a_conflict() -> None:
+    """Two branches each appending an entry must merge cleanly, which is the
+    whole point of moving the narrative out of one line. That property comes
+    from the file being registered for git's union merge, so the registration
+    is what is tested — a plain 3-way merge conflicts on two appends at the
+    end of the same file.
+    """
+    attributes = (RATCHET_HISTORY_PATH.parent.parent / ".gitattributes")
+    assert "config/number_ledger_history.yaml merge=union" in attributes.read_text(
+        encoding="utf-8"
+    )
+
 
 
 def test_the_arbitrary_count_counts_numbers_not_rows() -> None:

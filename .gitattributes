@@ -10,3 +10,8 @@
 docs/WORK.md merge=docsmerge
 docs/BOARD_NOTES.md merge=docsmerge
 docs/INCIDENT_HISTORY.md merge=docsmerge
+
+# The ratchet history is APPEND-ONLY: two branches that each retire a number
+# both append one entry at the end, and union merge keeps both instead of
+# raising a conflict on the same last line. See the header of that file.
+config/number_ledger_history.yaml merge=union
