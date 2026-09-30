@@ -965,11 +965,6 @@ _TOKEN_GOVERNORS = {
 }
 
 
-def token_governor_snapshots() -> list[dict]:
-    """Every governor's current state, for status reporting."""
-    return [g.snapshot() for g in _TOKEN_GOVERNORS.values()]
-
-
 # finish/stop reasons that mean "output hit a ceiling mid-generation".
 # Shared by the truncation flag in _execute() and the empty-content guards:
 # an empty body WITH one of these reasons is a legitimate truncation (e.g. a

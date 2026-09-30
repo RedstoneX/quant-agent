@@ -13,7 +13,6 @@ from src.evidence_kind import (
     STATUS_CARRIED_FROM_MORNING,
     STATUS_CHOSE_NOT_TO_REFETCH,
     STATUS_REMEMBERED,
-    chart_reuse,
     covered_news_headlines,
     earnings_reuse,
     headline_mentions_symbols,
@@ -106,13 +105,6 @@ def test_insider_remembered_until_new_form4():
     assert kept.decision == DECISION_REUSE
     expired = insider_reuse(findings, same_session=True, new_form4=True)
     assert expired.decision == DECISION_REFETCH
-
-
-def test_chart_always_rereads_live_price():
-    v = chart_reuse({"symbol": "AAPL", "rating": "buy"}, same_session=True)
-    assert v.decision == DECISION_REREAD_LIVE
-    assert v.usable
-    assert not v.pay_again
 
 
 def test_no_seat_count_lives_in_the_kind_module():
