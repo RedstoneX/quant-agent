@@ -22,6 +22,122 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
+
+**In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
+
+**What the desk could see.** This account is entitled to quotes from IEX only, one venue carrying a small share of US trading, while its orders are matched against the consolidated national best price. The repo has known for a while that IEX's displayed prices are unreliable — an in-code note records a moment when it showed a 15% gap between its buy and sell price on an ordinary day. What nobody had done was ask how often that matters, or check whether the rule built to cope with it was doing anything useful.
+
+**The rule.** An entry was abandoned when the displayed offer sat more than 2% past the highest price the desk was willing to pay. The 2% was not read off anything; the comment beside it said the number was "deliberately loose because the input is", which is an honest way of saying nobody knew how wrong the input could be.
+
+**What the record actually shows.** The rule has fired eight times in its whole recorded life. For every one of those eight, the price the desk had captured as its reference was compared against the minute-by-minute record of what the stock actually traded at in the fifteen minutes either side. The reference was right every time — matching the real traded price to within a few hundredths of a percent. The displayed offer was wrong every time, sitting 4% to 6.7% above the highest price the stock traded anywhere in that half hour. And six of the eight stocks were trading *below* the desk's own ceiling at the instant it refused them: the trades would have gone through at a price the desk had already approved.
+
+**And it was never protecting anything.** The order the desk sends is a limit — a ceiling, not a price. It cannot pay more than that ceiling no matter what any screen displays. So in the case the rule was supposedly built for, a market that has genuinely run away, deleting the rule changes nothing: the order goes out, nobody sells at that price, it sits, and the existing entry-protection sweep gives it 90 seconds to fill and then cancels the remainder. Said exactly: the wait is 90 seconds, not the rest of the session, and the parent order's own time-in-force is DAY, so an order the sweep never reaches expires at the close rather than resting overnight. The rule was buying no protection; it was only removing the cases where the venue was wrong.
+
+**How common is the venue being wrong?** Measured live on 2026-09-30 between 13:47 and 13:58 UTC — 32 snapshots of 55 of the desk's own names, 3,630 observations. The typical name's displayed spread implies a cost of about 19 basis points to cross, but 25 of those 55 names showed a typical figure above 40 basis points, and the deleted rule's condition was true on 17.2% of the observations. In an ordinary session this rule stood to refuse roughly one entry in six on a bad display alone.
+
+**What changed.** The rule is gone, and no replacement percentage was put in its place. A displayed price sitting through the ceiling is now written down as a fact about the data feed, not treated as a decision about the trade, and a record needs no threshold. The desk's own owner-facing feed had already refused to show this refusal code to Rex on exactly this evidence back on 2026-09-23 — the finding existed, it had just never been acted on.
+
+**Ruled out.** That the market had genuinely run: eight for eight against the traded record, not one case. That the reference price was stale: it matched the tape every time. That the four simultaneous refusals on 2026-09-15 were a real market event: four unrelated companies — a software firm, a refiner, an oil major and a storage maker — do not all jump 4-6% in the same second.
+
+**Side-effect, stated and not buried — and it is CONDITIONAL, not reliable.** An entry that rests unfilled for 90 seconds is cancelled, and *when that cancel succeeds* it sends Rex a Telegram alert. Three ways it stays silent, all true today: the alert only fires when this code did the cancelling, so a cancel request that itself fails logs an error and pages nobody; an accepted entry is only handed to the protection sweep at all when it carries a pending stop price (or is a scale-in whose existing stop was cancelled), and one that does not is never watched, never cancelled and simply expires at the DAY close; and the wait is 90 seconds, not the end of the session. So cases the old rule swallowed in silence will *mostly* become visible messages — more alerts than before, not full coverage.
+
+**Same-loop budget, fixed here.** Deleting the skip also removed the thing that stopped a possibly-unfillable entry from drawing the session's deployment pool: the pool is charged on submission, read by every later candidate in the same submit loop, and never released. A name whose displayed quote reads through its own ceiling is now moved to the BACK of the submit queue, exactly once — still submitted, still sized the same way, just served after the names quoting inside theirs. Releasing the charge when the sweep cancels would not have helped: the pool figure is local to the execution stage and is already dead 90 seconds later, and the next session recomputes it from the broker.
+
+**What is NOT fixed.** The 40-basis-point ceiling itself is still a number nobody can source, and deleting the rule above makes it the only thing bounding what an entry pays. It stays on the board.
+
+---
+
+### 2026-09-30 — two rules each justified themselves by pointing at the other, and neither was anchored to anything (board item 185, circularity FIXED, item STAYS OPEN)
+
+**In plain words.** The desk had a rule saying a trailing stop more than halfway below the share price is a typing mistake, and a second rule refusing to even look at a share whose daily swings are big enough to trip the first one. Each rule's only justification was the other rule. Nobody had ever picked the "half the price" out of anything real, and the two had also drifted apart, so there was a band of shares the screen let in and the typo rule would then have argued with. Both rules now measure the same thing off the share itself — how far the desk's own widest stop would actually sit — so the two cannot disagree again. **The board item is NOT closed by this.** The circular pair is gone, but the question underneath it — how volatile a share may this desk hold — is still unanswered, and the replacement bound answers a different and much weaker question: the point at which the arithmetic stops making sense. A rule may be retired when its question is answered, never when it is declined.
+
+**What the circularity actually was.** The midday guard refused a proposed trailing stop under 50% of the current price — and it did that refusing on the ONE branch where the live broker stop could not be read, i.e. exactly where the position may be carrying no protection at all, so the refusal could end the loop with the name naked. The replacement does not refuse: it CLAMPS an over-wide proposal to the widest legitimate stop and places it, because the owner's board-item-80 ruling is that the desk never answers a stop it dislikes by placing nothing. That is also the shape board item 56 route (c) already gave to stop width — answered by adjusting the trade, never by a refusal. The first draft of this change kept the refusal and was caught by the adversary before merge. The universe screen then set its volatility ceiling as that 50% divided by the base stop multiple. So the floor was justified by "no admitted name can trip it" and the ceiling was justified by "past here a legitimate stop trips the floor". Nothing outside the pair fixed either end. The owner was asked to supply the missing end — the highest ATR14/price a name may carry — and refused it, correctly: a volatility ceiling is a market-structure number and this desk does not put those to the owner. So it had to be reformulated, sourced, or measured, and reformulation was available.
+
+**The reformulation.** Both rules were really asking one question: how far below price can a stop this desk would actually place ever sit? That is computable from constants that already govern stops — the base `min_stop_atr_multiple` times the largest setup scaler and the largest regime scaler, which is 3.00 x ATR14 today and moves by itself if any of the three moves. The midday guard now compares a proposal against that multiple of the NAME'S OWN live ATR14, which is what the owner's standing rule on stops asks for. The screen's ceiling is 1 divided by that same multiple: the ATR/price at which the widest legitimate stop would sit at or below zero, so the name genuinely cannot be given a stop at all. The old ceiling was 20%, the new one is 33.3%; the old one was not a weaker version of the new one, it was a different quantity borrowed from a rule that has now changed.
+
+**Honest limits of the reformulation, recorded so nobody reads it as more than it is.** First, 3.00 is 2.5 x 1.00 x 1.20, and the 2.5 and the 1.20 are BOTH still `status: arbitrary` in the ledger with live open questions (the 1.20's own row says no measured regime/MAE breakdown exists in this repo). One independent literal was removed and a live dependency on two unresolved ones created; the desk's arbitrary content did not fall. Second, neither ceiling has ever bound or ever could at today's volatilities: the highest ATR14/price this desk has recorded is 8.11%, median 2.97% [measured 2026-09-30, n=46 constructor stop lines across every retained production log 2026-08-31 to 2026-09-30]. 20% and 33.3% are both several multiples past anything observed. Third, the arithmetic bound must never be described as a volatility appetite; what would actually answer the question is recorded on the board item, and the published FORM for a volatility eligibility screen appears to be a cross-sectional quantile rather than a constant.
+
+**The mismatch the board had recorded was real.** The screen divided the 50% by the BASE multiple (2.5) rather than the widest one the constructor can actually reach (3.00, the base scaled by the 1.20 risk-off scaler). The two ends of one relationship differed by exactly that scaler. Names with ATR14/price between 16.67% and 20% were therefore admitted by a screen whose stated rationale did not hold for them. The fix was not to change the divisor but to remove the borrowing: neither side reads the other any more.
+
+**Three consumers, and the third one was the awkward one.** A third rule, in the no-ATR branch of the portfolio constructor, had borrowed the same fraction to refuse a structural stop more than 50% of entry away. There is no volatility reading on that branch by construction, so the borrowed fraction could not follow the others onto the instrument, and keeping the gate meant inventing an independent flat width bound — which doctrine bars. It was deleted instead, under the ruling already made about the near-identical width refusal 130 lines further down the same method (board item 56 route (c): a wide stop is answered by sizing down, never by a refusal there). Its own comment had already conceded that per-trade risk stays bounded by fixed-fractional sizing whatever the width; all it added beyond that was a stub-size objection, and that objection was itself ruled a non-reason by board item 183, because the broker charges no stock commission and the desk trades fractional shares. What still judges that stop, stated exactly: the reward:risk gate at the tail of the same method — but ONLY for a Type A / range trade. `reward_risk_floor_applies` returns False for a Type B / breakout trade and its own docstring says that is the whole rule, so on a breakout with no ATR reading NOTHING judges the width of that stop after this deletion. Position sizing is the only answer there. An earlier draft of this entry and of the code comment said the tail still judged it, full stop; that was untrue for the commonest setup on this desk and is corrected here rather than softened.
+
+**Blast radius, measured before changing anything.** The universe screen ships `enabled: false`, has never run in production, and no `universe_state.json` exists anywhere on the box — so the ceiling has never admitted or refused a single name, at either value. The midday 50% guard fired zero times across every retained production log (2026-08-31 to 2026-09-30). The constructor's borrowed width refusal also fired zero times, in those same logs and across the whole live trade and report history in the desk database. Nothing about today's behaviour changes; what changes is that a future name can no longer be admitted by one rule and argued with by another.
+
+**A false compensating control found while doing this, and corrected in place.** The 2026-09-26 entry for board item 56, further down this file, justified deleting that width refusal partly with "the upstream universe screen separately refuses instruments whose daily range is too large a fraction of their price. Nothing was protected that is not still protected." Both sentences were false on the day they were written: the screen is `enabled: false` and has never executed once. The correction is written into that entry. The item-56 deletion still stands on its own reasoning, but it stands on that alone.
+
+**What would catch this class next time.** Not a test — a shape. A number that can only be justified by pointing at a second number, which is in turn justified by the first, is not sourced however carefully each end is written up; the ledger recorded both ends honestly and the circularity still survived two passes. The tell is a `derived` ledger row whose base is itself `arbitrary` and whose base's note cites the derived row back. Where the pair really expresses one quantity, the fix is to compute that quantity once and delete both literals.
+
+---
+
+### 2026-09-30 — the cash-deficit cushion stops being a number; the de-levering ladder's owner alert was ALSO removed, and that half was reverted. Item 182 stays open.
+
+**In plain words:** one of this item's two remaining constants was reformulated out of existence. The other was too, and it was wrong: removing it made the desk QUIETER, so it was put back and only the false sentence it printed was fixed.
+
+**The cash-deficit cushion** (`_force_delever`, `deficit × 1.02`) sized the partial sale of the T-bill park by dividing the remaining deficit by a possibly-stale mark and then padding by 2% — a guess at how far the fill would land under that mark. The guess is unnecessary when the order carries its own worst case. `_live_delever_price` is now called BEFORE the quantity is chosen, and the sale is sized off the price floor the order actually rests at: a SELL limit fills at or above its limit or it does not fill, so `ceil(remaining_deficit / sell_limit)` is the smallest share count that provably clears the deficit at that floor, with `ceil` supplying the whole-share rounding. **With no live quote there is no floor at all**, so no partial size can be defended and the loop sells the whole position, exactly as every non-sweep de-lever target already does.
+
+**An intermediate draft of that branch was wrong and is recorded here because the failure shape recurs.** It divided by `1 - AlpacaBroker.STOP_LIMIT_BUFFER_PCT` and described this as "an existing number, not a new one". Dividing by 0.97 is a **3.09% pad** [measured: `1/0.97 - 1`], *larger* than the flat 2.00% pad the change was removing, applied to the same possibly-stale mark — and 3% is a `status: arbitrary` stop-limit through-buffer chosen for a different job. Borrowing a constant at the wrong tightness for a new job is not sourcing it, and the commit message's claim that "the 2% cushion is gone with no replacement" was untrue on that branch.
+
+**The owner alert (`GROSS_LADDER_ALERT_PCT`) was changed to the ladder's deepest rung and REVERTED the same day.** The argument for the change was that freezing the alert would mean reaching a new floor in silence. That is false of this code. The trigger is `alert = drawdown <= GROSS_LADDER_ALERT_PCT`, which is **monotone**: once the drawdown passes the threshold, the alert is true at every deeper drawdown too. Work the change's own scenario through it — add a -30% rung. Under the frozen -20.0 the owner is told from -20% onward and is still told at -30%; there is no silence anywhere. Under `min(...)` the alert moves to -30% and the owner hears **nothing between -20% and -30%**, a band in which the ladder is actively cutting the book to 0.5x. The change was strictly worse in exactly the case it was argued from. The two questions genuinely are separate, and the same function proves it: `alert_owner=True` is also set on the unmeasurable-drawdown branch, where no rung fires at all.
+
+**What was actually wrong was the SENTENCE.** With a deeper rung present, a -22% message reading "the desk is at its most de-levered setting" is untrue. That is prose rot, and moving the trigger to make a wrong sentence true is fixing the alarm instead of the fault. The reason string now names the rung the ladder is ACTUALLY on, claims the floor only at the floor, and says "NOT its most de-levered setting" otherwise. The row, its `open_question` ("at what drawdown must the owner be told, independently of what the ladder does to exposure?") and its `cost_while_unanswered` are restored. Deduplicating one arbitrary number against another is deduplication, not sourcing; the honest state of that half is **question still open**.
+
+**A second defect, found underneath and corrected here.** `projected_proceeds += p.market_value * 0.97` credited the WHOLE position's value even when only a slice was sold. The sweep vehicle sorts first, the loop breaks at `projected_proceeds >= deficit`, and the completeness alert at the bottom reads the same figure. The slice is now credited at the limit it was sized off — consistent with the sizing, and arithmetically true. **Honest scope:** under today's full-fill assumption this changes no decision, because the slice is sized to cover the deficit by construction, so the guard and the alert reach the same verdict either way; what it fixes is the *figure* the owner-facing incompleteness alert would report, and the masking disappears the moment proceeds are booked from an actual filled quantity — which is the next item below.
+
+**STILL BROKEN, pre-existing, NOT fixed here — partial fills.** "A SELL limit fills at or above its limit or not at all" bounds the fill PRICE of the shares that fill; the deficit is cleared by filled_qty × price. `_submit_protected_sell` returns on broker ACCEPTANCE, nothing on this path reads a filled quantity, and Alpaca documents `partially_filled` as an order status while cancelling unfilled day orders at the close. The limit is placed AT the live bid, whose displayed size is finite, so the pricing rule creates the partial-fill case rather than avoiding it. A short fill therefore still leaves a residual deficit this loop cannot see. The fix that deletes a number rather than replacing one — book proceeds from the ACTUAL filled quantity and keep selling while the deficit stands — is larger than this change and is not attempted here.
+
+**Reachability, corrected.** An earlier draft said the sweep branch is dead because `cash_sweep.enabled: false`. That understates it. `_force_delever` returns `[]` at its first guard when `risk.allow_margin` is true, and `config/settings.yaml` carries `allow_margin: true` [measured: `grep -n allow_margin config/settings.yaml` → line 862]. **The entire function is unreachable in production**, not just its sweep branch; `cash_sweep.enabled` is the weaker gate. Understating a finding is the same failure as overstating one. This change therefore restores no behaviour that currently runs, and by the desk's own rule about proving a path has succeeded before optimising it, the honest reading is that the cushion half is ledger hygiene on dead code rather than a live-money improvement.
+
+**Measured, and deliberately NOT used to pick anything:** all six `SWEEP_SELL` fills the desk has ever recorded (2026-09-15 to 2026-09-17) filled between 0.0 and 0.5 basis points under their reference price. Every one is the cash sweeper's own fund-release path — a different function, a different urgency and a different order shape — in normal hours over three days, so they are **not** evidence about a forced de-lever on a gap day and are not offered as directional support for any cushion size. What they do establish is a census: the `_force_delever` cushion branch has fired **zero times in production**.
+
+**Ledger.** One row left `config/number_ledger.yaml` (the 1.02 cushion) and `MAX_ARBITRARY_ENTRIES` moved 139 → 138 [measured: `yaml.safe_load` count of `status: arbitrary` entries = 138]. The `GROSS_LADDER_ALERT_PCT` row is restored with its open question intact. The surviving 0.97 haircut is unchanged in value and derivation, renumbered `factor[1]` → `factor[0]`, and its note is corrected: it is now solely the no-quote accounting haircut, applied per share sold.
+
+**Criterion status.** 182/1 (the cushion) is met. 182/2 (the owner alert) is DEFERRED and the item does not close.
+
+### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
+
+**In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
+
+**The measurement.** Production log, 2026-09-29 19:46:45-19:47:46 UTC: route 1 (`openai/gpt-5.5` over OpenRouter) returned HTTP 402 Payment Required, route 2 was skipped because the same account was already demoted, route 3 (`anthropic/claude-haiku-4.5`, also over OpenRouter) returned HTTP 402 again, and the agent logged "Every route is down." At 19:46:08 the same process had completed the technical analyst on `generativelanguage.googleapis.com` at HTTP 200 for $0.00.
+
+**Why the earlier design got it right and still left this open.** Route 3 was added on 2026-09-23 to fix a DIFFERENT failure: on 2026-09-22 routes 1 and 2 were the same model on two roads, the model itself saturated, and both went down together. The answer there was to change the MODEL on the last rung, and the reasoning is sound — for the eight specialist seats, whose first route is already the direct Google endpoint. That change recorded, honestly and in writing, that routes 2 and 3 now shared one account, and judged closing it to need "a grant for a third host", which would be an owner decision. For the eight specialists that was accurate. For the three DECISION seats it was not: every one of them starts on OpenRouter, so they had no second road at all, and the second host was already there, already credentialed, already primary for eight other seats.
+
+**What changed.** When a seat's first two routes resolve to the same provider and its third would too, the third is swapped for the direct Google endpoint instead. Nothing else moves: no new rung, no new host, no new spend, and the eight Google-primary seats keep the different-model tertiary exactly as reasoned in 2026-09-23 — for them a Google third route would be a third attempt at the road that just failed twice.
+
+**What was ruled out.** Pointing route 2 at the direct endpoint instead. That is the smaller diff, but it would have taken the same-model second route away from the eight specialist seats, which is the 2026-08-31 "change the road, not the reasoning" ruling, and traded one seat group's resilience for another's. Also ruled out: adding a fourth rung. The attempt ceiling the cost circuit enforces is derived from the rung count, and growing it is how a routine rate-limit costs a whole session.
+
+**The honest cost.** In a total outage of the paid provider, the three decision seats now answer with a small free model rather than with Haiku. That is a real drop in decision quality, accepted on the same ground the 2026-09-23 change accepted a model swap at all: the measured alternative on 2026-09-29 was no decision run whatsoever. Nobody has benchmarked that model at those three seats, so what the desk produces in that state is unknown rather than merely worse — that is what item 188 stays open for.
+
+**What catches it next time.** A test reads `config/settings.yaml` itself and fails if ANY seat's reachable routes land on a single provider. That is stronger than a runtime key check, which was written and then deliberately removed: refusing to boot over a missing credential for an opt-out resilience feature would have turned the fix into an outage of its own, and it broke a legal single-provider configuration on the first run.
+
+### 2026-09-30 — the nightly unprotected figure was the one thing the owner asked to keep, and it had stopped being printed anywhere
+
+**In plain words.** Every night a handful of holdings carry a part-share that has no stop on it until the next morning. The owner agreed to that trade-off on one condition: that he could always see the dollar amount. On the night of 2026-09-29 the amount was $2,264 across nine holdings, and it appeared in no message and on no screen — only in a log file nobody reads. The condition he attached to his own agreement had quietly stopped being met.
+
+**The reported symptom was not the defect.** The 30-minute sweep logged "gaps 9, repairs attempted 0" fourteen times in a row overnight and that reads like a repair path that is broken. It is not. The same sweep reported nine gaps and zero repairs for a simple reason: the market was shut, and the sweep refuses to send an order into a shut market. Its own state file recorded exactly that ("the session has closed (closed 16:00 EDT)"). The earlier sweeps of the same afternoon, while the market was open, reported zero gaps — so both stop legs, the durable whole-share one and the part-share one, were resting at the broker together all session. The gaps appear at 16:30 and not before, which is the part-share order expiring at the close exactly as the broker forces it to.
+
+**The standing hypothesis was wrong and is now refuted.** The desk's records suspected the repair could not place a part-share stop while a whole-share stop already rested on the same name, because the broker would count the resting order against available quantity. The 2026-09-29 tape says otherwise: nine names held both legs simultaneously for a full session with no gap reported. Whatever else may be true of that broker behaviour, it is not what produced this log line, and nothing here should be built on it.
+
+**Where the number actually went.** Two owner rulings collided and the later one silently won. The first accepted the overnight exposure on the explicit condition that the dollars stay visible. The second, on 2026-09-17, switched off the evening banner that carried them, because a banner repeating the same sentence every night is not information. That ruling was right about the banner and took the number with it, and nothing else ever picked it up: the dashboard and the read-only interface render no stop-coverage information at all.
+
+**What was done.** The figure goes back inside the evening message's collapsed detail section — not a banner, no severity mark, nothing to act on. It names every holding and its dollars rather than the first six, because a count of nine followed by six names is a sentence that does not add up. Rows that are genuinely abnormal, such as a holding smaller than one whole share with nothing covering it at all, keep their existing red banner and are deliberately excluded from this total so the same shares are never counted twice.
+
+**What would catch it next time.** A rule ratified as "X is acceptable *provided* Y is observable" needs the Y half written down as a test, not as a sentence in a docstring. The 2026-09-17 change passed every test it ran because the only test guarding the number asserted that the whole message said nothing about it. A test written as "stays quiet" cannot tell a deliberate silence from a lost one.
+
+### 2026-09-30 — a practice run against history cannot be made to fund the same trades the live desk would (item 64 retired)
+
+**In plain words:** the live desk spends its risk budget on its best-ranked trade ideas first when there is not enough budget for all of them. The practice run against history cannot do that, and after checking how it is built, it never will be able to: it does not ask any analyst anything, so there is no ranked list to spend down. Making one up was already refused once. The honest answer is that this kind of practice run cannot grade "which trades get funded when the budget runs out" at all — only the parts of the trade it does simulate (stop placement, position size, trailing).
+
+**What was checked before deciding this, not taken on the board's word.** `src/backtest/engine.py` and its module docstring (`src/backtest/__init__.py`) both say outright that this backtester replays only the deterministic layer — stop placement, sizing, trailing — and never calls the five analyst seats, because an LLM's answer on a past day is not reproducible (`docs/QAMC_REMEDIATION_SPEC.md` §7.1, done 2026-08-30 on exactly that scope). Live's rationing order comes from `src/verdicts.py::rank_verdicts`, which takes a list of `AnalystVerdict` objects — the analysts' own outputs — and is passed into `src/risk/budget.py::allocate_risk_budget` as `priority=[c.symbol for c in rank_verdicts(...)]` (see `PortfolioConstructor._plan_risk_targets`). The backtest's own call to `allocate_risk_budget` in `run_backtest` passes no `priority` at all (`RiskRequest(c["symbol"], config.risk.max_position_risk_pct)`, no `rank_verdicts` import, nothing computed to rank by), so the allocator falls back to its documented "no ranking supplied" behaviour, which is alphabetical. That is not a bug in the allocator or an oversight in the engine; there are no verdicts in this code path to rank by, by the backtester's own design.
+
+**Why the two stand-ins already on record stay refused.** Copying live analyst ratings onto historical rows is not replaying them, since the LLM was never asked about that day; it would grade the desk against opinions manufactured after the fact. Ranking by the engine's own reward:risk number was ruled out 2026-09-16 for the same reason live never uses it as the rank — it is a tie-break under the real ranking there, not the ranking itself, so promoting it in the backtest would score a different, invented selection rule and still look like a ranking fix.
+
+**The decision, per item 64's own done-criteria (docs/WORK.md, "Not an owner call").** This engine cannot evaluate rationing. It is closed on that basis, not as a ranking fix. Every backtest result keeps printing how many of its days the risk ceiling bound and that the tie-break is alphabetical (shipped 2026-09-16), so its numbers can never be read as evidence about how the live desk picks among trades on a binding day. `tests/test_backtest.py` already locks the shape in: `run_backtest`'s source is asserted to contain the unranked `RiskRequest(...)` call and to contain neither `priority=` nor `rank_verdicts`, while `PortfolioConstructor._plan_risk_targets`'s source is asserted to contain `priority=ranking` — so a future change that quietly added ranking to one side without the other, or added a stand-in score, fails that test.
+
+**What would reopen this.** Only a change to what this backtester scopes to simulate — teaching it to call the analyst seats over historical data, which the spec's own reproducibility requirement (§7.1) currently rules out — would ever let it evaluate rationing for real. Nothing short of that is a fix; it is a disguised version of the stand-in score this item, and 2026-09-16 before it, already refused.
+
+---
+
 ### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 191 retired)
 
 **In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
@@ -135,6 +251,199 @@ one-percent part is an open measurement the desk has already scheduled, not a
 settled preference, so it is left alone rather than guessed at. Separately, a
 position built in two purchases carries a target per purchase with the last
 one written winning — META holds $730.99 and $785.20 against one position.
+
+**Follow-up, 2026-09-30 — the stored numbers, and what could and could not be
+repaired.** The deliberate action the paragraph above called for was taken the
+same day. Every one of the eleven open positions was checked, not the three
+that were assumed: the target each one would have been given at entry was
+recomputed twice from the same five years of bars, once with the old code and
+once with the fixed code, and the two answers were compared. They differ for
+exactly three names — META, AMD and UPS — and agree for the other eight, which
+independently confirms the count the fix itself reported and rules the rest
+out rather than taking it on trust.
+
+Of those three, only UPS could be repaired. Its live target moved from $90.79
+to $92.82, the nearest wall under its entry, which the old code had stepped
+over because that wall stood inside a day's range. META and AMD were both
+refused, and a refusal here is the right answer rather than a failure: the
+corrected target is re-measured from the ORIGINAL entry over the ORIGINAL
+expected holding period — anything else would make the target a function of
+how far the price has since moved, which is the one thing it must never be —
+and on both names every level reachable from that entry now sits behind the
+price. Nothing was substituted in their place, so META continues to carry
+$785.20 and AMD $614.60, now flagged rather than quietly wrong. The number
+recorded at entry was not touched on any of them: that is the historical
+record of what the desk decided at the time, and it is also the denominator
+progress and pace are measured against.
+
+Each of the three carries a durable record saying which happened and why,
+under a code of its own that a reader cannot mistake for an ordinary
+evidence-driven revision. That distinction is the point: a code deploy is not
+a market event, and the record must not let one look like the other.
+
+**What now catches this class of thing.** `scripts/check_stored_targets.py`
+asks, for every held position, whether its stored target sits beyond a
+structural level that is still standing between that position's entry and the
+target. That is this defect's exact signature, it is a doctrine violation in
+its own right, and it is stable — a target with no wall in front of it does
+not acquire one because volatility moved. The script re-derives through the
+same shared body the live revision path uses, so it cannot drift away from
+what the desk actually computes. It separately reports, without treating it
+as an error, any target that merely differs from today's derivation: the
+derivation reads today's bars, so that differs constantly and by design, and
+a check that fires every session is a check nobody reads. On the day it was
+written it found three names aiming past a standing wall — META from this
+bug, and AAPL and NOK from levels that formed after those positions were
+opened, which is a real state the desk had no way to see before.
+
+### 2026-09-26 — the drift check could only see a mechanism that was deleted, so one that merely changed went on being described wrongly (item 107, part)
+
+**In plain words:** the desk pays models to read standing instruction sheets. A check built on 2026-09-17 makes the build fail when a sheet still describes something the code DELETED. Its own documentation names what it cannot see, first item on the list: a mechanism that is still there but no longer behaves the way the sheet says. That second half is the commoner one — a threshold moves, a term is dropped from a formula, a guarantee is weakened — and nothing was watching it.
+
+**A live example was sitting in the trade-picking sheet the whole time.** Its sizing formula used to multiply by an "evening tilt" of plus or minus 0.20 or 0.10. That term was removed on 2026-09-17 because nothing derived it. A sentence four lines below the formula went on telling the seat to express a lean through `evening` — naming a multiplier that had not existed for nine days. Nothing was retired, so the deletion check saw nothing; no number was wrong, so the rendering mechanism saw nothing. This is the class, found in the sheet that decides position sizes.
+
+**What was built, and why it is not a second grep.** A behaviour-change registry. Each entry pairs code — a function, by name — with the prompt lines that describe what that code does, and pins both sides with a digest. Change the code and the build fails until somebody has looked at the prose. The digest is taken over the parsed syntax with docstrings dropped, so reformatting, renaming a local or rewriting an explanation does not fire; what fires is a change to what the function computes. Maintenance is asked once, at the commit that changes the behaviour, which is the same trade the deletion-site check already makes and the reason three richer designs were rejected in the first place (see the 2026-09-17 entry — do not re-propose them). Two pairings are registered to start: the drift flag, and the four figures the technical sheet quotes about what the constructor will do to its stop.
+
+**What it still cannot do, stated plainly.** It covers only pairings somebody registered. It cannot tell a prose fix from a prose regression — it can only insist a human looked. Re-pinning without reading defeats it. Those are the same limits the deletion check accepts, and naming them is not a reason to accept a worse check.
+
+**The number that had three homes now has one, and that is not the same as being sourced.** A holding is flagged as "drifted" at more than 12% of the book with more than 10% profit. The pair was typed as bare literals at three code sites and four places of prompt prose, with no settings key and no named constant, so the rendering mechanism could reach none of them. There is now one definition and the sheets render from it. **Neither number is sourced.** Naming a constant does not derive it, and a future reader must not take the existence of the constant as evidence that somebody measured something. One code site still types the pair — the main pipeline module, which was owned by another change and could not be edited in the same pass; it is named in the test rather than tolerated, so the count can only go down.
+
+**The rendering check now covers all ten sheets instead of two.** Not by rendering all ten — six carry no numbers to render — but by refusing a sheet that is not registered, a registered sheet that has been renamed away, and a placeholder in a namespace that sheet's renderer cannot resolve. That last one was a live trap: the technical sheet's three placeholders are substituted by its own module, and routing that sheet through the risk renderer would have raised at construction on the one seat allowed to halt the desk.
+
+**Still open, and it is the part that governs money.** The trade-picking sheet's whole sizing arithmetic exists only as prose: conviction bases of 3.0, 1.75 and 0.75 with ranges around them, a 0.25 bonus at a reward:risk of 3, a halving at eight days stale, a half-point shade inside each range. The technical sheet's "three aligned signals", its 1-3 / 4-7 / 8+ freshness tiers and its forward-PE 40/60 and price-to-sales 15/25 levels are the same shape. Every one was checked against the code on 2026-09-26: no function computes any of them, and none is in the number ledger. Under the desk's own doctrine an unsourceable number comes out of the path rather than being ratified quietly — removing a sizing formula from the sheet that sizes trades is a money decision, not a documentation pass, so it is filed rather than done here.
+
+### 2026-09-26 — three items that could only be closed by a real broker event: two are closed on observed evidence, one cannot be attempted without spending on the shared account (items 86 and 173 retired, item 157 stays open)
+
+**In plain words:** three jobs on the board were stuck because no amount of
+code-reading could settle them — each needed something to actually happen at
+a broker or a provider. Two of them turn out to be settled already, by real
+events the desk recorded and nobody went back to look at. The third cannot be
+attempted from the practice account at all, for a reason worth writing down.
+
+**Item 86 — the live fill feed. MET.** The feed that tells the desk the
+instant an order has filled had never once logged in: 1,017 refusals across
+three days and no successes. The cause was found and the fix shipped on
+2026-09-18, and the item was left open on purpose until a real attempt proved
+it. It has proved it nineteen times. Read out of the desk's own live log,
+read-only — one representative line shown, timestamp redacted:
+
+```
+<timestamp redacted> [INFO] src.execution.broker: trade_updates websocket authenticated (endpoint=BaseURL.TRADING_STREAM_PAPER)
+```
+
+Nineteen such lines in the retained logs, the first on 2026-09-21 13:37:00
+UTC and the most recent on 2026-09-25 19:32:10 UTC, each one immediately
+preceded by the desk's own line saying the CURRENT login format was accepted
+and the vendor's deprecated one was not needed. The last refusal of any kind
+was on 2026-09-17 19:04:06 UTC; there have been zero refusals, zero
+give-ups and zero handshake failures since the first success. **Stated at its
+honest limit:** the item's single criterion was one live line saying the feed
+authenticated, and that is met many times over — but nothing in the desk's
+logging records a fill *arriving over* the socket, because no such line is
+written, so this entry does not claim one. The credential exception that
+makes this work at all (the key is handed to the process as a file, because
+the login happens inside the conversation and no gateway can rewrite it) is
+unchanged and stays recorded in
+`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+**Item 173(a) — the share count with no sale behind it. MET, and it resolved
+itself the way the item said it should.** A holding left the book on
+2026-09-21 between 16:19 and 16:45 UTC and no sale was written down for the
+remaining 8.5962 shares; the worry was that the seven-day window would run
+out around 2026-09-28, after which the desk would page the owner CRITICAL at
+every session entry, every day, forever, with no way to silence it. Read
+read-only from the live database today, the gap is closed: two exits are
+recorded against that symbol, 0.5962 shares at $42.574 and 8.0000 shares at
+$42.57, totalling exactly the missing 8.5962, each carrying a broker order id
+the ledger had never seen, each with realized profit-and-loss computed
+(-$1.62 and -$21.76) rather than guessed, and the ledger's own belief about
+that symbol now reads 0.0 shares. They were written back by an ordinary
+reconciliation pass between 2026-09-21 18:19 and 2026-09-23 15:24 UTC (their
+row order in the ledger brackets it), on the broker's own record of the
+fills. No unexplained-gap flag for that symbol exists anywhere in the
+evidence store.
+
+**What was still unproven, and was proved on a live account today.** That the
+gap was closed does not by itself say the current code would close the next
+one, so the situation was rebuilt from scratch on the owner's separate
+practice account (the unmonitored one, verified before anything was placed:
+account number [redacted account id], equity $10,000.00, empty book), with all owner
+messaging suppressed. A small position was bought and filled, then sold in
+full at the broker with no sale ever written to the desk's ledger — the exact
+shape of the original: the ledger believes it holds shares, the broker's book
+is empty, nothing explains the difference. The real reconciliation code from
+current main was then run against the real broker, twice.
+
+With the fill inside the lookback window, the desk fixed itself and said so:
+
+```
+WARNING src.pipeline: EXIT RECORDED (SELL): BTC/USD 0.000199 sh @ $83983.5000 (order 00000000-0000-4000-8000-000000000000 [redacted broker order id], type=market, realized_pnl=unknown) — broker-initiated exit written back to the ledger by the reconciler
+```
+
+Note the label: `SELL`, not `STOP_OUT`. The broker said the order type was a
+plain market sale, so the desk declined to attribute it to a protective stop
+— which is precisely the unevidenced-cause trap this item was filed to avoid,
+now demonstrably shut on live data. It also refused to invent a profit figure
+it could not derive, flagging `stop_out_pnl_unmatched` instead. Afterwards
+the ledger's belief for that symbol dropped from 0.0002 to 0.0000005 shares,
+below the threshold that makes it look open at all.
+
+With the same fill outside the lookback window — the state the original
+holding would have entered around 2026-09-28 had nothing resolved it — the
+feared behaviour reproduces exactly and in full:
+
+```
+ERROR src.pipeline: stop-out reconcile: BTC/USD stop_out_gap_unexplained — ledger believes 0.0002 sh open, broker shows 0.0000, but no untracked filled SELL order was found in the last 0 day(s) — recording nothing rather than guessing
+CRITICAL src.notifier: OWNER ALERT
+RECORDS DISAGREE — the desk's records and the broker's do not match, and the desk cannot tell which is right
+```
+
+So both halves of the item's own reasoning are now measured rather than
+argued: inside the window the desk repairs itself on broker evidence and
+never guesses a cause; outside it, it pages CRITICAL with no dedup and no
+throttle and will keep doing so. The item closes because its own condition —
+resolved on its own evidence before the window expired — is what actually
+happened. **The unbounded repeat page is real and is NOT closed by this
+entry**; it is a property of `send_owner_alert` having no dedup at all, which
+is a general alerting gap rather than anything about one holding, and the
+next occurrence of any unexplainable gap will page daily until someone acts.
+
+**Two things seen in passing, neither fixed here.** The two recovered exits
+for the 2026-09-21 holding are labelled `STOP_OUT` with category
+`broker_stop_fill`, but they were written back before the 2026-09-24 change
+that labels a recovered exit by the broker's own order type — so their "this
+was a protective stop" attribution rests on the blanket label that change
+exists to stop, not on evidence, and the same is true of another holding's
+recovered exit dated 2026-09-02 that carries no realized figure at all. Nothing owner-facing is wrong in quantity or money; the *cause* stamped
+on two exits is unverified. Separately, and only as a caution for anyone
+repeating this rehearsal: the practice run had to use a crypto instrument
+because the exercise ran on a Saturday, and a crypto position is reported by
+the broker under a different symbol spelling than its own orders are
+(`BTCUSD` versus `BTC/USD`), which would make the reconciler unable to find
+the explaining sale if the desk ever traded crypto. The desk trades equities
+only, so this is a note, not a defect.
+
+**Item 157 — the Google route's enforced answer format. NOT attempted, and
+the reason is structural.** The remaining criterion is a live call proving
+that Google's endpoint really enforces a sent answer schema. It was not
+attempted, deliberately. The practice account reaches providers through the
+same credential gateway the desk uses, and the gateway hands out credentials
+per identity: the practice identity is granted the broker, economics,
+messaging and general model credentials, and is **not** granted the Google
+one. The only identity that can make that call is the production one, so any
+live attempt would spend real money on the shared account rather than on the
+throwaway account this exercise is scoped to. That is a hard blocker, not a
+scheduling one: either the Google credential is granted to the rehearsal
+identity, or someone accepts a single production-billed call worth a fraction
+of a cent. Until one of those happens the criterion cannot be met from a
+rehearsal, and the item stays open with nothing else about it changed.
+
+**What was left on the practice account.** Nothing open. Two filled crypto
+orders sit in its history and the book is empty; equity finished at $9,999.90
+against $10,000.00 at the start — about ten cents, the spread and fee on a $17
+round trip. The monitored production account was never contacted: every
+call in this exercise asserted the account number and the equity band before
+placing anything, as a hard assertion that would have aborted the script.
 
 ### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
 
@@ -736,9 +1045,25 @@ rule already answers a wide stop by holding the risked dollars constant and
 buying fewer shares — twice the stop distance, half the position — which is
 also what the published practice the check cited actually prescribes; and at
 the extreme the position rounds to nothing and is refused by name
-(`position_sized_to_zero`). The upstream universe screen separately refuses
-instruments whose daily range is too large a fraction of their price. Nothing
-was protected that is not still protected.
+(`position_sized_to_zero`).
+
+**CORRECTION, 2026-09-30 (board item 185).** This paragraph originally
+continued: "The upstream universe screen separately refuses instruments whose
+daily range is too large a fraction of their price. Nothing was protected that
+is not still protected." **Both sentences were false when written, and the
+second rested on the first.** The universe screen ships `enabled: false` in
+`config/settings.yaml` and has never executed once — there is no
+`universe_state.json` anywhere on the box (`find / -name universe_state.json`
+returns nothing, re-checked 2026-09-30). So the screen was never a
+compensating control for anything; it is a design that has not run. The
+deletion of the width refusal still stands on its own reasoning — sizing down
+is the ratified answer to a wide stop, and the refusal had fired zero times in
+648 recorded sized stops — but it stands on THAT alone, with no upstream
+backstop behind it. What is genuinely true is narrower and is stated here
+instead: after this deletion and item 185's, nothing in `_widen_stop_past_noise`
+refuses a stop on width, and on a Type B / breakout trade the reward:risk tail
+does not run either, so position sizing is the only thing standing between a
+very wide stop and a filled order.
 
 **What was kept.** The READING survives untouched and is still stamped on every
 stop the desk sizes: the probability, from the reflection principle and the
@@ -17083,5 +17408,53 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
+### 2026-09-30 — the anti-collision number tool failed open and let item 192 be claimed twice; it now fails closed
 
+**In plain words:** `scripts/next_board_number.py` exists so that two changes cannot claim the same board item number. Its open-pull-request read is the half that catches the parallel-agent race, because a number is claimed on a branch long before it reaches `docs/WORK.md`. That read hit a GitHub request limit, the script printed a WARNING and returned a number anyway with exit 0, and two pull requests then both claimed item 192 — caught by hand, not by a machine. The 192 double-claim is reported by the session that caught it and is no longer directly verifiable, because the hand fix renumbered one of the two: [measured 2026-09-30, `gh pr diff` over the last 60 pull requests] only PR 792 now adds item 192. What IS independently verifiable is the pattern and the defect: PR 783 is titled "Renumber item 189 to 190 — third parallel-PR number collision", and the fail-open behaviour was plainly in the script's own code and exit-code table. The desk's standing rule is that everything mechanically enforced holds and everything relying on somebody noticing a warning slips; the old output was a warning.
 
+It now exits non-zero and prints no number at all when the open-pull-request read fails, for any reason — request limit, network, or auth. The deliberate offline escape hatch is `--accept-unchecked-number`, named for its consequence rather than its mechanism so it cannot be reached for as a speed switch the way `--no-github` was; it prints the number labelled `(UNCHECKED)` on the number's own line, so the caveat survives being pasted elsewhere. `--no-github` is removed rather than kept as an alias, and argparse rejects it.
+
+**What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
+
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.

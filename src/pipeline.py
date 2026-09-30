@@ -219,6 +219,13 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
 # imports, and moving the import site would be churn with no benefit.
 from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
+# The canonical names of the sanctioned exit triggers, so the phrase gate
+# below cannot name a different set of triggers from `ExitTrigger` itself.
+# `src.risk.exit_trigger` imports only the stdlib, so this cannot cycle.
+from src.risk.exit_trigger import (  # noqa: E402
+    CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
+)
+
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
 #
@@ -302,6 +309,69 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     # Protection already fired
     "stop hit",
     "stopped out",
+)
+
+# THE ENUM IS THE SINGLE SOURCE OF TRUTH FOR WHICH TRIGGERS EXIST
+# (2026-09-30, live defect on META).
+#
+# On 2026-09-25 17:06:23 the position reviewer emitted a REDUCE on META whose
+# reason began, verbatim, "bearish_state_change: [HIGH] U.S. 10-year Treasury
+# yield crosses 5% ...". `src/risk/exit_trigger.py` DECLARES
+# `ExitTrigger.BEARISH_STATE_CHANGE` as a sanctioned trigger and
+# `src/risk/exit_guard.py::claims_bearish_state_change` accepts the phrase,
+# but the tuple above only ever carried the WORDINGS "high bearish" /
+# "high(-)conviction bearish" — so the seat naming a sanctioned trigger by its
+# own canonical name was refused with `exit_blocked_no_named_trigger` for
+# "naming no recognised trigger". Two modules disagreed about whether the same
+# sanctioned trigger existed.
+#
+# The fix is structural rather than another hand-maintained phrase: the
+# canonical `ExitTrigger` values are appended here, derived from the enum, so
+# the two vocabularies cannot diverge again without the enum itself changing.
+#
+# WHAT THIS DOES AND DOES NOT CLAIM ABOUT THE BAR ABOVE. Every name added
+# here is a trigger this tuple already accepted under another wording, with
+# ONE exception, and the bar the comment above sets — "names something the
+# desk records" — is met by THREE of the six, not by all of them. Measured
+# member by member 2026-09-30, and kept true mechanically by
+# `exit_trigger.EVENT_TRIGGERS` / `exit_trigger.NO_VERIFIER_EXISTS`, which
+# `tests/test_exit_trigger_canonical_names.py` requires every enum member to
+# appear in exactly one of:
+#
+#   VERIFIER EXISTS — some branch of `holding_discipline_claim_check` is
+#   reached for the claim and can CONTRADICT it:
+#     bearish_state_change - the same-day `state_change` rows for the symbol.
+#     adverse_news         - routed into that same branch deliberately.
+#     regime_shift         - the day's macro regime read, when trusted.
+#
+#   NO VERIFIER — accepted on its wording alone. Recorded, not excused:
+#     thesis_invalid - `check_structural_protection` is CONSULTED, with
+#                      `advisory_only=True, persist=False`, and its own
+#                      comment says it cannot change which exits execute.
+#                      Consulted is not judged.
+#     sector_shock   - the desk records no sector-scope row;
+#                      `holding_discipline_claim_check` says so where it
+#                      declines to route it.
+#     stop_fired     - nothing asks the broker whether a stop filled. This is
+#                      also the one genuinely NEW spelling here rather than a
+#                      re-spelling of a phrase already accepted above.
+#
+# `earnings` is deliberately NOT added to the prose vocabulary: its canonical
+# spelling is a bare common word that occurs in prose naming no event, and
+# admitting it would be the widening this comment block forbids. It has no
+# verifier either, and it stays reachable through the structured field.
+# `cannot_substantiate` is not a trigger and is never accepted. Both prose
+# exclusions are the named constant
+# `exit_trigger.CANONICAL_NAME_NOT_MATCHED_IN_PROSE`, pinned by
+# `tests/test_exit_trigger_canonical_names.py`.
+#
+# An earlier draft of this comment asserted a verifier for all six. That was
+# untrue of four of them, in the one comment block whose entire job is to
+# record that bar. Overstating a finding is the same failure as understating
+# one, so the claim now lives in a constant a test checks.
+_HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
+    name for name in _CANONICAL_TRIGGER_NAMES
+    if name not in _HARD_TRIGGER_KEYWORDS
 )
 
 
@@ -907,6 +977,14 @@ class TradingPipeline:
             _key_for(config.llm.tertiary_model, config.llm.tertiary_provider)
             if (config.llm.tertiary_model or "").strip() else ""
         )
+        # Route 3's second-road substitute (2026-09-30). Same closure again,
+        # so the credential can never disagree with the provider
+        # `select_tertiary_route` picks. Empty switches the substitution off,
+        # which BaseAgent reads as "keep the configured tertiary".
+        _tertiary_alt_api_key = (
+            _key_for(config.llm.tertiary_alt_model, config.llm.tertiary_alt_provider)
+            if (config.llm.tertiary_alt_model or "").strip() else ""
+        )
 
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
@@ -918,6 +996,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.tech_analyst_provider,
             provider_order=config.llm.get_provider_order("tech_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -937,6 +1018,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -962,6 +1046,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -984,6 +1071,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.position_reviewer_provider,
             provider_order=config.llm.get_provider_order("position_reviewer"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -999,6 +1089,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.evening_analyst_provider,
             provider_order=config.llm.get_provider_order("evening_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1014,6 +1107,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.news_analyst_provider,
             provider_order=config.llm.get_provider_order("news_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1029,6 +1125,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1061,6 +1160,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.earnings_analyst_provider,
             provider_order=config.llm.get_provider_order("earnings_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1076,6 +1178,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1150,6 +1255,9 @@ class TradingPipeline:
             tertiary_api_key=_tertiary_api_key,
             tertiary_provider=config.llm.tertiary_provider,
             tertiary_model=config.llm.tertiary_model,
+            tertiary_alt_api_key=_tertiary_alt_api_key,
+            tertiary_alt_provider=config.llm.tertiary_alt_provider,
+            tertiary_alt_model=config.llm.tertiary_alt_model,
             provider=config.llm.meta_reflector_provider,
             provider_order=config.llm.get_provider_order("meta_reflector"),
             reasoning_effort=config.llm.reasoning_effort,
@@ -1794,7 +1902,9 @@ class TradingPipeline:
         deadline = _time.monotonic() + float(self.config.smart_money.request_timeout_s) * 2
         result = screen_symbol(
             symbol, self._universe_screen_sources(deadline),
-            ScreenThresholds.from_config(self.config),
+            ScreenThresholds.from_config(
+                self.config, self._constructor_cfg_or_none(),
+            ),
         )
         if not result.passed:
             logger.info(
@@ -1901,7 +2011,9 @@ class TradingPipeline:
                 get_bars_batch=lambda chunk: self.market.get_ohlcv_batch(
                     chunk, HISTORY_FETCH_DAYS,
                 ),
-                th=ScreenThresholds.from_config(self.config),
+                th=ScreenThresholds.from_config(
+                    self.config, self._constructor_cfg_or_none(),
+                ),
                 today=et_today(),
                 held=held,
                 configured=self.config.trading.universe,
@@ -10919,13 +11031,22 @@ class TradingPipeline:
         # (a) thesis invalidation. Until 2026-09-14 this fell through the
         # short-circuit above and the structural check was NEVER consulted
         # on it — on the one exit class where "did the level backing this
-        # stop actually break?" is the whole question, and the only exit
-        # class for which the ATR noise band is not already redundant (21
-        # of the 26 hard-trigger keywords also match
-        # `EXTERNAL_INFORMATION_PATTERNS` and skip the band outright, so
-        # these five are its entire non-redundant domain). The desk already
-        # computes the answer; it simply was not asked here.
-        # docs/WORK.md item 60.
+        # stop actually break?" is the whole question, and the exit class
+        # for which the ATR noise band is least redundant: most
+        # hard-trigger keywords ALSO match `EXTERNAL_INFORMATION_PATTERNS`
+        # and so skip the band outright, while the thesis-invalidation
+        # wordings never have. The desk already computes the answer; it
+        # simply was not asked here. docs/WORK.md item 60.
+        #
+        # NO COUNT IS WRITTEN HERE ON PURPOSE (2026-09-30). This comment
+        # used to read "21 of the 26 hard-trigger keywords", and the 26 was
+        # already wrong before this change — the tuple held 23 — so the
+        # sentence reasoned from a number that had outlived its derivation.
+        # The figures are now RECOMPUTED FROM THE CODE, every run, by
+        # `tests/test_exit_trigger_canonical_names.py::
+        # test_clamp_bypass_divergence_is_pinned_per_trigger`, which also
+        # pins WHICH keywords diverge. A digit in prose here can only go
+        # stale again.
         #
         # This branch is STRICTLY ADDITIVE and is designed so that it
         # cannot change which exits execute:
@@ -11331,6 +11452,18 @@ class TradingPipeline:
                 earnings=None, events=None, coverage=None, horizon_days=0,
             )
 
+    def _constructor_cfg_or_none(self):
+        """The LIVE `ConstructorConfig`, for rules that must agree with the
+        stops the desk actually places (board item 185: the universe
+        screen's volatility ceiling is 1 / the widest stop this object can
+        produce). `None` when no constructor has been built -- some tests
+        drive a bare pipeline -- and the caller then falls back to
+        `config.risk` plus the class defaults.
+        """
+        return getattr(
+            getattr(self, "portfolio_constructor", None), "cfg", None,
+        )
+
     def _record_exit_refusal(
         self, *, symbol: str, run_id: str, action: str, code: str,
         dropped: bool, detail: str, layer: str,
@@ -11463,6 +11596,8 @@ class TradingPipeline:
             # execute is not reached; the executor still drops.
             judgment = classify_trigger_reason(
                 action.reason, cites=_reason_cites_hard_trigger,
+                trigger=getattr(action, "exit_trigger", None),
+                trigger_evidence=getattr(action, "trigger_evidence", None),
             )
             if judgment == "unnamed":
                 logger.info(
@@ -11994,6 +12129,8 @@ class TradingPipeline:
                 )
                 trigger_judgment = classify_trigger_reason(
                     reason_text, cites=_reason_cites_hard_trigger,
+                    trigger=action_item.get("exit_trigger"),
+                    trigger_evidence=action_item.get("trigger_evidence"),
                 )
                 if trigger_judgment == "unnamed":
                     logger.warning(
@@ -12250,15 +12387,6 @@ class TradingPipeline:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
-                    # Sanity: stop < 50% of current price is almost certainly
-                    # an LLM typo. Leaving the old stop is safer than
-                    # replacing it with a non-protective one.
-                    if new_stop < existing[0].current_price * 0.5:
-                        logger.warning(
-                            "Midday: TRAIL_STOP %s skipped — new_stop $%.2f is <50%% of current $%.2f (likely LLM error)",
-                            symbol, new_stop, existing[0].current_price,
-                        )
-                        continue
                     # Minimum-ratchet floor: a raise must clear the live stop
                     # by at least MIN_RATCHET_PCT. The position_reviewer prompt
                     # presents `new_stop_price >= old_stop_price × 1.02` as a
@@ -12300,6 +12428,104 @@ class TradingPipeline:
                                 min_new_stop,
                             )
                             continue
+                    # WIDTH IS ANSWERED BY ADJUSTING THE STOP, NEVER BY
+                    # PLACING NONE (board item 185, 2026-09-30; board item
+                    # 80's ruling; board item 56 route (c)'s shape).
+                    #
+                    # What used to be here. A flat refusal: a proposed stop
+                    # under 50% of current price was dropped as a model
+                    # typo, and the routine moved on -- placing nothing.
+                    # Nothing fixed the 50%; it was picked, and the
+                    # universe screen then DERIVED its volatility ceiling
+                    # from it, so each end of the pair was justified only
+                    # by the other.
+                    #
+                    # Why a refusal is the wrong answer here whatever the
+                    # bound is. This check can only bind where the live
+                    # broker stop was unreadable or absent -- where the
+                    # stop IS readable the min-ratchet floor above has
+                    # already refused anything that does not clear it, so
+                    # a typo far below price is long gone. "The live stop
+                    # could not be read" is precisely the case where the
+                    # position may be carrying NO protection at all, and a
+                    # refusal there ends the loop with the name still
+                    # naked. That is the owner's board-item-80 failure in
+                    # a different costume -- its ruling, quoted at
+                    # `portfolio_constructor.
+                    # STOP_REFUSAL_NO_STOP_NO_VOLATILITY`, is that "a
+                    # missing volatility reading is never a reason to skip
+                    # protection", and the general shape of it is that the
+                    # desk does not answer a stop it dislikes by placing
+                    # nothing. It is also the same ruling board item 56
+                    # route (c) made about stop WIDTH specifically: a wide
+                    # stop is answered by adjusting the trade (there, by
+                    # sizing down), never by a refusal. There is no sizing
+                    # lever on this path, so the adjustment available is
+                    # the stop price itself.
+                    #
+                    # What happens instead. A proposal further below price
+                    # than any stop this desk's own rules can produce is
+                    # CLAMPED to that widest legitimate stop and PLACED.
+                    # The bound is read off the instrument, not chosen:
+                    # the widest multiple `PortfolioConstructor.
+                    # _stop_atr_multiple` can actually return (the base
+                    # `min_stop_atr_multiple` times the largest setup and
+                    # regime scalers, 3.00 at today's settings) against
+                    # THIS name's live ATR14. The clamped price is below
+                    # the 1.25 x ATR noise floor by construction, so the
+                    # noise-band clamp below cannot then reject it. If the
+                    # name is so volatile that even that widest stop lands
+                    # at or below zero, there is no legitimate stop to
+                    # clamp to, so the proposal stands -- the same
+                    # "something beats nothing" direction, and the case
+                    # the universe screen's ceiling exists to keep out.
+                    #
+                    # The desk, not the model, chose that price, so it is
+                    # recorded per-symbol and durably rather than only
+                    # logged (`dropped=False` -- nothing was dropped).
+                    #
+                    # `atr` is fetched once here and reused by the
+                    # noise-band clamp below. Unreadable ATR degrades to no
+                    # clamp, the same rule the noise band already used;
+                    # the proposal then stands, because placing the model's
+                    # stop still beats placing none.
+                    atr = self._atr_for_symbol(symbol)
+                    if (old_stop is None or old_stop <= 0) and atr is not None:
+                        from src.portfolio_constructor import (
+                            widest_reachable_stop_atr_multiple,
+                        )
+                        _cfg = self.portfolio_constructor.cfg
+                        widest = widest_reachable_stop_atr_multiple(
+                            _cfg.min_stop_atr_multiple,
+                            _cfg.stop_atr_setup_scale,
+                            _cfg.stop_atr_regime_scale,
+                        )
+                        widest_stop = existing[0].current_price - widest * atr
+                        if widest_stop > 0 and new_stop < widest_stop:
+                            from src.risk.exit_refusal import (
+                                CODE_TRAIL_CLAMPED_TO_WIDEST,
+                            )
+                            detail = (
+                                f"TRAIL_STOP {symbol}: no live stop was "
+                                f"readable, and the proposed ${new_stop:,.2f} "
+                                f"sits further below the "
+                                f"${existing[0].current_price:,.2f} price than "
+                                f"the widest stop this desk can place "
+                                f"({widest:.2f} x ATR14 ${atr:,.2f} = "
+                                f"${widest_stop:,.2f}). Read as a model typo "
+                                f"and CLAMPED to ${widest_stop:,.2f} -- the "
+                                f"position may be unprotected, so a stop is "
+                                f"placed, never skipped (board item 80)."
+                            )
+                            logger.warning("Midday: %s", detail)
+                            self._record_exit_refusal(
+                                symbol=symbol, run_id=run_id,
+                                action=act,
+                                code=CODE_TRAIL_CLAMPED_TO_WIDEST,
+                                dropped=False, detail=detail[:400],
+                                layer="midday_trail_width",
+                            )
+                            new_stop = widest_stop
                     # RC1 exit-quality clamps (2026-07-16 forensics: 5 trail
                     # fills missed avg +30.7% post-exit; LLY was whipsawed
                     # twice identically). A hard-trigger citation in the
@@ -12321,7 +12547,8 @@ class TradingPipeline:
                         # the current price sits inside one day's normal
                         # range — it converts routine volatility into a
                         # realized exit. Keep the old stop instead.
-                        atr = self._atr_for_symbol(symbol)
+                        # `atr` was read above for the typo guard; the
+                        # fetch is not repeated.
                         if atr is not None:
                             noise_floor = existing[0].current_price - 1.25 * atr
                             if new_stop > noise_floor:
@@ -12644,21 +12871,6 @@ class TradingPipeline:
             if projected_proceeds >= deficit:
                 break
             is_sweep = sweep_symbol is not None and p.symbol == sweep_symbol
-            if is_sweep and p.current_price and p.current_price > 0:
-                # audit round 2: only unpark what the deficit needs (plus a
-                # 2% cushion) — full-liquidating an $80k T-bill balance for a
-                # $200 deficit forced a full re-park at the session bookend,
-                # a pointless round-trip. Real positions keep whole-position
-                # sells (partial de-levers of losers re-review next session).
-                import math as _math
-                needed = (deficit - projected_proceeds) * 1.02
-                qty = min(float(_math.ceil(needed / p.current_price)), p.qty)
-                if qty >= p.qty:
-                    qty = self._full_sell_qty(p.qty)
-            else:
-                qty = self._full_sell_qty(p.qty)
-            if qty is None or qty <= 0:
-                continue
             # Price the must-fill exit off the LIVE quote at submit time: a
             # marketable limit AT the live bid, or a MARKET order (limit=None)
             # when no live quote is available. See `_live_delever_price`. The
@@ -12666,8 +12878,71 @@ class TradingPipeline:
             # a legitimately gapped fill; it falls back to the mark only when
             # there is no quote, in which case the order is a MARKET order the
             # guard skips anyway.
+            #
+            # Priced BEFORE the quantity is chosen (board item 182): the
+            # partial sweep sale below sizes itself off this limit, and it
+            # cannot do that if the limit is only established afterwards.
             sell_limit, quote_ref = self._live_delever_price(p.symbol, "sell")
             exec_ref = quote_ref if quote_ref is not None else p.current_price
+            # The price floor each share of a partial sweep sale is
+            # guaranteed to raise. A SELL limit fills AT OR ABOVE its limit
+            # or it does not fill, so the live limit IS that floor, and a
+            # partial sale can be sized off it with no cushion at all.
+            #
+            # WITH NO LIVE QUOTE THERE IS NO FLOOR, so there is no partial
+            # size to justify and the loop sells the whole position, exactly
+            # as every non-sweep de-lever target already does. An earlier
+            # draft of this change sized that branch off the mark less
+            # `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` and called it "an existing
+            # number, not a new one". It was neither safe nor a no-op:
+            # dividing by 0.97 is a 3.09% pad on the same possibly-stale
+            # mark, i.e. LARGER than the flat 2% pad the change claimed to be
+            # removing, and 3% is a stop-limit through-buffer picked
+            # (`status: arbitrary`) for a different job. Borrowing a constant
+            # at the wrong tightness for a new job is not sourcing it.
+            sizing_price = sell_limit if (
+                sell_limit is not None and sell_limit > 0
+            ) else None
+            if is_sweep and sizing_price is not None:
+                # audit round 2: only unpark what the deficit needs —
+                # full-liquidating an $80k T-bill balance for a $200 deficit
+                # forced a full re-park at the session bookend, a pointless
+                # round-trip. Real positions keep whole-position sells
+                # (partial de-levers of losers re-review next session).
+                #
+                # THE SHARE COUNT IS COMPUTED, NOT PADDED (board item 182,
+                # 2026-09-30). This used to divide the remaining deficit by
+                # the possibly-stale `current_price` and then multiply by a
+                # flat 1.02 — a 2% guess at how far the fill would land under
+                # the mark, chosen by nobody and read off nothing. The guess
+                # is unnecessary on THIS branch, because the order this loop
+                # is about to place already carries its own worst case: the
+                # live SELL limit it will rest at. Dividing the remaining
+                # deficit by that floor gives the smallest share count that
+                # clears it, and `ceil` supplies the whole-share rounding.
+                # This extends to the QUANTITY exactly what
+                # `_live_delever_price` already states for the PRICE.
+                #
+                # WHAT THIS DOES NOT COVER: the limit bounds the PRICE of the
+                # shares that fill, not HOW MANY fill. The limit is placed at
+                # the live bid, whose displayed size is finite, and Alpaca
+                # documents `partially_filled` as an order status, so a short
+                # fill is a real state on this path. Nothing below reads a
+                # filled quantity — `_submit_protected_sell` returns on
+                # broker ACCEPTANCE — so a partial fill still leaves a
+                # residual deficit this loop will not see. That gap predates
+                # this change and is reported, not fixed, here.
+                import math as _math
+                remaining = deficit - projected_proceeds
+                qty = min(
+                    float(_math.ceil(remaining / sizing_price)), p.qty,
+                )
+                if qty >= p.qty:
+                    qty = self._full_sell_qty(p.qty)
+            else:
+                qty = self._full_sell_qty(p.qty)
+            if qty is None or qty <= 0:
+                continue
             limit_str = f"${sell_limit:.2f}" if sell_limit is not None else "market"
             # The sweep vehicle's exit is recorded as SWEEP_SELL, not
             # FORCE_DELEVER (audit round 2): action names are the sweep's
@@ -12703,7 +12978,26 @@ class TradingPipeline:
                 # STOP_LIMIT_BUFFER_PCT budgets for a gapping exit). Under-
                 # counting proceeds is the safe error here — it never stops the
                 # sweep one position too early and leaves a residual deficit.
-                projected_proceeds += p.market_value * 0.97
+                #
+                # ON THE SHARES ACTUALLY SOLD (2026-09-30). `market_value`
+                # is the position's FULL value, and every branch here sells
+                # the whole position EXCEPT the sweep slice above — which
+                # credited the whole park anyway. The sweep vehicle sorts
+                # FIRST and the loop breaks at `projected_proceeds >=
+                # deficit`, and the completeness alert at the bottom reads
+                # the same figure, so an $80k park sold down by $500
+                # credited ~$78k and a short sale produced neither a second
+                # sale NOR an owner alert.
+                #
+                # The slice is credited at the limit it was SIZED off, which
+                # is the same arithmetic floor and keeps the two consistent:
+                # counting a correctly-sized slice at a lower figure than it
+                # was sized to raise would make the loop believe it fell
+                # short and sell the next position on top of it.
+                if qty < p.qty:
+                    projected_proceeds += float(qty) * float(sizing_price)
+                else:
+                    projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
                     "FORCE DE-LEVER SELL %s qty=%s @ limit=%s "

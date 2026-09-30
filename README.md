@@ -225,6 +225,16 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+**The number-ledger ratchet needs no setup.** The fourth file every parallel
+branch used to collide on was `src/number_sources.py`: its
+`MAX_ARBITRARY_ENTRIES` was one hand-edited line carrying both the count and
+the whole narrative of every past move, so two branches retiring different
+numbers always conflicted. The count is now computed as the sum of the deltas
+in `config/number_ledger_history.yaml`, one appended entry per change, and
+that file is registered `merge=union` — a git built-in, so unlike `docsmerge`
+it works in every clone with no `git config`. To move the count, APPEND an
+entry there; never edit an existing one, and never write the literal back.
+
 **Register the board-document merge driver (one-time, per clone — not automatic).**
 `docs/WORK.md`, `docs/BOARD_NOTES.md` and `docs/INCIDENT_HISTORY.md` are the
 three files every parallel branch collides on, and `.gitattributes` names a
@@ -438,6 +448,12 @@ It compares the deployed checkout's `scripts/systemd/` against the installed uni
 A `not_enabled` unit named in `scripts/systemd/paused_units.yaml` is reported separately as **deliberately paused** instead — it does not count as drift or trip the exit status. If that same unit turns out to be enabled anyway, the list and the box disagree and it IS reported as drift; a paused-list entry naming a unit not tracked in `scripts/systemd/` is reported as an error in the list itself. An empty list is the fully-running desk. See the operational-state note above and `scripts/systemd/paused_units.yaml`.
 
 Compared against the **deployed checkout**, not `origin/main`, deliberately: that keeps the two checks disjoint so they never alarm twice for one condition. Right after a merge the deploy-drift check says "behind" and this one correctly says the installed units still match the checkout they came from. Exit 1 is a finding (`SuccessExitStatus=0 1`); exit 3 is an operator problem and is left to mark the unit failed. Install with `cp scripts/systemd/quant-agent-unit-drift.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-unit-drift.timer`. Run by hand with `scripts/run_unit_drift_check.sh --no-telegram`.
+
+The **stored take-profit check** runs **09:05 ET, seven days a week** — `scripts/systemd/quant-agent-stored-target-check.{service,timer}`, via `scripts/run_stored_target_check.sh` (sources `.env`, 600s timeout; it is the only one of these checks that goes to the network for bars, which is why its timeout is an order of magnitude larger and why it fires last of the four). For every held position it re-derives the take-profit from that position's **own pinned entry, horizon and setup type** — only levels, ATR and coverage come from today's bars — and compares it to the number stored on the trade row. It writes nothing: the database is opened `mode=ro`, and correcting a live position record is not something a timer does unattended.
+
+It reports two things and treats them differently. A stored target with a **structural level still standing between the entry and that target** is an error, because the target is the nearest wall and never the level past it; a stored target that merely **differs** from today's derivation is not, because the derivation reads today's bars and the desk deliberately does not re-derive on a price move. Exit 1 means the first kind was found — a finding about the book, not a unit failure (`SuccessExitStatus=0 1`). The Telegram message names the positions it can recompute with both numbers, and names separately the ones it **cannot**, saying so in as many words rather than going quiet or substituting a guessed number. Measured against the live book on 2026-09-30: 11 held positions, 3 aiming past a standing wall, 6.3s.
+
+**It is deliberately not a CI check**, and `tests/test_stored_target_guard.py` fails if anyone makes it one. It is legitimately red today on real findings the desk cannot correct, and a permanently-red required check blocks every unrelated merge and is switched off inside a day. Install with `cp scripts/systemd/quant-agent-stored-target-check.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-stored-target-check.timer` — or just deploy, which does all three. Run by hand with `scripts/run_stored_target_check.sh --no-telegram`.
 
 The repository half is `tests/test_systemd_units.py`: CI cannot see the box, so it gates the units instead — no foreign `/home/*` path, `WorkingDirectory` at the deploy root, every `ExecStart` naming a script that exists, every timer paired with its service and installable, every service reachable, no inline credentials, and the six session units plus the API pinned by name. Neither half subsumes the other: CI stops the repo regressing, the timer stops the box diverging.
 

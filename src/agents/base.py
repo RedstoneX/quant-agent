@@ -718,6 +718,104 @@ def _reset_route_breakers_for_tests() -> None:
 _DEFAULT_TERTIARY_PROVIDER = "openrouter"
 _DEFAULT_TERTIARY_MODEL = "anthropic/claude-haiku-4.5"
 
+# === ROUTE 3, SECOND-ROAD SUBSTITUTE (2026-09-30) =========================
+# Closes the "HONEST RESIDUAL" written into the block above, for the seats
+# where it is not a residual at all but the whole ladder.
+#
+# THE MEASUREMENT. Production log /home/qamc/quant-agent/quant_agent.log,
+# 2026-09-29 19:46:45-19:47:46: portfolio_manager's route 1
+# (openrouter, openai/gpt-5.5) returned HTTP 402 Payment Required, route 2
+# (openrouter, google/gemini-3.5-flash-lite) was skipped on a demoted
+# provider, route 3 (openrouter, anthropic/claude-haiku-4.5) returned HTTP
+# 402 again and logged "Every route is down." At 19:46:08 the SAME PROCESS
+# had completed tech_analyst on `generativelanguage.googleapis.com` at
+# HTTP 200 for $0.00 using gemini-3.5-flash-lite. A healthy, credentialed,
+# free road sat unused while every rung of the decision seat's ladder
+# queued behind one exhausted OpenRouter balance.
+#
+# WHY THIS IS NOT THE SAME CHOICE THE BLOCK ABOVE ALREADY MADE. That block
+# reasoned about the eight specialist seats, whose route 1 IS Google
+# direct: for them a Google route 3 would be a third attempt at the road
+# that already failed twice, and OpenRouter/haiku is the right answer. It
+# then recorded the OpenRouter-account collision as an accepted residual
+# and said closing it "means getting a grant for a third host". For the
+# decision seats (portfolio_manager, risk_manager, position_reviewer —
+# every one of them `provider: openrouter`) that is simply not true: the
+# SECOND credentialed host is already there, already primary for eight
+# other seats, already exercised every session. No new host, no new
+# grant, no new paid dependency.
+#
+# THE RULE, and it is deliberately narrow: when routes 1 and 2 resolve to
+# the SAME provider and the configured route 3 would land on that provider
+# too, route 3 is swapped for this pair instead — but ONLY if this pair is
+# on a provider not already in the ladder. A seat whose ladder already
+# spans two roads is untouched, so the eight Google-primary seats keep
+# OpenRouter/haiku exactly as reasoned above. This adds no rung: the
+# attempt budget is unchanged (see `provider_attempt_budget`).
+#
+# MODEL DIVERSITY IS NOT SACRIFICED, it is traded where it is worthless.
+# Route 3's purpose per the block above is to change the MODEL once the
+# same model on two roads has failed. When both of those roads are ONE
+# account, changing the model changes nothing — a 402 is an account-level
+# refusal, not a model-level one, and the 2026-09-29 log is that sentence
+# measured. Against a dead account, a different ROAD is the only variable
+# that can still move.
+#
+# WHY THIS MODEL. `gemini-3.5-flash-lite` on Google AI Studio direct is
+# the only (provider, model) pair on a non-OpenRouter host that this
+# deployment has ever completed a call on — it is the configured PRIMARY
+# for eight seats and it answered at 19:46:08 on the very day of the
+# outage. It is not picked for quality at the decision seats and does not
+# claim to be their equal; it is the last rung, reached only when the desk's
+# alternative is producing nothing at all, which is the same standard the
+# block above applied to haiku. It also inherits the uniform reasoning
+# effort, the structured-output constraint and usage telemetry, because
+# `_openai_wire_call` builds `extra_body` for `google` as well as
+# `openrouter` — the exact property that ruled out the OpenAI/Anthropic
+# direct endpoints there.
+#
+# RESIDUAL THAT REMAINS. A decision seat's route 3 is now a small free
+# model rather than haiku, so a total-OpenRouter outage degrades decision
+# QUALITY at those seats. That is accepted for the same reason the block
+# above accepted a model change at all: the alternative on 2026-09-29 was
+# no decision run whatsoever. Set `tertiary_alt_model` to "" to switch the
+# substitution off and restore the previous behaviour exactly.
+_DEFAULT_TERTIARY_ALT_PROVIDER = "google"
+_DEFAULT_TERTIARY_ALT_MODEL = "gemini-3.5-flash-lite"
+
+
+def select_tertiary_route(
+    *,
+    primary: tuple[str, str],
+    fallback: tuple[str, str] | None,
+    tertiary: tuple[str, str],
+    alt: tuple[str, str] | None,
+) -> tuple[str, str]:
+    """Which (provider, model) route 3 actually uses.
+
+    Returns `alt` when the ladder has collapsed onto a single provider and
+    `alt` is on a different one; otherwise returns `tertiary` unchanged.
+    `fallback` is None when route 2 is unreachable for this seat (no key, or
+    the same pair as the primary), and `alt` is None when the substitute is
+    unconfigured or uncredentialed.
+
+    A free function, not an inline branch in `__init__`, so the rule can be
+    asserted directly per seat in tests rather than only through a
+    constructed agent.
+    """
+    if alt is None:
+        return tertiary
+    ladder_roads = {primary[0]}
+    if fallback is not None:
+        ladder_roads.add(fallback[0])
+    if len(ladder_roads) != 1:
+        return tertiary          # the ladder already spans two roads
+    if tertiary[0] not in ladder_roads:
+        return tertiary          # route 3 already leaves that road
+    if alt[0] in ladder_roads:
+        return tertiary          # the substitute would not change the road
+    return alt
+
 
 def _route_price(model: str) -> tuple[float | None, float | None]:
     """Published list price of `model` in USD per MILLION tokens, for the
@@ -1757,6 +1855,9 @@ class BaseAgent(ABC):
                  tertiary_api_key: str = "",
                  tertiary_provider: str = _DEFAULT_TERTIARY_PROVIDER,
                  tertiary_model: str = _DEFAULT_TERTIARY_MODEL,
+                 tertiary_alt_api_key: str = "",
+                 tertiary_alt_provider: str = _DEFAULT_TERTIARY_ALT_PROVIDER,
+                 tertiary_alt_model: str = _DEFAULT_TERTIARY_ALT_MODEL,
                  reasoning_effort: str = "medium",
                  structured_output: bool = True):
         self.model = model
@@ -1817,9 +1918,36 @@ class BaseAgent(ABC):
         # a key must be configured AND the pair must differ from BOTH routes
         # already in the ladder, or route 3 is just a third attempt at
         # something that has already failed twice.
-        self._tertiary_provider = resolve_provider(tertiary_model, tertiary_provider)
-        self._tertiary_model = tertiary_model
-        self._tertiary_api_key = (tertiary_api_key or "").strip()
+        #
+        # Before any of that is fixed, route 3 may be SWAPPED for the
+        # second-road substitute — see `_DEFAULT_TERTIARY_ALT_PROVIDER` and
+        # `select_tertiary_route` above for the rule and the 2026-09-29
+        # measurement behind it. The swap fires only for a seat whose routes
+        # 1 and 2 have collapsed onto one provider; it never adds a rung.
+        _configured_tertiary = (
+            resolve_provider(tertiary_model, tertiary_provider), tertiary_model,
+        )
+        _alt_key = (tertiary_alt_api_key or "").strip()
+        _alt = (
+            (resolve_provider(tertiary_alt_model, tertiary_alt_provider),
+             tertiary_alt_model)
+            if _alt_key and (tertiary_alt_model or "").strip()
+            and (tertiary_model or "").strip()
+            else None
+        )
+        _selected = select_tertiary_route(
+            primary=(self._provider, self.model),
+            fallback=((self._fallback_provider, self._fallback_model)
+                      if self._failover_reachable else None),
+            tertiary=_configured_tertiary,
+            alt=_alt,
+        )
+        self._tertiary_on_alt_road = _selected is _alt and _alt is not None
+        self._tertiary_provider, self._tertiary_model = _selected
+        self._tertiary_api_key = (
+            _alt_key if self._tertiary_on_alt_road
+            else (tertiary_api_key or "").strip()
+        )
         self._tertiary_reachable = bool(self._tertiary_api_key) and (
             (self._tertiary_provider, self._tertiary_model)
             not in {(self._provider, self.model),
@@ -2390,8 +2518,14 @@ class BaseAgent(ABC):
                         input_usd_per_mtok=in_price,
                         output_usd_per_mtok=out_price,
                         error=primary_error,
-                        detail="tertiary route carried the call (DIFFERENT "
-                               "model — both routes on the primary model failed)",
+                        detail=(
+                            "tertiary route carried the call (DIFFERENT ROAD "
+                            "— routes 1 and 2 shared one provider and it was "
+                            "down)"
+                            if self._tertiary_on_alt_road else
+                            "tertiary route carried the call (DIFFERENT "
+                            "model — both routes on the primary model failed)"
+                        ),
                     )
                 elif primary_error is None and attempt_errors:
                     # ONLY on the demoted path. When the primary DID fail,

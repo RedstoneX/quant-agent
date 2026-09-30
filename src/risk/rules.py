@@ -844,9 +844,35 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
     (-20.0, 0.5),
 )
 
-#: At or worse than this drawdown the ceiling is the floor rung AND the owner
-#: is told. Kept as its own constant rather than inferred from the last
-#: `GROSS_LADDER` row so that adding a rung never silently moves the alert.
+#: At or worse than this drawdown the OWNER IS TOLD. Kept as its own
+#: constant rather than inferred from the deepest `GROSS_LADDER` row, because
+#: it answers a DIFFERENT question from the ladder: "at what drawdown must
+#: the owner hear about it", not "how much may the book own". The same
+#: function proves the two are separate — `alert_owner=True` is also set on
+#: the unmeasurable-drawdown branch, where no rung fires at all.
+#:
+#: A 2026-09-30 change (board item 182) briefly replaced this with
+#: `min(threshold for threshold, _ in GROSS_LADDER)` and was REVERTED the
+#: same day, because it made the desk QUIETER, the opposite of the intent.
+#: The trigger below is `drawdown <= GROSS_LADDER_ALERT_PCT`, which is
+#: MONOTONE: once the drawdown passes the threshold the alert is true at
+#: every deeper drawdown too. Freezing this at -20 therefore cannot produce
+#: silence anywhere — add a -30 rung and the owner is still told from -20
+#: onward, including at -30. Tying it to the deepest rung instead MOVES the
+#: alert down to -30 and buys real silence between -20% and -30%, a band in
+#: which the ladder is actively cutting the book to 0.5x.
+#:
+#: What was actually wrong was the SENTENCE, not the trigger. With a deeper
+#: rung present, a -22% message reading "the desk is at its most de-levered
+#: setting" is untrue. That is prose rot and it is fixed where it lives: the
+#: reason string below names the rung the ladder is ACTUALLY on, and only
+#: claims the floor when the book is at the floor.
+#:
+#: STATUS: still `arbitrary`, still ledgered, and its open question — "at
+#: what drawdown must the owner be told, independently of what the ladder
+#: does to exposure?" — is still unanswered. Deduplicating it against an
+#: arbitrary table would not have sourced it either; a number does not become
+#: non-arbitrary by being set equal to another arbitrary number.
 GROSS_LADDER_ALERT_PCT = -20.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
@@ -1009,10 +1035,36 @@ def resolve_gross_ceiling(
             f"{base:.1f}x equity to {ceiling:.1f}x until the account recovers."
         )
     if alert:
+        # Name the rung the ladder is ACTUALLY on. The alert threshold and
+        # the ladder's deepest rung are separate numbers that happen to agree
+        # today; if a deeper rung is ever added, this sentence must not go on
+        # claiming the floor at a drawdown that is merely past the alert.
+        deepest = min(threshold for threshold, _ in GROSS_LADDER)
         reason += (
-            " This is past the -20% rung: the desk is at its most de-levered "
-            "setting and the owner is being told."
+            f" This is past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% level at "
+            f"which the owner is told."
         )
+        floor_x = min(
+            rung_x for threshold, rung_x in GROSS_LADDER if threshold == deepest
+        )
+        if drawdown <= deepest:
+            reason += (
+                f" The book is on the ladder's deepest {abs(deepest):.0f}% "
+                f"rung — its most de-levered setting, {ceiling:.1f}x."
+            )
+        elif rung == "none":
+            reason += (
+                f" The ladder has not cut anything yet: the first rung is at "
+                f"{abs(GROSS_LADDER[0][0]):.0f}% and the deepest, "
+                f"{floor_x:.1f}x, is at {abs(deepest):.0f}%."
+            )
+        else:
+            reason += (
+                f" The ladder has the book on its {rung} rung at "
+                f"{ceiling:.1f}x — NOT its most de-levered setting; a deeper "
+                f"{abs(deepest):.0f}% rung at {floor_x:.1f}x still sits "
+                f"below this."
+            )
     return GrossCeiling(
         ceiling_x=ceiling, base_x=base, drawdown_pct=drawdown,
         alert_owner=alert, rung=rung, reason=reason,

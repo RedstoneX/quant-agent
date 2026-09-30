@@ -7,6 +7,8 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.config import ExecutionConfig
 from src.execution.broker import (
     _ALPACA_STREAM_AUTH_DEADLINE_S,
@@ -185,23 +187,40 @@ def _buy_ctx(entry=100.0):
     return ctx
 
 
-def test_through_ceiling_after_desk_stall_is_latency_window_not_wad_slippage():
-    pipeline = _buy_pipeline(ask=110.0, live=100.0, stall=True)
-    ctx = _buy_ctx()
-    ExecutionStage(pipeline=pipeline).run(ctx)
-    reasons = [s["reason"] for s in ctx.execution_skips]
-    assert "latency_window" in reasons
-    assert "slippage_gated" not in reasons
-    assert pipeline.broker.submit_order.call_count == 0
+def test_a_displayed_ask_through_the_ceiling_no_longer_refuses_the_entry():
+    """Board item 183, 2026-09-30. A 1000bp IEX ask against a 40bp ceiling
+    used to refuse this BUY outright. It no longer does: the order goes at
+    the ceiling, which it cannot fill through, and the far-through quote is
+    a recorded fact rather than a trading decision.
 
-
-def test_through_ceiling_without_stall_stays_slippage_gated():
+    The measurement that removed the old gate: all 8 firings it had on
+    record were venue noise, not a market that had run — in every one the
+    reference matched the price the name was actually trading at, while the
+    quoted ask sat 392-669bp above the highest price it traded anywhere in a
+    +/-15 minute window.
+    """
     pipeline = _buy_pipeline(ask=110.0, live=100.0, stall=False)
     ctx = _buy_ctx()
     ExecutionStage(pipeline=pipeline).run(ctx)
     reasons = [s["reason"] for s in ctx.execution_skips]
-    assert "slippage_gated" in reasons
+    assert "slippage_gated" not in reasons
     assert "latency_window" not in reasons
+    assert pipeline.broker.submit_order.call_count == 1
+    limit = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit == pytest.approx(100.0 * (1 + 40.0 / 10_000.0), abs=0.01)
+
+
+def test_a_desk_stall_still_refuses_before_the_quote_is_ever_read():
+    """`latency_window` survives on its own path — the submit-window
+    overrun check, which runs before any quote comparison and is untouched
+    by item 183. A handshake stall alone is not that overrun, so this BUY
+    is submitted; the overrun case has its own test below."""
+    pipeline = _buy_pipeline(ask=110.0, live=100.0, stall=True)
+    ctx = _buy_ctx()
+    ExecutionStage(pipeline=pipeline).run(ctx)
+    reasons = [s["reason"] for s in ctx.execution_skips]
+    assert "slippage_gated" not in reasons
+    assert pipeline.broker.submit_order.call_count == 1
 
 
 def test_overrun_refuses_inside_ceiling_as_latency_window(monkeypatch):

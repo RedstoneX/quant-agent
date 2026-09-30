@@ -983,9 +983,11 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
 
     **What this does NOT close, stated plainly.** The BUY submit loop can
     still refuse an entry for reasons no pre-check can evaluate in advance:
-    the latency window (`latency_window`), an unfillable marketable limit
-    against the NBBO at submit time, the borrow gate on a SHORT, and any
-    broker rejection. Those are not knowable before the sale, and the tape
+    the latency window (`latency_window`), the borrow gate on a SHORT, and
+    any broker rejection. (Board item 183, 2026-09-30: a displayed quote
+    through the entry ceiling is no longer one of them — it is recorded as
+    `venue_quote_through_ceiling` and the order is still sent, because the
+    limit is its own protection.) Those are not knowable before the sale, and the tape
     can also move between this projection and the real check. This gate
     removes the deterministic, knowable refusals — the ones that made the
     naked-sale outcome reproducible — and the residual is recorded in the
@@ -9021,7 +9023,23 @@ class ExecutionStage:
                 entry_budget, budget_note, single_name_cap,
             )
         pending_entry_stops: list[dict] = []
-        for decision in buy_decisions:
+        # A QUEUE, not the decision list. `entry_budget` is drawn on
+        # SUBMISSION and is never given back, so an entry that rests unfilled
+        # holds its slice of the §11.2 pool for the whole burst and every
+        # LATER candidate sizes against the smaller pool. A name whose
+        # displayed quote reads through its own ceiling is therefore moved to
+        # the BACK of this queue exactly once (board item 183, see the
+        # deferral in the limit-price block): it is still submitted, it is
+        # still sized the same way, it simply stops taking the pool ahead of
+        # names whose quotes are clean. Nothing here refuses anything and no
+        # threshold is involved — the test is the ceiling itself.
+        submit_queue = list(buy_decisions)
+        original_entry_count = len(submit_queue)
+        deferred_far_through: set[str] = set()
+        queue_index = 0
+        while queue_index < len(submit_queue):
+            decision = submit_queue[queue_index]
+            queue_index += 1
             if decision.action not in ("BUY", "SHORT"):
                 continue
             is_short = decision.action == "SHORT"
@@ -9296,41 +9314,115 @@ class ExecutionStage:
                     offer_limit = round(cap, 2 if cap >= 1 else 4)
                     ask_premium_bps = (ask - market_price) / market_price * 10_000.0
 
-                    # The IEX ask is too unreliable to gate on directly, but a
-                    # far-through reading is still information: either the
-                    # market has genuinely run, or the venue is quoting
-                    # nonsense. Either way this is not a book to cross blind.
-                    # The multiple is deliberately loose because the input is.
-                    if ask > cap * 1.02:
-                        skip_reason = (
-                            "latency_window"
-                            if getattr(ctx, "desk_latency_stall", False)
-                            else "slippage_gated"
+                    # THE IEX ASK DOES NOT DECIDE ANYTHING HERE (board item
+                    # 183, 2026-09-30). It used to: an entry was refused when
+                    # `ask > cap * 1.02`, a multiple its own comment called
+                    # "deliberately loose because the input is" — a number
+                    # chosen to absorb how wrong this venue's top of book can
+                    # be, which is not a quantity anyone had measured.
+                    #
+                    # Measured now, against every firing the gate has on
+                    # record (8 rows, `execution_skip` evidence, 2026-09-15 to
+                    # 2026-09-24 — the whole life of the telemetry): in all 8
+                    # the reference was RIGHT and the ask was garbage. The
+                    # reference matched the price the name was actually
+                    # trading at to within a few bp, while the quoted ask sat
+                    # 392 to 669bp above the HIGHEST price that name traded
+                    # anywhere in a +/-15 minute window around the refusal,
+                    # and 6 of the 8 were trading strictly INSIDE this ceiling
+                    # at the instant they were refused. The gate turned away 8
+                    # risk-approved entries and caught zero runaway books.
+                    # `src/trader_feed.py` already refuses to render this code
+                    # to the owner for the same reason.
+                    #
+                    # It was never protecting money either. A limit at `cap`
+                    # cannot fill above `cap`, whatever the ask claims. When
+                    # the market really has run through the ceiling the order
+                    # simply rests unfilled inside the bounded entry window
+                    # — 90 seconds (`_ENTRY_FILL_TIMEOUT_S`), not the rest of
+                    # the session, with the parent order's own tif at DAY —
+                    # and the entry-protection sweep cancels it — the same
+                    # no-trade the skip produced, minus the refusals of names
+                    # that had not moved. So the gate is gone and no multiple
+                    # replaces it: the ceiling is its own protection.
+                    #
+                    # The far-through reading is still WRITTEN DOWN, because a
+                    # venue quoting hundreds of bp away from the tape is a
+                    # real data fact. A record needs no threshold — it fires
+                    # on the ceiling itself.
+                    # THE POOL, NOT THE PRICE (board item 183 rework). The
+                    # reading still decides nothing about WHETHER to submit —
+                    # the order goes either way. What it now decides is
+                    # ORDER OF SERVICE against the deployment pool, because
+                    # deleting the old skip removed the one thing that used
+                    # to stop a possibly-unfillable entry from drawing that
+                    # pool: `entry_budget -= estimated_cost` fires on
+                    # submission, `order_ceiling = min(entry_budget, ...)` is
+                    # read by every later candidate in this same loop, and
+                    # the draw is never released.
+                    #
+                    # Releasing it on cancel would not help and is not what
+                    # this does: `entry_budget` is a local of this stage and
+                    # is already dead by the time the 90s fill timeout
+                    # cancels, and the next session recomputes the pool from
+                    # the broker anyway. The only place the draw can be made
+                    # to matter is inside this loop, so the far-through name
+                    # goes to the BACK of the submit queue, once.
+                    #
+                    # This is strictly LESS authority than the same reading
+                    # carried yesterday, when it refused the entry outright.
+                    # When the quote is noise (8 times out of 8 on record)
+                    # the cost is bounded at being submitted later in the
+                    # same burst; when the market really has run, a resting
+                    # order stops starving a name that could have filled.
+                    if (
+                        ask > cap
+                        and queue_index < original_entry_count
+                        and decision.symbol not in deferred_far_through
+                    ):
+                        deferred_far_through.add(decision.symbol)
+                        submit_queue.append(decision)
+                        logger.info(
+                            "BUY %s deferred to the back of the submit queue "
+                            "— the displayed IEX offer $%.4f is through the "
+                            "%.0fbp ceiling $%.4f, so it draws the deployment "
+                            "pool after the names quoting inside theirs. Not "
+                            "a refusal: it is submitted below.",
+                            decision.symbol, ask, slippage_bps, cap,
                         )
-                        logger.warning(
-                            "BUY %s NOT SUBMITTED — the displayed offer has run "
-                            "beyond the slippage ceiling%s. Ask $%.4f is %.1fbp "
-                            "above the $%.4f reference; the %.0fbp ceiling is "
-                            "$%.4f. (Quote is IEX, not NBBO, so it may also "
-                            "simply be a stale venue print — either way, not a "
-                            "book to cross blind.)",
-                            decision.symbol,
-                            " after a desk-caused stall; latency blew the window"
-                            if skip_reason == "latency_window" else "",
-                            ask, ask_premium_bps,
-                            market_price, slippage_bps, cap,
-                        )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol, skip_reason,
-                            f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
-                            f"above reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp ceiling ${cap:.4f}"
-                            + (
-                                " — latency blew the window"
-                                if skip_reason == "latency_window" else ""
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "entry_deferred_behind_clean_quotes",
+                            "buy_ask_above_cap",
+                            detail=(
+                                f"IEX ask ${ask:.4f} through the "
+                                f"{slippage_bps:.0f}bp ceiling ${cap:.4f}; "
+                                f"moved to the back of the submit queue so it "
+                                f"draws the deployment pool last"
                             ),
                         )
                         continue
+
+                    if ask > cap:
+                        logger.warning(
+                            "BUY %s submitted anyway — the displayed IEX offer "
+                            "$%.4f is %.1fbp above the $%.4f reference and "
+                            "through the %.0fbp ceiling $%.4f. IEX is not the "
+                            "NBBO the order fills against; the limit cannot "
+                            "pay more than the ceiling either way.",
+                            decision.symbol, ask, ask_premium_bps,
+                            market_price, slippage_bps, cap,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "venue_quote_through_ceiling", "buy_ask_above_cap",
+                            detail=(
+                                f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
+                                f"above reference ${market_price:.4f}, through "
+                                f"the {slippage_bps:.0f}bp ceiling ${cap:.4f}; "
+                                f"order submitted at the ceiling"
+                            ),
+                        )
 
                     if limit_price is None or abs(limit_price - offer_limit) > 0.000001:
                         logger.info(
@@ -9384,41 +9476,69 @@ class ExecutionStage:
                         (market_price - bid) / market_price * 10_000.0
                     )
 
-                    # Same IEX-noise tolerance as the BUY `cap * 1.02`
-                    # skip: invert the multiple so a far-through bid
-                    # (genuinely run, or a stale venue print) refuses
-                    # rather than submitting an unfillable or unbound
-                    # short. Not a new percentage.
-                    if bid < floor / 1.02:
-                        skip_reason = (
-                            "latency_window"
-                            if getattr(ctx, "desk_latency_stall", False)
-                            else "slippage_gated"
+                    # Mirror of the BUY side above, and it goes for the same
+                    # measured reason: the IEX bid does not decide anything
+                    # here either. The old `bid < floor / 1.02` inverted the
+                    # BUY multiple, so it inherited an unmeasured tolerance
+                    # for venue noise rather than adding a second one. A sell
+                    # -short limit at `floor` cannot fill below `floor`, so
+                    # refusing on a quote this account's own code calls
+                    # routinely absurd only loses the entries where the venue
+                    # was wrong. Recorded, not refused; no multiple.
+                    # Mirror of the BUY deferral above, and it applies only
+                    # when the pool is the ladder's GROSS headroom — a short
+                    # does not draw a settled-cash pool at all (D11), so on
+                    # the cash fallback there is no pool for it to hold and
+                    # nothing to defer.
+                    if (
+                        bid < floor
+                        and budget_is_gross
+                        and queue_index < original_entry_count
+                        and decision.symbol not in deferred_far_through
+                    ):
+                        deferred_far_through.add(decision.symbol)
+                        submit_queue.append(decision)
+                        logger.info(
+                            "SHORT %s deferred to the back of the submit "
+                            "queue — the displayed IEX bid $%.4f is through "
+                            "the %.0fbp floor $%.4f, so it draws the gross "
+                            "deployment pool after the names quoting inside "
+                            "theirs. Not a refusal: it is submitted below.",
+                            decision.symbol, bid, slippage_bps, floor,
                         )
-                        logger.warning(
-                            "SHORT %s NOT SUBMITTED — the displayed bid has "
-                            "run beyond the slippage floor%s. Bid $%.4f is "
-                            "%.1fbp below the $%.4f reference; the %.0fbp "
-                            "floor is $%.4f. (Quote is IEX, not NBBO, so it "
-                            "may also simply be a stale venue print — either "
-                            "way, not a book to cross blind.)",
-                            decision.symbol,
-                            " after a desk-caused stall; latency blew the window"
-                            if skip_reason == "latency_window" else "",
-                            bid, bid_discount_bps,
-                            market_price, slippage_bps, floor,
-                        )
-                        _record_execution_skip(
-                            pipeline, ctx, decision.symbol, skip_reason,
-                            f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
-                            f"below reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp floor ${floor:.4f}"
-                            + (
-                                " — latency blew the window"
-                                if skip_reason == "latency_window" else ""
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "entry_deferred_behind_clean_quotes",
+                            "short_bid_below_floor",
+                            detail=(
+                                f"IEX bid ${bid:.4f} through the "
+                                f"{slippage_bps:.0f}bp floor ${floor:.4f}; "
+                                f"moved to the back of the submit queue so it "
+                                f"draws the gross deployment pool last"
                             ),
                         )
                         continue
+
+                    if bid < floor:
+                        logger.warning(
+                            "SHORT %s submitted anyway — the displayed IEX bid "
+                            "$%.4f is %.1fbp below the $%.4f reference and "
+                            "through the %.0fbp floor $%.4f. IEX is not the "
+                            "NBBO the order fills against; the limit cannot "
+                            "sell below the floor either way.",
+                            decision.symbol, bid, bid_discount_bps,
+                            market_price, slippage_bps, floor,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "execution",
+                            "venue_quote_through_ceiling", "short_bid_below_floor",
+                            detail=(
+                                f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
+                                f"below reference ${market_price:.4f}, through "
+                                f"the {slippage_bps:.0f}bp floor ${floor:.4f}; "
+                                f"order submitted at the floor"
+                            ),
+                        )
 
                     if limit_price is None or abs(limit_price - bid_limit) > 0.000001:
                         logger.info(
@@ -10242,6 +10362,38 @@ class ExecutionStage:
                                 cover_order.get("id")
                                 if isinstance(cover_order, dict) else None
                             )
+                            # Board item 183 follow-up (2026-09-30).
+                            # `AlpacaBroker.submit_order` no longer RAISES on
+                            # a rejection the broker's own response calls
+                            # terminal — it returns
+                            # `{"id": None, "status": "rejected_by_broker"}`.
+                            # Every other `submit_order` caller in this repo
+                            # already tests the RESULT via `_order_accepted`;
+                            # this one only read `.get("id")`, so a rejected
+                            # emergency cover would have written a
+                            # `fill_status="submitted"` EMERGENCY_COVER row
+                            # and filed a SUCCESS event for an order that
+                            # does not exist — on the one path that runs
+                            # when a SHORT has filled and its protective stop
+                            # did NOT place, i.e. a naked short with
+                            # unbounded loss and nobody paged. Raising here
+                            # puts a non-accept back on EXACTLY the path a
+                            # raised submit took before #786: the CRITICAL
+                            # operator page and the `emergency_cover_failed`
+                            # event in the `except` branch below, and no
+                            # trade row, because the raise precedes
+                            # `insert_trade`. `_order_accepted` also catches
+                            # the desk's OWN pre-flight refusals (the
+                            # fat-finger guard, the kill switch), which reach
+                            # here identically id-less and are equally not a
+                            # cover.
+                            if not pipeline._order_accepted(
+                                cover_order, spec["symbol"], "buy",
+                            ):
+                                raise RuntimeError(
+                                    "broker did not accept the emergency "
+                                    f"cover order: {cover_order!r}"
+                                )
                             pipeline.db.insert_trade(
                                 symbol=spec["symbol"], action="EMERGENCY_COVER",
                                 qty=cover_qty, price=0.0,
