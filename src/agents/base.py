@@ -6,6 +6,7 @@ import os
 import random
 import re
 import threading
+import itertools
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -1025,6 +1026,42 @@ def _max_retries() -> int:
     return max(1, n)
 
 
+def capacity_max_attempts() -> int:
+    """Primary attempts a CAPACITY refusal (429/5xx) may spend.
+
+    DERIVED, not picked. The retry loop already owns two published numbers:
+    the full-jitter schedule in `_retry_backoff_seconds` (upper bounds
+    1, 2, 4, 8, ... capped at `_BACKOFF_CAP_S`) and the wall-clock
+    `_retry_deadline_s()`. This returns the number of attempts whose
+    worst-case cumulative sleep still fits inside that deadline. Nothing new
+    is chosen here; change either published number and this moves with it.
+
+    WHY IT IS NOT `_max_retries()`. Measured from this desk's own production
+    log, 2026-09-29 and 2026-09-30: the tech seat's Google 503 "this model is
+    currently experiencing high demand ... spikes in demand are usually
+    temporary" spent BOTH permitted attempts two seconds apart, inside a 480s
+    deadline that was never approached; the paid failover and tertiary routes
+    were out of credit (402), the blocking seat produced nothing, and the
+    morning session reported FAILED. The same model answered normally later in
+    the same session, so the spike was transient and the desk simply did not
+    wait for it. Two attempts two seconds apart does not measure whether a
+    capacity spike has passed.
+
+    Non-capacity failures keep `_max_retries()`: a degenerate 200 or a
+    transport blip carries no provider statement that waiting helps.
+    """
+    deadline = _retry_deadline_s()
+    total = 0.0
+    attempts = 1
+    while True:
+        wait = min(_BACKOFF_CAP_S, float(2 ** (attempts - 1)))
+        if total + wait > deadline:
+            break
+        total += wait
+        attempts += 1
+    return max(_max_retries(), attempts)
+
+
 def provider_attempt_budget(*, failover_available: bool,
                             tertiary_available: bool = False) -> int:
     """Worst-case provider attempts ONE logical agent call can make.
@@ -1072,7 +1109,7 @@ def provider_attempt_budget(*, failover_available: bool,
     entirely, so a demoted call spends at most 2 (secondary + tertiary),
     below this ceiling. The ceiling describes the undemoted worst case.
     """
-    return (_max_retries()
+    return (capacity_max_attempts()
             + (1 if failover_available else 0)
             + (1 if tertiary_available else 0))
 
@@ -2290,7 +2327,7 @@ class BaseAgent(ABC):
                 "at the secondary route without attempting it.",
                 self.name, self._provider, self.model,
             )
-        for attempt in range(max_retries):
+        for attempt in itertools.count():
             try:
                 if self._use_deepseek:
                     (raw_text, input_tokens, output_tokens, finish_reason,
@@ -2351,9 +2388,28 @@ class BaseAgent(ABC):
                         "No more retries.", self.name, attempt + 1, e,
                     )
                     break
-                # Last attempt: stop — sleeping then giving up wastes the
-                # final backoff on nothing.
-                if attempt == max_retries - 1:
+                # Attempt budget. For a CAPACITY refusal (429/5xx — the
+                # provider saying "busy now, usually temporary") the bound is
+                # the wall-clock deadline below, NOT this count. Measured from
+                # this desk's own production log 2026-09-29/30: the tech
+                # seat's Google 503 "experiencing high demand ... usually
+                # temporary" burned both attempts 2 SECONDS apart inside a
+                # 480s deadline, fell through to paid routes that were out of
+                # credit, and the blocking seat produced nothing — while the
+                # same model answered normally later in the same session. Two
+                # attempts two seconds apart is not a measure of whether a
+                # capacity spike has passed. Everything else (a degenerate
+                # 200, a transport blip) keeps the original count. The growing
+                # full-jitter sleep and the existing deadline bound this; no
+                # new number is introduced.
+                kind_now, _hint_now = classify_backoff(e)
+                capacity_class = (
+                    kind_now in (BACKOFF_JITTER, BACKOFF_RETRY_AFTER)
+                    and not single_provider_attempt
+                )
+                attempt_cap = (capacity_max_attempts() if capacity_class
+                               else max_retries)
+                if attempt >= attempt_cap - 1:
                     logger.warning("Agent %s attempt %d failed: %s. Primary exhausted.",
                                    self.name, attempt + 1, e)
                     break
