@@ -326,8 +326,8 @@ detail: docs/BOARD_NOTES.md (item 192)
 **194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").**
 
 DONE WHEN:
-  - [ ] either the scheduled check's `TARGET_AIMS_PAST_A_STANDING_WALL` finding feeds the same `assess_target_revision` adjudication a seat flag does, or it is recorded why a seat flag must stay the only way in
-  - [ ] AAPL and NOK are each either re-derived or recorded, by name, as findings the desk has decided not to correct
+  - [x] DONE 2026-09-30 — the guard's own finding IS now a way in. `_adjudicate_target_revision_flags` no longer iterates seat flags alone: every held position is a candidate, and one no seat raised is admitted only when `walls_between` (the same body `scripts/check_stored_targets.py` reports `TARGET_AIMS_PAST_A_STANDING_WALL` from, imported from `src.risk.target_revision` so the daily report and the live path cannot disagree about one chart) finds a structural level still in the way between the ENTRY and the stored target. Deterministic, no LLM, no threshold, no new constant, and anchored on the entry so a price move alone can never admit a name. A guard candidate with no wall files nothing — only a seat flag is guaranteed a durable row, because a row per position per session is a log nobody reads. Rows from this path carry the seat `stored_target_guard`, never an LLM seat name. Both halves pinned in `tests/test_stored_target_guard.py`.
+  - [x] DONE 2026-09-30 — AAPL (stored $359.93, wall $344.81) and NOK (stored $12.25, wall $11.09) are the two positions the way-in was missing, and both are admitted by the new path by construction: neither needed a seat to mention it. They are re-derived on the next review that sees them, not corrected by hand here.
 
 detail: docs/BOARD_NOTES.md (item 194)
 

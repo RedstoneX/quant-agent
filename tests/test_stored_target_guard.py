@@ -266,3 +266,101 @@ def test_the_wall_test_has_exactly_one_definition():
     about whether a wall is in the way, so there is one function and the
     script imports it."""
     assert walls_between is tr.walls_between
+
+
+# ---------------------------------------------------------------------
+# Board item 194 — the guard's finding is now a WAY IN, not only a report.
+#
+# `_adjudicate_target_revision_flags` used to run only on a symbol a seat
+# had raised a `TargetRevisionFlag` for, so a position that quietly grew a
+# wall between its entry and its stored target was reported here every
+# morning and never re-derived (AAPL and NOK on the live book, 2026-09-30).
+# Every held position is now a candidate, admitted by the same
+# `walls_between` body this script reports `TARGET_AIMS_PAST_A_STANDING_WALL`
+# from. These tests pin BOTH halves: the wall case gets in, and the
+# no-wall case stays silent rather than filing a row per position per
+# session.
+# ---------------------------------------------------------------------
+from datetime import date as _d
+from types import SimpleNamespace as _NS
+
+
+def _Bar(day, price):
+    """A REAL `OHLCVBar`, not a stub — `compute_indicators` calls
+    `model_dump()` on whatever it is given, so a duck-typed object would
+    have tested the fetch-failure branch instead of the guard."""
+    from src.models import OHLCV
+
+    return OHLCV(
+        symbol="AAPL", date=_d(2026, 9, day), open=price,
+        high=price + 0.5, low=price - 0.5, close=price, volume=1_000_000,
+    )
+
+
+def _pipeline_with_book(entry, stored_target, prices):
+    """A real `TradingPipeline` method bound to stubs — no LLM, no broker."""
+    from src.pipeline import TradingPipeline
+
+    pipe = object.__new__(TradingPipeline)
+    bars = [_Bar(i + 1, p) for i, p in enumerate(prices)]
+    pipe.market = _NS(get_ohlcv=lambda sym, days: bars)
+    pipe.config = _NS(trading=_NS(lookback_days=len(bars)))
+    pipe.risk_engine = _NS(config=_NS())
+    pipe.broker = _NS(trading_sessions_held=lambda a, b: 10)
+    pipe.db = _NS(
+        get_symbol_last_buy=lambda sym, action=None: {
+            "take_profit": stored_target,
+            "expected_horizon_sessions": 20,
+            "setup_type": "breakout",
+            "timestamp": "2026-09-01T00:00:00",
+        },
+        get_prior_target_level_break=lambda syms, **kw: {},
+    )
+    filed = []
+    pipe._file_target_revision = lambda **kw: (filed.append(kw), kw)[1]
+    positions = [_NS(symbol="AAPL", qty=10, avg_entry=entry)]
+    return pipe, positions, filed
+
+
+def _levels_of(prices):
+    from src.data.levels import find_structural_levels
+
+    bars = [_Bar(i + 1, p) for i, p in enumerate(prices)]
+    sup, res = find_structural_levels(bars)
+    return sorted(lv.price for lv in (*sup, *res))
+
+
+def test_unflagged_position_with_a_wall_reaches_the_adjudication():
+    """No seat mentioned AAPL; a standing wall alone lets it in."""
+    # A saw-tooth chart so `find_structural_levels` has pivots to cluster,
+    # with the stored target parked far above every level it produces.
+    prices = [100, 104, 100, 105, 101, 106, 102, 106, 101, 105,
+              100, 104, 100, 105, 101, 106, 102, 106, 101, 104]
+    levels = _levels_of(prices)
+    assert levels, "fixture must produce structural levels"
+    entry = min(levels) - 1.0
+    stored = max(levels) + 20.0
+    pipe, positions, filed = _pipeline_with_book(entry, stored, prices)
+    out = pipe._adjudicate_target_revision_flags(
+        _NS(target_revision_flags=[]), positions,
+        run_id="r1", seat="position_reviewer",
+    )
+    assert out, "a wall standing in front of the target must be adjudicated"
+    assert filed, "the outcome must be filed durably, never a silent no-op"
+    assert filed[0]["seat"] == "stored_target_guard"
+    assert "no seat raised this symbol" in filed[0]["evidence"]
+
+
+def test_unflagged_position_with_no_wall_files_nothing():
+    """The guard must not write a row per held position per session."""
+    prices = [100, 104, 100, 105, 101, 106, 102, 106, 101, 105,
+              100, 104, 100, 105, 101, 106, 102, 106, 101, 104]
+    levels = _levels_of(prices)
+    # Target BELOW every level: nothing stands between entry and target.
+    pipe, positions, filed = _pipeline_with_book(
+        min(levels) - 5.0, min(levels) - 1.0, prices)
+    out = pipe._adjudicate_target_revision_flags(
+        _NS(target_revision_flags=[]), positions,
+        run_id="r1", seat="position_reviewer",
+    )
+    assert out == [] and filed == []

@@ -915,6 +915,10 @@ def _reconciled_exit_action(order_type: str | None) -> str:
     return "RECONCILED_EXIT"
 
 
+#: The seat name written on a target revision nobody flagged - the
+#: deterministic stored-target guard (board item 194), never an LLM seat.
+TARGET_GUARD_SEAT = "stored_target_guard"
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -10179,14 +10183,17 @@ class TradingPipeline:
         from src.risk.target_revision import (
             assess_target_revision,
             level_backing_target,
+            levels_still_in_the_way,
             target_level_broken,
+            walls_between,
         )
         from src.trading_calendar import et_today
 
         flags = list(getattr(review, "target_revision_flags", None) or [])
-        if not flags:
+        if not flags and not (positions or []):
             return []
 
+        flag_seat = seat
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
             "min_target_atr_multiple": getattr(
@@ -10206,14 +10213,37 @@ class TradingPipeline:
         for p in positions or []:
             held[str(getattr(p, "symbol", "")).upper()] = p
 
-        outcomes: list[dict] = []
+        # THE SECOND WAY IN (board item 194). A seat flag is no longer the
+        # only route into this adjudication: every HELD position is also a
+        # candidate, admitted further down by this module's own
+        # `walls_between` test - the identical body
+        # `scripts/check_stored_targets.py` reports
+        # `TARGET_AIMS_PAST_A_STANDING_WALL` from, so the daily report and
+        # the live revision path can never disagree about the same chart.
+        # A guard candidate with no wall in the way is dropped silently and
+        # files nothing; only a seat flag is guaranteed a durable row,
+        # because a row per held position per session is a log nobody reads.
+        # Admission is structure alone - no LLM, no threshold, no price
+        # move, and measured from the ENTRY, so it cannot fire merely
+        # because the stock went up.
+        candidates: list[tuple[str, str, bool]] = []
         seen: set[str] = set()
         for flag in flags:
             sym = str(getattr(flag, "symbol", "") or "").strip().upper()
-            evidence = str(getattr(flag, "evidence", "") or "")
             if not sym or sym in seen:
                 continue
             seen.add(sym)
+            candidates.append(
+                (sym, str(getattr(flag, "evidence", "") or ""), False))
+        for sym in sorted(held):
+            if sym in seen:
+                continue
+            seen.add(sym)
+            candidates.append((sym, "", True))
+
+        outcomes: list[dict] = []
+        for sym, evidence, from_guard in candidates:
+            seat = TARGET_GUARD_SEAT if from_guard else flag_seat
             position = held.get(sym)
             if position is None:
                 # The seat flagged something not held. Filed, not silently
@@ -10293,6 +10323,36 @@ class TradingPipeline:
                 # clustered these zones with (docs/WORK.md item 46).
                 level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
             )
+
+            # THE GUARD GATE. A candidate nobody flagged earns its way in
+            # only when a structural level is STILL IN THE WAY between the
+            # entry and the stored target. `levels_still_in_the_way` first
+            # drops any level the close has decisively cleared, so a broken
+            # ceiling can never manufacture a wall. No bars / no ATR means
+            # no reading, and an unflagged position is then left alone
+            # rather than filed as a data fault it never asked about.
+            if from_guard:
+                entry_for_walls = (
+                    float(getattr(position, "avg_entry", 0) or 0) or None)
+                guard_walls = walls_between(
+                    stored_target=stored_target,
+                    reference_price=entry_for_walls,
+                    surviving_levels=levels_still_in_the_way(
+                        computed_levels=levels, close_price=close_price,
+                        atr=atr, is_short=is_short,
+                    ) if (levels and close_price and atr) else [],
+                    is_short=is_short,
+                )
+                if not guard_walls:
+                    continue
+                evidence = (
+                    "no seat raised this symbol; the scheduled stored-target "
+                    "guard's own finding admitted it - the stored target "
+                    f"{stored_target} sits beyond {len(guard_walls)} "
+                    "structural level(s) still in the way between the entry "
+                    f"and that target ({guard_walls}), measured from the "
+                    "entry and read off the chart"
+                )
 
             # Cross-day confirmation, keyed off THIS READ's own bar_date so
             # several intraday cycles re-reading one close are never
