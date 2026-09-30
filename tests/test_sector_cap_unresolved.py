@@ -68,6 +68,24 @@ def _buy(symbol: str, allocation_pct: float, entry: float = 100.0) -> TradeDecis
 # 1. A symbol whose sector lookup fails is NOT exempt from the cap.
 # ===========================================================================
 
+
+@pytest.fixture(autouse=True)
+def _use_the_real_sector_lookup(monkeypatch):
+    """This whole file is ABOUT `_get_sector` failing, so it needs the real one.
+
+    conftest wraps `_get_sector` to substitute a per-symbol sector wherever the
+    real call would have gone to the network and returned "Unknown" -- that
+    keeps tests which are not about sectors from collapsing into one bucket
+    now that outbound HTTP is genuinely blocked. Here the "Unknown" IS the
+    subject, so the wrapper is removed for every test in this file.
+    """
+    from src.execution import broker as _broker
+
+    real = getattr(_broker._get_sector, "real_get_sector", None)
+    if real is not None:
+        monkeypatch.setattr(_broker, "_get_sector", real)
+
+
 def test_unresolved_sector_is_not_exempt_from_the_hard_ceiling():
     """Pre-fix: `_get_sector` returning "Unknown" skipped rule 5 entirely
     (both the soft target AND the hard ceiling), so this BUY into an
