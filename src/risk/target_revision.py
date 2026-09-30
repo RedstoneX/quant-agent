@@ -95,8 +95,8 @@ Three further conditions keep it honest, all of them refusals back to
 
 WHAT LEGITIMISES ONE
 --------------------
-A structural event, never a price move and never a judgement. Two, and no
-third:
+A structural event, never a price move and never a judgement. Three, and no
+fourth:
 
 1. `TRIGGER_LEVEL_BROKEN` — the level the target was measured against has
    been closed through, and the break is CONFIRMED on two consecutive
@@ -119,6 +119,55 @@ third:
    NO NEW THRESHOLD IS INTRODUCED for "ATR changed enough". The condition is
    read off the constants the derivation already uses, because inventing a
    percentage here would be an arbitrary number on the live risk path.
+
+3. `TRIGGER_WALL_IN_FRONT_OF_TARGET` — a structural level that is STILL IN
+   THE WAY now stands between the entry and the stored target. The target
+   is aiming past a wall.
+
+   THIS IS THE MIRROR OF THE MOTIVATING CASE, and the argument for it is
+   the same argument, run backwards. Trigger 1 says: the ceiling the target
+   was measured against has GONE, so the measurement describes a chart
+   nobody is looking at. This one says: a ceiling the measurement did not
+   know about has APPEARED between the position and its target, so the
+   measurement again describes a chart nobody is looking at. In both cases
+   the set of overhead levels that `derive_structural_target` would
+   partition today differs from the set it partitioned at entry, and in
+   both cases the stored number is the answer to a question about the old
+   set. Accepting the first and refusing the second would mean the desk
+   revises when the news is good and freezes when it is bad, which is a
+   preference, not a measurement.
+
+   It is also the DOCTRINE VIOLATION the entry derivation exists to
+   prevent, arriving by a different route: "the target is the nearest wall,
+   never the level past it". A target with a standing wall in front of it
+   was not wrong when it was derived — no such wall existed — and it is
+   wrong now. Nothing in triggers 1 and 2 can see this: trigger 1 asks only
+   about the ONE level the target itself sat on, and a new level forming
+   somewhere below it leaves that level untouched; trigger 2 asks only
+   whether today's ATR has moved the stored distance outside
+   `horizon_reach`, and a pivot forming mid-way changes no ATR. Measured on
+   the live book 2026-09-30, both AAPL and NOK aim past a level that did
+   not exist on their entry dates, and both returned
+   `REFUSAL_NO_STRUCTURAL_EVENT` from this function before this trigger
+   existed.
+
+   NO NEW CONSTANT AND NO NEW DEFINITION OF "WALL". `walls_between` counts
+   only levels that have already survived `levels_still_in_the_way`, which
+   is the module's single existing answer to "is this level still
+   overhead", and a level sitting ON the stored target is excluded by
+   strict inequality — that is a target on its own wall, which is the
+   correct outcome rather than a finding. The reference point is the ENTRY,
+   never the latest close, for the same reason everything else here is
+   measured from entry: measuring the gap from today's price would make the
+   trigger fire on every position that has moved, which is a statement
+   about the price move and not about the target.
+
+   WHAT IT DOES NOT DO is exit anything, and it does not assert the wall is
+   new. Whether a level formed after entry or was there all along is not
+   recoverable from the trade row — only the resulting price is stored —
+   and it does not need to be: the re-derivation body is the same either
+   way, so a row that is really the old derivation bug gets the same
+   correct answer from this path as it does from `assess_bugfix_backfill`.
 
 WHAT A REVISION CANNOT DO
 -------------------------
@@ -160,6 +209,7 @@ __all__ = [
     "TRIGGER_LEVEL_BROKEN",
     "TRIGGER_TARGET_BEYOND_REACH",
     "TRIGGER_TARGET_INSIDE_NOISE",
+    "TRIGGER_WALL_IN_FRONT_OF_TARGET",
     "REVISION_NO_TRIGGER",
     "REVISION_BREAK_PENDING_CONFIRMATION",
     "REVISION_NO_PINNED_HORIZON",
@@ -174,6 +224,7 @@ __all__ = [
     "remaining_horizon_sessions",
     "level_backing_target",
     "levels_still_in_the_way",
+    "walls_between",
     "target_level_broken",
     "stale_reach_trigger",
     "assess_target_revision",
@@ -194,6 +245,12 @@ TRIGGER_TARGET_BEYOND_REACH = "TARGET_BEYOND_TODAYS_REACH"
 #: Today's ATR puts the stored target inside the derivation's own noise
 #: floor — it no longer clears the instrument's own daily range.
 TRIGGER_TARGET_INSIDE_NOISE = "TARGET_INSIDE_TODAYS_NOISE_FLOOR"
+
+#: A structural level still in the way now stands BETWEEN the entry and the
+#: stored target — the target is aiming past a wall. See the module
+#: docstring's trigger 3 for why this is the mirror of TRIGGER_LEVEL_BROKEN
+#: and not a new kind of event.
+TRIGGER_WALL_IN_FRONT_OF_TARGET = "STRUCTURAL_WALL_STANDING_IN_FRONT_OF_TARGET"
 
 # --- Outcomes that are NOT a revision, each recorded by name --------------
 
@@ -396,6 +453,58 @@ def levels_still_in_the_way(
         # band beneath is no longer a floor in the way.
         return [p for p in levels if close > p - margin]
     return [p for p in levels if close < p + margin]
+
+
+def walls_between(
+    *,
+    stored_target: float | None,
+    reference_price: float | None,
+    surviving_levels: list[float] | tuple[float, ...] | None,
+    is_short: bool,
+) -> list[float]:
+    """Every structural level standing BETWEEN the position and its stored
+    target, nearest first. Empty is the healthy answer.
+
+    PURE, and deliberately independent of the derivation so it can be
+    tested without bars. `surviving_levels` must already have been put
+    through `levels_still_in_the_way`, because a level price has closed
+    decisively beyond is not a wall any more and counting it would
+    manufacture a finding out of a broken ceiling.
+
+    `reference_price` is where the position is measured FROM, and every
+    caller passes the ENTRY, not the current price — the same anchor the
+    whole module holds fixed. Measuring from the latest close would flag
+    every position that has moved away from its entry, which is a
+    statement about the price move and not about the target.
+
+    A level exactly ON the target is not between anything and is excluded
+    — that is the target sitting on its own wall, which is the correct
+    outcome, not a finding. Strict inequalities on both ends do that.
+
+    THIS FUNCTION LIVES HERE, not in the script that first needed it
+    (`scripts/check_stored_targets.py`, which now imports it), because it
+    is now also the trigger test `assess_target_revision` runs. Two copies
+    of "is a wall in the way" would let the scheduled report and the live
+    revision path disagree about the same chart, which is the exact class
+    of failure this module's one-body re-derivation exists to prevent.
+    """
+    target = _finite(stored_target)
+    ref = _finite(reference_price)
+    if target is None or ref is None or target <= 0 or ref <= 0:
+        return []
+    out: list[float] = []
+    for raw in surviving_levels or ():
+        level = _finite(raw)
+        if level is None or level <= 0:
+            continue
+        if is_short:
+            # A short's target sits below; a wall is a floor it must get
+            # through on the way down.
+            if target < level < ref:
+                out.append(level)
+        elif ref < level < target:
+            out.append(level)
+    return sorted(out, reverse=bool(is_short))
 
 
 def target_level_broken(
@@ -604,16 +713,37 @@ def assess_target_revision(
             max_horizon_sessions=max_horizon_sessions,
         )
 
+    # --- Trigger 3: a level still in the way now stands between the entry
+    # and the stored target. The mirror of trigger 1 — see the module
+    # docstring. Asked LAST because it is the only one of the three whose
+    # premise is about the chart's structure rather than about the stored
+    # number's own inputs, so the cheaper, narrower tests get first refusal.
+    walls: list[float] = []
+    if not trigger:
+        walls = walls_between(
+            stored_target=target,
+            reference_price=entry,
+            surviving_levels=levels_still_in_the_way(
+                computed_levels=levels, close_price=close, atr=vol,
+                is_short=is_short,
+                break_margin_atr_multiple=break_margin_atr_multiple,
+            ),
+            is_short=is_short,
+        )
+        if walls:
+            trigger = TRIGGER_WALL_IN_FRONT_OF_TARGET
+
     if not trigger:
         return TargetRevisionOutcome(
             symbol=sym, code=REVISION_NO_TRIGGER, refusal=REVISION_NO_TRIGGER,
             prior_price=target, level_used=_finite(target_level),
             detail=(
                 "no structural event backs this flag: the level the target "
-                "was measured against is intact on the latest close, and "
-                "today's ATR still puts the target inside the same reach and "
-                "noise bounds the derivation accepted it under. A view that "
-                "there is further upside is not a trigger"
+                "was measured against is intact on the latest close, today's "
+                "ATR still puts the target inside the same reach the "
+                "derivation accepted it under, and no structural level "
+                "stands between the entry and the target. A view that there "
+                "is further upside is not a trigger"
             ),
         )
 

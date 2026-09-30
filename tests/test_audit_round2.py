@@ -337,6 +337,13 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p.broker = MagicMock()
     p.broker.get_account.return_value = {"cash": 10.0, "portfolio_value": 90_000.0}
     p.broker.get_positions.return_value = []
+    # A real live quote: the partial sale sizes itself off the SELL limit the
+    # order will actually rest at (board item 182 removed the flat 2%
+    # cushion). Without this a MagicMock quote float()s to 1.0 and the sizing
+    # would ask for one share per dollar of deficit.
+    p.broker.get_latest_quote.return_value = {
+        "bid_price": 100.5, "ask_price": 100.7,
+    }
     p.db = MagicMock()
     p._submit_protected_sell = MagicMock(return_value=(
         {"id": "s1", "status": "accepted"}, {"symbol": "SGOV"}))
@@ -350,7 +357,58 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p._force_delever(ctx)
     kwargs = p._submit_protected_sell.call_args.kwargs
     assert kwargs["label"] == "SWEEP_SELL"          # ledger isolation held
-    assert kwargs["qty"] <= 7                       # ceil(510/100.6)=6 … not 800
+    assert kwargs["qty"] <= 7                       # ceil(500/100.5)=5 … not 800
+
+    # Board item 182: the share count is the deficit divided by the price
+    # floor the order carries, so it must be enough to actually clear the
+    # deficit at that floor — not a padded guess, and not a share short.
+    assert kwargs["qty"] * 100.5 >= 500.0
+
+    # With NO live quote the order becomes a MARKET order, which has no price
+    # floor at all — so there is no worst case to size a partial sale from,
+    # and the loop sells the WHOLE position, exactly as every non-sweep
+    # de-lever target already does. An intermediate draft sized this branch
+    # off `mark x (1 - STOP_LIMIT_BUFFER_PCT)`; dividing by 0.97 is a 3.09%
+    # pad, LARGER than the 2% cushion the change removed and borrowed from an
+    # `status: arbitrary` stop-limit buffer picked for a different job.
+    p.broker.get_latest_quote.return_value = {}
+    p._submit_protected_sell.reset_mock()
+    ctx2 = RunContext.start("morning")
+    ctx2.cash = -500.0
+    ctx2.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
+                               current_price=100.6, market_value=80_480,
+                               unrealized_pnl=80, sector="Unknown")]
+    p._force_delever(ctx2)
+    no_quote = p._submit_protected_sell.call_args.kwargs
+    assert no_quote["limit_price"] is None, "no quote -> MARKET order"
+    assert no_quote["qty"] == 800, (
+        "no price floor means no defensible partial size: sell the position"
+    )
+
+    # The slice is credited at the limit it was sized off, not at the whole
+    # park's market value. `market_value` is the FULL position; crediting it
+    # for a slice overstated proceeds by everything left parked. Today that
+    # overstatement is masked — the slice is sized to cover the deficit by
+    # construction, so the break-early guard and the incompleteness alert
+    # reach the same verdict either way — but the figure the alert would
+    # REPORT to the owner was a phantom, and the masking disappears the
+    # moment proceeds are booked from an actual filled quantity.
+    p.broker.get_latest_quote.return_value = {
+        "bid_price": 100.5, "ask_price": 100.7,
+    }
+    p._submit_protected_sell.reset_mock()
+    p._alert_owner_force_delever_incomplete = MagicMock()
+    ctx3 = RunContext.start("morning")
+    ctx3.cash = -500.0
+    ctx3.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
+                               current_price=100.6, market_value=80_480,
+                               unrealized_pnl=80, sector="Unknown")]
+    p._force_delever(ctx3)
+    slice_qty = p._submit_protected_sell.call_args.kwargs["qty"]
+    assert slice_qty < 800, "this assertion is about the PARTIAL path"
+    # Sized off the limit and credited at the limit: consistent, and enough.
+    assert slice_qty * 100.5 >= 500.0
+    assert p._alert_owner_force_delever_incomplete.call_count == 0
 
 
 def test_earnings_batch_isolates_one_bad_filing():
