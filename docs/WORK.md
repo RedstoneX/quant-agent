@@ -338,9 +338,9 @@ detail: docs/BOARD_NOTES.md (item 193)
 
 **199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
 DONE WHEN:
-  - [ ] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed
-  - [ ] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening
-  - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
+  - [x] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed — MEASURED 2026-09-30 on 867 production technical-seat candidates: 97.2% at any touch count, 31.7% at the current 5-touch bar, but the nearest level below entry is TIGHTER than the flat floor for 71.8% of them, so the population the reformulation actually removes from the ATR multiple is 28.2%, not the coverage figure
+  - [x] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening — DECIDED 2026-09-30: no widening anchor ships, because capping at the flat multiple makes the rule arithmetically inert and any other cap is a newly invented money number; the far anchor reaches 10.1 ATRs measured
+  - [x] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs — the note now states it governs the WHOLE unbacked-stop population, not a residue
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
 **200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
