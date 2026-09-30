@@ -916,6 +916,44 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline.position_reviewer.review.assert_not_called()
 
 
+def test_paid_suspension_marks_morning_for_the_evening_dead_man_probe():
+    """Item 189: `paid_analysis_suspended` is a third legit PM-less
+    completion alongside `no_data` and `evidence_gate_skip` (see
+    `test_evidence_gate.py`'s `write_status.assert_called_once_with(
+    "morning", "evidence_gate_skip")`), so it must tell the evening
+    dead-man probe the same way those two already do. Before this it
+    didn't: a same-day cost-circuit trip the owner was already alerted to
+    (the morning session's own "SUSPENDED" push) came back ~16h later
+    relabelled "research ran, PM never did — killed mid-run?"."""
+    from src import decision_checkpoint as dc
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    with patch.object(dc, "write_status") as write_status:
+        result = pipeline._paid_suspension_after_late_safety(
+            "run-dd502c6f", session="morning",
+            error=PaidAnalysisSuspended("circuit open", {"suspended": True}),
+            where="post-research-circuit-open",
+        )
+    assert result["status"] == "paid_analysis_suspended"
+    write_status.assert_called_once_with("morning", "paid_analysis_suspended")
+
+
+def test_paid_suspension_does_not_mark_non_morning_sessions():
+    """The evening probe's sharpened checks only ever key on 'morning' —
+    marking midday/close would just be a dead write, so the guard mirrors
+    `_evidence_gate_skip`'s own `if session == "morning":` exactly."""
+    from src import decision_checkpoint as dc
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    with patch.object(dc, "write_status") as write_status:
+        pipeline._paid_suspension_after_late_safety(
+            "midday-abc123", session="midday",
+            error=PaidAnalysisSuspended("circuit open", {"suspended": True}),
+            where="post-research-circuit-open",
+        )
+    write_status.assert_not_called()
+
+
 def test_total_pnl_since_reset_uses_earliest_row_prior_equity(tmp_path):
     """The Telegram feed's 'total P&L' baseline: the earliest surviving
     `daily_pnl` row's account equity BEFORE that day's own P&L

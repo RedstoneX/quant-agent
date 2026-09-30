@@ -22,6 +22,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 189 retired)
+
+**In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
+
+**Why this happened.** Two other legitimate reasons the portfolio manager can be skipped (`no_data`, `evidence_gate_skip`) already leave a marker the evening check reads to stay quiet about them. The cost-circuit suspension path never left that marker, so it fell through to the probe's "unexplained kill" branch every time it happened.
+
+**What was checked, not assumed.** The production log and `journalctl` for `quant-agent-morning.service` on 2026-09-29 show a clean exit (`Result=success`, exit code 0) roughly 24 seconds after starting, immediately after `src.cost_circuit` logged two provider 503s and two charged-but-unprovable 402s on the technical-analysis call — not a kill signal, not an OOM, not an unhandled crash. The code path that produces this (`TradingPipeline._paid_suspension_after_late_safety`) is unchanged in shape since before 2026-09-26, so this is not new breakage; it is a pre-existing gap the finding surfaced.
+
+**Verified on main.** `_paid_suspension_after_late_safety` in `src/pipeline.py` now calls `decision_checkpoint.write_status("morning", "paid_analysis_suspended")` when `session == "morning"`, the same mechanism the `no_data`/`evidence_gate_skip` paths already use a few hundred lines above it. `tests/test_pipeline.py::test_paid_suspension_marks_morning_for_the_evening_dead_man_probe` and `::test_paid_suspension_does_not_mark_non_morning_sessions` cover the new behaviour and its scope. The single DONE WHEN criterion was met.
+
 ### 2026-09-26 — eight board items were already finished by merged code but their entries were never deleted (items 125, 127, 138, 148, 154, 165, 179, 180 retired)
 
 **In plain words:** eight jobs on the board had been done — in some cases days earlier — but nobody removed them, so the board kept reporting work that no longer existed. Each one was re-checked against the code that is actually live before it was struck off; nothing was taken on trust from the audit that flagged them.
