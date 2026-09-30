@@ -120,12 +120,15 @@ def test_smart_money_observation_rows_are_no_longer_demanded_of_the_seat():
 
 def test_smart_money_schema_now_matches_the_contract_its_prompt_states():
     """`config/prompts/smart_money_analyst.md` line 6 states the whole output
-    contract as five keys. The strict schema used to demand nine, four of
-    them desk-owned — the prompt and the schema disagreed."""
+    contract as six keys. The strict schema used to demand nine, four of
+    them desk-owned — the prompt and the schema disagreed. The sixth key,
+    `thesis_invalid_if`, is the seat's own falsifier: the prompt asks for it
+    and the schema must therefore demand it."""
     schema = _response_format_for(SmartMoneySynthesis)["json_schema"]["schema"]
     finding = schema["$defs"]["SmartMoneyFinding"]
     assert list(finding["properties"]) == [
         "symbol", "stance", "economic_role", "summary", "why_now",
+        "thesis_invalid_if",
     ]
     assert sorted(finding["required"]) == sorted(finding["properties"])
 

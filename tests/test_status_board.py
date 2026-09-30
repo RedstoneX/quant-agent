@@ -2709,10 +2709,13 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         "resolved items are still in docs/WORK.md; write them up in "
         "docs/INCIDENT_HISTORY.md and delete them from the queue"
     )
-    # Genuinely partial work stays where he can see it.
-    for rank in (18,):
+    # Genuinely partial work stays where he can see it. Item 18 was retired
+    # 2026-09-30 once its prompt-bulk defect was fixed and re-measured; its
+    # three unrelated residuals were carried forward as item 208, so the pin
+    # moves to 208 rather than being dropped -- the residual work must still
+    # be visible on the board.
+    for rank in (208,):
         assert by_rank[rank].bucket == "open", rank
-        assert by_rank[rank].part_done is True, rank
     # And the negated lines stay open, as they always did. (28 was the other
     # one; it is retired above.)
     # 32 was pinned here from 2026-09-13 until 2026-09-20, when the owner
