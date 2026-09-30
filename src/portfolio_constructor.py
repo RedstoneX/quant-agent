@@ -366,15 +366,32 @@ STOP_REFUSAL_SIZED_TO_ZERO = "position_sized_to_zero"
 #: `apply_gross_ceiling` so the constructor can file it with `_note_refusal`
 #: directly, the same precedent as every other code in this block.
 STOP_REFUSAL_GROSS_EXPOSURE_CEILING = "gross_exposure_ceiling_refused"
-#: Board item 10 (2026-09-14). The delta loop's churn filter
-#: (`min_trade_weight_delta`) silently `continue`s a brand-new position too
-#: small to bother with — but only records anything when one already exists
-#: to HOLD (`current_pct > 0`). A target asking to open a position below the
-#: threshold (`current_pct <= 0`) left, and still leaves, no `TradeDecision`
-#: row and no log line of any kind — not a regex miss, there was never
-#: anything for the regex to see. Named and filed rather than left mute:
-#: this is not a judgement on the idea, only on its size.
+#: RETIRED (owner ruling 2026-09-30, board item 183). This named the delta
+#: loop's churn filter: `min_trade_weight_delta`, a picked 0.5%-of-book
+#: floor, silently `continue`d past a delta below it — a brand-new position
+#: too small to bother with left no `TradeDecision` row and no log line at
+#: all, and an existing one got a HOLD instead of the trade it asked for.
+#: The owner ruled the desk gets autonomy to nudge a position whenever its
+#: own reasoning calls for it; a flat unsourced percentage that silently
+#: overrides that judgement is gone, not resized. See
+#: `config/number_ledger.yaml`'s now-deleted entry for the measurement that
+#: already showed the cost side could not justify a floor this size. Kept
+#: defined as a greppable key only because it appears in
+#: `tests/test_owner_message_cannot_mislead.py` / `tests/test_trader_feed.py`
+#: fixture data exercising the generic refusal-reporting path, which is
+#: unaffected by this constant's retirement — NOTHING EMITS IT ANY MORE.
 CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA = "delta_below_min_trade_weight"
+#: NOT a replacement for `min_trade_weight_delta`. `signed_target` and
+#: `current_pct` are both floats built from independent divisions (a live
+#: price against total_value vs. a model-typed percent), so a delta the
+#: desk did not actually ask for — "hold exactly what is held" — can land a
+#: few ULPs off zero rather than bit-exact. This is the same role
+#: `_FRACTIONAL_QTY_EPSILON` already plays for share quantities elsewhere in
+#: this codebase (`src/execution/broker.py`): it recognises floating-point
+#: representation noise as "no request", never as a size the desk judged
+#: too small. Nine orders of magnitude below the finest weight either a
+#: model or a human types, so it is not a floor on any real nudge.
+_NO_REAL_WEIGHT_DELTA_PCT = 1e-9
 #: 2026-09-17 (intra_check-44594a05). A risk-based TRIM of a held name this
 #: session did not analyse is sized from the position's live broker stop
 #: (see `_held_trim_entry_and_stop`). When there is no usable live stop the
@@ -795,8 +812,12 @@ class ConstructorConfig:
     # a model that is consistently far from the chart is a finding about the
     # model, not about the trade.
     target_divergence_warn_pct: float = 25.0
-    # Minimum delta to trigger a rebalance order (avoid tiny 0.2% churn trades).
-    min_trade_weight_delta: float = 0.5
+    # NO `min_trade_weight_delta` HERE ANY MORE (owner ruling 2026-09-30,
+    # board item 183) -- the flat 0.5%-of-book churn floor is DELETED, not
+    # resized. The desk's own delta loop now attempts every nonzero
+    # rebalance its reasoning asks for; see `CONSTRUCTOR_NO_ACTION_BELOW_
+    # MIN_DELTA` above and `_NO_REAL_WEIGHT_DELTA` below for what is kept
+    # in its place (a floating-point-noise guard, not an appetite choice).
     # --- Spec §11.2 — the gross-exposure ceiling (2026-09-01) ------------
     # The SIZING half of the ceiling. `max_gross_exposure` is in
     # HARD_BLOCK_RULES, so without this clamp an entry that breaches the
@@ -1229,58 +1250,26 @@ class PortfolioConstructor:
             # audit). Anything held with target 0 goes to the SELL/COVER
             # builder, which emits a full exit.
             closing = (signed_target == 0 and current_pct != 0)
-            if not closing and abs(delta_pct) < self.cfg.min_trade_weight_delta:
+            # Owner ruling 2026-09-30 (board item 183): the picked
+            # `min_trade_weight_delta` churn floor is GONE. Any delta the
+            # desk's own reasoning asked for is attempted below, however
+            # small — the mechanical bounds a real order can still hit
+            # (a broker minimum notional/quantity, sub-penny pricing, a
+            # non-fractionable instrument) are read from the broker itself
+            # (`AlpacaBroker.get_fractionability`, `_quantize_price`,
+            # `_is_terminal_broker_rejection` in `submit_order`), not chosen
+            # here. Only a delta that is not really there at all — floating-
+            # point noise below `_NO_REAL_WEIGHT_DELTA_PCT` — is a no-op.
+            if not closing and abs(delta_pct) < _NO_REAL_WEIGHT_DELTA_PCT:
                 # No action — emit HOLD for audit continuity so PM's intent
                 # to keep this position at its current level is recorded.
                 # (A held short with no delta gets no HOLD row — HOLD's
-                # audit bookkeeping stays long-only for this stage.)
+                # audit bookkeeping stays long-only for this stage. A
+                # brand-new position asked for at essentially zero weight
+                # is not a real request either way, so it gets neither a
+                # HOLD row nor a refusal — there is nothing to report.)
                 if current_pct > 0:
                     buys.append(self._hold_decision(target))
-                else:
-                    # Board item 10 (2026-09-14): a brand-new position too
-                    # small to bother opening got neither a TradeDecision
-                    # row (HOLD is long-only bookkeeping, above) nor any log
-                    # line at all — not a regex miss, there was nothing for
-                    # `_DropReasonCapture` to see. Not a judgement on the
-                    # idea, only on its size.
-                    #
-                    # Board item 89 defect 6 (2026-09-18). Two corrections
-                    # here, neither of which touches the threshold or the
-                    # decision it drives.
-                    #
-                    # 1. This comment used to call the threshold "an
-                    #    already-ratified config threshold". It is neither.
-                    #    `min_trade_weight_delta = 0.5` exists ONLY as a
-                    #    dataclass default in this file — it is absent from
-                    #    `config/settings.yaml`, from every document in
-                    #    `docs/`, and from any ratification record; the only
-                    #    justification written anywhere is the parenthetical
-                    #    "(avoid tiny 0.2% churn trades)" beside the default,
-                    #    which does not even match the value. It is an
-                    #    unsourced trading number of exactly the class
-                    #    `docs/WORK.md` item 90 covers. It is NOT changed
-                    #    here: this change is about reporting the drop, and
-                    #    the number is a separate owner question.
-                    # 2. The sentence the owner reads is rewritten for a
-                    #    reader who is not a developer. The measured
-                    #    figures are unchanged and nothing is rounded,
-                    #    estimated or added; "No existing position to record
-                    #    as a HOLD" was internal bookkeeping and is gone.
-                    self._note_refusal(
-                        sym, target.direction,
-                        CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA,
-                        f"the desk decided to open this but the position it "
-                        f"asked for was {abs(delta_pct):.2f}% of the "
-                        f"account, and the desk does not place a new trade "
-                        f"smaller than {self.cfg.min_trade_weight_delta:.2f}"
-                        f"% of the account. The whole plan for this name "
-                        f"was dropped on size alone — nothing was judged "
-                        f"wrong with the idea. Nothing already held was "
-                        f"touched.",
-                    )
-                # drop-reason: both arms above are accounted for — a held
-                # position leaves a HOLD row (the symbol survives), a
-                # brand-new one files CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA.
                 continue
 
             if delta_pct < 0:

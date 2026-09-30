@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 140, (
+    assert MAX_ARBITRARY_ENTRIES == 139, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -318,7 +318,20 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "doing, the margin a completed daily close must clear a structural "
         "level by. Same value, no behaviour change; item 70 requires the two "
         "jobs to become two independently justified numbers and forbids "
-        "collapsing them to keep the count down, so the count rises by one."
+        "collapsing them to keep the count down, so the count rises by one. "
+        "140 -> 139 on 2026-09-30, board item 183 (owner ruling): "
+        "`src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta` "
+        "(0.5) was DELETED rather than sourced. The owner ruled the desk gets "
+        "autonomy to nudge a position whenever its own reasoning calls for it, "
+        "so a flat, picked percentage that silently overrode that judgement is "
+        "gone, not resized or lowered. This entry's own 2026-09-26 measurement "
+        "had already shown the cost side (execution slippage; Alpaca charges "
+        "no stock commission) could not justify any floor of this size -- a "
+        "$50 order on a $10k book costs about a cent -- leaving only appetite "
+        "unmeasured, and appetite is exactly what this ruling hands to the "
+        "desk instead of to a constant. No replacement percentage was "
+        "substituted. A row left the ledger, so the count is lowered in the "
+        "same commit."
     )
 
 

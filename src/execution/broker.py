@@ -4739,7 +4739,38 @@ class AlpacaBroker:
                 time_in_force=TimeInForce.DAY,
             )
 
-        order = self.client.submit_order(request)
+        try:
+            order = self.client.submit_order(request)
+        except Exception as exc:  # noqa: BLE001
+            # Owner ruling 2026-09-30 (board item 183): the constructor's
+            # flat `min_trade_weight_delta` churn floor is gone, so a
+            # genuinely tiny, desk-requested nudge now reaches THIS call for
+            # the first time — and the broker has its own real, documented
+            # floors this desk never chose: a $1 minimum notional on a BUY
+            # entry (https://alpaca.markets/support/can-we-submit-orders-
+            # smaller-than-1-usd-in-notional-value), Alpaca's tick size
+            # (already normalized above by `_quantize_price`), and
+            # fractional support per asset (already read live by
+            # `get_fractionability`). `_is_terminal_broker_rejection` is the
+            # SAME status-code test (APIError 400/404/422) board item 129
+            # already uses to tell a deterministic rejection from a
+            # transient one (429/5xx/timeout) for stop placement — reused
+            # here rather than re-decided, so a genuine "the broker will
+            # never accept this" answer is read off the API's own response,
+            # not guessed at. A transient failure still propagates, exactly
+            # as before this change, so the caller's orphan-sweep recovery
+            # (src/pipeline_stages.py) still runs for the ambiguous case
+            # where the broker may or may not have the order.
+            if _is_terminal_broker_rejection(exc):
+                logger.warning(
+                    "Order rejected by broker for %s %s %s: %s",
+                    side, qty, symbol, exc,
+                )
+                return {
+                    "id": None, "status": "rejected_by_broker",
+                    "symbol": internal_symbol, "detail": str(exc),
+                }
+            raise
         bracket_info = f" [SL=${stop_loss_price} to be placed on fill]" if use_stop else ""
         logger.info("Order submitted: %s %s %s @ %s%s — status: %s",
                      side, qty, symbol, limit_price or "market", bracket_info,
