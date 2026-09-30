@@ -20,13 +20,10 @@ Design contract (mirrors CLAUDE.md 金额/仓位语义):
    - `_force_delever` liquidates it FIRST (before any real long) when the
      account drifts into margin.
 
-2. Deterministic and zero-LLM. Two bookend operations:
-   - `fund_buys(ctx, planned_notional)` — before the BUY phase, sell just
-     enough of the vehicle that raw cash covers the planned notional;
-   - `park_excess(ctx)` — after a session's trading completes, buy the
-     vehicle with cash above the configured reserve, minus the notional of
-     any still-open BUY orders (Alpaca's `cash` does not subtract open-order
-     holds; sweeping that cash would starve pending fills).
+2. Deterministic and zero-LLM. Both bookend operations — the pre-BUY
+   funding sale and the end-of-session parking purchase — were REMOVED in
+   docs/WORK.md item 190. What remains is `release_retired_vehicle`, the
+   one-way exit for a vehicle still held after the sweep was switched off.
 
 3. SELL discipline: funding sells go through
    `pipeline._submit_protected_sell` + `_finalize_pending_protections`,
@@ -150,8 +147,8 @@ class CashSweeper:
 
         Owner mandate 2026-09-17: fully invested, nothing in T-bills. With
         `cash_sweep.enabled: false` every other sweep hook goes inert —
-        `fund_buys` no longer releases the vehicle, `park_excess` no longer
-        buys it, and `split_positions` stops hiding it. A vehicle bought
+        the bookend sweep operations are gone entirely (item 190) and
+        `split_positions` stops hiding it. A vehicle bought
         before the switch would otherwise sit as a stopless, thesis-less
         position that nothing is designed to sell. This is the one path that
         does: a deterministic, zero-LLM full exit, recorded as SWEEP_SELL so

@@ -1612,10 +1612,10 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         )
 
         reserve_line = (
-            f"\n  (of which ${reserve_balance:,.2f} is parked in the "
-            f"cash-equivalent sweep vehicle and is auto-liquidated before "
-            f"any BUY executes — already included in Cash Balance above, "
-            f"do not add it again)"
+            f"\n  (a further ${reserve_balance:,.2f} is parked in the "
+            f"cash-equivalent sweep vehicle; the desk does NOT sell it to "
+            f"fund a BUY, and it is NOT part of the Cash Balance above — "
+            f"do not size against it)"
             if reserve_balance > 0 else ""
         )
         # 2026-09-17 fix: this used to hardcode "no margin" regardless of

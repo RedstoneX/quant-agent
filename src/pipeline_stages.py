@@ -1758,7 +1758,7 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     Auth is omitted when the kept socket already started during Risk — that
     budget began at hub open. Funding timeouts are the cash-sweep step's
     own ceiling; they must not be added as leftover slack on the submit
-    path after fund_buys has already returned. Call this AFTER funding
+    path after the funding step has already returned. Call this AFTER funding
     with will_fund=False.
 
     Auth is also omitted when the socket is switched off entirely
@@ -6359,10 +6359,11 @@ class DecisionStage:
             ctx.macro_analysis, ctx.total_value, ctx.deployable_cash,
             ctx.last_equity
 
-    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan, and the
-    plan may spend the sweep vehicle because `fund_buys` converts it before
-    the BUY phase. Raw broker cash here would hide the parked book from PM
-    and RM and cap the desk at its reserve. The docstring said `ctx.cash`;
+    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan against
+    everything the account owns, parked sweep value included. Raw broker cash
+    here would hide the parked book from PM and RM and cap the desk at its
+    reserve. Since item 190 nothing converts the vehicle automatically before
+    the BUY phase. The docstring said `ctx.cash`;
     the code has read `deployable_cash` since the 2026-08-19 tranche.
     Writes: ctx.portfolio_decision (with .targets AND .decisions populated),
             ctx.facts
@@ -8986,12 +8987,11 @@ class ExecutionStage:
         # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
         # session with meaningful BUYs this sale IS load-bearing — the raw
-        # cash on hand is typically just the reserve. `fund_buys` sells
-        # enough of the vehicle to cover the planned notional, then waits
-        # for the fill and CONFIRMS the observed rise in broker cash (a
-        # filled sale credits `cash` immediately; the 2026-08-19 loss of a
-        # fully-approved plan was a 51s fill outliving a 15s wait, not
-        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S).
+        # cash on hand is typically just the reserve. The pre-BUY funding
+        # sale that used to cover the planned notional was removed in item
+        # 190, so nothing converts the vehicle automatically now (the
+        # 2026-08-19 loss of a fully-approved plan was a 51s fill outliving
+        # a 15s wait, not settlement).
         #
         # Since margin went on (2026-09-02) the sale is no longer what makes
         # a BUY POSSIBLE — the entry budget below is ladder headroom, and a
