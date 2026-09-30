@@ -2160,7 +2160,16 @@ def test_evening_is_silent_about_the_expected_overnight_fractional_state(
 ):
     """The sub-share DAY stop lapsing at the close happens to every
     fractional position every night. A line that never varies is not
-    information — the owner called it redundant and it now says nothing."""
+    information — the owner called it redundant and it raises no banner.
+
+    SILENT IN THE BANNERS, NOT SILENT ABOUT THE NUMBER. The owner accepted
+    this exposure on the condition that the dollars stay observable, and
+    from 2026-09-17 until now they were observable nowhere he reads — the
+    2026-09-29 evening message carried no figure while $2,264 of remainder
+    sat unprotected. The figure is back inside the expandable DETAILS
+    block, which is not a banner and costs nothing on the nights it is
+    dull.
+    """
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
     result = _evening_result(stop_coverage_gaps=[
@@ -2168,9 +2177,54 @@ def test_evening_is_silent_about_the_expected_overnight_fractional_state(
     ])
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
-    assert "unprotected" not in msg
-    assert "by design" not in msg
     assert "NO STOP" not in msg
+    # No mark of any severity is attached to it.
+    banners, _, details = msg.partition("<blockquote expandable>")
+    assert "unprotected" not in banners
+    assert "Unprotected overnight, as designed: $512.88 across 2 holding(s)" in details
+    assert "AAPL $256.44" in details and "AMD $256.44" in details
+
+
+def test_evening_detail_names_every_unprotected_remainder_not_the_first_six(
+    tmp_path, monkeypatch,
+):
+    """The live case this was found on: 2026-09-29 held NINE remainders.
+    A count of nine followed by six names is a sentence that does not add
+    up, and the old banner truncated at six with nothing saying so."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    symbols = ["AAPL", "AMD", "ETN", "META", "MRVL", "NET", "NOK", "RKLB", "VLO"]
+    result = _evening_result(stop_coverage_gaps=[
+        _expected_fractional_gap(sym) for sym in symbols
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "across 9 holding(s)" in msg
+    for symbol in symbols:
+        assert f"{symbol} $256.44" in msg
+
+
+def test_evening_detail_excludes_the_abnormal_rows_the_banner_already_owns(
+    tmp_path, monkeypatch,
+):
+    """A sub-one-share holding is stopless in WHOLE, gets the 🛑 banner,
+    and must not also be summed into the by-design detail — the same shares
+    counted in two places would overstate the accepted exposure."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[
+        _expected_fractional_gap("AAPL"),
+        {
+            "symbol": "BRK-B", "held_qty": 0.44, "covered_qty": 0.0,
+            "coverage": "fractional_overnight", "uncovered_qty": 0.44,
+            "unprotected_value": 223.74, "repaired": False,
+        },
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑 NO STOP OVERNIGHT" in msg
+    assert "Unprotected overnight, as designed: $256.44 across 1 holding(s)" in msg
+    assert "BRK-B $223.74" not in msg
 
 
 def test_evening_speaks_when_a_sub_one_share_holding_has_no_stop(tmp_path, monkeypatch):

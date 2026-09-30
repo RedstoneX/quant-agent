@@ -2387,6 +2387,80 @@ def _evening_fractional_line(result: dict) -> str | None:
     )
 
 
+def _evening_overnight_remainder_detail(result: dict) -> str | None:
+    """The DOLLARS unprotected overnight on sub-share remainders, as a fact
+    inside DETAILS — never a banner.
+
+    TWO RATIFIED THINGS WERE IN CONFLICT AND ONE OF THEM HAD QUIETLY LOST.
+
+    The owner accepted the hybrid fractional design (spec §11.1) on an
+    explicit condition, recorded in `src/notifier.py`
+    (`_append_fractional_overnight_line`): "a number he can look at beats a
+    guarantee he has to trust." Then on 2026-09-17 he ruled the nightly
+    BANNER off, because a banner that says the same sentence every night is
+    not information (`_evening_fractional_line`). That ruling is right and
+    is not touched here: the banner stays suppressed for the expected state.
+
+    What went with it was the number. Measured 2026-09-30 against the live
+    desk: the 2026-09-29 evening message (`notifier_sends` id 199) carried
+    no figure at all while nine holdings sat with $2,264 of sub-share
+    remainder unprotected overnight, and nothing in `src/api/` or
+    `frontend/src/` renders stop coverage either — so the figure the owner
+    made a condition of accepting the exposure was observable on no surface
+    he reads. Only the 30-minute sweep's log line had it.
+
+    So the number goes back, in the one place a never-varying sentence
+    costs nothing: inside the expandable DETAILS block. No mark, no
+    severity, nothing to act on — the whole-share leg is still standing
+    watch and the DAY leg is re-placed at the next open, exactly as
+    designed.
+
+    Scope is deliberately the EXPECTED state only. A remainder whose
+    position has no whole-share leg at all, or one the sweep recorded as
+    replaced and did not get back, is abnormal, is the banner's business
+    (`_evening_fractional_line`), and is excluded here so the same shares
+    are never counted in two places.
+    """
+    from src.notifier import _gap_is_expected_fractional
+
+    gaps = result.get("stop_coverage_gaps")
+    if not isinstance(gaps, list):
+        return None
+    rows: list[dict] = []
+    for gap in gaps:
+        if not isinstance(gap, dict) or not _gap_is_expected_fractional(gap):
+            continue
+        if str(gap.get("coverage", "")).strip().lower() != "fractional_overnight":
+            continue
+        covered = _number(gap.get("covered_qty"))
+        # covered <= 0 is the abnormal sub-one-share case the banner above
+        # already reports. Excluded, not silently merged.
+        if covered is None or covered <= 0:
+            continue
+        rows.append(gap)
+    if not rows:
+        return None
+    total = 0.0
+    for gap in rows:
+        value = _number(gap.get("unprotected_value"))
+        if value is not None:
+            total += value
+    # Every name, not the first few: this sits inside the expandable block,
+    # which `_wrap_details` sizes against the message budget, and a count
+    # of nine followed by six names is a sentence that does not add up.
+    named = ", ".join(
+        f"{gap.get('symbol', '?')} ${(_number(gap.get('unprotected_value')) or 0):,.2f}"
+        for gap in rows
+    )
+    return (
+        f"Unprotected overnight, as designed: ${total:,.2f} across "
+        f"{len(rows)} holding(s) — the sub-share remainder only, whose DAY "
+        f"stop the broker expires at the close and the desk re-places at "
+        f"the next open. The whole shares are still covered by their GTC "
+        f"stop. {named}."
+    )
+
+
 def _append_evening_banners(lines: list[str], result: dict) -> None:
     """Everything that must be read before the numbers. Same conditions the
     base formatter raised, in the same order, minus the nightly fractional
@@ -2761,6 +2835,9 @@ def _format_evening(result: dict, elapsed: float) -> str:
             for action in actions[:5]:
                 if isinstance(action, str) and action.strip():
                     detail.append(f"   • {_clip(action, 400)}")
+        overnight = _evening_overnight_remainder_detail(result)
+        if overnight:
+            detail.append(overnight)
         meta = _evening_meta_line(result.get("auto_meta"))
         if meta:
             detail.append(meta)
