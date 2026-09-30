@@ -430,11 +430,25 @@ target — or vice versa for a long — fails grounding.
 ### Step 5: Position Sizing
 
 **Base RISK allocation by conviction** (from Step 4). These are shares
-of equity the idea may LOSE if stopped, not weights it may occupy:
+of equity the idea may LOSE if stopped, not weights it may occupy.
 
-- High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
-- Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
-- Low conviction: 0.5-1.0% or skip
+**There is no conviction-to-percentage grid here, and that absence is
+deliberate.** A three-rung band table used to sit on this line. It was
+hand-typed, no code ever computed it, no measurement of this desk's own record
+produced it and no published source supports it, so it was deleted rather than
+re-chosen (`docs/WORK.md` item 107(b)). Pick each name's
+`risk_allocation_pct` yourself, anywhere between the `min_position_risk_pct`
+floor and the `max_position_risk_pct` cap below, and make the pick answerable:
+
+- `sizing_logic` must say WHY this name earns this much risk — which seats
+  agree, what the thesis is, and what observation would falsify it. A number
+  with no stated reason is the defect this grid used to hide.
+- Keep one run's plan internally ordered: a name you call higher-conviction may
+  not carry LESS risk than one you call lower-conviction in the same plan,
+  unless you NAME the constraint that forced it (cluster budget, sector cap,
+  stop distance, event window).
+- A conviction you cannot state a falsifier for is not high conviction, and a
+  thesis you cannot state at all is a skip, not a small position.
 
 **Never a balance reason (owner mandate, 2026-09-25).** "Diversifies away from
 Technology", "improves non-Tech exposure", "better sector shape" or any
@@ -515,21 +529,23 @@ a name, never raise it.
   it (correlated names sharing one bet's budget). No fourth number is
   introduced here.
 
-- **Agreement ceiling (Phase 9.4, 2026-08-30; signed 2026-09-02), on top
-  of the `max_position_risk_pct` cap.** However many sources you cite as `supports`, the
-  CONSTRUCTOR additionally ceilings `risk_allocation_pct` by the NET
-  number of independent sources in the canonical registry — those aligned
-  with your direction MINUS those opposed to it. See "Independent Source
-  Agreement" above for this session's per-symbol counts and nets. Today's
-  schedule: a net of one source (commonly Technical alone) ceilings at
-  3.0%; net two at 4.0%; net three or more at the full 5.0% envelope.
-  **A net of zero or below produces no order at all** — a seat arguing
-  the other way subtracts, and three-for/three-against is not a small
-  idea, it is not an idea. This is deterministic, composes with
-  everything else in this section, and can only ever REDUCE what you
-  asked for, never raise it — ask for what the idea has earned. When it
-  binds, the order's reasoning will say so; that is expected, not an
-  error, exactly like the single-name notional clamp above.
+- **Net independent-source agreement — a REFUSAL and a ranking, NOT a
+  graduated ceiling.** However many sources you cite as `supports`, the
+  deterministic layer computes the NET number of independent sources in the
+  canonical registry — those aligned with your direction MINUS those opposed
+  to it. See "Independent Source Agreement" above for this session's per-symbol
+  counts and nets. **A net of zero or below produces no order at all**
+  (`agreement_refuses_trade`, `src/risk/rules.py`) — a seat arguing the other
+  way subtracts, and three-for/three-against is not a small idea, it is not an
+  idea. **Above zero, the net does not scale your permitted risk by any
+  schedule.** The graduated per-net-count ceiling that once did was retired
+  with `agreement_ceiling_pct` on 2026-09-14 (the settings key is now REFUSED
+  at config load), because the square-root-of-n curve behind it assumes five
+  INDEPENDENT estimates and these seats read overlapping evidence. What
+  agreement still does above zero is ORDER which candidates get funded first
+  (`rank_verdicts` / `allocate_risk_budget`). Nothing here raises what you
+  asked for; the bounds above zero are the `max_position_risk_pct` envelope
+  and the portfolio budget allocator.
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; a `breakout` leader is not judged on reward:risk at all, and a `range` leader is not skipped for a made-up ratio — per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence. **There is no sizing ladder by seat count** — `agreement_ceiling_pct` was RETIRED on 2026-09-14 because the square-root-of-n curve behind it assumes five INDEPENDENT estimates and these seats are not independent. What survives is the REFUSAL only: if the evidence does not net out in favour of the trade, it is not taken at all. So size the starter on your own conviction under the hard caps below; a second confirming seat is a reason for more conviction, not a rung being unlocked. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
@@ -563,8 +579,12 @@ real support and there is a real resistance above it that is genuinely
 likely to slow the stock. Reward:risk measured between those two is
 information about this specific trade, and you should use it as such:
 
-- **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
-  risk allocation (still ≤ the `max_position_risk_pct` single-name risk cap)
+- **A fat computed ratio is ranking information, not a size adder.** There is
+  no ratio at which this sheet grants extra risk. A bonus used to sit here at a
+  fixed cut point with a fixed uplift; both figures were invented, nothing
+  computed them, and the same paragraph below already explains why no ratio on
+  this desk carries a measured hit rate to spend. Prefer the better-paying
+  candidate when you must choose; do not pay it a premium.
 - **A thinner computed ratio** — information about this trade, not a
   cutoff. R/R X breaks even at a hit rate of `1/(1+X)`: 1.5 needs 40%,
   2.0 needs 33%, 3.0 needs 25%, and this desk has no measured per-setup
@@ -593,11 +613,16 @@ short.
 at source (`tech_analyst.md` "Signal Freshness"), so a `low` signal
 already sizes 0-5% via Step 4 — no extra cut needed.
 
-The defense-in-depth case: **if Tech still emits `conviction: high` on
-a BUY with `signal_age_days ≥ 8` AND no progress toward target**, Tech
-failed to downgrade — cut allocation 50% vs base AND name the override
-in `sizing_logic`. HOLD on a stale BUY with no fresh catalyst → trim
-or rotate per "How much to be invested".
+The defense-in-depth case: **if Tech still emits `conviction: high` on a BUY
+whose `age` has run past the signal-validity horizon Tech itself states for
+that setup, AND price has made no progress toward the reference target**, Tech
+failed to downgrade and its conviction is not evidence you may take at face
+value. Do not apply a fixed haircut — there is no measured one, and the flat
+halving that used to sit here was hand-typed with no derivation. Size the name
+on the evidence that survives once that read is discounted, say in
+`sizing_logic` that you overrode a stale Tech `high` and on what grounds, and
+skip it outright if nothing is left. HOLD on a stale BUY with no fresh
+catalyst → trim or rotate per "How much to be invested".
 
 **Opportunity Rotation (deterministic, Phase 14)**: this covers ONE stale
 signal in isolation. When capital is genuinely constrained, a separate
@@ -653,25 +678,29 @@ consistently wrong; follow TA's numbers literally.
 
 **Sizing formula — explicit ordering of multipliers**
 
-Compute each BUY's `risk_allocation_pct` in this exact order so two
-mornings with the same inputs produce the same number:
+**There is no multiplier chain any more, and nothing to compute in order.**
+This block used to hold one: a conviction-to-base lookup, a reward:risk bonus
+and a staleness halving, multiplied together. Every factor in it was
+hand-typed. No code ever evaluated any of them, none was ever measured against
+this desk's own record and none carried a source, so the chain is deleted
+rather than re-numbered (`docs/WORK.md` item 107(b)). What remains is one
+judgement and one hard cap:
 
 ```
-base       = conviction_to_base(alignment)
-             # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
-             # low=0.75 (mid of 0.5-1.0)
-rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
-stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-
-raw  = base × rr_mult × stale
-risk = min(raw, {{risk.max_position_risk_pct}})   # single-name hard cap
+base = the risk YOU judge this name has earned, justified in `sizing_logic`
+risk = min(base, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
+
+Determinism does not come from a formula here; it comes from the reason. Two
+mornings with the same inputs should produce the same number because the same
+argument supports it, and `sizing_logic` has to carry that argument.
 
 There is **no separate term here for a `JUST FILED` name.** There used to
 be, and it was a hand-typed number with no derivation behind it (item 62,
 settled 2026-09-14). A just-filed name needs none: it carries no earnings
-stance at all, so it arrives at this formula with one fewer agreeing seat,
-`alignment` is lower, and `base` is lower for that reason alone. The
+stance at all, so it arrives with one fewer agreeing seat, your judged
+conviction is lower, and the risk you can defend is lower for that reason
+alone. The
 constructor then re-derives the same count. It does NOT price it against a
 ladder — the agreement sizing ladder was retired 2026-09-14 and only the
 refusal survives. Sizing a just-filed name down twice, once through the seat
@@ -683,11 +712,11 @@ floor the idea is not worth trading: it pays full commission and full
 attention for an immaterial payoff, and the constructor will deny it
 anyway.
 
-**Nothing in this formula refers to the stop distance, the share price
+**Your risk figure does not refer to the stop distance, the share price
 or the position's weight.** That is deliberate. Those belong to the
 size calculation, which is not yours.
 
-There is deliberately **no `drawdown` term** in this formula, and as of
+There is deliberately **no drawdown term** in your figure either, and as of
 2026-09-20 there is no drawdown haircut anywhere downstream either: the
 ×0.5 halving the engine used to apply after you submitted was removed with
 the rest of the account-level loss alarms on the owner's instruction
@@ -696,11 +725,12 @@ shrink your number on a rolling-return reading, so do not size as though
 something will. `scale_all_buys` is unaffected and is still applied after
 you submit — do not pre-apply that one.
 
-Use the mid of each conviction's range as the formula's `base`; you
-may shade ±0.5pp inside the range based on Step 4 alignment quality
-(at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
-that's what `rr_mult` and `evening` are for. RM's `scale_all_buys` is
-applied AFTER you submit, so don't pre-scale by it.
+Step 4 alignment quality is a reason to argue for MORE or LESS risk, and it
+belongs in the argument, not in a shading allowance: more agreeing sources with
+a thesis each can state, fewer conflicts, a clearer falsifier → a bigger number
+you can defend. There is no fixed percentage-point shade any more; the one that
+sat here was invented and merely disguised the judgement as arithmetic. RM's
+`scale_all_buys` is applied AFTER you submit, so don't pre-scale by it.
 
 ## The audit trail you must produce
 

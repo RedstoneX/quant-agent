@@ -218,3 +218,66 @@ retired:
       - docs/WORK.md
       - docs/BOARD_NOTES.md
       - tests/test_retired_mechanisms.py
+
+  - name: the prompt-only sizing and conviction arithmetic (PM + Technical)
+    retired: 2026-09-26
+    why: >-
+      NONE OF IT WAS EVER CODE. Board item 107(b): the portfolio manager's
+      sheet carried a whole arithmetic of sizing that no Python evaluated --
+      a conviction-to-base lookup (high=3.0 / moderate=1.75 / low=0.75, the
+      mids of hand-typed 2.0-4.0 / 1.0-2.5 / 0.5-1.0 bands), a reward:risk
+      bonus (x1.25 at R/R >= 3.0, restated elsewhere as "add 20-30%"), a
+      x0.5 halving for a Tech `high` at `signal_age_days >= 8`, a permitted
+      +/-0.5pp shade inside the band, and a per-net-source ceiling schedule
+      (net one 3.0%, net two 4.0%, net three 5.0%) attributed to the
+      CONSTRUCTOR although `agreement_ceiling_pct` was retired 2026-09-14
+      and its settings key is refused at load. The technical sheet carried
+      the matching set: `conviction: high` gated on a counted "3+ aligned
+      signals", three fixed age brackets (1-3 / 4-7 / 8+ days), forward-PE
+      40x/60x and P/S 15/25 "stretched"/"nosebleed" tiers, and a worked
+      example claiming a computed ratio "passes the >= 2.0 discipline"
+      three sections after the same sheet says those floors were invented
+      and eliminated. Every figure was hand-typed, none appears in
+      `config/number_ledger.yaml`, none is computed anywhere in `src/`, and
+      each of them sized or ranked real trades through the model that read
+      them. They are DELETED, not re-chosen: picking a different figure
+      would be the same defect. What replaced them is an instruction --
+      name the agreeing signals and the falsifier, judge staleness against
+      the `expected_horizon_sessions` the seat itself emits, disclose a
+      valuation multiple rather than adjusting on it, and justify the risk
+      figure in `sizing_logic` between the ledgered
+      `min_position_risk_pct` floor and `max_position_risk_pct` cap.
+    symbols:
+      - conviction_to_base
+      - rr_bonus
+      - rr_mult
+    phrases:
+      - "3+ aligned signals"
+      - "mid of 2.0-4.0"
+      - "mid of 1.0-2.5"
+      - "mid of 0.5-1.0"
+      - "0.25 if r/r"
+      - "add 20-30% to the base"
+      - "signal_age_days ≥ 8"
+      - "signal_age_days >= 8"
+      - "±0.5pp inside the range"
+      - "+/-0.5pp inside the range"
+      - "same rating, age 1-3 days"
+      - "same rating, age 4-7 days"
+      - "age 8+ days without progress"
+      - "forward pe > 40x"
+      - "forward pe > 60x"
+      - "p/s > 15"
+      - "p/s > 25"
+      - "r/r ≥ 3.0"
+      - "r/r >= 3.0"
+      - "net two at 4.0%"
+      - "≥ 2.0 discipline"
+      - ">= 2.0 discipline"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
