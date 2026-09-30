@@ -1181,12 +1181,27 @@ class Database:
         _ensure_column("trades", "stop_basis", "stop_basis TEXT")
         # `max_adverse_excursion` — the worst price the position reached
         # against its entry while open, in price units, accumulated by
-        # `update_adverse_excursion` from each session's position snapshot.
+        # `_accumulate_excursions` from each session's position snapshot.
         # A snapshot-frequency floor on the true MAE, never an overstatement:
         # intraday spikes between snapshots are missed, so a reading that
         # says the floor WAS violated is trustworthy while one that says it
         # was not is only "not observed". Any reader must carry that caveat.
         _ensure_column("trades", "max_adverse_excursion", "max_adverse_excursion REAL")
+        # `max_favourable_excursion` — the best price the position reached IN
+        # ITS FAVOUR against its entry while open, in price units, the exact
+        # mirror of `max_adverse_excursion` and accumulated by the same
+        # `_accumulate_excursions` call from the same snapshot. It is the
+        # other half of the falsification question and cannot be recovered
+        # afterwards either: without it, a stop-out recorded alongside a wide
+        # adverse excursion cannot be told apart from one that first ran a
+        # long way in the desk's favour and gave it all back. Carries the
+        # SAME snapshot-frequency caveat (a floor on the true MFE, never an
+        # overstatement) and the SAME hard limit on use — falsification of
+        # the ratified floor only, never a value to optimise a multiplier
+        # against. NULL on every legacy row and every non-entry row.
+        _ensure_column(
+            "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
+        )
         _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
         _ensure_column("trades", "conviction", "conviction TEXT")
@@ -1464,7 +1479,7 @@ class Database:
         `entry_atr` / `stop_basis` are STOP-FLOOR EVIDENCE, pinned at entry
         only, and are recorded for one purpose: so a future pass can ask
         whether the ratified minimum stop width was ever VIOLATED in
-        practice. See `update_adverse_excursion` for the third leg (MAE) and
+        practice. See `_accumulate_excursions` for the MAE/MFE legs and
         for the explicit limits on what this data may be used for.
 
 
@@ -2472,13 +2487,15 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def _accumulate_adverse_excursion(self, position) -> None:
-        """Widen the recorded worst-against-entry excursion for one holding.
+    def _accumulate_excursions(self, position) -> None:
+        """Widen the recorded worst- and best-against-entry excursions.
 
-        STOP-FLOOR EVIDENCE, RECORDING ONLY. This is the third of the three
-        facts the desk needs before it can ever check its ratified minimum
-        stop width against its own trades (the other two, `entry_atr` and
-        `stop_basis`, are pinned at entry by `insert_trade`). Read the
+        STOP-FLOOR EVIDENCE, RECORDING ONLY. These are the running half of
+        the facts the desk needs before it can ever check its ratified
+        minimum stop width against its own trades (the pinned half,
+        `entry_atr`, `initial_stop_loss` and `stop_basis`, is written at
+        entry by `insert_trade`; the resolved half, `realized_pnl` and
+        `exit_reason_category`, lands when the position closes). Read the
         `max_adverse_excursion` migration note in `_migrate` for the hard
         limit on its use: it may show whether the floor was ever VIOLATED in
         practice, and it may NOT be optimised against to produce a new
@@ -2508,20 +2525,28 @@ class Database:
         if entry <= 0 or last <= 0 or qty == 0:
             return
         # Excursion AGAINST the position, in price units. Never negative:
-        # a position in profit contributes nothing.
-        excursion = (entry - last) if qty > 0 else (last - entry)
-        if excursion <= 0:
-            return
-        self.conn.execute(
-            "UPDATE trades SET max_adverse_excursion = ? "
-            "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
-            "AND entry_atr IS NOT NULL "
-            "AND (max_adverse_excursion IS NULL OR max_adverse_excursion < ?) "
-            "AND position_id IN ("
-            "  SELECT position_id FROM trades WHERE symbol = ? "
-            "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
-            (excursion, position.symbol, excursion, position.symbol),
-        )
+        # a position in profit contributes nothing. The favourable leg is
+        # its exact mirror, and at most one of the two is positive at any
+        # snapshot, so each column widens only on the snapshots that
+        # actually evidence it.
+        adverse = (entry - last) if qty > 0 else (last - entry)
+        favourable = -adverse
+        for column, excursion in (
+            ("max_adverse_excursion", adverse),
+            ("max_favourable_excursion", favourable),
+        ):
+            if excursion <= 0:
+                continue
+            self.conn.execute(
+                f"UPDATE trades SET {column} = ? "  # noqa: S608 - literal, not input
+                "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
+                "AND entry_atr IS NOT NULL "
+                f"AND ({column} IS NULL OR {column} < ?) "
+                "AND position_id IN ("
+                "  SELECT position_id FROM trades WHERE symbol = ? "
+                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
+                (excursion, position.symbol, excursion, position.symbol),
+            )
 
     def sync_positions(self, positions) -> None:
         """Replace positions table with a fresh broker snapshot.
@@ -2568,10 +2593,10 @@ class Database:
                     # disagree, and swallowed on error so a recording problem
                     # can never fail a position sync.
                     try:
-                        self._accumulate_adverse_excursion(p)
+                        self._accumulate_excursions(p)
                     except Exception:
                         logger.debug(
-                            "adverse-excursion recording skipped for %s",
+                            "excursion recording skipped for %s",
                             getattr(p, "symbol", "?"), exc_info=True,
                         )
                 self.conn.commit()
