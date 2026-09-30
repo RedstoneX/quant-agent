@@ -296,6 +296,21 @@ numbers:
       rests unfilled at the ceiling is now a recorded outcome rather than a
       refusal, so the rate at which 40bp is too tight to fill becomes
       measurable from the desk's own orders for the first time.
+      RATIFIED 2026-09-30 as owner appetite, board item 183, the last of
+      that item's five order-placement gates: the 2026-09-26 measurement
+      leaves a band of roughly 32bp to 390bp inside which the desk's own
+      filled and refused orders decide every observed case identically,
+      so nothing in the data or in published practice picks a figure and
+      40 is a choice, not a derivation. It is recorded as a dial rather
+      than changed, because inventing a replacement inside an
+      indifference band would be the same arbitrary act with a newer
+      date. Two successor routes stay open and are written into the
+      board item rather than lost here: reading the ceiling off each
+      name's own Corwin & Schultz half-spread once the reference-to-
+      submission drift term has its own instrument-read basis, and re-
+      measuring the untruncated fill rate now that the deleted 2% ask-
+      skip lets a too-tight entry rest and be recorded instead of being
+      pre-refused.
     open_question: >-
       The distribution is now measured and it does not pick a percentile,
       because the belt censors its own tail. Answering this needs data the
