@@ -497,7 +497,11 @@ numbers:
       appetite 2026-09-25 (delegated to the adversary). Ratified, not sourced:
       40% is the crowding the owner accepts in one correlated cluster, but it
       still depends on a cluster definition whose own threshold
-      (CLUSTER_CORRELATION_THRESHOLD) is unsourced and NOT ratified here.
+      is unsourced and NOT ratified here. RESOLVED 2026-09-30: the cluster
+      definition no longer uses a correlation cutoff at all — membership is
+      read from the book's own correlation-distance tree (see the removal
+      note further down this file), so the 40% now applies to a structural
+      cluster rather than to a 0.7-threshold one.
     open_question: >-
       What share of the total risk budget can one correlated cluster take
       before the book stops being several bets and becomes one?
@@ -1308,59 +1312,42 @@ numbers:
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
-      much to trade. A wrong value degrades data availability, which is a
-      separate failure the seats already see as missing evidence.
-  - id: src.data.correlation.CLUSTER_CORRELATION_THRESHOLD
-    value: 0.7
-    status: arbitrary
-    site: src/data/correlation.py
-    note: >-
-      Called "the traditional finance cutoff" at the definition site with no
-      citation (2026-09-14 verification). It decides which names count as one
-      cluster, and therefore what max_cluster_risk_share_pct applies to.
-      ITEM 186 PASS 2026-09-26 — RESEARCHED, NOT SOURCEABLE, and the claim at
-      the definition site is corrected in the same commit because it was
-      untrue. There is no "traditional finance cutoff" for correlation-cluster
-      membership. The mainstream portfolio-clustering literature does not
-      threshold a correlation at all: it clusters hierarchically on a
-      correlation DISTANCE (Mantegna's correlation-based hierarchical
-      clustering and minimum spanning tree, and the risk-parity work built on
-      it), producing clusters with no cutoff to choose. Where thresholded
-      correlation NETWORKS are used instead, published cutoffs span roughly
-      0.3 to 0.8 and are selected for the network density a given study
-      wants, not from theory; correlation-network work reports 0.7 both as a
-      point where network structure changes abruptly and as a point where
-      noise starts to dominate the surviving edges — a description of what
-      0.7 does, not an endorsement of it. Adopting any of those numbers would
-      mean adopting a figure that measures a different quantity (the network
-      topology of some study's universe) than this desk's use (which of MY
-      held names are one bet).
-      The old open question below was also the wrong question and is
-      replaced: "above what correlation do two of this desk's names actually
-      FAIL together" is a question about past outcomes, and fitting a
-      threshold to realised joint losses is barred by the desk's own
-      no-fitting doctrine.
-      NO VALUE PICKED. The literature gives a RANGE and nothing inside it,
-      which is precisely the case the doctrine reserves for owner-ratified
-      appetite — and the owner has already flagged it once: the 40% cluster
-      share was ratified 2026-09-25 with the explicit caveat that the cluster
-      DEFINITION was "unsourced and NOT ratified here".
-    open_question: >-
-      OWNER APPETITE, routed and not answered: at what pairwise |correlation|
-      do you want two names treated as ONE bet for risk rationing? Lower
-      (0.5-0.6) merges more names into a cluster and rations harder, refusing
-      ideas as duplicates; higher (0.8) splits themes apart and lets a
-      crowded book pass. The mechanism amplifies whatever is picked, so this
-      matters more than the number looks: clustering here is TRANSITIVE, so
-      A~B and B~C puts A, B and C in one cluster even when A and C are
-      unrelated, and a lower cutoff grows clusters faster than the number
-      alone suggests. If you would rather not set a number at all, the
-      alternative is structural — replace the cutoff with distance-based
-      hierarchical clustering, which has no threshold to choose. That is a
-      build, not a value.
-    cost_while_unanswered: >-
-      Risk rationing across correlated clusters - the mechanism that stops one
-      theme taking the whole budget - keys off this one number.
+  # REMOVED 2026-09-30 (board item 186): the entry for
+  # src.data.correlation.CLUSTER_CORRELATION_THRESHOLD = 0.7 is gone because
+  # THE NUMBER IS GONE. It is not ratified, not re-derived and not replaced by
+  # another number. The research pass recorded here had already concluded the
+  # cutoff was not sourceable (published thresholded-correlation-network
+  # values span roughly 0.3-0.8, chosen for the network density a study
+  # wants; the mainstream portfolio-clustering literature thresholds nothing
+  # at all) and had named the structural alternative. The owner's 2026-09-30
+  # ruling — risk tolerance is never a global dial, it is read from structure
+  # or per name — made that alternative the required answer rather than an
+  # option, so the routed owner-appetite question is WITHDRAWN, not pending.
+  #
+  # WHAT SHIPPED. src/data/correlation.py now clusters on Mantegna's
+  # correlation distance d = sqrt(2 * (1 - |corr|)): build the minimum
+  # spanning tree of the held book and cut it at the largest gap in its own
+  # sorted edge lengths. The cut is read from the book in front of the desk,
+  # not picked. The only constants left are the two fixed points of the
+  # metric itself — the distance at |corr| = 1 and the distance at corr = 0 —
+  # which bracket the gap search and are never compared against a correlation
+  # to decide membership; they are properties of the formula, not levels, so
+  # they are deliberately NOT ledgered as appetite.
+  #
+  # STILL TRANSITIVE, and that is the correct behaviour here: single linkage
+  # chains, so A~B and B~C is one bet even when A and C are apart, which is
+  # how a theme actually transmits (the nuclear names are one bet whether or
+  # not every pair inside is tight). The difference from the old cutoff is
+  # that a chain now only forms through links that are tight RELATIVE TO THE
+  # REST OF THE BOOK instead of as far as a fixed number allowed.
+  #
+  # This is rationing only. It never asks the desk to buy to diversify;
+  # conviction still outranks balance.
+  #
+  # The risk rule feeding max_cluster_risk_share_pct now asks for cluster
+  # membership (`cluster_peers`) instead of "who is above 0.7". The old
+  # pairwise helper survives only for callers supplying an explicit level of
+  # their own, and it no longer has a default.
   - id: src.data.levels.BREAKOUT_PROJECTION_ATR_MULTIPLE
     value: 1
     status: derived

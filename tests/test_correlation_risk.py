@@ -7,8 +7,9 @@ import pytest
 
 from src.config import RiskConfig
 from src.data.correlation import (
-    CLUSTER_CORRELATION_THRESHOLD,
     build_correlation_matrix,
+    cluster_peers,
+    correlation_clusters,
     highly_correlated_peers,
 )
 from src.models import OHLCV, Position, TradeDecision
@@ -217,3 +218,74 @@ def test_correlation_cluster_silent_when_below_threshold():
             total_value=100_000,
             correlation_matrix=corr_matrix,)
     assert not any(v.rule == "correlation_cluster" for v in violations)
+
+
+# --- Structural clustering (item 186): no correlation cutoff anywhere ---
+
+def _sym_matrix(pairs: dict, symbols: list[str]) -> dict:
+    out: dict[str, dict[str, float]] = {s: {} for s in symbols}
+    for (a, b), v in pairs.items():
+        out[a][b] = v
+        out[b][a] = v
+    return out
+
+
+def test_no_cutoff_constant_is_exported():
+    """The module must not reintroduce a picked correlation level."""
+    import src.data.correlation as corr_mod
+    assert not hasattr(corr_mod, "CLUSTER_CORRELATION_THRESHOLD")
+
+
+def test_clusters_read_a_theme_out_of_a_mixed_book():
+    import itertools
+    syms = ["OKLO", "CEG", "VST", "CCJ", "JPM", "KO", "XOM"]
+    theme = {"OKLO", "CEG", "VST", "CCJ"}
+    pairs = {
+        (a, b): (0.88 if a in theme and b in theme else 0.12)
+        for a, b in itertools.combinations(syms, 2)
+    }
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == [
+        ["CCJ", "CEG", "OKLO", "VST"]
+    ]
+
+
+def test_uniformly_unrelated_book_has_no_clusters():
+    import itertools
+    syms = ["JPM", "KO", "XOM", "PG"]
+    pairs = {(a, b): 0.10 for a, b in itertools.combinations(syms, 2)}
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == []
+
+
+def test_uniformly_related_book_is_one_cluster():
+    import itertools
+    syms = ["NVDA", "AVGO", "AMD", "MU"]
+    pairs = {(a, b): 0.85 for a, b in itertools.combinations(syms, 2)}
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == [
+        ["AMD", "AVGO", "MU", "NVDA"]
+    ]
+
+
+def test_clustering_stays_transitive():
+    """A~B and B~C puts A, B and C in one bet even though A and C are apart."""
+    matrix = {
+        "A": {"B": 0.90, "C": 0.10},
+        "B": {"A": 0.90, "C": 0.90},
+        "C": {"A": 0.10, "B": 0.90},
+    }
+    assert correlation_clusters(["A", "B", "C"], matrix) == [["A", "B", "C"]]
+
+
+def test_cluster_peers_excludes_the_symbol_itself():
+    import itertools
+    syms = ["OKLO", "CEG", "JPM", "KO"]
+    theme = {"OKLO", "CEG"}
+    pairs = {
+        (a, b): (0.92 if a in theme and b in theme else 0.10)
+        for a, b in itertools.combinations(syms, 2)
+    }
+    peers = cluster_peers("OKLO", ["CEG", "JPM", "KO"], _sym_matrix(pairs, syms))
+    assert peers == ["CEG"]
+
+
+def test_cluster_peers_empty_without_a_matrix():
+    assert cluster_peers("NVDA", ["AVGO"], {}) == []

@@ -9315,8 +9315,10 @@ class TradingPipeline:
             # It is not a ledgered number: `trading.lookback_days` carries no
             # numeric default (`Field(ge=1)` in src/config.py), so it is not a
             # definition site the number-ledger scanner can attach an entry to;
-            # the 0.7 cutoff beside it (CLUSTER_CORRELATION_THRESHOLD) IS
-            # ledgered arbitrary.
+            # the 0.7 cutoff that used to sit beside it is GONE (item 186,
+            # 2026-09-30): clusters are now read from the correlation
+            # geometry itself, so the window is the only unjustified input
+            # left on this path.
             pool_bars = dict(ctx.symbols_bars)
             for p in positions:
                 if p.symbol not in pool_bars:
