@@ -5098,7 +5098,7 @@ own `reset_manifest.json` records `{"table": "daily_pnl", "rows": 13,
 "deleting": 13}` — and took a full database snapshot beside the manifest first.
 Those 13 rows run 2026-08-14 to 2026-09-01 and peak at **10005.68 on
 2026-08-20**. The account was not restarted by that reset: it flattened
-positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+positions to cash on the same paper account (`<redacted-main-account-id>` in both
 `book_before.json` and `book_after.json`), with equity running 9870.37 (08-27
 close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74 (09-02
 close) and no capital added or removed. A high-water mark is a property of the
