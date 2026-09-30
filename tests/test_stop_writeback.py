@@ -491,7 +491,7 @@ def test_reprotect_kill_switch_does_not_write_back(db):
     pipeline.broker = MagicMock()
     pipeline._format_qty = lambda q: str(q)
     pipeline.broker._list_open_sell_stop_orders.return_value = []
-    pipeline.broker._submit_stop_limit_order.return_value = {
+    pipeline.broker._submit_protective_stop_retrying.return_value = {
         "id": None, "status": "kill_switch_halted",
     }
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]

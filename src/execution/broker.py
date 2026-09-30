@@ -1789,6 +1789,55 @@ PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
     {"new", "accepted", "held", "partially_filled"}
 )
 
+#: Broker order states in which an order has been ACCEPTED BY US to the
+#: broker but is not yet working on the book. Alpaca's own enum names them:
+#: `pending_new` (received, not yet routed) and `accepted_for_bidding`.
+#:
+#: These are deliberately NOT in the set above. That set answers "is this
+#: resting order real protection right now?" and its reader
+#: (`replace_stop_loss`'s failure path) is looking at the AGED order book —
+#: an order that has been sitting there and is still `pending_new` is a
+#: stuck order, not coverage.
+PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
+    {"pending_new", "accepted_for_bidding"}
+)
+
+#: The set for the OTHER question: "would submitting another stop here
+#: create a SECOND live order against the same shares?"
+#:
+#: Its reader (`TradingPipeline._reprotect_residual`'s idempotency check)
+#: is looking at a stop this desk placed SECONDS ago on a prior attempt of
+#: the same reprotect, after excluding by order id every stop this run
+#: itself cancelled. In that window `pending_new` is the NORMAL state of a
+#: healthy just-submitted stop, and treating it as "not protection" is what
+#: makes a replay submit a duplicate. Nothing in this codebase reconciles a
+#: duplicate protective stop (see `src/coverage_watchdog.py`, which states
+#: it never cancels or modifies; the only duplicate handling anywhere is a
+#: message asking the owner to cancel one by hand), so the duplicate must
+#: be prevented rather than cleaned up.
+#:
+#: `pending_cancel` stays OUT of both sets: a dying order is never
+#: protection, whichever question is being asked.
+PROTECTIVE_ORDER_ALIVE_STATUSES = (
+    PROTECTIVE_ORDER_ACTIVE_STATUSES | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
+)
+
+
+def real_broker_order_id(value: object) -> str:
+    """The broker order id in `value`, or "" when there ISN'T one.
+
+    `_snapshot_stop_order` stamps `"id": str(order.id)`, so an order that
+    reached it without an id carries the four-character string "None" —
+    which is TRUTHY. Every `if spec.get("id")` filter therefore counted a
+    missing id as a present one, and the resulting "id" then matched no
+    open order at the broker, ever. Judge the value, don't test the
+    stringified None for truthiness.
+    """
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "null", "nan"}:
+        return ""
+    return text
+
 
 class AlpacaBroker:
     #: Set in __init__. Declared here so an instance built without __init__
@@ -6431,7 +6480,9 @@ class AlpacaBroker:
                     return 0.0
 
             cancelled_ids = {
-                str(spec.get("id")) for spec in cancelled_specs if spec.get("id")
+                real_broker_order_id(spec.get("id"))
+                for spec in cancelled_specs
+                if real_broker_order_id(spec.get("id"))
             }
             visible = self._list_open_protective_stop_orders(symbol, side=side)
             live_stops = [o for o in visible if _is_live_protection(o)]

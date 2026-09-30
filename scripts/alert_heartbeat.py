@@ -499,6 +499,27 @@ def run_coverage_check(now: datetime | None = None) -> str:
             f"stop-repair all-clear "
             f"{'delivered' if ok else 'could NOT be delivered'}"
         )
+    if status.should_alert_repair_performed:
+        # 2026-09-30: this event used to log "alert none sent". A repair
+        # means something upstream failed silently; same owner channel as
+        # every other message here, no second channel invented.
+        from src.coverage_watchdog import repair_performed_text
+        from src.notifier import send_owner_alert as _send_repaired
+
+        text = repair_performed_text(status)
+        print(text, file=sys.stderr)
+        told = {
+            str(s).strip().upper() for s in status.resolution_notice_symbols
+        }
+        names = [
+            r.symbol for r in status.repaired
+            if str(r.symbol).strip().upper() not in told
+        ]
+        ok = bool(_send_repaired(text, symbols=names))
+        sent.append(
+            f"stop-repaired alert "
+            f"{'delivered' if ok else 'could NOT be delivered'}"
+        )
     if (
         status.should_alert or status.should_alert_repair_failure
         or status.should_alert_unreadable

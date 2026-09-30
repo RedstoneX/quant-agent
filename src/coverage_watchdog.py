@@ -254,6 +254,20 @@ class CoverageStatus:
     #: Empty is the ordinary case: a repair the owner was never alarmed
     #: about produces no all-clear.
     resolution_notice_symbols: tuple[str, ...] = ()
+    #: How many gaps this run DETECTED, before any repair.
+    #:
+    #: 2026-09-30: the sweep repaired AAPL and reported "gaps 0, repairs
+    #: attempted 1". It was not two code paths disagreeing — detection and
+    #: the repair trigger read the same list. It is one variable doing two
+    #: jobs: after a successful placement `check_coverage` RE-READS the
+    #: broker and rebinds `gaps` to what is STILL uncovered, so `gaps`
+    #: silently changes meaning from "found" to "left" and the summary
+    #: counted the second. An operator scans the gap count, so the line
+    #: concealed the very event it was reporting. Both numbers are kept
+    #: now: this one is what was found, `gaps` is what remains.
+    #: None means the status was assembled by hand rather than by
+    #: `check_coverage`; readers fall back to len(gaps).
+    gaps_detected: int | None = None
 
     @property
     def unprotected_total(self) -> float:
@@ -262,6 +276,30 @@ class CoverageStatus:
     @property
     def repaired(self) -> list[RepairOutcome]:
         return [r for r in self.repairs if r.placed]
+
+    @property
+    def should_alert_repair_performed(self) -> bool:
+        """A repair actually happened and the owner has not been told.
+
+        2026-09-30: the sweep put AAPL's stop back after the position had
+        been unprotected for 13m22s and reported "alert none sent". A
+        COVERAGE REPAIRED event is never routine — it means something
+        upstream failed silently, and the last line of defence is the only
+        thing that noticed. It pages, on the same owner channel as every
+        other message this unit sends.
+
+        Suppressed when `resolution_notice_symbols` already covers every
+        repaired name: that is the all-clear for a gap he was ALREADY
+        paged about, and two messages about one event is the noise that
+        makes him stop reading them. A run that repairs nothing stays
+        silent exactly as before.
+        """
+        if not self.repaired:
+            return False
+        told = {str(s).strip().upper() for s in self.resolution_notice_symbols}
+        return any(
+            str(r.symbol).strip().upper() not in told for r in self.repaired
+        )
 
     @property
     def repairs_awaiting_print(self) -> list[RepairOutcome]:
@@ -1484,6 +1522,9 @@ def check_coverage(
     # it defers to a session, and the next tick re-reads the broker.
     from src.execution.scale_in import trading_session_lock_held
     session_active = trading_session_lock_held()
+    # Counted HERE, before the repair block below can rebind `gaps` to the
+    # post-repair re-read. See `CoverageStatus.gaps_detected`.
+    gaps_detected = len(gaps)
     repair_deferred = ""
     if gaps and market_open and last_buy is not None and not session_active:
         with repair_lock(db_path) as held:
@@ -1631,6 +1672,7 @@ def check_coverage(
         trading_day=day.isoformat(),
         session_ran=ran,
         gaps=gaps,
+        gaps_detected=gaps_detected,
         broker_error=broker_error,
         db_error=db_error,
         already_alerted_for_day=(state.get("alerted_for_day") == day.isoformat()),
@@ -1784,6 +1826,30 @@ def repair_resolution_text(symbols: Iterable[str]) -> str:
     )
 
 
+def repair_performed_text(status: CoverageStatus) -> str:
+    """The owner message for a stop this run PUT BACK unprompted."""
+    told = {str(s).strip().upper() for s in status.resolution_notice_symbols}
+    rows = [
+        r for r in status.repaired
+        if str(r.symbol).strip().upper() not in told
+    ]
+    detail = "\n".join(
+        f"  {r.symbol}: {r.qty:.4f} share(s) had NO stop; one is now placed"
+        for r in rows
+    )
+    return (
+        "🛑🛑 A MISSING STOP WAS PUT BACK\n"
+        f"The coverage sweep found {len(rows)} position(s) holding shares "
+        "the broker was not watching, and placed the protective stop "
+        "itself. Nothing needs doing about the stop.\n"
+        f"{detail}\n"
+        "Why you are being told: the sweep is the LAST line of defence. "
+        "For it to find a gap at all, something earlier — an entry, a "
+        "trailing ratchet or a re-protect after a partial exit — failed "
+        "without saying so."
+    )
+
+
 def status_line(status: CoverageStatus) -> str:
     """One journal line for the heartbeat unit."""
     if status.broker_error:
@@ -1896,7 +1962,12 @@ def sweep_summary(
         "session_ran": status.session_ran,
         "market_open": status.market_open,
         "positions_checked": status.positions_checked,
-        "gaps_found": len(status.gaps),
+        # What the run FOUND, not what is left after it repaired them.
+        "gaps_found": (
+            len(status.gaps) if status.gaps_detected is None
+            else status.gaps_detected
+        ),
+        "gaps_remaining": len(status.gaps),
         "gap_symbols": [g.symbol for g in status.gaps],
         "unprotected_usd": status.unprotected_total,
         "repairs_attempted": len(status.repairs),
@@ -1932,7 +2003,10 @@ def sweep_log_line(summary: dict[str, Any]) -> str:
     return (
         f"{SWEEP_LOG_NAME} {summary.get('run_id')} ({summary.get('entry')}): "
         f"{summary.get('outcome')} — positions checked "
-        f"{summary.get('positions_checked')}, gaps {summary.get('gaps_found')}, "
+        f"{summary.get('positions_checked')}, gaps "
+        f"{summary.get('gaps_found')} found / "
+        f"{summary.get('gaps_remaining', summary.get('gaps_found'))} still "
+        f"open, "
         f"repairs attempted {summary.get('repairs_attempted')} / succeeded "
         f"{summary.get('repairs_succeeded')} / failed "
         f"{summary.get('repairs_failed')}, alert "
