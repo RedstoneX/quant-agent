@@ -65,6 +65,7 @@ __all__ = [
     "CANONICAL_NAME_NOT_MATCHED_IN_PROSE",
     "canonical_prose_names",
     "EVENT_TRIGGERS",
+    "VERIFIED_ON_CHART",
     "NO_VERIFIER_EXISTS",
     "derive_trigger_from_reason",
     "normalize_trigger",
@@ -102,6 +103,7 @@ class ExitTrigger(str, Enum):
     # 2026-09-20 with the account-level loss alarm itself (WORK.md item 32,
     # docs/INCIDENT_HISTORY.md). Nothing computes the event it named.
     STOP_FIRED = "stop_fired"
+    TREND_ALIGNMENT_OVER = "trend_alignment_over"
     CANNOT_SUBSTANTIATE = "cannot_substantiate"
 
 
@@ -133,6 +135,13 @@ _LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
         "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
     ),
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
+    # The ALIGNMENT EXIT (owner ruling 2026-09-30, docs/WORK.md item 205) —
+    # the desk's only sanctioned way to realise a GAIN. Substantiated by
+    # `src.risk.alignment_exit.check_alignment_exit`, never by a price
+    # target.
+    ExitTrigger.TREND_ALIGNMENT_OVER: (
+        "trend alignment over", "alignment exit",
+    ),
 }
 
 #: THE ONE DIVERGENCE THIS MODULE STILL ALLOWS, AND WHY (2026-09-30).
@@ -222,6 +231,17 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
 #: no sector-shock row. The set asserted a verifier that the code next to it
 #: said did not exist. Removing it changes no behaviour — see
 #: `NO_VERIFIER_EXISTS` for why this set had drifted unnoticed.
+#: Triggers verified by READING THE CHART rather than by looking up a
+#: recorded event. Exactly one member: the alignment exit (owner ruling
+#: 2026-09-30). Its verifier is `alignment_exit.check_alignment_exit`,
+#: which answers "is this position's move over?" from the instrument's own
+#: marks and its own noise band — so the trigger is neither an unverifiable
+#: claim nor an external event, and belongs in neither of the two sets that
+#: existed before it.
+VERIFIED_ON_CHART: frozenset[ExitTrigger] = frozenset({
+    ExitTrigger.TREND_ALIGNMENT_OVER,
+})
+
 EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset({
     ExitTrigger.BEARISH_STATE_CHANGE,
     ExitTrigger.ADVERSE_NEWS,
@@ -250,6 +270,10 @@ EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset({
 #:
 #: Being here does not make a trigger illegitimate. It makes the gap visible.
 NO_VERIFIER_EXISTS: dict[ExitTrigger, str] = {
+    # TREND_ALIGNMENT_OVER is NOT in this dict and NOT in EVENT_TRIGGERS.
+    # It is the one trigger with a verifier of its own that answers "is it
+    # true right now?" off the instrument rather than off a recorded event:
+    # `src.risk.alignment_exit.check_alignment_exit`. See VERIFIED_ON_CHART.
     ExitTrigger.THESIS_INVALID: (
         "consulted, never judged: `check_structural_protection` is read with "
         "`advisory_only=True, persist=False` and its own comment states the "
