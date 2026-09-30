@@ -682,7 +682,7 @@ numbers:
       target side's own 1.0 makes reward:risk horizon-INVARIANT and always
       near one, where today it rises with the hold.
       (e) THE ROUTE WITH THE MOST MONEY IN IT WAS NEVER TESTED, and is now
-      filed as item 191. docs/OUTCOME.md ranks reformulation first and its
+      filed as item 195. docs/OUTCOME.md ranks reformulation first and its
       worked example is structural ("does the last higher low still hold?"
       needs no number because the chart supplies the level). This desk
       already computes structural levels with touch counts, and
@@ -704,22 +704,42 @@ numbers:
       level (MIN_TOUCHES = 2) still sits above the shuffled control. That
       asymmetry was never examined and it is where this constant's blast
       radius actually shrinks.
-      (f) EFFECT ON THE UNIVERSE SCREEN. The value is untouched, so the
-      dial does not move the ceiling in this change. The 16.67%-to-20%
-      contradiction is FIXED here rather than parked: `src/universe_screen.py`
-      now divides `STOP_SANITY_FLOOR_FRACTION` by
-      `ConstructorConfig.widest_reachable_stop_atr_multiple(base)` instead
-      of by the base. That adds no number — the gap was the risk-off
-      scaler 1.20 and nothing else — and needed no owner decision. The
-      board's note that it "needs the owner's call because it tightens a
-      live screen" was itself wrong on the facts: `universe_screen.enabled`
-      is False in config/settings.yaml, so the screen does not ship on.
+      (f) EFFECT ON THE UNIVERSE SCREEN — SUPERSEDED ON MAIN, and the
+      correction is recorded rather than re-applied. This pass proposed
+      dividing `STOP_SANITY_FLOOR_FRACTION` by
+      `widest_reachable_stop_atr_multiple(base)` instead of by the base,
+      taking the ceiling from 20% to 16.67%. Board item 185 landed first
+      and went further: it deleted the borrowed 0.5 literal outright, so
+      the ceiling is now `1 / widest_reachable_stop_atr_multiple(...)` =
+      1/3.00 = 33.3%, the arithmetic point at which the widest legitimate
+      stop would sit at or below zero. Main's form is kept and this
+      branch's narrower form is dropped. What survives from this pass is
+      the FINDING, which item 185 confirms: dividing by the bare base was
+      false across a band of names, and the divergence was exactly the
+      risk-off scaler 1.20. Also withdrawn as wrong on the facts: the
+      board's note that the screen fix "needs the owner's call because it
+      tightens a live screen" — `universe_screen.enabled` is False in
+      config/settings.yaml, so the screen does not ship on.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
     open_question: >-
       NOT a point-inside-a-band question any more; that framing is
       withdrawn with the band (see note (c) — there is no citation, so
       both ends are unsupported). The answerable question is now whether
       this constant can be reformulated away for most of the names it
-      governs, and it is answered by BUILDING item 191, not by a ruling:
+      governs, and it is answered by BUILDING item 195, not by a ruling:
       when no 5-touch level backs the stop, does the nearest computed
       level below entry at any touch count (>= MIN_TOUCHES = 2), plus the
       already-ratified `structural_stop_buffer_pct`, give a floor read off
@@ -755,9 +775,9 @@ numbers:
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
     note: >-
-      A target inside this many ATRs of entry is not a destination - price is
-      already there and the reward is one ordinary session's noise
-      (src/config.py:876-878).
+      Flags a target inside this many ATRs of entry as thin reward - price is
+      barely off it and the whole payoff is one ordinary session's noise.
+      Labels the derived target; does not select it (changed 2026-09-30).
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
     status: arbitrary
@@ -2157,6 +2177,20 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
+      ITEM 185, 2026-09-30 — NEW DOWNSTREAM CONSUMERS, and an honest note
+      about what that means. This value is now one of three factors in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (base x
+      largest setup scaler x largest regime scaler = 2.5 x 1.00 x 1.20 =
+      3.00), which board item 185 made the basis of TWO further rules: the
+      midday TRAIL_STOP clamp and the universe screen's ATR/price
+      volatility ceiling (1 / 3.00). Those two used to carry a flat 0.5
+      literal between them; that literal is deleted and its row is gone.
+      Do not read the composition as a derivation. It removes one
+      independent arbitrary literal and creates a live dependency on THIS
+      row and on `stop_atr_regime_scale[0][1]`, both of which remain
+      `arbitrary` with open questions. The arbitrary content of the desk is
+      unchanged by item 185; only the number of independent literals fell.
+      Board item 185 therefore STAYS OPEN.
   - id: src.portfolio_constructor.ConstructorConfig.min_target_atr_multiple
     value: 1
     status: derived
@@ -2171,29 +2205,6 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta
-    value: 0.5
-    status: arbitrary
-    site: src/portfolio_constructor.py
-    note: >-
-      How large a weight change must be before the desk bothers to trade it. A
-      round half a percent with no measurement of cost against it.
-      MEASURED 2026-09-26, the cost half of the question below (board item 183;
-      method in docs/INCIDENT_HISTORY.md). Commission is zero -- Alpaca charges
-      none on stock -- so the whole cost of a small trade is execution
-      slippage, and on this desk's own 30 filled BUY entries that ran at a
-      median +2.6bp with a 90th percentile of +26.4bp. On a $10k book a 0.5%
-      weight change is a $50 order whose measured expected cost is about a
-      cent. The measurement therefore says the cost side cannot justify a
-      floor of this size; it does NOT say what the floor should be, because
-      the other half of the question -- how much pointless order churn the
-      desk is willing to create -- is appetite and was never measured.
-    open_question: >-
-      Given a measured cost of roughly a cent on a $50 order, how much order
-      churn is the desk willing to accept to stop skipping genuine small
-      rebalances? Appetite, not measurement.
-    cost_while_unanswered: >-
-      Small genuine rebalances are skipped, or the desk churns.
   - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
     value: 5
     status: arbitrary
@@ -2237,6 +2248,14 @@ numbers:
       removed, because removing them would narrow risk-off stops. Ratified, not
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
+      ITEM 185, 2026-09-30 — this scaler is now also the widest factor in
+      `portfolio_constructor.widest_reachable_stop_atr_multiple` (2.5 x 1.00
+      x 1.20 = 3.00), which sets the midday TRAIL_STOP clamp and the
+      universe screen's volatility ceiling (1 / 3.00) after the flat 0.5
+      literal they shared was deleted. That composition is not a derivation:
+      it replaces one arbitrary literal with a live dependency on this row
+      and on `min_stop_atr_multiple`, both still arbitrary and both still
+      carrying open questions. Board item 185 stays open.
     open_question: >-
       By how much should stop width scale with volatility regime, measured on
       this desk's own maximum adverse excursion by regime?
@@ -2724,10 +2743,22 @@ numbers:
     status: arbitrary
     site: src/risk/rules.py
     note: >-
-      The de-levering ladder: drawdown rungs and the gross multiple each rung
-      allows. Round drawdown percentages and round multiples, none read off
-      the account or off a cited source. It can only tighten
-      max_gross_exposure_x, which does not make the rungs sourced.
+      The drawdown at which the OWNER IS TOLD (resolve_gross_ceiling sets
+      alert_owner). A round percentage, not read off the account or off a
+      cited source. It happens to equal the de-levering ladder's deepest
+      rung, but it answers a different question from the ladder -- the same
+      function also sets alert_owner=True on the unmeasurable-drawdown
+      branch, where no rung fires at all. A 2026-09-30 change (board item
+      182) deleted this row and set the constant to min(GROSS_LADDER
+      thresholds); it was REVERTED the same day because the trigger
+      (drawdown <= this) is monotone, so freezing the value can never
+      produce silence at a deeper drawdown, while tying it to the deepest
+      rung WOULD go silent across any band between -20% and a newly added
+      deeper rung. Setting one arbitrary number equal to another arbitrary
+      number is deduplication, not sourcing, so the question below stays
+      open either way. The stale-prose defect that change was really
+      chasing is fixed in the reason string instead, which now names the
+      rung the ladder is actually on.
     open_question: >-
       At what drawdown must the owner be told, independently of what the
       ladder does to exposure?
@@ -3245,6 +3276,24 @@ numbers:
       well below a real fractional remainder (which is never smaller than a
       broker-tradable fraction of one share) produces identical behaviour,
       so this is a precision guard rather than a policy choice.
+  - id: src.portfolio_constructor._NO_REAL_WEIGHT_DELTA_PCT
+    value: 1.0e-9
+    status: not-trade-governing
+    site: src/portfolio_constructor.py
+    note: >-
+      Floating-point tolerance, added 2026-09-30 (owner ruling, board item
+      183) when the picked `min_trade_weight_delta` churn floor (0.5%) was
+      DELETED rather than resized. `signed_target` and `current_pct` are
+      independent float divisions (a live price against total_value vs. a
+      model-typed percent), so a delta the desk did not actually request —
+      "hold exactly what is held" — can land a few ULPs off zero instead of
+      bit-exact. This recognises that as no request at all, the same role
+      `src.execution.broker._FRACTIONAL_QTY_EPSILON` plays for share
+      quantities; it is nine orders of magnitude below the finest weight a
+      model or a human types, so any value in a wide band below that
+      produces identical behaviour — a precision guard, not a policy
+      choice. It decides nothing about whether or how much to trade: a real
+      nonzero delta of any size, however small, is now attempted.
   - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
     value: 5
     status: not-trade-governing
@@ -4643,20 +4692,6 @@ numbers:
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
-    value: 1.02
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      The 2% cushion on how much of the T-bill sweep vehicle is sold to cover
-      a cash deficit (src/pipeline.py:11524-11531): needed = deficit x 1.02.
-    open_question: >-
-      How far does a sweep-vehicle sale's realised proceeds fall short of
-      price x qty on this account, measured from its own SWEEP_SELL fills?
-    cost_while_unanswered: >-
-      Too small and a de-lever leaves a residual deficit for the next session;
-      too large and more of the cash park is sold, and re-parked, than the
-      deficit needs.
-  - id: src.pipeline.TradingPipeline._force_delever:factor[1]
     value: 0.97
     status: derived
     site: src/pipeline.py
@@ -4672,7 +4707,28 @@ numbers:
       (the same must-fill slippage STOP_LIMIT_BUFFER_PCT budgets for a gapping
       exit) so the loop never stops one position too early and leaves a
       residual deficit. Under-counting proceeds is the safe error. 0.97 =
-      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number.
+      1 - STOP_LIMIT_BUFFER_PCT, not a fresh number. Was factor[1] until
+      2026-09-30 (board item 182): the 1.02 sweep-sizing cushion that used to
+      precede it in this function was reformulated away, so this literal is
+      now the first factor-band literal in source order. Positional id only --
+      the number and its derivation are unchanged. Its APPLICATION was
+      narrowed in the same commit: it now covers WHOLE-position sells only.
+      A partial sweep slice is credited at the live SELL limit it was sized
+      off, because crediting the whole park's market_value for a slice
+      overstated proceeds by everything left parked -- the figure this
+      loop's break-early guard and its owner-facing incompleteness alert
+      both read. Under a full fill that overstatement changed no decision,
+      since the slice is sized to cover the deficit by construction; it
+      corrupted the REPORTED figure, and it stops being harmless the moment
+      proceeds are booked from an actual filled quantity.
+      SCOPE LIMIT, unfixed and pre-existing: proceeds are still booked at
+      broker ACCEPTANCE, not at fill. _submit_protected_sell returns an
+      accepted order and nothing reads filled_qty, so a PARTIAL FILL still
+      leaves a residual deficit this loop cannot see. Alpaca documents
+      partially_filled as an order status and the limit rests at the live
+      bid, whose displayed size is finite, so this is a reachable state, not
+      a theoretical one. Booking from the filled quantity and continuing to
+      sell while the deficit stands would delete this haircut entirely.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
@@ -4690,62 +4746,6 @@ numbers:
       Decides which names the technical seat ever looks at; a name filtered
       out here cannot be traded that session.
   - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
-    value: 0.5
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      A non-binding sanity GUARD in the midday path: it refuses a TRAIL_STOP
-      whose proposed stop sits below 50% of current price as a likely model
-      typo, and a real trail never approaches this floor (the noise-band and
-      ratchet clamps in the same routine bind first). It is kept `arbitrary`
-      rather than reclassified `not-trade-governing`, because the same 0.5 IS
-      reused as a genuine trade-governing gate: STOP_SANITY_FLOOR_FRACTION in
-      src/universe_screen.py derives from this entry to set the screen's
-      ATR/price volatility ceiling (0.5 / min_stop_atr_multiple), which screens
-      real names out. So the number can reach a trade decision and the debt
-      stands.
-      ITEM 185 PASS 2026-09-26 — CATEGORY, stated rather than forced into
-      one: at its own site this is a SANITY BOUND on model output (does this
-      look like a digit typed in the wrong place), not a trading number. It
-      is not read off the instrument, it expresses no risk appetite, and no
-      trading literature bears on it. It is trade-governing only through the
-      screen row derived from it, which is the whole reason it is still
-      counted here.
-      Its old open question is now ANSWERED, from this repo rather than from
-      outside it: the widest stop the desk's own rules can legitimately
-      produce is 3.00 x ATR14 under price. `PortfolioConstructor` scales
-      `min_stop_atr_multiple` (2.5) by setup and regime; the reachable range
-      is [2.1375, 3.00] and the widest case is a breakout (1.00) on a
-      risk-off tape (1.20). A legitimate stop therefore falls below half of
-      price exactly when ATR14/price exceeds 1/6 = 16.67%.
-      DEFECT FOUND, NOT FIXED HERE — pre-existing, reported to the owner
-      rather than self-authorised: `src.universe_screen.
-      STOP_SANITY_FLOOR_FRACTION` divides by `min_stop_atr_multiple` (2.5),
-      giving a 20% ATR/price ceiling, but the widest REACHABLE multiple is
-      3.00, not 2.5. Names with ATR14/price between 16.67% and 20% pass the
-      screen while their widest legitimate stop would be refused by this
-      guard as a typo, so the screen's stated "fails by construction"
-      rationale does not hold across that band. The fix is to divide by the
-      widest reachable multiple rather than the base one; that tightens a
-      live screen and is the owner's call, not this pass's.
-      What remains is a genuine CIRCULARITY, and it is why no value is
-      picked: the floor fraction and the screen's volatility ceiling each
-      derive from the other (floor = 1 - widest_multiple x ceiling; ceiling
-      = floor / multiple). One of the two must be chosen independently;
-      nothing external fixes either.
-    open_question: >-
-      OWNER APPETITE, and one number settles both ends: what is the highest
-      ATR14/price a name may carry and still be allowed into this desk's
-      universe? Set that ceiling C and this floor stops being a choice — it
-      reads 1 - 3.00 x C. C = 16.67% reproduces today's 0.5; C = 20%, the
-      screen's current effective ceiling, would make it 0.40. Until C is set
-      independently, picking either end only relocates the arbitrary number
-      to the other end.
-    cost_while_unanswered: >-
-      Across the 16.67-20% ATR/price band a name is admitted by the screen
-      and then has its widest legitimate stop refused as a typo, leaving the
-      old, less protective stop in place.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
     value: 1.25
     status: derived
     site: src/pipeline.py
@@ -4755,7 +4755,7 @@ numbers:
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
       refused (src/pipeline.py:11313-11320). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
     value: 1.005
     status: derived
     site: src/pipeline.py
@@ -4765,7 +4765,7 @@ numbers:
       Board item 138: the midday COVER limit, price x 1.005
       (src/pipeline.py:11365-11372). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]
+  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
     value: 0.995
     status: derived
     site: src/pipeline.py
@@ -5177,15 +5177,34 @@ numbers:
       between the first and last bar, and this only has to reach past a
       year. It never decides a verdict unless set BELOW a year, which would
       fail every symbol's history test visibly.
-  - id: src.universe_screen.STOP_SANITY_FLOOR_FRACTION
-    value: 0.5
-    status: derived
-    site: src/universe_screen.py
-    derived_from: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
-    base_value: 0.5
+  - id: src.risk.metrics.DRIFT_WEIGHT_PCT
+    value: 12.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
     note: >-
-      The midday stop-sanity floor (a stop under half the price is refused
-      as a typo), restated so the screen's volatility ceiling can be read
-      from it: ATR/price <= this / risk.min_stop_atr_multiple (0.5 / 2.5 =
-      20% at today's values). Inherits that entry's arbitrary status and
-      open question.
+      Board item 107. One of the drift flag's two thresholds (weight percent
+      of book). Consolidates three bare inline literals (src/pipeline.py's
+      `_build_position_facts`, src/agents/portfolio_manager.py's
+      `_fmt_position`, src/agents/position_reviewer.py's label string) that
+      already existed on main before this change and were never a ledger
+      site because a bare comparison literal inside a function body matches
+      none of this scanner's five structural shapes. Naming the constant
+      does not source it: it is still hand-chosen and unmeasured. `drift_flag`
+      only sets a `⚠️DRIFT`/`positions_drift_flagged` decoration read by the
+      Portfolio Manager and Position Reviewer prompts; no Python path sizes,
+      prices, stops or exits a position from it, so it is informational, not
+      trade-governing, exactly like the seats' other contextual read-outs
+      (news, technicals). Not reclassified as `arbitrary`: that status is
+      for a number a debt-tracked owner appetite call still has to settle,
+      and this one decides nothing to settle.
+  - id: src.risk.metrics.DRIFT_PNL_PCT
+    value: 10.0
+    status: not-trade-governing
+    site: src/risk/metrics.py
+    note: >-
+      Board item 107. The drift flag's other threshold (unrealized P&L
+      percent). Same consolidation and the same reasoning as
+      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file: pre-existing bare
+      inline literal, newly named, still unsourced, informational-only (see
+      that entry for the full reasoning; not repeated to avoid two owners of
+      one explanation).

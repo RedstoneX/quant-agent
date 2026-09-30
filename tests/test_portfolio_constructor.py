@@ -122,21 +122,41 @@ def test_construct_orders_closes_at_zero_target():
     assert decisions[0].allocation_pct == 100.0
 
 
-def test_construct_orders_skips_tiny_delta():
-    """Held at 8.1%, target 8.2% → delta < min_trade_weight_delta → no order.
-
-    Except: held positions get a HOLD row for audit continuity.
-    """
+def test_construct_orders_nudges_a_tiny_delta_when_measurable():
+    """Owner ruling 2026-09-30 (board item 183): the flat 0.5%-of-book churn
+    floor (`min_trade_weight_delta`) is DELETED. Held at 8.1%, target 8.2% —
+    a 0.1% delta that used to be silently converted into a HOLD — is now a
+    real nudge the desk attempts, given something to size it from."""
     constructor = PortfolioConstructor()
     positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]  # 8.1%
     targets = [TargetPosition(symbol="NVDA", target_weight_pct=8.2,
                               conviction="high", thesis="keep")]
 
     decisions = constructor.construct_orders(
+        targets=targets, positions=positions,
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].action == "BUY"
+    assert abs(decisions[0].allocation_pct - 0.1) < 1e-6
+
+
+def test_construct_orders_exact_zero_delta_still_holds():
+    """A target that asks for EXACTLY what is already held is not a
+    request to trade at all — the floating-point-noise guard that replaced
+    `min_trade_weight_delta` still records a HOLD for audit continuity, the
+    same as before the floor was removed. This is not the arbitrary floor
+    coming back: 8.1% == 8.1% has no delta to nudge."""
+    constructor = PortfolioConstructor()
+    positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]  # 8.1%
+    targets = [TargetPosition(symbol="NVDA", target_weight_pct=8.1,
+                              conviction="high", thesis="keep")]
+
+    decisions = constructor.construct_orders(
         targets=targets, positions=positions, analyses=[],
         total_value=100_000, price_map={"NVDA": 100.0},
     )
-    # delta 0.1% < 0.5% default threshold → HOLD, not a tradeable order
     assert len(decisions) == 1
     assert decisions[0].action == "HOLD"
 
@@ -520,23 +540,55 @@ def test_no_atr_no_readable_structure_refuses_per_name():
     )
 
 
-def test_no_atr_structural_stop_too_far_is_skipped_on_risk():
-    """A readable level so far below entry that the implied risk exceeds the
-    desk's stop-distance sanity bound is skipped ON RISK, with its own code —
-    not on the missing volatility reading."""
-    from src.portfolio_constructor import STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+def test_no_atr_wide_structural_stop_is_held_not_refused_on_width():
+    """Board item 185. The no-ATR path used to refuse a structural stop more
+    than 50% of entry away, borrowing the midday typo guard's flat fraction.
+    That fraction is gone, and re-picking a width bound with no volatility
+    reading to read it from is what doctrine bars — so the stop is HELD, as
+    board item 56 route (c) already ruled for the width refusal further down
+    the same method: a wide stop is answered by sizing down, not by a
+    refusal here."""
     constructor = PortfolioConstructor()
-    # 40.0 below a 100 entry -> ~60% away, past the 50% sanity bound.
+    # 40.0 below a 100 entry -> ~60% away, past the old 50% bound.
     analysis = _no_atr_analysis(
         computed_levels=[40.0], computed_level_touches={40.0: 6},
     )
     result = constructor._widen_stop_past_noise(
         "FAR", analysis, 100.0, 41.0, direction="long", target_price=None,
     )
-    assert result is None
-    assert constructor.last_refusals["FAR"]["refusal"] == (
-        STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR
+    assert result is not None
+    assert "FAR" not in constructor.last_refusals
+
+
+def test_widest_reachable_stop_atr_multiple_is_computed_not_chosen():
+    """Board item 185. The widest stop the desk can place is the base
+    multiple scaled by the largest setup and regime scalers — 2.5 x 1.00 x
+    1.20 = 3.00 — and `_stop_atr_multiple` must never return more."""
+    import pytest
+    from types import SimpleNamespace
+    from src.portfolio_constructor import (
+        ConstructorConfig, widest_reachable_stop_atr_multiple,
     )
+    cfg = ConstructorConfig()
+    widest = widest_reachable_stop_atr_multiple(
+        cfg.min_stop_atr_multiple,
+        cfg.stop_atr_setup_scale,
+        cfg.stop_atr_regime_scale,
+    )
+    assert widest == pytest.approx(3.0)
+    assert widest_reachable_stop_atr_multiple() == pytest.approx(widest)
+    constructor = PortfolioConstructor()
+    setups = [None, "", "breakout", "range", "unlabelled"]
+    tapes = [None, "", "risk-off", "risk-on", "transitional", "unlabelled"]
+    for setup in setups:
+        for tape in tapes:
+            got = constructor._stop_atr_multiple(
+                SimpleNamespace(setup_type=setup), tape,
+            )
+            assert got <= widest + 1e-12, (setup, tape, got)
+    assert constructor._stop_atr_multiple(
+        SimpleNamespace(setup_type="breakout"), "risk-off",
+    ) == pytest.approx(widest)
 
 
 def test_no_atr_nothing_typed_derives_and_holds():
@@ -864,10 +916,14 @@ def test_sell_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning()
 
 def test_hold_and_no_condition_leave_the_field_none():
     """No stated condition → the field is None, not an empty string, on
-    every action — matching the conviction-ledger fields' own discipline."""
+    every action — matching the conviction-ledger fields' own discipline.
+
+    target_weight_pct matches the held 8.1% exactly (no floor involved,
+    board item 183): this is a HOLD because nothing was asked to change,
+    not because a small delta was refused."""
     constructor = PortfolioConstructor()
     positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]
-    target = TargetPosition(symbol="NVDA", target_weight_pct=8.2,
+    target = TargetPosition(symbol="NVDA", target_weight_pct=8.1,
                              conviction="high", thesis="keep")
     decisions = constructor.construct_orders(
         targets=[target], positions=positions, analyses=[],

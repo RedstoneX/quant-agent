@@ -50,7 +50,9 @@ WORK_BASE = """\
 
 **100. An item that was already here — OPEN.** Body of the existing item.
 
-**Retired item numbers — never reuse.** 1, 2 in this queue, and 3 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`.
+**Retired item numbers — never reuse.** APPEND-ONLY: closing an item adds one new line below.
+- retired queue: 1, 2
+- retired gate: 3
 """
 
 HISTORY_PREAMBLE = """\
@@ -196,8 +198,8 @@ def test_a_refusal_whose_line_merge_is_clean_is_still_marked(tmp_path):
     """
     head = ("# QAMC Current Work\n\n## THE FUNNEL QUEUE — why trades do not "
             "happen, ranked by measured cost\n\n")
-    tail = ("**Retired item numbers — never reuse.** 1, 2 in this queue, and "
-            "3 in the PM test gate, were deleted once written up.\n")
+    tail = ("**Retired item numbers — never reuse.** APPEND-ONLY.\n"
+            "- retired queue: 1, 2\n- retired gate: 3\n")
     filler = "".join(f"**{n}. Item {n}.** {'x' * 900}\n\n" for n in range(10, 118))
     base = head + filler + tail
     ours = head + filler + f"**500. Ours adds.** {'o' * 1500}\n\n" + tail

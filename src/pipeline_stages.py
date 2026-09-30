@@ -5040,6 +5040,27 @@ class MorningResearchStage:
                 fomc_meetings=fomc_meetings,
                 fomc_coverage=fomc_coverage,
             )
+            if analysis is not None and macro_coverage is not None:
+                # Board item 119, second criterion. Stamp the fetch record
+                # onto the verdict BEFORE anything persists, carries or
+                # renders it — `save_last_state` below is the first of those
+                # and the reason the stamp has to happen here rather than at
+                # any single display site. See
+                # `MacroCoverage.verdict_stamp()` for why the run-scoped
+                # `data_status["macro"]` a few hundred lines down does not
+                # already cover this.
+                try:
+                    state, note = macro_coverage.verdict_stamp()
+                    analysis.coverage_state = state
+                    analysis.coverage_note = note
+                    if state != "complete":
+                        logger.warning(
+                            "Macro verdict formed on an incomplete set — "
+                            "regime=%s confidence=%s stamped coverage_state=%s (%s)",
+                            analysis.regime, analysis.confidence, state, note,
+                        )
+                except Exception as e:  # noqa: BLE001 — a stamp must never lose the verdict
+                    logger.warning("Could not stamp macro coverage onto verdict: %s", e)
             if analysis:
                 try:
                     from src.data.macro_store import series_prints_from_summary
@@ -10221,6 +10242,38 @@ class ExecutionStage:
                                 cover_order.get("id")
                                 if isinstance(cover_order, dict) else None
                             )
+                            # Board item 183 follow-up (2026-09-30).
+                            # `AlpacaBroker.submit_order` no longer RAISES on
+                            # a rejection the broker's own response calls
+                            # terminal — it returns
+                            # `{"id": None, "status": "rejected_by_broker"}`.
+                            # Every other `submit_order` caller in this repo
+                            # already tests the RESULT via `_order_accepted`;
+                            # this one only read `.get("id")`, so a rejected
+                            # emergency cover would have written a
+                            # `fill_status="submitted"` EMERGENCY_COVER row
+                            # and filed a SUCCESS event for an order that
+                            # does not exist — on the one path that runs
+                            # when a SHORT has filled and its protective stop
+                            # did NOT place, i.e. a naked short with
+                            # unbounded loss and nobody paged. Raising here
+                            # puts a non-accept back on EXACTLY the path a
+                            # raised submit took before #786: the CRITICAL
+                            # operator page and the `emergency_cover_failed`
+                            # event in the `except` branch below, and no
+                            # trade row, because the raise precedes
+                            # `insert_trade`. `_order_accepted` also catches
+                            # the desk's OWN pre-flight refusals (the
+                            # fat-finger guard, the kill switch), which reach
+                            # here identically id-less and are equally not a
+                            # cover.
+                            if not pipeline._order_accepted(
+                                cover_order, spec["symbol"], "buy",
+                            ):
+                                raise RuntimeError(
+                                    "broker did not accept the emergency "
+                                    f"cover order: {cover_order!r}"
+                                )
                             pipeline.db.insert_trade(
                                 symbol=spec["symbol"], action="EMERGENCY_COVER",
                                 qty=cover_qty, price=0.0,

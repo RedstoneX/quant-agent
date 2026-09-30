@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 140, (
+    assert MAX_ARBITRARY_ENTRIES == 137, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -318,7 +318,51 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "doing, the margin a completed daily close must clear a structural "
         "level by. Same value, no behaviour change; item 70 requires the two "
         "jobs to become two independently justified numbers and forbids "
-        "collapsing them to keep the count down, so the count rises by one."
+        "collapsing them to keep the count down, so the count rises by one. "
+        "140 -> 139 on 2026-09-30, board item 183 (owner ruling): "
+        "`src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta` "
+        "(0.5) was DELETED rather than sourced. The owner ruled the desk gets "
+        "autonomy to nudge a position whenever its own reasoning calls for it, "
+        "so a flat, picked percentage that silently overrode that judgement is "
+        "gone, not resized or lowered. This entry's own 2026-09-26 measurement "
+        "had already shown the cost side (execution slippage; Alpaca charges "
+        "no stock commission) could not justify any floor of this size -- a "
+        "$50 order on a $10k book costs about a cent -- leaving only appetite "
+        "unmeasured, and appetite is exactly what this ruling hands to the "
+        "desk instead of to a constant. No replacement percentage was "
+        "substituted. A row left the ledger, so the count is lowered in the "
+        "same commit. "
+        "139 -> 138 on 2026-09-30, board item 182 (PARTIAL, the item stays "
+        "open): ONE row left, REFORMULATED AWAY rather than sourced. "
+        "`src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02), the "
+        "sweep-vehicle sizing cushion, is gone because the partial sale now "
+        "divides the remaining deficit by the price floor the order itself "
+        "carries -- the live SELL limit -- so the smallest provably-"
+        "sufficient share count is computed rather than padded by a guess, "
+        "and with no quote there is no floor so the whole position is sold. "
+        "`src.risk.rules.GROSS_LADDER_ALERT_PCT` was removed in the first "
+        "draft of the same commit and PUT BACK: the alert trigger is "
+        "monotone, so freezing it at the owner-ratified -20 cannot cause "
+        "silence at any deeper drawdown, while tying it to the ladder's "
+        "deepest rung would have silenced the band between -20% and any new "
+        "deeper rung. Its open question is still unanswered and its row is "
+        "still counted."
+        "138 -> 137 on 2026-09-30, board item 185 (the item STAYS OPEN): "
+        "the midday stop-sanity floor 0.5 "
+        "(`_midday_execute_llm_actions:factor[0]`) was DELETED, not sourced. "
+        "It was a flat half-of-price bound on a model-proposed TRAIL_STOP, "
+        "and the universe screen derived its ATR/price volatility ceiling "
+        "from it, so each of the two was justified by the other and neither "
+        "was fixed by anything outside the pair. Both now read "
+        "`widest_reachable_stop_atr_multiple` instead -- the midday path "
+        "CLAMPS an over-wide proposal to that multiple of the name's own "
+        "live ATR14 rather than refusing it, and the screen's ceiling is "
+        "1 / that multiple. That composition is itself built from two rows "
+        "that are still `arbitrary` with open questions (the 2.5 base and "
+        "the 1.20 risk-off scaler), so one literal is gone but the desk's "
+        "arbitrary content is not reduced, and item 185's own question -- "
+        "how volatile a name may this desk hold -- is not answered. "
+        "A row left the ledger, so the count is lowered in the same commit."
     )
 
 
@@ -367,10 +411,10 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
 
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
-        "src.pipeline.TradingPipeline._force_delever:factor[1]": stop_buffer,
+        "src.pipeline.TradingPipeline._force_delever:factor[0]": stop_buffer,
         "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
-        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
         "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
@@ -485,7 +529,15 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 153, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 154, (
+        "153 -> 154 on 2026-09-26, item 99(d): +1 for "
+        "src.retired_mechanisms.MIN_NEEDLE (12), the minimum length a "
+        "described_in.contains needle must have in the new deletion-site "
+        "TRIGGER (described: / described_gaps()) so a short substring "
+        "cannot match a sentence by accident. It bounds a string-matching "
+        "rule inside a build-time prompt-drift check, not any trade "
+        "decision -- it decides whether a registry entry loads, never a "
+        "size, price, stop or exit. "
         "152 -> 153 on 2026-09-24, item 163: +1 for "
         "src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT (0.5), the "
         "tolerance the new PM risk-narrative-mismatch check uses to compare "
@@ -844,13 +896,15 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # (e) item 138: inline order-price factors. The de-lever ladder's own
     # SELL/COVER fill limits are no longer inline % literals — the emergency
     # de-lever now crosses the LIVE quote or sends a MARKET order
-    # (delever-live-fill), so `_enforce_gross_ceiling` carries no factor site
-    # and `_force_delever:factor[1]` is now its conservative proceeds haircut.
-    # The forced de-lever's sweep cushion (factor[0]) still proves rule (e).
+    # (delever-live-fill), so `_enforce_gross_ceiling` carries no factor site.
+    # `_force_delever` now has exactly ONE factor site, its conservative
+    # proceeds haircut: the sweep-sizing cushion that used to sit ahead of it
+    # was reformulated away on 2026-09-30 (board item 182), which renumbered
+    # the haircut factor[1] -> factor[0]. One site still proves rule (e).
     assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
-    assert "src.pipeline.TradingPipeline._force_delever:factor[1]" in ids
+    assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
-    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[3]" in ids
+    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]" in ids
 
 
 def test_a_parameter_default_is_a_site() -> None:

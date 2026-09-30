@@ -95,8 +95,8 @@ Three further conditions keep it honest, all of them refusals back to
 
 WHAT LEGITIMISES ONE
 --------------------
-A structural event, never a price move and never a judgement. Two, and no
-third:
+A structural event, never a price move and never a judgement. Three, and no
+fourth:
 
 1. `TRIGGER_LEVEL_BROKEN` — the level the target was measured against has
    been closed through, and the break is CONFIRMED on two consecutive
@@ -119,6 +119,55 @@ third:
    NO NEW THRESHOLD IS INTRODUCED for "ATR changed enough". The condition is
    read off the constants the derivation already uses, because inventing a
    percentage here would be an arbitrary number on the live risk path.
+
+3. `TRIGGER_WALL_IN_FRONT_OF_TARGET` — a structural level that is STILL IN
+   THE WAY now stands between the entry and the stored target. The target
+   is aiming past a wall.
+
+   THIS IS THE MIRROR OF THE MOTIVATING CASE, and the argument for it is
+   the same argument, run backwards. Trigger 1 says: the ceiling the target
+   was measured against has GONE, so the measurement describes a chart
+   nobody is looking at. This one says: a ceiling the measurement did not
+   know about has APPEARED between the position and its target, so the
+   measurement again describes a chart nobody is looking at. In both cases
+   the set of overhead levels that `derive_structural_target` would
+   partition today differs from the set it partitioned at entry, and in
+   both cases the stored number is the answer to a question about the old
+   set. Accepting the first and refusing the second would mean the desk
+   revises when the news is good and freezes when it is bad, which is a
+   preference, not a measurement.
+
+   It is also the DOCTRINE VIOLATION the entry derivation exists to
+   prevent, arriving by a different route: "the target is the nearest wall,
+   never the level past it". A target with a standing wall in front of it
+   was not wrong when it was derived — no such wall existed — and it is
+   wrong now. Nothing in triggers 1 and 2 can see this: trigger 1 asks only
+   about the ONE level the target itself sat on, and a new level forming
+   somewhere below it leaves that level untouched; trigger 2 asks only
+   whether today's ATR has moved the stored distance outside
+   `horizon_reach`, and a pivot forming mid-way changes no ATR. Measured on
+   the live book 2026-09-30, both AAPL and NOK aim past a level that did
+   not exist on their entry dates, and both returned
+   `REFUSAL_NO_STRUCTURAL_EVENT` from this function before this trigger
+   existed.
+
+   NO NEW CONSTANT AND NO NEW DEFINITION OF "WALL". `walls_between` counts
+   only levels that have already survived `levels_still_in_the_way`, which
+   is the module's single existing answer to "is this level still
+   overhead", and a level sitting ON the stored target is excluded by
+   strict inequality — that is a target on its own wall, which is the
+   correct outcome rather than a finding. The reference point is the ENTRY,
+   never the latest close, for the same reason everything else here is
+   measured from entry: measuring the gap from today's price would make the
+   trigger fire on every position that has moved, which is a statement
+   about the price move and not about the target.
+
+   WHAT IT DOES NOT DO is exit anything, and it does not assert the wall is
+   new. Whether a level formed after entry or was there all along is not
+   recoverable from the trade row — only the resulting price is stored —
+   and it does not need to be: the re-derivation body is the same either
+   way, so a row that is really the old derivation bug gets the same
+   correct answer from this path as it does from `assess_bugfix_backfill`.
 
 WHAT A REVISION CANNOT DO
 -------------------------
@@ -160,6 +209,7 @@ __all__ = [
     "TRIGGER_LEVEL_BROKEN",
     "TRIGGER_TARGET_BEYOND_REACH",
     "TRIGGER_TARGET_INSIDE_NOISE",
+    "TRIGGER_WALL_IN_FRONT_OF_TARGET",
     "REVISION_NO_TRIGGER",
     "REVISION_BREAK_PENDING_CONFIRMATION",
     "REVISION_NO_PINNED_HORIZON",
@@ -174,9 +224,12 @@ __all__ = [
     "remaining_horizon_sessions",
     "level_backing_target",
     "levels_still_in_the_way",
+    "walls_between",
     "target_level_broken",
     "stale_reach_trigger",
     "assess_target_revision",
+    "TRIGGER_DERIVATION_CORRECTED",
+    "assess_bugfix_backfill",
 ]
 
 # --- Triggers: what legitimises re-deriving -------------------------------
@@ -192,6 +245,12 @@ TRIGGER_TARGET_BEYOND_REACH = "TARGET_BEYOND_TODAYS_REACH"
 #: Today's ATR puts the stored target inside the derivation's own noise
 #: floor — it no longer clears the instrument's own daily range.
 TRIGGER_TARGET_INSIDE_NOISE = "TARGET_INSIDE_TODAYS_NOISE_FLOOR"
+
+#: A structural level still in the way now stands BETWEEN the entry and the
+#: stored target — the target is aiming past a wall. See the module
+#: docstring's trigger 3 for why this is the mirror of TRIGGER_LEVEL_BROKEN
+#: and not a new kind of event.
+TRIGGER_WALL_IN_FRONT_OF_TARGET = "STRUCTURAL_WALL_STANDING_IN_FRONT_OF_TARGET"
 
 # --- Outcomes that are NOT a revision, each recorded by name --------------
 
@@ -396,6 +455,58 @@ def levels_still_in_the_way(
     return [p for p in levels if close < p + margin]
 
 
+def walls_between(
+    *,
+    stored_target: float | None,
+    reference_price: float | None,
+    surviving_levels: list[float] | tuple[float, ...] | None,
+    is_short: bool,
+) -> list[float]:
+    """Every structural level standing BETWEEN the position and its stored
+    target, nearest first. Empty is the healthy answer.
+
+    PURE, and deliberately independent of the derivation so it can be
+    tested without bars. `surviving_levels` must already have been put
+    through `levels_still_in_the_way`, because a level price has closed
+    decisively beyond is not a wall any more and counting it would
+    manufacture a finding out of a broken ceiling.
+
+    `reference_price` is where the position is measured FROM, and every
+    caller passes the ENTRY, not the current price — the same anchor the
+    whole module holds fixed. Measuring from the latest close would flag
+    every position that has moved away from its entry, which is a
+    statement about the price move and not about the target.
+
+    A level exactly ON the target is not between anything and is excluded
+    — that is the target sitting on its own wall, which is the correct
+    outcome, not a finding. Strict inequalities on both ends do that.
+
+    THIS FUNCTION LIVES HERE, not in the script that first needed it
+    (`scripts/check_stored_targets.py`, which now imports it), because it
+    is now also the trigger test `assess_target_revision` runs. Two copies
+    of "is a wall in the way" would let the scheduled report and the live
+    revision path disagree about the same chart, which is the exact class
+    of failure this module's one-body re-derivation exists to prevent.
+    """
+    target = _finite(stored_target)
+    ref = _finite(reference_price)
+    if target is None or ref is None or target <= 0 or ref <= 0:
+        return []
+    out: list[float] = []
+    for raw in surviving_levels or ():
+        level = _finite(raw)
+        if level is None or level <= 0:
+            continue
+        if is_short:
+            # A short's target sits below; a wall is a floor it must get
+            # through on the way down.
+            if target < level < ref:
+                out.append(level)
+        elif ref < level < target:
+            out.append(level)
+    return sorted(out, reverse=bool(is_short))
+
+
 def target_level_broken(
     *,
     target_level: float | None,
@@ -444,14 +555,28 @@ def stale_reach_trigger(
     """Re-apply the derivation's OWN two acceptance tests to the stored
     target using TODAY's ATR; return the trigger code, or "".
 
-    `derive_structural_target` accepts a level only when its distance from
-    entry is both (a) beyond `atr * min_target_atr_multiple` — the noise
-    floor — and (b) within `horizon_reach(atr, horizon)`. Those two bounds
-    are functions of ATR, so a large enough change in ATR moves the stored
-    target outside them. That, and nothing else, is this desk's definition
-    of "ATR has changed enough that the reach measurement is measuring
-    something different": no new constant is introduced, because the
-    derivation already owns both bounds.
+    **ONE test since 2026-09-30, not two.** `derive_structural_target`
+    used to accept a level only when its distance from entry was both (a)
+    beyond `atr * min_target_atr_multiple` — the noise floor — and (b)
+    within `horizon_reach(atr, horizon)`. The noise floor is no longer an
+    acceptance test there: it was filtering the candidate set, so a wall
+    inside one ATR was deleted and the target promoted to the next level
+    out, past structure price had been rejected from (META, 2026-09-21).
+    It now only LABELS the result (`TargetDerivation.target_inside_noise`).
+
+    This function's whole contract is to re-apply the derivation's own
+    tests, so it has to follow. Leaving the noise arm in place made the
+    two modules disagree every session about what the derivation accepts:
+    a sub-noise target fired `TRIGGER_TARGET_INSIDE_NOISE`, the
+    re-derivation returned the identical price, and the outcome was
+    `REVISION_NO_CHANGE` — no write and no harm, but a trigger whose
+    stated premise ("the derivation would no longer accept this") had
+    become false. A trigger that is always wrong is not a safe trigger to
+    leave running.
+
+    Reach remains, and it is still a function of ATR, so a large enough
+    change in ATR still moves the stored target outside it. No constant is
+    introduced; one was retired.
     """
     entry = _finite(entry_price)
     target = _finite(stored_target)
@@ -466,8 +591,12 @@ def stale_reach_trigger(
     distance = abs(target - entry)
     if reach is not None and distance > reach:
         return TRIGGER_TARGET_BEYOND_REACH
-    if distance <= vol * min_target_atr_multiple:
-        return TRIGGER_TARGET_INSIDE_NOISE
+    # No noise-floor arm — see this function's docstring. The derivation
+    # no longer refuses a sub-noise level, so a sub-noise stored target is
+    # not evidence that the measurement went stale. `min_target_atr_multiple`
+    # is kept in the signature because callers pass it and the constant
+    # still governs the LABEL; it no longer gates anything here.
+    del min_target_atr_multiple
     return ""
 
 
@@ -584,19 +713,96 @@ def assess_target_revision(
             max_horizon_sessions=max_horizon_sessions,
         )
 
+    # --- Trigger 3: a level still in the way now stands between the entry
+    # and the stored target. The mirror of trigger 1 — see the module
+    # docstring. Asked LAST because it is the only one of the three whose
+    # premise is about the chart's structure rather than about the stored
+    # number's own inputs, so the cheaper, narrower tests get first refusal.
+    walls: list[float] = []
+    if not trigger:
+        walls = walls_between(
+            stored_target=target,
+            reference_price=entry,
+            surviving_levels=levels_still_in_the_way(
+                computed_levels=levels, close_price=close, atr=vol,
+                is_short=is_short,
+                break_margin_atr_multiple=break_margin_atr_multiple,
+            ),
+            is_short=is_short,
+        )
+        if walls:
+            trigger = TRIGGER_WALL_IN_FRONT_OF_TARGET
+
     if not trigger:
         return TargetRevisionOutcome(
             symbol=sym, code=REVISION_NO_TRIGGER, refusal=REVISION_NO_TRIGGER,
             prior_price=target, level_used=_finite(target_level),
             detail=(
                 "no structural event backs this flag: the level the target "
-                "was measured against is intact on the latest close, and "
-                "today's ATR still puts the target inside the same reach and "
-                "noise bounds the derivation accepted it under. A view that "
-                "there is further upside is not a trigger"
+                "was measured against is intact on the latest close, today's "
+                "ATR still puts the target inside the same reach the "
+                "derivation accepted it under, and no structural level "
+                "stands between the entry and the target. A view that there "
+                "is further upside is not a trigger"
             ),
         )
 
+    return _rederive_on_todays_bars(
+        sym=sym, direction=direction, is_short=is_short, entry=entry,
+        target=target, target_level=target_level, horizon=horizon,
+        setup_type=setup_type, levels=levels, vol=vol, close=close,
+        levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
+        trigger=trigger, sessions_held=sessions_held, allow_reanchor=True,
+        min_target_atr_multiple=min_target_atr_multiple,
+        breakout_projection_atr_multiple=breakout_projection_atr_multiple,
+        max_reach_atr_multiple=max_reach_atr_multiple,
+        max_horizon_sessions=max_horizon_sessions,
+        break_margin_atr_multiple=break_margin_atr_multiple,
+    )
+
+
+def _rederive_on_todays_bars(
+    *,
+    sym: str,
+    direction: str,
+    is_short: bool,
+    entry: float,
+    target: float,
+    target_level: float | None,
+    horizon: int,
+    setup_type: str | None,
+    levels: list[float] | tuple[float, ...] | None,
+    vol: float,
+    close: float,
+    levels_coverage: str,
+    trigger: str,
+    sessions_held: int | None,
+    allow_reanchor: bool,
+    min_target_atr_multiple: float,
+    breakout_projection_atr_multiple: float,
+    max_reach_atr_multiple: float,
+    max_horizon_sessions: int,
+    break_margin_atr_multiple: float,
+) -> TargetRevisionOutcome:
+    """The re-derivation itself, shared by every caller that is allowed to
+    ask for one. Pure — no DB, no broker, no market data, no LLM.
+
+    THIS IS ONE BODY ON PURPOSE. It was lifted out of
+    `assess_target_revision` unchanged when `assess_bugfix_backfill` was
+    added, rather than copied: two derivations of the same number drift,
+    and a target that disagrees with itself depending on which caller asked
+    is the exact failure this desk keeps hitting. Everything above this
+    point — WHETHER the question may be asked — differs between callers;
+    nothing below it does.
+
+    `allow_reanchor` is the single behavioural difference, and it is a
+    difference in what the CALLER is entitled to, not in the derivation. A
+    revision may extend a target once the entry-anchored reach has been
+    outrun (item 114). A correction of a number the derivation itself got
+    wrong may not: the re-anchor is defined to only ever move a target
+    further from entry, and a correction whose content is "the stored
+    number is too far out" would be silently undone by it.
+    """
     # --- Re-derive. Entry, horizon and setup_type are the pinned values;
     # only levels, ATR and coverage come from today's bars.
     raw_levels = [p for p in (_finite(lv) for lv in levels or ()) if p is not None]
@@ -685,9 +891,18 @@ def assess_target_revision(
         # on a measured move.
         remaining = remaining_horizon_sessions(
             pinned_horizon_sessions=horizon, sessions_held=sessions_held,
-        )
+        ) if allow_reanchor else None
         reanchor_note = ""
-        if remaining is None:
+        if not allow_reanchor:
+            reanchor_note = (
+                "; no re-anchor was attempted, because the caller is "
+                "correcting a derivation this desk now knows was wrong "
+                "rather than revising one that has gone stale — the "
+                "re-anchor may only ever move a target FURTHER from entry, "
+                "and the whole content of such a correction is that the "
+                "stored number already sits too far out"
+            )
+        elif remaining is None:
             reanchor_note = (
                 "; the remaining horizon could not be read (no holiday-aware "
                 "sessions-held count for this position), and it is never "
@@ -800,5 +1015,157 @@ def assess_target_revision(
             f"${entry:,.2f} entry and {horizon}-session horizon — "
             f"${target:,.2f} -> ${new_price:,.2f} ({derivation.basis}). "
             f"{derivation.detail}"
+        ),
+    )
+
+
+#: The one thing that legitimises re-deriving a target with no market event
+#: behind it at all: the code that produced the stored number has been
+#: FIXED, so that number is not stale, it is wrong. Deliberately a distinct
+#: string from every `TRIGGER_*` above, so a reader of
+#: `specialist_evidence` can separate a bug-fix backfill from an
+#: evidence-driven revision by the code alone and never has to infer it
+#: from a timestamp.
+TRIGGER_DERIVATION_CORRECTED = "TARGET_DERIVATION_BUG_CORRECTED"
+
+
+def assess_bugfix_backfill(
+    *,
+    symbol: str,
+    direction: str,
+    entry_price: float | None,
+    stored_target: float | None,
+    pinned_horizon_sessions: int | None,
+    setup_type: str | None,
+    levels: list[float] | tuple[float, ...] | None,
+    atr: float | None,
+    close_price: float | None,
+    levels_coverage: str = COVERAGE_UNKNOWN,
+    # DELIBERATELY `None`-defaulted rather than repeating the constants as
+    # defaults here. Written the other way these five would be five NEW
+    # numeric definition sites on the trade-governing path
+    # (`config/number_ledger.yaml`, `tests/test_number_sources.py`) — five
+    # more places a ratified bar could be changed in one and not the other.
+    # A caller that has read them off `risk_engine.config` passes them; a
+    # caller that has not gets `src.data.levels`' own module constants,
+    # which is where these values live and the only place they are stated.
+    min_target_atr_multiple: float | None = None,
+    breakout_projection_atr_multiple: float | None = None,
+    max_reach_atr_multiple: float | None = None,
+    max_horizon_sessions: int | None = None,
+    break_margin_atr_multiple: float | None = None,
+) -> TargetRevisionOutcome:
+    """Re-derive a held position's target because the DERIVATION was wrong,
+    not because the chart changed.
+
+    WHY THIS IS A SEPARATE ENTRY POINT AND NOT A THIRD TRIGGER
+    ----------------------------------------------------------
+    Every trigger `assess_target_revision` accepts is a statement about the
+    MARKET: a level broke, or today's ATR moved the stored target outside
+    the reach the derivation accepted it under. This one is a statement
+    about the DESK: `derive_structural_target` used the noise floor to
+    filter its candidate levels, so a wall inside one ATR of entry left the
+    candidate set and the target was promoted to the next level out. Any
+    target derived before that was fixed may be a number the desk would
+    never compute today.
+
+    Putting that through the trigger list would have been wrong twice over.
+    It would have made a code deploy look like a market event in the
+    record, and — because a corrected target is usually NEARER than the one
+    it replaces — a market trigger would have had to be invented for
+    symbols whose charts did nothing at all.
+
+    WHAT IS HELD FIXED is exactly what a revision holds fixed, for exactly
+    the reasons in this module's docstring: the ENTRY PRICE, the PINNED
+    HORIZON and the SETUP TYPE. Only levels, ATR and coverage come from
+    today's bars. A correction re-asks the ORIGINAL question with working
+    code; it does not ask a new question from today's price.
+
+    WHAT IS NOT ALLOWED, and is the one difference from a revision: the
+    re-anchor on the latest close over the remaining horizon (item 114).
+    That path exists so a revision can EXTEND a target the price has
+    outrun, and it refuses anything not further from entry than the stored
+    number. A correction is very often nearer, so the re-anchor could only
+    ever suppress it or replace it with a longer reach — neither of which
+    is the corrected derivation. `REFUSAL_DERIVED_TARGET_BEHIND_PRICE` is
+    therefore the EXPECTED outcome on a position that has already run, and
+    it is a correct answer: no number is substituted and the stored target
+    stands, flagged rather than quietly replaced.
+
+    Nothing here exits anything and nothing here moves `thesis_progress_pct`
+    or `pace`, which stay measured against the pinned
+    `trades.initial_take_profit` — the column this path must never write.
+    """
+    sym = str(symbol or "").strip().upper()
+    is_short = str(direction or "").strip().lower() == "short"
+
+    entry = _finite(entry_price)
+    target = _finite(stored_target)
+    if target is None or target <= 0:
+        return TargetRevisionOutcome(
+            symbol=sym, code=REVISION_NO_STORED_TARGET,
+            refusal=REVISION_NO_STORED_TARGET,
+            detail=(
+                "no usable take-profit is stored on this position's opening "
+                "row, so there is no derivation to correct"
+            ),
+        )
+
+    try:
+        horizon = int(pinned_horizon_sessions) if pinned_horizon_sessions else None
+    except (TypeError, ValueError):
+        horizon = None
+    if not horizon or horizon <= 0:
+        return TargetRevisionOutcome(
+            symbol=sym, code=REVISION_NO_PINNED_HORIZON,
+            refusal=REVISION_NO_PINNED_HORIZON, prior_price=target,
+            detail=(
+                "no expected_horizon_sessions was pinned at entry for this "
+                "position, and the horizon is never recomputed — there is no "
+                "period over which to re-ask how far this symbol travels"
+            ),
+        )
+
+    vol = _finite(atr)
+    close = _finite(close_price)
+    if entry is None or vol is None or vol <= 0 or close is None:
+        return TargetRevisionOutcome(
+            symbol=sym, code=REVISION_UNMEASURABLE_INPUTS,
+            fault=REVISION_UNMEASURABLE_INPUTS, prior_price=target,
+            detail=(
+                "DATA FAULT: no usable entry price, ATR reading or completed "
+                "daily close could be obtained, so the target cannot be "
+                "re-derived at all"
+            ),
+        )
+
+    return _rederive_on_todays_bars(
+        sym=sym, direction=direction, is_short=is_short, entry=entry,
+        target=target, target_level=None, horizon=horizon,
+        setup_type=setup_type, levels=levels, vol=vol, close=close,
+        levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
+        trigger=TRIGGER_DERIVATION_CORRECTED, sessions_held=None,
+        allow_reanchor=False,
+        min_target_atr_multiple=(
+            MIN_TARGET_ATR_MULTIPLE if min_target_atr_multiple is None
+            else min_target_atr_multiple
+        ),
+        breakout_projection_atr_multiple=(
+            BREAKOUT_PROJECTION_ATR_MULTIPLE
+            if breakout_projection_atr_multiple is None
+            else breakout_projection_atr_multiple
+        ),
+        max_reach_atr_multiple=(
+            MAX_REACH_ATR_MULTIPLE if max_reach_atr_multiple is None
+            else max_reach_atr_multiple
+        ),
+        max_horizon_sessions=(
+            MAX_HORIZON_SESSIONS if max_horizon_sessions is None
+            else max_horizon_sessions
+        ),
+        break_margin_atr_multiple=(
+            BREAK_CONFIRMATION_ATR_MULTIPLE
+            if break_margin_atr_multiple is None
+            else break_margin_atr_multiple
         ),
     )

@@ -372,13 +372,20 @@ def test_a_target_now_beyond_todays_reach_is_a_trigger():
     assert trigger == tr.TRIGGER_TARGET_BEYOND_REACH
 
 
-def test_a_target_now_inside_todays_noise_floor_is_a_trigger():
-    """Volatility exploded, so the stored target no longer clears the
-    instrument's own daily range."""
-    trigger = tr.stale_reach_trigger(
+def test_a_target_inside_todays_noise_floor_is_no_longer_a_trigger():
+    """**Inverted 2026-09-30.** This used to assert
+    `TRIGGER_TARGET_INSIDE_NOISE` on the reasoning that a target inside the
+    daily range is one the derivation would no longer accept.
+
+    It would. The noise floor stopped being an acceptance test in
+    `derive_structural_target` when it was found to be deleting walls and
+    promoting targets past them; it only labels the result now. Re-deriving
+    here returned the identical price and the outcome was
+    `REVISION_NO_CHANGE` every session — a trigger whose premise was always
+    false. Reach is the one remaining test and is unaffected."""
+    assert tr.stale_reach_trigger(
         entry_price=100.0, stored_target=101.0, atr=8.0, horizon_sessions=10,
-    )
-    assert trigger == tr.TRIGGER_TARGET_INSIDE_NOISE
+    ) == ""
 
 
 def test_an_unchanged_target_under_unchanged_volatility_is_not_a_trigger():
@@ -699,3 +706,99 @@ def test_the_reanchor_cannot_fire_without_a_structural_trigger():
     )
     assert out.code == tr.REVISION_NO_TRIGGER
     assert out.new_price is None
+
+
+# ---------------------------------------------------------------------------
+# Trigger 3 — a wall that now stands between the entry and the stored target
+#
+# The mirror of TRIGGER_LEVEL_BROKEN. Same entry ($100) and same 10-session
+# horizon as everything above; what differs is that the chart has grown a
+# level BETWEEN the entry and the number frozen on the row.
+# ---------------------------------------------------------------------------
+
+
+def test_a_wall_in_front_of_the_stored_target_is_a_trigger():
+    """Entry 100, stored target 110, and today's bars carry a level at 105
+    that the 101 close has not cleared. The target aims past a standing
+    wall, and the re-derivation returns the wall."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
+    assert out.revised
+    assert out.new_price == pytest.approx(105.0)
+    assert out.basis == tr.STRUCTURAL_LEVEL_BASIS
+
+
+def test_the_old_triggers_alone_would_have_missed_that_chart():
+    """The load-bearing claim. On the identical inputs neither existing
+    trigger can see the new wall: the level the target sat on is intact, and
+    a pivot forming mid-way moves no ATR, so reach is unchanged."""
+    assert tr.target_level_broken(
+        target_level=110.0, close_price=101.0, atr=2.5, is_short=False,
+    ) is False
+    assert tr.stale_reach_trigger(
+        entry_price=100.0, stored_target=110.0, atr=2.5, horizon_sessions=10,
+    ) == ""
+
+
+def test_a_target_sitting_on_its_own_wall_is_not_a_finding():
+    """Strict inequality. The level AT the target is the target's own wall,
+    which is the correct derivation, not something to revise."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0, 95.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+    assert out.new_price is None
+
+
+def test_a_wall_the_close_has_broken_through_is_not_a_wall():
+    """`levels_still_in_the_way` runs first, so a level the close has
+    cleared by a noise band cannot manufacture a trigger. Close 109 with
+    ATR 2.5 clears 105 by a full BREAK_CONFIRMATION_ATR_MULTIPLE."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=108.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+
+
+def test_the_wall_test_is_anchored_on_entry_not_on_the_current_price():
+    """A target must never become a function of the price move. A level
+    BELOW the entry is behind the position, not in front of the target, and
+    no amount of price movement makes it a wall."""
+    assert tr.walls_between(
+        stored_target=110.0, reference_price=100.0,
+        surviving_levels=[95.0, 99.9], is_short=False,
+    ) == []
+    assert tr.walls_between(
+        stored_target=110.0, reference_price=100.0,
+        surviving_levels=[102.0, 107.0, 110.0, 115.0], is_short=False,
+    ) == [102.0, 107.0]
+
+
+def test_the_wall_test_mirrors_for_a_short():
+    """A short's target sits below entry, so its wall is a floor between
+    the two, and the nearest one comes first."""
+    assert tr.walls_between(
+        stored_target=90.0, reference_price=100.0,
+        surviving_levels=[85.0, 93.0, 97.0, 100.0], is_short=True,
+    ) == [97.0, 93.0]
+
+
+def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
+    """`REVISION_BEHIND_PRICE` is a correct answer, not a gap to fill. The
+    $110 wall still stands in front of the stored $120, but the only target
+    derivable from the pinned $100 entry is that same $110, which the $113
+    close has passed — and the horizon is spent, so there is nothing to
+    re-anchor on either."""
+    out = tr.assess_target_revision(
+        stored_target=120.0, target_level=120.0, levels=[110.0, 120.0],
+        atr=5.0, close_price=113.0, break_seen_prior_close=False,
+        sessions_held=10, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
+    assert out.new_price is None
+    assert out.code == tr.REVISION_BEHIND_PRICE

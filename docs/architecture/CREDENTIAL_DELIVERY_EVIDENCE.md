@@ -30,11 +30,11 @@ to an agent identity, and each agent identity has its own credential grants in
 the `agent_secrets` table.
 
 - `Default Agent` (`identifier=default`) → production, Alpaca paper account
-  `PA3DFXH9FF5V` (the same account already named elsewhere in this repo's
+  `<redacted-main-account-id>` (the same account already named elsewhere in this repo's
   incident history).
 - `Rehearsal Harness` (`identifier=rehearsal`) → a separate paper account,
-  `PA30V8QHEW1C`, funded at $10,000, with its secrets pinned specifically to
-  `paper-api.alpaca.markets`.
+  `<redacted-rehearsal-account-id>`, funded at $10,000, with its secrets
+  pinned specifically to `paper-api.alpaca.markets`.
 
 Verified directly: the same URL called through each of the two tokens returns
 data for a different account. When OneCLI cannot resolve a token to a grant
@@ -125,7 +125,7 @@ in-band with the key pair and cannot traverse the gateway, the socket's
 identity is whatever account that key pair belongs to — it CANNOT be pointed
 at a second account that is selected by a gateway agent token. Measured
 2026-09-18: the key pair in `/home/qamc/credentials` reads back account
-`PA3DFXH9FF5V`. A fill-notification test on any gateway-selected account is
+`<redacted-main-account-id>`. A fill-notification test on any gateway-selected account is
 therefore not possible on this box.
 
 The consequence is the thing that cost this project most: **order placement

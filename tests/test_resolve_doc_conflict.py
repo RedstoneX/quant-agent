@@ -59,7 +59,9 @@ WORK_BASE = """\
 
 **8. The queue's own item eight, unrelated to the gate's — OPEN.** Queue body eight.
 
-**Retired item numbers — never reuse.** 4, 5 in this queue, and 1, 2 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`.
+**Retired item numbers — never reuse.** APPEND-ONLY: closing an item adds one new line below, never an edit to an existing one.
+- retired queue: 4, 5
+- retired gate: 1, 2
 
 ## Evidence-only follow-ups
 
@@ -89,13 +91,20 @@ def _add_queue_item(text: str, block: str) -> str:
 
 
 def _set_retired(text: str, queue: str, gate: str) -> str:
-    for line in text.splitlines():
-        if line.startswith("**Retired item numbers"):
-            new = (f"**Retired item numbers — never reuse.** {queue} in this "
-                   f"queue, and {gate} in the PM test gate, were deleted once "
-                   "written up in `docs/INCIDENT_HISTORY.md`.")
-            return text.replace(line, new)
-    raise AssertionError("fixture has no retired line")
+    """APPEND one new queue bullet and one new gate bullet after the
+    fixture's existing retired lines — the real, append-only way a closure
+    records itself now. Never edits or removes an existing line, including
+    the fixture's own starting `4, 5` / `1, 2` lines."""
+    lines = text.splitlines(keepends=True)
+    last_retired = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("- retired queue:") or stripped.startswith("- retired gate:"):
+            last_retired = i
+    if last_retired is None:
+        raise AssertionError("fixture has no retired bullet lines")
+    insert = [f"- retired queue: {queue}\n", f"- retired gate: {gate}\n"]
+    return "".join(lines[:last_retired + 1] + insert + lines[last_retired + 1:])
 
 
 # ---------------------------------------------------------------------------
@@ -240,40 +249,59 @@ def test_a_section_heading_that_differs_between_the_sides_refuses():
 # ---------------------------------------------------------------------------
 
 
-def test_the_retired_line_is_the_union_of_both_sides_lists():
+def test_the_retired_lines_are_the_union_of_both_sides_bullet_lines():
     ours = _set_retired(_drop_item(WORK_BASE, "**1. The first"), "1, 4, 5", "1, 2")
     theirs = _set_retired(_drop_item(WORK_BASE, "**2. The second"), "2, 4, 5", "1, 2")
 
     merged = rdc.resolve_work(WORK_BASE, ours, theirs)
-    line = [s.retired for s in rdc.parse_sections(merged) if s.retired][0]
-    queue, gate, *_ = rdc.parse_retired(line)
+    lines = [l for s in rdc.parse_sections(merged) for l in s.retired]
+    queue, gate = rdc.parse_retired_lines(lines)
 
-    assert queue == [1, 2, 4, 5]
-    assert gate == [1, 2]
+    # Both sides APPENDED a new bullet line (never edited the base one), so
+    # the base line and both new lines all survive — the guarantee is that no
+    # NUMBER is lost, not that the line count collapses to one.
+    assert sorted(set(queue)) == [1, 2, 4, 5]
+    assert sorted(set(gate)) == [1, 2]
 
 
-def test_the_retired_line_is_parsed_from_its_own_lists_not_scraped_from_prose():
+def test_two_closures_append_two_different_lines_and_never_conflict():
+    """THE structural fix: each side appends ONE NEW bullet line (never
+    editing the header or an existing bullet), the way a real closure now
+    does. This must merge with no Refusal at all — no union-of-two-numbers
+    reconstruction needed, because the two lines simply both survive."""
+    ours = WORK_BASE.replace(
+        "- retired gate: 1, 2\n",
+        "- retired gate: 1, 2\n- retired queue: 190\n",
+    )
+    theirs = WORK_BASE.replace(
+        "- retired gate: 1, 2\n",
+        "- retired gate: 1, 2\n- retired queue: 191\n",
+    )
+    merged = rdc.resolve_work(WORK_BASE, ours, theirs)
+    assert "- retired queue: 190" in merged
+    assert "- retired queue: 191" in merged
+
+
+def test_the_retired_lines_are_parsed_from_their_own_shape_not_scraped_from_prose():
     """Scraping integers out of the surrounding sentences pulled stray digits
     in and corrupted the line badly enough that a separate session had to
-    rebuild it from git history. The tail of the real line is full of numbers
-    that are NOT retired numbers; none may end up in either list."""
-    line = ("**Retired item numbers — never reuse.** 4, 5 in this queue, and "
-            "1, 2 in the PM test gate, were deleted once written up. Items 62, "
-            "63 and 65 were renumbered on 2026-09-14 and 90, 101, 200 never "
-            "existed.\n")
-    queue, gate, *_ = rdc.parse_retired(line)
+    rebuild it from git history. A bullet line's own numbers are all that
+    counts; the explanatory header (full of unrelated numbers, e.g. dates and
+    renumbered items) is never touched by this parser."""
+    lines = ["- retired queue: 4, 5\n", "- retired gate: 1, 2\n"]
+    queue, gate = rdc.parse_retired_lines(lines)
     assert queue == [4, 5]
     assert gate == [1, 2]
 
 
-def test_a_retired_line_whose_shape_changed_refuses_rather_than_guessing():
+def test_a_malformed_retired_bullet_line_refuses_rather_than_guessing():
     with pytest.raises(rdc.Refusal) as exc:
-        rdc.parse_retired("**Retired item numbers — never reuse.** none yet.\n")
-    assert "cannot be parsed" in str(exc.value)
+        rdc.parse_retired_lines(["- retired queue: none yet\n"])
+    assert "no longer has the shape" in str(exc.value)
 
 
 def test_closing_an_item_on_one_side_survives_the_merge_end_to_end():
-    """The whole point: a branch closes item 3 (deletes it, adds 3 to the
+    """The whole point: a branch closes item 3 (deletes it, appends 3 to the
     retired list) while another branch files item 9. Both land."""
     ours = _set_retired(_drop_item(WORK_BASE, "**3. The third"), "3, 4, 5", "1, 2")
     theirs = _add_queue_item(WORK_BASE, "**9. A parallel finding — OPEN.** Nine body.\n")
@@ -282,7 +310,7 @@ def test_closing_an_item_on_one_side_survives_the_merge_end_to_end():
     queue = [s for s in rdc.parse_sections(merged)
              if s.key.startswith("## THE FUNNEL QUEUE")][0]
     assert sorted(queue.order) == [1, 2, 8, 9]
-    assert rdc.parse_retired(queue.retired)[0] == [3, 4, 5]
+    assert sorted(set(rdc.parse_retired_lines(queue.retired)[0])) == [3, 4, 5]
 
 
 # ---------------------------------------------------------------------------

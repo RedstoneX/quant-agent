@@ -118,16 +118,19 @@ def test_magnitude_tracks_neither_confidence_nor_regime_shift(confidence, regime
     assert v.magnitude == NO_STATED_STRENGTH
 
 
-def test_neutral_outlook_always_maps_to_zero_magnitude_even_with_regime_shift():
+def test_neutral_outlook_states_no_magnitude_even_with_regime_shift():
     """A neutral verdict with nonzero magnitude is refused by `AnalystVerdict`
     as self-contradictory — `to_verdict` must never construct one, regardless
-    of confidence or `regime_shift`."""
+    of confidence or `regime_shift`. Item 65, 2026-09-26: macro states no
+    strength on ANY read, neutral included, so this is None (absent) rather
+    than 0.0 (a strength of nothing, read off a scale macro does not have).
+    """
     a = _macro(
         "neutral", confidence="high", regime_shift=True, shift_reason="Something moved",
     )
     v = a.to_verdict("SPY")
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -293,7 +296,7 @@ def test_a_neutral_sector_row_neutralises_a_directional_broad_read():
     )
     v = a.to_verdict("NEE", sector="Utilities")
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
     assert v.invalidation == ""
 
 
@@ -311,7 +314,7 @@ def test_disagreeing_sector_rows_resolve_to_neutral_not_to_the_broad_read():
     )
     v = a.to_verdict("XOM", sector="Energy")
     assert v.direction == "neutral"
-    assert v.magnitude == 0.0
+    assert v.magnitude is None
 
 
 def test_an_unresolved_macro_read_no_longer_silently_conflict_drops_a_candidate():
