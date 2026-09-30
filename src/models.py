@@ -1407,6 +1407,14 @@ class TechAnalysisResult(TechAnalystAnswerItem):
     # A price missing from this map is not an error: the matching sites fall
     # back to the percentage bound, which is the fail-closed direction.
     computed_level_zones: dict[float, list[float]] = Field(default_factory=dict)
+    #: (low, high) of the bars that DREW each computed level, keyed by the
+    #: same price. `_level_backing_stop` needs it to answer "is the stop AT
+    #: this level" without a tolerance — docs/WORK.md item 215. Python-set
+    #: from `find_structural_levels`, never emitted by a model; missing means
+    #: unknown, which fails closed to "not level-backed".
+    computed_level_bars: dict[float, list[tuple[float, float]]] = Field(
+        default_factory=dict
+    )
     # PYTHON-SET (2026-09-12): what the bar history behind `computed_levels`
     # was — one of the COVERAGE_* states in `src/data/levels.py`. An empty
     # `computed_levels` with coverage "measured" is a chart with no

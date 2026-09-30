@@ -957,6 +957,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
+        computed_level_bars_by_sym: dict[
+            str, dict[float, list[tuple[float, float]]]
+        ] = {}
         # What the bar history WAS, recorded beside the levels it did or did
         # not produce (2026-09-12). Without it an empty `computed_levels`
         # from a dead feed and one from a chart with no repeated turning
@@ -983,6 +986,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 computed_levels_by_sym[sym] = sorted(lv.price for lv in all_levels)
                 computed_level_touches_by_sym[sym] = {
                     lv.price: lv.touches for lv in all_levels
+                }
+                computed_level_bars_by_sym[sym] = {
+                    lv.price: list(lv.pivot_bars) for lv in all_levels
                 }
                 last = bars[-1]
                 signal_bar_by_sym[sym] = (
@@ -1043,6 +1049,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     )
                     analysis.computed_level_touches = (
                         computed_level_touches_by_sym.get(analysis.symbol, {})
+                    )
+                    analysis.computed_level_bars = (
+                        computed_level_bars_by_sym.get(analysis.symbol, {})
                     )
                     # A submitted symbol with no entry here had no bars dict
                     # at all; that is the no-bars fault, not "unknown".

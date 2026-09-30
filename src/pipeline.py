@@ -10558,6 +10558,7 @@ class TradingPipeline:
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
         computed_level_zones: dict[float, list[float]] = {}
+        computed_level_bars: dict[float, list[tuple[float, float]]] = {}
         atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
         # The completed trading sessions strictly before today's close, most
         # recent first, taken from THIS position's own daily bars — the
@@ -10590,6 +10591,9 @@ class TradingPipeline:
                     lv.price: [float(lv.zone_low), float(lv.zone_high)]
                     for lv in all_levels
                     if lv.zone_low is not None and lv.zone_high is not None
+                }
+                computed_level_bars = {
+                    lv.price: list(lv.pivot_bars) for lv in all_levels
                 }
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -10641,6 +10645,7 @@ class TradingPipeline:
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             computed_level_zones=computed_level_zones,
+            computed_level_bars=computed_level_bars,
             min_level_touches=min_level_touches,
             # NOT a setting and not a fallback default — this is the exact
             # constant `find_structural_levels` used to cluster pivots into

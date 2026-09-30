@@ -144,6 +144,44 @@ CLUSTER_TOLERANCE_PCT_FALLBACK = 1.0
 CLUSTER_TOLERANCE_PCT = CLUSTER_TOLERANCE_PCT_FALLBACK
 
 
+def stop_rests_on_level(
+    stop_price: float, pivot_bars: "tuple | list | None"
+) -> bool:
+    """Is `stop_price` AT this level, rather than merely inside its band?
+
+    docs/WORK.md item 215. `level_zone_halfwidth` bounds the level's WHOLE
+    zone, so "inside the zone" and "at the level" were reported as the same
+    statement. They are not: a merged cluster's zone can span a fifth of the
+    price, and a stop at one end of it can be taken out with the level itself
+    never broken.
+
+    The test here introduces NO new number. A level is drawn by the bars that
+    turned at it; the smallest thing the instrument itself says is "structure
+    traded here" is one of those bars' own high-low range. So the stop rests
+    on the level when it lies inside the range of at least one bar that formed
+    the level — a price the market actually defended — and not when it merely
+    lies somewhere in the merged span between two distant pivots. The bound is
+    read off the same bars `find_structural_levels` clustered, so it can never
+    drift from the object it is matching.
+
+    Fail closed: no bar ranges, or a non-finite stop, means NOT backed, which
+    routes the stop to the ordinary ATR floor exactly as an unmatched stop
+    does today.
+    """
+    if not math.isfinite(stop_price):
+        return False
+    for rng in pivot_bars or ():
+        try:
+            low, high = float(rng[0]), float(rng[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            continue
+        if low <= stop_price <= high:
+            return True
+    return False
+
+
 def level_zone_halfwidth(
     level_price: float,
     tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
@@ -433,6 +471,11 @@ class Level:
         return level_zone_halfwidth(
             self.price, zone_low=self.zone_low, zone_high=self.zone_high
         )
+    # (low, high) of every BAR that drew this level — one entry per pivot in
+    # the cluster, read straight off the instrument. This is what makes
+    # "the stop is AT this level" answerable without inventing a tolerance:
+    # see `stop_rests_on_level`. Empty means unknown, which fails closed.
+    pivot_bars: tuple[tuple[float, float], ...] = ()
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -717,6 +760,11 @@ def find_structural_levels(
             continue
 
         newest_index = max(p[0] for p in cluster)
+        pivot_bars = tuple(
+            (float(clean[p[0]].low), float(clean[p[0]].high))
+            for p in cluster
+            if 0 <= p[0] < len(clean)
+        )
         sessions_ago = last_index - newest_index
 
         # Strength is touch count, discounted by distance — no age term.
@@ -768,6 +816,7 @@ def find_structural_levels(
             strength=round(strength, 4),
             zone_low=round(zlow, 4) if zlow is not None else None,
             zone_high=round(zhigh, 4) if zhigh is not None else None,
+            pivot_bars=pivot_bars,
         )
         (supports if level.kind == "support" else resistances).append(level)
 

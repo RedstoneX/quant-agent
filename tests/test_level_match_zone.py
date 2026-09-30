@@ -177,12 +177,16 @@ def test_new_tolerance_is_independent_of_volatility():
     Nothing in the matcher takes an ATR any more, so there is no volatility
     at which the tolerance can fall short of the zone.
     """
-    level_price, stop = 100.0, 99.5  # inside the 1% zone, 0.5 away
+    # Item 215: the stop is on a BAR that drew the level, not merely inside
+    # the level's zone. That bar traded 99.4-100.2; the stop sits in it.
+    level_price, stop = 100.0, 99.5
+    bars = {level_price: [(99.4, 100.2)]}
     for atr in (0.5, 1.5, 2.56, 4.0, 9.0):  # 0.5%..9% of price
         matched = _structural_level_backing_stop(
             entry_price=105.0, stop_loss=stop, is_short=False,
             computed_levels=[level_price],
             computed_level_touches={level_price: 5},
+            computed_level_bars=bars,
             min_level_touches=5,
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
         )
@@ -200,55 +204,76 @@ def _constructor():
 
 
 class _Analysis:
-    def __init__(self, levels, touches):
+    def __init__(self, levels, touches, bars=None):
         self.computed_levels = levels
         self.computed_level_touches = touches
+        # Item 215: (low, high) of the bars that DREW each level. Absent
+        # means unknown, which fails closed to "not level-backed".
+        self.computed_level_bars = bars or {}
         self.atr_14 = 2.0
 
 
 @pytest.mark.parametrize("gap", [0.0, 0.5, 0.99, 1.0, 1.01, 1.5, 5.0])
 def test_constructor_and_exit_guard_match_identically(gap):
-    """Straddles the 1% boundary at price 100 — inside, on it, and outside."""
+    """Straddles the FORMING BAR's low — inside, on it, and outside.
+
+    Item 215: the boundary both implementations must agree on is no longer
+    the zone's edge but the low of a bar that drew the level. The bar here
+    traded 99.0-100.5, so gaps up to 1.0 rest on it and larger ones do not.
+    """
     level_price = 100.0
     stop = level_price - gap
     entry = 110.0
     touches = {level_price: 5}
+    bar_low, bar_high = 99.0, 100.5
+    bars = {level_price: [(bar_low, bar_high)]}
 
     from_constructor = _constructor()._level_backing_stop(
-        _Analysis([level_price], touches), entry, stop, False,
+        _Analysis([level_price], touches, bars), entry, stop, False,
     )
     from_exit_guard = _structural_level_backing_stop(
         entry_price=entry, stop_loss=stop, is_short=False,
         computed_levels=[level_price], computed_level_touches=touches,
+        computed_level_bars=bars,
         min_level_touches=5,
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
     )
     assert from_constructor == from_exit_guard
 
-    expected = level_price if gap <= level_zone_halfwidth(level_price) else None
+    expected = level_price if bar_low <= stop <= bar_high else None
     assert from_constructor == expected
 
 
 def test_boundary_scales_with_price_in_both_implementations():
-    """A $1000 level's zone is $10 wide; a $10 level's is $0.10.
+    """The bound is each level's OWN bar, so it cannot be one fraction of
+    price for every name.
 
-    Under the old ATR multiple a single tolerance could be inside one zone
-    and outside another on the same day. It cannot now.
+    Item 215 replaced "inside the zone" with "inside the range of a bar that
+    drew the level". That keeps the property this test was written for — a
+    tolerance can never be inside one level's structure and outside
+    another's on the same day — and strengthens it: the widths below are
+    deliberately NOT a constant fraction of price, because the instrument
+    does not trade one.
     """
-    for level_price in (10.0, 100.0, 1000.0):
-        just_inside = level_price - level_zone_halfwidth(level_price) * 0.99
-        just_outside = level_price - level_zone_halfwidth(level_price) * 1.01
+    cases = {
+        10.0: (9.93, 10.02),      # 0.7% below the level
+        100.0: (98.10, 100.40),   # 1.9% below
+        1000.0: (996.00, 1002.0), # 0.4% below
+    }
+    for level_price, (bar_low, bar_high) in cases.items():
         touches = {level_price: 5}
+        bars = {level_price: [(bar_low, bar_high)]}
         entry = level_price * 1.2
         c = _constructor()
 
+        just_inside = bar_low + (bar_high - bar_low) * 0.01
+        just_outside = bar_low - (bar_high - bar_low) * 0.01
         assert c._level_backing_stop(
-            _Analysis([level_price], touches), entry, just_inside, False,
+            _Analysis([level_price], touches, bars), entry, just_inside, False,
         ) == level_price
         assert c._level_backing_stop(
-            _Analysis([level_price], touches), entry, just_outside, False,
+            _Analysis([level_price], touches, bars), entry, just_outside, False,
         ) is None
-
 
 # ---------------------------------------------------------------------------
 # 4. Mechanical guards — the rules in section 1 only hold if nobody quietly
@@ -358,22 +383,76 @@ def _bars_with_a_double_bottom() -> list[OHLCV]:
     return bars
 
 
-def test_a_stop_inside_a_real_computed_zone_is_recognised():
+def test_a_stop_on_a_bar_that_drew_a_real_computed_level_is_recognised():
+    """End to end against real bars: `find_structural_levels` records the
+    forming bars, and only a stop inside one of them is backed."""
     supports, _ = find_structural_levels(_bars_with_a_double_bottom())
     assert supports, "fixture must produce a support level"
     level = supports[0]
     assert level.touches >= 2
+    assert level.pivot_bars, "the level must carry the bars that drew it"
 
-    tolerance = level_zone_halfwidth(level.price)
     entry = level.price * 1.1
     touches = {level.price: 5}
+    bars = {level.price: [tuple(b) for b in level.pivot_bars]}
     c = _constructor()
 
-    inside = level.price - tolerance * 0.9
-    outside = level.price - tolerance * 1.1
+    lowest = min(b[0] for b in level.pivot_bars)
+    highest = max(b[1] for b in level.pivot_bars)
+    on_a_bar = (lowest + highest) / 2.0
+    # Still inside the level's own reported zone, but below every bar that
+    # made it — the case item 215 exists to refuse.
+    off_every_bar = lowest - (highest - lowest)
+
     assert c._level_backing_stop(
-        _Analysis([level.price], touches), entry, inside, False,
+        _Analysis([level.price], touches, bars), entry, on_a_bar, False,
     ) == level.price
     assert c._level_backing_stop(
-        _Analysis([level.price], touches), entry, outside, False,
+        _Analysis([level.price], touches, bars), entry, off_every_bar, False,
+    ) is None
+
+
+def test_a_stop_inside_the_zone_but_on_no_forming_bar_is_not_backed():
+    """THE new rule, item 215, stated on its own.
+
+    A level's zone is the merged span of the bars that formed it (item 55),
+    so on a name whose turning points are far apart that span can be a large
+    fraction of the price with a wide gap in the middle that nothing ever
+    traded. A stop parked in that gap can be taken out with the level never
+    broken, so it is not level-backed and gets no exemption. Both
+    implementations must say so.
+    """
+    level_price = 100.0
+    touches = {level_price: 5}
+    # Two sessions drew this level, ten dollars apart. The zone spans both;
+    # the bars do not.
+    bars = {level_price: [(94.0, 95.0), (104.0, 105.0)]}
+    entry = 120.0
+    in_the_gap = 99.0          # inside the zone, on neither bar
+    on_the_lower_bar = 94.5    # on a bar that actually traded
+
+    c = _constructor()
+    assert c._level_backing_stop(
+        _Analysis([level_price], touches, bars), entry, in_the_gap, False,
+    ) is None
+    assert c._level_backing_stop(
+        _Analysis([level_price], touches, bars), entry, on_the_lower_bar, False,
+    ) == level_price
+
+    for stop, expected in ((in_the_gap, None), (on_the_lower_bar, level_price)):
+        assert _structural_level_backing_stop(
+            entry_price=entry, stop_loss=stop, is_short=False,
+            computed_levels=[level_price], computed_level_touches=touches,
+            computed_level_bars=bars,
+            min_level_touches=5,
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+        ) == expected
+
+
+def test_no_bar_ranges_recorded_fails_closed_to_not_backed():
+    """Item 215 fails closed. An older stored analysis carries no forming
+    bars, and an unknown is never an exemption."""
+    level_price = 100.0
+    assert _constructor()._level_backing_stop(
+        _Analysis([level_price], {level_price: 5}), 110.0, 99.9, False,
     ) is None

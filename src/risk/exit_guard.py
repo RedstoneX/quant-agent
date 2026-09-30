@@ -1755,6 +1755,7 @@ def _structural_level_backing_stop(
     computed_levels: list | None,
     computed_level_touches: dict | None,
     computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
 ) -> float | None:
@@ -1783,6 +1784,7 @@ def _structural_level_backing_stop(
     ATR — see docs/WORK.md item 46 / docs/INCIDENT_HISTORY.md.
     """
     touches_by_price = computed_level_touches or {}
+    bars_by_price = computed_level_bars or {}
     best: float | None = None
     best_gap = float("inf")
     for raw in computed_levels or []:
@@ -1799,26 +1801,30 @@ def _structural_level_backing_stop(
         touches = touches_by_price.get(price)
         if touches is None or touches < min_level_touches:
             continue
-        # This level's OWN zone. Since item 55 (2026-09-30) that is the
-        # MEASURED span of the bars that formed the level, passed in on
-        # `computed_level_zones` keyed by the same price. When no zone was
-        # recorded for this price the percentage bound still applies — fail
-        # closed, so the level keeps backing the stop instead of vanishing.
-        zone = (computed_level_zones or {}).get(price)
-        tolerance = 0.0
-        if zone and len(zone) == 2:
-            try:
-                z_lo, z_hi = float(zone[0]), float(zone[1])
-            except (TypeError, ValueError):
-                z_lo = z_hi = float("nan")
-            if math.isfinite(z_lo) and math.isfinite(z_hi) and z_hi >= z_lo:
-                tolerance = max(price - z_lo, z_hi - price)
-        if tolerance <= 0:
-            tolerance = price * level_cluster_tolerance_pct / 100.0
-        if tolerance <= 0:
+        # "AT this level", not "inside its band" — docs/WORK.md item 215.
+        # The stop must lie inside the high-low range of at least one BAR
+        # that drew the level. `level_cluster_tolerance_pct` bounds the whole
+        # merged zone, which can span a fifth of the price, so a stop at one
+        # end of it could be taken out with the level never broken and the
+        # desk still reporting the position structurally protected. Missing
+        # bar ranges fail closed to not-backed, same as an unmatched stop.
+        # Mirrors `src.data.levels.stop_rests_on_level`, restated here in
+        # full only because this module imports nothing.
+        if price * level_cluster_tolerance_pct / 100.0 <= 0:
             continue
+        rests = False
+        for rng in (bars_by_price.get(price) or ()):
+            try:
+                low, high = float(rng[0]), float(rng[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+                continue
+            if low <= stop_loss <= high:
+                rests = True
+                break
         gap = abs(stop_loss - price)
-        if gap <= tolerance and gap < best_gap:
+        if rests and gap < best_gap:
             best, best_gap = price, gap
     return best
 
@@ -1834,6 +1840,7 @@ def check_structural_protection(
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
     computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2019,6 +2026,7 @@ def check_structural_protection(
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             computed_level_zones=computed_level_zones,
+            computed_level_bars=computed_level_bars,
             min_level_touches=min_level_touches,
             level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         )
@@ -2244,6 +2252,7 @@ def structural_protection_broken(
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
     computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2278,6 +2287,7 @@ def structural_protection_broken(
         computed_levels=computed_levels,
         computed_level_touches=computed_level_touches,
         computed_level_zones=computed_level_zones,
+        computed_level_bars=computed_level_bars,
         min_level_touches=min_level_touches,
         level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,
