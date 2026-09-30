@@ -7,6 +7,53 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def _check_interpreter_matches_ci() -> None:
+    """Fail loudly, at test-collection time, if the interpreter running this
+    session isn't the one CI runs.
+
+    Item 192: CI pins Python via `.python-version` (both `.github/workflows/
+    test.yml` jobs read it with `python-version-file`, rather than each
+    carrying its own literal). Nothing previously checked that a developer's
+    or agent's local interpreter matched it, and the drift was invisible: a
+    prompt-drift check once hashed `ast.dump()` of a parsed function, and
+    Python 3.12 added a `type_params` field to `FunctionDef`/`AsyncFunctionDef`/
+    `ClassDef` that 3.11 doesn't have, so the same unchanged source hashed
+    differently under the two interpreters. CI went red, local ran green, and
+    two agents produced confident but wrong diagnoses before the version skew
+    itself was found.
+
+    This runs unconditionally at collection (module scope, not a fixture) so
+    it fires on every local pytest invocation, including a single-file run —
+    that is how agents on this repo actually invoke tests, and a fixture only
+    a full-suite run would exercise would miss exactly that case. A floor
+    check via `pyproject.toml`'s `requires-python` was considered instead:
+    it's declarative and nothing evaluates it against the running
+    interpreter, so it can't fire and was rejected for that reason.
+    """
+    pin_file = Path(__file__).resolve().parent.parent / ".python-version"
+    try:
+        pinned = pin_file.read_text().strip()
+    except OSError:
+        return  # nothing to check against; don't block tests on this file's absence
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if running != pinned:
+        pytest.exit(
+            "Local Python is "
+            f"{running} (full version {sys.version.split()[0]}) but CI runs "
+            f"{pinned}, pinned in .python-version and read by both jobs in "
+            ".github/workflows/test.yml. Run tests under Python "
+            f"{pinned} instead — a version mismatch here can silently change "
+            "behaviour (e.g. Python 3.12 added an AST field 3.11 doesn't "
+            "have, which once made an unchanged file hash differently in CI "
+            "vs. local and produced two false diagnoses before anyone found "
+            "the real cause). See docs/WORK.md item 192.",
+            returncode=1,
+        )
+
+
+_check_interpreter_matches_ci()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_cwd(tmp_path, monkeypatch):
     """Every test runs in its own tmp cwd so stores with relative data_dir defaults
