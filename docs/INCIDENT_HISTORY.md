@@ -102,6 +102,36 @@ It now exits non-zero and prints no number at all when the open-pull-request rea
 
 **What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
 
+## 2026-09-30 — a near-empty balance refused calls the provider offered to serve
+
+**What happened.** On a near-empty paid balance the provider answered with
+HTTP 402 and its own message naming the answer allowance it WOULD still
+serve: "This request requires more credits, or fewer max_tokens. You
+requested up to 16000 tokens, but can only afford 775." Seven such refusals
+were seen the same day, all against the same 16000 ask, with stated
+affordable allowances of 10125, 5062, 4655, 1622, 1551, 811 and 775.
+
+**Why it mattered.** The desk always asked for the same fixed allowance and
+never re-asked smaller, so every one of those calls died even though the
+provider had just said what it could serve. With the owner out of credit and
+not topping up, that is the difference between a session running and a
+session not running at all.
+
+**The fix.** On a credit refusal that NAMES a servable allowance, the seat
+re-asks ONCE at exactly that stated figure, then restores its configured
+ask. No fallback size is invented: a refusal naming no figure fails exactly
+as before and says so in the log.
+
+**What was deliberately NOT weakened.** A smaller allowance can cut an answer
+off. Truncation detection is unchanged, so a cut-off answer is still
+discarded unused and the seat still refuses to decide. The technical seat —
+the outlier that asks for a very large allowance because it analyses 25
+symbols per call — is NOT re-batched to fit whatever the balance can afford;
+it re-asks, and if the answer will not fit it fails honestly on truncation.
+Re-cutting the work to fit the wallet would make the analysis depend on the
+balance, which is the opposite of what the desk is for.
+
+
 ## Item 198 — the number-ledger ratchet stops being one hand-edited line
 
 **RETIRED 2026-09-30, shipped in the same change.** Every pull request that

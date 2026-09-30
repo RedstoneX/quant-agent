@@ -1212,6 +1212,57 @@ _RETRYABLE_EXC_NAMES = frozenset({
 })
 
 
+# --- 402 "fewer max_tokens" shrink-retry -------------------------------------
+#
+# MEASURED 2026-09-30, production log: OpenRouter refuses a call on a
+# near-empty balance with HTTP 402 and a message that NAMES the output
+# allowance it would still serve, e.g.
+#   "This request requires more credits, or fewer max_tokens. You requested
+#    up to 16000 tokens, but can only afford 775."
+# Observed affordable figures on the same day: 10125, 5062, 4655, 1622,
+# 1551, 811, 775 — every one of them against the same 16000 ask. The desk
+# asked for 16000 every time and never re-asked, so a balance that could
+# have answered refused outright.
+#
+# We retry ONCE with the provider's OWN stated figure. We never invent a
+# fallback size: no figure in the message means no shrink-retry, and the
+# call fails exactly as it does today (the caller logs the refusal).
+#
+# This does NOT weaken the "refuse to decide on unusable evidence"
+# doctrine. A smaller allowance can cut the answer off; the existing
+# truncation detection (`_TRUNCATION_FINISH_REASONS`) still sees the
+# max_tokens/length finish reason and the answer is still discarded
+# unused. A seat whose prompt cannot fit the affordable allowance — the
+# tech_analyst 25-symbol batch is the known case — therefore fails
+# HONESTLY on truncation rather than being salvaged, and we deliberately
+# do NOT shrink its batch to fit: re-cutting the batch to whatever a
+# balance can afford would make the work depend on the wallet, and the
+# batch size is the caller's decision, not this retry loop's.
+_INSUFFICIENT_CREDIT_STATUS = 402
+
+_AFFORDABLE_MAX_TOKENS_RE = re.compile(
+    r"can only afford\s+(\d+)", re.IGNORECASE,
+)
+
+
+def _affordable_max_tokens(exc: Exception) -> int | None:
+    """The output allowance a credit-refusal says it WOULD have served.
+
+    Returns the provider's own stated figure, or None when the refusal is
+    not a credit refusal or names no figure. Never guesses.
+    """
+    if getattr(exc, "status_code", None) != _INSUFFICIENT_CREDIT_STATUS:
+        return None
+    m = _AFFORDABLE_MAX_TOKENS_RE.search(str(exc))
+    if not m:
+        return None
+    try:
+        value = int(m.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Decide whether an LLM-call exception is worth retrying.
 
@@ -2290,6 +2341,11 @@ class BaseAgent(ABC):
                 "at the secondary route without attempting it.",
                 self.name, self._provider, self.model,
             )
+        # One-shot latch for the 402 shrink-retry below, and the ask we
+        # restore afterwards so a single poor-balance call cannot silently
+        # shrink every later call on this seat.
+        shrunk_for_credit = False
+        configured_max_tokens = self.max_tokens
         for attempt in range(max_retries):
             try:
                 if self._use_deepseek:
@@ -2345,7 +2401,34 @@ class BaseAgent(ABC):
                 # Non-retryable (auth / bad-request / 4xx / context-length):
                 # stop retrying — sleeping won't help. (Was: raise. Now we
                 # break so the cross-provider failover below can still try.)
+                # Credit refusal that NAMES a smaller allowance it would
+                # serve: re-ask once at exactly that figure instead of
+                # treating the call as dead. One shot only, and only
+                # downwards. See `_affordable_max_tokens`.
+                affordable = _affordable_max_tokens(e)
+                if (affordable is not None and not shrunk_for_credit
+                        and affordable < self.max_tokens
+                        and attempt < max_retries - 1):
+                    shrunk_for_credit = True
+                    logger.warning(
+                        "Agent %s attempt %d: provider refused for "
+                        "insufficient credit but stated it can serve "
+                        "%d output tokens (we asked for %d). Retrying once "
+                        "at the provider's stated allowance. A cut-off "
+                        "answer is still discarded unused.",
+                        self.name, attempt + 1, affordable, self.max_tokens,
+                    )
+                    self.max_tokens = affordable
+                    continue
                 if not _is_retryable(e):
+                    if (affordable is None
+                            and getattr(e, "status_code", None)
+                            == _INSUFFICIENT_CREDIT_STATUS):
+                        logger.warning(
+                            "Agent %s attempt %d: insufficient-credit refusal "
+                            "names no servable allowance — not guessing one. "
+                            "Failing this route.", self.name, attempt + 1,
+                        )
                     logger.warning(
                         "Agent %s attempt %d hit a non-retryable error: %s. "
                         "No more retries.", self.name, attempt + 1, e,
@@ -2407,6 +2490,10 @@ class BaseAgent(ABC):
                         "%.1fs...", self.name, attempt + 1, e, wait,
                     )
                 time.sleep(wait)
+
+        # Restore the configured ask: the shrunken allowance belonged to the
+        # one refusal that named it, not to this seat forever.
+        self.max_tokens = configured_max_tokens
 
         # Model that actually produced the output — primary unless a backup wins.
         actual_model = self.model
