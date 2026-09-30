@@ -625,13 +625,90 @@ numbers:
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
       That phrase is at src/portfolio_constructor.py, not here.
+      ITEM 90 PASS 2026-09-30 — the value is UNCHANGED and the 2026-09-25
+      ratification stands; what changed is the question, which was asking
+      for something this desk's doctrine forbids. Four findings.
+      (a) THE OLD QUESTION WAS DOCTRINE-BARRED. It read "what in this
+      desk's own maximum-adverse-excursion record picks the point inside
+      it?" An MAE study over this desk's own trades is FITTING, and
+      docs/OUTCOME.md ("No arbitrary numbers, ever", the 2026-09-12
+      correction) says fitting a threshold to past outcomes "is not the
+      opposite of an arbitrary number; it is an arbitrary number with a
+      backtest stapled to it". Answering it as written would not have
+      sourced this number, it would have re-created the abandoned 1.5 —
+      which came from exactly such an MAE fit. The question is replaced,
+      not softened.
+      (b) THE REFORMULATION ROUTE WAS EXAMINED AND IS REFUSED, recorded so
+      it is not re-proposed. docs/OUTCOME.md orders reformulation first, and
+      the obvious one is to drop the constant and read the floor off the
+      instrument and the trade the way the TARGET side already does:
+      1.0 x ATR x sqrt(horizon sessions), whose 1.0 needs no pick because
+      it means "one typical excursion over the stated hold and nothing
+      more" — the identical justification the ledger already grades
+      `sourced` for `min_target_atr_multiple` and
+      `breakout_projection_atr_multiple`. It is refused on arithmetic, not
+      taste: the unbacked-stop target IS
+      `breakout_projection_atr_multiple` x ATR x sqrt(H) with the same 1.0,
+      so a stop built the same way equals the target at every horizon and
+      pins reward:risk at exactly 1.0 by construction. Today the ratio
+      instead RISES with the hold (~0.98 at H=6, ~1.79 at H=20, against the
+      flat 2.5 base), so the reformulation would destroy a real
+      horizon-sensitivity rather than add one. Any sqrt(H) stop floor
+      either equals the target (ratio fixed at 1.0) or needs a fresh
+      unsourced multiple to separate them, so this route cannot produce a
+      number that is both live-read and free of a new pick.
+      (c) THE ARGUMENT THAT PUSHED THE BASE DOWN IS VOID. The 3.0 -> 1.5
+      move of 2026-09-04 rested on the arithmetic that a 3.0 ATR stop needs
+      a 4.5 ATR target to clear a 1.5 reward:risk floor. That floor was
+      `min_reward_risk_after_widening`, DELETED on 2026-09-24 as dead code
+      (board item 81) after it was found never to have refused or shrunk a
+      single trade, and config/settings.yaml's own comment at this key
+      already admits as much. So the case against the top of the published
+      band no longer exists, and the owner's dial below is the full
+      2.5-3.0, not a defence of the bottom of it.
+      (d) A CAVEAT THAT SURVIVES, stated rather than papered over. A stop
+      floor with no horizon term is defensible where the entry stop is
+      quickly replaced by the trail — true for Type B (breakout), which
+      trails from entry. It is NOT true for Type A (range), this desk's
+      most common setup, whose stop is static at its entry placement until
+      price reaches +1R (src/risk/trailing.py). For those trades the entry
+      stop does bear the whole early hold, and noise accumulates over it.
+      That is an argument for the WIDE end of the band under (e); it is not
+      itself a derivation of any number.
+      (e) EFFECT ON THE UNIVERSE SCREEN: NONE, deliberately. The value is
+      untouched, so `universe_screen.STOP_SANITY_FLOOR_FRACTION` / 2.5
+      still gives the same 20% ATR/price ceiling and the known
+      16.67%-to-20% contradiction is neither widened nor narrowed by this
+      pass. Recorded for whoever answers the dial: that contradiction is
+      the risk-off regime scaler 1.20 and nothing else — the screen divides
+      by the BASE while the midday guard binds on the WIDEST REACHABLE
+      multiple (base x 1.20), so the mismatched band is a factor of 1.20
+      wide at any base. Moving this number to 3.0 would move the ceiling to
+      16.67% (a TIGHTENING of the screen, fewer names admitted) without
+      closing that gap.
     open_question: >-
-      The published 2.5-3.0x swing-stop consensus is a source for the RANGE.
-      What in this desk's own maximum-adverse-excursion record picks the point
-      inside it?
+      OWNER APPETITE, and no evidence can settle it — routed rather than
+      picked. Everything answerable has been answered: the published
+      2.5-3.0x fixed-entry-stop consensus for multi-day holds is a source
+      for the RANGE and not for any point in it; this desk's own trade
+      record cannot pick the point because fitting is barred; and the
+      reformulation that would remove the constant altogether pins
+      reward:risk at 1.0 (see note (b)). What separates the two ends is a
+      trade-off the owner owns, not a fact: because position size is
+      derived as risk / |entry - stop|, a WIDER floor does not increase the
+      dollar loss if the stop fills — it buys fewer stop-outs inside
+      ordinary volatility and less gap-exposed notional, and pays for them
+      with a smaller position and a smaller dollar win when the trade
+      works. In answerable form: within the published 2.5-3.0x band, how
+      much size is worth giving up to be stopped out by noise less often?
+      The answer is one number in [2.5, 3.0] and nothing else is needed.
     cost_while_unanswered: >-
-      Every unbacked stop, and therefore every position size derived from it,
-      rests on a point value chosen inside a cited range.
+      Every unbacked stop, and therefore every position size derived from
+      it, rests on a point value chosen inside a cited range. The band is
+      narrow and the sizing rule absorbs the difference in dollar risk, so
+      the live cost is bounded: at the ends of the band the same idea is
+      taken at 2.5/3.0 = 83% versus 100% of the size, with a
+      correspondingly different chance of being stopped by noise.
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced
