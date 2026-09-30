@@ -172,7 +172,6 @@ DONE WHEN:
   - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
 detail: docs/BOARD_NOTES.md (item 99)
 
-**112. A de-lever that leaves the book over its ceiling now writes a durable record — TIER 1, filed 2026-09-18 out of the item 87 audit, RECORD SHIPPED 2026-09-19; the alert decision stays open.** `_enforce_gross_ceiling` used to only log a warning; a run-scoped `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) is now written whenever a de-lever finishes over ceiling, carrying gross/equity before and after and each order's outcome.
 
 DONE WHEN:
   - [ ] a de-lever pass that finishes with the book still over its gross ceiling reaches the owner in its OWN Telegram message, severity carried in text. Not an owner decision: his standing alert-design rule (2026-09-02, recorded at the top of this file) already says every failure alerts in its own message, and a de-lever that fails to get the book under its limit is a failure. The `specialist_evidence` row (`stage='gross_delever'`, `outcome='still_over_ceiling'`) already exists, so only the delivery half is left.
@@ -362,7 +361,7 @@ detail: docs/BOARD_NOTES.md (item 197)
 - retired queue: 163
 - retired queue: 86, 173
 - retired queue: 198
-
+- retired queue: 112
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
