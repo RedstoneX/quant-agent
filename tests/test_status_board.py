@@ -4029,3 +4029,43 @@ def test_ordinary_words_containing_a_class_token_survive(title, expect):
 ])
 def test_an_inline_classification_label_is_still_stripped(title, expect):
     assert sb._tidy_title(title) == expect
+
+
+# ---------------------------------------------------------------------------
+# The retired line takes numbers, not reasons
+# ---------------------------------------------------------------------------
+
+_RETIRED_REASON_SENTENCE = re.compile(
+    r"(?<=\. )\*?\*?Items? \d+[^.]{0,400}?\bretired\b", re.S)
+
+
+def test_the_retired_line_carries_no_per_item_reason():
+    """A retirement adds its NUMBER here and its REASON to the history file.
+
+    This is a merge property, not a style rule. `docs/INCIDENT_HISTORY.md` is
+    append-only and the doc merge driver reconciles it entry by entry, so any
+    number of closures can record themselves at once. The retired-numbers line
+    is one physical line: the driver merges the two NUMBER LISTS as a union and
+    never conflicts on them, but the prose around them goes through
+    `merge_text`, which refuses when both sides edited it
+    (`scripts/resolve_doc_conflict.py`). While every retirement appended its
+    reason here, two closures in flight could never both land — measured
+    2026-09-26, with eight retirement PRs open and serialising on this one line
+    while the work itself had been done in parallel. The line had reached 8,965
+    characters of re-narration of what the history file already said.
+
+    The surviving prose is the part that is NOT a per-item reason: which
+    numbers never existed, which schemes are separate, where a residue lives.
+    """
+    line = next(
+        (l for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()
+         if l.startswith("**Retired item numbers")), "")
+    assert line, "the retired-item-numbers line is missing from docs/WORK.md"
+    offenders = _RETIRED_REASON_SENTENCE.findall(line)
+    assert not offenders, (
+        "the retired-item-numbers line has grown a per-item reason again:\n"
+        + "\n".join(f"  - {o[:120]}..." for o in offenders)
+        + "\n\nPut the reason in docs/INCIDENT_HISTORY.md as its own dated "
+          "### entry and leave only the number here. Every retirement that "
+          "writes prose on this line blocks every other retirement in flight."
+    )

@@ -523,6 +523,354 @@ allowed the same loss as all of it.
 
 ---
 
+## 9. ATR bands — what a volatility multiple is, and what the literature will not tell you (2026-09-26)
+
+Added for board item 143: this file had no entry at all for the ATR
+multiples that govern the desk's noise band and stop floor, so every one of
+them was unsourceable from the desk's own research file. Recorded here is
+what a literature pass on 2026-09-26 actually found — including where it
+found nothing.
+
+**Do not re-derive the desk's own work from this section.** The two
+underived `1.0` multiples and the split between them are board item 70
+(`docs/BOARD_NOTES.md`, "item 70"); the 1.5 → 2.5 ATR stop-floor
+re-derivation and its explicit warning not to conflate a fixed entry stop
+with a trailing stop is `docs/INCIDENT_HISTORY.md`, 2026-09-10; the
+owner's ratification of the 2.5 floor and the three regime scales as
+appetite-with-values-unchanged is `docs/INCIDENT_HISTORY.md`, 2026-09-25
+(item 184 retired). Read those first.
+
+### What IS published
+
+- **ATR itself, and its conventional period, are Wilder's.** J. Welles
+  Wilder, *New Concepts in Technical Trading Systems* (1978), introduced
+  Average True Range specifically so a volatility measure would not miss
+  gap and limit moves that a plain high-low range ignores. Wilder names
+  **7 and 14** periods in the book; no derivation of 14 is given by him or
+  by the reference sources that carry it forward
+  ([StockCharts ChartSchool, ATR](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/average-true-range-atr-and-average-true-range-percent-atrp);
+  [Macroption, "ATR period"](https://www.macroption.com/atr-period/),
+  fetched 2026-09-26, which states plainly: *"There is no best method and
+  no best period."*). **So the ATR period this desk multiplies everything
+  by is a convention, not a measurement** — and the ledger already watches
+  it (item 90).
+- **A trailing ATR band of 3.0 x ATR(22) is a named, attributable
+  default**, not a folk number: the Chandelier Exit, Chuck LeBeau,
+  popularised in Alexander Elder's *Come Into My Trading Room* (2002)
+  ([StockCharts ChartSchool, Chandelier Exit](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/chandelier-exit),
+  fetched 2026-09-26). The same page gives **no justification for 3.0**
+  and explicitly says to vary it — *"Volatile stocks may require a higher
+  multiplier to reduce whipsaws. Relatively dull stocks may need a lower
+  multiplier to increase sensitivity"* — illustrating 5.0 on a volatile
+  name. It states no numeric bounds.
+
+### What is NOT published, searched for specifically on 2026-09-26
+
+**There is no published measurement of the ATR multiple at which an
+adverse move stops being noise.** That is the exact quantity the desk's
+noise band bounds, and searching for it directly returns only practitioner
+blog posts that contradict each other — 1x described as triggering "on
+noise about half the time", 2x as the filter threshold, envelopes quoted
+at 1-2 and stop rails at 2.5-3, with no measurement, sample or method
+behind any of the splits. None of it is citable under this desk's rule and
+none of it is recorded here as a finding. **The honest state is: searched,
+nothing published answers it.**
+
+What this means in practice:
+
+- The 2-3 x ATR magnitude is **corroborated as conventional** by two
+  independent named sources (Wilder-derived practice, LeBeau's Chandelier).
+  That is a range, and **choosing a value inside it is owner appetite, not
+  research.** This section picks nothing and recommends changing nothing.
+- The corroboration is for a **trailing** band off a running extreme.
+  `docs/INCIDENT_HISTORY.md`, 2026-09-10 already warns against reading it
+  as support for a fixed distance from a static entry. That warning stands
+  and this section does not weaken it.
+- A multiple for the *noise band* — a different question from either — has
+  no source at all. Item 70 remains open on exactly that basis.
+
+---
+
+## 10. Trailing stops — the one genuinely academic result, and its limits (2026-09-26)
+
+**Do not re-derive the desk's own work from this section.** The six
+unsourced trail constants, the target that never reaches the broker and the
+"trail sits too loose" finding are board item 75 (`docs/BOARD_NOTES.md`,
+"item 75"); the minimum-ratchet enforcement is `docs/WORK.md`'s retired
+item 108 and `docs/INCIDENT_HISTORY.md`, 2026-09-25; the range-setup
+ratchet-before-target change is `docs/INCIDENT_HISTORY.md`, 2026-09-25
+(item 142 retired).
+
+### What IS published
+
+- **Stop-loss rules are not free, and whether they add value depends
+  entirely on the return process.** Kaminski & Lo, *When do stop-loss rules
+  stop losses?*, Journal of Financial Markets 18(C), 234-254 (2014);
+  working paper SIFR No. 63
+  ([abstract, fetched 2026-09-26](https://ideas.repec.org/p/hhs/sifrwp/0063.html);
+  full text fetched 2026-09-26 from
+  [smallake.kr mirror](https://www.smallake.kr/wp-content/uploads/2017/02/When_Do_Stop-Loss_Rules_Stop_Losses.pdf)).
+  Their result: **under the Random Walk Hypothesis the "stopping premium"
+  is always negative** — a 0/1 stop-loss rule always *lowers* expected
+  return on an IID process. Under momentum or regime-switching it can be
+  positive. This is a conditional result, not an endorsement.
+- **Their empirical scan deliberately reports a RANGE, and says why.**
+  Stop thresholds were varied **from -1.5 to -0.5 standard deviations**
+  from the mean at the relevant frequency, re-entry thresholds from -0.5 to
+  +1.0 sd, across daily/weekly/monthly/quarterly frequencies, on daily
+  US futures data January 1993 - November 2011 (stocks, with long-term
+  bond futures as the stop-loss asset). Their stated reason for scanning
+  rather than reporting one number: *"To avoid data selection bias, we
+  review a large range of stops to demonstrate how the performance depends
+  on threshold choices."* **Reported effect in one calibration: +1.5%
+  return, -5% volatility, Sharpe up as much as 20%.**
+- **The frequency finding is the part most relevant to this desk.** They
+  find short-horizon stop policies carry **negative** stopping premiums
+  over large parameter ranges, and that policies at frequencies **above
+  one month** perform better and can achieve positive premiums. They also
+  find the **exit threshold matters more than the re-entry threshold** for
+  variation in results.
+- **One student-thesis replication exists and its result is a wide band,
+  not a point.** Snorrason & Yusupov, *Performance of Stop-loss Rules vs.
+  Buy-and-Hold Strategy*, Lund University master essay NEKM01, Spring 2009
+  ([fetched 2026-09-26](https://lup.lub.lu.se/student-papers/record/1474565/file/2435595.pdf)).
+  OMX Stockholm 30 constituents, daily data January 1998 - April 2009,
+  quarterly holding periods, stop levels swept **5% to 55%**. Highest
+  average quarterly return (1.7%) at a **20%** trailing level, highest
+  cumulative return (74%) at **15%**; the **5%** trailing level was the
+  only setting that underperformed buy-and-hold (-0.1% average, -8.1%
+  cumulative). **Read the size of that sweep before reading the winners:
+  the 15-20% peak is the top of a 5-55% grid on one index over one period,
+  which is the shape of an in-sample optimum, and the authors set the
+  starting date arbitrarily by design.** It is recorded here as evidence
+  that *too tight* is a real and measurable failure mode, not as a source
+  for a trail distance.
+- **The optimal-trailing-stop problem has been solved analytically, and
+  the answer is not a number.** Leung & Zhang, *Optimal trading with a
+  trailing stop*, arXiv:1701.03960v2 (2019)
+  ([fetched 2026-09-26](https://arxiv.org/pdf/1701.03960)). Under a general
+  linear diffusion they solve the optimal liquidation and entry timing
+  given a pre-specified percentage drawdown stop, illustrated on an
+  exponential Ornstein-Uhlenbeck model. **The output is a trading region
+  conditional on a fitted price model — it does not yield a trailing
+  distance for a real equity without first committing to that model**,
+  which is a fitting exercise this desk has ruled out (`docs/OUTCOME.md`,
+  "No fitting, only reading").
+
+### What is NOT published, searched for specifically on 2026-09-26
+
+- **No published source gives a minimum ratchet increment** — how far a
+  trailing stop must move before moving it is worth the whipsaw. Searched
+  directly; the returns describe *mechanisms* (per-tick, step-size,
+  time-interval) with no measurement of any step size. The desk's own
+  minimum-ratchet value is therefore still appetite, and
+  `docs/INCIDENT_HISTORY.md`, 2026-09-25 records it as ratified rather than
+  sourced. Nothing found here changes that.
+- **No published source gives a trail-adjustment cooldown.** Same search,
+  same result: nothing.
+- **Picking a trail multiple inside the corroborated 2-3 x ATR band
+  (section 9) is owner appetite, not research.** No source found narrows
+  it, and this section does not.
+
+---
+
+## 11. Profit-taking — the evidence runs against preset targets, and it is about direction, not size (2026-09-26)
+
+The desk deleted its automatic take-profit trim on 2026-09-12 and made the
+trailing stop the only exit rule; the reasons, the n=1 tuning history and
+the owner's ruling are in `docs/INCIDENT_HISTORY.md`, 2026-09-12 and are
+not restated here. What was missing was any published evidence either way.
+**The literature pass finds evidence pointing the same direction as that
+decision — but it is weaker and narrower than the decision, and must not be
+cited as having proved it.**
+
+### What IS published
+
+- **Investors who sell winners and keep losers are, on average, wrong —
+  measured.** Terrance Odean, *Are Investors Reluctant to Realize Their
+  Losses?*, Journal of Finance 53(5), 1775-1798 (1998)
+  ([full text fetched 2026-09-26](https://faculty.haas.berkeley.edu/odean/papers%20current%20versions/areinvestorsreluctant.pdf)).
+  10,000 discount-brokerage accounts. Table VI, excess returns over the
+  CRSP value-weighted index following the sale of a realized winner versus
+  a paper loser that was held:
+
+  | Horizon | Winners sold | Losers kept | Difference (p) |
+  |---|---|---|---|
+  | 84 trading days | +0.47% | -0.56% | **+1.03%** (0.002) |
+  | 252 trading days | +2.35% | -1.06% | **+3.41%** (0.001) |
+  | 504 trading days | +6.45% | +2.87% | **+3.58%** (0.014) |
+
+  Odean's own framing: the behaviour is *"not justified by subsequent
+  portfolio performance."* He ties the 1-year result to Jegadeesh &
+  Titman's momentum horizon and notes DeBondt & Thaler's reversals at
+  3-5 years, i.e. **the result is horizon-bounded and reverses eventually.**
+- **Read the limit of that result honestly.** It measures the *selection*
+  of which position to close, over horizons of 84-504 trading days, in
+  retail accounts. It is **not** a test of a fixed-percentage profit trim,
+  it does not measure partial exits, and it says nothing about position
+  size. It is evidence that closing a winner because it is a winner is a
+  documented, costly bias — which is the class the deleted trim belonged
+  to — and nothing more.
+- **Capping the upside of a trend-following position provably changes the
+  shape of its payoff.** Dao, Nguyen, Deremble, Lempérière, Bouchaud &
+  Potters, *Tail protection for long investors: Trend convexity at work*,
+  arXiv:1607.02410 (2016)
+  ([fetched 2026-09-26](https://arxiv.org/pdf/1607.02410)). Trend
+  performance is shown to come from the gap between long-term and
+  short-term realized variance, giving trend strategies positive convexity
+  in the trend signal. Their §2.4 treats capping: an extreme cap (position
+  = ±1 on the sign of the trend) turns the parabolic payoff into a
+  **piece-wise linear** one, and softer caps interpolate between the two —
+  *"the positive convexity of this curve is a generic property of trend
+  following strategies."* **What this does and does not say:** it is about
+  capping POSITION SIZE in a systematic trend strategy, not about a
+  discretionary profit target, and it finds convexity survives capping in
+  reduced form. Cite it for the mechanism — truncation flattens the right
+  tail — never as a measurement of what a profit target costs this desk.
+
+### What is NOT published, searched for specifically on 2026-09-26
+
+**There is no citable study of scaling out versus holding a full position
+to a trailing exit.** Searched directly; every result was practitioner
+education material, and the most honest of those says the answer must be
+measured in your own trade history rather than assumed. **No number, no
+range, nothing to record but the absence.** In particular nothing found
+supports any specific trim fraction or any specific gain trigger — the two
+numbers the deleted rule contained.
+
+Board item 75's four-way exit comparison (sell all at target; sell half and
+trail; target tightens the trail; today's desk) is a MEASUREMENT proposal,
+not a research question, and this pass does not answer it or license it.
+
+---
+
+## 12. Pacing — the literature is about portfolio rebalancing horizons, not per-position deadlines (2026-09-26)
+
+"Pacing" here means the desk's judgement of whether a position is
+progressing fast enough against the horizon pinned at entry.
+
+**Do not re-derive the desk's own work from this section.** The
+calendar-days-versus-sessions defect is `docs/INCIDENT_HISTORY.md`,
+2026-09-20 (item 91 retired); its siblings, including the removal of the
+`1/3`-of-horizon pace floor by owner ruling on 2026-09-25, are board item
+165 in `docs/WORK.md`.
+
+### What IS published
+
+- **Momentum's profitable horizon is measured, and the measurement is a
+  broad plateau, not a point.** Jegadeesh & Titman, *Returns to Buying
+  Winners and Selling Losers*, Journal of Finance 48(1), 65-91 (1993)
+  ([full text fetched 2026-09-26](https://www.bauer.uh.edu/rsusmel/phd/jegadeesh-titman93.pdf)).
+  NYSE and AMEX, 1965-1989, a **16-cell grid of 3/6/9/12-month formation x
+  3/6/9/12-month holding**; every cell is positive, the strongest being
+  12-month formation / 3-month holding at **1.31% per month**. Their own
+  headline caveat, in the abstract: the abnormal returns of the first year
+  **dissipate in the following two years** — and one panel notes the
+  cumulative first-12-month return dissipating almost entirely by month 24.
+- **What that licenses, exactly.** It establishes that a continuation edge
+  has a finite life measured in months and then decays. It is a
+  **cross-sectional portfolio rebalancing frequency** — how often a ranked
+  basket is re-formed — and every cell of the grid works. It is **not** a
+  per-position deadline, and it gives no basis for a per-name horizon.
+
+### What is NOT published, searched for specifically on 2026-09-26
+
+**Nothing published gives a per-position horizon, a pace threshold, or a
+time-stop length for a discretionary multi-day equity trade.** Searching
+for "time stop" / "time-based exit" empirical tests returns practitioner
+material (a widely-repeated Curtis Faith 80-day Donchian time exit, and
+general claims that time exits are robust because they resist curve
+fitting) with no fetched study behind the numbers. The nearest academic
+neighbour is Kaminski & Lo's frequency result (section 10) — which
+concerns the *frequency at which a stop rule is evaluated*, not how long a
+position may take — and it points the other way from a short clock: their
+short-horizon policies carried negative stopping premiums.
+
+Consequences, stated plainly:
+
+- **The horizon pinned at entry is not a researched number and this pass
+  does not make it one.** Any pace threshold built on it is appetite.
+- The owner's 2026-09-25 removal of the `1/3` pace floor — on the grounds
+  that it was a made-up clock stacked on a guessed horizon — is
+  **consistent with what the literature does and does not support.** That
+  consistency is recorded; it is not a claim the ruling was derived from
+  research.
+
+---
+
+## 13. Ranking granularity — the finance literature is silent, the evaluation literature is not (2026-09-26)
+
+"Ranking granularity" here means: the desk's composite conviction score is
+coarse enough that candidates tie frequently, and what happens after a tie
+is decided by a tiebreak rule rather than by the score.
+
+**Do not re-derive the desk's own work from this section.** The measured
+tie rates on this desk's own technical reads (64% of reads sharing a
+composite score; 9 of 12 names tied one day, 23 of 33 another), the
+alphabetical fallback, and the three-stage tiebreak that replaced it are
+`docs/INCIDENT_HISTORY.md`, 2026-09-20 (item 141 retired). The backtester's
+alphabetical rationing when the risk budget binds is board item 64; the
+four seats with no strength scale of their own are board item 65. The
+rotation margin's own unidentifiability finding — that only four distinct
+ratios occur across the whole band, so the margin sits inside the score's
+same-day noise — is the item 39(a) work in `docs/INCIDENT_HISTORY.md`,
+2026-09-23 ("the pruning mechanism watched the wrong dial"), and is the
+closest thing the desk has to a measurement of its own score's resolution.
+
+### What IS published — but not in finance
+
+**Searched on 2026-09-26 for published work on score granularity, tie rates
+and tie-breaking in stock ranking or portfolio selection: nothing usable.**
+The finance results returned were about the ranking signals themselves, not
+about the resolution of the score or what ties do to the selection. The one
+finance-adjacent tie convention found is a patent claim describing breaking
+a portfolio-selection tie by market capitalisation — a convention in a
+filing, not a measurement, and not recorded here as evidence.
+
+The question *is* addressed, rigorously, in the recommender-systems and
+information-retrieval evaluation literature, which is a genuinely different
+field and must be labelled as such:
+
+- Guo, Chen, Zhu & Li, *Tie Handling Is Part of the Evaluation Protocol: An
+  Order-Invariance Audit for Tie-Heavy Recommender Scores*,
+  arXiv:2609.26977v1, 22 September 2026
+  ([fetched 2026-09-26](https://arxiv.org/html/2609.26977v1)). Their
+  central finding: **when scores are coarse, the tie-breaking rule becomes
+  an undeclared ranking feature and dominates the reported result.** On one
+  audited dataset every row contained an exact tie, **99.94%** contained a
+  tie crossing the top-10 boundary, and NDCG@10 moved from **0.8474 to
+  0.1702** purely by changing the tie-break order; a finer-grained
+  residualized score on the same data moved by **0.0004**. Their
+  recommendation is disclosure and sensitivity testing — report tie
+  prevalence, state the tie-break rule explicitly, and test the metric
+  under permuted tie order.
+- Corroborating prevalence from IR: ties are common enough to be a standard
+  evaluation hazard — 77% of TREC Web runs contained ties, in 72% of
+  rankings [reported via search, 2026-09-26, primary source not fetched —
+  treat as unverified].
+
+### What this does and does not license
+
+- **It does not give a granularity target.** There is no published number
+  for how many distinct score levels a ranking needs, in any field found.
+  Choosing one is appetite, or a measurement this desk would have to make
+  on its own scores.
+- **It does license one cheap, non-numeric practice**, already partly
+  matching what the desk was pushed into by item 141: the tie-break rule is
+  part of the ranking and should be stated, and tie prevalence should be
+  reported rather than left implicit. Note that item 141's own write-up
+  records the opposite state today — **neither the touch-count tiebreak nor
+  the reward:risk tiebreak is rendered into the PM's prompt or any
+  owner-facing surface** — and flags it as an unresolved gap. The published
+  evidence above is consistent with that gap mattering. It does not measure
+  how much it matters here, and no such measurement is claimed.
+- **The field gap is real and is not hand-waved away.** These are
+  recommender and IR metrics, not portfolio returns. The transferable claim
+  is the mechanism — coarse scores make the tiebreak decisive — not any of
+  the magnitudes.
+
+---
+
 ## Summary of what to build, in order
 
 | Priority | Item | Type |
@@ -535,5 +883,6 @@ allowed the same loss as all of it.
 | 6 | Post-cutoff discipline in the backtester | Process |
 | 7 | Level-quality measurement — built, measured, `levels.py` strength now touch-count-based; `level_quality.py` itself NOT wired; stop-honouring touch bar (5) ratified 2026-09-03 | Python |
 | 8 | Drawdown-alarm basis — volatility-relative, shipped 2026-09-11; sqrt(time) scaling research-grounded, trigger sensitivity provisional (no published number exists) | Python |
+| — | ATR bands, trailing, profit-taking, pacing, ranking granularity (sections 9-13) — literature recorded 2026-09-26, **no build and no number licensed**; every value in these areas remains appetite or an open board item | Research |
 
 Items 1, 2 and 5 need no new data source and no model spend.

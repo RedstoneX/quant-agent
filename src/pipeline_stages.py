@@ -4444,8 +4444,20 @@ def _link_nominations_to_decision(pipeline, ctx) -> None:
         logger.warning("Conviction ledger: nomination join failed: %s", e)
 
 
-def _record_seat_stances(pipeline, ctx, evidence_registry, symbols) -> None:
+def _record_seat_stances(
+    pipeline, ctx, evidence_registry, symbols, *,
+    non_corroborating_sources=None,
+) -> None:
     """Spec §9.5 — record who ARGUED AGAINST, not only who proposed. NEVER raises.
+
+    `non_corroborating_sources` (board item 109) marks the stances the §9.4
+    tally would not let corroborate the trade — today only a macro stance
+    broadcast onto a name whose sector the macro read never mentioned. The
+    ledger is read later to score who was right; a stance recorded with no
+    trace that the desk declined to count it reads as a seat that backed the
+    idea, which is not what happened. It is recorded in `observation`
+    because that field already exists and already travels with the row; no
+    schema change is taken for this.
 
     §9.4 already computes each seat's stance per symbol into the canonical
     evidence registry, and counts only the ALIGNED ones to earn size. The
@@ -4479,19 +4491,29 @@ def _record_seat_stances(pipeline, ctx, evidence_registry, symbols) -> None:
                 str(getattr(a, "conviction", "") or DEFAULT_CONVICTION)
             for a in (ctx.analyses or [])
         }
+        non_corroborating = non_corroborating_sources or {}
         stances: list[SeatStance] = []
         for symbol in sorted(wanted):
+            gated = non_corroborating.get(symbol) or frozenset()
             for source, stance in sorted((evidence_registry.get(symbol) or {}).items()):
                 seat = normalize_seat(source)
                 declared = (nominations.get(symbol) or {}).get(seat) or {}
                 conviction = declared.get("conviction")
                 if not conviction and seat == "technical":
                     conviction = tech_conviction.get(symbol)
+                observation = str(declared.get("observation") or "")
+                if source in gated:
+                    note = (
+                        "market-wide stance, not a read on this name's "
+                        "sector — did not count toward agreement for the "
+                        "trade (still counted against one it opposed)"
+                    )
+                    observation = f"{observation} [{note}]".strip()
                 stances.append(SeatStance(
                     seat=seat, symbol=symbol, stance=stance,
                     conviction=conviction or DEFAULT_CONVICTION,
                     nominated=bool(declared),
-                    observation=str(declared.get("observation") or ""),
+                    observation=observation,
                 ))
         if not stances:
             return
@@ -4592,82 +4614,6 @@ def _stash_macro_parse_failure(reason: str) -> None:
         failures = PortfolioManagerAgent._macro_parse_failures
     if reason not in failures:
         failures.append(reason)
-
-
-
-def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
-    """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
-
-    `_apply_risk_modifications` guard 1b already does this for a BUY. It was
-    written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
-    the same cumulative clamp in the constructor, and treated alongside BUY as
-    new risk (as `_record_scale_advisory` also does) — could be enlarged by an
-    edit the seat believed was protective. On a short that ADDS
-    to a short already held, `allocation_pct` is an increment exactly as it is
-    on a long add, so an upward edit grows the short by more than the number
-    reads.
-
-    Enforced here rather than inside guard 1b only because this sweep needs
-    the pre-modification sizes, which this stage already has. Guard 1b stays:
-    it fires first and more specifically for a BUY, and this is a no-op behind
-    it. If the two are ever consolidated, consolidate ONTO guard 1b.
-
-    Fails toward the SMALLER size in every branch: the pre-modification value
-    is the constructor's own, which is already clamped by the single-name
-    ceiling, the risk budget and the sector dial. Nothing here can raise a
-    size, and a decision whose pre-modification size is unknown is left
-    untouched rather than guessed at.
-    """
-    out: list = []
-    rejected: list[dict] = []
-    for d in decisions:
-        if d is None or d.action not in ("BUY", "SHORT"):
-            out.append(d)
-            continue
-        before = pre_alloc.get((d.symbol.strip().upper(), d.action))
-        if before is None or d.allocation_pct <= before:
-            out.append(d)
-            continue
-        reason = (
-            f"RM modification would INCREASE {d.symbol}'s {d.action} "
-            f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}). "
-            f"Reverted — the risk seat may only reduce an entry's size, "
-            f"never enlarge it; on an add to a position already held this "
-            f"field is an increment, so an upward edit grows the position by "
-            f"more than the number reads."
-        )
-        logger.warning("Risk mod REJECTED for %s: %s", d.symbol, reason)
-        rejected.append({
-            "symbol": d.symbol, "field": "allocation_pct", "reason": reason,
-        })
-        try:
-            out.append(d.model_copy(update={"allocation_pct": before}))
-        except Exception as e:
-            # Cannot restore the smaller size, so do not ship the larger one.
-            logger.warning(
-                "Could not revert %s's enlarged allocation_pct (%s) — "
-                "DROPPING the decision rather than executing the increase",
-                d.symbol, e,
-            )
-            # Board item 164: the entry above says "Reverted", which is no
-            # longer true — the decision is gone. Restate it as the drop it
-            # is, so the durable record does not claim a trade shipped at
-            # its pre-edit size when nothing shipped at all.
-            rejected[-1].update({
-                "outcome": "dropped",
-                "gate": "rm_enlargement_revert_failed",
-                "action": d.action,
-                "before": before,
-                "requested": d.allocation_pct,
-                "reason": (
-                    f"RM modification would INCREASE {d.symbol}'s {d.action} "
-                    f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}); "
-                    f"restoring the pre-edit size failed ({e}), so the "
-                    f"{d.action} was DROPPED rather than shipped at the "
-                    f"enlarged size."
-                ),
-            })
-    return out, rejected
 
 
 #: The four fields a risk-seat edit or `scale_all_buys` can change — the
@@ -5111,6 +5057,11 @@ class MorningResearchStage:
                 macro_events, event_coverage, fomc_meetings, fomc_coverage,
             )
 
+        # Filled by `_run_news` below (same thread-pool fan-out), read after
+        # the future resolves to file a per-stock record of an unreadable
+        # news answer. Board item 152.
+        news_symbols_asked: set[str] = set()
+
         def _run_news():
             # Per-symbol news selection (2026-08-30 owner decision): held
             # positions first, then this run's admitted candidates — the
@@ -5127,6 +5078,11 @@ class MorningResearchStage:
             ]
             held = [s for s in held if s]
             candidates = sorted(ctx.admitted_symbols)
+            # Board item 152: remember WHICH names this seat was asked about,
+            # so that if its answer comes back unreadable the loss can be
+            # filed per-stock rather than as a bare log line and a count.
+            news_symbols_asked.update(held)
+            news_symbols_asked.update(candidates)
             try:
                 return self._run_news_update(
                     ctx.run_id, session="morning", universe=effective_symbols,
@@ -5701,6 +5657,31 @@ class MorningResearchStage:
                 )
             else:
                 data_status["news"] = "ok"
+            # Board item 152. An unreadable news answer was paid for and
+            # thrown away; until now the only trace was a log line (gone at
+            # the next 10MB rotation) and a count. File the loss per STOCK,
+            # with its reason, through the same `analysis_drop` writer the
+            # technical seat's row drops already use (item 158), so a later
+            # reader can ask "why is this name's news seat absent on this
+            # run?" and get an answer from the database. Observability only:
+            # `_persist_dropped_reasons` never raises and nothing downstream
+            # reads these rows to make a decision. `book_symbols=set()`
+            # because nothing recovered — the whole answer is gone.
+            if data_status["news"] == "parse_error" and news_symbols_asked:
+                reason = (
+                    "news seat's answer was unreadable after its one paid "
+                    "heal retry — this stock has NO news seat on this run "
+                    "(absent, not neutral); raw payload in "
+                    "data/parse_failures/news_analyst_*.json"
+                )
+                _persist_dropped_reasons(
+                    self.db, ctx.run_id,
+                    {("NewsIntelligenceReport", sym): 1
+                     for sym in sorted(news_symbols_asked)},
+                    {("NewsIntelligenceReport", sym): reason
+                     for sym in news_symbols_asked},
+                    set(),
+                )
             # PM TEST GATE item 4, second half (2026-09-14). A structural
             # loss — the seat had real headline coverage for a symbol and
             # its answer for that symbol is missing (see
@@ -5719,6 +5700,26 @@ class MorningResearchStage:
                     "data_status['news']='symbol_dropped' instead of 'ok': %s",
                     len(news_intel.dropped_news_symbols),
                     news_intel.dropped_news_symbols,
+                )
+            # Board item 152, salvage half. The report parsed and is usable,
+            # but `analyze()` had to drop a top-level field the seat sent
+            # unreadable (measured: `market_sentiment` carrying "mixed").
+            # That is not "ok" — a field is missing — and it is not a lost
+            # seat either, so it gets its own word rather than overstating
+            # either reading. Checked after `symbol_dropped`, which is a
+            # per-STOCK loss and so the worse news, and before
+            # `low_confidence`, which is only the model's own self-report.
+            if data_status["news"] == "ok" and news_intel and news_intel.unreadable_fields:
+                data_status["news"] = "field_unreadable"
+                logger.warning(
+                    "News seat answered but %d field(s) were unreadable and "
+                    "dropped to save the rest of the report: %s — those "
+                    "fields read ABSENT, not neutral.",
+                    len(news_intel.unreadable_fields),
+                    ", ".join(
+                        f"{k}={v!r}"
+                        for k, v in sorted(news_intel.unreadable_fields.items())
+                    ),
                 )
             # Self-reported confidence is a second, independent signal from
             # the coverage check above: coverage measures whether the wire
@@ -6462,6 +6463,13 @@ class DecisionStage:
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
+            # Board item 95: the PM is shown what the capacity above COSTS.
+            # Read off the same loaded config the rest of this call uses, so
+            # the prompt renderer never re-loads `AppConfig` (which validates
+            # API keys and would fail silently, dropping the price).
+            margin_interest_rate_pct=getattr(
+                pipeline.config.risk, "margin_interest_rate_pct", None,
+            ),
             # 2026-09-23: the §10.3 notional floor, read by exactly the
             # helper the execution-time re-size and the rotation buy-leg
             # projection already read it with, so the rotation pre-check
@@ -6787,8 +6795,9 @@ class DecisionStage:
         # the constructor refuses to pay for are exactly the ones the PM's
         # prompt marked stale. An earnings view older than
         # `EARNINGS_STANCE_MAX_AGE_DAYS` stops counting toward the agreement
-        # tally; it stays in the registry above, so grounding still accepts
-        # it as coverage and this can only ever shrink a ceiling.
+        # tally on BOTH sides; it stays in the registry above, so grounding
+        # still accepts it as coverage and this can only ever shrink a
+        # ceiling.
         stale_sources = PortfolioManagerAgent.stale_evidence_sources(
             earnings_analyses=earnings_results,
         )
@@ -6799,6 +6808,26 @@ class DecisionStage:
         # over-age earnings stance and nothing else — it is not a general
         # staleness sweep over macro or smart money.
         ctx.evidence_stale_sources = stale_sources
+        # Item 109 — a SEPARATE mapping, never merged into the one above.
+        # A macro stance broadcast onto a name whose sector the macro read
+        # never mentioned cannot count FOR that name; its dissent still
+        # counts against it. One-sided, so this too can only ever shrink a
+        # ceiling — merging it into `stale_sources` would drop the dissent
+        # as well and RAISE the net on exactly the names a bearish broad
+        # read opposed. See `broadcast_macro_sources`.
+        non_corroborating_sources = PortfolioManagerAgent.broadcast_macro_sources(
+            registry=evidence_registry,
+            positions=positions,
+            macro_analysis=_macro_analysis_as_dict(macro_analysis),
+            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+        )
+        # Items 109 + 112 together — the conviction cut order must honour the
+        # SAME one-sided removal. A broadcast macro stance may not be the
+        # thing that protects a holding from the de-lever (that would be
+        # macro acting alone, which the 2026-09-25 ruling forbids), while its
+        # dissent still counts against the name. Stashed separately from the
+        # two-sided freshness set for exactly that reason.
+        ctx.evidence_non_corroborating_sources = non_corroborating_sources
         # Conviction ledger (spec §9.5): persist every seat's side on every
         # idea — dissent included — from that same registry, BEFORE the
         # constructor runs so a construction failure cannot lose the record
@@ -6824,6 +6853,7 @@ class DecisionStage:
         _record_seat_stances(
             pipeline, ctx, evidence_registry,
             [t.symbol for t in portfolio_decision.targets],
+            non_corroborating_sources=non_corroborating_sources,
         )
         book_targets, refused_soft_exit = _targets_admitted_to_book(
             portfolio_decision.targets,
@@ -6867,6 +6897,7 @@ class DecisionStage:
             regime=_macro_regime(macro_analysis),
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
             # Spec §11.2 — the session's gross-exposure ceiling, already
             # resolved from account state in the run preamble (and re-derived
             # here only on a lane where the preamble did not run). The
@@ -8194,33 +8225,23 @@ class RiskStage:
         pre_rm_fields = _risk_edit_snapshot(portfolio_decision.decisions)
 
         if verdict.modifications:
-            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
-            # `allocation_pct` edit that ENLARGES a BUY, but it tests
-            # `decision.action == "BUY"` only — a SHORT was never covered,
-            # although the constructor sizes it with the identical cumulative
-            # arithmetic (`name_headroom_pct = (max_position_pct -
-            # current_short_gross_pct) / gross_mul`, the explicit mirror of
-            # the long clamp) and `_record_scale_advisory` already treats the
-            # two sides alike because both open new risk. Snapshotted here
-            # and enforced below for BOTH sides: for a BUY the inner guard
-            # has already reverted the edit, so this sweep is a no-op and
-            # finds nothing; for a SHORT it is the only thing standing
-            # between the seat and a short it believes it is cutting.
-            pre_mod_entry_alloc = {
-                (d.symbol.strip().upper(), d.action): d.allocation_pct
-                for d in portfolio_decision.decisions
-                if d.action in ("BUY", "SHORT")
-            }
+            # Board items 135 + 155. An `allocation_pct` edit that ENLARGES an
+            # entry is refused by `_apply_risk_modifications` guard 1b, which
+            # now covers SHORT as well as BUY. It used to test
+            # `decision.action == "BUY"` only, and the SHORT half was patched
+            # in HERE, one layer out, by a second sweep over the same
+            # decisions — solely because `src/pipeline.py` was locked by
+            # another workstream on 2026-09-18. That sweep is DELETED and
+            # must not come back: one rule, one enforcement point, inside the
+            # guard that already owns it. `tests/test_pipeline_stages.py`
+            # fails the build if a duplicate reappears in this file.
             unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
                 unapplied=unapplied_mods,
             )
-            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
-                portfolio_decision.decisions, pre_mod_entry_alloc,
-            )
-            rejected_mods = list(rejected_mods) + enlarged
+            rejected_mods = list(rejected_mods)
             # A modification this method refused (exit silently zeroed, or a
             # stop/target edit that would have shipped a reward:risk / noise-
             # band floor breach) must be a visible, distinguishable event —

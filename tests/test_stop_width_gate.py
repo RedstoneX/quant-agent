@@ -22,11 +22,48 @@ same day on sourced research, before it ran a session:
 Pinned here: (1) the level scan's relevance window is still read from the
 instrument (kept from #330); (2) an unbacked or missing stop is read from
 the instrument — the wider of the ATR noise band and the signal bar's far
-edge; (3) a stop wider than the instrument's own reach over the trade's
-horizon is refused BY CODE and recorded as data; (4) a listing too young to
-measure is refused by its own code, first; (5) under the cap, a wider stop
-buys a smaller position at the same dollars of risk; (6) nothing anywhere
-refuses for absent structure any more, and the gap branch is gone.
+edge; (3) **the width REFUSAL is GONE** (board item 56, route (c),
+2026-09-26) and cannot come back silently — see
+`TestTheWidthGateIsDeletedAndCannotComeBack`; (4) a listing too young to
+measure is refused by its own code, first; (5) a wider stop buys a smaller
+position at the same dollars of risk, and that is now the ONLY answer to
+width; (6) nothing anywhere refuses for absent structure any more, and the
+gap branch is gone.
+
+**2026-09-26, docs/WORK.md item 56, route (c) — the width gate is deleted.**
+The question the item narrowed to was "at what probability of being touched
+inside the trade's own horizon does a stop stop being a stop". Three routes
+were open; this is why the other two were rejected and this one taken.
+
+  * Route (a), a CITED touch probability: no published work measures that
+    quantity. What the stop-loss literature measures is the RETURN and
+    VOLATILITY effect of a stop threshold (Acar & Toffel 2000; Han, Zhou &
+    Zhu on momentum stop-losses; Kaminski & Lo), never a minimum touch
+    probability below which a level stops counting as a stop. A different
+    quantity, so it is not adopted.
+  * Route (b), the THRESHOLD-FREE reformulation the item proposed — refuse
+    when the stop's touch probability is below the target's reach
+    probability on the same instrument — is NOT threshold-free. Both
+    probabilities read the same ATR over the same horizon, and
+    `touch_probability` is strictly decreasing in width, so the inequality
+    is exactly `stop_distance > target_distance`: a reward:risk floor of
+    1.0 wearing a probability costume. The desk deleted its reward:risk
+    floor on 2026-09-24 (board item 81) and the owner ruled twice
+    (2026-09-11, restated 2026-09-17) that a breakout setup gets no
+    reward-side refusal at all. Pinned by
+    `test_the_threshold_free_reformulation_is_a_reward_risk_floor`.
+  * Route (c), DELETE, is what shipped, on a measurement: across 648 sized
+    stops recorded in production between 2026-09-13 and 2026-09-26
+    (`quant_agent.log`, the item-56 touch-probability reading) the gate
+    refused ZERO trades; the widest stop it ever saw sat at 1.29 x ATR x
+    sqrt(H) against its 1.5 cap; the lowest touch probability ever recorded
+    was 4.0% against a gate that refuses at 1.67%. It never protected
+    anything that `_plan_risk_targets` sizing down (spec 2.1) and, at the
+    extreme, `position_sized_to_zero` do not already answer.
+
+The READING survives, unchanged and still stamped on every sized stop: it
+is the evidence that could one day answer the question the gate pretended
+to have answered.
 """
 
 from __future__ import annotations
@@ -216,12 +253,15 @@ class TestNoFloorIsNotARefusal:
         assert "unfilled_down_gap_edge" not in fields
         assert {"signal_bar_low", "signal_bar_high", "bars_available"} <= set(fields)
 
-    def test_the_owners_gap_example_is_now_judged_on_width_not_on_the_gap(self):
+    def test_the_owners_gap_example_now_ships_and_is_answered_by_SIZE(self):
         """$45-50 base, gap to $80. The pre-gap shelf IS the nearest floor
         (Bulkowski says it is the reachable one). An analyst leaning the
-        stop on it asks for a stop 37% away; what refuses that trade now is
-        the WIDTH gate — the stop sits past what the instrument can
-        plausibly travel inside the trade — recorded under its own code."""
+        stop on it asks for a stop 37% away. Until 2026-09-26 the WIDTH
+        gate refused that trade; item 56 route (c) deleted the gate, so the
+        trade now ships and the wide stop is paid for in shares — which is
+        what published practice (Van Tharp sizing) actually prescribes and
+        what the desk's own ratified §2.1 invariant already did under the
+        cap. The refusal is NOT recorded, because it no longer exists."""
         pre = _oscillation(45.0, 50.0, cycles=5) + [50.0] * 10
         day_one = _bars(pre + [80.0], spread=0.6)
         supports, _ = find_structural_levels(day_one)
@@ -230,7 +270,9 @@ class TestNoFloorIsNotARefusal:
         atr = float(atr_series(day_one)[-1])
         horizon = 20
         reach = horizon_reach(atr, horizon)
-        assert 80.0 - shelf > reach, "the numbers must actually make this the width case"
+        assert 80.0 - shelf > reach, (
+            "the numbers must still be the width case the old gate refused"
+        )
 
         constructor = PortfolioConstructor()
         analysis = _analysis(
@@ -238,9 +280,18 @@ class TestNoFloorIsNotARefusal:
             atr=atr, horizon=horizon, setup="breakout",
             bars=LONGEST_INDICATOR_WINDOW,  # old enough: this is the width case
         )
-        decisions = _orders(constructor, analysis)
-        assert decisions == []
-        assert constructor.last_refusals["GAPD"]["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
+        decisions = _orders(constructor, analysis, risk_pct=1.0)
+        assert [d.action for d in decisions] == ["BUY"]
+        assert STOP_REFUSAL_WIDER_THAN_REACH not in json.dumps(
+            constructor.last_refusals, default=str,
+        )
+        # The wide stop is paid for in shares: risked dollars, not the
+        # position, are what the desk holds constant.
+        risked = (
+            decisions[0].allocation_pct / 100 * 100_000
+            * (80.0 - decisions[0].stop_loss) / 80.0
+        )
+        assert risked == pytest.approx(1_000, rel=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -298,56 +349,66 @@ class TestTheStopIsAlwaysDerivable:
 
 
 # ---------------------------------------------------------------------------
-# 4. The width gate — refused by code, recorded as data
+# 4. The width gate is DELETED (board item 56, route (c), 2026-09-26) and
+#    cannot come back silently
 # ---------------------------------------------------------------------------
 
-class TestTheWidthGate:
-    def test_a_stop_past_the_instruments_reach_is_refused_and_recorded(self):
-        """ATR 2, horizon 20: reach = 2 x sqrt(20) x 1.5 = 13.42. A
-        level-backed stop $20 away is a stop price cannot reach inside
-        the trade, so the size computed from it would be fiction."""
+class TestTheWidthGateIsDeletedAndCannotComeBack:
+    def test_a_stop_past_the_instruments_reach_now_ships(self):
+        """ATR 2, horizon 20: the old reach cap was 2 x sqrt(20) x 1.5 =
+        13.42 and a level-backed stop $20 away was refused as "a stop price
+        cannot reach". It ships now. Nothing is recorded as a refusal."""
         constructor = PortfolioConstructor()
         a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0])
-        assert 20.0 > horizon_reach(2.0, 20)
-        decisions = _orders(constructor, a)
-        assert decisions == []
-        recorded = constructor.last_refusals["WIDE"]
-        assert recorded["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
-        assert recorded["direction"] == "long"
-        assert "x ATR" in recorded["detail"]
-        assert "refused" in constructor.last_drop_reasons["WIDE"]
+        assert 20.0 > horizon_reach(2.0, 20), "still the width case"
+        decisions = _orders(constructor, a, risk_pct=1.0)
+        assert [d.action for d in decisions] == ["BUY"]
+        assert constructor.last_refusals == {}
 
-    def test_the_same_stop_inside_reach_ships_and_sizes_smaller(self):
+    def test_width_is_answered_by_size_at_every_width_including_past_reach(self):
         """Same dollars of risk, twice the stop distance, half the shares —
-        §2.1, the Van Tharp arithmetic. Under the cap, width is answered
-        by size, never by refusal."""
+        §2.1, the Van Tharp arithmetic. This used to hold only UNDER the
+        cap; with the cap gone it is the whole answer to width, and it
+        keeps holding past where the gate used to refuse."""
         constructor = PortfolioConstructor()
         near = _analysis("NEAR", entry=100.0, stop=94.0, levels=[94.0, 140.0])
         far = _analysis("FAR", entry=100.0, stop=88.0, levels=[88.0, 140.0])
-        assert 12.0 < horizon_reach(2.0, 20)
-        d_near = _orders(constructor, near, risk_pct=1.0)
-        d_far = _orders(constructor, far, risk_pct=1.0)
-        assert [d.action for d in d_near] == ["BUY"] and [d.action for d in d_far] == ["BUY"]
-        risk_near = d_near[0].allocation_pct / 100 * 100_000 * (100.0 - d_near[0].stop_loss) / 100.0
-        risk_far = d_far[0].allocation_pct / 100 * 100_000 * (100.0 - d_far[0].stop_loss) / 100.0
-        assert risk_near == pytest.approx(1_000, abs=20)
-        assert risk_far == pytest.approx(1_000, abs=20)
-        assert d_far[0].allocation_pct == pytest.approx(d_near[0].allocation_pct / 2, abs=0.05)
+        past = _analysis("PAST", entry=100.0, stop=80.0, levels=[80.0, 140.0])
+        assert 12.0 < horizon_reach(2.0, 20) < 20.0, (
+            "FAR must be inside the old cap and PAST outside it"
+        )
+        got = {}
+        for a in (near, far, past):
+            d = _orders(constructor, a, risk_pct=1.0)
+            assert [x.action for x in d] == ["BUY"], a.symbol
+            got[a.symbol] = d[0]
+        for sym, entry_stop in (("NEAR", 94.0), ("FAR", 88.0), ("PAST", 80.0)):
+            d = got[sym]
+            risked = d.allocation_pct / 100 * 100_000 * (100.0 - d.stop_loss) / 100.0
+            assert risked == pytest.approx(1_000, abs=20), sym
+        # Twice the distance, half the position — the whole mechanism.
+        assert got["FAR"].allocation_pct == pytest.approx(
+            got["NEAR"].allocation_pct / 2, abs=0.05,
+        )
         assert constructor.last_refusals == {}
 
-    def test_the_gate_applies_to_a_short(self):
+    def test_the_gate_no_longer_refuses_a_short_either(self):
         constructor = PortfolioConstructor()
-        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 90.0], rating="sell")
-        assert _orders(constructor, a, direction="short") == []
-        assert constructor.last_refusals["SHRT"]["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
-        assert "above" in constructor.last_refusals["SHRT"]["detail"]
+        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 90.0],
+                      rating="sell")
+        assert [d.action for d in _orders(constructor, a, direction="short",
+                                          risk_pct=1.0)] == ["SHORT"]
+        assert constructor.last_refusals == {}
 
-    def test_the_band_itself_is_never_refused(self):
-        """The fallback the desk reads for an unbacked stop (2.5 x ATR at
-        most 3.0 with the scales) is inside the reach at every permitted
-        horizon >= 4 sessions, and float noise must not refuse it."""
+    def test_the_eligibility_preview_refuses_nothing_on_width(self):
         constructor = PortfolioConstructor()
-        for horizon in (4, 10, 20, MAX_HORIZON_SESSIONS):
+        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0])
+        assert constructor.real_reward_risk_preview(a, "long") is not None
+        assert constructor.last_refusals == {}
+
+    def test_the_band_itself_still_ships_at_every_horizon(self):
+        constructor = PortfolioConstructor()
+        for horizon in (1, 2, 4, 10, 20, MAX_HORIZON_SESSIONS):
             a = _analysis("BAND", entry=100.0, stop=99.0, levels=[110.0],
                           horizon=horizon, setup="breakout")
             placed = constructor._widen_stop_past_noise(
@@ -357,26 +418,68 @@ class TestTheWidthGate:
             assert placed is not None, horizon
         assert constructor.last_refusals == {}
 
-    def test_the_eligibility_preview_refuses_the_same_names(self):
-        constructor = PortfolioConstructor()
-        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0])
-        assert constructor.real_reward_risk_preview(a, "long") is None
-        assert constructor.last_refusals["WIDE"]["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
-        drained = constructor.drain_refusals()
-        assert "WIDE" in drained and constructor.last_refusals == {}
+    # -- the "cannot come back silently" guards ---------------------------
 
-    def test_the_cap_is_the_reach_not_a_daily_range(self):
-        """Stated, not hidden: the cap is `horizon_reach` (the desk's own
-        estimate, no new constant), NOT Kullamägi's 1 x daily range — at
-        which the desk's own 2.5 x ATR fallback would refuse itself."""
-        constructor = PortfolioConstructor()
-        band_width = constructor._stop_atr_multiple(None, None) * 2.0
-        assert band_width > 2.0  # wider than one ATR: his literal cap
-        a = _analysis("CAP", entry=100.0, stop=99.0, levels=[110.0], setup="breakout")
-        assert constructor._widen_stop_past_noise(
-            "CAP", a, 100.0, 99.0, direction="long", target_price=110.0,
-        ) is not None
+    def test_no_live_code_emits_the_width_refusal_any_more(self):
+        """The code is kept defined so old records stay attributable, and
+        `scripts/blocked_proposals_census.py` must still be able to name
+        it. Nothing under `src/` may EMIT it. If a future change
+        reintroduces a width refusal, this fails and the reintroduction
+        has to argue with board item 56 rather than slip in."""
+        from pathlib import Path
 
+        import ast
+
+        root = Path(__file__).resolve().parents[1] / "src"
+        offenders = []
+        for path in root.rglob("*.py"):
+            source = path.read_text()
+            if "STOP_REFUSAL_WIDER_THAN_REACH" not in source:
+                continue
+            tree = ast.parse(source)
+            assigned = {
+                id(t)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                for t in node.targets
+            }
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Name)
+                        and node.id == "STOP_REFUSAL_WIDER_THAN_REACH"
+                        and id(node) not in assigned):
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert not offenders, (
+            "the deleted stop-width refusal is being emitted again; see "
+            "docs/WORK.md item 56 / docs/INCIDENT_HISTORY.md 2026-09-26 "
+            "before re-adding it:\n" + "\n".join(offenders)
+        )
+
+    def test_the_threshold_constant_is_gone_from_both_definition_sites(self):
+        from src.config import RiskConfig
+        from src.portfolio_constructor import ConstructorConfig
+
+        assert "max_stop_width_reach_atr_multiple" not in RiskConfig.model_fields
+        assert not hasattr(ConstructorConfig(), "max_stop_width_reach_atr_multiple")
+        # The TARGET-side reach multiple is a different number and stays.
+        assert RiskConfig.model_fields["max_target_reach_atr_multiple"].default == 1.5
+        assert ConstructorConfig().max_target_reach_atr_multiple == 1.5
+
+    def test_a_settings_file_still_carrying_the_key_fails_loudly(self):
+        """`extra="ignore"` would let a stale settings.yaml load silently
+        and an operator would believe a width refusal was in force."""
+        from pathlib import Path
+
+        import yaml
+
+        from src.config import RiskConfig
+
+        settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
+        risk = yaml.safe_load(settings.read_text())["risk"]
+        assert "max_stop_width_reach_atr_multiple" not in risk
+        RiskConfig(**risk)  # the shipped file must still load
+        with pytest.raises(Exception) as excinfo:
+            RiskConfig(**{**risk, "max_stop_width_reach_atr_multiple": 1.5})
+        assert "removed 2026-09-26" in str(excinfo.value)
 
 # ---------------------------------------------------------------------------
 # 5. Young listings — judged on stop readability, never on a bar count
@@ -535,27 +638,48 @@ class TestRecordedAsData:
 
         no_floor = _analysis("NVDA", entry=100.0, stop=96.0, levels=[110.0, 120.0],
                              setup="breakout")
-        wide = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0],
-                         setup="breakout")
+        # The width refusal was deleted (item 56, 2026-09-26). Recorded
+        # consequence, stated rather than hidden: `real_reward_risk_preview`
+        # now records NO refusal at all for any input — the width gate was
+        # its only live producer, and the remaining stop-readability refusal
+        # needs a missing ATR, which the preview classifies one step earlier
+        # as a DATA FAULT and returns None for. R6 itself is unchanged and
+        # still reads whatever snapshot it is handed; the ENFORCING check
+        # was always one stage later, in construction. So this pins the
+        # wiring against a synthetic snapshot and pins the new emptiness.
+        unreadable = _analysis("DRAM", entry=100.0, stop=95.0, levels=[110.0],
+                               setup="breakout", atr=None, bars=0,
+                               bar_low=None)
         constructor = PortfolioConstructor()
-        for a in (no_floor, wide):
+        for a in (no_floor, unreadable):
             constructor.real_reward_risk_preview(a, "long")
-        snapshot = dict(constructor.last_refusals)
-        registry = {s: {"technical": "bullish", "news": "bullish"} for s in ("NVDA", "WIDE")}
+        assert constructor.last_refusals == {}, (
+            "no preview-time refusal exists any more; if one is added, "
+            "wire this test back onto the live preview"
+        )
+        snapshot = {
+            "DRAM": {
+                "refusal": STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+                "direction": "long",
+                "detail": "no stop can be read from the instrument",
+            },
+        }
+        registry = {s: {"technical": "bullish", "news": "bullish"} for s in ("NVDA", "DRAM")}
         verdicts = PortfolioManagerAgent.candidate_eligibility(
-            analyses=[no_floor, wide], evidence_registry=registry,
-            active_state_changes="", allowed_buy_symbols={"NVDA", "WIDE"},
+            analyses=[no_floor, unreadable], evidence_registry=registry,
+            active_state_changes="", allowed_buy_symbols={"NVDA", "DRAM"},
             constructor_refusals_by_symbol=snapshot,
         )
         assert not any(r.startswith("R6") for r in verdicts["NVDA"]), verdicts
         assert any(
-            r.startswith("R6") and STOP_REFUSAL_WIDER_THAN_REACH in r
-            for r in verdicts["WIDE"]
+            r.startswith("R6")
+            and STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY in r
+            for r in verdicts["DRAM"]
         ), verdicts
         # Without the snapshot R6 says nothing at all — no chart-shape rule.
         verdicts = PortfolioManagerAgent.candidate_eligibility(
-            analyses=[no_floor, wide], evidence_registry=registry,
-            active_state_changes="", allowed_buy_symbols={"NVDA", "WIDE"},
+            analyses=[no_floor, unreadable], evidence_registry=registry,
+            active_state_changes="", allowed_buy_symbols={"NVDA", "DRAM"},
         )
         assert not any(r.startswith("R6") for v in verdicts.values() for r in v)
 
@@ -573,40 +697,6 @@ class TestStopWidthReadingAndSeparation:
     width into a probability is the published one and not a fitted curve,
     and (c) what the shipped multiple is actually worth.
     """
-
-    def test_target_and_refusal_multiples_are_independent_knobs(self):
-        """Moving the stop-width knob must not move the target knob."""
-        from src.portfolio_constructor import ConstructorConfig
-
-        cfg = ConstructorConfig()
-        assert cfg.max_target_reach_atr_multiple == 1.5
-        assert cfg.max_stop_width_reach_atr_multiple == 1.5
-        moved = ConstructorConfig(max_stop_width_reach_atr_multiple=3.0)
-        assert moved.max_target_reach_atr_multiple == 1.5, (
-            "the target estimate must not follow the refusal threshold"
-        )
-
-    def test_settings_expose_both_multiples(self):
-        """Both knobs are declared AND ratified — model default and YAML.
-
-        Read straight off `config/settings.yaml` rather than through
-        `load_config`, which validates API keys this test has no business
-        needing.
-        """
-        from pathlib import Path
-
-        import yaml
-
-        from src.config import RiskConfig
-
-        fields = RiskConfig.model_fields
-        assert fields["max_target_reach_atr_multiple"].default == 1.5
-        assert fields["max_stop_width_reach_atr_multiple"].default == 1.5
-
-        settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
-        risk = yaml.safe_load(settings.read_text())["risk"]
-        assert risk["max_target_reach_atr_multiple"] == 1.5
-        assert risk["max_stop_width_reach_atr_multiple"] == 1.5
 
     def test_range_to_sigma_constant_is_the_gaussian_one(self):
         """`ATR_PER_SIGMA` is sqrt(8/pi) — a property of the Gaussian.
@@ -651,35 +741,54 @@ class TestStopWidthReadingAndSeparation:
         assert touch_probability(float("nan"), 20) is None
         assert touch_probability("wide", 20) is None
 
-    def test_the_shipped_gate_is_a_constant_and_very_low_probability(self):
-        """What 1.5 x ATR x sqrt(H) is worth, stated as a reading.
+    def test_what_the_deleted_gate_was_actually_worth(self):
+        """The arithmetic that made the deletion obvious, kept as a record.
 
-        The cap scales with sqrt(H) exactly as the reading does, so the
-        probability it refuses at is the SAME at every horizon: ~1.7%. That
-        is the measured answer to "does this gate bind" — it refuses only a
-        stop with under a 2% chance of being touched inside the trade.
+        The old cap scaled with sqrt(H) exactly as the reading does, so the
+        probability it refused at was the SAME at every horizon: 1.67%. It
+        refused only a stop with under a 2% chance of being touched inside
+        the trade — and the desk's own 2.5 x ATR fallback stop sits inside
+        1.5 x ATR x sqrt(H) for every horizon of 3 sessions or more, so it
+        could never refuse the desk's own fallback. Production agreed: over
+        648 recorded stops (2026-09-13..2026-09-26) the LOWEST touch
+        probability was 4.0% and the widest stop was 1.29 x ATR x sqrt(H).
         """
         import math
 
         from src.data.levels import touch_probability
 
-        at_the_cap = {
-            h: touch_probability(1.5 * math.sqrt(h), h)
-            for h in (5, 20, 40, 60)
-        }
-        for horizon, p in at_the_cap.items():
+        for horizon in (5, 20, 40, 60):
+            p = touch_probability(1.5 * math.sqrt(horizon), horizon)
             assert p == pytest.approx(0.016681, abs=1e-5), (horizon, p)
-
-    def test_the_desks_own_fallback_stop_cannot_trip_the_gate(self):
-        """2.5 x ATR is inside 1.5 x ATR x sqrt(H) for every H >= 3.
-
-        Arithmetic, not a measurement: the gate can only ever fire on a
-        level-backed or signal-bar stop, never on the band the desk itself
-        falls back to. Recorded so that a future change to either number
-        has to face this.
-        """
-        import math
-
         for horizon in range(3, 61):
             assert 2.5 <= 1.5 * math.sqrt(horizon), horizon
         assert 2.5 > 1.5 * math.sqrt(2)
+        # The widest stop production ever produced (1.287 x ATR x sqrt(H))
+        # still sat at more than twice the probability the gate refused at,
+        # which is why 648 stops produced zero refusals.
+        assert touch_probability(1.287 * math.sqrt(10), 10) > 2 * 0.016681
+
+    def test_the_threshold_free_reformulation_is_a_reward_risk_floor(self):
+        """Why route (b) was rejected — arithmetic, not opinion.
+
+        Item 56 offered "refuse when the stop's touch probability is below
+        the target's reach probability on the same instrument" as the
+        threshold-free option. Both readings take the same ATR and the same
+        horizon, and `touch_probability` is strictly decreasing in width,
+        so the inequality reduces EXACTLY to `stop_distance >
+        target_distance` — a reward:risk floor of 1.0 with no constant
+        visible. The desk deleted its reward:risk floor on 2026-09-24
+        (board item 81) and the owner ruled twice that a breakout setup
+        gets no reward-side refusal, so adopting (b) would have
+        reintroduced a refused rule while claiming to remove a number.
+        """
+        from src.data.levels import touch_probability
+
+        for horizon in (5, 10, 20, 60):
+            for stop_w in (0.5, 1.0, 2.0, 3.5, 6.0):
+                for target_w in (0.5, 1.0, 2.0, 3.5, 6.0):
+                    p_stop = touch_probability(stop_w, horizon)
+                    p_target = touch_probability(target_w, horizon)
+                    assert (p_stop < p_target) == (stop_w > target_w), (
+                        horizon, stop_w, target_w,
+                    )

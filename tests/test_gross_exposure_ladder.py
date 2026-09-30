@@ -3140,3 +3140,96 @@ def test_a_sigterm_unwinds_so_the_deferred_ceiling_is_still_paid():
         )
     finally:
         pipeline._restore_sigterm(previous)
+
+
+def test_a_holding_the_desk_already_decided_to_sell_is_not_cut_twice():
+    """ADVERSARY FINDING (4th round). The conviction pass runs AFTER the risk
+    stage, so the session's approved SELL/COVER decisions already exist. If
+    the de-lever measures the held book as though those names were staying,
+    it overstates the breach and reaches one extra name — and under a
+    weakest-first cut the extra name is by construction among the STRONGEST
+    convictions still standing, which is the exact opposite of the ordering's
+    purpose. The doctrine here is the desk's own: it never sells a holding
+    for a reason that is not about that holding.
+    """
+    from src.models import PortfolioDecision
+    from src.pipeline_context import RunContext
+
+    pipeline = _morning_delever_pipeline(drawdown_frac=0.10)  # 1.5x -> $15k
+    ctx = RunContext(run_id="c-exits", session="morning")
+    # $20k book against a $15k ceiling: $5k over. But the desk has already
+    # decided to sell all of GOING ($5k), so the TRUE residual is zero.
+    ctx.positions = [
+        _position("GOING", qty=50.0, current_price=100.0),
+        _position("KEEP", qty=100.0, current_price=100.0),
+        _position("SPARE", qty=50.0, current_price=100.0),
+    ]
+    ctx.total_value = EQUITY
+    ctx.evidence_registry = {
+        "GOING": {"technical": "bearish"},   # opposed — cut first
+        "KEEP": {"technical": "bullish"},    # supported — must survive
+        "SPARE": {"technical": "bullish"},
+    }
+    ctx.portfolio_decision = PortfolioDecision.model_construct(
+        decisions=[TradeDecision(
+            action="SELL", symbol="GOING", allocation_pct=100.0,
+            entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+            reasoning="thesis broke; the desk is exiting this name today",
+        )],
+    )
+
+    pipeline._enforce_gross_ceiling_by_conviction(ctx)
+    sold = [c.kwargs["symbol"] for c in pipeline._submit_protected_sell.call_args_list]
+    assert sold == [], (
+        "the exit the desk already approved covers the whole breach; "
+        f"nothing else may be sold, but the de-lever sold {sold}"
+    )
+
+
+def test_a_broadcast_macro_stance_alone_does_not_protect_a_holding():
+    """Items 109 + 112. `macro weighted, never solo` (owner, 2026-09-25): a
+    market-wide macro read back-filled onto a name whose sector it never
+    mentioned may not be the thing that saves that name from the cut. The
+    removal is ONE-SIDED — a broadcast DISSENT still counts against.
+    """
+    from src.pipeline_context import RunContext
+
+    pipeline = _morning_delever_pipeline(drawdown_frac=0.10)
+    ctx = RunContext(run_id="c-macro", session="morning")
+    ctx.positions = [
+        _position("BROAD", qty=100.0, current_price=100.0),
+        _position("REAL", qty=100.0, current_price=100.0),
+    ]
+    ctx.total_value = EQUITY
+    ctx.evidence_registry = {
+        "BROAD": {"macro": "bullish"},       # broadcast only
+        "REAL": {"technical": "bullish"},    # a genuine per-name read
+    }
+    ctx.evidence_non_corroborating_sources = {"BROAD": frozenset({"macro"})}
+
+    order = pipeline._conviction_cut_order(ctx)
+    assert order["BROAD"][0] == NO_COVERAGE, (
+        "a broadcast macro stance is not per-name support and must not "
+        "lift a holding into the protected bucket"
+    )
+    assert order["REAL"][0] == SUPPORTED
+    assert order["BROAD"] < order["REAL"]
+
+    # One-sided: a broadcast BEARISH read on a long still opposes it.
+    ctx.evidence_registry["BROAD"] = {"macro": "bearish"}
+    assert pipeline._conviction_cut_order(ctx)["BROAD"][0] == OPPOSED
+
+
+def test_a_symbol_absent_from_the_cut_order_is_unread_not_opposed():
+    """Defence in depth for the same ruling: the rule that a data gap must
+    not author a liquidation cannot depend on WHICH function dropped the
+    symbol, so `apply_gross_ceiling`'s own default for an unmapped name is
+    the NO-COVERAGE rung, never OPPOSED."""
+    missing = _position("GONE", qty=100.0, current_price=100.0)
+    opposed = _position("OPP", qty=100.0, current_price=100.0)
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)
+    outcome = apply_gross_ceiling(
+        [], [missing, opposed], EQUITY, ceiling,
+        conviction_rank={"OPP": (OPPOSED, 0)},  # GONE deliberately absent
+    )
+    assert outcome.trims[0].symbol == "OPP"

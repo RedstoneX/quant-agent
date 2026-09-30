@@ -830,3 +830,81 @@ def backfill_daily_estimates(
             )
         )
     return rows
+
+
+def format_borrowing_cost_lines(
+    cash_balance: float | None,
+    rate_pct: float | None,
+    headroom_usd: float | None = None,
+) -> list[str]:
+    """What borrowing COSTS, rendered for a decision seat's prompt.
+
+    Board item 95's third criterion — "the portfolio manager is actually
+    SHOWN the account's borrowing capacity" — was only half built. The
+    Margin Capacity block in `src/agents/portfolio_manager.py` has told the
+    seat since the 2026-09-17 CRM incident how much it MAY spend (the
+    ladder multiple, its rung, and the session's dollar headroom), and the
+    prompt sheet says in so many words "You may borrow, and above 1.0x you
+    are borrowing". Nothing anywhere told it that borrowing is not free.
+    A seat shown a spending limit and no price reads the limit as free
+    money; this is the price.
+
+    Two figures, both arithmetic on numbers the desk already holds, and
+    NEITHER of them a required return:
+
+      * what the debit the account is carrying RIGHT NOW costs, from the
+        broker's own cash figure through `overnight_debit_balance` (so the
+        settlement-noise floor applies here exactly as everywhere else);
+      * what spending the session's remaining ladder headroom overnight
+        WOULD add, at the same rate. This is `headroom x rate / 360` per
+        night — it is not a forecast of whether the seat will spend it, and
+        it is stated as a cost of carry, never as a hurdle the seat must
+        clear. The owner has ratified the 2.0x cap and the de-levering
+        ladder; he has NOT ratified a minimum return on borrowed money, and
+        this function must never imply one.
+
+    Silent (empty list) when the rate cannot be read or when there is
+    neither a debit nor resolvable headroom — same no-noise contract
+    `build_estimate` keeps. Every non-zero figure carries `ESTIMATE_LABEL`,
+    because the one night the desk has actually measured (2026-09-17 into
+    2026-09-18, a -$915.83 debit) returned ZERO `INT` activity rows from
+    the paper broker: paper may well not charge this at all, and a figure
+    printed without that caveat would teach the seat a real cost is zero.
+    """
+    if rate_pct is None or rate_pct <= 0:
+        return []
+    debit = overnight_debit_balance(cash_balance)
+    lines: list[str] = []
+    carried = build_estimate(debit, rate_pct)
+    if carried is not None:
+        lines.append(
+            f"- Borrowing is NOT free. The {_money(carried.debit_balance)} "
+            f"debit this account is carrying costs about "
+            f"{_money(carried.daily_usd)}/night at {rate_pct:.2f}%/yr "
+            f"(Alpaca's 360-day convention; a Friday is charged as three "
+            f"nights), roughly {_money(carried.annual_usd)}/yr if carried."
+        )
+    if isinstance(headroom_usd, (int, float)) and not isinstance(
+        headroom_usd, bool
+    ) and headroom_usd > 0:
+        headroom_daily = estimate_daily_interest(float(headroom_usd), rate_pct)
+        if headroom_daily > 0:
+            lines.append(
+                f"- Spending the full {_money(float(headroom_usd))} of ladder "
+                f"headroom and carrying it overnight would add about "
+                f"{_money(headroom_daily)}/night, roughly "
+                f"{_money(headroom_daily * DAYS_PER_YEAR_ALPACA_CONVENTION)}/yr. "
+                f"Intraday leverage is free — only the END-OF-DAY debit is "
+                f"charged, so a position opened and closed the same session "
+                f"costs nothing to borrow for."
+            )
+    if not lines:
+        return []
+    lines.append(
+        f"- This is a COST of carry, not a hurdle rate: nobody has set a "
+        f"minimum return on borrowed money, and you must not invent one. "
+        f"It is a reason to prefer conviction over filling the headroom, "
+        f"and to prefer closing a leveraged position before the bell over "
+        f"carrying it. {ESTIMATE_LABEL}."
+    )
+    return lines

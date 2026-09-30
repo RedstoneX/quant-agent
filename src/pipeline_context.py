@@ -226,6 +226,15 @@ class RunContext:
     # conviction de-lever passes it as `ignored_sources` so it counts the
     # same stances the constructor is willing to size on.
     evidence_stale_sources: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Item 109, read by item 112's cut order: {symbol: {"macro"}} for every
+    # held name whose macro stance is the market-wide BROADCAST rather than a
+    # read of its own sector. ONE-SIDED, never merged into the set above: a
+    # broadcast stance may not CORROBORATE holding a name — macro alone
+    # protecting a position is the thing the 2026-09-25 ruling forbids — while
+    # its dissent still counts against it.
+    evidence_non_corroborating_sources: dict[str, frozenset[str]] = field(
+        default_factory=dict,
+    )
     # Item 112 — the RAW `AnalystVerdict`s every seat produced this session,
     # BEFORE `candidate_eligibility` and the conviction bar remove names that
     # may not be BOUGHT today. The de-lever's cut order ranks conviction about

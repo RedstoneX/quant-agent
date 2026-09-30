@@ -611,9 +611,25 @@ def route_breaker_for(provider: str) -> RouteBreaker:
         return breaker
 
 
-def _reset_route_breakers_for_tests() -> None:
+def reset_route_breakers() -> None:
+    """Forget every route demotion this process is currently holding.
+
+    The breakers are process-wide and deliberately outlive one session, so a
+    provider that just failed is not re-attempted by the next caller. That is
+    right in production, where the process IS the desk, and wrong for anything
+    that runs two independent sessions back to back in one process: the second
+    session then starts at the secondary route because of something that
+    happened in the first, and its verdict is a function of its predecessor
+    rather than of the code under test. The rehearsal harness calls this at
+    the start of every run for exactly that reason
+    (`ops/rehearsal/runner.py`); nothing in the live pipeline calls it.
+    """
     with _ROUTE_BREAKERS_LOCK:
         _ROUTE_BREAKERS.clear()
+
+
+def _reset_route_breakers_for_tests() -> None:
+    reset_route_breakers()
 
 
 # === The third route =======================================================

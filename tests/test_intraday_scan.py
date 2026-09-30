@@ -1369,3 +1369,214 @@ def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
     assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
     p.tech_analyst.analyze_batch.assert_not_called()
     assert "tech" not in (ctx.data_status or {})
+
+
+# === Board item 177, the TRIGGER third ================================
+#
+# `move_threshold_pct` is a flat 3% applied to a 1%/day utility and an
+# 8%/day small cap alike, and the number ledger's open question against it
+# asks what move marks a development worth re-reading RELATIVE TO THE
+# NAME'S OWN ATR. Measured 2026-09-26 against the desk's own
+# `intraday_evaluations` table (253 selections, 2026-09-02..25): the flat
+# threshold does not discriminate — median move of a selection that led to
+# a BUY/SHORT was 3.50% against 3.67% for one that led to nothing, and the
+# 5-7% band produced zero orders from 51 selections. The ATR-relative form
+# could not be tested at all, because the ledger stored `move_pct=` and
+# never the denominator. These tests pin the recording of that denominator.
+# NO THRESHOLD IS CHANGED by any of this.
+
+def test_move_in_atr_is_the_move_over_the_names_own_daily_range():
+    atr_pct, move_atr = TradingPipeline._intraday_move_in_atr(
+        move_pct=6.0, atr_14=3.0, prev_close=100.0,
+    )
+    assert atr_pct == pytest.approx(3.0)
+    assert move_atr == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("atr_14,prev_close", [
+    (None, 100.0), (0.0, 100.0), (-1.0, 100.0),
+    (3.0, None), (3.0, 0.0), (3.0, -5.0),
+])
+def test_move_in_atr_refuses_to_invent_a_denominator(atr_14, prev_close):
+    """An unreadable ATR or prev_close must produce nothing, never a
+    fabricated ratio — the measurement exists to answer a live money
+    question and a made-up row would poison it."""
+    assert TradingPipeline._intraday_move_in_atr(
+        move_pct=6.0, atr_14=atr_14, prev_close=prev_close,
+    ) == (None, None)
+
+
+@patch("src.pipeline.compute_indicators")
+def test_a_movers_ledger_row_records_the_atr_denominator(
+    mock_compute_indicators,
+):
+    """The same 3% move is a third of a daily range on one name and two
+    whole ranges on another. The row now carries both."""
+    mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),   # 10% move, ATR 2% of close
+    }
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": _ta_result("AAPL", rating="buy")},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = []
+
+    p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
+
+    details = [
+        c.kwargs["detail"]
+        for c in p.db.record_intraday_evaluation.call_args_list
+        if c.kwargs["symbol"] == "AAPL"
+    ]
+    assert details, "the mover was never ledgered at all"
+    assert "atr_pct=2.0000" in details[-1]
+    assert "move_atr=5.0000" in details[-1]
+    # The selection-time field every existing reader parses is untouched.
+    assert details[-1].startswith("move_pct=10.0000")
+
+
+@patch("src.pipeline.compute_indicators")
+def test_the_atr_stamp_reuses_the_selection_row_and_never_adds_one(
+    mock_compute_indicators,
+):
+    """`record_intraday_evaluation` upserts on (symbol, run_id), so the
+    stamp updates the row the cooldown already counts. A second ROW would
+    be a second cooldown fact for one paid look."""
+    mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": _ta_result("AAPL", rating="buy")},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = []
+
+    ctx = RunContext.start("intra_check")
+    p._run_intraday_opportunity_scan(ctx)
+
+    keys = {
+        (c.kwargs["symbol"], c.kwargs["run_id"], c.kwargs["status"])
+        for c in p.db.record_intraday_evaluation.call_args_list
+    }
+    assert keys == {("AAPL", ctx.run_id, "selected")}
+
+
+@patch("src.pipeline.compute_indicators")
+def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
+    """Held-book coverage never passed through `move_threshold_pct`, so
+    stamping it would contaminate the very measurement meant to answer for
+    that trigger — and would give a quiet hold a mover cooldown."""
+    mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
+    p = _intraday_pipeline(universe=["AAPL", "MSFT"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),   # mover
+        "MSFT": _snapshot(last=100.2, prev=100.0),   # quiet hold
+    }
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": _ta_result("AAPL", rating="buy"),
+         "MSFT": _ta_result("MSFT", rating="buy")},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = []
+
+    ctx = RunContext.start("intra_check")
+    ctx.positions = [_held_position("MSFT")]
+    p._run_intraday_opportunity_scan(ctx)
+
+    ledgered = {
+        c.kwargs["symbol"]
+        for c in p.db.record_intraday_evaluation.call_args_list
+    }
+    assert ledgered == {"AAPL"}
+
+
+@patch("src.pipeline.compute_indicators")
+def test_an_unreadable_atr_is_recorded_as_unreadable_not_dropped(
+    mock_compute_indicators,
+):
+    """The true state, reported: a name whose ATR could not be read must
+    say so on its row, so the eventual measurement knows its own coverage
+    instead of quietly counting a smaller sample."""
+    mock_compute_indicators.return_value = SimpleNamespace(atr_14=None)
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": _ta_result("AAPL", rating="buy")},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = []
+
+    p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
+
+    detail = [
+        c.kwargs["detail"]
+        for c in p.db.record_intraday_evaluation.call_args_list
+        if c.kwargs["symbol"] == "AAPL"
+    ][-1]
+    assert "atr_pct=unreadable" in detail
+    assert "move_atr=unreadable" in detail
+
+
+@patch("src.pipeline.compute_indicators")
+def test_a_ledger_write_failure_on_the_stamp_never_breaks_the_scan(
+    mock_compute_indicators,
+):
+    """A measurement must not cost a trade. If the stamp write raises, the
+    scan completes exactly as it would have without it."""
+    mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    calls = {"n": 0}
+
+    def _flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:            # the selection write succeeds, the stamp fails
+            raise RuntimeError("disk full")
+
+    p.db.record_intraday_evaluation.side_effect = _flaky
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": _ta_result("AAPL", rating="buy")},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = [
+        {"id": "o1", "action": "BUY", "symbol": "AAPL"},
+    ]
+
+    result = p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
+
+    assert result["status"] == "intraday_executed"
+    assert calls["n"] == 2

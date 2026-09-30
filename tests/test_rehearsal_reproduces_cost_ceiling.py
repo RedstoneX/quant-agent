@@ -45,13 +45,73 @@ byte-identical inputs:
   chunk and the session died long before the Portfolio Manager.)
 
   PHASE 2, with the ceiling set to that measured figure and nothing else
-  changed: the settled-cost circuit must trip, and the Portfolio Manager must
-  never reach the provider boundary at all.
+  changed: the settled-cost circuit must trip on the decision seat, the run
+  must settle no more than the ceiling, and the refusal must end the session
+  cleanly rather than as an unhandled fault.
 
 No invented number anywhere: the phase-2 ceiling is read out of phase 1's own
 ledger, and the two runs read the same bytes because phase 2 runs against a
 `fork()` of the prepared sandbox rather than a second snapshot of a production
 that keeps moving.
+
+WHY THE REPLAY IS NO LONGER PINNED TO THE INCIDENT RUN (2026-09-26)
+--------------------------------------------------------------------
+The version above pinned `replay_run` to the 2026-08-28 recording while the
+sandbox was a snapshot of production TAKEN TODAY. That pairing decayed, and
+by 2026-09-26 it had gone all the way: phase 1 ended `no_data`, never
+reaching the Portfolio Manager, so the ceiling was never measured at all.
+
+The mechanism, from the run's own log: `tech_analyst` batches are split into
+chunks by RENDERED PROMPT SIZE (`_split_to_budget` /`pack_to_budget` in
+src/agents/tech_analyst.py), so the chunk a symbol lands in is a function of
+today's universe and today's per-symbol payload. Replaying August's four
+recorded chunk answers into today's chunks put every recorded row in the
+wrong chunk: all four answers were discarded whole by the
+"emitted rows for symbols not in the submitted chunk" guard (33 rows dropped,
+0 kept), `ctx.analyses` came back empty, and src/pipeline.py stopped the
+session at `no_data` well before any spending decision. Nothing about the
+cost circuit was involved or exercised.
+
+Widening the drift tolerance would have made the test permanently vacuous.
+The fix is to stop pairing a fixed old recording with a moving snapshot:
+the recording is now SELECTED from the snapshot, with the harness's own
+`select_replay_run` — the most recent COMPLETE morning run in the database
+being rehearsed — and the rehearsed date comes from that recording. Recording
+and snapshot are then contemporaneous by construction, so the chunking lines
+up, and the pin is still explicit and printed in the report (an unpinned
+replay is a non-reproducible verdict; see ops/rehearsal/runner.py).
+
+WHICH PORTFOLIO MANAGER CALL THE CEILING CAN ACTUALLY REFUSE
+--------------------------------------------------------------
+With the replay contemporaneous, phase 1 reaches the Portfolio Manager and
+the measurement that comes back is this [measured, sandbox `agent_logs`,
+rehearsal of the 2026-09-25 morning, 2026-09-26]:
+
+    news_analyst_morning  gemini-3.5-flash-lite   $0.000000
+    smart_money_analyst   gemini-3.5-flash-lite   $0.000000
+    macro_analyst         gemini-3.5-flash-lite   $0.000000
+    tech_analyst          gemini-3.5-flash-lite   $0.000000
+    portfolio_manager     openai/gpt-5.5          $0.210995
+
+Every research seat now runs on the direct Gemini route, which
+`src/cost_table.py` pins at 0.0/0.0 input/output on purpose (owner decision,
+free tier). So the spend SETTLED at the moment the Portfolio Manager's FIRST
+call is authorized is exactly $0.00 — and `src/config.py` requires
+`session_cost_limit_usd > 0`. No valid session ceiling can pre-empt that
+first call, and setting one below a figure the session never spent would be
+an invented number, so this test no longer claims otherwise.
+
+What it does claim, measured and unweakened: with the ceiling set to phase
+1's own settled total, the circuit refuses the Portfolio Manager's NEXT call
+(`session LLM spend $0.2110 reached safe limit $0.21`, agent
+`portfolio_manager`), the run finishes having settled no more than the
+ceiling it was given, and the refusal ends the session cleanly instead of as
+an unhandled provider fault.
+
+That the FIRST decision call cannot be pre-empted — the single most expensive
+call of the desk's day, and now the only one that costs anything before it —
+is a finding about the control's REACH, not about this test. It belongs on
+the board, not in a weakened assertion here.
 
 REQUIRES real production data (`sudo -n -u qamc` read access to
 `/home/qamc/quant-agent/data`) — this is an ops tool for one specific
@@ -66,7 +126,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -74,12 +134,15 @@ PRODUCTION_DB = "/home/qamc/quant-agent/data/quant_agent.db"
 PRODUCTION_DATA = "/home/qamc/quant-agent/data"
 SUDO_USER = "qamc"
 
-# The real run_id of the 2026-08-28 morning session whose recorded model
-# responses this test replays. Historical agent_logs rows are retained for
-# 2 years (src/storage/db.py), so this should stay resolvable for a long time.
+# The real run_id of the 2026-08-28 morning session that this test exists to
+# describe. It is documentation now, NOT the recording that gets replayed —
+# see "WHY THE REPLAY IS NO LONGER PINNED TO THE INCIDENT RUN" above.
 INCIDENT_RUN_ID = "run-be9f8f06"
 
-REHEARSED_AT = (2026, 8, 28, 9, 35)
+# Time of day the rehearsal is frozen at: mid-morning, inside the session, on
+# whatever DATE the selected recording was actually made. Unchanged from the
+# incident's own 09:35 ET; only the date now comes from the recording.
+REHEARSED_TIME_ET = (9, 35)
 
 # The settled-spend ceiling that replaced the reserved-exposure projections
 # (item 14, 2026-09-02). `_enforce_settled_limits_locked` in src/cost_circuit.py
@@ -151,6 +214,48 @@ def _paid_for_agent(db_path, run_id: str, agent_prefix: str) -> float:
     return float(rows[0] or 0.0)
 
 
+def _settled_before_agent(db_path, run_id: str, agent_prefix: str) -> float:
+    """Settled spend logged before this run first called `agent_prefix`.
+
+    `agent_logs.id` is the insertion order of the pipeline's own per-call
+    records, which is the order the calls settled in, so everything with a
+    lower id had already been paid for when that agent was reached.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        first = conn.execute(
+            "SELECT MIN(id) FROM agent_logs WHERE run_id = ? AND agent_name LIKE ?",
+            (run_id, agent_prefix + "%"),
+        ).fetchone()
+        assert first is not None and first[0] is not None, (
+            f"{run_id} logged no {agent_prefix} call at all, so there is no "
+            "boundary to measure the ceiling at"
+        )
+        row = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs "
+            "WHERE run_id = ? AND id < ?", (run_id, first[0]),
+        ).fetchone()
+    finally:
+        conn.close()
+    return float(row[0] or 0.0)
+
+
+def _recording_started_utc(db_path, run_id: str) -> str:
+    """When the recorded run this rehearsal replays actually began (UTC).
+
+    `agent_logs.timestamp` is SQLite's `datetime('now')`, i.e. UTC — the same
+    assumption `select_replay_run` documents and orders on.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT MIN(timestamp) FROM agent_logs WHERE run_id = ?", (run_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return str((row or [None])[0] or "")
+
+
 def _reached_provider(report, agent: str) -> bool:
     """True when `agent` got past the circuit and asked replay for an answer.
 
@@ -166,18 +271,46 @@ def _reached_provider(report, agent: str) -> bool:
     ) or any(a["agent"] == agent for a in report.agents_ran)
 
 
-def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
+def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
     from ops.rehearsal.isolation import Sandbox
+    from ops.rehearsal.replay import select_replay_run
     from ops.rehearsal.runner import run_rehearsal
     from src.trading_calendar import ET
 
-    now_et = datetime(*REHEARSED_AT, tzinfo=ET)
     prepared = Sandbox.prepare(
         source_db=PRODUCTION_DB,
         root=tmp_path / "sandbox",
         source_data_dir=PRODUCTION_DATA,
         sudo_user=SUDO_USER,
     )
+
+    # The recording is chosen FROM the snapshot, so the two are contemporaneous
+    # and tech_analyst's size-packed chunks line up. `complete` means the run
+    # has a recording for both tech_analyst and portfolio_manager, which is
+    # exactly what phase 1 needs to reach the spending boundary.
+    choice = select_replay_run(str(prepared.db_path), "morning")
+    if not choice.run_id or not choice.complete:
+        pytest.skip(
+            "no COMPLETE recorded morning run exists in this snapshot, so "
+            "there is nothing to replay the Portfolio Manager's call from "
+            f"and the ceiling cannot be measured: {choice.reason}"
+        )
+    started = _recording_started_utc(prepared.db_path, choice.run_id)
+    assert started, (
+        f"the selected recording {choice.run_id} has no timestamp to rehearse "
+        "at, so the frozen clock would be arbitrary"
+    )
+    recorded_date = (
+        datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
+        .replace(tzinfo=timezone.utc).astimezone(ET).date()
+    )
+    # Its own date — a day the desk demonstrably traded, because it recorded a
+    # whole morning on it — at the incident's own mid-morning hour.
+    now_et = datetime(
+        recorded_date.year, recorded_date.month, recorded_date.day,
+        *REHEARSED_TIME_ET, tzinfo=ET,
+    )
+
     # Fork BEFORE the first session writes to it, so phase 2 reads the same
     # bytes phase 1 read and the only difference between the two runs is the
     # ceiling. A second Sandbox.prepare() would re-snapshot a production that
@@ -190,7 +323,7 @@ def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
         prepared,
         session="morning",
         now_et=now_et,
-        replay_run=INCIDENT_RUN_ID,
+        replay_run=choice.run_id,
         production_db=PRODUCTION_DB,
         sudo_user=SUDO_USER,
     )
@@ -241,26 +374,38 @@ def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
     )
 
     baseline_run_id = f"rehearsal-morning-{now_et.strftime('%Y%m%d')}"
-    ceiling_usd = _settled_session_spend(prepared.db_path, baseline_run_id)
-    assert ceiling_usd > 0, (
+    settled_total = _settled_session_spend(prepared.db_path, baseline_run_id)
+    assert settled_total > 0, (
         "the rehearsal settled no spend at all, so there is no measured "
         "ceiling to re-run against"
     )
-    # The Portfolio Manager contributed nothing to that figure — it never got
-    # an answer to bill for — so the measured ceiling is exactly the spend that
-    # had settled by the time it was reached, which is the boundary the
-    # circuit checks.
-    assert _paid_for_agent(prepared.db_path, baseline_run_id, "portfolio_manager") == 0.0
+
+    # It really did get an answer and really was billed for it, so the session
+    # total below is a decision that was actually paid for.
+    assert _paid_for_agent(prepared.db_path, baseline_run_id, "portfolio_manager") > 0.0
+
+    # MEASURED, and the reason this test can no longer claim the ceiling
+    # pre-empts the Portfolio Manager — see the docstring section of the same
+    # name. What had settled by the moment the Portfolio Manager was reached:
+    pre_decision_usd = _settled_before_agent(
+        prepared.db_path, baseline_run_id, "portfolio_manager",
+    )
+    assert pre_decision_usd < settled_total, (
+        "the spend settled before the decision is not below the session "
+        f"total, so the Portfolio Manager's own call is unaccounted: "
+        f"pre={pre_decision_usd!r} total={settled_total!r}"
+    )
+
+    ceiling_usd = settled_total
 
     # ---------------------------------------------------------- phase 2
     # Identical inputs, identical replay, one changed number: the ceiling is
-    # now the money this very session had already spent by the time it got to
-    # the Portfolio Manager.
+    # the money this very session settled, measured from its own ledger.
     blocked = run_rehearsal(
         forked,
         session="morning",
         now_et=now_et,
-        replay_run=INCIDENT_RUN_ID,
+        replay_run=choice.run_id,
         production_db=PRODUCTION_DB,
         sudo_user=SUDO_USER,
         config_overrides={
@@ -282,20 +427,42 @@ def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
         f"status={blocked.status!r} error={blocked.error!r}"
     )
 
-    # The incident itself: the Portfolio Manager is refused BEFORE it can
-    # spend. In phase 1 it reached the provider boundary and asked a question;
-    # here it must not get that far.
-    assert not _reached_provider(blocked, "portfolio_manager"), (
-        "the Portfolio Manager still reached the provider boundary with the "
-        "ceiling already spent — the circuit let a call through above its "
-        f"cap. findings={blocked.findings} "
+    # It is the DECISION seat the ceiling refuses. The Portfolio Manager's
+    # first call is what carries the session over the cap (every research seat
+    # ahead of it is on a $0 route), and the re-ask that follows is the call
+    # the circuit stops — so the agent named on the hold is the one this test
+    # has always been about.
+    assert any(b["agent"] == "portfolio_manager" for b in ceiling_trips), (
+        "the settled ceiling fired, but not on the Portfolio Manager — the "
+        "one seat whose spend is the whole session's. "
         f"blocked_agents={blocked.blocked_agents}"
     )
-    # ...and the session ends the way 2026-08-28 ended: paid analysis stopped
-    # by the spending circuit, not by a crash and not by a decision.
-    assert "paid analysis suspended" in (blocked.error or ""), (
-        "the ceiling fired but the session did not end as a spending "
-        f"suspension: status={blocked.status!r} error={blocked.error!r}"
+
+    # And nothing got through above the cap: the money this run finished
+    # having settled must not exceed the ceiling it was given. This is the
+    # direct measurement, in the circuit's own ledger, that the refusal above
+    # actually prevented spend rather than merely being recorded.
+    spent_under_ceiling = _settled_session_spend(forked.db_path, baseline_run_id)
+    assert spent_under_ceiling <= ceiling_usd, (
+        f"the session settled ${spent_under_ceiling:.7f} against a "
+        f"${ceiling_usd:.7f} ceiling — a call was paid for above the cap. "
+        f"blocked_agents={blocked.blocked_agents}"
+    )
+    # ...and the refusal ends the run cleanly. Either the circuit suspended
+    # paid analysis outright (what happens when the refused call was one the
+    # session could not proceed without), or the session finished on the
+    # answer it already had — as here, where the refused call is the decision
+    # seat's optional re-ask and the desk correctly decides on what it has.
+    # What must NEVER happen is the shape this rehearsal produced while route
+    # demotions leaked between runs: an unhandled provider fault. A refusal
+    # the code does not handle is a refusal that takes the desk down.
+    assert blocked.error is None or "paid analysis suspended" in blocked.error, (
+        "the ceiling fired and the run then died on something the pipeline "
+        f"did not handle: status={blocked.status!r} error={blocked.error!r}"
+    )
+    assert blocked.status != "did_not_finish", (
+        "the ceiling fired and the session did not reach a terminal state: "
+        f"status={blocked.status!r} error={blocked.error!r}"
     )
 
     # Deliberately NOT asserted: `report.proposed == 0`. That count is every
@@ -303,6 +470,5 @@ def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
     # suspension deliberately preserves deterministic loss protection and the
     # broker-resident stops (the circuit's own alert says so). Exit management
     # acting while the thinking is switched off is the design, not a leak past
-    # the ceiling. What must be zero is anything the Portfolio Manager
-    # decided, and the assertion above — it never reached a provider — is the
-    # direct measurement of that.
+    # the ceiling. What must hold is that nothing the circuit refused ran
+    # anyway, and the assertion above is the direct measurement of that.

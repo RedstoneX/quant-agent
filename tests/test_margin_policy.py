@@ -827,3 +827,121 @@ def test_reviewer_prompt_margin_headroom_wired_from_entry_deployment_budget():
     assert "self, ctx, review_positions, total_value, review_cash," in src
     assert "margin_headroom_usd=margin_headroom_usd" in src
     assert "margin_ladder_backed=margin_ladder_backed" in src
+
+
+# --- Board item 95: the seat is shown the PRICE of the capacity ----------
+
+
+def test_borrowing_cost_lines_price_both_the_carried_debit_and_the_headroom():
+    """Item 95. `format_borrowing_cost_lines` must price what is already
+    borrowed AND what the remaining ladder headroom would cost overnight,
+    at Alpaca's 360-day convention, and must label both an ESTIMATE."""
+    from src.margin_interest import ESTIMATE_LABEL, format_borrowing_cost_lines
+
+    lines = format_borrowing_cost_lines(-915.83, 6.25, 11_434.37)
+
+    assert lines, "a real debit plus real headroom must produce cost lines"
+    blob = "\n".join(lines)
+    # 915.83 * 0.0625 / 360 = 0.15899...
+    assert "$0.16" in blob
+    # 11,434.37 * 0.0625 / 360 = 1.98513...
+    assert "$1.99" in blob
+    assert "6.25%/yr" in blob
+    assert ESTIMATE_LABEL in blob
+    # Intraday leverage is free — that is a design lever, not a footnote.
+    assert "Intraday leverage is free" in blob
+
+
+def test_borrowing_cost_lines_never_state_a_hurdle_rate():
+    """The owner supplied 6.25% as the COST of the debit. He has not
+    ratified any minimum return on borrowed money, so the seat must never
+    be handed one — the lines say 'cost of carry, not a hurdle rate'."""
+    from src.margin_interest import format_borrowing_cost_lines
+
+    blob = "\n".join(format_borrowing_cost_lines(-5_000.0, 6.25, 6_000.0))
+
+    assert "not a hurdle rate" in blob
+    assert "must not invent one" in blob
+    for banned in ("hurdle rate of", "must beat", "must return at least",
+                   "required return"):
+        assert banned not in blob
+
+
+def test_borrowing_cost_lines_silent_with_nothing_to_price():
+    """No debit and no headroom: say nothing rather than print a zero that
+    would read as 'borrowing is free'. An unreadable rate is also silent,
+    never a fabricated figure."""
+    from src.margin_interest import format_borrowing_cost_lines
+
+    assert format_borrowing_cost_lines(5_000.0, 6.25, 0.0) == []
+    assert format_borrowing_cost_lines(5_000.0, 6.25, None) == []
+    assert format_borrowing_cost_lines(-915.83, None, 11_434.37) == []
+    assert format_borrowing_cost_lines(-915.83, 0.0, 11_434.37) == []
+
+
+def test_borrowing_cost_lines_ignore_settlement_noise_deficits():
+    """A sub-floor negative cash balance is settlement noise, not
+    borrowing — the same floor the de-lever mandate uses. It must not be
+    priced as a debit."""
+    from src.margin_interest import format_borrowing_cost_lines
+
+    blob = "\n".join(format_borrowing_cost_lines(-0.99, 6.25, None))
+    assert blob == ""
+
+
+def test_pm_prompt_shows_what_the_borrowing_capacity_COSTS():
+    """Item 95's third criterion. The Margin Capacity block has named the
+    spending limit since the 2026-09-17 CRM fix and never named its price,
+    while the PM sheet says 'You may borrow'. Capacity without a price
+    reads as free money."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=-915.83, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            margin_interest_rate_pct=6.25,
+        )
+
+    assert "What borrowing costs" in msg
+    assert "Borrowing is NOT free" in msg
+    assert "not a hurdle rate" in msg
+
+
+def test_pm_prompt_omits_the_price_rather_than_guessing_it():
+    """No rate threaded: the block must simply not price the borrowing.
+    A prompt renderer may never substitute a rate of its own."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=-915.83, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "What borrowing costs" not in msg
+    assert "6.25" not in msg
+    # Capacity itself is unaffected — this is an addition, not a swap.
+    assert "$11,434.37" in msg
+
+
+def test_decide_forwards_the_margin_rate_to_the_prompt():
+    """The rate must survive the `decide()` -> `build_user_message()` hop;
+    a kwarg that is accepted and dropped is the same as never adding it."""
+    import inspect
+
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    src = inspect.getsource(PortfolioManagerAgent.decide)
+    assert "margin_interest_rate_pct=margin_interest_rate_pct" in src
+    assert "margin_interest_rate_pct" in inspect.signature(
+        PortfolioManagerAgent.decide
+    ).parameters
