@@ -1444,33 +1444,30 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.data.levels.CLUSTER_TOLERANCE_PCT
+  - id: src.data.levels.CLUSTER_TOLERANCE_PCT_FALLBACK
     value: 1
-    status: arbitrary
+    status: derived
     site: src/data/levels.py
     note: >-
-      Two pivots within this percentage of each other are the same level, so a
-      cluster spans at most 1.0%. src/data/levels.py:112-129 is unusually
-      honest about it: that is HALF the narrowest bin the literature has
-      tested, the match zone built from it spans exactly that narrowest tested
-      bin, and "1.0 is not shown to be right, and it is not shown to be wrong
-      either". It stays labelled rather than being moved to a foreign default,
-      which would be the same unsourced act in the other direction.
-      Ratified as owner-appetite 2026-09-25 (item 55): Zapranis & Tsinaslanidis
-      (2012), Applied Financial Economics 22(19) tested band widths from 2% to
-      5% and found the bounce-behaviour result did not change across that
-      range -- the literature gives a shape (a range with no measured winner
-      inside it), not a single value, so no citation can pick this number for
-      us. The on-desk sweep named below (item 55) would still narrow it if
-      run; until then this stays labelled `arbitrary` per this ledger's
-      convention for owner-ratified appetite figures.
-    open_question: >-
-      At what price separation do two pivots stop being one level, measured on
-      the bounce behaviour of this desk's own names? docs/WORK.md item 55
-      names what would settle it.
+      SUPERSEDED 2026-09-30, docs/WORK.md item 55. This used to BE the level
+      definition: two pivots within 1% of each other were one level. That 1%
+      was never shown to be right (this entry said so in its own words) and
+      it did not scale with how violently a name moves. It is gone from the
+      definition. `_cluster` now groups two pivots when the price RANGES the
+      bars actually traded OVERLAP, and the level's width is those bars' own
+      combined span - read off the instrument, with no width to pick and
+      nothing left to sweep. The open question this entry used to carry ("at
+      what price separation do two pivots stop being one level") no longer
+      has to be answered, because nothing asks it any more.
+      The 1.0 survives ONLY as a fail-closed fallback for a caller holding a
+      bare level PRICE with no zone attached (an older stored analysis, a
+      fixture). Such a caller gets exactly the old behaviour rather than a
+      zero-width zone, which would silently strip the level out of stop
+      placement. It governs no live level built from bars.
     cost_while_unanswered: >-
-      Level clustering decides where structure is, and structure places stops
-      - so this sets the granularity of every level-backed stop.
+      None on the live path: every level built by `find_structural_levels`
+      carries its measured zone. Only a zone-less legacy payload reaches
+      this value, and then it reproduces the previous behaviour exactly.
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary

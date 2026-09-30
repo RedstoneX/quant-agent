@@ -126,13 +126,43 @@ MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 # It stays, labelled, rather than being moved to 3.0 — moving it would be
 # adopting a foreign default, which is the same unsourced act in the other
 # direction. What would settle it is named in docs/WORK.md item 55.
-CLUSTER_TOLERANCE_PCT = 1.0
+# SUPERSEDED 2026-09-30 (docs/WORK.md item 55). The clustering rule above is
+# no longer a percentage at all: two pivots are the same level when the actual
+# PRICE RANGES of the bars that made them OVERLAP, and the level's zone is
+# those bars' own combined span (`_cluster`, `Level.zone_low/zone_high`). That
+# is read off the instrument, so there is no width to pick and nothing left to
+# sweep. The everything above about 1.0 vs 2%-5% bins is history, kept because
+# it records why a number was there.
+#
+# This constant survives for ONE purpose: FAIL-CLOSED fallback. A caller that
+# holds only a bare level PRICE with no zone attached (an older stored
+# analysis, a fixture, any path that predates the zone field) still needs some
+# bound, and silently dropping the level would remove a stop's structural
+# backing. Such a caller gets exactly today's behaviour. It must never be used
+# when a real zone is available.
+CLUSTER_TOLERANCE_PCT_FALLBACK = 1.0
+CLUSTER_TOLERANCE_PCT = CLUSTER_TOLERANCE_PCT_FALLBACK
 
 
 def level_zone_halfwidth(
-    level_price: float, tolerance_pct: float = CLUSTER_TOLERANCE_PCT
+    level_price: float,
+    tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
+    *,
+    zone_low: float | None = None,
+    zone_high: float | None = None,
 ) -> float:
     """How far from a reported `Level.price` its own zone can still reach.
+
+    **2026-09-30, item 55.** When `zone_low`/`zone_high` are supplied — the
+    level's MEASURED span, the combined high-low range of the bars whose
+    pivots formed it — the answer is read straight off them and no
+    percentage is involved. `tolerance_pct` is then ignored entirely.
+
+    When they are absent or unusable the percentage fallback below applies,
+    unchanged. That is deliberate and it is the fail-closed direction: a
+    caller holding a bare price still gets a bound wide enough to match
+    within, instead of a zero-width zone that would silently strip a real
+    level out of stop placement.
 
     THE ONE definition of "a level is a zone, not a number", so no caller
     ever has to restate it in different units. docs/WORK.md item 46.
@@ -161,6 +191,16 @@ def level_zone_halfwidth(
     """
     if not math.isfinite(level_price) or level_price <= 0:
         return 0.0
+    lo = _finite_positive(zone_low)
+    hi = _finite_positive(zone_high)
+    if lo is not None and hi is not None and hi >= lo:
+        # The furthest the level's own measured band reaches from its price.
+        reach = max(level_price - lo, hi - level_price)
+        if math.isfinite(reach) and reach > 0:
+            return float(reach)
+        # A degenerate band (one bar, zero range) cannot bound a match.
+        # Fall through to the percentage rather than return 0.0, which would
+        # delete the level from every "is price AT this level" test.
     return level_price * tolerance_pct / 100.0
 
 # A level touched once is a coincidence, not structure.
@@ -379,6 +419,19 @@ class Level:
     touches: int  # pivots clustered into this level
     last_touch_sessions_ago: int  # informational only — not a strength input, see below
     strength: float  # touch count, distance-discounted; higher = more significant
+    # The level's MEASURED zone (item 55, 2026-09-30): the combined traded
+    # range of the pivot bars that formed it. `None` on a level built by an
+    # older caller or a fixture — then `level_zone_halfwidth` falls back to
+    # the percentage, which is the fail-closed direction.
+    zone_low: float | None = None
+    zone_high: float | None = None
+
+    @property
+    def zone_halfwidth(self) -> float:
+        """This level's own match tolerance, measured where possible."""
+        return level_zone_halfwidth(
+            self.price, zone_low=self.zone_low, zone_high=self.zone_high
+        )
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -434,42 +487,111 @@ def _clean_bars(bars: list[OHLCV]) -> list[OHLCV]:
     return keep
 
 
-def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str]]:
-    """Locate swing highs and lows. Returns (index, price, "R"|"S")."""
+def _find_pivots(
+    bars: list[OHLCV], window: int
+) -> list[tuple[int, float, str, float, float]]:
+    """Locate swing highs and lows.
+
+    Returns ``(index, price, "R"|"S", bar_low, bar_high)``. The last two are
+    the pivot BAR's own traded range, which is what `_cluster` groups on
+    (item 55, 2026-09-30) — the pivot price alone cannot say how wide the
+    turning point actually was.
+
+    `window` is unchanged and deliberately so: no threshold-free equivalent
+    for the swing-point bar count has been found, so it stays a stated
+    number rather than being replaced by an invented rule.
+    """
     n = len(bars)
     if n < window * 2 + 1:
         return []
     highs = np.array([b.high for b in bars], dtype=float)
     lows = np.array([b.low for b in bars], dtype=float)
 
-    pivots: list[tuple[int, float, str]] = []
+    pivots: list[tuple[int, float, str, float, float]] = []
     for i in range(window, n - window):
         lo, hi = i - window, i + window + 1
+        bar_low, bar_high = float(lows[i]), float(highs[i])
         if highs[i] >= highs[lo:hi].max():
-            pivots.append((i, float(highs[i]), "R"))
+            pivots.append((i, float(highs[i]), "R", bar_low, bar_high))
         if lows[i] <= lows[lo:hi].min():
-            pivots.append((i, float(lows[i]), "S"))
+            pivots.append((i, float(lows[i]), "S", bar_low, bar_high))
     return pivots
 
 
 def _cluster(
-    pivots: list[tuple[int, float, str]], tolerance_pct: float
-) -> list[list[tuple[int, float, str]]]:
-    """Group pivots that sit within `tolerance_pct` of each other into zones."""
+    pivots: list[tuple[int, float, str, float, float]],
+    tolerance_pct: float | None = None,
+) -> list[list[tuple[int, float, str, float, float]]]:
+    """Group pivots into levels by OVERLAP of the bars that made them.
+
+    **The rule (item 55, 2026-09-30), and there is no number in it.** Two
+    pivots belong to the same level when the price RANGES their bars actually
+    traded overlap. Grouping is transitive: pivots are swept in ascending
+    price and chained while the next bar's range still reaches the running
+    band, so a level is a connected run of overlapping bar ranges. The
+    level's width is then that run's own combined span — ``min(low)`` to
+    ``max(high)`` — measured, not assigned.
+
+    What this replaces, and why. Until today a pivot joined a group when its
+    PRICE sat within `CLUSTER_TOLERANCE_PCT` (1%) of the group's anchor. That
+    1% was never shown to be right (its own ledger entry said so), it did not
+    scale with how violently a name moves, and it made a quiet utility's
+    level as wide as a volatile name's. The bars themselves already answer
+    the question the percentage was guessing at: if the market traded through
+    both turning points at the same prices, it was defending the same band.
+    A wide, volatile turning point produces a wide zone and a tight one
+    produces a tight zone, with nothing to sweep and nothing to ratify.
+
+    `tolerance_pct` is accepted and IGNORED so existing callers that still
+    pass it keep working; it is no longer part of the definition.
+    """
     if not pivots:
         return []
     ordered = sorted(pivots, key=lambda p: p[1])
-    clusters: list[list[tuple[int, float, str]]] = []
+    clusters: list[list[tuple[int, float, str, float, float]]] = []
     current = [ordered[0]]
+    band_high = ordered[0][4]
     for pivot in ordered[1:]:
-        anchor = current[0][1]
-        if anchor > 0 and abs(pivot[1] - anchor) / anchor * 100.0 <= tolerance_pct:
+        p_low, p_high = pivot[3], pivot[4]
+        # Overlap against the running band's top. Because pivots are swept in
+        # ascending PRICE, a bar whose low is at or below the highest high
+        # seen so far shares traded prices with at least one member.
+        overlaps = (
+            math.isfinite(p_low)
+            and math.isfinite(band_high)
+            and p_low <= band_high
+        )
+        if not overlaps and (not math.isfinite(p_low) or not math.isfinite(p_high)):
+            # Unusable range: cannot evaluate the overlap test. Fail closed to
+            # the OLD percentage rule for this pivot rather than split a level
+            # (which would drop it below MIN_TOUCHES and delete it outright).
+            anchor = current[0][1]
+            overlaps = (
+                anchor > 0
+                and abs(pivot[1] - anchor) / anchor * 100.0
+                <= CLUSTER_TOLERANCE_PCT_FALLBACK
+            )
+        if overlaps:
             current.append(pivot)
+            if math.isfinite(p_high):
+                band_high = max(band_high, p_high)
         else:
             clusters.append(current)
             current = [pivot]
+            band_high = p_high
     clusters.append(current)
     return clusters
+
+
+def cluster_span(
+    cluster: list[tuple[int, float, str, float, float]]
+) -> tuple[float | None, float | None]:
+    """``(low, high)`` of the bars forming a cluster — the level's own zone."""
+    lows = [c[3] for c in cluster if len(c) > 4 and math.isfinite(c[3]) and c[3] > 0]
+    highs = [c[4] for c in cluster if len(c) > 4 and math.isfinite(c[4]) and c[4] > 0]
+    if not lows or not highs:
+        return None, None
+    return min(lows), max(highs)
 
 
 def find_structural_levels(
@@ -609,12 +731,15 @@ def find_structural_levels(
             1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
         )
 
+        zlow, zhigh = cluster_span(cluster)
         level = Level(
             price=round(price, 2),
             kind="support" if price < side_price else "resistance",
             touches=len(cluster),
             last_touch_sessions_ago=int(sessions_ago),
             strength=round(strength, 4),
+            zone_low=round(zlow, 4) if zlow is not None else None,
+            zone_high=round(zhigh, 4) if zhigh is not None else None,
         )
         (supports if level.kind == "support" else resistances).append(level)
 

@@ -44,6 +44,7 @@ import pytest
 from src.config import RiskConfig
 from src.data.levels import (
     CLUSTER_TOLERANCE_PCT,
+    cluster_span,
     MIN_TOUCHES,
     _cluster,
     find_structural_levels,
@@ -90,18 +91,29 @@ def test_tolerance_covers_every_pivot_the_clusterer_would_have_merged():
     pivot in a zone is never more than `price * pct/100` from the reported
     level. This test builds the worst case the clusterer can actually
     produce and confirms the tolerance reaches every member of it.
-    """
-    anchor = 100.0
-    edge = anchor * (1 + CLUSTER_TOLERANCE_PCT / 100.0)
-    pivots = [(0, anchor, "S"), (1, (anchor + edge) / 2, "S"), (2, edge, "S")]
 
-    clusters = _cluster(pivots, CLUSTER_TOLERANCE_PCT)
+    RESTATED 2026-09-30 (item 55): `_cluster` no longer uses a percentage at
+    all. Pivots are one level when their BARS' traded ranges overlap, and the
+    zone is those bars' own span. The property under test is unchanged and is
+    the one that matters — the reported tolerance still reaches every pivot
+    the clusterer merged — but it is now checked against the measured span.
+    """
+    pivots = [
+        (0, 100.0, "S", 99.0, 100.5),
+        (1, 100.4, "S", 100.2, 101.2),
+        (2, 101.0, "S", 100.9, 102.0),
+    ]
+
+    clusters = _cluster(pivots)
     assert len(clusters) == 1, "fixture must be ONE zone for the test to mean anything"
 
     level_price = sum(p[1] for p in clusters[0]) / len(clusters[0])
-    tolerance = level_zone_halfwidth(level_price)
-    for _, pivot_price, _ in clusters[0]:
-        assert abs(pivot_price - level_price) <= tolerance
+    zone_low, zone_high = cluster_span(clusters[0])
+    tolerance = level_zone_halfwidth(
+        level_price, zone_low=zone_low, zone_high=zone_high
+    )
+    for pivot in clusters[0]:
+        assert abs(pivot[1] - level_price) <= tolerance
 
 
 def test_zero_and_nonsense_prices_yield_no_tolerance():
@@ -289,7 +301,7 @@ def test_cluster_constant_has_exactly_one_definition():
             if path.suffix not in {".py", ".yaml", ".yml"} or not path.is_file():
                 continue
             for line in path.read_text(errors="replace").splitlines():
-                if line.startswith("CLUSTER_TOLERANCE_PCT"):
+                if line.startswith("CLUSTER_TOLERANCE_PCT_FALLBACK ="):
                     definitions.append(str(path.relative_to(REPO)))
     assert definitions == ["src/data/levels.py"], definitions
 

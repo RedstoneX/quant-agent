@@ -1754,6 +1754,7 @@ def _structural_level_backing_stop(
     is_short: bool,
     computed_levels: list | None,
     computed_level_touches: dict | None,
+    computed_level_zones: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
 ) -> float | None:
@@ -1798,10 +1799,22 @@ def _structural_level_backing_stop(
         touches = touches_by_price.get(price)
         if touches is None or touches < min_level_touches:
             continue
-        # This level's OWN zone — the same bound
-        # `src.data.levels.level_zone_halfwidth` derives, restated here in
-        # one line only because this module imports nothing.
-        tolerance = price * level_cluster_tolerance_pct / 100.0
+        # This level's OWN zone. Since item 55 (2026-09-30) that is the
+        # MEASURED span of the bars that formed the level, passed in on
+        # `computed_level_zones` keyed by the same price. When no zone was
+        # recorded for this price the percentage bound still applies — fail
+        # closed, so the level keeps backing the stop instead of vanishing.
+        zone = (computed_level_zones or {}).get(price)
+        tolerance = 0.0
+        if zone and len(zone) == 2:
+            try:
+                z_lo, z_hi = float(zone[0]), float(zone[1])
+            except (TypeError, ValueError):
+                z_lo = z_hi = float("nan")
+            if math.isfinite(z_lo) and math.isfinite(z_hi) and z_hi >= z_lo:
+                tolerance = max(price - z_lo, z_hi - price)
+        if tolerance <= 0:
+            tolerance = price * level_cluster_tolerance_pct / 100.0
         if tolerance <= 0:
             continue
         gap = abs(stop_loss - price)
@@ -1820,6 +1833,7 @@ def check_structural_protection(
     is_short: bool = False,
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
+    computed_level_zones: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2004,6 +2018,7 @@ def check_structural_protection(
             entry_price=ent, stop_loss=stop, is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
+            computed_level_zones=computed_level_zones,
             min_level_touches=min_level_touches,
             level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         )
@@ -2228,6 +2243,7 @@ def structural_protection_broken(
     is_short: bool = False,
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
+    computed_level_zones: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2261,6 +2277,7 @@ def structural_protection_broken(
         is_short=is_short,
         computed_levels=computed_levels,
         computed_level_touches=computed_level_touches,
+        computed_level_zones=computed_level_zones,
         min_level_touches=min_level_touches,
         level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,

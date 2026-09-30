@@ -1400,6 +1400,13 @@ class TechAnalysisResult(TechAnalystAnswerItem):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET, keyed by the same prices as `computed_levels`: each level's
+    # MEASURED zone as ``[low, high]`` — the combined traded range of the
+    # pivot bars that formed it (item 55, 2026-09-30). This is what replaced
+    # the flat 1% cluster tolerance; see `src/data/levels.py::_cluster`.
+    # A price missing from this map is not an error: the matching sites fall
+    # back to the percentage bound, which is the fail-closed direction.
+    computed_level_zones: dict[float, list[float]] = Field(default_factory=dict)
     # PYTHON-SET (2026-09-12): what the bar history behind `computed_levels`
     # was — one of the COVERAGE_* states in `src/data/levels.py`. An empty
     # `computed_levels` with coverage "measured" is a chart with no

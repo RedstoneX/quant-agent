@@ -2362,6 +2362,7 @@ class PortfolioConstructor:
         """
         raw_levels = getattr(analysis, "computed_levels", None) or []
         touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        zones_by_price = getattr(analysis, "computed_level_zones", None) or {}
         min_touches = self.cfg.min_level_touches_for_stop_honor
 
         best: float | None = None
@@ -2387,13 +2388,18 @@ class PortfolioConstructor:
                 # "below the bar" — fail closed, per Invariant 2, rather than
                 # honour a tight stop we cannot show cleared the bar.
                 continue
-            # "At" this level means INSIDE this level's own zone. The bound
-            # is read per-level off `CLUSTER_TOLERANCE_PCT`, the same
-            # constant `find_structural_levels` used to build the zone in the
-            # first place, so the tolerance is exactly as wide as the thing
-            # it is matching against — never narrower, never a second number
-            # that can drift. docs/WORK.md item 46.
-            tolerance = level_zone_halfwidth(price)
+            # "At" this level means INSIDE this level's own zone. Since
+            # item 55 (2026-09-30) that zone is MEASURED — the traded range
+            # of the bars that made the level — carried here on
+            # `computed_level_zones`. A level with no zone recorded (older
+            # stored analysis, fixture) falls back to the percentage bound,
+            # which is the fail-closed direction: it keeps the level in play
+            # instead of silently dropping its structural backing.
+            # docs/WORK.md items 46 and 55.
+            zone = zones_by_price.get(price) or (None, None)
+            tolerance = level_zone_halfwidth(
+                price, zone_low=zone[0], zone_high=zone[1]
+            )
             gap = abs(stop_loss - price)
             if gap <= tolerance and gap < best_gap:
                 best, best_gap = price, gap
