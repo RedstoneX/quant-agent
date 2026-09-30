@@ -3273,6 +3273,37 @@ class MacroAnalysis(LLMOutputModel):
     # see src/nominations.py.
     nominations: list[Nomination] = []
 
+    # --- board item 119: how much of the set this verdict was formed on ----
+    #
+    # NOT model output. The economist is never asked to self-report its own
+    # coverage — it would be grading its own inputs. These two fields are
+    # stamped by the pipeline immediately after validation, from
+    # `src.data.macro.MacroCoverage.verdict_stamp()`, which is the
+    # deterministic fetch record.
+    #
+    # They default to "unknown"/"" so every MacroAnalysis written before this
+    # existed (macro_store snapshots, replayed decisions, the offline
+    # rehearsal fixtures) still parses. "unknown" means nobody stamped it,
+    # which is deliberately NOT the same claim as "complete".
+    #
+    # Measured reason this is on the verdict rather than only on the run:
+    # production paid the economist on a partial set twice (2026-09-17 8/15,
+    # 2026-09-22 7/15 — `agent_logs`), and on the first of those the regime
+    # came back `transitional` where the sessions either side of it said
+    # `risk-on`. That verdict was then persisted, carried into the later
+    # sessions and shown to the owner with nothing marking it as a read with
+    # eight holes in it.
+    coverage_state: Literal["complete", "partial", "failed", "unknown"] = "unknown"
+    coverage_note: str = ""
+
+    @property
+    def partial_read(self) -> bool:
+        """True when this verdict is known to have been formed on an
+        incomplete series set. "unknown" is not partial and is not complete —
+        an unstamped verdict makes no claim either way, so it must not be
+        rendered as a caveat the fetch record does not support."""
+        return self.coverage_state in ("partial", "failed")
+
     # DELETED 2026-09-13 (retired item 31): `_MAGNITUDE_BY_CONFIDENCE`
     # ({high 0.75, medium 0.5, low 0.25}) and `_REGIME_SHIFT_BONUS` (0.25).
     # The first was a table on `confidence`, which is the very field this

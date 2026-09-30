@@ -1077,7 +1077,29 @@ Bear triggers (would turn defensive):
             # is fully invested and macro informs direction only. Older
             # snapshots still carry `target_invested_pct` /
             # `cash_recommendation_pct`; they are deliberately not rendered.
-            macro_section = f"""## Macro Analysis
+            # Board item 119. A regime call formed on an incomplete FRED set
+            # is not a complete read and must never be rendered as one. The
+            # stamp is the deterministic fetch record
+            # (`src/data/macro.py::MacroCoverage.verdict_stamp`), not the
+            # economist's self-assessment, and it survives the macro_store
+            # round trip so a CARRIED partial read still says so here. An
+            # unstamped verdict ("unknown") prints nothing: it makes no claim
+            # in either direction and inventing one would be the same defect
+            # pointed the other way.
+            coverage_state = str(macro_analysis.get("coverage_state") or "unknown")
+            coverage_line = ""
+            if coverage_state in ("partial", "failed"):
+                note = str(macro_analysis.get("coverage_note") or "").strip()
+                coverage_line = (
+                    "\n- **PARTIAL READ — this view was formed on an INCOMPLETE "
+                    "macro set"
+                    + (f" ({note})" if note else "")
+                    + ".** The missing series are gaps, not calm readings. Do not "
+                    "treat this regime call as a complete read of the macro "
+                    "picture, and do not cite an indicator that is not listed "
+                    "below as confirming anything."
+                )
+            macro_section = f"""## Macro Analysis{coverage_line}
 - Regime: {macro_analysis.get('regime', 'N/A')} | Outlook: {macro_analysis.get('equity_outlook', 'N/A')} | Confidence: {macro_analysis.get('confidence', 'N/A')}{shift_line}{alignment_line}
 - Summary: {macro_analysis.get('summary', 'N/A')}{reasoning_section}
 
