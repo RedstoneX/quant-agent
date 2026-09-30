@@ -38,6 +38,20 @@ what would catch it next time.
 
 **What catches it next time.** A test reads `config/settings.yaml` itself and fails if ANY seat's reachable routes land on a single provider. That is stronger than a runtime key check, which was written and then deliberately removed: refusing to boot over a missing credential for an opt-out resilience feature would have turned the fix into an outage of its own, and it broke a legal single-provider configuration on the first run.
 
+### 2026-09-30 — the nightly unprotected figure was the one thing the owner asked to keep, and it had stopped being printed anywhere
+
+**In plain words.** Every night a handful of holdings carry a part-share that has no stop on it until the next morning. The owner agreed to that trade-off on one condition: that he could always see the dollar amount. On the night of 2026-09-29 the amount was $2,264 across nine holdings, and it appeared in no message and on no screen — only in a log file nobody reads. The condition he attached to his own agreement had quietly stopped being met.
+
+**The reported symptom was not the defect.** The 30-minute sweep logged "gaps 9, repairs attempted 0" fourteen times in a row overnight and that reads like a repair path that is broken. It is not. The same sweep reported nine gaps and zero repairs for a simple reason: the market was shut, and the sweep refuses to send an order into a shut market. Its own state file recorded exactly that ("the session has closed (closed 16:00 EDT)"). The earlier sweeps of the same afternoon, while the market was open, reported zero gaps — so both stop legs, the durable whole-share one and the part-share one, were resting at the broker together all session. The gaps appear at 16:30 and not before, which is the part-share order expiring at the close exactly as the broker forces it to.
+
+**The standing hypothesis was wrong and is now refuted.** The desk's records suspected the repair could not place a part-share stop while a whole-share stop already rested on the same name, because the broker would count the resting order against available quantity. The 2026-09-29 tape says otherwise: nine names held both legs simultaneously for a full session with no gap reported. Whatever else may be true of that broker behaviour, it is not what produced this log line, and nothing here should be built on it.
+
+**Where the number actually went.** Two owner rulings collided and the later one silently won. The first accepted the overnight exposure on the explicit condition that the dollars stay visible. The second, on 2026-09-17, switched off the evening banner that carried them, because a banner repeating the same sentence every night is not information. That ruling was right about the banner and took the number with it, and nothing else ever picked it up: the dashboard and the read-only interface render no stop-coverage information at all.
+
+**What was done.** The figure goes back inside the evening message's collapsed detail section — not a banner, no severity mark, nothing to act on. It names every holding and its dollars rather than the first six, because a count of nine followed by six names is a sentence that does not add up. Rows that are genuinely abnormal, such as a holding smaller than one whole share with nothing covering it at all, keep their existing red banner and are deliberately excluded from this total so the same shares are never counted twice.
+
+**What would catch it next time.** A rule ratified as "X is acceptable *provided* Y is observable" needs the Y half written down as a test, not as a sentence in a docstring. The 2026-09-17 change passed every test it ran because the only test guarding the number asserted that the whole message said nothing about it. A test written as "stays quiet" cannot tell a deliberate silence from a lost one.
+
 ### 2026-09-30 — a practice run against history cannot be made to fund the same trades the live desk would (item 64 retired)
 
 **In plain words:** the live desk spends its risk budget on its best-ranked trade ideas first when there is not enough budget for all of them. The practice run against history cannot do that, and after checking how it is built, it never will be able to: it does not ask any analyst anything, so there is no ranked list to spend down. Making one up was already refused once. The honest answer is that this kind of practice run cannot grade "which trades get funded when the budget runs out" at all — only the parts of the trade it does simulate (stop placement, position size, trailing).
@@ -165,6 +179,50 @@ one-percent part is an open measurement the desk has already scheduled, not a
 settled preference, so it is left alone rather than guessed at. Separately, a
 position built in two purchases carries a target per purchase with the last
 one written winning — META holds $730.99 and $785.20 against one position.
+
+**Follow-up, 2026-09-30 — the stored numbers, and what could and could not be
+repaired.** The deliberate action the paragraph above called for was taken the
+same day. Every one of the eleven open positions was checked, not the three
+that were assumed: the target each one would have been given at entry was
+recomputed twice from the same five years of bars, once with the old code and
+once with the fixed code, and the two answers were compared. They differ for
+exactly three names — META, AMD and UPS — and agree for the other eight, which
+independently confirms the count the fix itself reported and rules the rest
+out rather than taking it on trust.
+
+Of those three, only UPS could be repaired. Its live target moved from $90.79
+to $92.82, the nearest wall under its entry, which the old code had stepped
+over because that wall stood inside a day's range. META and AMD were both
+refused, and a refusal here is the right answer rather than a failure: the
+corrected target is re-measured from the ORIGINAL entry over the ORIGINAL
+expected holding period — anything else would make the target a function of
+how far the price has since moved, which is the one thing it must never be —
+and on both names every level reachable from that entry now sits behind the
+price. Nothing was substituted in their place, so META continues to carry
+$785.20 and AMD $614.60, now flagged rather than quietly wrong. The number
+recorded at entry was not touched on any of them: that is the historical
+record of what the desk decided at the time, and it is also the denominator
+progress and pace are measured against.
+
+Each of the three carries a durable record saying which happened and why,
+under a code of its own that a reader cannot mistake for an ordinary
+evidence-driven revision. That distinction is the point: a code deploy is not
+a market event, and the record must not let one look like the other.
+
+**What now catches this class of thing.** `scripts/check_stored_targets.py`
+asks, for every held position, whether its stored target sits beyond a
+structural level that is still standing between that position's entry and the
+target. That is this defect's exact signature, it is a doctrine violation in
+its own right, and it is stable — a target with no wall in front of it does
+not acquire one because volatility moved. The script re-derives through the
+same shared body the live revision path uses, so it cannot drift away from
+what the desk actually computes. It separately reports, without treating it
+as an error, any target that merely differs from today's derivation: the
+derivation reads today's bars, so that differs constantly and by design, and
+a check that fires every session is a check nobody reads. On the day it was
+written it found three names aiming past a standing wall — META from this
+bug, and AAPL and NOK from levels that formed after those positions were
+opened, which is a real state the desk had no way to see before.
 
 ### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
 

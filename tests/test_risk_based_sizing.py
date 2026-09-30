@@ -1940,32 +1940,29 @@ def test_gross_exposure_ceiling_block_leaves_a_durable_reason():
     assert "NVDA" in constructor.last_drop_reasons
 
 
-def test_below_min_trade_weight_delta_on_a_new_position_leaves_a_reason():
-    """The churn filter's `continue` records a HOLD only when a position is
-    already held (`current_pct > 0`); a brand-new position too small to
-    bother opening got neither a `TradeDecision` row nor any log line at
-    all — nothing for the regex to miss, because nothing was ever logged."""
-    from src.portfolio_constructor import CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA
-
+def test_a_small_new_position_is_no_longer_refused_on_size_alone():
+    """Owner ruling 2026-09-30 (board item 183): the churn filter's flat
+    `min_trade_weight_delta` floor is DELETED, not resized. A brand-new
+    position this small used to be dropped with neither a `TradeDecision`
+    row nor a log line (nothing for the regex to miss, because nothing was
+    ever logged) — it is now a real, if tiny, BUY the desk's own reasoning
+    asked for."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", target_weight_pct=0.1, conviction="low",
-        thesis="A dreg of an idea, below the min trade delta.",
+        thesis="A small idea, once dropped as below the deleted min trade delta.",
     )
     decisions = constructor.construct_orders(
         targets=[target], positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].symbol == "NVDA"
+    assert decisions[0].action == "BUY"
+    assert abs(decisions[0].allocation_pct - 0.1) < 1e-6
     refusals = constructor.drain_refusals()
-    assert refusals["NVDA"]["refusal"] == CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA
-    # Board item 89 defect 6: this sentence is now OWNER-FACING (the drop
-    # used to reach no message at all), so it is written for a reader who
-    # is not a developer. The measured figures are unchanged.
-    assert "does not place a new trade smaller than" in refusals["NVDA"]["detail"]
-    assert "% of the account" in refusals["NVDA"]["detail"]
-    assert "NVDA" in constructor.last_drop_reasons
+    assert "NVDA" not in refusals
 
 
 # --------------------------------------------------------------------------
