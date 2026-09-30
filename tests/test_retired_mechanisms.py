@@ -303,3 +303,44 @@ def test_a_trailing_marker_exempts_a_string_literal_line(tmp_path):
     )
     findings = scan(root)
     assert [f.line for f in findings] == [3], [str(f) for f in findings]
+
+
+def test_the_unenforced_25pct_sizing_cut_is_registered():
+    """Item 99(f). Two live sheets told two paid seats that a 25% base-
+    allocation cut happens automatically on repeated `oversized` verdicts,
+    and the Risk Manager's sheet used that to tell it to discount PM's
+    caution. No code ever performed the cut. The prose is gone; this pins
+    the phrases so it cannot come back unnoticed."""
+    entries = {e.name: e for e in load_registry(REGISTRY_PATH)}
+    entry = entries.get("the automatic 25% oversized base-allocation cut")
+    assert entry is not None, (
+        "the unenforced 25% oversized cut is no longer registered"
+    )
+    assert entry.retired == "2026-09-26"
+    for phrase in (
+        "cut every buy base 25%",
+        "base allocations 25%",
+        "pre-adjusts its sizing before you ever see the plan",
+    ):
+        assert phrase in entry.phrases, f"{phrase!r} no longer pinned"
+
+
+def test_the_two_removed_sentences_would_be_caught_if_restored(tmp_path):
+    """The pairing is only worth anything if it FAILS on the exact text that
+    was removed. Rebuilds both sentences verbatim in a scanned location and
+    asserts the live registry flags each one."""
+    prompts = tmp_path / "config" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "portfolio_manager.md").write_text(
+        "| `oversized` | Cut every BUY base 25%; name it in `sizing_logic` |\n"
+    )
+    (prompts / "risk_manager.md").write_text(
+        "- **PM calibrates against YOU.** It reads your last 5 verdicts and "
+        "their `reason_category` tags and pre-adjusts its sizing before you "
+        "ever see the plan — 2+ `oversized` tags cut its base allocations "
+        "25%, `rr_fail` makes it read range-setup payoffs more literally.\n"
+    )
+    findings = scan(tmp_path, registry_path=REGISTRY_PATH)
+    hit = {f.path for f in findings}
+    assert "config/prompts/portfolio_manager.md" in hit, findings
+    assert "config/prompts/risk_manager.md" in hit, findings
