@@ -2469,8 +2469,8 @@ class TradingPipeline:
             )
             projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - invested_target_pct
-            # The band is the desk's own sourced cash reserve
-            # (`cash_sweep.reserve_pct`), not an invented number — see
+            # The band is the owner-set advisory band
+            # (`deployment_gap.band_pct`), not an invented number — see
             # `deployment_gap_band_pct`. An UNDER-deployed book beyond that
             # reserve is the drag this advisory exists to surface. The OVER
             # branch that told RM to "consider scale_all_buys" was deleted
