@@ -166,32 +166,6 @@ def quarter_label(d: date | None = None) -> str:
     return f"{target.year}-Q{quarter_of(target)}"
 
 
-def is_last_business_day_of_quarter(d: date | None = None) -> bool:
-    """True when `d` is the last Mon-Fri of a quarter-end month.
-
-    CHEAP — weekday-only. Ignores market holidays. The quarterly meta-
-    reflector scheduler uses this for the coarse "are we near quarter end?"
-    check; the broker-calendar-aware version (`broker.is_last_trading_day
-    _of_quarter`) tightens it on early-close/holiday days so the reflection
-    doesn't fire on the wrong date (e.g. Dec 31 is Sunday in some years,
-    last trading day is Dec 29).
-    """
-    from datetime import timedelta
-    target = d if d is not None else et_today()
-    if target.month not in _QUARTER_END_MONTHS:
-        return False
-    if target.weekday() >= 5:
-        return False  # Sat/Sun can't be last business day anyway
-    # Walk forward day-by-day through the remainder of the month; if we find
-    # any later weekday still inside the same month, `target` isn't last.
-    probe = target + timedelta(days=1)
-    while probe.month == target.month:
-        if probe.weekday() < 5:
-            return False
-        probe += timedelta(days=1)
-    return True
-
-
 def _minute_of_day(when: datetime) -> int:
     et = to_et(when)
     return et.hour * 60 + et.minute
