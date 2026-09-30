@@ -51,6 +51,7 @@ __all__ = [
     "EXTERNAL_INFORMATION_PATTERNS",
     "cites_external_information",
     "adverse_move_is_noise",
+    "instrument_adverse_noise_band",
     "noise_band_atr",
     "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
@@ -897,6 +898,109 @@ def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAN
     return multiple * math.sqrt(days)
 
 
+# ---------------------------------------------------------------------------
+# BOARD ITEM 70 — the noise band read PER NAME off the instrument (2026-09-30)
+# ---------------------------------------------------------------------------
+#
+# Owner ruling 2026-09-30: risk tolerance is never a global dial; it is read
+# from the instrument in front of you. `NOISE_BAND_ATR_MULTIPLE` is a global
+# multiple, and 3.0 (Wilder / Chandelier / Kaufman, see the item 70 board
+# note) would only install a DIFFERENT global multiple, so it is rejected as
+# a replacement. The quantity the band actually needs is: for THIS stock,
+# over a hold of THIS length, how far does it ORDINARILY travel against a
+# position before anything has happened? That is directly measurable on the
+# instrument's own bars and needs no multiple at all.
+#
+# THE READ. Over the bar series the caller already holds, take every rolling
+# window of `sessions_held` sessions. In each window measure the worst
+# adverse excursion from that window's opening reference close — for a long,
+# `start_close - min(low)`; for a short, `max(high) - start_close`. The band
+# is the MEDIAN of those excursions, in dollars per share.
+#
+# WHY THE MEDIAN, and why that is not a hidden dial. "Ordinarily" is the
+# middle of the instrument's own distribution; the median IS the definition
+# of the quantity, not a confidence level chosen to make selling easier or
+# harder. A quantile (90th, 95th) WOULD be an appetite pick and is refused
+# here for exactly that reason.
+#
+# WHAT IS DELIBERATELY NOT PICKED. How many rolling windows are enough for
+# the median to be trustworthy is NOT answerable from the instrument, so no
+# minimum-sample threshold is invented: the function requires only that one
+# full window exists, and reports `windows` so every caller and every log
+# line carries how thin the read was. See the item 70 board note.
+#
+# NO FITTING. Nothing here looks at the desk's own past trades, fills or
+# outcomes; it reads only the price series of the name in front of it.
+
+
+def instrument_adverse_noise_band(
+    bars,
+    sessions_held: int | float | None,
+    *,
+    side: str = "sell",
+) -> tuple[float, int] | None:
+    """(band in DOLLARS per share, number of windows) read off this name.
+
+    `bars` is any sequence of daily bars exposing `high`/`low`/`close`, as
+    attributes (`src.models.OHLCV`) or as dict keys, oldest first. `side` is
+    the CLOSING side: "sell" for a long, "buy" for a short's cover.
+
+    Returns None whenever the question cannot be answered on this
+    instrument's own data — too few bars for one full window, unusable
+    values, or a measured band of zero — so the caller can fall back. It
+    never manufactures a band out of missing data.
+    """
+    try:
+        rows = list(bars or [])
+    except TypeError:
+        return None
+    try:
+        held = int(float(sessions_held)) if sessions_held is not None else 1
+    except (TypeError, ValueError):
+        held = 1
+    if held < 1:
+        held = 1
+
+    def _f(row, key):
+        v = getattr(row, key, None)
+        if v is None and isinstance(row, dict):
+            v = row.get(key)
+        return _finite(v)
+
+    highs, lows, closes = [], [], []
+    for row in rows:
+        h, lo, c = _f(row, "high"), _f(row, "low"), _f(row, "close")
+        if h is None or lo is None or c is None or c <= 0:
+            continue
+        highs.append(h)
+        lows.append(lo)
+        closes.append(c)
+    if len(closes) < held + 1:
+        return None
+
+    is_short = str(side).lower() == "buy"
+    excursions: list[float] = []
+    for i in range(len(closes) - held):
+        ref = closes[i]
+        window = slice(i + 1, i + 1 + held)
+        if is_short:
+            worst = max(highs[window]) - ref
+        else:
+            worst = ref - min(lows[window])
+        excursions.append(max(0.0, worst))
+    if not excursions:
+        return None
+    excursions.sort()
+    n = len(excursions)
+    band = (
+        excursions[n // 2] if n % 2
+        else (excursions[n // 2 - 1] + excursions[n // 2]) / 2.0
+    )
+    if not math.isfinite(band) or band <= 0:
+        return None
+    return band, n
+
+
 def adverse_move_is_noise(
     entry: float,
     current_price: float,
@@ -905,6 +1009,7 @@ def adverse_move_is_noise(
     multiple: float = NOISE_BAND_ATR_MULTIPLE,
     side: str = "sell",
     days_held: int | float | None = None,
+    bars=None,
 ) -> bool:
     """True when the position has moved ADVERSELY from entry by less than
     the noise band for how long it has been held.
@@ -935,6 +1040,17 @@ def adverse_move_is_noise(
     adverse = (cur - ent) if str(side).lower() == "buy" else (ent - cur)
     if adverse <= 0:
         return False   # flat or winning — not this guard's business
+    # BOARD ITEM 70 (2026-09-30). When the caller hands over this name's own
+    # bars, the band is READ OFF THE INSTRUMENT
+    # (`instrument_adverse_noise_band`) and no ATR multiple is involved at
+    # all. The global-multiple path below survives only as the fallback for
+    # when that read is impossible (too little history) and for callers that
+    # pass no bars; it is reachable in production by switching
+    # `RiskConfig.per_name_noise_band` off.
+    if bars is not None:
+        read = instrument_adverse_noise_band(bars, days_held, side=side)
+        if read is not None:
+            return adverse < read[0]
     return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
 
 

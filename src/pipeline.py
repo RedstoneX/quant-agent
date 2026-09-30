@@ -12122,9 +12122,32 @@ class TradingPipeline:
                     # every weekend (Friday entry reviewed Monday shows 3
                     # calendar days but only 1 real session of price action).
                     sessions_held_for_band = (position_facts or {}).get(symbol, {}).get("sessions_held")
+                    # BOARD ITEM 70 (2026-09-30). The band is now read off
+                    # THIS name's own bars — the median worst adverse
+                    # excursion over rolling windows the length of the hold —
+                    # instead of a global ATR multiple. `bars=None` (fetch
+                    # failed, or the switch is off) falls back to the old
+                    # global path unchanged.
+                    band_bars = None
+                    if getattr(self.config.risk, "per_name_noise_band", True):
+                        try:
+                            _depth = max(30, int(sessions_held_for_band or 1) + 1)
+                            band_bars = self.market.get_ohlcv(symbol, _depth) or None
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                "Noise-band bars fetch failed for %s: %s", symbol, e,
+                            )
+                            band_bars = None
+                    from src.risk.exit_guard import instrument_adverse_noise_band
+                    per_name_band = (
+                        instrument_adverse_noise_band(
+                            band_bars, sessions_held_for_band, side=close_side,
+                        ) if band_bars is not None else None
+                    )
                     if adverse_move_is_noise(
                         held_now.avg_entry, held_now.current_price, atr,
                         side=close_side, days_held=sessions_held_for_band,
+                        bars=band_bars,
                     ):
                         adverse_move = (
                             held_now.current_price - held_now.avg_entry
@@ -12132,6 +12155,19 @@ class TradingPipeline:
                             else held_now.avg_entry - held_now.current_price
                         )
                         band_multiple = noise_band_atr(sessions_held_for_band)
+                        if per_name_band is not None:
+                            logger.warning(
+                                "Position reviewer: blocking %s %s — adverse "
+                                "$%.2f move from entry $%.2f is inside THIS "
+                                "NAME'S OWN ordinary adverse travel of $%.2f "
+                                "over %s session(s), measured as the median "
+                                "worst adverse excursion across %d rolling "
+                                "windows of its own daily bars (no ATR "
+                                "multiple). Reason: %r",
+                                act, symbol, adverse_move, held_now.avg_entry,
+                                per_name_band[0], sessions_held_for_band,
+                                per_name_band[1], reason_for_band[:160],
+                            )
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
                             "$%.2f move from entry $%.2f, which is inside the "

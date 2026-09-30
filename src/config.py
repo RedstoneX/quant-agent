@@ -846,6 +846,16 @@ class RiskConfig(BaseModel):
     # exactly as an unbacked stop does — it does not become untradeable, it
     # loses only the tight-stop exemption.
     min_level_touches_for_stop_honor: int = Field(default=5, ge=1, le=20)
+    #: BOARD ITEM 70 (2026-09-30, owner ruling "risk tolerance is read per
+    #: name, never a global dial"). ON: the exit noise band is measured on
+    #: each holding's OWN bars — the median worst adverse excursion over
+    #: rolling windows as long as the position has been held
+    #: (`src.risk.exit_guard.instrument_adverse_noise_band`), in dollars,
+    #: with no ATR multiple anywhere in it. OFF: the pre-2026-09-30 global
+    #: `NOISE_BAND_ATR_MULTIPLE * ATR * sqrt(sessions)` path, kept intact and
+    #: reachable while this change is under review. This is a switch between
+    #: two existing code paths, NOT a tunable number.
+    per_name_noise_band: bool = True
     # --- Target derivation (2026-09-01) ---------------------------------
     # The floor above was dividing a stop computed from measured volatility
     # by a target a language model guessed. On 2026-09-01's morning run that
