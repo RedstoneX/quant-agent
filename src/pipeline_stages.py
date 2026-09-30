@@ -9996,6 +9996,20 @@ class ExecutionStage:
                     # breakout verdict construction reached, not a label-only
                     # approximation. See TradeDecision.structural_ceiling.
                     structural_ceiling=pinned_structural_ceiling,
+                    # Stop-floor evidence, pinned at ENTRY because neither
+                    # fact can be recovered afterwards: the ATR the stop was
+                    # measured in has moved by the time the trade resolves,
+                    # and the constructor's stop rule is not stored anywhere
+                    # else. Together with the adverse excursion accumulated
+                    # while the position is open and the realised outcome
+                    # already on the row, these let a future pass ask whether
+                    # the ratified minimum stop width was ever VIOLATED in
+                    # practice. They may NOT be swept for a better
+                    # multiplier — doctrine bars fitting a number to this
+                    # desk's history. See the `entry_atr` migration note in
+                    # src/storage/db.py.
+                    entry_atr=getattr(decision, "atr_14", None),
+                    stop_basis=getattr(decision, "stop_rule", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this
