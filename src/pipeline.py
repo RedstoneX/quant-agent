@@ -275,6 +275,9 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "earnings missed",
     "earnings miss",
     "guidance cut",
+    # Trend alignment ended — the alignment exit (owner ruling 2026-09-30).
+    "trend alignment over",
+    "alignment exit",
     # Macro regime — sanctioned by spec 3.8, previously unrepresented
     "regime shift",
     "regime flip",
@@ -12080,87 +12083,26 @@ class TradingPipeline:
                 )
                 continue
 
-            # Phase 3.6 — noise band on exits. A PRICE-DERIVED failure inside
-            # one ATR of entry has not distinguished itself from one ordinary
-            # day's range. OKLO was bought and sold on 2026-08-26 at 0.67 ATR,
-            # on day zero, never given a single day's normal range to breathe.
+            # REMOVED 2026-09-30 (owner ruling "exit on ALIGNMENT, never on a
+            # target"; docs/WORK.md item 205). A blanket noise-band gate used
+            # to sit here and block every non-news sale whose move from the
+            # price the desk PAID was smaller than one (sqrt-scaled) ATR.
             #
-            # Triggers originating outside the tape — earnings, news, regime,
-            # sector, a fired stop — bypass this entirely. ("correlation" and
-            # "circuit breaker" were in this sentence until they were removed
-            # from the accepted list, 2026-09-13 and 2026-09-20; neither
-            # bypasses anything now.) An earnings miss is an earnings miss whether the stock
-            # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
-            # before acting on information sells the bottom instead of the top.
-            if act in ("SELL", "REDUCE", "COVER"):
-                from src.risk.exit_guard import (
-                    adverse_move_is_noise, cites_external_information,
-                )
-                held_now = next((p for p in positions if p.symbol == symbol), None)
-                reason_for_band = action_item.get("reason", "")
-                # COVER's adverse direction is the mirror of SELL/REDUCE's —
-                # a short is hurt by price RISING, not falling — so the
-                # noise band is measured against the CLOSING side, same
-                # convention as _submit_protected_sell's `side` param.
-                close_side = "buy" if act == "COVER" else "sell"
-                if held_now is not None and not cites_external_information(reason_for_band):
-                    from src.risk.exit_guard import noise_band_atr
-
-                    atr = self._atr_for_symbol(symbol)
-                    # Phase 3.6 audit follow-up (2026-09-04, fix #1): the band
-                    # widens with sqrt(sessions_held) — same convention as
-                    # levels.py's target projection — instead of a flat 1.0x
-                    # ATR regardless of how long the position has aged. See
-                    # `exit_guard.noise_band_atr` for the rationale.
-                    #
-                    # 2026-09-04 audit follow-up (fix, second pass): this MUST
-                    # be `sessions_held` (weekend-aware trading-session count,
-                    # `trading_calendar.trading_sessions_held`), NOT the plain
-                    # calendar-day `days_held` — levels.py's own precedent
-                    # scales by sqrt(TRADING sessions), and a calendar-day
-                    # count silently over-widens the band by sqrt(3/1) after
-                    # every weekend (Friday entry reviewed Monday shows 3
-                    # calendar days but only 1 real session of price action).
-                    sessions_held_for_band = (position_facts or {}).get(symbol, {}).get("sessions_held")
-                    if adverse_move_is_noise(
-                        held_now.avg_entry, held_now.current_price, atr,
-                        side=close_side, days_held=sessions_held_for_band,
-                    ):
-                        adverse_move = (
-                            held_now.current_price - held_now.avg_entry
-                            if close_side == "buy"
-                            else held_now.avg_entry - held_now.current_price
-                        )
-                        band_multiple = noise_band_atr(sessions_held_for_band)
-                        logger.warning(
-                            "Position reviewer: blocking %s %s — adverse "
-                            "$%.2f move from entry $%.2f, which is inside the "
-                            "%.2fxATR noise band (ATR14 $%.2f, sessions_held=%s). "
-                            "A price-derived failure this small has not "
-                            "distinguished itself from this position's normal "
-                            "range so far. External-information triggers "
-                            "bypass this. Reason: %r",
-                            act, symbol, adverse_move,
-                            held_now.avg_entry, band_multiple, atr or 0.0,
-                            sessions_held_for_band,
-                            reason_for_band[:160],
-                        )
-                        try:
-                            self.db.record_intraday_evaluation(
-                                symbol=symbol, run_id=run_id,
-                                status="exit_blocked_inside_atr_noise_band",
-                                detail=f"{act}: {reason_for_band[:400]}",
-                            )
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning("noise band: audit write failed: %s", e)
-                        from src.risk.exit_refusal import CODE_NOISE_BAND
-                        self._record_exit_refusal(
-                            symbol=symbol, run_id=run_id, action=act,
-                            code=CODE_NOISE_BAND, dropped=True,
-                            detail=f"{act}: {reason_for_band[:400]}",
-                            layer="noise_band",
-                        )
-                        continue
+            # It was the only thing in the whole selling path anchored to the
+            # entry price, and that is precisely the disposition effect
+            # written into code: refusing to sell because of what was paid.
+            # Under the ratified ruling the desk sells when STRUCTURE, ATR and
+            # an SMA CROSS agree the trend is over — three readings of the
+            # instrument as it is now. What the desk paid says nothing about
+            # whether a trend has ended, so an entry-anchored veto standing in
+            # front of that test could only ever overrule it wrongly.
+            #
+            # Nothing replaces it here and no new number is introduced: the
+            # ATR reading the desk still requires is the one inside
+            # `src.risk.alignment_exit.check_alignment_exit`, measured from
+            # the position's own high rather than from its entry. The
+            # remaining exit gates below (AI Risk veto above, named-trigger
+            # gate, structural protection) are untouched.
 
             reason_text = action_item.get("reason", "")
             if act in ("SELL", "REDUCE", "COVER"):

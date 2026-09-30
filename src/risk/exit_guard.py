@@ -2142,6 +2142,20 @@ def check_structural_protection(
                 trend_context=trend_context,
             )
 
+    # LAST RESORT — NOT a rule about the entry price. Read this before
+    # assuming it contradicts the alignment ruling (2026-09-30, "exit on
+    # ALIGNMENT, never on a target"). Its twin — a blanket entry-anchored
+    # noise-band veto standing in front of EVERY non-news sale in
+    # `pipeline.py` — was deleted on that ruling, because what the desk paid
+    # is irrelevant to whether a trend has ended. This one survives for the
+    # opposite reason: it is reached ONLY when the alignment test has
+    # nothing to read at all — no written invalidation condition and no
+    # qualifying structural level — so there is no structure leg and no
+    # thesis-named average to cross. The choice here is not "entry price vs
+    # alignment"; it is "this fallback vs zero protection". It introduces no
+    # number of its own, reusing the band the rest of the module already
+    # uses.
+    #
     # Neither a checkable thesis_invalid_if nor a qualifying structural
     # level under the stop. Owner refinement 2026-09-04: this must NOT
     # default to zero protection — that would systematically strip

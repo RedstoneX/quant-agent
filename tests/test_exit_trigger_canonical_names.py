@@ -33,6 +33,7 @@ from src.risk.exit_trigger import (
     CANONICAL_TRIGGER_NAMES,
     EVENT_TRIGGERS,
     NO_VERIFIER_EXISTS,
+    VERIFIED_ON_CHART,
     ExitTrigger,
     TRIGGER_PHRASES,
     derive_trigger_from_reason,
@@ -204,7 +205,7 @@ def test_every_trigger_is_recorded_as_verifiable_or_explicitly_not(trigger):
     `NO_VERIFIER_EXISTS` is a legitimate answer and records the gap; being
     in neither is not an answer at all.
     """
-    in_event = trigger in EVENT_TRIGGERS
+    in_event = trigger in EVENT_TRIGGERS or trigger in VERIFIED_ON_CHART
     in_none = trigger in NO_VERIFIER_EXISTS
     assert in_event != in_none, (
         f"{trigger.value} is in "
@@ -282,7 +283,7 @@ def test_clamp_bypass_divergence_is_pinned_per_trigger():
     )
     # Triggers whose phrases agree with themselves, either way.
     coherent = {t.value for t in TRIGGER_PHRASES} - split
-    assert coherent == {"thesis_invalid", "earnings"}
+    assert coherent == {"thesis_invalid", "earnings", "trend_alignment_over"}
 
 
 def test_no_soft_signal_was_admitted_by_the_widening():
