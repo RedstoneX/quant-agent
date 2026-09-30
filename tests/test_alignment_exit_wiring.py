@@ -193,3 +193,192 @@ def test_tolerance_is_ledgered_as_arbitrary_not_sourced():
     )
     assert row["status"] == "arbitrary"
     assert float(row["value"]) == ae.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
+
+
+# --------------------------------------------------------------------------
+# 6. THE SCAN — the alignment exit can now INITIATE a sale.
+#
+# Until this landed, `check_alignment_exit` ran only on positions the review
+# had already named, and only GATED the ones whose prose already claimed the
+# alignment exit. Nothing ever asked the question of a position the models
+# were silent about, so the owner-ratified rule could never start a sale.
+# --------------------------------------------------------------------------
+def _scan_pipeline(verdicts: dict):
+    """A pipeline whose only real behaviour is the scan; the chart read is
+    replaced by a per-symbol canned verdict."""
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    seen = []
+
+    def _chart(*, symbol, **kw):
+        seen.append(symbol)
+        return verdicts[symbol]
+
+    p._alignment_exit_for_holding = _chart
+    p._seen = seen
+    return p
+
+
+def _verdict(status):
+    return ae.AlignmentExitCheck(
+        status, "c", (), None, None, None, "detail",
+        owner_reason="Trend alignment over: the last line ...",
+    )
+
+
+def _pos(symbol, qty=10.0):
+    from src.models import Position
+
+    return Position(
+        symbol=symbol, qty=qty, avg_entry=100.0, current_price=90.0,
+        market_value=900.0, unrealized_pnl=-100.0, sector="Tech",
+    )
+
+
+_PRIORITY = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
+
+
+def test_scan_raises_a_sale_on_a_position_no_model_mentioned():
+    """THE POINT OF THE WHOLE BUILD."""
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"]["action"] == "SELL"
+    assert best["AAA"]["exit_trigger"] == ExitTrigger.TREND_ALIGNMENT_OVER.value
+    # The reason names the trigger in the accepted wording, so the confirmer
+    # downstream recognises the claim and gates the sale on the verdict.
+    from src.pipeline import _reason_claims_alignment_exit
+
+    assert _reason_claims_alignment_exit(best["AAA"]["reason"], None)
+
+
+def test_scan_raises_nothing_on_hold_or_unreadable_chart():
+    for status in ("HOLD", "UNPARSEABLE"):
+        p = _scan_pipeline({"AAA": _verdict(status)})
+        best: dict = {}
+        p._alignment_exit_scan(
+            [_pos("AAA")], best, run_id="r", position_facts=None,
+            priority=_PRIORITY,
+        )
+        assert best == {}, status
+
+
+def test_scan_failure_holds_and_does_not_stop_the_other_names():
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+
+    def _chart(*, symbol, **kw):
+        if symbol == "BOOM":
+            raise RuntimeError("no bars")
+        return _verdict("EXIT")
+
+    p._alignment_exit_for_holding = _chart
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("BOOM"), _pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert "BOOM" not in best
+    assert best["AAA"]["action"] == "SELL"
+
+
+def test_scan_covers_a_short_and_never_sells_it():
+    p = _scan_pipeline({"SHT": _verdict("EXIT")})
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("SHT", qty=-10.0)], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["SHT"]["action"] == "COVER"
+
+
+def test_scan_never_overwrites_an_exit_the_review_asked_for():
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    mine = {"symbol": "AAA", "action": "SELL", "reason": "earnings miss"}
+    best = {"AAA": mine}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"] is mine
+    assert p._seen == []  # not even read: the model's exit already stands
+
+
+def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    best = {"AAA": {"symbol": "AAA", "action": "HOLD", "reason": "still like it"}}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"]["action"] == "SELL"
+
+
+def test_verdict_is_read_once_per_position_per_run():
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    calls = []
+
+    def _chart(*, symbol, **kw):
+        calls.append(symbol)
+        return _verdict("EXIT")
+
+    p._alignment_exit_for_holding = _chart
+    kw = dict(
+        symbol="AAA", thesis_invalid_if=None, is_short=False,
+        entry_price=1.0, stop_loss=None, run_id="r",
+    )
+    assert p._alignment_exit_cached(**kw).status == "EXIT"
+    assert p._alignment_exit_cached(**kw).status == "EXIT"
+    assert calls == ["AAA"]
+
+
+def test_scanned_sale_reaches_the_real_sell_path_with_the_reason_voiced():
+    """End to end through `_midday_execute_llm_actions`: a review that names
+    NOTHING, a chart that says the move is over, and the desk's ordinary
+    protected-sell path carrying the chart's own owner-facing sentence."""
+    from unittest.mock import MagicMock
+
+    from src.models import PositionReasoningChain, PositionReview
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.db = MagicMock()
+    p.db.get_trades.return_value = []
+    p.db.get_acted_exit_triggers_today.return_value = []
+    p._format_qty = lambda q: str(q)
+    p._atr_for_symbol = lambda s: 2.0
+    p._record_exit_refusal = lambda **kw: None
+    p._alignment_exit_for_holding = lambda **kw: _verdict("EXIT")
+    p._submit_protected_sell = lambda **kw: (
+        {"id": "o-1", "symbol": kw["symbol"], "status": "accepted"}, None,
+    )
+
+    review = PositionReview(
+        reasoning_chain=PositionReasoningChain(
+            macro_continuity_check="stable",
+            thesis_progress_check="on pace",
+            thesis_integrity_check="intact",
+            winners_discipline_check="no flags",
+            session_disposition_check="patient",
+            execution_rationale="n/a",
+        ),
+        actions=[],
+        overall_assessment="nothing to do", risk_level="low",
+    )
+    orders = p._midday_execute_llm_actions(
+        positions=[_pos("AAA")], review=review, run_id="r-scan",
+    )
+    assert orders, "the chart said the move was over and nothing was sold"
+    # The sale states WHY, in the desk's existing owner-facing wording: the
+    # scan's own line plus the chart's own sentence appended by the confirmer.
+    reason = (p.db.insert_trade.call_args.kwargs.get("reasoning") or "")
+    assert "Trend alignment over" in reason
+    assert "the last line" in reason
