@@ -776,7 +776,7 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
         "file is to the cap, the less room a single change gets before it "
         "must prune first: delete items already written up in "
         "docs/INCIDENT_HISTORY.md (write one up first if it is not), and "
-        "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
+        "their `## item N` blocks in docs/board_notes/, until the growth "
         "fits the budget."
     )
 
@@ -1719,7 +1719,7 @@ def test_a_synthetic_finished_item_trips_the_check(tmp_path):
     # The message must tell a reader the whole procedure, not just that
     # something is wrong — this is the one check nobody will know how to
     # act on without being told.
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1808,14 +1808,14 @@ def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     flagged = sb.find_finished_items_still_on_board(work, notes)
     assert len(flagged) == 1
     assert "item 9" in flagged[0]
     assert "DONE WHEN" in flagged[0]
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1829,7 +1829,7 @@ def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [ ] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -1865,7 +1865,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -1877,7 +1877,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
 #: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
 #: pre-existing rot, not a target: retiring one of these items (writing it
 #: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
-#: `docs/BOARD_NOTES.md` blocks, the normal procedure) makes it disappear
+#: `docs/board_notes/` blocks, the normal procedure) makes it disappear
 #: from the live check's output, and this set may SHRINK to match without
 #: anyone treating that as a test failure to chase down — update it in the
 #: same change that retires the item. It must never GROW silently: a NEW
@@ -1898,7 +1898,7 @@ _REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
 
 
 def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
-    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture.
+    """The real docs/WORK.md and docs/board_notes/, not a fixture.
 
     Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
     already-measured backlog rot pinned in
@@ -1912,7 +1912,7 @@ def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     still fail CI.
     """
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     flagged = sb.find_finished_items_still_on_board(work, notes)
     flagged_refs = set()
     for f in flagged:
@@ -2096,7 +2096,7 @@ def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path)
 
 # The item itself — number, title, status, engineering notes — is still
 # docs/WORK.md's shape. Its prose has moved out to a separate fixture below,
-# standing in for docs/BOARD_NOTES.md, keyed to the item by "## item 1"
+# standing in for docs/board_notes/, keyed to the item by "## item 1"
 # rather than living inside the item's own body.
 _FULL_ITEM = (
     "## THE FUNNEL QUEUE\n\n"
@@ -2123,7 +2123,7 @@ _FULL_ITEM_NOTES = (
 
 
 def _notes(tmp_path, text):
-    """Write `text` as a `docs/BOARD_NOTES.md`-shaped fixture and parse it,
+    """Write `text` as a `docs/board_notes/`-shaped fixture and parse it,
     the same way `render` parses the real file."""
     p = tmp_path / "BOARD_NOTES.md"
     p.write_text(text)
@@ -2143,7 +2143,7 @@ def test_an_item_carries_its_plain_language_example_and_recommendation(tmp_path)
 
 
 def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed(tmp_path):
-    """The paragraph after the blank line in docs/BOARD_NOTES.md is ordinary
+    """The paragraph after the blank line in docs/board_notes/ is ordinary
     commentary, not a labelled field. If it leaked into the recommendation
     the owner would be shown text nobody wrote as one."""
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
@@ -2164,7 +2164,7 @@ def test_wrapped_prose_lines_are_joined_not_truncated(tmp_path):
 def test_prose_no_longer_comes_from_work_mds_own_body():
     """The relocation's core guarantee: a plain-language block typed straight
     into a WORK.md item's body must NOT reach the page — only a matching
-    heading in docs/BOARD_NOTES.md does. Without that, this file's own cap
+    heading in docs/board_notes/ does. Without that, this file's own cap
     would be pointless: the prose it was moved to avoid could just come back
     in through the body text instead."""
     body = ("**3. A thing — DEFECT.**\n\n"
@@ -2178,7 +2178,7 @@ def test_prose_no_longer_comes_from_work_mds_own_body():
 
 
 # ---------------------------------------------------------------------------
-# docs/BOARD_NOTES.md — the prose file itself
+# docs/board_notes/ — the prose file itself
 #
 # The key property this file's whole design rests on: an entry is found by
 # the item's NUMBER and SECTION, never by its title, so a rename in
@@ -2218,7 +2218,7 @@ def test_board_notes_with_no_recognised_heading_is_empty(tmp_path):
 
 
 def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
-    """The whole point of keying by number: an item docs/BOARD_NOTES.md has
+    """The whole point of keying by number: an item docs/board_notes/ has
     never heard of must render as unexplained, never silently inherit
     prose written for a different item."""
     notes = _notes(tmp_path, "## item 7\n\n**Plain language —** for item 7 only.\n")
@@ -2227,9 +2227,9 @@ def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
 
 
 def test_the_real_board_notes_file_loads_without_error():
-    """docs/BOARD_NOTES.md ships in the repo; whatever it currently holds
+    """docs/board_notes/ ships in the repo; whatever it currently holds
     must parse without raising, exactly like the real backlog."""
-    path = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    path = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     assert path.exists()
     notes = sb.load_board_notes(path)
     assert isinstance(notes, dict)
@@ -3221,7 +3221,7 @@ def test_nothing_to_do_says_so_rather_than_inventing_urgency():
 
 def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
     """The decision's own line in docs/WORK.md carries only the question now
-    — its prose comes from docs/BOARD_NOTES.md, keyed by the decision's due
+    — its prose comes from docs/board_notes/, keyed by the decision's due
     date (`PendingDecision.ref`), because a decision has no number of its
     own to key on."""
     p = tmp_path / "WORK.md"
@@ -3245,7 +3245,7 @@ def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
 def test_a_decisions_indented_body_no_longer_carries_prose(tmp_path):
     """The relocation's guarantee for decisions too: prose typed straight
     into the indented body under a `DECIDE BY` line must not reach the page
-    without a matching heading in docs/BOARD_NOTES.md."""
+    without a matching heading in docs/board_notes/."""
     p = tmp_path / "WORK.md"
     p.write_text(
         "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
@@ -3576,14 +3576,14 @@ def test_the_rebuild_trigger_watches_the_backlog():
 
 
 def test_the_rebuild_trigger_also_watches_the_board_notes_file():
-    """The prose the page renders now lives in docs/BOARD_NOTES.md, not
+    """The prose the page renders now lives in docs/board_notes/, not
     docs/WORK.md. An edit to it changes what the board says exactly as much
     as an edit to the backlog does, so it must fire the same rebuild — the
     same defect the WORK.md watch above exists to prevent, on the other
     half of the page's source material."""
     unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
             / "quant-agent-status-board.path").read_text()
-    assert "PathChanged=/home/qamc/quant-agent/docs/BOARD_NOTES.md" in unit
+    assert "PathChanged=/home/qamc/quant-agent/docs/board_notes" in unit
 
 
 def test_the_board_service_does_not_point_at_the_retired_timer():
@@ -3709,7 +3709,7 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
 # ---------------------------------------------------------------------------
 # The page's own copy must obey the page's own rules.
 #
-# The jargon detector ran only over prose loaded from docs/BOARD_NOTES.md.
+# The jargon detector ran only over prose loaded from docs/board_notes/.
 # Every reader-facing string HARDCODED IN THIS SCRIPT was exempt from it —
 # so the one card written by hand was the one card nothing checked. On
 # 2026-09-11 that card told the owner three finished things had "stopped
@@ -3772,7 +3772,7 @@ def test_a_humanised_identifier_keeps_a_date_readable():
 
 
 def test_no_board_note_is_orphaned_in_the_real_repository():
-    """Every prose entry in the REAL docs/BOARD_NOTES.md must match a real
+    """Every prose entry in the REAL docs/board_notes/ must match a real
     item in the REAL docs/WORK.md.
 
     The keying tests above prove the mechanism. This proves the live files
@@ -3785,7 +3785,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     That is a rule no session should have to remember. This is the check.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)
@@ -3794,7 +3794,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     orphans = sorted(k for k in notes if k not in real
                      and not k.lower().startswith("item n"))
     assert orphans == [], (
-        "docs/BOARD_NOTES.md explains items that no longer exist under those "
+        "docs/board_notes/ explains items that no longer exist under those "
         f"keys in docs/WORK.md: {orphans}. Either the item was renumbered "
         "(update the key in the same commit) or it was archived (remove its "
         "prose). Leaving it strands the explanation and the owner's board "
@@ -3814,7 +3814,7 @@ def test_every_rendered_entry_carries_a_reference_handle():
     fine on the page and only surface as the owner being unable to name it.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)

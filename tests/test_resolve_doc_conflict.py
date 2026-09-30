@@ -443,7 +443,6 @@ def test_existing_history_is_never_reordered_by_a_merge():
 
 @pytest.mark.parametrize("kind,rel", [
     ("work", "docs/WORK.md"),
-    ("notes", "docs/BOARD_NOTES.md"),
     ("history", "docs/INCIDENT_HISTORY.md"),
 ])
 def test_the_real_documents_round_trip_byte_for_byte(kind: str, rel: str):
@@ -463,10 +462,25 @@ def test_the_real_documents_round_trip_byte_for_byte(kind: str, rel: str):
 
 def test_the_real_documents_agree_with_each_other_through_this_tool():
     work = REPO_ROOT / "docs" / "WORK.md"
-    notes = REPO_ROOT / "docs" / "BOARD_NOTES.md"
-    if not (work.exists() and notes.exists()):
+    notes_dir = REPO_ROOT / "docs" / "board_notes"
+    if not (work.exists() and notes_dir.is_dir()):
         pytest.skip("board documents are not present in this checkout")
-    rdc.assert_notes_agree_with_work(work.read_text(), notes.read_text())
+    notes = "".join(p.read_text() for p in sorted(notes_dir.glob("*.md"))
+                    if p.name != "README.md")
+    rdc.assert_notes_agree_with_work(work.read_text(), notes)
+
+
+def test_every_real_board_note_file_round_trips_byte_for_byte():
+    """One file per item, so every one of them must merge with itself
+    unchanged — the same proof the single file used to give."""
+    notes_dir = REPO_ROOT / "docs" / "board_notes"
+    if not notes_dir.is_dir():
+        pytest.skip("docs/board_notes is not present in this checkout")
+    for p in sorted(notes_dir.glob("*.md")):
+        if p.name == "README.md":
+            continue
+        text = p.read_text()
+        assert rdc.RESOLVERS["notes"](text, text, text) == text, p.name
 
 
 WORK_EMPTY_GATE = """\

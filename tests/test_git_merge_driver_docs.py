@@ -63,7 +63,8 @@ def _run(base: str, ours: str, theirs: str, tree_path: str, tmp_path: Path):
 
 def test_gitattributes_routes_all_three_documents_to_the_driver():
     text = ATTRIBUTES.read_text()
-    for doc in ("docs/WORK.md", "docs/BOARD_NOTES.md", "docs/INCIDENT_HISTORY.md"):
+    for doc in ("docs/WORK.md", "docs/board_notes/*.md",
+                "docs/INCIDENT_HISTORY.md"):
         assert f"{doc} merge=docsmerge" in text, doc
 
 
@@ -112,7 +113,8 @@ def test_an_unmapped_path_exits_nonzero_without_running_the_resolver(tmp_path):
 
 def test_board_notes_and_incident_history_route_to_their_own_kinds(tmp_path):
     notes = "# Board notes\n\n## item 1\n\nnote one.\n"
-    proc, ours_path = _run(notes, notes, notes, "docs/BOARD_NOTES.md", tmp_path)
+    proc, ours_path = _run(notes, notes, notes, "docs/board_notes/item-001.md",
+                           tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert ours_path.read_text() == notes
 

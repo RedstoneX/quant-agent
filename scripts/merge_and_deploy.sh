@@ -60,7 +60,7 @@ install_units() {
     fi
     # Show what is being replaced BEFORE replacing it. A box copy that was
     # hand-edited is evidence the unit-drift check would otherwise report;
-    # an unconditional overwrite would destroy it unread (docs/BOARD_NOTES.md
+    # an unconditional overwrite would destroy it unread (docs/board_notes/
     # on item 122), so the diff goes into this run's output first.
     if sudo -n test -e "${UNIT_DIR}/${name}"; then
       echo "==> ${name} differs from the installed copy:"

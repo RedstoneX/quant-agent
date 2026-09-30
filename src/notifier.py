@@ -178,7 +178,7 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
 _MALFORMED_NUMBER_MARKER = "[number garbled — removed]"
 
 # Scope note, so this is never confused with the REJECTED "prompt-text
-# number scanner" (docs/BOARD_NOTES.md item 99): that idea was scanning
+# number scanner" (docs/board_notes/ item 99): that idea was scanning
 # ~1,825 numeric tokens inside PROMPT INPUT (config/prompts/*.md) — mostly
 # dates and list numbering, hopeless signal-to-noise, and explicitly not
 # built. This is the opposite direction: it scans the LLM's OUTPUT prose
