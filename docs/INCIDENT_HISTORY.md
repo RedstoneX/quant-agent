@@ -17578,3 +17578,32 @@ symbol carrying more than one resting protective stop.
 3. Measure the bracket-leg case.
 4. Only then delete the compensating machinery, rather than continuing to
    harden it.
+
+## 2026-09-30 — RULING: exit on ALIGNMENT, never on a target
+
+Owner ruling, recorded here because it had no record of its own. Its only trace
+in the repository was a comment inside the exit code [verified 2026-09-30:
+`grep -c alignment docs/INCIDENT_HISTORY.md` returned 0], which is one refactor
+away from being lost.
+
+**The ruling.** A price target is a made-up number and the desk must not use
+one. The desk sells a winner only when structure, volatility and a moving-average
+cross AGREE the trend is over. Never on one signal alone. Never at a pre-set
+price.
+
+**What it supersedes.** Board item 75 asked for the opposite — send a target to
+the broker, and make profit-taking an allowed sell reason. Building either is
+now the defect, so item 75 was retired rather than built, and the surviving
+clause (the trail being too loose) is already carried by other open items.
+
+**What it requires that does not exist.** VERIFIED 2026-09-30: there is **no
+moving-average-cross exit condition anywhere in `src/`** — a search for
+`sma_cross`, `ema_cross`, `golden_cross`, `death_cross`, `crossed_below` and
+`crossed_above` across every Python file returns nothing. So the exit the owner
+ruled for is not built, and until it is, the desk has no sanctioned way to sell
+a winner other than the trailing stop.
+
+**Consistent with standing doctrine.** [[qamc-no-fitting-only-reading]] and the
+stops-and-exits rule: exits read live from the instrument in front of you —
+its volatility, its levels, its trend — never fitted to past trades and never a
+fixed number. A target is the exact thing that rule bars.
