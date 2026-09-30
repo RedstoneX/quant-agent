@@ -800,3 +800,35 @@ changes:
       /home/qamc/quant-agent/quant_agent.log*`) and the screen ships
       `enabled: false` and has never run, so no admitted name and no
       accepted trail changes.
+
+  - delta: -1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 183: -1 for
+      `src.pipeline_stages.ExecutionStage._run_session:factor[2]`
+      (1.02), the far-through-quote entry skip, DELETED rather than
+      sourced or ratified -- its `derived` mirror `factor[3]` (the SHORT
+      `bid < floor / 1.02`) went with it and does not move this count.
+      The gate refused an approved entry when the displayed IEX ask sat
+      more than 2% past the slippage ceiling, on a multiple its own
+      comment called "deliberately loose because the input is". MEASURED
+      2026-09-30 against all 8 firings it has on record (the
+      `execution_skip` evidence rows in the production DB, 2026-09-15 to
+      2026-09-24, which is the entire life of that telemetry): in every
+      one of the 8 the reference price was right and the quote was wrong
+      -- the reference matched the price the name was actually trading
+      at to within a few bp, while the quoted ask sat 392-669bp above
+      the HIGHEST price the name traded anywhere in a +/-15 minute
+      window around the refusal (Alpaca 1-minute bars, IEX feed), and 6
+      of the 8 were trading strictly inside the ceiling they were
+      refused against. Zero of the 8 were a market that had run. The
+      gate also protected no money that the ceiling was not already
+      protecting: a limit at the ceiling cannot fill through it, so a
+      genuinely runaway book now simply leaves the order resting
+      unfilled until the entry-protection sweep cancels it -- the same
+      no-trade, without the false refusals. `src/trader_feed.py` had
+      already refused to render this gate's `slippage_gated` code to the
+      owner on the same evidence (2026-09-23). No multiple replaces it;
+      the far-through reading is recorded as a
+      `venue_quote_through_ceiling` pipeline event, which needs no
+      threshold because it is a record and not a decision.
