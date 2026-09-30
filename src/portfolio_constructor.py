@@ -45,7 +45,6 @@ from src.models import (
     reward_to_risk, stated_soft_exit,
 )
 from src.risk.constants import reward_risk_floor_applies
-from src.universe_screen import STOP_SANITY_FLOOR_FRACTION
 
 logger = logging.getLogger(__name__)
 
@@ -452,16 +451,30 @@ STOP_REFUSAL_NO_STOP_NO_VOLATILITY = "no_stop_and_no_volatility_reading"
 #: no ATR outright (`typed_stop_but_no_volatility_reading`); that was
 #: wrong per the ruling -- a missing volatility reading is never a reason
 #: to skip protection. The branch now derives the stop from price
-#: structure and HOLDS, and only these two refusals remain:
+#: structure and HOLDS, and only ONE refusal remains:
 #:  * NO_STRUCTURAL_STOP_NO_VOLATILITY -- no ATR AND no structural level
 #:    (computed level with enough touches, or signal-bar edge) on the
 #:    protective side of entry: a monotonic move, no structure, or zero
 #:    bars. The ruling's genuine skip-correct case. Per-symbol, durable,
 #:    never a book-wide halt.
-#:  * STRUCTURAL_STOP_TOO_FAR -- a level was readable but sits past the
-#:    desk's existing stop-distance sanity bound (`STOP_SANITY_FLOOR_
-#:    FRACTION`), so the implied per-trade risk exceeds what the desk
-#:    accepts: skip on RISK, not on the missing reading.
+#:
+#: STRUCTURAL_STOP_TOO_FAR is still DEFINED but is no longer raised by
+#: anything: board item 185 deleted the width refusal behind it on
+#: 2026-09-30. It refused a readable structural level sitting further from
+#: entry than `1 - STOP_SANITY_FLOOR_FRACTION` (50%), borrowing that
+#: fraction from the midday TRAIL_STOP typo guard -- which item 185
+#: replaced with a reading off the instrument that this no-ATR branch
+#: cannot follow, there being no volatility reading here by construction.
+#: The reasoning for deleting rather than re-picking it is at the deletion
+#: site in `_widen_stop_past_noise`; in short it is board item 56 route
+#: (c)'s ruling applied to the same shape of gate, and the refusal had
+#: fired zero times in production. What is NOT true, and was claimed in an
+#: earlier version of this note, is that the reward:risk tail still judges
+#: the resulting stop in every case: that tail is off for a Type B /
+#: breakout trade by design, so on a breakout with no ATR reading nothing
+#: judges stop width at all and sizing is the only answer. The name is kept because tests
+#: reference it, exactly as STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER was kept
+#: after board item 183.
 STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY = (
     "no_structural_stop_and_no_volatility_reading"
 )
@@ -867,6 +880,60 @@ class ConstructorConfig:
     # ONLY when nothing computed backs the typed stop — and the result is
     # then gated on width. The analyst schema requires a stop on every
     # actionable rating, so "nothing typed" is the rare case, not the norm.
+
+
+def widest_reachable_stop_atr_multiple(
+    base_multiple: float | None = None,
+    setup_scales: tuple[tuple[str, float], ...] | None = None,
+    regime_scales: tuple[tuple[str, float], ...] | None = None,
+) -> float:
+    """The widest stop, in ATRs, `_stop_atr_multiple` can actually return.
+
+    NOT a new number. `_stop_atr_multiple` multiplies the base
+    (`risk.min_stop_atr_multiple`) by AT MOST one setup scale and AT MOST
+    one regime scale, and applies neither when the label matches no key --
+    so the reachable maximum is the base times the largest of
+    `{1.0} | setup scales` times the largest of `{1.0} | regime scales`.
+    At today's ratified settings that is 2.5 x 1.00 (breakout) x 1.20
+    (risk-off) = 3.00, the widest end of the `[2.1375, 3.00]` range that
+    method's docstring already states.
+
+    It exists so that every rule needing "the widest stop this desk can
+    legitimately place" COMPUTES it from the constants that already govern
+    stops instead of carrying its own copy. Two rules did carry a copy --
+    the midday TRAIL_STOP typo guard and the universe screen's volatility
+    ceiling -- and they had drifted apart by exactly the risk-off scaler
+    (board item 185).
+
+    **What this is NOT: a derivation of a non-arbitrary number.** 3.00 is
+    2.5 x 1.00 x 1.20. The 2.5 (`min_stop_atr_multiple`) carries
+    `status: arbitrary` in `config/number_ledger.yaml` with a live open
+    question; the 1.00 is only the declared absence of a setup scaler; the
+    1.20 risk-off entry of `stop_atr_regime_scale` is `status: arbitrary`
+    too, its own row recording that no measured regime/MAE breakdown exists
+    in this repo. Composing them removes one independent literal from the
+    ledger and creates a live dependency on two that remain open. It does
+    not reduce the desk's arbitrary CONTENT, and it does not answer board
+    item 185's question -- how volatile a name may this desk hold.
+
+    **Both callers must pass the same values.** The function itself cannot
+    enforce that: the midday guard reads the LIVE `ConstructorConfig`, and
+    `ScreenThresholds.from_config` is handed that same object by the
+    pipeline but falls back to `config.risk.min_stop_atr_multiple` plus the
+    class defaults when no constructor is available. `tests/
+    test_universe_screen.py::test_the_screen_ceiling_and_the_midday_clamp_
+    read_the_same_multiple` pins the agreement so a divergence fails CI
+    rather than passing silently.
+    """
+    if base_multiple is None:
+        base_multiple = ConstructorConfig.min_stop_atr_multiple
+    if setup_scales is None:
+        setup_scales = ConstructorConfig.stop_atr_setup_scale
+    if regime_scales is None:
+        regime_scales = ConstructorConfig.stop_atr_regime_scale
+    widest_setup = max([1.0] + [float(s) for _, s in setup_scales])
+    widest_regime = max([1.0] + [float(s) for _, s in regime_scales])
+    return float(base_multiple) * widest_setup * widest_regime
 
 
 class PortfolioConstructor:
@@ -2798,9 +2865,17 @@ class PortfolioConstructor:
         # Exactly one of these branches runs (no ATR; nothing typed, read
         # from the instrument; outside the band; level-honoured; absolute
         # floor; widened to the band or the signal bar). `honoured` is what
-        # ships; `rule` is why; the width gate and then the single
-        # reward:risk gate at the bottom judge the geometry that results,
-        # whichever branch produced it.
+        # ships; `rule` is why. NO WIDTH GATE JUDGES THE RESULT ANY MORE:
+        # `STOP_REFUSAL_WIDER_THAN_REACH` went on 2026-09-26 (board item 56
+        # route (c)) and the no-ATR branch's
+        # `STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR` went on 2026-09-30 (board
+        # item 185). What judges the geometry now is the single reward:risk
+        # gate at the bottom -- and that gate is OFF for a Type B /
+        # breakout trade by design (`reward_risk_floor_applies`), so on a
+        # breakout nothing judges stop WIDTH at all. Width is answered by
+        # `_plan_risk_targets` sizing down (spec 2.1) and, at the extreme,
+        # by `position_sized_to_zero`, which is the ratified answer and the
+        # reason the refusals went.
         # -------------------------------------------------------------
         if atr is None:
             # No volatility reading -- but a missing ATR is NEVER a reason to
@@ -2814,12 +2889,12 @@ class PortfolioConstructor:
             # with `computed_level_touches`) and `signal_bar_low`/
             # `signal_bar_high` (the last completed bar). "There are always
             # levels, even from a few days ago." So DERIVE the protective stop
-            # from that structure and HOLD; refuse this one name ONLY when no
-            # structural level is readable at all, or the level that is sits so
-            # far from entry that it fails the desk's own stop-distance sanity
-            # bound (skip on risk, not on the missing reading). Never a
-            # book-wide halt -- a transient ATR loss drops only the names it
-            # actually hits.
+            # from that structure and HOLD; refuse this one name ONLY when
+            # no structural level is readable at all. There is no longer a
+            # second, width-based refusal on this branch: board item 185
+            # deleted `STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR` on 2026-09-30
+            # (see the deletion site below). Never a book-wide halt -- a
+            # transient ATR loss drops only the names it actually hits.
             #
             # Published basis (cited, not re-derived here): a swing-low /
             # structure stop placed just beyond the nearest confirmed level
@@ -2860,29 +2935,54 @@ class PortfolioConstructor:
                 )
                 return None
             level, honoured, rule = derived
-            # Sanity / risk skip, reusing the desk's EXISTING stop-distance
-            # bound rather than inventing a new one: a stop further than
-            # `STOP_SANITY_FLOOR_FRACTION` of entry away is refused elsewhere
-            # on the desk as not-a-real-stop (the universe screen's volatility
-            # ceiling and the midday trail both use it). Applied here it is the
-            # owner's "the only readable level sits so far below entry that the
-            # implied risk exceeds the limit -- skip on risk". Equity per-trade
-            # risk (`max_position_risk_pct`) stays bounded downstream by
-            # fixed-fractional sizing whatever the width; this only catches an
-            # absurd distance the sizing would otherwise shrink to a stub.
-            width_frac = abs(entry_price - honoured) / entry_price
-            if width_frac > (1.0 - STOP_SANITY_FLOOR_FRACTION):
-                self._note_refusal(
-                    symbol, direction, STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR,
-                    f"the only structural stop readable with no ATR sits "
-                    f"${honoured:,.2f} [{rule}], {100 * width_frac:.1f}% "
-                    f"{side_word} the ${entry_price:,.2f} entry -- past the "
-                    f"desk's {100 * (1.0 - STOP_SANITY_FLOOR_FRACTION):.0f}% "
-                    f"stop-distance sanity bound. A stop that far implies more "
-                    f"per-trade risk than the desk accepts, so this one name "
-                    f"is skipped on risk, not on the missing reading.",
-                )
-                return None
+            # NO WIDTH REFUSAL HERE ANY MORE -- removed 2026-09-30, board
+            # item 185. There used to be one: a structural stop further
+            # from entry than `1 - STOP_SANITY_FLOOR_FRACTION` (50%) was
+            # filed as `STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR`. It borrowed
+            # that fraction from the midday TRAIL_STOP typo guard, which
+            # item 185 has now replaced with a reading off the instrument;
+            # there is no ATR on this branch by construction, so the
+            # borrowed fraction could not follow it, and the only way to
+            # keep the gate was to invent an independent flat width bound,
+            # which doctrine bars.
+            #
+            # Deleting it rather than re-picking it follows the ruling
+            # already made about the gate further down this same method:
+            # board item 56 route (c) deleted `STOP_REFUSAL_WIDER_THAN_REACH`
+            # on the reasoning that "a wide stop is answered by
+            # `_plan_risk_targets` sizing down -- the ratified spec 2.1
+            # invariant, and what published practice prescribes -- never by
+            # a refusal here". This gate was the same shape, and its own
+            # comment already conceded the point: per-trade risk stays
+            # bounded by fixed-fractional sizing whatever the width, so all
+            # it added was a stub-size objection -- and that objection was
+            # itself ruled a non-reason by board item 183 (Alpaca charges no
+            # stock commission and the desk trades fractional shares, so a
+            # small position is not costly to hold). Measured before
+            # deleting: across every retained production log (2026-08-31 to
+            # 2026-09-30) and the whole live trade/report history in
+            # `data/quant_agent.db`, this refusal fired ZERO times.
+            # `STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR` stays DEFINED because
+            # tests reference it, exactly as
+            # `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER` was kept after item 183.
+            # WHAT STILL JUDGES THIS STOP, STATED HONESTLY. For a Type A
+            # / range trade, the reward:risk gate at the tail of this
+            # method: it runs on the no-ATR branch too and measures the
+            # stop against the trade's own derived target rather than
+            # against a chosen fraction of entry. For a Type B / breakout
+            # trade -- the commonest setup on this desk -- it does NOT
+            # run: `reward_risk_floor_applies` returns False for a trend
+            # trade and its own docstring says that is the whole rule
+            # (owner decision 2026-09-11, docs/WORK.md item 1 part (d)).
+            # So on a breakout with no ATR reading, NOTHING judges the
+            # width of this stop after the deletion above. That is
+            # deliberate and it is the ratified answer, not an oversight:
+            # width is answered by `_plan_risk_targets` holding the risked
+            # dollars constant and buying fewer shares (spec 2.1), and at
+            # the extreme by `position_sized_to_zero`. It is recorded here
+            # rather than glossed because an earlier version of this
+            # comment claimed the reward:risk tail still judged the stop,
+            # which was untrue for exactly the commonest case.
             logger.info(
                 "Constructor: %s %s had no ATR reading; protective stop "
                 "derived from price structure at $%.2f [%s]%s and HELD -- a "
@@ -2891,9 +2991,11 @@ class PortfolioConstructor:
                 side_label, symbol, honoured, rule,
                 f" (structural level ${level:.2f})" if level is not None else "",
             )
-            # honoured/rule set above; falls through to the width gate (skipped
-            # with no ATR) and the single reward:risk tail, exactly like the
-            # ATR path.
+            # honoured/rule set above; falls through to the single
+            # reward:risk tail, exactly like the ATR path. There is no
+            # width gate left on any branch (board items 56 and 185), and
+            # the reward:risk tail does NOT run on a Type B / breakout
+            # trade -- see the note where the branches are introduced.
         else:
             multiple = self._stop_atr_multiple(analysis, regime)
             band_edge = (
@@ -2927,8 +3029,9 @@ class PortfolioConstructor:
             if stop_loss is None:
                 # Nothing typed by the PM or the analyst. Read the stop from
                 # the instrument rather than refuse: a stop is always
-                # derivable (item 54), and the width gate below still judges
-                # the result.
+                # derivable (item 54). Nothing judges its WIDTH below any
+                # more -- the width gate was deleted (board item 56 route
+                # (c)); sizing answers a wide stop.
                 honoured, rule = fallback_edge, fallback_rule
                 logger.info(
                     "Constructor: %s %s had no stop from the PM or the "
@@ -4014,8 +4117,12 @@ class PortfolioConstructor:
         that: the stop is always derivable — the wider of the ATR noise band
         and the signal bar's far edge, both read from the bars — and the
         thing that cannot be sized honestly is a stop WIDER than the
-        instrument's own range, which the width gate refuses. The old flat
-        `entry * 0.95` fallback stays gone; nothing here is a percentage.
+        instrument's own range -- which item 54 answered with a refusal
+        (`STOP_REFUSAL_WIDER_THAN_REACH`) that was itself DELETED on
+        2026-09-26 under board item 56 route (c), the ratified answer being
+        to size down instead. No width refusal remains anywhere in this
+        module. The old flat `entry * 0.95` fallback stays gone; nothing
+        here is a percentage.
         """
         if target.suggested_stop_price and target.suggested_stop_price > 0:
             return float(target.suggested_stop_price)

@@ -43,12 +43,15 @@ THE CRITERIA, and where each threshold comes from (every number is in
               design required. Estimated from bars, not quotes, because
               this account sees IEX quotes only and those are routinely
               absurd (src/pipeline_stages.py, the CCJ 15%-spread note).
-  volatility  ATR(14) / price <= STOP_SANITY_FLOOR_FRACTION /
-              `risk.min_stop_atr_multiple`. Past it, the desk's own
-              minimum unbacked stop (k x ATR under price) sits below half
-              the price, which the midday stop-sanity rule refuses as a
-              typo — the name fails by construction, so it is screened at
-              the door.
+  volatility  ATR(14) / price < 1 / the widest stop multiple the desk's
+              own rules can reach (`portfolio_constructor.
+              widest_reachable_stop_atr_multiple`, 1/3.00 = 33.3% at
+              today's ratified settings). At or past it the widest
+              legitimate stop — that multiple of ATR under price — sits at
+              or below ZERO, so no stop this desk would place can be
+              placed at all and the name fails by construction. Nothing is
+              chosen here: the bound is arithmetic, and it moves by itself
+              if the stop multiple or its setup/regime scalers move.
   size        market capitalisation >= `min_market_cap_usd` ($30M, the
               Russell US indexes' eligibility floor).
   sector      resolves to a real sector — the sector cap needs one. Kept
@@ -79,13 +82,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 logger = logging.getLogger(__name__)
-
-#: The midday stop-sanity floor, restated so the volatility ceiling can be
-#: derived from it: a trailing stop below this fraction of price is refused
-#: as a model typo (`TradingPipeline._midday_execute_llm_actions`). A
-#: `derived` ledger row pins this to that inline factor, so the two cannot
-#: drift apart silently.
-STOP_SANITY_FLOOR_FRACTION = 0.5
 
 #: Calendar days of daily bars requested per symbol. A fetch size, not a
 #: threshold: it only has to exceed the one-year history test with room for
@@ -157,7 +153,7 @@ PLAIN_REASON = {
     "price_below_minimum": "a penny stock (under $5)",
     "spread_too_wide": "too costly to trade (wide bid-ask spread)",
     "spread_unmeasurable": "its trading cost could not be measured",
-    "volatility_above_ceiling": "too wild to place a sane stop",
+    "volatility_above_ceiling": "so volatile the desk's widest stop would sit at or below zero",
     "company_too_small": "company too small (under $30M)",
     "market_cap_unknown": "company size unknown",
     "unresolved_sector": "no sector",
@@ -184,17 +180,55 @@ class ScreenThresholds:
     min_history_bars: int
 
     @classmethod
-    def from_config(cls, config) -> "ScreenThresholds":
+    def from_config(cls, config, constructor_cfg=None) -> "ScreenThresholds":
+        """`constructor_cfg` is the LIVE `ConstructorConfig` the desk places
+        stops with; the pipeline passes `self.portfolio_constructor.cfg`.
+
+        It is a parameter rather than something re-resolved here because the
+        volatility ceiling below is 1 / the widest stop the desk can place,
+        and "the desk" means the constructor that will actually place it. The
+        two used to resolve the base multiple by DIFFERENT routes -- the
+        screen straight off `config.risk.min_stop_atr_multiple`, the
+        constructor through `pipeline.build_constructor_config`'s
+        `_risk_setting` (whose own fallback is a different number) -- and
+        neither passed the setup/regime scalers at all, so the two agreed
+        only because both happened to land on the class defaults. Passing the
+        live object removes the second route. When it is absent (tests, and
+        any caller with no constructor to hand) the old route is used and
+        the values are the class defaults.
+        """
         from src.data.context import _SLOPE_LOOKBACK
         from src.data.technical import LONGEST_INDICATOR_WINDOW
+        # Imported here, not at module scope: `portfolio_constructor` is a
+        # heavy module and the screen is otherwise independent of it.
+        from src.portfolio_constructor import widest_reachable_stop_atr_multiple
 
         screen = config.universe_screen
         return cls(
             min_price_usd=float(screen.min_price_usd),
             min_market_cap_usd=float(screen.min_market_cap_usd),
             max_half_spread_bps=float(config.execution.max_entry_slippage_bps),
-            max_atr_fraction=(
-                STOP_SANITY_FLOOR_FRACTION / float(config.risk.min_stop_atr_multiple)
+            # NOT a chosen ceiling and no longer a borrowed one. Board
+            # item 185: this used to read `0.5 / min_stop_atr_multiple`,
+            # borrowing the midday typo guard's flat half-of-price floor
+            # and dividing it by the BASE stop multiple (2.5) rather than
+            # the widest one the desk can reach (3.00). The two sides
+            # disagreed by exactly the 1.20 risk-off scaler, so names with
+            # ATR14/price between 16.67% and 20% passed a screen whose
+            # stated rationale did not hold for them. Both halves are gone:
+            # the guard now reads the instrument, and this ceiling is the
+            # arithmetic point where the widest legitimate stop would sit
+            # at or below zero.
+            max_atr_fraction=1.0 / (
+                widest_reachable_stop_atr_multiple(
+                    constructor_cfg.min_stop_atr_multiple,
+                    constructor_cfg.stop_atr_setup_scale,
+                    constructor_cfg.stop_atr_regime_scale,
+                )
+                if constructor_cfg is not None
+                else widest_reachable_stop_atr_multiple(
+                    float(config.risk.min_stop_atr_multiple),
+                )
             ),
             min_history_bars=int(LONGEST_INDICATOR_WINDOW + _SLOPE_LOOKBACK),
         )
@@ -353,7 +387,9 @@ def check_bars(bars: list, th: ScreenThresholds) -> tuple[list[str], dict]:
     if len(atr) and price > 0:
         atr_fraction = float(atr[-1]) / price
         measured["atr_pct"] = round(atr_fraction * 100, 2)
-        if atr_fraction > th.max_atr_fraction:
+        # `>=`, not `>`: at exactly the ceiling the widest legitimate stop
+        # sits at exactly zero, which is not a placeable stop either.
+        if atr_fraction >= th.max_atr_fraction:
             failures.append("volatility_above_ceiling")
     return failures, measured
 
