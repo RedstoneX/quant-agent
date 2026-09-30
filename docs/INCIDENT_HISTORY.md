@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
+
+**In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
+
+**The measurement.** Production log, 2026-09-29 19:46:45-19:47:46 UTC: route 1 (`openai/gpt-5.5` over OpenRouter) returned HTTP 402 Payment Required, route 2 was skipped because the same account was already demoted, route 3 (`anthropic/claude-haiku-4.5`, also over OpenRouter) returned HTTP 402 again, and the agent logged "Every route is down." At 19:46:08 the same process had completed the technical analyst on `generativelanguage.googleapis.com` at HTTP 200 for $0.00.
+
+**Why the earlier design got it right and still left this open.** Route 3 was added on 2026-09-23 to fix a DIFFERENT failure: on 2026-09-22 routes 1 and 2 were the same model on two roads, the model itself saturated, and both went down together. The answer there was to change the MODEL on the last rung, and the reasoning is sound — for the eight specialist seats, whose first route is already the direct Google endpoint. That change recorded, honestly and in writing, that routes 2 and 3 now shared one account, and judged closing it to need "a grant for a third host", which would be an owner decision. For the eight specialists that was accurate. For the three DECISION seats it was not: every one of them starts on OpenRouter, so they had no second road at all, and the second host was already there, already credentialed, already primary for eight other seats.
+
+**What changed.** When a seat's first two routes resolve to the same provider and its third would too, the third is swapped for the direct Google endpoint instead. Nothing else moves: no new rung, no new host, no new spend, and the eight Google-primary seats keep the different-model tertiary exactly as reasoned in 2026-09-23 — for them a Google third route would be a third attempt at the road that just failed twice.
+
+**What was ruled out.** Pointing route 2 at the direct endpoint instead. That is the smaller diff, but it would have taken the same-model second route away from the eight specialist seats, which is the 2026-08-31 "change the road, not the reasoning" ruling, and traded one seat group's resilience for another's. Also ruled out: adding a fourth rung. The attempt ceiling the cost circuit enforces is derived from the rung count, and growing it is how a routine rate-limit costs a whole session.
+
+**The honest cost.** In a total outage of the paid provider, the three decision seats now answer with a small free model rather than with Haiku. That is a real drop in decision quality, accepted on the same ground the 2026-09-23 change accepted a model swap at all: the measured alternative on 2026-09-29 was no decision run whatsoever. Nobody has benchmarked that model at those three seats, so what the desk produces in that state is unknown rather than merely worse — that is what item 188 stays open for.
+
+**What catches it next time.** A test reads `config/settings.yaml` itself and fails if ANY seat's reachable routes land on a single provider. That is stronger than a runtime key check, which was written and then deliberately removed: refusing to boot over a missing credential for an opt-out resilience feature would have turned the fix into an outage of its own, and it broke a legal single-provider configuration on the first run.
+
 ### 2026-09-30 — the nightly unprotected figure was the one thing the owner asked to keep, and it had stopped being printed anywhere
 
 **In plain words.** Every night a handful of holdings carry a part-share that has no stop on it until the next morning. The owner agreed to that trade-off on one condition: that he could always see the dollar amount. On the night of 2026-09-29 the amount was $2,264 across nine holdings, and it appeared in no message and on no screen — only in a log file nobody reads. The condition he attached to his own agreement had quietly stopped being met.
