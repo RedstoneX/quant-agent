@@ -28,8 +28,6 @@ from src.execution.scale_in import (
     pending_protection_symbols,
     prepare_long_add,
     prepare_short_add,
-    scale_in_symbols_to_skip,
-    short_add_is_blocked,
 )
 from src.models import PortfolioDecision, Position, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
@@ -134,12 +132,6 @@ def _shortable(pipeline):
 
 def test_repeg_enabled_stays_false():
     assert ExecutionConfig().repeg_enabled is False
-
-
-def test_short_add_is_blocked_only_when_already_short():
-    assert short_add_is_blocked([_cop_position(qty=-8)], "COP") is True
-    assert short_add_is_blocked([_cop_position(qty=8)], "COP") is False
-    assert short_add_is_blocked([], "COP") is False
 
 
 def test_most_protective_long_stop_is_the_highest_trigger():
@@ -1021,19 +1013,6 @@ def test_pending_protection_symbols_includes_scale_in_wal(tmp_path):
     db.close()
 
 
-def test_scale_in_symbols_to_skip_when_an_entry_is_still_working():
-    db = MagicMock()
-    db.get_pending_protection_restores.return_value = [
-        {"symbol": "COP", "sell_order_id": WAL_SCALE_IN_SENTINEL},
-    ]
-    broker = MagicMock()
-    broker.list_open_entry_order_ids.return_value = ["buy-1"]
-    with patch(
-        "src.execution.scale_in.trading_session_lock_held", return_value=False,
-    ):
-        assert scale_in_symbols_to_skip(broker, db) == {"COP"}
-
-
 # --------------------------------------------------------------------------
 # D7 emergency cover: a NON-RAISING broker rejection is still a FAILED cover
 # --------------------------------------------------------------------------
@@ -1170,3 +1149,106 @@ def test_emergency_cover_source_guards_its_submit_result():
     assert "logger.critical" in handler_src, (
         "the failure branch no longer pages the operator"
     )
+
+
+# --- board item 193: the cancel-to-rearm window is measured in-run ---------
+
+def test_unprotected_window_seconds_is_none_without_a_cancel():
+    """A naked add cancelled nothing, so there is no window to report."""
+    from src.execution.scale_in import unprotected_window_seconds
+    assert unprotected_window_seconds(None) is None
+
+
+def test_unprotected_window_seconds_measures_from_the_cancel_ack():
+    import time as _t
+    from src.execution.scale_in import unprotected_window_seconds
+    seconds = unprotected_window_seconds(_t.monotonic() - 2.0)
+    assert seconds is not None and 1.5 <= seconds <= 5.0
+
+
+def test_prepare_long_add_stamps_the_cancel_acknowledgement():
+    """The stamp exists only once the BROKER confirmed the cancel."""
+    from src.execution.scale_in import LongAddPrep
+    assert LongAddPrep.not_scale_in().cancel_confirmed_at is None
+
+
+def test_window_event_carries_duration_notional_and_wal_pairing():
+    from src.pipeline_stages import _record_scale_in_window_closed
+    import time as _t
+
+    recorded = []
+
+    class _DB:
+        pass
+
+    class _P:
+        db = _DB()
+
+    class _Ctx:
+        run_id = "r1"
+        decision_id = None
+
+    import src.pipeline_stages as ps
+    orig = ps._record_pipeline_event
+    ps._record_pipeline_event = (
+        lambda pipeline, ctx, symbol, stage, outcome, reason="", **d:
+        recorded.append((symbol, stage, outcome, reason, d))
+    )
+    try:
+        _record_scale_in_window_closed(
+            _P(), _Ctx(),
+            {
+                "symbol": "AAPL", "cancel_confirmed_at": _t.monotonic() - 1.0,
+                "held_qty_before": -12.0, "reference_price": 100.0,
+                "wal_row_id": 7, "stop_price": 90.0,
+            },
+            covered=True,
+        )
+        # No cancel happened -> nothing emitted at all.
+        _record_scale_in_window_closed(
+            _P(), _Ctx(), {"symbol": "MSFT", "cancel_confirmed_at": None},
+            covered=True,
+        )
+    finally:
+        ps._record_pipeline_event = orig
+
+    assert len(recorded) == 1
+    symbol, stage, outcome, reason, details = recorded[0]
+    assert (symbol, stage) == ("AAPL", "scale_in")
+    assert outcome == "unprotected_window_closed"
+    assert reason == "rearm_acknowledged"
+    assert details["window_seconds"] >= 0.5
+    # A short's held qty is negative; the WHOLE position was exposed.
+    assert details["held_qty_before"] == 12.0
+    assert details["exposed_notional"] == 1200.0
+    assert details["wal_row_id"] == 7
+
+
+def test_window_event_says_so_when_the_rearm_did_not_land():
+    from src.pipeline_stages import _record_scale_in_window_closed
+    import src.pipeline_stages as ps
+    import time as _t
+
+    recorded = []
+    orig = ps._record_pipeline_event
+    ps._record_pipeline_event = (
+        lambda pipeline, ctx, symbol, stage, outcome, reason="", **d:
+        recorded.append((outcome, reason, d))
+    )
+    try:
+        _record_scale_in_window_closed(
+            object(), object(),
+            {
+                "symbol": "NOK", "cancel_confirmed_at": _t.monotonic(),
+                "held_qty_before": 5.0, "reference_price": 0.0,
+            },
+            covered=False,
+        )
+    finally:
+        ps._record_pipeline_event = orig
+
+    outcome, reason, details = recorded[0]
+    assert outcome == "unprotected_window_still_open"
+    assert reason == "rearm_did_not_land"
+    # Price unknowable -> the notional is None, never a fabricated 0.
+    assert details["exposed_notional"] is None

@@ -7,8 +7,9 @@ import pytest
 
 from src.config import RiskConfig
 from src.data.correlation import (
-    CLUSTER_CORRELATION_THRESHOLD,
     build_correlation_matrix,
+    cluster_peers,
+    correlation_clusters,
     highly_correlated_peers,
 )
 from src.models import OHLCV, Position, TradeDecision
@@ -210,10 +211,134 @@ def test_correlation_cluster_silent_when_below_threshold():
         action="BUY", symbol="NVDA", allocation_pct=15,
         entry_price=200, stop_loss=190, take_profit=220, reasoning="x",
     )
-    corr_matrix = {"NVDA": {"JPM": 0.3}}  # low — not clustered
+    # A two-name matrix has no structure to read and would now (correctly,
+    # conservatively) come back as one cluster, so the book here is a real
+    # one: a tight tech pair plus JPM sitting outside it.
+    corr_matrix = {
+        "NVDA": {"AVGO": 0.88, "JPM": 0.30},
+        "AVGO": {"NVDA": 0.88, "JPM": 0.28},
+        "JPM": {"NVDA": 0.30, "AVGO": 0.28},
+    }  # JPM is not in NVDA's cluster
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = engine.check(
             decision=decision, positions=positions,
             total_value=100_000,
             correlation_matrix=corr_matrix,)
     assert not any(v.rule == "correlation_cluster" for v in violations)
+
+
+# --- Structural clustering (item 186): no correlation cutoff anywhere ---
+
+def _sym_matrix(pairs: dict, symbols: list[str]) -> dict:
+    out: dict[str, dict[str, float]] = {s: {} for s in symbols}
+    for (a, b), v in pairs.items():
+        out[a][b] = v
+        out[b][a] = v
+    return out
+
+
+def test_no_cutoff_constant_is_exported():
+    """The module must not reintroduce a picked correlation level."""
+    import src.data.correlation as corr_mod
+    assert not hasattr(corr_mod, "CLUSTER_CORRELATION_THRESHOLD")
+
+
+def test_clusters_read_a_theme_out_of_a_mixed_book():
+    import itertools
+    syms = ["OKLO", "CEG", "VST", "CCJ", "JPM", "KO", "XOM"]
+    theme = {"OKLO", "CEG", "VST", "CCJ"}
+    pairs = {
+        (a, b): (0.88 if a in theme and b in theme else 0.12)
+        for a, b in itertools.combinations(syms, 2)
+    }
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == [
+        ["CCJ", "CEG", "OKLO", "VST"]
+    ]
+
+
+def test_structureless_book_falls_back_to_one_cluster():
+    """No jump in the tree -> nothing to read -> ration as one bet, not none.
+
+    MEASURED trade-off, pinned here so it cannot regress silently: a book with
+    no structure (every pair alike) returns ONE cluster rather than none. That
+    over-rations rather than under-rations, which is the safe direction, and
+    it is what lets the cut work without any guard constant.
+    """
+    import itertools
+    syms = ["JPM", "KO", "XOM", "PG"]
+    pairs = {(a, b): 0.10 for a, b in itertools.combinations(syms, 2)}
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == [
+        ["JPM", "KO", "PG", "XOM"]
+    ]
+
+
+def test_themes_survive_a_realistic_book_and_do_not_flip_under_noise():
+    """The case the old 0.7 cutoff existed for, and the stability measurement.
+
+    An 11-name book: three real themes (within-theme corr 0.78-0.90), ordinary
+    equity-beta correlation between them (0.35-0.50), and three loners. The
+    partition must come out 3/3/2 AND must not move when every correlation is
+    nudged by up to 0.03 — the sampling wobble between two sessions.
+
+    MEASURED 2026-09-30: 0 flips in 400 draws as shipped. The earlier version
+    of the cut, which also bracketed the edge lengths at d = 0, returned NO
+    clusters on this same book and flipped in 11.8% of the same 400 draws.
+    """
+    import itertools
+    import random
+    syms = ["OKLO", "CEG", "VST", "NVDA", "AVGO", "AMD",
+            "KO", "PG", "XOM", "JPM", "GLD"]
+    theme = {"OKLO": "a", "CEG": "a", "VST": "a",
+             "NVDA": "b", "AVGO": "b", "AMD": "b", "KO": "c", "PG": "c"}
+    rnd = random.Random(3)
+    base = {}
+    for a, b in itertools.combinations(syms, 2):
+        ta, tb = theme.get(a), theme.get(b)
+        if ta and ta == tb:
+            base[(a, b)] = rnd.uniform(0.78, 0.90)
+        elif ta and tb:
+            base[(a, b)] = rnd.uniform(0.35, 0.50)
+        else:
+            base[(a, b)] = rnd.uniform(0.05, 0.35)
+    expected = [["AMD", "AVGO", "NVDA"], ["CEG", "OKLO", "VST"], ["KO", "PG"]]
+    assert correlation_clusters(syms, _sym_matrix(base, syms)) == expected
+
+    noise = random.Random(11)
+    for _ in range(200):
+        jittered = {k: v + noise.uniform(-0.03, 0.03) for k, v in base.items()}
+        assert correlation_clusters(syms, _sym_matrix(jittered, syms)) == expected
+
+
+def test_uniformly_related_book_is_one_cluster():
+    import itertools
+    syms = ["NVDA", "AVGO", "AMD", "MU"]
+    pairs = {(a, b): 0.85 for a, b in itertools.combinations(syms, 2)}
+    assert correlation_clusters(syms, _sym_matrix(pairs, syms)) == [
+        ["AMD", "AVGO", "MU", "NVDA"]
+    ]
+
+
+def test_clustering_stays_transitive():
+    """A~B and B~C puts A, B and C in one bet even though A and C are apart."""
+    matrix = {
+        "A": {"B": 0.90, "C": 0.10},
+        "B": {"A": 0.90, "C": 0.90},
+        "C": {"A": 0.10, "B": 0.90},
+    }
+    assert correlation_clusters(["A", "B", "C"], matrix) == [["A", "B", "C"]]
+
+
+def test_cluster_peers_excludes_the_symbol_itself():
+    import itertools
+    syms = ["OKLO", "CEG", "JPM", "KO"]
+    theme = {"OKLO", "CEG"}
+    pairs = {
+        (a, b): (0.92 if a in theme and b in theme else 0.10)
+        for a, b in itertools.combinations(syms, 2)
+    }
+    peers = cluster_peers("OKLO", ["CEG", "JPM", "KO"], _sym_matrix(pairs, syms))
+    assert peers == ["CEG"]
+
+
+def test_cluster_peers_empty_without_a_matrix():
+    assert cluster_peers("NVDA", ["AVGO"], {}) == []

@@ -1906,6 +1906,77 @@ def work_md_growth_budget(before_size: int,
     return int(headroom * share)
 
 
+#: The share of the cap at which CI starts SAYING SO out loud, instead of
+#: the first warning being a merge that will not go through. PROVISIONAL —
+#: no owner ruling states a share; 0.8 is picked so the nudge lands while
+#: `work_md_growth_budget` still allows 10,000 bytes of growth (half the
+#: remaining fifth), i.e. while an ordinary change still fits and pruning
+#: is a choice rather than a precondition. Deliberately EARLIER than
+#: `scripts/check_board_hygiene.py:NEAR_CAP_SHARE` (0.90), which is the
+#: owner-facing ops report: the people who can prune see it first.
+WORK_MD_WARN_SHARE = 0.8
+
+
+def work_md_cap_warning(size: int,
+                        cap: int = WORK_MD_GROWTH_CAP_BYTES,
+                        share: float = WORK_MD_WARN_SHARE) -> str | None:
+    """A loud, early notice that `docs/WORK.md` is filling up, or None.
+
+    Board item 200: the first signal that the cap was binding used to be a
+    failed merge. This fires while there is still room to act, and is
+    emitted from the same test that enforces the growth budget so it shows
+    up in the same place a budget failure already speaks.
+    """
+    if size < share * cap:
+        return None
+    return (
+        f"docs/WORK.md is at {size:,} of its {cap:,}-byte cap "
+        f"({size / cap:.0%} full, {max(cap - size, 0):,} bytes left). A "
+        f"single change may still grow it by "
+        f"{work_md_growth_budget(size, cap):,} bytes, and that allowance "
+        "keeps shrinking. Retire finished items into "
+        "docs/INCIDENT_HISTORY.md, or move argument and history out of open "
+        "items into docs/BOARD_NOTES.md, before the cap starts refusing "
+        "work."
+    )
+
+
+def work_md_cap_blocker(before_size: int,
+                        after_size: int,
+                        cap: int = WORK_MD_GROWTH_CAP_BYTES) -> str | None:
+    """Whether the hard cap should REFUSE this change, as a message, or None.
+
+    Board item 200: the cap used to be a bare `size <= cap` on the file as
+    it stands, which deadlocks. Once the file is over the cap — by one
+    change that squeaked past a stale base measurement, or by two changes
+    racing — that assertion fails for EVERY subsequent change, including
+    the retirement that would bring it back under. Nothing can merge, and
+    the only exits are force-merging or raising the cap, which is exactly
+    what the cap exists to prevent.
+
+    So: over the cap is a failure, EXCEPT for a change that strictly
+    shrinks the file. A shrinking change is always allowed to land, however
+    far over the cap the file still is — it is the only kind of change that
+    can end the state. Growth is refused as hard as before, and a change
+    that first pushes the file over the cap is refused at the change that
+    does it, not at the next one.
+    """
+    if after_size <= cap:
+        return None
+    if after_size < before_size:
+        return None  # a prune: always lands, this is the way out
+    return (
+        f"docs/WORK.md is {after_size:,} bytes, over the {cap:,}-byte cap "
+        f"(it was {before_size:,} before this change) — finished or decided "
+        "content has likely crept back in; MOVE it to "
+        "docs/INCIDENT_HISTORY.md, or move argument and history into "
+        "docs/BOARD_NOTES.md, rather than deleting it, and never raise this "
+        "number to make room. A change that SHRINKS the file is exempt from "
+        "this cap even while it is still over, so the prune that fixes this "
+        "can always merge."
+    )
+
+
 _DECISION_RE = re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-\u2014] (.+)$")
 
 

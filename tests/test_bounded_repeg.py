@@ -1442,3 +1442,81 @@ def test_a_dead_stream_and_dead_rest_places_nothing_and_cancels_nothing(db, aler
     pipeline.broker.submit_order.assert_called_once()
     pipeline.broker.place_entry_protection.assert_called_once()
     assert pipeline.broker.place_entry_protection.call_args.kwargs["order_id"] == "ord-1"
+
+
+# --------------------------------------------------------------------------
+# board item 197 — the bound has a side
+# --------------------------------------------------------------------------
+
+FLOOR_40BPS = round(REFERENCE * (1 - 40 / 10_000.0), 2)
+
+
+def _short_spec(db, *, limit_price):
+    spec = _spec(db, limit_price=limit_price)
+    spec["side"] = "sell_short"
+    return spec
+
+
+def test_short_entry_repegs_DOWN_to_the_floor_never_up(db):
+    """A short sale fills at the bid, so its slippage bound is BELOW the
+    reference. The pre-197 code built one ceiling above it and would have
+    walked a short's limit away from any fill."""
+    pipeline = _pipeline(db)
+    spec = _short_spec(db, limit_price=99.90)
+    # Bid is below our 99.90 offer, so the resting short is not marketable.
+    pipeline.broker.get_latest_quote.return_value = {
+        "ask_price": 99.60, "bid_price": 99.50,
+    }
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+    pipeline.broker.wait_for_order_terminal.side_effect = ["accepted", "filled"]
+
+    order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert order_id == "ord-2"
+    new_limit = pipeline.broker.replace_entry_limit.call_args[0][1]
+    assert new_limit == pytest.approx(FLOOR_40BPS)
+    # The load-bearing assertion: the limit moved TOWARD the market, not away.
+    assert new_limit < spec["limit_price"]
+    assert new_limit < REFERENCE
+    assert spec["ceiling"] == pytest.approx(FLOOR_40BPS)
+
+
+def test_short_limit_already_at_the_floor_has_no_room(db):
+    """The room test must invert too, or a short sitting at its bound reads
+    as having room and a short far from it reads as already there."""
+    pipeline = _pipeline(db)
+    spec = _short_spec(db, limit_price=FLOOR_40BPS)
+
+    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert (order_id, carried) == ("ord-1", 0.0)
+    assert spec["repeg_outcome"] == "no_room"
+    pipeline.broker.replace_entry_limit.assert_not_called()
+
+
+def test_short_already_marketable_is_left_alone(db):
+    """Bid at or above the short's offer means it can fill as it stands."""
+    pipeline = _pipeline(db)
+    spec = _short_spec(db, limit_price=99.90)
+    pipeline.broker.get_latest_quote.return_value = {
+        "ask_price": 100.10, "bid_price": 99.95,
+    }
+
+    order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert order_id == "ord-1"
+    assert spec["repeg_outcome"] == "market_within_limit"
+    pipeline.broker.replace_entry_limit.assert_not_called()
+
+
+def test_buy_side_bound_is_unchanged_by_the_side_fix(db):
+    """Regression guard: the long path must still build a ceiling ABOVE."""
+    pipeline = _pipeline(db)
+    spec = _spec(db, limit_price=100.10)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+    pipeline.broker.wait_for_order_terminal.side_effect = ["accepted", "filled"]
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert spec["ceiling"] == pytest.approx(CEILING_40BPS)
+    assert pipeline.broker.replace_entry_limit.call_args[0][1] > REFERENCE

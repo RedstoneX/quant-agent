@@ -223,6 +223,12 @@ UNDECIDED_OUTCOMES = frozenset({
     "attempted",      # funding — a cash sweep is in flight
     "not_decided",    # evidence_gate — the gate says so in the word itself
     "protective_sell_cancelled",   # scale_in — a bookkeeping step mid-add
+    # Board item 193 — the measured cancel-to-rearm window. Same character as
+    # `protective_sell_cancelled`: it records how long the held position was
+    # naked, it rules on nothing, and a candidate whose last event is one of
+    # these was neither refused nor survived.
+    "unprotected_window_closed",
+    "unprotected_window_still_open",
 })
 
 #: Outcomes where something DID rule, and ruled that no new entry was the
@@ -701,11 +707,6 @@ def streak_and_skipped(
     streak.reverse()
     skipped.reverse()
     return streak, skipped
-
-
-def unvarying_streak(sessions: list[SessionShape]) -> list[SessionShape]:
-    """Just the streak — see `streak_and_skipped`."""
-    return streak_and_skipped(sessions)[0]
 
 
 # ---------------------------------------------------------------------------

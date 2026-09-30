@@ -538,6 +538,31 @@ Mon-Fri 08:45 ET. It exists because PR #111 sat merged-but-undeployed for
 eight hours with nothing catching it (`docs/WORK.md` records that incident).
 Merged and deployed as part of `32c174b`; verified firing.
 
+**Second correction (2026-09-30): an alert that repeats and changes nothing
+is not a control.** The production checkout ran six commits behind
+`origin/main` and the drift alert fired five times that day without anything
+happening; desk alerts are also muted, so the message reached nobody in any
+case. Two changes: `scripts/check_deploy_drift.py` now writes a durable
+snapshot to `data/alerting/deploy_drift.json` on every run (in sync or not,
+so "checked and clean" is distinguishable from "never checked"), and `/health`
+reads it and reports `deploy_drift`, turning the board degraded while the box
+is behind. A snapshot older than 26 hours is reported `stale`, which is also
+degraded — the checker having stopped is itself a fault. The Telegram push is
+now deduplicated per day AND per `origin/main` tip using the same
+`load_state`/`save_state` helpers the three stop-coverage alerts already share,
+so a new merge still speaks but the same drift does not repeat.
+
+**Stale CI results (2026-09-30).** A push to an already-open PR branch was
+measured to create no `pull_request` workflow run at all, leaving the previous
+commit's failure standing and auto-merge unable to fire; roughly six finished
+changes sat stuck that way for hours. Cause not established — `test.yml`
+cancels superseded PR runs, and GitHub also drops run creation under load —
+so `scripts/check_stale_ci.py` tests the observable state instead: every open
+non-draft PR whose head commit has no completed `tests` run is reported, a
+run is dispatched for it, and the job exits non-zero so the scheduled
+`stale-ci` workflow goes red in the Actions tab. A cancelled run counts as
+stale; it is not an answer.
+
 **Correction (2026-08-31): the drift alarm could not actually send.** The unit
 installed on 2026-08-27 declared no `EnvironmentFile` and invoked the venv
 Python directly on the script, unlike the session units which go through an

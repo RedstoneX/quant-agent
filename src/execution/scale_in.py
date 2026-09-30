@@ -59,6 +59,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,12 @@ class LongAddPrep:
     #: `restore_after_failed_add` / `restore_cancelled_stops` re-place on
     #: this side so a short's stop is never restored as a sell.
     side: str = "sell"
+    #: `time.monotonic()` at the instant the BROKER acknowledged the cancel
+    #: as terminal (board item 193). The unprotected window is measured from
+    #: here to the broker's acknowledgement of the rearm, so the figure bounds
+    #: real exposure rather than database write times. None when nothing was
+    #: cancelled, which is exactly the case with no window to measure.
+    cancel_confirmed_at: float | None = None
 
     @classmethod
     def not_scale_in(cls) -> "LongAddPrep":
@@ -116,11 +123,6 @@ def held_signed_qty(positions: list | None, symbol: str) -> float:
         except (TypeError, ValueError):
             return 0.0
     return 0.0
-
-
-def short_add_is_blocked(positions: list | None, symbol: str) -> bool:
-    """True when SHORT would add to an existing short. Item 73 must land first."""
-    return held_signed_qty(positions, symbol) < 0
 
 
 def most_protective_long_stop(prices: list[float]) -> float:
@@ -424,6 +426,7 @@ def prepare_long_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "scale-in: cancelled and confirmed %d protective sell(s) for %s "
         "so a BUY add can submit; WAL row %s covers the unprotected window",
@@ -661,12 +664,25 @@ def prepare_short_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "short scale-in: cancelled and confirmed %d protective buy-stop(s) "
         "for %s so a SELL add can submit; WAL row %s covers the unprotected "
         "window", len(live), symbol, prep.wal_row_id,
     )
     return prep
+
+
+def unprotected_window_seconds(cancel_confirmed_at: float | None) -> float | None:
+    """Seconds since the broker acknowledged the cancel, or None.
+
+    Board item 193. Both ends are `time.monotonic()` readings taken in the
+    session that did the cancelling, so the figure is immune to clock changes
+    and does not depend on when any row was written.
+    """
+    if cancel_confirmed_at is None:
+        return None
+    return round(max(0.0, time.monotonic() - cancel_confirmed_at), 3)
 
 
 def restore_after_failed_add(
@@ -775,20 +791,6 @@ def pending_protection_symbols(db: Any) -> set[str]:
     except Exception:  # noqa: BLE001
         return set()
     return {str(r["symbol"]) for r in (rows or []) if r.get("symbol")}
-
-
-def scale_in_symbols_to_skip(broker: Any, db: Any) -> set[str]:
-    """Scale-in symbols the watchdog/repair must not touch right now."""
-    symbols = pending_scale_in_symbols(db)
-    if not symbols:
-        return set()
-    if trading_session_lock_held():
-        return set(symbols)
-    skip: set[str] = set()
-    for symbol in symbols:
-        if list_open_entry_ids(broker, symbol):
-            skip.add(symbol)
-    return skip
 
 
 def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
@@ -924,6 +926,42 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
         logger.error("scale-in rearm-failure owner alert failed: %s", exc)
+
+
+def pending_scale_in_rows_from_path(
+    db_path: str | os.PathLike | None,
+) -> list[dict]:
+    """Read-only lookup of the LIVE scale-in write-ahead rows, with the row's
+    own `created_at` and the quantity the cancel exposed.
+
+    Board item 193. `pending_scale_in_symbols_from_path` answers only "which
+    symbols is the watchdog to stay away from". That is the question the skip
+    needs and the wrong question for the owner, who has to be told WHICH
+    position is deliberately unguarded and for HOW LONG. `created_at` is the
+    row's write time, not the broker's cancel acknowledgement, so a duration
+    derived from it is an approximation of the window and is labelled as one
+    everywhere it is shown; the exact figure is the `unprotected_window_closed`
+    event the session itself emits when the rearm returns. Empty on any
+    failure: this is observability and must never break the sweep.
+    """
+    if not db_path:
+        return []
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT id, symbol, created_at, position_qty_before_sell "
+                "FROM pending_protection_restores WHERE sell_order_id = ? "
+                "ORDER BY created_at ASC",
+                (WAL_SCALE_IN_SENTINEL,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+    return [dict(r) for r in rows if r["symbol"]]
 
 
 def pending_scale_in_symbols_from_path(db_path: str | os.PathLike | None) -> set[str]:
