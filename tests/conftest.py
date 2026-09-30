@@ -141,6 +141,10 @@ def _isolate_cwd(tmp_path, monkeypatch):
                 return resolved
             return f"sector-{symbol}"
 
+        # A test that is ABOUT the lookup failing needs the real function
+        # back. Publish it under a name such a test can restore, so opting
+        # out is explicit and greppable rather than a hidden ordering trick.
+        _sector_offline.real_get_sector = _real_get_sector
         monkeypatch.setattr(_broker, "_get_sector", _sector_offline)
     except Exception:  # pragma: no cover - module not importable in a stub env
         pass
