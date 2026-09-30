@@ -1,0 +1,36 @@
+# Stored-target check — pairs with quant-agent-stored-target-check.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-stored-target-check.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-stored-target-check.timer
+[Unit]
+Description=quant-agent stored take-profit check (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# READ-ONLY in both directions: the database is opened with mode=ro, and the
+# check writes no trade row, no target and no order. It re-derives each held
+# position's take-profit from that position's OWN pinned entry, horizon and
+# setup type and compares it to the number stored on the row — it never
+# corrects anything, because a correction to a live position record is an
+# owner-gated act and not something a timer does at 09:05 unattended.
+#
+# Through the wrapper, NOT the venv Python directly — same reason as
+# run_board_hygiene_check.sh and run_drift_check.sh, plus one this check has
+# on its own: the qamc systemd user environment carries neither the
+# TELEGRAM_* variables (so a finding would reach nobody) nor the market-data
+# credentials (so there would be no bars to measure against in the first
+# place).
+ExecStart=/home/qamc/quant-agent/scripts/run_stored_target_check.sh
+# Exit 1 means "at least one held position is aiming past a standing wall" —
+# that is a FINDING about the book, not a failure of the unit, and it is
+# expected to be non-zero for as long as such a position is held. Without
+# this systemd would mark the service failed on every run that works, and a
+# permanently-failed unit is one the next operator silences.
+SuccessExitStatus=0 1
+# Above the wrapper's own 600+30s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
+TimeoutStartSec=700
+StandardOutput=journal
+StandardError=journal

@@ -184,3 +184,85 @@ def test_drift_and_the_wall_finding_are_different_severities():
     ).read_text()
     assert "return 1 if bad else 0" in source
     assert 'r.get("finding") == FINDING_AIMS_PAST_WALL' in source
+
+
+# --------------------------------------------------------------------------
+# The guard is SCHEDULED, not a merge gate, and it says the true state.
+# --------------------------------------------------------------------------
+
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+def test_the_guard_is_wired_to_a_timer_and_a_wrapper():
+    """Wired to nothing is the same as not existing. A unit, a timer and a
+    wrapper that sources `.env` — the shape every other read-only check on
+    this box uses, so `scripts/merge_and_deploy.sh` installs it with no
+    change (copy + daemon-reload + enable)."""
+    service = _REPO / "scripts/systemd/quant-agent-stored-target-check.service"
+    timer = _REPO / "scripts/systemd/quant-agent-stored-target-check.timer"
+    wrapper = _REPO / "scripts/run_stored_target_check.sh"
+    for path in (service, timer, wrapper):
+        assert path.is_file(), path
+    # The wrapper is the entry point, not the venv Python — without `.env`
+    # the notifier disables itself and the market-data credentials are
+    # missing, so a finding would neither be measured nor delivered.
+    svc = service.read_text()
+    assert "run_stored_target_check.sh" in svc
+    assert 'source "${PROJECT_ROOT}/.env"' in wrapper.read_text()
+    # Exit 1 is a finding about the book, not a unit failure.
+    assert "SuccessExitStatus=0 1" in svc
+    # The timer must actually be installable, or the deploy enables nothing.
+    assert "[Install]" in timer.read_text()
+    assert "WantedBy=timers.target" in timer.read_text()
+
+
+def test_the_guard_is_not_a_blocking_ci_check():
+    """It is legitimately red today on findings the desk cannot correct. A
+    permanently-red required check blocks every unrelated merge and is
+    switched off within a day, and a switched-off check reports nothing."""
+    workflows = list((_REPO / ".github" / "workflows").glob("*.yml")) + list(
+        (_REPO / ".github" / "workflows").glob("*.yaml"),
+    )
+    assert workflows, "no workflows found — the assertion below is vacuous"
+    for wf in workflows:
+        assert "check_stored_targets" not in wf.read_text(), wf
+
+
+def test_the_report_names_what_it_cannot_correct_rather_than_going_quiet():
+    """The owner's standing rule: a finding the desk cannot correct is
+    reported as exactly that — the true state, named, not an error and not
+    silence. And no number is substituted for the refusal."""
+    from scripts.check_stored_targets import format_message
+
+    msg = format_message([
+        {"symbol": "AAPL", "finding": FINDING_AIMS_PAST_WALL,
+         "stored_target": 359.93, "derived_target": 344.81},
+        {"symbol": "META", "finding": FINDING_AIMS_PAST_WALL,
+         "stored_target": 785.20, "derived_target": None},
+    ])
+    # The correctable one carries both numbers so the reader can check it.
+    assert "$359.93" in msg and "$344.81" in msg
+    # The uncorrectable one is named, said to be wrong, and said to have no
+    # replacement — and its stored number is never swapped for a guess.
+    assert "META" in msg and "$785.20" in msg
+    assert "CANNOT recompute" in msg
+    assert "not inventing a number" in msg
+
+
+def test_a_clean_book_says_nothing():
+    """A check that speaks every session is a check nobody reads, and a
+    daily all-clear is how a real finding gets scrolled past."""
+    from scripts.check_stored_targets import FINDING_AGREES, format_message
+
+    assert format_message([]) == ""
+    assert format_message([
+        {"symbol": "ETN", "finding": FINDING_DRIFT, "stored_target": 487.69},
+        {"symbol": "UPS", "finding": FINDING_AGREES, "stored_target": 92.82},
+    ]) == ""
+
+
+def test_the_wall_test_has_exactly_one_definition():
+    """The scheduled report and the live revision path must never disagree
+    about whether a wall is in the way, so there is one function and the
+    script imports it."""
+    assert walls_between is tr.walls_between
