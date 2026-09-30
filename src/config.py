@@ -514,9 +514,12 @@ class ExecutionConfig(BaseModel):
     """Max basis points of adverse excursion from the verified reference
     price an entry limit may sit. A BUY limit is capped this far above the
     reference; a SHORT limit is floored this far below it — the same bound,
-    opposite side (fillability parity, not a second risk budget). When the
-    displayed quote is already beyond this, the entry is skipped with
-    reason `slippage_gated` rather than submitted as an unfillable order."""
+    opposite side (fillability parity, not a second risk budget). A
+    displayed quote already beyond this no longer skips the entry (board
+    item 183, 2026-09-30 — all 8 recorded skips were venue noise, not a
+    market that had run): the order is still sent at the bound, which it
+    cannot fill through, and the far-through quote is recorded as a
+    `venue_quote_through_ceiling` pipeline event."""
 
     repeg_enabled: bool = False
     """Master switch for the single-shot entry reprice. OFF by default so

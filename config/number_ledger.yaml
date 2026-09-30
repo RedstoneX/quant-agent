@@ -285,6 +285,17 @@ numbers:
       9 recorded slippage skips had the quoted ask 391bp to 1466bp above the
       reference. Between roughly 32bp and 390bp no observed order distinguishes
       one value from another. Measured, and still unsourced at 40.
+      2026-09-30 (board item 183): this belt is now the ONLY thing bounding
+      what an entry pays. The far-through-quote skip that used to sit on top
+      of it was deleted after all 8 of its recorded firings measured as venue
+      noise rather than a market that had run, so an order whose displayed
+      quote sits past the ceiling is now sent at the ceiling instead of
+      refused. Nothing about the belt's own value changed, and the deletion
+      does not make 40 any more identified -- but it does start producing the
+      observation the censoring problem below was blocked on: an entry that
+      rests unfilled at the ceiling is now a recorded outcome rather than a
+      refusal, so the rate at which 40bp is too tight to fill becomes
+      measurable from the desk's own orders for the first time.
     open_question: >-
       The distribution is now measured and it does not pick a percentile,
       because the belt censors its own tail. Answering this needs data the
@@ -4883,42 +4894,6 @@ numbers:
       Board item 138: the COVER mirror of the 0.5% SELL offset
       (src/pipeline_stages.py:6638-6642), 1.005 = 2 - 0.995. One number,
       mirrored.
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[2]
-    value: 1.02
-    status: arbitrary
-    site: src/pipeline_stages.py
-    note: >-
-      An entry BUY is skipped when the quoted ask sits more than 2% above the
-      slippage cap (src/pipeline_stages.py:7242-7247); the comment says the
-      multiple is 'deliberately loose because the input is'.
-      MEASURED 2026-09-26 from this desk's own records (board item 183; method
-      in docs/INCIDENT_HISTORY.md), which is exactly the comparison the open
-      question below asked for. All 9 recorded skips on this gate had the IEX
-      ask 391bp to 1466bp above the reference; the 30 orders that filled
-      normally came in at or under 40bp. This multiple fires at about 241bp
-      above the reference (the 40bp cap x 1.02), which sits in a ~350bp band
-      containing NO observation at all. Every multiple from about 1.004 to
-      about 1.035 would have produced an identical decision on every case the
-      desk has ever seen, so the data cannot identify 1.02 -- it can only show
-      the gate is nowhere near either population.
-    open_question: >-
-      The measurement is done and it does not pick a value. What remains is
-      whether the desk accepts a gate whose exact multiple is unidentifiable
-      inside a 350bp gap in its own data, or replaces the IEX-ask test with
-      something the desk can actually source. Nothing measurable decides it.
-    cost_while_unanswered: >-
-      Too tight and approved entries are skipped on venue noise; too loose and
-      an entry is sent into a market that has genuinely run away.
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[3]
-    value: 1.02
-    status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[2]
-    base_value: 1.02
-    note: >-
-      The SHORT mirror of the BUY skip: bid < floor / 1.02
-      (src/pipeline_stages.py:7330-7335); its comment says 'Not a new
-      percentage'.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25
     status: derived
