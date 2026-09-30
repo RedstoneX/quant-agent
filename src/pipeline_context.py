@@ -435,11 +435,11 @@ class PMFacts:
     # when there was no book to measure.
     invested_target_pct: float | None = None
     deployment_gap_pp: float | None = None  # invested - target (negative = under)
-    # Tolerance band for the ⚠️ section below: the desk's own sourced cash
-    # reserve (`cash_sweep.reserve_pct`), not an invented number — see
+    # Tolerance band for the ⚠️ section below: the owner-set advisory
+    # band (`deployment_gap.band_pct`), not an invented number — see
     # `src.risk.rules.deployment_gap_band_pct`. None only when the pipeline
     # never set it (e.g. a bare `PMFacts()` in a test); render() then falls
-    # back to `CashSweepConfig`'s own declared default rather than a number
+    # back to `DeploymentGapConfig`'s own declared default rather than a number
     # invented here.
     deployment_gap_band_pct: float | None = None
 
@@ -624,8 +624,8 @@ class PMFacts:
         # not by a prompt nudge to trim.
         band = self.deployment_gap_band_pct
         if band is None:
-            from src.config import CashSweepConfig
-            band = CashSweepConfig.model_fields["reserve_pct"].get_default()
+            from src.config import DeploymentGapConfig
+            band = DeploymentGapConfig.model_fields["band_pct"].get_default()
         # 2026-09-18 fix: the not-under branch used to read
         # "invested=109.4% vs mandate=100% (gap +9pp)". On 2026-09-17 the PM
         # cited that line, alongside the (separately fixed) "no margin" cash
