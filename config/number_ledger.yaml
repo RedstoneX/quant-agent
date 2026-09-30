@@ -2412,6 +2412,31 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md:330 attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
+  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    value: 3.0
+    status: sourced
+    site: src/risk/alignment_exit.py
+    note: >-
+      Give-back below the last CHART MARK (a moving average or a
+      confirmed-broken structural level), in the name's own ATR, before the
+      alignment exit reads the move as over. Deliberately NOT
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`: that constant is
+      `arbitrary`, is 1.0, and measures excess over noise FROM ENTRY. Its
+      own ledger note records the 2026-09-26 research finding that every
+      published analogue sits at roughly 2.8-3.5 ATR, and gives exactly one
+      reason for not moving it to 3.0 -- that Wilder's Volatility System ARC
+      (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit (3.0 x
+      ATR default, 2.5 tight, 3.5-4.0 loose) measure give-back from a
+      RUNNING EXTREME rather than from entry, making them the closest
+      analogue but not an exact fit. THIS quantity IS measured from a
+      running reference, so that mismatch does not apply and the published
+      default is an exact fit rather than an approximate one. 3.0 is the
+      named system's own default and the centre of the published band.
+    open_question: >-
+      The published band is 2.5-3.5; 3.0 is its centre and the Chandelier
+      default. Where inside that band the desk sits is an owner appetite
+      dial, not a research question -- tightening to 2.5 realises gains
+      sooner and whipsaws more often.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
     value: 1
     status: arbitrary
