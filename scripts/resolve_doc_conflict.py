@@ -131,21 +131,22 @@ _HEADING_RE = re.compile(r"^#{1,6}\s")
 #: The item-opening shape, deliberately the same one `status_board` reads with
 #: (`_ITEM_OPEN_RE`): bold, optional strikethrough, number, dot.
 _ITEM_OPEN_RE = re.compile(r"^\*\*(?:~~)?(\d+)\.\s*(.*)$")
+#: The retired-numbers list is APPEND-ONLY as of 2026-09-30 (board-number-
+#: allocation work): a single shared line used to carry both number lists,
+#: and every closure edited that SAME physical line, so every parallel
+#: retirement collided on it — even under `merge_retired`'s own union rule,
+#: because GitHub's own squash-merge (what actually runs on GitHub.com) never
+#: invokes a local git merge driver at all; the driver only ever helped a
+#: manual local merge. Each retirement now APPENDS one new `- retired
+#: <scheme>: N[, N, ...]` line instead, which is why `_RETIRED_BULLET_RE`
+#: matches a LINE, not a whole-line-spanning number-list structure: two
+#: closures appending two different lines merge with no conflict, by
+#: construction, with no special-casing needed at all — see `_lift_retired`
+#: and `merge_retired`, which now union LINES rather than reparsing one
+#: line's two number lists.
 _RETIRED_LINE_RE = re.compile(r"^\*\*Retired item numbers")
-
-#: The retired-numbers line, parsed from ITS OWN two number lists rather than
-#: by scraping integers out of the surrounding sentences. Scraping is not a
-#: hypothetical failure: it pulled stray digits out of neighbouring prose and
-#: corrupted the line badly enough that a separate session had to reconstruct
-#: it from git history.
-_RETIRED_STRUCT_RE = re.compile(
-    r"^(?P<pre>.*?)"
-    r"(?P<queue>\d[\d,\s]*\d|\d)"
-    r"(?P<mid>\s+in this queue, and\s+)"
-    r"(?P<gate>\d[\d,\s]*\d|\d)"
-    r"(?P<post>\s+in the PM test gate\b.*)$",
-    re.S,
-)
+_RETIRED_BULLET_RE = re.compile(r"^-\s+retired\s+(queue|gate):\s*[\d,\s]*\d\s*$")
+_RETIRED_BULLET_NUMS_RE = re.compile(r"^-\s+retired\s+(queue|gate):\s*([\d,\s]*\d)\s*$")
 
 _GATE_HEADING_PREFIX = "## PM TEST GATE"
 _QUEUE_HEADING_PREFIX = "## THE FUNNEL QUEUE"
@@ -172,7 +173,11 @@ class Section:
     items: dict[int, str] = field(default_factory=dict)
     order: list[int] = field(default_factory=list)
     post: str = ""
-    retired: str | None = None  # the retired line, lifted out of `post`
+    #: The `- retired <scheme>: ...` bullet lines, lifted out of `post` in
+    #: the order they appeared. Empty list, never None, when there are none
+    #: — a section with nothing retired merges exactly like one with nothing
+    #: else in `post`.
+    retired: list[str] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -270,21 +275,27 @@ def parse_sections(text: str) -> list[Section]:
     return sections
 
 
-def _lift_retired(post: str) -> tuple[str | None, str]:
-    """Pull the retired-numbers line out of a section's trailing prose so it
-    merges by its own rule (union of the two parsed lists) instead of as
-    ordinary text."""
+def _lift_retired(post: str) -> tuple[list[str], str]:
+    """Pull every `- retired <scheme>: ...` bullet line out of a section's
+    trailing prose so the LIST OF LINES merges by union (see `merge_retired`)
+    instead of as one ordinary text blob. The explanatory `**Retired item
+    numbers...**` header line is deliberately NOT lifted — it changes rarely,
+    and an ordinary 3-way prose merge (`merge_text`) is exactly right for it.
+
+    All lifted lines collapse to a SINGLE placeholder at the position of the
+    first one found; the block is always contiguous in practice (a header
+    paragraph immediately followed by the running list), and rendering
+    re-expands the placeholder into however many lines the merge produced.
+    """
     out: list[str] = []
-    retired: str | None = None
+    retired: list[str] = []
+    placeholder_written = False
     for line in post.splitlines(keepends=True):
-        if _RETIRED_LINE_RE.match(line):
-            if retired is not None:
-                raise Refusal(
-                    "Two retired-item-numbers lines in one section. There is "
-                    "exactly one such line; a human has to say which is real."
-                )
-            retired = line
-            out.append("\x00RETIRED\x00\n")
+        if _RETIRED_BULLET_RE.match(line.rstrip("\n")):
+            retired.append(line if line.endswith("\n") else line + "\n")
+            if not placeholder_written:
+                out.append("\x00RETIRED\x00\n")
+                placeholder_written = True
             continue
         out.append(line)
     return retired, "".join(out)
@@ -298,8 +309,8 @@ def render_sections(sections: list[Section]) -> str:
         for n in s.order:
             parts.append(s.items[n])
         post = s.post
-        if s.retired is not None:
-            post = post.replace("\x00RETIRED\x00\n", s.retired)
+        if s.retired:
+            post = post.replace("\x00RETIRED\x00\n", "".join(s.retired))
         parts.append(post)
     return "".join(parts)
 
@@ -507,47 +518,50 @@ def _merge_order(base_order, ours_order, theirs_order, keep: set) -> list:
 # ---------------------------------------------------------------------------
 
 
-def parse_retired(line: str) -> tuple[list[int], list[int], str, str, str]:
-    m = _RETIRED_STRUCT_RE.match(line)
-    if not m:
-        raise Refusal(
-            "The retired-item-numbers line no longer has the shape this tool "
-            "reads (`<numbers> in this queue, and <numbers> in the PM test "
-            "gate`), so its two lists cannot be parsed from their own source "
-            "text. Refusing rather than scraping integers out of the prose — "
-            "that is what corrupted the line last time.\n"
-            f"--- line ---\n{line}"
-        )
-    nums = lambda s: [int(x) for x in re.findall(r"\d+", s)]
-    return (nums(m.group("queue")), nums(m.group("gate")),
-            m.group("pre"), m.group("mid"), m.group("post"))
+def parse_retired_lines(lines: list[str]) -> tuple[list[int], list[int]]:
+    """The queue and gate number lists, read out of a list of `- retired
+    <scheme>: ...` bullet lines — never scraped out of surrounding prose.
+    Raises `Refusal` if any line does not have that exact shape; every line
+    reaching here should already have matched `_RETIRED_BULLET_RE`, so a
+    failure here means something upstream let a malformed line through."""
+    queue: list[int] = []
+    gate: list[int] = []
+    for line in lines:
+        m = _RETIRED_BULLET_NUMS_RE.match(line.strip())
+        if not m:
+            raise Refusal(
+                "A retired-numbers line no longer has the shape this tool "
+                "reads (`- retired queue: N, N, ...` or `- retired gate: "
+                f"N, N, ...`).\n--- line ---\n{line}"
+            )
+        nums = [int(x) for x in re.findall(r"\d+", m.group(2))]
+        (queue if m.group(1) == "queue" else gate).extend(nums)
+    return queue, gate
 
 
-def merge_retired(base: str | None, ours: str | None, theirs: str | None) -> str | None:
-    """Rebuild the retired-numbers line as the UNION of both sides' lists,
-    parsed from the two source lists — never regex-scraped out of the prose
-    around them."""
-    if ours is None and theirs is None:
-        return None
-    if ours is None:
-        return theirs
-    if theirs is None:
-        return ours
-    if ours == theirs:
-        return ours
-    o_q, o_g, o_pre, o_mid, o_post = parse_retired(ours)
-    t_q, t_g, t_pre, t_mid, t_post = parse_retired(theirs)
-    b_q, b_g, b_pre, b_mid, b_post = ([], [], o_pre, o_mid, o_post)
-    if base is not None:
-        b_q, b_g, b_pre, b_mid, b_post = parse_retired(base)
+def merge_retired(base: list[str], ours: list[str], theirs: list[str],
+                  ) -> list[str]:
+    """The retired-numbers block as the UNION OF LINES from both sides —
+    never a re-parse-and-rebuild of one shared line's two number lists.
 
-    queue = sorted(set(o_q) | set(t_q))
-    gate = sorted(set(o_g) | set(t_g))
-    pre = merge_text(b_pre, o_pre, t_pre, "the retired-numbers line's opening")
-    mid = merge_text(b_mid, o_mid, t_mid, "the retired-numbers line's middle")
-    post = merge_text(b_post, o_post, t_post, "the retired-numbers line's tail")
-    return (f"{pre}{', '.join(str(n) for n in queue)}{mid}"
-            f"{', '.join(str(n) for n in gate)}{post}")
+    This is deliberately almost too simple to need a docstring: the list is
+    append-only, so a line either exists (on any side) or it does not, and a
+    line is never edited or removed once written. Two closures that each
+    append ONE NEW line therefore merge by just keeping both lines — the
+    exact case that used to be a guaranteed conflict when both edited the
+    same single physical line, union rule or not, because that rule only
+    ran under this LOCAL driver and GitHub's own squash-merge never invokes
+    it. A line is deduplicated by its exact text (ignoring only a trailing
+    newline) so re-running a merge, or a line both sides happened to add
+    identically, never doubles it up.
+    """
+    seen: dict[str, None] = {}
+    for group in (base or (), ours or (), theirs or ()):
+        for line in group:
+            key = line.rstrip("\n")
+            if key not in seen:
+                seen[key] = None
+    return [key + "\n" for key in seen]
 
 
 # ---------------------------------------------------------------------------
@@ -603,11 +617,11 @@ def resolve_work(base: str, ours: str, theirs: str) -> str:
                             f"{_scheme_label(s_o.heading)!r}"),
             retired=merge_retired(s_b.retired, s_o.retired, s_t.retired),
         )
-        if sec.retired is not None and "\x00RETIRED\x00" not in sec.post:
+        if sec.retired and "\x00RETIRED\x00" not in sec.post:
             raise Refusal(
-                "The retired-item-numbers line survived the merge but its "
+                "The retired-numbers lines survived the merge but their "
                 "place in the surrounding prose did not. Refusing rather than "
-                "guessing where to put it back."
+                "guessing where to put them back."
             )
         out.append(sec)
         expected[s_o.key] = set(merged_items)
@@ -722,13 +736,12 @@ def _assert_status_board_agrees(text: str, want: dict[str, set[int]]) -> None:
 
 
 def _assert_retired_disjoint(text: str, want: dict[str, set[int]]) -> None:
-    line = None
+    lines: list[str] = []
     for s in parse_sections(text):
-        if s.retired is not None:
-            line = s.retired
-    if line is None:
+        lines.extend(s.retired)
+    if not lines:
         return
-    queue, gate, *_ = parse_retired(line)
+    queue, gate = parse_retired_lines(lines)
     live = {
         _QUEUE_HEADING_PREFIX: set(queue),
         _GATE_HEADING_PREFIX: set(gate),

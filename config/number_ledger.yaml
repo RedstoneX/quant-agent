@@ -642,9 +642,9 @@ numbers:
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
     note: >-
-      A target inside this many ATRs of entry is not a destination - price is
-      already there and the reward is one ordinary session's noise
-      (src/config.py:876-878).
+      Flags a target inside this many ATRs of entry as thin reward - price is
+      barely off it and the whole payoff is one ordinary session's noise.
+      Labels the derived target; does not select it (changed 2026-09-30).
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
     status: arbitrary

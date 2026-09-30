@@ -166,7 +166,12 @@ def test_sec_insider_actionable_role_is_downgraded_when_directions_conflict():
     assert finding.economic_role == "historical"
     verdict = finding.to_verdict()
     assert verdict.conviction == "low"
-    assert verdict.magnitude < 1.0
+    # The downgrade shows up in CONVICTION, which is the only thing this seat
+    # states: smart_money has no strength scale, so its magnitude is the
+    # absence (None) and always was the same value on every call — asserting
+    # it is "below the maximum" never tested the downgrade (item 65,
+    # 2026-09-26; before that date the same assertion read 0.0 < 1.0).
+    assert verdict.magnitude is None
 
 
 def test_insider_age_alone_does_not_disqualify_support():

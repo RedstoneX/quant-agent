@@ -605,24 +605,59 @@ def test_no_board_item_disappears_without_being_retired():
     before = set(heading.findall(r.stdout))
     now_text = work_md.read_text()
     after = set(heading.findall(now_text))
-    retired_line = next(
-        (l for l in now_text.splitlines() if l.startswith("**Retired item numbers")), "",
-    )
-    # Only the two number LISTS count as retired: "<list> in this queue" and
-    # "and <list> in the PM test gate". The rest of that line is prose that
-    # mentions live item numbers ("moved to item 76", "68/69/70"), and reading
-    # those as retired would let a live item vanish unnoticed.
-    queue_part = retired_line.split(" in this queue", 1)[0]
-    gate_match = re.search(r"and ([\d,\s]+) in the PM test gate", retired_line)
-    retired = set(re.findall(r"\b(\d+)\b", queue_part.split("**", 2)[-1]))
-    if gate_match:
-        retired |= set(re.findall(r"\d+", gate_match.group(1)))
+    # Only the retired-numbers BULLET LINES count as retired (see
+    # `_parse_retired_numbers`, which reads them the same way the merge
+    # driver and `next_board_number.py` do). The explanatory header line
+    # above them is prose that mentions live item numbers ("moved to item
+    # 76", "68/69/70"), and reading those as retired would let a live item
+    # vanish unnoticed.
+    queue_retired, gate_retired = _parse_retired_numbers(now_text)
+    retired = {str(n) for n in (*queue_retired, *gate_retired)}
     vanished = sorted(before - after - retired, key=int)
     assert not vanished, (
         f"board item(s) {vanished} existed in docs/WORK.md before this change and are "
         "now gone without being added to the retired-numbers line. Either restore "
         "them, or close them properly (write up in docs/INCIDENT_HISTORY.md, add the "
         "number to the retired line)."
+    )
+
+
+def test_retired_bullet_lines_are_never_edited_or_removed():
+    """Append-only, enforced, not just documented (board-number-allocation
+    work, 2026-09-30). Every `- retired <scheme>: ...` line present in
+    `docs/WORK.md` before this change must still be present, byte for byte,
+    now. New lines may be added; no existing line may be edited or deleted —
+    that is the entire structural fix: two closures that only ever ADD a
+    line, never touch an existing one, cannot conflict with each other,
+    whether or not the merge driver ever runs (GitHub's own squash-merge
+    never runs it at all).
+    """
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    work_md = repo / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    base = _work_md_base_ref()
+    if base is None:
+        if os.environ.get("GITHUB_ACTIONS"):
+            raise AssertionError("cannot read main-before-this-change to compare retired lines against")
+        pytest.skip("no reachable origin to compare retired lines against")
+    r = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return
+    bullet_re = re.compile(r"^-\s+retired\s+(?:queue|gate):\s*[\d,\s]*\d\s*$")
+    before = {l.strip() for l in r.stdout.splitlines() if bullet_re.match(l.strip())}
+    now = {l.strip() for l in work_md.read_text().splitlines() if bullet_re.match(l.strip())}
+    changed = sorted(before - now)
+    assert not changed, (
+        "these retired-numbers bullet line(s) existed before this change and "
+        "are now gone or edited: " + "; ".join(changed) + " — a closure may "
+        "only APPEND a brand new line, never edit or remove an existing one."
     )
 
 
@@ -2600,47 +2635,39 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
 # cannot recur silently a third time.
 # ---------------------------------------------------------------------------
 
-_RETIRED_LINE_RE = re.compile(
-    r"\*\*Retired item numbers — never reuse\.\*\*\s*"
-    r"(?P<queue>[0-9, ]*?)\s*in this queue,\s*and\s*"
-    r"(?P<gate>[0-9, ]*?)\s*in the PM test gate",
-)
-
-
+#: As of 2026-09-30 the retired list is APPEND-ONLY: `- retired queue: ...` /
+#: `- retired gate: ...` bullet lines, one per closure, never a single shared
+#: line. Parsed through `scripts.board_numbers` (which itself reuses
+#: `scripts.resolve_doc_conflict.parse_retired_lines`, the merge driver's own
+#: parser) — never re-implemented here, so this test can never quietly
+#: disagree with what a real merge unions or what `next_board_number.py`
+#: reads.
 def _parse_retired_numbers(work_md_text: str) -> tuple[list[int], list[int]]:
-    """Pull the two retired-number lists out of the line's own prose.
+    """Pull the two retired-number lists out of every bullet line.
 
-    Fails loudly (not with a silent empty list) if the line is missing or its
-    number lists do not parse as clean comma-separated integers — a stray
-    value (a stray word, a duplicate separator, anything a regex sweep or a
-    typo could introduce) must break this parse, not slide through as zero
-    retired numbers.
+    Fails loudly (not with a silent empty list) if no retired line is found,
+    or a line does not parse as a clean comma-separated integer list — a
+    stray value (a stray word, a duplicate separator, anything a regex sweep
+    or a typo could introduce) must break this parse, not slide through as
+    zero retired numbers.
     """
-    m = _RETIRED_LINE_RE.search(work_md_text)
-    assert m is not None, (
-        "the 'Retired item numbers — never reuse.' line is missing, or no "
-        "longer matches 'N, N, ... in this queue, and N, N, ... in the PM "
-        "test gate' — every consumer of this line needs that exact shape"
+    from scripts import board_numbers as bn
+
+    result = bn.retired_item_numbers(work_md_text)
+    assert result.error is None, (
+        "the retired-numbers list could not be parsed: "
+        f"{result.error} — every consumer of this line needs the exact "
+        "'- retired queue: N, N, ...' / '- retired gate: N, N, ...' shape"
     )
-
-    def _clean_ints(blob: str, label: str) -> list[int]:
-        blob = blob.strip()
-        assert blob, f"the {label} retired-number list is empty"
-        parts = [p.strip() for p in blob.split(",")]
-        for p in parts:
-            assert re.fullmatch(r"[0-9]+", p), (
-                f"the {label} retired-number list contains a non-integer "
-                f"entry ({p!r}); it must be a clean comma-separated list "
-                "of item numbers, nothing else"
-            )
-        numbers = [int(p) for p in parts]
-        assert len(numbers) == len(set(numbers)), (
-            f"the {label} retired-number list repeats a number"
-        )
-        return numbers
-
-    return _clean_ints(m.group("queue"), "funnel-queue"), \
-        _clean_ints(m.group("gate"), "PM-gate")
+    assert len(result.queue) == len(set(result.queue)), (
+        "the funnel-queue retired-number list repeats a number across its "
+        "bullet lines"
+    )
+    assert len(result.gate) == len(set(result.gate)), (
+        "the PM-gate retired-number list repeats a number across its "
+        "bullet lines"
+    )
+    return result.queue, result.gate
 
 
 def test_the_retired_numbers_line_parses_as_a_clean_integer_list():
@@ -4044,18 +4071,26 @@ def test_the_retired_line_carries_no_per_item_reason():
 
     This is a merge property, not a style rule. `docs/INCIDENT_HISTORY.md` is
     append-only and the doc merge driver reconciles it entry by entry, so any
-    number of closures can record themselves at once. The retired-numbers line
-    is one physical line: the driver merges the two NUMBER LISTS as a union and
-    never conflicts on them, but the prose around them goes through
-    `merge_text`, which refuses when both sides edited it
-    (`scripts/resolve_doc_conflict.py`). While every retirement appended its
-    reason here, two closures in flight could never both land — measured
-    2026-09-26, with eight retirement PRs open and serialising on this one line
-    while the work itself had been done in parallel. The line had reached 8,965
-    characters of re-narration of what the history file already said.
+    number of closures can record themselves at once. While every retirement
+    appended its reason to the retired-numbers line, two closures in flight
+    could never both land — measured 2026-09-26, with eight retirement PRs
+    open and serialising on this one line while the work itself had been done
+    in parallel. The line had reached 8,965 characters of re-narration of
+    what the history file already said.
 
-    The surviving prose is the part that is NOT a per-item reason: which
-    numbers never existed, which schemes are separate, where a residue lives.
+    As of 2026-09-30 the NUMBERS moved off this line entirely, onto their own
+    append-only `- retired <scheme>: N, N, ...` bullet lines below it (see
+    `_parse_retired_numbers`) — each closure appends a new line rather than
+    editing the shared one, which is what actually fixed the every-closure-
+    collides problem (the old union-of-two-lists merge rule only ever helped
+    a LOCAL merge; GitHub's own squash-merge never runs it). This test now
+    covers only the explanatory HEADER line that introduces the list: the
+    surviving prose there is the part that is NOT a per-item reason — which
+    numbers never existed, which schemes are separate, where a residue lives
+    — and a per-item reason must never creep back onto it OR onto a bullet
+    line (a bullet line carrying anything but digits, commas and spaces after
+    its scheme tag already fails to parse — see
+    `scripts/resolve_doc_conflict.py::parse_retired_lines`).
     """
     line = next(
         (l for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()

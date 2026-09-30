@@ -88,9 +88,28 @@ news, macro and smart_money were each deriving `magnitude` from the very
 field they also reported as `conviction` — so those seats fed one signal in
 twice, at three different unsourced spacings, before this weight ever saw
 them. Those tables are deleted; every seat but Technical now carries
-`NO_STATED_STRENGTH` (0.0) on any call, so what this prior weights for those
+`NO_STATED_STRENGTH` on any call, so what this prior weights for those
 four seats is exactly the seat's stated conviction. Technical keeps a real
 gradient, because its rating rungs are a strength it actually states.
+
+**2026-09-26 (item 65, retired).** `NO_STATED_STRENGTH` was the literal
+`0.0` until this date, and the magnitude term below summed it like any other
+seat's number. Verified before changing it: a sum is additively neutral to a
+zero, no consumer of `magnitude` averages or thresholds it, so the ORDER this
+module produced was never affected and no money moved on the placeholder.
+What WAS wrong is that `components["magnitude"]` was reported — to the
+Portfolio Manager's own prompt — as a strength "summed over N seats" when
+four of five could not contribute to it, and nothing in the types stopped the
+next consumer from reading four placeholders as four measured zeros. The
+constant is now `None`, the term below sums only over the seats that
+actually state a strength, and `RankedCandidate` names both sets. The
+arithmetic is unchanged by construction and pinned by test; the honesty of
+what it claims to be is not.
+
+The decision that goes with it, recorded rather than left open: direction
+plus confidence is everything news, macro, smart_money and earnings can say.
+See `src/models.py::NO_STATED_STRENGTH` for the per-seat re-check and the two
+conditions that would reopen it.
 
 **2026-09-13, same day, ON REVIEW BEFORE MERGE — the aggregation is a SUM,
 not an average, and that is the load-bearing change.** See `rank_verdicts`
@@ -179,8 +198,17 @@ def conviction_score(conviction: str) -> float:
 
 
 def score_verdict(verdict: AnalystVerdict) -> float:
-    """One verdict's composite: magnitude + conviction_score, weight 1 each."""
-    return round(verdict.magnitude + conviction_score(verdict.conviction), 4)
+    """One verdict's composite: magnitude + conviction_score, weight 1 each.
+
+    A seat that states NO strength (`magnitude is None`, item 65) contributes
+    only its conviction — it is absent from the strength half rather than
+    present at zero. Numerically the same total as before 2026-09-26, by
+    construction: the term it used to add was `0.0`. The difference is that
+    the absence is now readable instead of inferred, here and on
+    `RankedCandidate.no_strength_seats`.
+    """
+    strength = 0.0 if verdict.magnitude is None else verdict.magnitude
+    return round(strength + conviction_score(verdict.conviction), 4)
 
 
 def risk_reward_of(verdict: AnalystVerdict) -> float | None:
@@ -251,6 +279,17 @@ class RankedCandidate:
     #: indistinguishable downstream because neutral verdicts were dropped
     #: silently. See `rank_verdicts`.
     neutral_seats: list[str] = field(default_factory=list)
+    #: Of the seats that DID lean, the ones that stated a strength of their
+    #: own and therefore appear in `components["magnitude"]`. Item 65,
+    #: 2026-09-26: the strength term now names its own coverage instead of
+    #: implying every leaning seat contributed to it.
+    strength_seats: list[str] = field(default_factory=list)
+    #: The complement: seats that leaned but have no strength scale at all
+    #: (news, macro, smart_money, earnings — see
+    #: `src/models.py::NO_STATED_STRENGTH`). They are ABSENT from the
+    #: strength term, not present at zero, and they still contribute their
+    #: weighted conviction to `score` exactly as before.
+    no_strength_seats: list[str] = field(default_factory=list)
 
     @property
     def seats(self) -> list[str]:
@@ -381,14 +420,31 @@ def rank_verdicts(
         weights = [seat_weight(v.seat) for v in group]
         # SUM, not mean — see the docstring. Adding an agreeing seat adds a
         # non-negative term and can never reduce the total.
-        magnitude = sum(v.magnitude * w for v, w in zip(group, weights))
+        #
+        # Item 65, 2026-09-26: the strength term sums ONLY over the seats
+        # that state a strength. Four of five seats state none
+        # (`magnitude is None`) and are simply not in this sum — where
+        # before they were in it at a literal 0.0. The total is identical
+        # (that is the point: no number changed, no candidate reorders) but
+        # `components["magnitude"]` no longer claims coverage it never had,
+        # and a placeholder can no longer be mistaken for a measurement by
+        # whatever reads this next.
+        stated = [
+            (v, w) for v, w in zip(group, weights) if v.magnitude is not None
+        ]
+        magnitude = sum(v.magnitude * w for v, w in stated)
         conviction = sum(
             conviction_score(v.conviction) * w for v, w in zip(group, weights)
         )
-        components = {
-            "magnitude": round(magnitude, 4),
-            "conviction_score": round(conviction, 4),
-        }
+        components = {"conviction_score": round(conviction, 4)}
+        # ABSENT, not zero, when no seat on this name has a strength scale —
+        # the same distinction `risk_reward_tiebreak` already makes below.
+        # A reader (and the PM's own prompt) can then tell "every seat that
+        # leaned here leans without a strength scale" from "the seats that
+        # do have one all read zero", which the old constant made
+        # indistinguishable.
+        if stated:
+            components["magnitude"] = round(magnitude, 4)
         # Ordering signal, never added into `score` itself, so it changes
         # ORDER among ties without changing the composite any existing
         # caller/test reads. Weighted the same way as the score's own
@@ -450,6 +506,12 @@ def rank_verdicts(
             verdicts=sorted(group, key=lambda v: v.seat),
             components=components,
             neutral_seats=sorted(neutral_by_symbol.get(symbol, {})),
+            strength_seats=sorted(
+                v.seat for v in group if v.magnitude is not None
+            ),
+            no_strength_seats=sorted(
+                v.seat for v in group if v.magnitude is None
+            ),
         ))
     # Highest composite first; on a tie, highest reward:risk next (real
     # information about the candidate, see module docstring fix #2 and the
