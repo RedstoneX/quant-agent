@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 137, (
+    assert MAX_ARBITRARY_ENTRIES == 136, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -363,6 +363,22 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "arbitrary content is not reduced, and item 185's own question -- "
         "how volatile a name may this desk hold -- is not answered. "
         "A row left the ledger, so the count is lowered in the same commit."
+        "138 -> 137 on 2026-09-30, board item 183: "
+        "`src.pipeline_stages.ExecutionStage._run_session:factor[2]` (1.02), "
+        "the far-through-quote entry skip, was DELETED rather than sourced or "
+        "ratified; its `derived` mirror factor[3] (the SHORT "
+        "`bid < floor / 1.02`) went with it and never counted toward this "
+        "total. Measured against all 8 firings the gate had on record "
+        "(`execution_skip` evidence rows, 2026-09-15 to 2026-09-24, the whole "
+        "life of that telemetry): in every one of the 8 the reference was "
+        "right and the quote was wrong -- the quoted ask sat 392-669bp above "
+        "the highest price the name traded anywhere in a +/-15 minute window, "
+        "and 6 of the 8 were trading strictly inside the ceiling they were "
+        "refused against. The gate also guarded no money the ceiling was not "
+        "already guarding, because a limit at the ceiling cannot fill through "
+        "it. No multiple replaces it; a far-through quote is now a recorded "
+        "`venue_quote_through_ceiling` event and not a decision. A row left "
+        "the ledger, so the count is lowered in the same commit."
     )
 
 
