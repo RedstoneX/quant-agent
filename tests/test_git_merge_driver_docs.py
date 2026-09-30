@@ -43,7 +43,9 @@ WORK_BASE = """\
 
 **2. The second queue item — OPEN.** Queue body two.
 
-**Retired item numbers — never reuse.** 4 in this queue, and 1 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`.
+**Retired item numbers — never reuse.** APPEND-ONLY: closing an item adds one new line below.
+- retired queue: 4
+- retired gate: 1
 """
 
 
