@@ -22,6 +22,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — decision at the target rebuilt on the desk's own level-break standard; the swing read is gone (item 75, owner ruling 2026-09-25)
+
+**What the owner ruled (2026-09-25).** Re-derive the target every review; lean towards selling when a close hits it; hold only if the chart is showing higher highs and higher lows, moving the stop up.
+
+**What failed three times.** PR #726 read "higher highs and higher lows" off swing pivots at the moment of the touch. A confirmed pivot needs the pivot window on both sides, so the read was five-plus sessions stale by construction; each patch that added provisional (unconfirmed) swings made it either hold through a fifteen-session bleed or flip on one gap bar or bad print, and its final "two consecutive closes" rule borrowed the desk's break standard's name while dropping the break margin.
+
+**What shipped instead.** The at-target exception is the desk's ONE existing level-break test applied to the target itself (`src/risk/target_revision.py::target_level_broken`, the same margin and two-close confirmation the stop side uses): a close at the target sells in full by default; the first decisive close beyond it holds one session pending confirmation; two consecutive decisive closes hold the runner, extend the target to the next structure in reach, and leave the trailing stop to carry it. Reach is one-way per target and persisted (`at_target_reached` evidence rows), so a poke through the target that closes back inside, or a run that bleeds back within one margin of the target, is sold at the first review that sees it. The measured-move target, which sat on no structural level, now files its break flag against the target price so the confirmation can be read. The every-review re-derivation with the extend-only guard, the shared per-review bars fetch, the protected full-close path, the durable per-symbol reasons and the owner-surface wording are carried from #726; the swing read, the trailing-stop-only latch and its management rows are not.
+
+**Stated cost.** A breakout that closes at its target but less than one break margin beyond it is banked at the target that day; the desk does not re-enter automatically.
+
 ### 2026-09-26 — the economics feed kept running out of time before it asked for the last few readings (item 187 stays open on its own criterion, item 119's attempt half closed)
 
 **In plain words:** the desk fetches fifteen economic readings before it decides anything. It gives that whole job ninety seconds. Whoever went first was allowed to spend as much of the ninety seconds as it liked, so on a bad morning one reading that hung on a dead connection would use the lot and the desk simply never asked for the last five or eight at all. Nobody chose that; it fell out of sharing one stopwatch with no rule about whose turn it was. Each reading now has its own reserved slice of the ninety seconds, and nothing — not a retry, not a second attempt, not the little lookup that only decides how to LABEL a reading — can spend a slice that belongs to a reading still waiting in line.

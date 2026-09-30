@@ -3284,6 +3284,76 @@ class Database:
     #: alike. A flag is NEVER a silent no-op and never a blank.
     TARGET_REVISION_KIND = "target_revision"
 
+    #: A durable record that a completed close REACHED a position's target.
+    #: Reach is one-way for a given target (owner ruling 2026-09-25, decision
+    #: at target): a position that touched its target and then closed back
+    #: inside has not un-reached it, it has failed to hold beyond it, and the
+    #: at-target rule must still see it. One row per (position, target) is
+    #: enough: the row carries the target it was reached at, so an EXTENDED
+    #: target (a different price) starts unreached without any re-arm write,
+    #: and only rows newer than the position's own opening row count — a
+    #: re-entry in the same ticker is a different position.
+    AT_TARGET_REACHED_KIND = "at_target_reached"
+    #: The at-target decision itself, one row per review per symbol
+    #: (`src.risk.exit_guard.decide_at_target`'s code and owner reason).
+    AT_TARGET_DECISION_KIND = "at_target_decision"
+
+    def record_at_target_reached(
+        self, *, run_id: str, symbol: str, target_price: float, bar_date: str,
+    ) -> int:
+        """File that the completed close dated `bar_date` reached
+        `target_price` for this position."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.AT_TARGET_REACHED_KIND, scope="symbol",
+            symbol=str(symbol).upper(),
+            evidence_json=json.dumps({
+                "target_price": float(target_price), "bar_date": str(bar_date),
+            }),
+        )
+
+    def get_at_target_reached(self, symbols) -> dict[str, dict]:
+        """The NEWEST reached-target row per symbol, payload plus its
+        `timestamp`. A symbol absent from the result has no row, and callers
+        read that as "not reached before" — a missing row can never put a
+        position to the at-target decision on its own.
+        """
+        return self._newest_rows_by_symbol(symbols, kind=self.AT_TARGET_REACHED_KIND)
+
+    def get_last_at_target_decision(self, symbols) -> dict[str, dict]:
+        """The NEWEST at-target decision row per symbol (its `code`,
+        `target_price`, `timestamp`), so a review can tell whether the state
+        it is about to voice is a CHANGE or a repeat of last review's."""
+        return self._newest_rows_by_symbol(symbols, kind=self.AT_TARGET_DECISION_KIND)
+
+    def _newest_rows_by_symbol(self, symbols, *, kind: str) -> dict[str, dict]:
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp FROM specialist_evidence "
+            "WHERE agent_name='risk_manager' AND kind=? AND symbol IN "
+            f"({placeholders}) ORDER BY timestamp DESC, id DESC LIMIT 500"
+        )
+        with self._lock:
+            rows = self.conn.execute(sql, (kind, *wanted)).fetchall()
+        out: dict[str, dict] = {}
+        for row in rows:
+            row = dict(row)
+            sym = row["symbol"]
+            if sym in out:
+                continue
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            payload["timestamp"] = row.get("timestamp")
+            out[sym] = payload
+        return out
+
     def save_target_level_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
     ) -> int:

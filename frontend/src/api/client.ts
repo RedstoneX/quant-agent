@@ -1121,6 +1121,9 @@ export interface HoldingHorizon {
 export interface HoldingTakeProfit {
   price: number | null;
   plain: string;
+  /** True when reaching this price puts the position to the desk's
+   *  sell-or-hold decision (default: bank the win in full). False only
+   *  when there is no target on the row. Never a resting order either way. */
   acted_on: boolean;
   note: string;
 }

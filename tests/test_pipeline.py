@@ -2405,9 +2405,10 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
 
 
 def test_no_fixed_gain_automatic_profit_trim_exists():
-    """Doctrine, mechanically enforced (owner decision 2026-09-12): the ONLY
-    exit rule is the trailing stop. A preset profit target — sell a fixed
-    fraction at a fixed gain, decided in advance — is rejected outright,
+    """Doctrine, mechanically enforced (owner decision 2026-09-12, amended
+    2026-09-25): profit-taking is the trailing stop plus a decision at a
+    STRUCTURAL target read off the chart. A preset profit target — sell a
+    fixed fraction at a fixed gain, decided in advance — is rejected outright,
     the same way reward:risk was removed as a universal gate: the reward
     side of a trade cannot be predetermined because the holding period is
     unknown. The deleted `_auto_take_profit` (15% off at +30%, tuned on ONE

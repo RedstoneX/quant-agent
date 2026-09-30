@@ -40,9 +40,13 @@ read-only API-safety invariant in `src/api/db_reads.py` untouched.
   a person writes them ("11 September 2026").
 * A missing field SAYS it is missing. It is never omitted and never
   zeroed — "not recorded" is information, a silent gap is not.
-* The take-profit price is labelled for what it actually is. Nothing in
-  the desk executes against it (see `NOTHING_ACTS_ON_TARGET`), so
-  showing it as an instruction would be a lie.
+* The take-profit price is labelled for what it actually is — a DECISION
+  point the desk re-derives from the chart every review, whose default is
+  to sell the position in full when a close reaches it (owner ruling
+  2026-09-25). It is not a standing sell order and nothing fires intrabar,
+  so `note` says both halves; calling it merely a "reference" the desk
+  never acts on, which this view did until that ruling shipped, is the
+  lie it was written to avoid.
 """
 
 from __future__ import annotations
@@ -53,19 +57,24 @@ from datetime import date
 from typing import Any
 
 #: Verbatim, because getting this wrong misleads the owner about whether
-#: the desk will ever sell at the number on his screen. Established from
-#: code and history on 2026-09-18: the automatic take-profit trim was
-#: deleted on 2026-09-12 (`docs/INCIDENT_HISTORY.md`, "the automatic
-#: take-profit trim is deleted; the trailing stop is the only exit rule");
-#: no caller anywhere passes `take_profit_price` to the broker; and
-#: "taking profits" / "TARGET_BREACH" are deliberately absent from the
-#: list of reasons that can justify an exit (`src/pipeline.py`).
-NOTHING_ACTS_ON_TARGET = (
-    "Nothing sells at this price. It is a reference the desk recorded at "
-    "entry, not an instruction. Since 12 September 2026 the trailing stop "
-    "is the only automatic exit, and reaching a profit target is not by "
-    "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+#: the desk will ever sell at the number on his screen. The fixed "sell 15%
+#: at +30%" trim was deleted 2026-09-12 and a bare "sell at X" rule is not
+#: coming back. The owner ruling of 2026-09-25 made two things true that this
+#: line must state honestly: the target is RE-DERIVED from the chart every
+#: review (no longer frozen at entry), and reaching it is a decision whose
+#: DEFAULT is to sell the position in full. The old name
+#: (`NOTHING_ACTS_ON_TARGET`) described the deleted trim's absence and
+#: stopped being true on 2026-09-25.
+WHAT_HAPPENS_AT_TARGET = (
+    "This price is a reassessment point, not a standing sell order. The desk "
+    "re-derives it from the chart every review, so it stays current rather "
+    "than frozen at entry, and it only ever moves further from where we "
+    "bought. When a day's close reaches it, the desk sells the whole position "
+    "by default and banks the win. The one exception is a chart that has "
+    "clearly broken through the number — a close more than one day's range "
+    "past it, held for two sessions in a row, the same test the desk uses "
+    "for any level — in which case it holds, moves the target up to the next "
+    "level in reach, and lets the trailing stop carry the position."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry
@@ -704,6 +713,7 @@ def build_holding_why(
     revised = bool(
         tp and entry_target and round(tp, 2) != round(entry_target, 2)
     )
+    note = WHAT_HAPPENS_AT_TARGET
     if tp:
         move = ""
         if entry_price:
@@ -711,18 +721,18 @@ def build_holding_why(
                 f", about {abs(tp - entry_price) / entry_price * 100:.1f}% from "
                 "where we bought"
             )
-        plain = f"Reference target: ${tp:,.2f}{move}."
+        plain = f"Decision target: ${tp:,.2f}{move}."
         if revised and entry_target:
             plain = (
-                f"Reference target: ${tp:,.2f}{move} — re-derived from "
+                f"Decision target: ${tp:,.2f}{move} — re-derived from "
                 f"${entry_target:,.2f}, which is still what progress and pace "
                 f"are measured against."
             )
         take_profit = {
             "price": tp,
             "plain": plain,
-            "acted_on": False,
-            "note": NOTHING_ACTS_ON_TARGET,
+            "acted_on": True,
+            "note": note,
             "entry_price_target": entry_target,
             "revised": revised,
             "basis": str(revision.get("basis") or "") if revised else "",
@@ -734,7 +744,7 @@ def build_holding_why(
             "price": None,
             "plain": f"Take-profit target: {NOT_RECORDED}",
             "acted_on": False,
-            "note": NOTHING_ACTS_ON_TARGET,
+            "note": note,
             "entry_price_target": entry_target,
             "revised": False,
             "basis": "",

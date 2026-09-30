@@ -264,7 +264,10 @@ class PositionReviewerAgent(BaseAgent):
                 lines.append(f"  Hard stop (broker): ${sl:.2f}")
             if tp:
                 lines.append(
-                    f"  Reference target: ${tp:.2f} (soft — you manage exit)"
+                    f"  Decision target: ${tp:.2f} (the desk sells in full "
+                    f"when a close reaches this unless the target has "
+                    f"decisively broken — you may still manage the exit "
+                    f"before then)"
                 )
             entry_reasoning = (
                 (ctx.get("reasoning") or "").strip()

@@ -73,7 +73,7 @@ def test_idx4_stop_target_backfilled_from_position_facts():
         },
     )
     assert "Hard stop (broker): $99.00" in msg
-    assert "Reference target: $121.00" in msg
+    assert "Decision target: $121.00" in msg
     # Board item 89 defect 3: with no entry row supplied AT ALL, the thesis
     # is genuinely unknown and the line still names the absence. What
     # changed is the explanation: "position opened before today" was a
@@ -103,7 +103,7 @@ def test_idx4_today_buy_context_still_preferred():
         position_facts={"NVDA": {"days_held": 0}},
     )
     assert "Hard stop (broker): $95.00" in msg
-    assert "Reference target: $130.00" in msg
+    assert "Decision target: $130.00" in msg
     assert "Entry thesis: AI capex thesis" in msg
     assert "not recorded on this position's entry row" not in msg
 

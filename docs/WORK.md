@@ -137,11 +137,12 @@ detail: docs/BOARD_NOTES.md (item 70)
 DONE WHEN:
   - [ ] each open position's target is drawn on the Mission Control chart (the owner's own request)
   - [ ] four exit rules are tracked on every trade WITHOUT placing orders — sell all at target; sell half and trail the rest; target tightens the trail instead of selling; today's desk — with the rules fixed before anyone looks at the results and no tuning afterwards
-  - [ ] a ruling is recorded on whether a target plus a CONFIRMED breakdown may exit, and if so profit-taking becomes an allowed SELL reason and a chart breakdown can unlock an exit (today only the news seat emits state changes)
+  - [x] a ruling is recorded on whether a target plus a CONFIRMED breakdown may exit, and if so profit-taking becomes an allowed SELL reason and a chart breakdown can unlock an exit (today only the news seat emits state changes) — RULED 2026-09-25 and BUILT 2026-09-30: a completed close at the target sells in full by default; the desk holds only while the target has decisively broken on the existing two-close level-break standard (`src/risk/exit_guard.py::decide_at_target`; `docs/INCIDENT_HISTORY.md` 2026-09-30). The four-rule paper tracking in the bullet above was overtaken by that ruling and is not being built.
   - [ ] trail tightness is read off the instrument or a cited source; the six trail constants are item 90's half two and item 185's tranche — do not re-derive them here
   - [ ] an 8-K results release is visible to the exit path (invisible today)
   - [ ] nothing here ships alone and nothing is fitted to ORCL — one number changed by itself is the patch this item exists to prevent
 detail: docs/BOARD_NOTES.md (item 75)
+**Update (2026-09-30) — the target now governs an exit.** Every review re-derives each held position's target off today's bars (extend-only), and a completed close at the target sells the position in full by default; the desk holds only while the target has decisively broken on the desk's existing two-close level-break standard, then the trailing stop carries it. The target still never rests at the broker as an order; the chart drawing, the 8-K visibility and the trail-tightness halves are untouched.
 
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
 

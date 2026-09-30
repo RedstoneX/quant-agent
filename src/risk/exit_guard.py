@@ -66,6 +66,13 @@ __all__ = [
     "StructuralProtectionCheck",
     "check_structural_protection",
     "structural_protection_broken",
+    "AtTargetDecision",
+    "decide_at_target",
+    "AT_TARGET_NOT_REACHED",
+    "AT_TARGET_HOLD_BREAK_PENDING",
+    "AT_TARGET_HOLD_BREAK_CONFIRMED",
+    "AT_TARGET_SELL_STALLED",
+    "AT_TARGET_INPUTS_UNREADABLE",
 ]
 
 
@@ -2260,3 +2267,239 @@ def structural_protection_broken(
         prior_session_dates=prior_session_dates,
     ).protected
 
+
+
+# ---------------------------------------------------------------------------
+# Decision at the take-profit target — owner ruling 2026-09-25
+# ---------------------------------------------------------------------------
+#
+# The owner's lean, in his words: "lean towards selling if it hits target; if
+# the chart is showing higher highs and higher lows you could move up the stop
+# and reassess." Reaching a real target is therefore a REASSESS point whose
+# DEFAULT is to SELL and bank the win, and the only exception is a chart that
+# is demonstrably still running THROUGH the target.
+#
+# HOW "STILL RUNNING" IS READ — AND WHY IT IS NOT A SWING READ
+# ------------------------------------------------------------
+# Three earlier cuts of this rule tried to read "higher highs and higher lows"
+# off swing pivots at the moment of the touch. Every one failed the same two
+# ways, for a structural reason: a confirmed pivot needs `PIVOT_WINDOW` bars
+# on BOTH sides, so at the instant a position closes at its target the swing
+# structure is by construction five-plus sessions stale. Patching that with
+# provisional (unconfirmed) swings made the read either lag a break (a
+# fifteen-session bleed read "still trending" at every review) or flip on a
+# single print (one gap bar or one bad vendor print became a new high). The
+# desk doctrine (docs/OUTCOME.md, "No arbitrary numbers") says what to do
+# when a rule needs a number the chart cannot supply: REFORMULATE it into a
+# question the chart answers directly. "Is the trend still going?" is that
+# kind of number; "has this ceiling actually broken?" is not, and the desk
+# already has exactly ONE answer to it.
+#
+# So the exception is the desk's EXISTING level-break standard, applied to the
+# target itself. The target IS a resistance level (or a measured-move price
+# that plays the same role). A level on this desk is "broken" on a DECISIVE
+# close — beyond it by `BREAK_CONFIRMATION_ATR_MULTIPLE` ATRs — CONFIRMED on
+# the next session's close, with a reclaim in between resetting the count
+# (`check_structural_protection` on the stop side,
+# `target_revision.target_level_broken` on the target side; Edwards & Magee's
+# two-day close filter, cited at `TREND_CONFIRMING_CLOSES`). A ceiling that
+# has broken on that standard is, by the desk's own definition, a higher high
+# in force; a ceiling that has NOT broken on that standard is a ceiling price
+# is stalling under. No new number, no new reading of the chart: the one
+# break test the desk already applies to every level, applied to this one.
+#
+#   NOT REACHED        latest completed close has not touched the target and
+#                      no earlier close has either -> nothing to decide.
+#   SELL               reached, and today's close is NOT decisively beyond
+#                      the target -> bank the win. This includes a poke
+#                      through the target that has closed back inside, and
+#                      a decisive close yesterday that failed to confirm.
+#   HOLD (pending)     today's close is decisively beyond the target for the
+#                      FIRST session -> hold for the confirming close. One
+#                      close is a spring, on either side of a level.
+#   HOLD (confirmed)   decisively beyond on two consecutive closes -> the
+#                      ceiling has gone; the re-derivation extends the target
+#                      to the next structure in reach, and the trailing stop
+#                      (which ratchets every review) carries the runner.
+#
+# WHY THIS SURVIVES THE TWO FAILURES THAT KILLED THE SWING READ
+# -------------------------------------------------------------
+# * A bleed cannot be held through. "Reached" is a one-way fact for a given
+#   target (the caller persists it), so once a position has touched its
+#   target EVERY later review re-asks the same question, and the only answer
+#   that holds is "today's close is decisively beyond the target". The first
+#   close that is not — back inside the margin, or below the target — SELLS.
+#   A position can only stay held while it is more than one ATR past its
+#   target, and there the trailing stop is what bounds a giveback.
+# * A single print cannot produce a HOLD past the target. Holding needs two
+#   consecutive decisive closes; one print buys at most one session's delay,
+#   after which the next real close decides. A single print CAN put a
+#   position to the SELL side — but only at its own target, which is the
+#   ruled default, on the same completed-close basis every other break test
+#   on this desk uses, after the same bar-cleaning; the residual is stated in
+#   `decide_at_target`'s docstring rather than hidden.
+#
+# This is NOT a bare "sell at X": the sell is conditional on the chart NOT
+# having decisively broken through the number. It is NOT the deleted
+# fixed-gain trim: that sold a fixed fraction at a fixed % GAIN regardless of
+# the chart; this sells in full at a STRUCTURAL target that is re-derived
+# from today's bars every review and may only ratchet away from entry.
+
+#: No completed close has reached the target — nothing to decide.
+AT_TARGET_NOT_REACHED = "TARGET_NOT_REACHED"
+#: Reached, and today's close is decisively beyond the target for the first
+#: session — HOLD for the confirming close (one close is a spring).
+AT_TARGET_HOLD_BREAK_PENDING = "AT_TARGET_HOLD_BREAK_PENDING_CONFIRMATION"
+#: Reached, and the target has broken on two consecutive decisive closes —
+#: HOLD; the ceiling is gone, the target extends, the trailing stop carries it.
+AT_TARGET_HOLD_BREAK_CONFIRMED = "AT_TARGET_HOLD_BREAK_CONFIRMED"
+#: Reached, and today's close is NOT decisively beyond the target — SELL.
+AT_TARGET_SELL_STALLED = "AT_TARGET_SELL_TARGET_NOT_BROKEN"
+#: Close, target or the break test's ATR could not be read — cannot decide;
+#: the caller holds and files the fault. Never a silent skip.
+AT_TARGET_INPUTS_UNREADABLE = "AT_TARGET_INPUTS_UNREADABLE"
+
+
+@dataclass(frozen=True)
+class AtTargetDecision:
+    """What to do about a position that has reached its take-profit target.
+
+    `should_sell` is the one field a caller acts on. `reason` is the
+    plain-language, owner-facing sentence (why + when), empty only when there
+    is nothing to voice (not reached, or inputs unreadable).
+    """
+
+    symbol: str
+    code: str
+    reached: bool
+    should_sell: bool
+    reason: str = ""
+    target_price: float | None = None
+    close_price: float | None = None
+
+
+def decide_at_target(
+    *,
+    symbol: str,
+    is_short: bool,
+    close_price: float | None,
+    target_price: float | None,
+    reached_before: bool,
+    broken_today: bool | None,
+    broken_prior_close: bool,
+) -> AtTargetDecision:
+    """Decide whether a position that has REACHED its take-profit target is
+    sold now (bank the win) or held because the target has decisively broken.
+    Pure — no I/O. See the module note above for the rule and its reasons.
+
+    `close_price` MUST be the latest COMPLETED DAILY CLOSE, never a live
+    quote: "reached" is judged on the same close basis as every break test on
+    this desk, so a routine intrabar wick through the number is not a reach.
+
+    `target_price` MUST be the pinned / only-extended-away take-profit (a
+    re-derivation may only push it further from entry, never back), so the
+    reach test can never be tripped by a target that stepped toward entry.
+
+    `reached_before` is the caller's durable record that an EARLIER completed
+    close already reached THIS target. Reach is one-way for a given target:
+    a position that touched its target and then closed back inside has not
+    un-reached it, it has failed to hold beyond it — which is a SELL, not a
+    return to "nothing to decide". A new (extended) target starts unreached.
+
+    `broken_today` is `target_revision.target_level_broken` for today's close
+    against the target: True when the close is beyond the target by the
+    desk's one break margin, False when not, None when the question could
+    not be asked (no ATR). `broken_prior_close` is the same flag for the
+    immediately preceding completed session, reconstructed by the caller from
+    its own records exactly as the target re-derivation does.
+
+    Residual, stated rather than hidden: a single bad close print at or past
+    the target that survives bar-cleaning puts the position to the SELL side
+    on that review. It cannot produce a HOLD past the target (that needs two
+    consecutive decisive closes), and the sell is a marketable limit priced
+    off the broker's live quote, not off the print.
+    """
+    sym = str(symbol or "").strip().upper()
+    close = _finite(close_price)
+    target = _finite(target_price)
+    if close is None or target is None or target <= 0 or close <= 0:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_INPUTS_UNREADABLE, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    reached_now = close <= target if is_short else close >= target
+    reached = bool(reached_now or reached_before)
+    if not reached:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_NOT_REACHED, reached=False,
+            should_sell=False, target_price=target, close_price=close,
+        )
+
+    if broken_today is None:
+        # The break test needs an ATR and had none. A missing input is a
+        # data fault to be filed and fixed, never a reason to sell or to
+        # read "not broken"; the trailing stop still protects the position.
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_INPUTS_UNREADABLE, reached=True,
+            should_sell=False, target_price=target, close_price=close,
+            reason=(
+                f"reached its ${target:,.2f} target (close ${close:,.2f}) but "
+                f"no volatility reading could be taken today, so whether the "
+                f"target has decisively broken cannot be measured — no order "
+                f"is placed on missing data; the trailing stop still protects "
+                f"the position and the decision is re-asked next review."
+            ),
+        )
+
+    beyond = "below" if is_short else "above"
+    if broken_today and broken_prior_close:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_HOLD_BREAK_CONFIRMED, reached=True,
+            should_sell=False, target_price=target, close_price=close,
+            reason=(
+                f"has broken through its ${target:,.2f} target: the close of "
+                f"${close:,.2f} is decisively {beyond} it for the second "
+                f"consecutive session, the desk's own standard for a level "
+                f"that has really gone. The desk is NOT banking it here — it "
+                f"holds, extends the target to the next structure in reach "
+                f"if today's bars hold one, and lets the trailing stop, which "
+                f"ratchets up every review, carry the runner."
+            ),
+        )
+    if broken_today:
+        return AtTargetDecision(
+            symbol=sym, code=AT_TARGET_HOLD_BREAK_PENDING, reached=True,
+            should_sell=False, target_price=target, close_price=close,
+            reason=(
+                f"closed decisively {beyond} its ${target:,.2f} target today "
+                f"(close ${close:,.2f}). One close through a level is a "
+                f"possible spring, not a break, so the desk holds for ONE "
+                f"more session: a second decisive close confirms the ceiling "
+                f"has gone and the position runs on; anything less and it is "
+                f"banked at the target next review."
+            ),
+        )
+
+    failed = (
+        " It closed decisively through the target yesterday but did not "
+        "confirm today, so the break failed."
+        if broken_prior_close else ""
+    )
+    inside = (
+        f" It touched the target on an earlier close and has since closed "
+        f"back {'above' if is_short else 'below'} it."
+        if reached_before and not reached_now else ""
+    )
+    return AtTargetDecision(
+        symbol=sym, code=AT_TARGET_SELL_STALLED, reached=True,
+        should_sell=True, target_price=target, close_price=close,
+        reason=(
+            f"reached its ${target:,.2f} target (close ${close:,.2f}) and has "
+            f"NOT decisively broken through it — the desk is banking the win "
+            f"in full at the target rather than giving it back.{failed}"
+            f"{inside} The exception would have been a close more than one "
+            f"day's range {beyond} the target held for two sessions, which "
+            f"is not there."
+        ),
+    )

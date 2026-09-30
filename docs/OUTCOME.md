@@ -286,15 +286,46 @@ for what in this codebase has actually been measured versus merely
 asserted. If a real number cannot yet be derived from data or a measured
 record, mark it explicitly as provisional — never let it read as settled.
 
-**Exits, specifically (owner decision, 2026-09-12).** Profit-taking is
-trailing-stop-driven and nothing else: the reward side of a trade cannot be
-predetermined because the holding period is unknown, so a preset profit
-target — sell a fixed fraction at a fixed gain, decided in advance with no
-reference to what the instrument is doing — is rejected as a class, exactly
-as reward:risk was rejected as a universal entry gate. The 30%/15%
-automatic take-profit trim inherited from upstream (tuned on one GOOGL
-trade) was deleted under this rule; `tests/test_pipeline.py::
+**Exits, specifically (owner decision 2026-09-12, amended 2026-09-25).**
+Profit-taking is trailing-stop-driven PLUS one decision point: reaching a
+STRUCTURAL target read off the instrument. A FIXED-GAIN preset trim — sell a
+fixed fraction at a fixed gain, decided in advance with no reference to what
+the instrument is doing — remains rejected as a class, exactly as reward:risk
+was rejected as a universal entry gate. The 30%/15% automatic take-profit trim
+inherited from upstream (tuned on one GOOGL trade) was deleted under that rule
+and stays deleted; `tests/test_pipeline.py::
 test_no_fixed_gain_automatic_profit_trim_exists` keeps it out.
+
+What changed on 2026-09-25 is the target itself, not the ban. The take-profit
+is not a preset: it is derived from the instrument's own structure, re-derived
+off today's bars on every review, and may only ever ratchet FURTHER from entry.
+A completed close at that number is a REASSESS point whose DEFAULT is the
+owner's lean: BANK the win, in full. The one exception is a target the chart
+has clearly broken THROUGH, and "broken" here is not a new reading of the
+chart — it is the desk's one existing level-break standard, applied to the
+target itself: a close beyond it by the one break margin, held on two
+consecutive closes, a reclaim in between resetting the count (the same test
+the stop side and the target re-derivation already apply). A target broken on
+that standard is a higher high in force; the desk holds, extends the target to
+the next structure in reach, and lets the trailing stop carry the runner. A
+target NOT broken on that standard is a ceiling price is stalling under, and
+the position is sold. So the sell is conditional on the chart, never on a price
+or a gain alone — the property the fixed-gain trim lacked — and it needs no
+number the chart does not already supply.
+
+Three earlier cuts of this rule read "higher highs and higher lows" off swing
+pivots at the moment of the touch and failed the same two ways every time: a
+confirmed pivot is five-plus sessions stale by construction, so the read
+either held through a fifteen-session bleed or flipped on one bad print. The
+reformulation above is what this doctrine's "no arbitrary numbers" section
+prescribes for that shape — replace the question that needs a number ("is the
+trend still going?") with the one the chart answers directly ("has this level
+broken?"). Its two properties are pinned by `tests/test_at_target_decision.py`:
+reach is one-way for a given target, so a bleed cannot be held through (the
+first close no longer decisively beyond the target sells); and a hold past the
+target needs two consecutive decisive closes, so a single print cannot produce
+one. The honest cost, stated: a breakout that closes AT its target but less
+than one break margin beyond it is banked at the target that day.
 
 ## An unverifiable number must never rank or size a trade
 
