@@ -390,12 +390,19 @@ def test_a_family_with_no_board_item_says_so():
 
 
 def test_a_tracked_family_says_it_is_tracked():
-    finding = L.Finding(
-        family=next(f for f in L.FAMILIES if f.key == "stop_missing_or_failed"),
-        count=1,
-    )
-    assert L.disposition(finding, {127}, {127}, is_new=True) == "being worked on"
-    assert L.disposition(finding, {127}, set(), is_new=True) == "on the list"
+    """Reads the exemplar off FAMILIES rather than naming one.
+
+    This test used to name `stop_missing_or_failed`, whose board item was
+    retired on 2026-09-26 when the racing-broker-writes fix shipped; the test
+    then failed for a reason that had nothing to do with what it checks. A
+    test that hard-codes which family happens to be tracked today fails every
+    time the desk finishes something, which is exactly backwards.
+    """
+    family = next(f for f in L.FAMILIES if f.board_item is not None)
+    item = family.board_item
+    finding = L.Finding(family=family, count=1)
+    assert L.disposition(finding, {item}, {item}, is_new=True) == "being worked on"
+    assert L.disposition(finding, {item}, set(), is_new=True) == "on the list"
 
 
 # --- the false alarms this module shipped, and the guards against them ------

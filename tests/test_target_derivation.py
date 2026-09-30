@@ -583,14 +583,84 @@ class TestDataFaultsAtTheConstructor:
 # ---------------------------------------------------------------------------
 
 class TestTheRule:
-    def test_a_level_inside_the_noise_floor_is_not_a_destination(self):
-        """A 'target' half an ATR away is somewhere price already is. Skip it
-        and take the next real level out."""
+    def test_a_level_inside_the_noise_floor_is_recorded_not_stepped_over(self):
+        """**Inverted 2026-09-30.** This used to assert `112.0` — "skip it
+        and take the next real level out".
+
+        Skipping is what put META's target above three prior rejections.
+        A level half an ATR overhead is not somewhere price already is; it
+        is a wall with almost no room under it. The reward really is inside
+        one session's noise, and that is now SAID (`target_inside_noise`)
+        instead of being fixed by moving the target to the far side of the
+        wall — which is not a better reward, only an unreachable one."""
         result = derive_structural_target(
             entry_price=100.0, direction="long", levels=[100.5, 112.0],
             atr=2.0, horizon_sessions=25, setup_type="range",
         )
+        assert result.price == 100.5
+        assert result.basis == "structural_level"
+        assert result.target_inside_noise is True
+        assert "noise floor" in result.detail
+
+    def test_a_target_with_real_room_is_not_flagged_as_crowded(self):
+        """The flag is a measurement, not a mood — it is False whenever the
+        reward clears the floor, which is the ordinary case."""
+        result = derive_structural_target(
+            entry_price=100.0, direction="long", levels=[112.0],
+            atr=2.0, horizon_sessions=25, setup_type="range",
+        )
         assert result.price == 112.0
+        assert result.target_inside_noise is False
+
+    def test_a_short_does_not_step_over_a_floor_either(self):
+        """Direction symmetry: the same promotion bug existed downward."""
+        result = derive_structural_target(
+            entry_price=100.0, direction="short", levels=[99.5, 88.0],
+            atr=2.0, horizon_sessions=25, setup_type="range",
+        )
+        assert result.price == 99.5
+        assert result.target_inside_noise is True
+
+    def test_meta_2026_09_21_target_no_longer_clears_the_wall(self):
+        """THE MEASURED CASE, from the desk's own record.
+
+        The 2026-09-21 intraday add filled at $728.41 with ATR $21.22. The
+        level scan had found resistance at $730.41 (2 touches) and $739.84
+        (3 touches, including the 2026-01-29 rejection at $742.09). The old
+        noise floor sat at $749.63, swallowed both, and set the target at
+        $785.20 in the trade record — above both rejections and above the
+        then 52-week high. Reproducing the scan from completed bars puts
+        that same cluster at $784.58, which is the level used below; the
+        order was built intraday against a live reference price and that
+        is the whole of the difference.
+        Price high was $779.82 and it never filled.
+
+        The target must now be the first wall, $730.41, and the thin reward
+        must be recorded rather than engineered away."""
+        levels = [730.41, 739.84, 784.58]
+        result = derive_structural_target(
+            entry_price=728.41, direction="long", levels=levels,
+            atr=21.22, horizon_sessions=12, setup_type="breakout",
+        )
+        assert result.price == 730.41
+        assert result.basis == "structural_level"
+        assert result.target_inside_noise is True
+        # The specific harm: never again above a level price was rejected from.
+        assert result.price < 739.84 < 784.58
+
+    def test_a_projection_can_never_be_placed_beyond_a_wall(self):
+        """The measured-move branch is reached only when the wall is out of
+        reach, so at this module's defaults the clamp never binds. Both
+        multiples are caller-supplied, though, and a projection multiple at
+        or above the reach multiple would otherwise put an ATR target on the
+        far side of a real level. Pinned because it is a parameter away."""
+        result = derive_structural_target(
+            entry_price=100.0, direction="long", levels=[80.0, 130.0],
+            atr=2.0, horizon_sessions=25, setup_type="breakout",
+            max_reach_atr_multiple=1.0,          # reach 10 -> wall at 130 is far
+            breakout_projection_atr_multiple=5.0,  # projection 50 -> would be 150
+        )
+        assert result.price == 130.0
 
     def test_a_breakout_with_no_overhead_level_gets_a_measured_move(self):
         """No ceiling exists, so the only honest statement about where the
@@ -640,11 +710,33 @@ class TestTheRule:
         assert result.price == capped.price
 
     def test_a_short_projection_through_zero_is_refused(self):
+        """**Inputs changed 2026-09-30, assertion unchanged.** This used to
+        pass `levels=[1.9]` — a support 10c under a $2.00 short. The old
+        noise floor dropped it and the derivation projected $7.50 down
+        through zero, so the case under test was only ever reachable
+        BECAUSE a real level was being ignored. It is now targeted, which
+        is the better answer and is pinned directly below.
+
+        The through-zero refusal still matters and is still reached, on the
+        chart that actually produces it: nothing in the trade's direction
+        at all, so only the projection can speak."""
+        result = derive_structural_target(
+            entry_price=2.0, direction="short", levels=[2.6],
+            atr=1.5, horizon_sessions=25, setup_type="breakout",
+        )
+        assert result.refusal == "projection_implausible"
+
+    def test_a_support_under_a_penny_short_is_targeted_not_projected_past(self):
+        """The half the case above used to hide: a real level 10c under the
+        entry is where the short travels to, not a reason to invent $7.50 of
+        downside that runs the target through zero."""
         result = derive_structural_target(
             entry_price=2.0, direction="short", levels=[1.9],
             atr=1.5, horizon_sessions=25, setup_type="breakout",
         )
-        assert result.refusal == "projection_implausible"
+        assert result.price == 1.9
+        assert result.basis == "structural_level"
+        assert result.target_inside_noise is True
 
 
 # ---------------------------------------------------------------------------
