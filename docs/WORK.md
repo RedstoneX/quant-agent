@@ -17,7 +17,7 @@
 **RESOLVED 2026-09-25 — the mandate is SWING (days to weeks), not a quarterly-horizon value book.** Decided by the orchestrator after an adversary run, per the 2026-09-18 ruling that this question does not wait on the owner. Reason: `docs/OUTCOME.md:75` already rules the desk's horizon "swing — days to weeks"; `config/prompts/tech_analyst.md:3` already treats its own 5-15d window as signal-validity, not holding period, with PM/position_reviewer owning the hold; holding period is an OUTPUT of thesis health, not a setting. `config/prompts/evening_analyst.md` and `config/prompts/meta_reflector.md` carried un-migrated rot from the original upstream value mandate (medium-long-term/quarterly-horizon framing) and have been rewritten to match. Detail and the exact prose diff: `docs/BOARD_NOTES.md` ("item 99").
 
 - [ ] DECIDE BY 2026-10-31 — Which model should run the desk's actual trade-decision seat?
-  **Owner ruling 2026-09-13:** no model comparison until the job board is clean. The date exists only because this format needs one; it moves rather than forcing a decision. **Nobody proposes the run or its spend to him — he raises it or it does not happen.** Incumbent `openai/gpt-5.5` stays until a first run exists. Owner decision 2026-09-15 goes further: no test-environment work at all unless he asks. The seat is ~93% of the LLM bill. Verified detail 2026-09-14: `docs/INCIDENT_HISTORY.md` and `docs/BOARD_NOTES.md`.
+  **Owner ruling 2026-09-13:** no model comparison until the job board is clean. The date exists only because this format needs one; it moves rather than forcing a decision. **Nobody proposes the run or its spend to him — he raises it or it does not happen.** Incumbent `openai/gpt-5.5` stays until a first run exists. Owner decision 2026-09-15 goes further: no test-environment work at all unless he asks. The seat is ~93% of the LLM bill. Verified detail 2026-09-14: `docs/INCIDENT_HISTORY.md` and `docs/BOARD_NOTES.md`. Absorbs retired board item 77 (a bare pointer at this line; routing detail in `docs/architecture/MODEL_ROUTING_POLICY.md`; it closes with this line and is not answered twice).
 
 **RECONFIRM AFTER A FEW DAYS LIVE — `max_calls_per_session: 40` (owner instruction 2026-09-03).** The cost circuit's runaway-loop defence, set from real data (worst complete session: 14 calls). A first number, not final. Once live sessions exist, re-pull `llm_budget_sessions.logical_calls`; raise it if a legitimate session gets close, never lower it on a hunch. History: `docs/INCIDENT_HISTORY.md`, "item 14".
 
@@ -126,16 +126,9 @@ detail: docs/BOARD_NOTES.md (item 75)
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
 
 DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as items 77 and 18(a); one authorisation would release all three.
+  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as the model-seat decision line at the top of this file and 18(a); one authorisation would release all three.
   - [ ] it is not reopened as a prompt-size problem
 detail: docs/BOARD_NOTES.md (item 76)
-
-**77. Model selection: the PM seat is the next open question. Pointer, 2026-09-14.** Detail: `docs/architecture/MODEL_ROUTING_POLICY.md`.
-
-DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — the PM seat's model question IS the `DECIDE BY 2026-10-31` line at the top of this file, and the owner's 2026-09-13 ruling is that nobody proposes that run or its spend to him; he raises it or it does not happen. Same blocker as items 76 and 18(a).
-  - [ ] it closes with that pending-decision line and is not answered twice
-detail: docs/BOARD_NOTES.md (item 77)
 
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
 
@@ -236,18 +229,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 182)
 
-**183. Five order-placement gates are made-up money numbers with no board item — filed 2026-09-25, TIER 1.**
-
-DONE WHEN:
-  - [ ] each constant is sourced, measured, owner-ratified as appetite, or reformulated away
-  - [ ] DEAD CONFIG, remove rather than source: the T-bill cash-sweep was retired 2026-09-17 (`cash_sweep.enabled: false`), so its still-`arbi … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] 2026-09-26, PARTIAL. RESOLVED: the constructor's `$500` floor is DELETED — nothing in the constructor read it and the one call that fo … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] 2026-09-30, PARTIAL. RESOLVED: the owner ruled the desk has autonomy to nudge a position whenever its own reasoning calls for it, unle … (full text: docs/BOARD_NOTES.md item 183)
-  - [x] 2026-09-30. The 2% ask-skip is DELETED, not sourced and not ratified — with its SHORT mirror (`bid < floor / 1.02`), which was a deriv … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] STILL UNMET, the 40bp belt (`ExecutionConfig.max_entry_slippage_bps`). It is now the ONLY bound on what an entry pays, and it is still … (full text: docs/BOARD_NOTES.md item 183)
-  - [ ] CHECKED 2026-09-26, the reserve-band question: the deployment-gap advisory (`sweep_reserve_usd` / `cash_above_reserve`, surfaced on /a … (full text: docs/BOARD_NOTES.md item 183)
-detail: docs/BOARD_NOTES.md (item 183)
-
 **185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
 
 DONE WHEN:
@@ -324,6 +305,18 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 193)
 
+**195. The trail's structural leg has never once fired; the chandelier IS the trail — filed 2026-09-30.** MEASURED against the live production database (`/home/qamc/quant-agent/data/quant_agent.db`): all 9 deterministic trails ever placed came from the chandelier fallback (8) or the Type A breakeven ratchet (1) — the structural pivot in `src/risk/trailing.py::_swing_lows` has contributed ZERO. The 11 recorded `no_structure_and_no_usable_chandelier` refusals are NOT a broken fallback: reconstructing each from daily bars shows 9 of 11 are provably CORRECT (the chandelier level sat BELOW the live stop, so taking it would have LOOSENED the stop, which the module forbids) and the remaining 2 sit within reconstruction error and would have been refused by the min-ratchet gate one step later anyway. What is actually broken is arithmetic reach: `_swing_lows` needs `2 * PIVOT_WINDOW + 1` = 7 bars before it can confirm one pivot, the window held 0-6 bars in all 11 cases, and a scale-in additionally reset the window to zero because `_apply_deterministic_trails` sliced bars from `get_symbol_last_buy` (the LATEST add) while taking the entry PRICE from `position.avg_entry` (blended across every add) — MRVL on 2026-09-23 was evaluated with zero bars for a position opened 2026-09-17. That inconsistency is FIXED here (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`), and the fix was measured against all 21 recorded refusals and flipped NONE of them. Two corrections to how that fix was first written up, both material: (1) the claim that a longer window "cannot remove protection" is FALSE — a longer window raises the chandelier, a higher candidate can rise through the 1.25-ATR noise floor, and `evaluate_trailing_stop` then refuses OUTRIGHT instead of proposing a lower level, so the wider window can LOSE a tighten the narrower one took (price 100, ATR 4, stop 90: a 106 high tightens to 94, a 108 high proposes 96, above the 95 floor, and nothing is placed); the change is justified by consistency with the blended `avg_entry` price the same call uses, not by safety, and the measured exposure is that only 5 of the 21 refusals have a window start that moves at all (all MRVL, the only position with adds on different sessions) and ZERO of them newly land inside the noise band. (2) "the 7-bar floor is what binds" holds in 20 of 21, not all: the widest new window (MRVL 2026-09-29) holds 8 bars and CLEARS the floor, yet still confirms no pivot because its eight lows rise almost monotonically and neither eligible centre bar is a strict local minimum. Confirmed pivots under the new window: ZERO, same as the old. `MIN_RATCHET_PCT` was separately re-examined against doctrine and LEFT AT 2.0 with the failure recorded in `config/number_ledger.yaml` — the flat 2% demands 0.31 ATR on MRVL against 0.91 ATR on AAPL (real incoherence), but every reconstructed refusal fell between 0.12 and 0.50 ATR, so any `k * ATR` with k >= 0.75 blocks strictly MORE than the flat rule does and only k <= 0.5 admits anything, which would be fitting the constant to the outcomes the data liked. Deleting the gate was rejected on a measured cost: `AlpacaBroker.replace_stop_loss` is cancel-then-resubmit, so each extra replace opens a real unprotected window, and removal would have added 7 across 9 evaluation runs. WHAT THIS CANNOT ESTABLISH: 37 trail-state transitions over 9 calendar days on an 11-name book is a thin record; the reconstruction uses daily bars fetched after the fact rather than the exact series the live run saw, which is why 2 of 11 disagree at the margin; and nothing here measures whether a structural trail WOULD have been better than the chandelier, only that it never ran. Shortening `PIVOT_WINDOW` would make structure fire and is deliberately NOT done — that constant is documented as unsourceable and moving it to obtain a liked result is picking a number.
+
+DONE WHEN:
+  - [ ] the desk decides whether a structural trail that cannot reach on a 4-9 session hold should stay in the code at all, or be removed in favour of the chandelier it already defers to
+  - [ ] if it stays, the pivot window's inability to confirm inside a typical hold is surfaced somewhere the owner sees, not only in a module docstring
+
+**196. When the chandelier lands inside the noise band the trail gives up entirely instead of falling back to the noise floor — filed 2026-09-30.** `src/risk/trailing.py::evaluate_trailing_stop` computes ONE candidate (structural pivot, else chandelier) and, if that single candidate sits inside `NOISE_BAND_ATR_MULTIPLE` ATRs of price, returns `TRAIL_CODE_INSIDE_NOISE_BAND` and places nothing. There is no fallback to a lower level that WOULD clear the band — in particular not to the band's own edge, `current_price - NOISE_BAND_ATR_MULTIPLE * ATR`, which by the band's own definition is not inside it. The consequence is perverse and is visible in the arithmetic, not inferred: the better the trade has gone, the higher the run high, the higher the chandelier, and so the MORE likely the trail is to refuse — a position that has run hard can sit on its original entry stop indefinitely while a level 1.25 ATR under price was available the whole time. This surfaced while correcting item 195 (that change makes the window wider, which raises the chandelier, which makes this refusal MORE reachable) but it predates that change and exists on `main` today. NOT IMPLEMENTED HERE, deliberately, and the reason is doctrine and not effort: a noise-floor stop is read off TODAY'S PRICE, and this module's own `_swing_lows` docstring says in terms that "an unconfirmed low is just today's price, and trailing under today's price is how a stop ends up inside the noise band". Falling back to the floor would make the trail a pure price-follower whenever structure and the chandelier are both unusable, which is a different exit rule from the one the desk ratified (exit on ALIGNMENT, never on a level), so it needs an argued decision rather than a quiet patch inside an unrelated pull request. WHAT THIS CANNOT ESTABLISH: zero of the 21 recorded refusals carried this code, so the frequency is currently UNMEASURED — the case is made from the code path, not from a production count, and anyone acting on it should say so.
+
+DONE WHEN:
+  - [ ] the desk decides, with the adversary arguing the doctrine conflict above, whether a candidate refused by the noise band should fall back to the band edge or keep refusing outright
+  - [ ] whichever way it goes, the refusal is counted in production so the frequency stops being unmeasured
+
 **199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
 DONE WHEN:
   - [ ] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed
@@ -371,6 +364,8 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 152
 - retired queue: 197
 - retired queue: 18
+- retired queue: 77
+- retired queue: 183
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
