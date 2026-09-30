@@ -16881,3 +16881,11 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
+
+### 2026-09-30 — item 189 renumbered to item 190; a genuine three-way number race, not a closure (item 189 retired)
+
+**In plain words:** the cash-sweep-retirement item was filed and merged as item 188, collided with a parallel PR that had also claimed 188, was renumbered to 189 and merged again, then collided a second time with a different parallel PR that filed and closed item 189 in one change. Three branches independently read `docs/WORK.md`'s own "next free number" line at nearly the same moment and each got a truthful answer that stopped being true before it landed. Nothing about the item's content changed at any step.
+
+**What closes it.** Item 189's two DONE WHEN criteria carry no new work of their own — they are the same cash-sweep-retirement criteria, unstarted, now living under item 190. Both are deferred rather than met.
+
+**Verified on main.** `docs/WORK.md` no longer carries a `**189.` block; `docs/BOARD_NOTES.md`'s `## item 189` heading is renamed `## item 190` in the same change, so the owner-facing prose is not orphaned. No code, ledger or test file was touched by the renumber.
