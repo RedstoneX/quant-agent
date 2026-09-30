@@ -1006,8 +1006,22 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                 snapshot["calls"] = len(rows)
             for row in rows:
                 snapshot["agent_summaries"][row["agent_name"]] = row["output_summary"]
-            if rows and all(row["cost_usd"] is not None for row in rows):
-                snapshot["cost"] = sum(float(row["cost_usd"]) for row in rows)
+            # Board-item defect (2026-09-29 log): this used to sum only the
+            # successful `agent_logs.cost_usd` rows, so a run whose ONLY
+            # provider activity was a charged-but-failed call (402s the
+            # cost-circuit logged as "not every attempt is provably $0",
+            # see `_all_attempts_provably_free` in src/cost_circuit.py)
+            # summed to $0.00 here and the footer told the owner the run
+            # was free while the circuit's own ledger had just marked that
+            # exact session `costs_exact=0`. `_canonical_run_cost` is the
+            # one place that already gets this right (it backs Mission
+            # Control's run list) -- it prefers the circuit's settled
+            # total and returns None, not 0, whenever that total is not
+            # provably exact, which `describe_ai_cost` renders as "not
+            # available" rather than the false "none". Reused here instead
+            # of re-implementing it so the two surfaces cannot drift apart.
+            from src.api.db_reads import _canonical_run_cost
+            snapshot["cost"] = _canonical_run_cost(conn, run_id, rows)
         except sqlite3.DatabaseError:
             pass
     except Exception as exc:  # noqa: BLE001
@@ -1088,6 +1102,15 @@ def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     text = " / ".join(bits)
     if isinstance(target, (int, float)):
         text += f" · target {target:g}% invested"
+    # Board item 119: the owner's one-line market read must not present a
+    # regime call formed on an incomplete FRED set as a complete one. The
+    # stamp comes from the deterministic fetch record, not the economist —
+    # see `src/data/macro.py::MacroCoverage.verdict_stamp`. "unknown" prints
+    # nothing: an unstamped verdict makes no claim either way.
+    coverage_state = str(macro.get("coverage_state") or "unknown")
+    if coverage_state in ("partial", "failed"):
+        note = str(macro.get("coverage_note") or "").strip()
+        text += " · ⚠️ PARTIAL READ" + (f" ({note})" if note else "")
     if text:
         lines.append(f"📊 Market: {text}")
 
@@ -1453,11 +1476,19 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> No
     """
     bits: list[str] = []
     cost = snap.get("cost")
-    if isinstance(cost, (int, float)):
-        # In words, via the one shared helper (owner review, 2026-09-18).
-        # This used to render "AI cost $0.0000", which he read as broken
-        # rather than as the truthful price of a free-tier model.
-        bits.append(describe_ai_cost(cost, label="AI cost"))
+    # Always shown, never gated on `isinstance(cost, (int, float))` any
+    # more (2026-09-29 log defect): that gate silently DROPPED the whole
+    # bit whenever `cost` was `None`, and `_read_run` now legitimately
+    # returns `None` for a run whose settled cost the cost-circuit itself
+    # marked inexact (a charged-but-failed provider call it cannot prove
+    # cost $0 -- see `_canonical_run_cost`, src/api/db_reads.py). Dropping
+    # the line there would trade a false "none, free models" for silence,
+    # which still never tells the owner the true state. `describe_ai_cost`
+    # already renders `None` as "not available", so it is always safe to
+    # call unconditionally -- same one shared helper as before (owner
+    # review, 2026-09-18) that turned "AI cost $0.0000" into the truthful
+    # words for a free-tier run.
+    bits.append(describe_ai_cost(cost, label="AI cost"))
     bits.append(f"took {_fmt_elapsed(elapsed)}")
     lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
 

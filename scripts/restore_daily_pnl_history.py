@@ -19,7 +19,7 @@ WHAT WAS MISSING (all figures read from the files, 2026-09-18):
     database snapshot beside the manifest first. Those 13 rows run
     2026-08-14 .. 2026-09-01 and peak at **10005.68 on 2026-08-20**.
   * The account was NOT restarted by that reset. The reset flattened
-    positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+    positions to cash on the same paper account (`<redacted-main-account-id>` in both
     `book_before.json` and `book_after.json`); equity ran 9870.37 (08-27
     close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74
     (09-02 close) with no capital added or removed. A high-water mark is a

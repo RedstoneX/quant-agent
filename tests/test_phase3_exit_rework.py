@@ -218,6 +218,40 @@ def test_measured_breakout_labelled_range_still_disables_progress_and_pace():
     assert facts["pace_status"] == "n/a_breakout"
 
 
+def test_a_target_inside_one_sessions_range_disables_progress_and_pace():
+    """2026-09-30, the other road to the same defect the breakout case above
+    guards. `thesis_progress_pct` divides by `(target - entry)`. When the
+    target sits on a wall a fraction of an ATR overhead — which is now the
+    honest answer rather than a level further out, see
+    `src/data/levels.py::derive_structural_target` — that denominator
+    measures its own smallness and not the thesis.
+
+    With entry $100, a wall at $100.50 and ATR $2.00, a move to $101.50 is
+    half a typical session and would read as 300% progress, tripping
+    `target_breach_flag` (>150%) and rendering "TARGET_BREACH" into the
+    position reviewer's prompt — a seat that can answer SELL or REDUCE. The
+    owner ruled on 2026-09-30 that a computed target is never an exit
+    trigger, so this must not be reachable."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range", target=100.5)
+    row["structural_ceiling"] = 1  # a real ceiling: not the breakout branch
+    facts = _facts(_pipeline(), _position(current_price=101.5), row)
+    assert facts["thesis_progress_pct"] is None
+    assert facts["pace"] is None
+    assert facts["pace_status"] == "n/a_target_inside_noise"
+    assert facts["target_breach_flag"] is False
+
+
+def test_a_target_clearing_one_sessions_range_still_measures_progress():
+    """The mirror, so the suppression cannot quietly swallow real targets:
+    the same row with a $140 target against the same $2.00 ATR has 20 ATRs
+    of room and is measured exactly as before."""
+    row = _buy_row(days_ago=8, horizon=10, setup="range", target=140.0)
+    row["structural_ceiling"] = 1
+    facts = _facts(_pipeline(), _position(current_price=110.0), row)
+    assert facts["thesis_progress_pct"] == pytest.approx(25.0)
+    assert facts["pace_status"] == "measured"
+
+
 def test_measured_ceiling_range_row_keeps_progress_and_pace():
     """The mirror: a "range" label whose measurement DID find a ceiling
     (`structural_ceiling=True`, stored 1) is a genuine range trade — progress

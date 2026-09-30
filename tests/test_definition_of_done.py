@@ -74,7 +74,8 @@ def _board(items: str, retired: str) -> str:
     return (
         "## THE FUNNEL QUEUE\n\n"
         f"{items}\n\n"
-        f"**Retired item numbers — never reuse.** {retired} were deleted.\n"
+        "**Retired item numbers — never reuse.** APPEND-ONLY.\n"
+        f"- retired queue: {retired}\n"
     )
 
 
