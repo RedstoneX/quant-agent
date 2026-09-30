@@ -125,11 +125,6 @@ def held_signed_qty(positions: list | None, symbol: str) -> float:
     return 0.0
 
 
-def short_add_is_blocked(positions: list | None, symbol: str) -> bool:
-    """True when SHORT would add to an existing short. Item 73 must land first."""
-    return held_signed_qty(positions, symbol) < 0
-
-
 def most_protective_long_stop(prices: list[float]) -> float:
     """Tightest long stop: highest trigger below price. 0 if none usable."""
     usable = [float(p) for p in prices if isinstance(p, (int, float)) and p > 0]
@@ -796,20 +791,6 @@ def pending_protection_symbols(db: Any) -> set[str]:
     except Exception:  # noqa: BLE001
         return set()
     return {str(r["symbol"]) for r in (rows or []) if r.get("symbol")}
-
-
-def scale_in_symbols_to_skip(broker: Any, db: Any) -> set[str]:
-    """Scale-in symbols the watchdog/repair must not touch right now."""
-    symbols = pending_scale_in_symbols(db)
-    if not symbols:
-        return set()
-    if trading_session_lock_held():
-        return set(symbols)
-    skip: set[str] = set()
-    for symbol in symbols:
-        if list_open_entry_ids(broker, symbol):
-            skip.add(symbol)
-    return skip
 
 
 def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:

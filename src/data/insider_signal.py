@@ -519,32 +519,3 @@ def classify_transaction(
         f"routine pattern.{size_note}{role_note}",
     )
 
-
-def classify_observations(
-    observations,
-    history: InsiderHistory | None = None,
-    thresholds: InsiderSignalThresholds | None = None,
-) -> list:
-    """Return copies of ``observations`` carrying their classification.
-
-    ``history`` defaults to an index built from the observations themselves,
-    which is enough for the cadence test inside one cache window but not for
-    the three-year calendar test — pass the long-horizon index for that.
-    ``thresholds`` defaults to ``InsiderSignalThresholds()``; see
-    ``classify_transaction``.
-    """
-    rows = list(observations or [])
-    index = history if history is not None else InsiderHistory.from_observations(rows)
-    classified = []
-    for row in rows:
-        verdict = classify_transaction(row, index, thresholds)
-        fraction, band = holdings_fraction(row)
-        classified.append(row.model_copy(update={
-            "signal_class": verdict.label,
-            "signal_class_reason": verdict.reason,
-            "signal_class_detail": verdict.detail,
-            "signal_weight": verdict.weight,
-            "holdings_fraction": fraction,
-            "holdings_fraction_band": band,
-        }))
-    return classified
