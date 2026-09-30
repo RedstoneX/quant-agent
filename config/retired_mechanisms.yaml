@@ -186,3 +186,35 @@ retired:
       - docs/WORK.md
       - docs/BOARD_NOTES.md
       - tests/test_retired_mechanisms.py
+
+  - name: the automatic 25% oversized base-allocation cut
+    retired: 2026-09-26
+    why: >-
+      IT NEVER EXISTED IN CODE. Two live sheets described it as machinery:
+      `config/prompts/portfolio_manager.md` told PM "Cut every BUY base 25%"
+      on 2+ `oversized` tags, and `config/prompts/risk_manager.md` told the
+      Risk Manager that PM "pre-adjusts its sizing before you ever see the
+      plan — 2+ `oversized` tags cut its base allocations 25%", and used that
+      as grounds to discount a conservative-looking plan as anchoring rather
+      than conviction. What is real: `_build_rm_recent_verdicts`
+      (`src/pipeline.py`) renders the last 5 verdicts with their `cat=` tags
+      into PM's sheet, and PM's sheet asks the model to adjust. Nothing reads
+      `reason_category` and resizes anything; the 25% was an invented figure
+      (`docs/WORK.md` item 99(f), measured 2026-09-19 — 36 of 37 recorded
+      `risk_allocation_pct` sat on the prompt's own 0.25 grid with a maximum
+      of 3.0, no trace of a 25% haircut). The number is removed rather than
+      replaced: choosing a different one would be the same defect. A seat may
+      be shown another seat's history; it may not be told that history has
+      already been acted on when it has not.
+    symbols: []
+    phrases:
+      - "cut every buy base 25%"
+      - "base allocations 25%"
+      - "pre-adjusts its sizing before you ever see the plan"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
