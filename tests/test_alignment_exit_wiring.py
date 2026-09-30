@@ -119,7 +119,12 @@ def test_structural_mark_is_the_level_the_check_named(monkeypatch):
         symbol="X", thesis_invalid_if=None, is_short=False,
         entry_price=100.0, stop_loss=90.0, run_id="r",
     )
-    assert [m.price for m in v.marks] == [95.0]
+    # The chart's own averages are marks as well (the thesis named none),
+    # but the LAST mark price gave up is still the confirmed-broken level,
+    # and that is what the verdict is measured from.
+    assert 95.0 in [m.price for m in v.marks]
+    assert sum("structural" in m.source for m in v.marks) == 1
+    assert v.last_mark is not None and v.last_mark.price == 95.0
     assert v.status == "EXIT"
 
 
@@ -134,9 +139,10 @@ def test_no_structural_mark_when_the_level_was_not_confirmed_broken(monkeypatch)
         symbol="X", thesis_invalid_if=None, is_short=False,
         entry_price=100.0, stop_loss=90.0, run_id="r",
     )
-    assert v.status == "UNPARSEABLE"
-    assert v.code == ae.CODE_NO_MARK
-    assert v.exit_cleared is False
+    # The verdict may still be readable off the chart's own averages; what
+    # must never happen is an UNBROKEN level being admitted as a mark.
+    assert all("structural" not in m.source for m in v.marks)
+    assert 95.0 not in [m.price for m in v.marks]
 
 
 # --------------------------------------------------------------------------
@@ -193,3 +199,376 @@ def test_tolerance_is_ledgered_as_arbitrary_not_sourced():
     )
     assert row["status"] == "arbitrary"
     assert float(row["value"]) == ae.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
+
+
+# --------------------------------------------------------------------------
+# 6. THE SCAN — the alignment exit can now INITIATE a sale.
+#
+# Until this landed, `check_alignment_exit` ran only on positions the review
+# had already named, and only GATED the ones whose prose already claimed the
+# alignment exit. Nothing ever asked the question of a position the models
+# were silent about, so the owner-ratified rule could never start a sale.
+# --------------------------------------------------------------------------
+def _scan_pipeline(verdicts: dict):
+    """A pipeline whose only real behaviour is the scan; the chart read is
+    replaced by a per-symbol canned verdict."""
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    seen = []
+
+    def _chart(*, symbol, **kw):
+        seen.append(symbol)
+        return verdicts[symbol]
+
+    p._alignment_exit_for_holding = _chart
+    p._seen = seen
+    # Bought long before today: the scan's same-session gate needs a real
+    # entry date, and an unreadable one deliberately holds.
+    p.db = types.SimpleNamespace(
+        get_symbol_last_buy=lambda sym: {"timestamp": "2020-01-01 10:00:00"},
+    )
+    return p
+
+
+def _verdict(status):
+    return ae.AlignmentExitCheck(
+        status, "c", (), None, None, None, "detail",
+        owner_reason="Trend alignment over: the last line ...",
+    )
+
+
+def _pos(symbol, qty=10.0):
+    from src.models import Position
+
+    return Position(
+        symbol=symbol, qty=qty, avg_entry=100.0, current_price=90.0,
+        market_value=900.0, unrealized_pnl=-100.0, sector="Tech",
+    )
+
+
+_PRIORITY = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
+
+
+def test_scan_raises_a_sale_on_a_position_no_model_mentioned():
+    """THE POINT OF THE WHOLE BUILD."""
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"]["action"] == "SELL"
+    assert best["AAA"]["exit_trigger"] == ExitTrigger.TREND_ALIGNMENT_OVER.value
+    # The reason names the trigger in the accepted wording, so the confirmer
+    # downstream recognises the claim and gates the sale on the verdict.
+    from src.pipeline import _reason_claims_alignment_exit
+
+    assert _reason_claims_alignment_exit(best["AAA"]["reason"], None)
+
+
+def test_scan_raises_nothing_on_hold_or_unreadable_chart():
+    for status in ("HOLD", "UNPARSEABLE"):
+        p = _scan_pipeline({"AAA": _verdict(status)})
+        best: dict = {}
+        p._alignment_exit_scan(
+            [_pos("AAA")], best, run_id="r", position_facts=None,
+            priority=_PRIORITY,
+        )
+        assert best == {}, status
+
+
+def test_scan_failure_holds_and_does_not_stop_the_other_names():
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+
+    def _chart(*, symbol, **kw):
+        if symbol == "BOOM":
+            raise RuntimeError("no bars")
+        return _verdict("EXIT")
+
+    p._alignment_exit_for_holding = _chart
+    p.db = types.SimpleNamespace(
+        get_symbol_last_buy=lambda sym: {"timestamp": "2020-01-01 10:00:00"},
+    )
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("BOOM"), _pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert "BOOM" not in best
+    assert best["AAA"]["action"] == "SELL"
+
+
+def test_scan_covers_a_short_and_never_sells_it():
+    p = _scan_pipeline({"SHT": _verdict("EXIT")})
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("SHT", qty=-10.0)], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["SHT"]["action"] == "COVER"
+
+
+def test_scan_never_overwrites_an_exit_the_review_asked_for():
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    mine = {"symbol": "AAA", "action": "SELL", "reason": "earnings miss"}
+    best = {"AAA": mine}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"] is mine
+    assert p._seen == []  # not even read: the model's exit already stands
+
+
+def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+    best = {"AAA": {"symbol": "AAA", "action": "HOLD", "reason": "still like it"}}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"]["action"] == "SELL"
+
+
+def test_verdict_is_read_once_per_position_per_run():
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    calls = []
+
+    def _chart(*, symbol, **kw):
+        calls.append(symbol)
+        return _verdict("EXIT")
+
+    p._alignment_exit_for_holding = _chart
+    kw = dict(
+        symbol="AAA", thesis_invalid_if=None, is_short=False,
+        entry_price=1.0, stop_loss=None, run_id="r",
+    )
+    assert p._alignment_exit_cached(**kw).status == "EXIT"
+    assert p._alignment_exit_cached(**kw).status == "EXIT"
+    assert calls == ["AAA"]
+
+
+def test_scanned_sale_reaches_the_real_sell_path_with_the_reason_voiced():
+    """End to end through `_midday_execute_llm_actions`: a review that names
+    NOTHING, a chart that says the move is over, and the desk's ordinary
+    protected-sell path carrying the chart's own owner-facing sentence."""
+    from unittest.mock import MagicMock
+
+    from src.models import PositionReasoningChain, PositionReview
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.db = MagicMock()
+    p.db.get_trades.return_value = []
+    p.db.get_acted_exit_triggers_today.return_value = []
+    p._format_qty = lambda q: str(q)
+    p._atr_for_symbol = lambda s: 2.0
+    p._record_exit_refusal = lambda **kw: None
+    p._alignment_exit_for_holding = lambda **kw: _verdict("EXIT")
+    p._submit_protected_sell = lambda **kw: (
+        {"id": "o-1", "symbol": kw["symbol"], "status": "accepted"}, None,
+    )
+
+    review = PositionReview(
+        reasoning_chain=PositionReasoningChain(
+            macro_continuity_check="stable",
+            thesis_progress_check="on pace",
+            thesis_integrity_check="intact",
+            winners_discipline_check="no flags",
+            session_disposition_check="patient",
+            execution_rationale="n/a",
+        ),
+        actions=[],
+        overall_assessment="nothing to do", risk_level="low",
+    )
+    orders = p._midday_execute_llm_actions(
+        positions=[_pos("AAA")], review=review, run_id="r-scan",
+    )
+    assert orders, "the chart said the move was over and nothing was sold"
+    # The sale states WHY, in the desk's existing owner-facing wording: the
+    # scan's own line plus the chart's own sentence appended by the confirmer.
+    reason = (p.db.insert_trade.call_args.kwargs.get("reasoning") or "")
+    assert "Trend alignment over" in reason
+    assert "the last line" in reason
+
+
+# --------------------------------------------------------------------------
+# 6. ADVERSARY PASS — the five defects.
+# --------------------------------------------------------------------------
+
+
+def _scan_shell(*, status="EXIT", buy_ts="2020-01-01 10:00:00", calls=None):
+    """A pipeline shell with only what `_alignment_exit_scan` touches."""
+    from src.pipeline import TradingPipeline
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    verdict = types.SimpleNamespace(
+        status=status, exit_cleared=(status == "EXIT"),
+        reason="the chart says so", code="c", owner_reason="because",
+    )
+
+    def _cached(**kw):
+        if calls is not None:
+            calls.append(kw)
+        return verdict
+
+    p._alignment_exit_cached = _cached
+    p.db = types.SimpleNamespace(
+        get_symbol_last_buy=lambda sym: {"timestamp": buy_ts} if buy_ts else {},
+    )
+    return p
+
+
+def _pos_stub(symbol="AAA", qty=10.0, stop_loss=None):
+    return types.SimpleNamespace(
+        symbol=symbol, qty=qty, avg_entry=100.0, stop_loss=stop_loss,
+        thesis_invalid_if=None,
+    )
+
+
+# --- Defect 1: a refused scan sale must not strip the position's stop. ----
+def test_refused_scan_sale_restores_the_displaced_trail_stop():
+    from src.pipeline import _actions_with_scan_fallback
+
+    sale = {"symbol": "AAA", "action": "SELL", "_alignment_scan_raised": True}
+    trail = {"symbol": "AAA", "action": "TRAIL_STOP"}
+    orders: list = []
+    seen = [item for item in _actions_with_scan_fallback(
+        [sale], {"AAA": trail}, orders,
+    )]
+    assert seen == [sale, trail], (
+        "a scan-raised sale that produced no order must hand the symbol back "
+        "the TRAIL_STOP it displaced"
+    )
+
+
+def test_executed_scan_sale_does_not_restore_the_displaced_action():
+    from src.pipeline import _actions_with_scan_fallback
+
+    sale = {"symbol": "AAA", "action": "SELL", "_alignment_scan_raised": True}
+    displaced = {"AAA": {"symbol": "AAA", "action": "TRAIL_STOP"}}
+    orders: list = []
+    seen = []
+    for item in _actions_with_scan_fallback([sale], displaced, orders):
+        seen.append(item)
+        orders.append({"id": "1"})  # the sale went through
+    assert seen == [sale]
+    assert displaced == {"AAA": {"symbol": "AAA", "action": "TRAIL_STOP"}}
+
+
+def test_refused_model_action_is_never_re_queued():
+    from src.pipeline import _actions_with_scan_fallback
+
+    model_sell = {"symbol": "AAA", "action": "SELL"}
+    seen = list(_actions_with_scan_fallback(
+        [model_sell], {"AAA": {"symbol": "AAA", "action": "TRAIL_STOP"}}, [],
+    ))
+    assert seen == [model_sell]
+
+
+def test_scan_records_the_action_it_displaced_and_flags_its_own():
+    best = {"AAA": {"symbol": "AAA", "action": "TRAIL_STOP", "reason": "ratchet"}}
+    displaced: dict = {}
+    _scan_shell()._alignment_exit_scan(
+        [_pos_stub()], best, run_id="r", position_facts=None, priority=_PRIORITY,
+        displaced=displaced,
+    )
+    assert best["AAA"]["action"] == "SELL"
+    assert best["AAA"]["_alignment_scan_raised"] is True
+    assert displaced["AAA"]["action"] == "TRAIL_STOP"
+
+
+# --- Defect 3: the chart supplies a mark when the prose does not. ---------
+def test_chart_supplies_marks_when_the_thesis_names_no_average():
+    closes = [100.0] * 60 + [50.0]
+    v = ae.check_alignment_exit(
+        thesis_invalid_if="it looks tired", closes=closes, atr=1.0,
+    )
+    assert v.thesis_ma_period is None
+    assert v.marks, "no thesis average must not mean no mark"
+    assert v.status == "EXIT"
+
+
+def test_chart_marks_use_only_periods_the_desk_already_computes():
+    assert set(ae.CHART_MA_PERIODS) == set(ae.SMA_LADDER) | set(
+        ae.SMA_LADDER.values()
+    )
+
+
+def test_unreadable_only_when_the_chart_itself_has_nothing():
+    v = ae.check_alignment_exit(
+        thesis_invalid_if=None, closes=[100.0, 101.0], atr=1.0,
+    )
+    assert v.status == "UNPARSEABLE" and v.code == ae.CODE_NO_MARK
+
+
+# --- Defect 4: no same-session close. -------------------------------------
+def test_position_opened_today_is_not_closed_by_the_scan():
+    from src.trading_calendar import et_today
+
+    best: dict = {}
+    _scan_shell(buy_ts=f"{et_today()} 09:35:00")._alignment_exit_scan(
+        [_pos_stub()], best, run_id="r", position_facts=None, priority=_PRIORITY,
+        displaced={},
+    )
+    assert best == {}
+
+
+def test_unknown_entry_date_holds_rather_than_sells():
+    from src.pipeline import TradingPipeline
+
+    p = _scan_shell()
+
+    def _boom(sym):
+        raise RuntimeError("db down")
+
+    p.db = types.SimpleNamespace(get_symbol_last_buy=_boom)
+    assert p._position_opened_today("AAA") is True
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos_stub()], best, run_id="r", position_facts=None, priority=_PRIORITY,
+        displaced={},
+    )
+    assert best == {}
+    assert TradingPipeline._position_opened_today is not None
+
+
+def test_older_position_is_still_eligible():
+    best: dict = {}
+    _scan_shell(buy_ts="2020-01-01 10:00:00")._alignment_exit_scan(
+        [_pos_stub()], best, run_id="r", position_facts=None, priority=_PRIORITY,
+        displaced={},
+    )
+    assert best["AAA"]["action"] == "SELL"
+
+
+# --- Defect 5: the two callers of the shared memo pass identical inputs. --
+def test_scan_and_confirmer_resolve_stop_loss_identically():
+    """Both key the SAME per-run memo and `stop_loss` decides whether a
+    broken-level mark exists, so the two call sites must resolve it the
+    same way or one reads a verdict built from a stop it never passed."""
+    import inspect
+
+    from src.pipeline import TradingPipeline
+
+    scan_src = inspect.getsource(TradingPipeline._alignment_exit_scan)
+    exec_src = inspect.getsource(TradingPipeline._midday_execute_llm_actions)
+    needle = 'or facts.get("stop_loss")'
+    assert needle in scan_src
+    assert needle in exec_src
+
+
+def test_scan_passes_the_position_facts_stop_loss(monkeypatch):
+    calls: list = []
+    _scan_shell(calls=calls)._alignment_exit_scan(
+        [_pos_stub(stop_loss=None)], {}, run_id="r",
+        position_facts={"AAA": {"stop_loss": 91.0}}, priority=_PRIORITY,
+        displaced={},
+    )
+    assert calls and calls[0]["stop_loss"] == 91.0
