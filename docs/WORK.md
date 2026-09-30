@@ -86,6 +86,7 @@ detail: docs/BOARD_NOTES.md (item 20)
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
 DONE WHEN:
+  - [ ] FIRST, because 2026-09-30 found the sweep below is not runnable at all: a daily-bar source exists for it — either a one-off pull of this desk's universe committed as a test fixture, or the rehearsal account's read path — since the repo holds no bar cache and `src/execution/broker.py::get_bars` needs credentials a build agent must not touch
   - [ ] Tsinaslanidis §4.5's own bounce test (how often price entering a band leaves the way it came, against randomly drawn bands) is RUN on this desk's own universe and bars, sweeping cluster tolerance 0.5/1/2/3/5% and pivot window 3/5/10/25, and the result is recorded in `docs/RESEARCH_FINDINGS.md` — a reading, not a fit
   - [ ] on that reading: either one pivot window and one tolerance are single-sourced in code (today 3 in one module and 5 in another) with that measurement as their `config/number_ledger.yaml` source, or — if the effect is flat across the sweep — the percentage tolerance is replaced by the span of the pivot bars themselves, which needs no constant at all
   - [ ] the two-touch minimum is left exactly as it is: sourced (Tsinaslanidis 2012, 733 US stocks / 20 years) and pinned by a test
