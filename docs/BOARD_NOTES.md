@@ -354,12 +354,9 @@ Not done here: the other ~55 unsourced prompt numbers, ~20 unsourced market clai
 
 **Still open under this item:** (a) the un-enumerated remainder of the ~55 prompt-only numbers and ~20 unsourced market claims — the PM and technical sheet subsets are already catalogued precisely under item 107 and should be resolved there, not re-listed; (b) the technical seat's five unnamed data blocks, untouched here; (c) the dead-weight prose in the PM, risk manager and position reviewer sheets, untouched here; (f, residue) the 0.25 sizing grid, the `2+ occurrences` trigger and the conviction-to-base midpoints, left open when the false 25% cut itself was deleted on 2026-09-26; (g) rendering-or-pinning every code-controlled sentence, which is item 107's registry and covers two pairings so far.
 
-## item 112
+## item 112 — RETIRED 2026-09-30
 
-**Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
-**Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
-
-**Moved from WORK.md (2026-09-24) —** Full account: `docs/INCIDENT_HISTORY.md`, 2026-09-19 entry.
+**Verified against live code, not rebuilt: both halves already shipped.** `_record_delever_shortfall` (`src/pipeline.py`) has written the durable `specialist_evidence` row (`stage='gross_delever'`) since 2026-09-19. `_alert_owner_delever_incomplete` (`src/pipeline.py`) already pages the owner via a standalone `send_owner_alert`, edge-triggered on the transition into still-over-ceiling, shipped 2026-09-25 (#697, "Item 112: promote `_alert_owner_delever_incomplete` from a one-line session bullet to a standalone `send_owner_alert`"). WORK.md's "the alert decision stays open" clause was stale — the alert was built the same week the clause was written and the item text was never updated. `tests/test_gross_exposure_ladder.py` (11 relevant cases) pass on main. No code change made; item removed from the open queue.
 
 ## item 109
 
@@ -566,11 +563,54 @@ Full heading text, moved for the same reason:
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** This constant belongs to no tranche (182 is the ladder, 183 the order gates, 185 the trailing numbers, 186 the portfolio ceilings), so it was taken here. A first pass refused it; an adversary pass found that refusal rested on a false history and wrong arithmetic, and what follows is the corrected result. Full reasoning is in `config/number_ledger.yaml` under its id rather than duplicated here. **(a) A false history is deleted from five files, not softened.** The first pass asserted a "3.0 -> 1.5 move on 2026-09-04" and built an argument on it. There was no such move: `config/settings.yaml` went 3.0 (2026-08-27) straight to 2.5 (2026-09-10) and never deployed 1.5, because the commit that carried it squashes PR #269's two legs (3.0 -> 1.5, then 1.5 -> 2.5) into one merge. The wrong date was inherited from a settings comment and then copied into four more places by a change whose purpose was removing rot; it is now corrected at the source. **(b) The ledger's own open question was doctrine-barred and is replaced.** It asked what this desk's maximum-adverse-excursion record says about the point inside the band — an MAE study over the desk's own trades is FITTING, which `docs/OUTCOME.md` bars outright, and it is how the 1.5 was produced in the first place. **(c) There is no cited band, so BOTH ends are unsupported.** The entry carries no source field and `config/settings.yaml` offers only "general swing-trading guidance" with no URL, which doctrine explicitly rejects. Searched and recorded: the pages asserting 2.5-3.0x for a fixed multi-day entry stop are vendor content rather than literature, one secondary claim points the other way at 1.5-2.0x, the corroborating Van Tharp and Chandelier figures are trailing mechanisms the settings comment already concedes, and the top search hit for the desk's own phrasing is now the desk's own PR. The quoted band (2.5-3.0) does not even match the one quoted three lines below it (2-3). 2.5 stays as the INTERIM value and is deliberately not re-picked, because with no cited band moving it is one more unsourced choice. **(d) The reformulation is NOT refused — it is specified and filed as item 199.** The first pass refused a sqrt-horizon floor claiming it pins reward:risk at exactly 1.0; that was wrong twice (the setup and regime scalers still multiply in, giving about 1.17 to 0.83, and the target and stop rules fire on opposite sides of price so they do not share a population) and is retracted. More importantly it tested the wrong reformulation: doctrine's worked example is structural, and this desk already computes levels with touch counts and already has owner-ratified machinery that reads a stop from structure. The asymmetry nobody had examined is that the 5-touch bar was measured for justifying a TIGHTER stop, where a level that fails costs a whipsaw; as a WIDENING anchor a level that fails only leaves the stop wider than needed, which under risk-based sizing costs position size and not loss. **(e) One stale constant fixed and the class closed mechanically.** `src/pipeline.py` fell back to 1.5 whenever the configured multiple was absent or not a real number — a half-landed second leg of PR #269, which is exactly the failure `scripts/definition_of_done.py` exists for. Measured: not reachable in production, and the three test modules that build a pipeline give 108 passed with the fallback at either value, so nothing depended on it. `tests/test_risk_setting_fallbacks.py` now pins all fifteen fallbacks to the DEPLOYED value in `config/settings.yaml`. **(f) The screen contradiction was FIXED ON MAIN by item 185, which landed first and went further; this branch drops its own narrower version.** This pass proposed dividing `STOP_SANITY_FLOOR_FRACTION` by the widest reachable stop multiple instead of the base, taking the ceiling from 20% to 16.67%. Item 185 instead deleted the borrowed 0.5 literal outright, so the ceiling is now `1 / widest_reachable_stop_atr_multiple(...)` = 1/3.00 = 33.3%. Main's form is kept. The FINDING survives and item 185 confirms it: dividing by the bare base was false across a band of names, and the divergence was exactly the risk-off scaler 1.20. Also withdrawn as wrong on the facts: the board's note that this "needs the owner's call because it tightens a live screen" — `universe_screen.enabled` is false, so the screen does not ship on. **(g) THE BLAST RADIUS GREW WHILE THIS PASS WAS OPEN, and that strengthens rather than weakens the interim finding.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
 
+## Item 202 — the rehearsal harness reaches the network
 
+Found 2026-09-30 while closing a hole in the test suite's outbound-HTTP guard.
+
+`tests/conftest.py` blocked `requests.get` only. A `requests.Session` bypassed
+it, and yfinance does not use `requests` at all — it ships its own transport on
+curl_cffi [measured: `yfinance.data` references `curl_cffi` and `session.get`,
+and `requests.Session` zero times]. So the guard never applied to the one
+library that actually reached the internet.
+
+Closing both holes exposed five tests that silently depended on a live Yahoo
+Finance response. Four were not about market data and now state their own
+sectors. The fifth is this item: a test whose premise is replaying a RECORDED
+session downloads SPY and per-symbol price history on every run, reports
+`TECH DATA BLIND SPOT`, and never reaches the Portfolio Manager.
+
+It **fails on `origin/main` today** with the network reachable, taking 196
+seconds [measured 2026-09-30], so it is pre-existing rot rather than a
+regression from the guard.
+
+Do NOT fix it by loosening the guard, skipping the test, or marking it flaky.
+That is the same error as raising a safety sweep's frequency instead of fixing
+what the sweep is covering for.
+
+
+### Item 202 update — the isolation was never real (2026-09-30)
+
+`ops/rehearsal/broker.py::blocked_market_data` replaces the market-data
+provider with one that fetches nothing, and `ops/rehearsal/isolation.py`
+describes a socket wall covering "Anthropic, OpenAI, OpenRouter, Alpaca,
+yfinance, FRED and RSS". Neither held: price data still reached the rehearsal
+through **curl_cffi**, which is yfinance's own transport and which the test
+suite's outbound-HTTP guard did not cover.
+
+So the rehearsal has been validating against LIVE market data while claiming
+to be offline, deterministic and free. With the hole closed, the session
+degrades honestly to `status='no_data'` and never reaches the Portfolio
+Manager, which is why `test_the_settled_cost_ceiling_still_suspends_paid_analysis`
+cannot build its 'before' case.
+
+That test is marked `xfail(strict=False)` with the reason above — NOT as a
+flake. It flips to XPASS the moment this item serves recorded market data,
+which is the signal that item 202 is done.
+
+It also fails on `origin/main` today, taking ~196 seconds of live fetching
+[measured 2026-09-30], so the defect predates the guard rather than being
+caused by it.
 ## item 201 — the rest of the cancel+resubmit stop path
-
 **2026-09-30 — `replace_stop_loss`'s "Alpaca's OTO stop-loss leg cannot be edited in place, so we cancel + resubmit" was FALSE for the desk's own protective stops, and the false comment is what kept the naked-position window alive.** Measured against the broker on rehearsal account PA30V8QHEW1C on 2026-09-30: `client.replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))` moves a resting protective stop ATOMICALLY — the old order goes to REPLACED, a new id is issued, and exactly ONE open stop covers the symbol at every instant. A REFUSED amend leaves the ORIGINAL order resting untouched (`new`, old price, one open stop), so a refusal is a safe failure and must NOT be followed by a cancel. A quantity amend lands in place too (3 -> 2 shares, one open stop throughout), and a fractional 3.5-share DAY stop amends its PRICE in place while keeping its fractional quantity. The codebase already used the same endpoint for entry limits in `replace_entry_limit`. The cost of the old sequence is not theoretical: a live position sat unprotected for 13m22s on 2026-09-30, and Alpaca lists a just-cancelled stop as `new`, so the old path could also accept a duplicate.
-
 **What the accompanying change does and deliberately does not do.** `_amend_resting_stop_price` in `src/execution/broker.py` takes the amend path only for the shape the measurement covered: exactly one live protective stop, order class simple (no bracket/OTO/OCO leg, no `legs`), and a stop quantity that already equals the position, since a price-only amend cannot repair a coverage gap. Everything else — more than one resting stop, a bracket leg, a quantity mismatch, an amend whose exception carries no broker status and whose outcome is therefore unknown — returns the `_AMEND_NOT_ATTEMPTED` sentinel and drops through to the untouched cancel+resubmit fallback, snapshot and rollback machinery included. A broker REFUSAL (an exception carrying a `status_code`, i.e. the broker answered) returns `None` instead: the original stop is still resting, protection is intact, and cancelling it to "retry properly" would re-open exactly the window this closes. No new number, tolerance, retry count or sleep was introduced, and no wait was added after any cancel.
-
 **What is still open and is this item.** Every other stop-moving path still cancels first: the fractional hybrid pair (two legs, so the single-stop precondition never holds), `shift_stops_down`'s per-lot shift, and any multi-stop position. Each needs its own broker measurement before conversion — in particular whether both legs of the hybrid pair can be amended without collapsing to one stop — rather than being converted on the strength of the single-stop measurement. Until then the fallback is the correct behaviour for them, not an oversight.
