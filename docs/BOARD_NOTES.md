@@ -417,9 +417,9 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Moved from WORK.md (2026-09-24) —** Settles with a before/after benchmark of whether the PM uses `reasoning_chain.macro_audit`, which needs the owner's go. Do NOT reopen as a size problem.
 
-## item 77
+## item 77 — RETIRED 2026-09-30, bare pointer at the model-seat decision line
 
-**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15.
+**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15. **Retired 2026-09-30:** the board item was a bare pointer with no criteria of its own; its only criterion was closing with the `DECIDE BY 2026-10-31` model-seat line, which now names it as absorbed and keeps the owner ruling that nobody proposes the run. Items 17, 76 and 78 were checked the same day and stay open: 17 is a deferred owner decision with no backup channel built, 76 is blocked on a paid benchmark with its own criteria, 78 still has the live temporary isolate in the pipeline.
 
 ## item 81 — RETIRED 2026-09-24
 
