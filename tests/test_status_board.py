@@ -40,6 +40,8 @@ sb = _load()
 # --------------------------------------------------------------------------
 # a bent ruler is not a broken system
 # --------------------------------------------------------------------------
+import re as _re_mod
+
 
 def test_prose_where_a_test_name_belongs_is_unknown_not_failure():
     """The bug the first real run found.
@@ -907,6 +909,136 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
         "the file is over the cap, so the prune that fixes this can always "
         "merge."
     )
+
+
+# ---------------------------------------------------------------------------
+# PER-ITEM budget on docs/WORK.md
+# ---------------------------------------------------------------------------
+#: The board has always been policed by a WHOLE-FILE cap
+#: (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
+#: growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
+#: author. A whole-file cap binds on whoever files the NEXT item, never on
+#: whoever wrote a 12,556-byte one, and the only way past it is deleting
+#: items -- which is exactly how filed work comes to feel dropped. Measured
+#: on main that day: 33 items, median 1,180 bytes, largest 12,556.
+#:
+#: The design the owner wrote for this file is a one-line item plus a
+#: pointer, with the detail in docs/BOARD_NOTES.md. Every item already
+#: carried its pointer, but nothing held the item itself short, so items
+#: grew fat anyway. These checks enforce the per-item half.
+#:
+#: DERIVATION of the budget, so it is not a round number picked by feel:
+#: the whole-file cap divided by a realistic maximum open-item count. The
+#: board carried 33 open items when this was written [measured 2026-09-30];
+#: 40 is that with headroom, and is the number below. Per-item budget is
+#: therefore cap // 40. Raising the divisor (more items) or the cap changes
+#: it mechanically, and no third number has to be justified.
+_WORK_MD_MAX_OPEN_ITEMS = 40
+
+#: Same shape as `_QUEUE_ITEM_RE`/`_ITEM_OPEN_RE` in scripts/status_board.py:
+#: an item block starts at its bold `**N. ` heading and runs to the next
+#: heading, or to the retired-numbers paragraph that closes the list.
+_WORK_ITEM_HEADING_RE = _re_mod.compile(r"^\*\*(?:~~)?(\d+)\.\s", _re_mod.M)
+_RETIRED_PARA = "**Retired item numbers"
+
+
+def _work_md_item_blocks(text):
+    """`[(number, block_text)]` for every numbered item block in `text`."""
+    stop = text.find(_RETIRED_PARA)
+    if stop == -1:
+        stop = len(text)
+    heads = [m for m in _WORK_ITEM_HEADING_RE.finditer(text) if m.start() < stop]
+    blocks = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else stop
+        blocks.append((m.group(1), text[m.start():end].rstrip() + "\n"))
+    return blocks
+
+
+def _work_md_item_budget_bytes():
+    from scripts.check_board_hygiene import read_cap_bytes
+
+    repo = Path(__file__).resolve().parents[1]
+    cap, error = read_cap_bytes(repo)
+    assert error is None, error
+    return cap // _WORK_MD_MAX_OPEN_ITEMS
+
+
+def _over_budget_items(text, budget):
+    return [(n, len(b)) for n, b in _work_md_item_blocks(text) if len(b) > budget]
+
+
+def _items_missing_their_pointer(text):
+    return [n for n, b in _work_md_item_blocks(text)
+            if "docs/BOARD_NOTES.md" not in b]
+
+
+def _per_item_failure_message(offenders, budget):
+    worst = ", ".join(f"item {n} ({size:,} bytes)" for n, size in offenders)
+    return (
+        f"docs/WORK.md item block(s) over the {budget:,}-byte per-item budget: "
+        f"{worst}. The budget is the file's own 100,000-byte cap divided by "
+        f"{_WORK_MD_MAX_OPEN_ITEMS}, a realistic maximum number of open items "
+        "(33 were open on 2026-09-30, measured), so the whole board fits under "
+        "the cap without any single item crowding the rest out. "
+        "TO FIX, and do NOT delete anything: move the item's prose into "
+        "`## item N` in docs/BOARD_NOTES.md -- create that heading if it is "
+        "not there -- and leave behind only the bold title line, the DONE WHEN "
+        "checkboxes in short form, and the `detail: docs/BOARD_NOTES.md "
+        "(item N)` pointer. Never raise this number to make room, and never "
+        "retire a live item to get under it."
+    )
+
+
+def test_every_work_md_item_stays_within_its_per_item_budget():
+    """The real docs/WORK.md, every item block, against the derived budget."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    budget = _work_md_item_budget_bytes()
+    offenders = _over_budget_items(work_md.read_text(), budget)
+    assert not offenders, _per_item_failure_message(offenders, budget)
+
+
+def test_every_work_md_item_points_at_its_board_notes_block():
+    """An item may be short only because its detail lives somewhere; the
+    pointer is what makes that true, so it is checked, not assumed."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    missing = _items_missing_their_pointer(work_md.read_text())
+    assert not missing, (
+        f"docs/WORK.md item(s) {missing} carry no pointer to their detail. Add "
+        "a `detail: docs/BOARD_NOTES.md (item N)` line to the block and put the "
+        "prose under `## item N` in docs/BOARD_NOTES.md."
+    )
+
+
+def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
+    """Verifies the checker itself against a SIMULATED over-budget item, so
+    it is not merely passing because today's file happens to be tidy."""
+    budget = _work_md_item_budget_bytes()
+    assert budget > 0
+    tidy = (
+        "**5. A short title.**\n\n"
+        "DONE WHEN:\n  - [ ] the thing is measured\n\n"
+        "detail: docs/BOARD_NOTES.md (item 5)\n\n"
+    )
+    fat = (
+        "**6. A fat title.**\n\n" + ("  - [ ] " + "x" * 200 + "\n") * 40 +
+        "\ndetail: docs/BOARD_NOTES.md (item 6)\n\n"
+    )
+    pointerless = "**7. No pointer anywhere.**\n\nDONE WHEN:\n  - [ ] something\n\n"
+    text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
+
+    assert [n for n, _ in _work_md_item_blocks(text)] == ["5", "6", "7"]
+    assert [n for n, _ in _over_budget_items(text, budget)] == ["6"]
+    assert _items_missing_their_pointer(text) == ["7"]
+    assert _over_budget_items(tidy + _RETIRED_PARA, budget) == []
+    message = _per_item_failure_message(_over_budget_items(text, budget), budget)
+    assert "docs/BOARD_NOTES.md" in message and "move the item's prose" in message
+    # The retired-numbers paragraph is not an item and is never measured.
+    assert all(not b.startswith(_RETIRED_PARA) for _, b in _work_md_item_blocks(text))
 
 
 def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
