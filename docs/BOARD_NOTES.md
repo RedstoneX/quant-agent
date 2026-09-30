@@ -275,7 +275,7 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Same round number, two questions, no source, nothing tying them. The first job blocked 7 of 8 recorded discretionary exits. Settles with, for each independently, a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant. How readily the desk should block a sale at all is the owner's appetite, not this item.
 
-## item 75
+## item 75 — RETIRED 2026-09-30 (superseded by the exit-on-alignment ruling; the retirement note is at the end of this file and item 205 carries the successor)
 
 **Plain language —** When the desk bought Oracle on 2 September, the chart analyst set a profit target of $159.52 — a price Oracle had already failed at twice. Every seat saw that number: the portfolio manager used it to justify buying, the risk manager saw it, and the position reviewer was shown it every session with the words "soft — you manage exit". But nothing ever used it to sell. The reviewer is told it manages the exit, while its sell rules refuse "taking profit" as a reason, and the "past target" warning only appears at 150% of the way there. Oracle traded above the target on 4 and 8 September. Selling at target would have made about 9%; the desk would have ended slightly below its purchase price.
 **Example —** A target is written down before the trade opens, used to say the trade is worth taking, then ignored for the rest of the trade's life.
@@ -562,3 +562,42 @@ Moved out of `docs/WORK.md` on 2026-09-30 for the 100,000-byte cap
 Full heading text, moved for the same reason:
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** This constant belongs to no tranche (182 is the ladder, 183 the order gates, 185 the trailing numbers, 186 the portfolio ceilings), so it was taken here. A first pass refused it; an adversary pass found that refusal rested on a false history and wrong arithmetic, and what follows is the corrected result. Full reasoning is in `config/number_ledger.yaml` under its id rather than duplicated here. **(a) A false history is deleted from five files, not softened.** The first pass asserted a "3.0 -> 1.5 move on 2026-09-04" and built an argument on it. There was no such move: `config/settings.yaml` went 3.0 (2026-08-27) straight to 2.5 (2026-09-10) and never deployed 1.5, because the commit that carried it squashes PR #269's two legs (3.0 -> 1.5, then 1.5 -> 2.5) into one merge. The wrong date was inherited from a settings comment and then copied into four more places by a change whose purpose was removing rot; it is now corrected at the source. **(b) The ledger's own open question was doctrine-barred and is replaced.** It asked what this desk's maximum-adverse-excursion record says about the point inside the band — an MAE study over the desk's own trades is FITTING, which `docs/OUTCOME.md` bars outright, and it is how the 1.5 was produced in the first place. **(c) There is no cited band, so BOTH ends are unsupported.** The entry carries no source field and `config/settings.yaml` offers only "general swing-trading guidance" with no URL, which doctrine explicitly rejects. Searched and recorded: the pages asserting 2.5-3.0x for a fixed multi-day entry stop are vendor content rather than literature, one secondary claim points the other way at 1.5-2.0x, the corroborating Van Tharp and Chandelier figures are trailing mechanisms the settings comment already concedes, and the top search hit for the desk's own phrasing is now the desk's own PR. The quoted band (2.5-3.0) does not even match the one quoted three lines below it (2-3). 2.5 stays as the INTERIM value and is deliberately not re-picked, because with no cited band moving it is one more unsourced choice. **(d) The reformulation is NOT refused — it is specified and filed as item 199.** The first pass refused a sqrt-horizon floor claiming it pins reward:risk at exactly 1.0; that was wrong twice (the setup and regime scalers still multiply in, giving about 1.17 to 0.83, and the target and stop rules fire on opposite sides of price so they do not share a population) and is retracted. More importantly it tested the wrong reformulation: doctrine's worked example is structural, and this desk already computes levels with touch counts and already has owner-ratified machinery that reads a stop from structure. The asymmetry nobody had examined is that the 5-touch bar was measured for justifying a TIGHTER stop, where a level that fails costs a whipsaw; as a WIDENING anchor a level that fails only leaves the stop wider than needed, which under risk-based sizing costs position size and not loss. **(e) One stale constant fixed and the class closed mechanically.** `src/pipeline.py` fell back to 1.5 whenever the configured multiple was absent or not a real number — a half-landed second leg of PR #269, which is exactly the failure `scripts/definition_of_done.py` exists for. Measured: not reachable in production, and the three test modules that build a pipeline give 108 passed with the fallback at either value, so nothing depended on it. `tests/test_risk_setting_fallbacks.py` now pins all fifteen fallbacks to the DEPLOYED value in `config/settings.yaml`. **(f) The screen contradiction was FIXED ON MAIN by item 185, which landed first and went further; this branch drops its own narrower version.** This pass proposed dividing `STOP_SANITY_FLOOR_FRACTION` by the widest reachable stop multiple instead of the base, taking the ceiling from 20% to 16.67%. Item 185 instead deleted the borrowed 0.5 literal outright, so the ceiling is now `1 / widest_reachable_stop_atr_multiple(...)` = 1/3.00 = 33.3%. Main's form is kept. The FINDING survives and item 185 confirms it: dividing by the bare base was false across a band of names, and the divergence was exactly the risk-off scaler 1.20. Also withdrawn as wrong on the facts: the board's note that this "needs the owner's call because it tightens a live screen" — `universe_screen.enabled` is false, so the screen does not ship on. **(g) THE BLAST RADIUS GREW WHILE THIS PASS WAS OPEN, and that strengthens rather than weakens the interim finding.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
+
+## item 75 — RETIRED 2026-09-30, superseded by the exit-on-alignment ruling (item 205 carries the successor)
+
+Item 75 asked for automatic profit-taking: a price target sent to the broker,
+profit-taking made an allowed SELL reason, and a tighter trail. The owner ruled
+on 2026-09-30 that a price target is a made-up number and the desk sells only
+when structure, ATR and a moving-average cross agree the trend is over — never
+at a pre-set price and never on one signal. Two of the item's three clauses
+therefore ask for something the desk is now forbidden to build, so the item is
+retired rather than carried: building it as written would be a defect.
+
+What was verified in live code before retiring it, rather than assumed:
+
+- The target genuinely never reaches the broker — `take_profit_price` is a
+  parameter of the order-submission path in `src/execution/broker.py` and has
+  no caller anywhere in `src/`. Under the ruling this is now correct behaviour,
+  not the gap the item described.
+- Profit-taking genuinely is not an allowed exit reason — `ExitTrigger` in
+  `src/risk/exit_trigger.py` has no profit or target member, and
+  `src/risk/exit_refusal.py` already records in its own docstring that a target
+  rationale is one "the owner has ruled is never a trigger". Again correct
+  under the ruling.
+- The auto trim that once wrote the `TAKE_PROFIT` label was deleted 2026-09-12
+  and nothing writes it any more; the label survives only for historical rows
+  (`src/pipeline.py`, `_EXIT_AUDIT_ACTIONS`).
+- The third clause, the loose trail, survives the ruling but is NOT orphaned:
+  the six trail constants are already carried by item 185 and by item 90's half
+  two, and item 75's own DONE WHEN line said not to re-derive them here.
+
+What is genuinely not built, and is now filed as item 205: the alignment exit
+itself. Nothing in `src/` asks whether structure, ATR and a moving-average
+cross agree; a search of the whole package finds no moving-average-cross exit
+condition at all. Exits today are seat prose plus a named trigger, and
+`bearish_state_change` is a claim the seat makes, not a mechanical agreement
+test. Item 205 files that work; this pass deliberately did not build it.
+
+One gap worth recording: the 2026-09-30 ruling has no entry of its own in
+`docs/INCIDENT_HISTORY.md`. Its only in-repo trace is the docstring in
+`src/risk/exit_refusal.py`. That was not fixed here.

@@ -116,17 +116,6 @@ DONE WHEN:
   - [ ] 2026-09-26, PARTIAL: the SPLIT is built and the research is recorded (docs/INCIDENT_HISTORY.md, 2026-09-26). The single `1.0` is now two named constants — `NOISE_BAND_ATR_MULTIPLE` (adverse move from entry) and `BREAK_CONFIRMATION_ATR_MULTIPLE` (how far a close must clear a level) — at the same value, with no behaviour change, each with its own ledger entry, research and open question. The exit-guard band was also found mislabelled `derived` from the 1.25 trailing band while holding 1.0, and is now honestly `arbitrary`. STILL UNMET: neither value is sourced. The noise band's only published analogue is ~3 ATR (Wilder, Chandelier, Kaufman), which is a large LOOSENING of how readily the desk may sell and therefore owner appetite this item may not decide; the break margin has no ATR basis in the literature at all (Edwards & Magee answer in percent, Bulkowski in "a decisive close"), so it is unidentifiable in its own units. The absolute minimum stop multiple still carries no source of its own.
 detail: docs/BOARD_NOTES.md (item 70)
 
-**75. The desk has no automatic profit-taking: its target never reaches the broker, a trim for profit is not an allowed exit reason, and the trail sits too loose — OPEN, filed 2026-09-14 after an owner question on ORCL.**
-
-DONE WHEN:
-  - [ ] each open position's target is drawn on the Mission Control chart (the owner's own request)
-  - [ ] four exit rules are tracked on every trade WITHOUT placing orders — sell all at target; sell half and trail the rest; target tightens the trail instead of selling; today's desk — with the rules fixed before anyone looks at the results and no tuning afterwards
-  - [ ] a ruling is recorded on whether a target plus a CONFIRMED breakdown may exit, and if so profit-taking becomes an allowed SELL reason and a chart breakdown can unlock an exit (today only the news seat emits state changes)
-  - [ ] trail tightness is read off the instrument or a cited source; the six trail constants are item 90's half two and item 185's tranche — do not re-derive them here
-  - [ ] an 8-K results release is visible to the exit path (invisible today)
-  - [ ] nothing here ships alone and nothing is fitted to ORCL — one number changed by itself is the patch this item exists to prevent
-detail: docs/BOARD_NOTES.md (item 75)
-
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
 
 DONE WHEN:
@@ -353,6 +342,15 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 197)
 
+**205. The alignment exit the owner ruled for is not built: nothing asks whether structure, ATR and a moving-average cross AGREE the trend is over — filed 2026-09-30, carried out of item 75 when the 2026-09-30 ruling retired that item's target framing. Filed only; deliberately not built in that pass.**
+
+DONE WHEN:
+  - [ ] the three agreeing conditions are each defined off the instrument in front of the desk, with a cited source or an owner appetite dial for any span or multiple they need — never a fitted or invented value
+  - [ ] no single one of the three can exit a position on its own, and the exit path refuses an exit that cites only one of them
+  - [ ] nothing in the change sends a price target to the broker or makes profit-taking at a target an allowed exit reason, which the owner ruled against on 2026-09-30
+  - [ ] the trail constants stay out of scope: they are item 90's half two and item 185's tranche and must not be re-derived here
+detail: docs/BOARD_NOTES.md (item 205)
+
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 - retired queue: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 65, 66, 68, 69, 71, 72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 114, 115, 116, 117, 118, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 153, 154, 155, 156, 158, 159, 160, 161, 162, 164, 165, 166, 167, 168, 169, 170, 171, 172, 175, 176, 178, 179, 180, 181, 184, 189
 - retired gate: 1, 2, 3, 4, 5, 6, 7, 8
@@ -362,6 +360,7 @@ detail: docs/BOARD_NOTES.md (item 197)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 75
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
