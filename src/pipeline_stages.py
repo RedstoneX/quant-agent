@@ -2197,17 +2197,30 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         spec["repeg_outcome"] = "unpriced"
         return order_id, 0.0
 
-    ceiling = reference * (1 + slippage_bps / 10_000.0)
+    # SIDE (board item 197). The slippage bound is the worst price this entry
+    # was approved to pay, so it sits ABOVE the reference for a buy and BELOW
+    # it for a `sell_short`. Everything downstream — the room test, which side
+    # of the quote is read, and the direction the limit walks — flips with it.
+    # Written before `repeg_enabled` was ever turned on, so no short entry has
+    # been through this path.
+    is_short = str(spec.get("side", "buy")).lower() != "buy"
+    if is_short:
+        ceiling = reference * (1 - slippage_bps / 10_000.0)
+    else:
+        ceiling = reference * (1 + slippage_bps / 10_000.0)
     ceiling = round(ceiling, 2 if ceiling >= 1 else 4)
     spec["ceiling"] = ceiling
-    if limit_price >= ceiling - 1e-9:
+    no_room = (limit_price <= ceiling + 1e-9) if is_short \
+        else (limit_price >= ceiling - 1e-9)
+    if no_room:
         # Expected for most entries: since PR #111 the submitted limit IS the
         # ceiling, so there is nothing to reprice toward. Room exists only
-        # when the limit was set below the ceiling — e.g. the quote was
+        # when the limit was set inside the ceiling — e.g. the quote was
         # unavailable at submission and the analyst's entry price was used.
         logger.debug(
-            "re-peg %s: limit $%.4f is already at the %.0fbp ceiling $%.4f — "
-            "nothing to chase", symbol, limit_price, slippage_bps, ceiling,
+            "re-peg %s: limit $%.4f is already at the %.0fbp %s $%.4f — "
+            "nothing to chase", symbol, limit_price, slippage_bps,
+            "floor" if is_short else "ceiling", ceiling,
         )
         spec["repeg_outcome"] = "no_room"
         return order_id, 0.0
@@ -2306,11 +2319,15 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         logger.warning("re-peg %s: quote failed (%s)", symbol, exc)
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
-    ask = quote.get("ask_price") if isinstance(quote, dict) else None
+    # A buy fills against the ask; a short sale fills against the bid.
+    ask = quote.get("bid_price" if is_short else "ask_price") \
+        if isinstance(quote, dict) else None
     if not isinstance(ask, (int, float)) or ask <= 0:
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
-    if float(ask) <= limit_price + 1e-9:
+    marketable = (float(ask) >= limit_price - 1e-9) if is_short \
+        else (float(ask) <= limit_price + 1e-9)
+    if marketable:
         # The market is at or inside our limit: the order is marketable as
         # it stands and a replace would only re-queue it. Leave it working.
         logger.info(
@@ -2331,8 +2348,9 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     #    still the best legal price and is sent once, not chased.
     target = ceiling
     target = round(target, 2 if target >= 1 else 4)
-    assert target <= ceiling + 1e-9
-    crosses = float(ask) <= target + 1e-9
+    assert target >= ceiling - 1e-9 if is_short else target <= ceiling + 1e-9
+    crosses = (float(ask) >= target - 1e-9) if is_short \
+        else (float(ask) <= target + 1e-9)
     if not crosses:
         logger.info(
             "re-peg %s: ask $%.4f is ABOVE the ceiling $%.4f — the single "
