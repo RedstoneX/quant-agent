@@ -122,21 +122,41 @@ def test_construct_orders_closes_at_zero_target():
     assert decisions[0].allocation_pct == 100.0
 
 
-def test_construct_orders_skips_tiny_delta():
-    """Held at 8.1%, target 8.2% → delta < min_trade_weight_delta → no order.
-
-    Except: held positions get a HOLD row for audit continuity.
-    """
+def test_construct_orders_nudges_a_tiny_delta_when_measurable():
+    """Owner ruling 2026-09-30 (board item 183): the flat 0.5%-of-book churn
+    floor (`min_trade_weight_delta`) is DELETED. Held at 8.1%, target 8.2% —
+    a 0.1% delta that used to be silently converted into a HOLD — is now a
+    real nudge the desk attempts, given something to size it from."""
     constructor = PortfolioConstructor()
     positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]  # 8.1%
     targets = [TargetPosition(symbol="NVDA", target_weight_pct=8.2,
                               conviction="high", thesis="keep")]
 
     decisions = constructor.construct_orders(
+        targets=targets, positions=positions,
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].action == "BUY"
+    assert abs(decisions[0].allocation_pct - 0.1) < 1e-6
+
+
+def test_construct_orders_exact_zero_delta_still_holds():
+    """A target that asks for EXACTLY what is already held is not a
+    request to trade at all — the floating-point-noise guard that replaced
+    `min_trade_weight_delta` still records a HOLD for audit continuity, the
+    same as before the floor was removed. This is not the arbitrary floor
+    coming back: 8.1% == 8.1% has no delta to nudge."""
+    constructor = PortfolioConstructor()
+    positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]  # 8.1%
+    targets = [TargetPosition(symbol="NVDA", target_weight_pct=8.1,
+                              conviction="high", thesis="keep")]
+
+    decisions = constructor.construct_orders(
         targets=targets, positions=positions, analyses=[],
         total_value=100_000, price_map={"NVDA": 100.0},
     )
-    # delta 0.1% < 0.5% default threshold → HOLD, not a tradeable order
     assert len(decisions) == 1
     assert decisions[0].action == "HOLD"
 
@@ -864,10 +884,14 @@ def test_sell_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning()
 
 def test_hold_and_no_condition_leave_the_field_none():
     """No stated condition → the field is None, not an empty string, on
-    every action — matching the conviction-ledger fields' own discipline."""
+    every action — matching the conviction-ledger fields' own discipline.
+
+    target_weight_pct matches the held 8.1% exactly (no floor involved,
+    board item 183): this is a HOLD because nothing was asked to change,
+    not because a small delta was refused."""
     constructor = PortfolioConstructor()
     positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]
-    target = TargetPosition(symbol="NVDA", target_weight_pct=8.2,
+    target = TargetPosition(symbol="NVDA", target_weight_pct=8.1,
                              conviction="high", thesis="keep")
     decisions = constructor.construct_orders(
         targets=[target], positions=positions, analyses=[],
