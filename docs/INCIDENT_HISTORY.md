@@ -38,6 +38,16 @@ what would catch it next time.
 
 **What catches it next time.** A test reads `config/settings.yaml` itself and fails if ANY seat's reachable routes land on a single provider. That is stronger than a runtime key check, which was written and then deliberately removed: refusing to boot over a missing credential for an opt-out resilience feature would have turned the fix into an outage of its own, and it broke a legal single-provider configuration on the first run.
 
+### 2026-09-30 — the evening dead-man probe no longer relabels a same-day cost-circuit suspension as a mystery kill (item 191 retired)
+
+**In plain words:** on 2026-09-29 the morning session's research ran, then the mandatory cost circuit cleanly suspended paid analysis — after repeated provider failures it could not prove cost zero on — before the portfolio manager ever ran. That is a deliberate safety exit, not a crash: the process finished with a normal exit code, and the morning session's own Telegram message told the owner "SUSPENDED" at the time, same as it always does. The evening dead-man check did not know that suspension was already a known, reported event, so roughly sixteen hours later it re-reported the same morning as "research ran, PM never did — killed mid-run?" — a scarier, less accurate restatement of something the owner had already been told about that morning.
+
+**Why this happened.** Two other legitimate reasons the portfolio manager can be skipped (`no_data`, `evidence_gate_skip`) already leave a marker the evening check reads to stay quiet about them. The cost-circuit suspension path never left that marker, so it fell through to the probe's "unexplained kill" branch every time it happened.
+
+**What was checked, not assumed.** The production log and `journalctl` for `quant-agent-morning.service` on 2026-09-29 show a clean exit (`Result=success`, exit code 0) roughly 24 seconds after starting, immediately after `src.cost_circuit` logged two provider 503s and two charged-but-unprovable 402s on the technical-analysis call — not a kill signal, not an OOM, not an unhandled crash. The suspension had two independent causes that morning, not one: the free Google model genuinely returned two 503 "high demand" responses of its own before the OpenRouter fallback route hit its credit wall, so the credit exhaustion was not the whole story. The code path that produces this (`TradingPipeline._paid_suspension_after_late_safety`) is unchanged in shape since before 2026-09-26, so this is not new breakage; it is a pre-existing gap the finding surfaced.
+
+**Verified on main.** `_paid_suspension_after_late_safety` in `src/pipeline.py` now calls `decision_checkpoint.write_status("morning", "paid_analysis_suspended")` when `session == "morning"`, the same mechanism the `no_data`/`evidence_gate_skip` paths already use a few hundred lines above it. `tests/test_pipeline.py::test_paid_suspension_marks_morning_for_the_evening_dead_man_probe` and `::test_paid_suspension_does_not_mark_non_morning_sessions` cover the new behaviour and its scope. The single DONE WHEN criterion was met.
+
 ### 2026-09-30 — item 189 renumbered to item 190; a genuine three-way number race, not a closure (item 189 retired)
 
 **In plain words:** the cash-sweep-retirement item was filed and merged as item 188, collided with a parallel PR that had also claimed 188, was renumbered to 189 and merged again, then collided a second time with a different parallel PR that filed and closed item 189 in one change. Three branches independently read `docs/WORK.md`'s own "next free number" line at nearly the same moment and each got a truthful answer that stopped being true before it landed. Nothing about the item's content changed at any step.
@@ -141,6 +151,21 @@ one-percent part is an open measurement the desk has already scheduled, not a
 settled preference, so it is left alone rather than guessed at. Separately, a
 position built in two purchases carries a target per purchase with the last
 one written winning — META holds $730.99 and $785.20 against one position.
+
+### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
+
+**In plain words:** the desk pays models to read standing instruction sheets. Since 2026-09-17 the build fails when a sheet still describes something the code deleted — but only after a person adds that deletion to a list. Nothing made them. The list was the last link in the chain and it was held together by memory, which is the one thing this desk has established does not hold.
+
+**What was built.** The same registry gained a second section naming LIVE machinery that the sheets currently describe, together with the exact sentences that describe it. Delete or rename one of those pieces of machinery and the build goes red where the deletion happens, prints every sentence that has just become untrue, and tells the reader to write the retirement entry. The entry nobody was remembering to write is now the only way to get the build green again.
+
+**It deliberately points at code-assembled text, not at the prompt files.** Both drift cases this desk has actually confirmed lived in text that Python builds while the session runs, not in any prompt file, so a check anchored on prompt files would have missed both. Four pieces of machinery are registered to start and every one of them is described in code-assembled text; three are described nowhere else.
+
+**What was measured and rejected.** Scanning the prompt files for anything that looks like a code name: 430 candidate names, 151 of which match nothing in the code at all, because they are the vocabulary the seats are required to answer in rather than references to machinery. That is 151 false alarms on the first run, and a check that cries wolf gets turned off, which is worse than not having it. The explicit list stays explicit, for the same reason the older half is explicit.
+
+**What it still cannot do, said plainly.** It covers only what somebody registered. It cannot tell a prose fix from a prose regression. Registering an entry and never reading the sentence again defeats it. Those are the same limits the two neighbouring checks accept, and naming them is not an argument for a worse check — it is the reason there are three narrow checks rather than one that claims to do everything.
+
+**A second finding, filed rather than fixed.** The trade-picking sheet instructs the seat to cut every purchase by a quarter after two "too big" verdicts in a row. Nothing in the code does that. Worse, the risk manager's own sheet states the loop as a live fact and tells that seat to treat a cautious-looking plan as the first seat flinching from its history rather than as genuine conviction. So one seat follows an instruction nothing enforces, and a second discounts the first because of it. The quarter has no source anywhere. It is left open: removing a sizing instruction from the sheet that sizes trades changes what the desk buys, which is not a documentation pass.
+
 
 ### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
 
