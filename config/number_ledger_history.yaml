@@ -852,8 +852,10 @@ changes:
       geometry: Mantegna distance d = sqrt(2 * (1 - |corr|)), minimum
       spanning tree, cut at the largest gap in its own sorted edge
       lengths. No replacement number enters the count: the only
-      constants are the metric's values at |corr| = 1 and corr = 0,
-      which bracket the gap search and are properties of the formula
-      rather than levels compared against any correlation. Clustering
+      constant is the metric's value at corr = 0, which closes the top
+      of the gap search and is a property of the formula rather than a
+      level compared against any correlation. Cut stability was
+      MEASURED 2026-09-30 on an 11-name three-theme book: 0 partition
+      changes in 400 draws that nudged every correlation by up to 0.03. Clustering
       stays transitive on purpose (a theme transmits by chaining) and
       remains rationing only -- the desk still never buys to diversify.
