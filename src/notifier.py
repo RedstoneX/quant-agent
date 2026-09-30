@@ -514,6 +514,40 @@ def mode_label(mode: str) -> str:
     return (text[:1].upper() + text[1:]) if text else "Session"
 
 
+def format_settled_money(value: float | None) -> str:
+    """A settled dollar amount for owner-facing text, spelled so it can
+    never be the malformed shape `_redact_malformed_numbers` exists to
+    catch.
+
+    2026-09-29 log: `src/cost_circuit.py`'s owner-facing alerts printed
+    settled cost with `f"${value:.4f}"` (four decimal places, to show
+    sub-cent amounts like $0.0049 without rounding them away) and the
+    notifier's own numeric-token guard redacted every one of them --
+    "dollar amount without exactly 2 decimal places" -- five separate
+    times in one afternoon. The guard was working exactly as designed; the
+    generator was wrong to produce a `$` token with any decimal length
+    but 2. This is the one honest way to show a true sub-cent figure
+    without inventing a decimal convention the rest of the desk doesn't
+    use: round to cents when that loses nothing, and say so in words
+    when it would round a genuine nonzero charge down to "$0.00" --
+    exactly the silent-zero failure this desk treats as a fabricated
+    number (see `describe_ai_cost` above, same rule, same day of review).
+
+    `None` renders as "unavailable", never as a guessed number.
+    """
+    if value is None:
+        return "unavailable"
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "unavailable"
+    if amount < 0:
+        amount = 0.0
+    if 0 < amount < 0.01:
+        return "under a cent"
+    return f"${amount:,.2f}"
+
+
 def describe_ai_cost(
     cost: float | None,
     label: str = "AI cost for this run",
