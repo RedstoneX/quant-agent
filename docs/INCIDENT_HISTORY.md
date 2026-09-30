@@ -40,6 +40,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
+
+**In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
+
+**The measurement.** Production log, 2026-09-29 19:46:45-19:47:46 UTC: route 1 (`openai/gpt-5.5` over OpenRouter) returned HTTP 402 Payment Required, route 2 was skipped because the same account was already demoted, route 3 (`anthropic/claude-haiku-4.5`, also over OpenRouter) returned HTTP 402 again, and the agent logged "Every route is down." At 19:46:08 the same process had completed the technical analyst on `generativelanguage.googleapis.com` at HTTP 200 for $0.00.
+
+**Why the earlier design got it right and still left this open.** Route 3 was added on 2026-09-23 to fix a DIFFERENT failure: on 2026-09-22 routes 1 and 2 were the same model on two roads, the model itself saturated, and both went down together. The answer there was to change the MODEL on the last rung, and the reasoning is sound — for the eight specialist seats, whose first route is already the direct Google endpoint. That change recorded, honestly and in writing, that routes 2 and 3 now shared one account, and judged closing it to need "a grant for a third host", which would be an owner decision. For the eight specialists that was accurate. For the three DECISION seats it was not: every one of them starts on OpenRouter, so they had no second road at all, and the second host was already there, already credentialed, already primary for eight other seats.
+
+**What changed.** When a seat's first two routes resolve to the same provider and its third would too, the third is swapped for the direct Google endpoint instead. Nothing else moves: no new rung, no new host, no new spend, and the eight Google-primary seats keep the different-model tertiary exactly as reasoned in 2026-09-23 — for them a Google third route would be a third attempt at the road that just failed twice.
+
+**What was ruled out.** Pointing route 2 at the direct endpoint instead. That is the smaller diff, but it would have taken the same-model second route away from the eight specialist seats, which is the 2026-08-31 "change the road, not the reasoning" ruling, and traded one seat group's resilience for another's. Also ruled out: adding a fourth rung. The attempt ceiling the cost circuit enforces is derived from the rung count, and growing it is how a routine rate-limit costs a whole session.
+
+**The honest cost.** In a total outage of the paid provider, the three decision seats now answer with a small free model rather than with Haiku. That is a real drop in decision quality, accepted on the same ground the 2026-09-23 change accepted a model swap at all: the measured alternative on 2026-09-29 was no decision run whatsoever. Nobody has benchmarked that model at those three seats, so what the desk produces in that state is unknown rather than merely worse — that is what item 188 stays open for.
+
+**What catches it next time.** A test reads `config/settings.yaml` itself and fails if ANY seat's reachable routes land on a single provider. That is stronger than a runtime key check, which was written and then deliberately removed: refusing to boot over a missing credential for an opt-out resilience feature would have turned the fix into an outage of its own, and it broke a legal single-provider configuration on the first run.
+
 ### 2026-09-30 — the nightly unprotected figure was the one thing the owner asked to keep, and it had stopped being printed anywhere
 
 **In plain words.** Every night a handful of holdings carry a part-share that has no stop on it until the next morning. The owner agreed to that trade-off on one condition: that he could always see the dollar amount. On the night of 2026-09-29 the amount was $2,264 across nine holdings, and it appeared in no message and on no screen — only in a log file nobody reads. The condition he attached to his own agreement had quietly stopped being met.
@@ -181,6 +197,183 @@ one-percent part is an open measurement the desk has already scheduled, not a
 settled preference, so it is left alone rather than guessed at. Separately, a
 position built in two purchases carries a target per purchase with the last
 one written winning — META holds $730.99 and $785.20 against one position.
+
+**Follow-up, 2026-09-30 — the stored numbers, and what could and could not be
+repaired.** The deliberate action the paragraph above called for was taken the
+same day. Every one of the eleven open positions was checked, not the three
+that were assumed: the target each one would have been given at entry was
+recomputed twice from the same five years of bars, once with the old code and
+once with the fixed code, and the two answers were compared. They differ for
+exactly three names — META, AMD and UPS — and agree for the other eight, which
+independently confirms the count the fix itself reported and rules the rest
+out rather than taking it on trust.
+
+Of those three, only UPS could be repaired. Its live target moved from $90.79
+to $92.82, the nearest wall under its entry, which the old code had stepped
+over because that wall stood inside a day's range. META and AMD were both
+refused, and a refusal here is the right answer rather than a failure: the
+corrected target is re-measured from the ORIGINAL entry over the ORIGINAL
+expected holding period — anything else would make the target a function of
+how far the price has since moved, which is the one thing it must never be —
+and on both names every level reachable from that entry now sits behind the
+price. Nothing was substituted in their place, so META continues to carry
+$785.20 and AMD $614.60, now flagged rather than quietly wrong. The number
+recorded at entry was not touched on any of them: that is the historical
+record of what the desk decided at the time, and it is also the denominator
+progress and pace are measured against.
+
+Each of the three carries a durable record saying which happened and why,
+under a code of its own that a reader cannot mistake for an ordinary
+evidence-driven revision. That distinction is the point: a code deploy is not
+a market event, and the record must not let one look like the other.
+
+**What now catches this class of thing.** `scripts/check_stored_targets.py`
+asks, for every held position, whether its stored target sits beyond a
+structural level that is still standing between that position's entry and the
+target. That is this defect's exact signature, it is a doctrine violation in
+its own right, and it is stable — a target with no wall in front of it does
+not acquire one because volatility moved. The script re-derives through the
+same shared body the live revision path uses, so it cannot drift away from
+what the desk actually computes. It separately reports, without treating it
+as an error, any target that merely differs from today's derivation: the
+derivation reads today's bars, so that differs constantly and by design, and
+a check that fires every session is a check nobody reads. On the day it was
+written it found three names aiming past a standing wall — META from this
+bug, and AAPL and NOK from levels that formed after those positions were
+opened, which is a real state the desk had no way to see before.
+
+### 2026-09-26 — three items that could only be closed by a real broker event: two are closed on observed evidence, one cannot be attempted without spending on the shared account (items 86 and 173 retired, item 157 stays open)
+
+**In plain words:** three jobs on the board were stuck because no amount of
+code-reading could settle them — each needed something to actually happen at
+a broker or a provider. Two of them turn out to be settled already, by real
+events the desk recorded and nobody went back to look at. The third cannot be
+attempted from the practice account at all, for a reason worth writing down.
+
+**Item 86 — the live fill feed. MET.** The feed that tells the desk the
+instant an order has filled had never once logged in: 1,017 refusals across
+three days and no successes. The cause was found and the fix shipped on
+2026-09-18, and the item was left open on purpose until a real attempt proved
+it. It has proved it nineteen times. Read out of the desk's own live log,
+read-only — one representative line shown, timestamp redacted:
+
+```
+<timestamp redacted> [INFO] src.execution.broker: trade_updates websocket authenticated (endpoint=BaseURL.TRADING_STREAM_PAPER)
+```
+
+Nineteen such lines in the retained logs, the first on 2026-09-21 13:37:00
+UTC and the most recent on 2026-09-25 19:32:10 UTC, each one immediately
+preceded by the desk's own line saying the CURRENT login format was accepted
+and the vendor's deprecated one was not needed. The last refusal of any kind
+was on 2026-09-17 19:04:06 UTC; there have been zero refusals, zero
+give-ups and zero handshake failures since the first success. **Stated at its
+honest limit:** the item's single criterion was one live line saying the feed
+authenticated, and that is met many times over — but nothing in the desk's
+logging records a fill *arriving over* the socket, because no such line is
+written, so this entry does not claim one. The credential exception that
+makes this work at all (the key is handed to the process as a file, because
+the login happens inside the conversation and no gateway can rewrite it) is
+unchanged and stays recorded in
+`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`.
+
+**Item 173(a) — the share count with no sale behind it. MET, and it resolved
+itself the way the item said it should.** A holding left the book on
+2026-09-21 between 16:19 and 16:45 UTC and no sale was written down for the
+remaining 8.5962 shares; the worry was that the seven-day window would run
+out around 2026-09-28, after which the desk would page the owner CRITICAL at
+every session entry, every day, forever, with no way to silence it. Read
+read-only from the live database today, the gap is closed: two exits are
+recorded against that symbol, 0.5962 shares at $42.574 and 8.0000 shares at
+$42.57, totalling exactly the missing 8.5962, each carrying a broker order id
+the ledger had never seen, each with realized profit-and-loss computed
+(-$1.62 and -$21.76) rather than guessed, and the ledger's own belief about
+that symbol now reads 0.0 shares. They were written back by an ordinary
+reconciliation pass between 2026-09-21 18:19 and 2026-09-23 15:24 UTC (their
+row order in the ledger brackets it), on the broker's own record of the
+fills. No unexplained-gap flag for that symbol exists anywhere in the
+evidence store.
+
+**What was still unproven, and was proved on a live account today.** That the
+gap was closed does not by itself say the current code would close the next
+one, so the situation was rebuilt from scratch on the owner's separate
+practice account (the unmonitored one, verified before anything was placed:
+account number [redacted account id], equity $10,000.00, empty book), with all owner
+messaging suppressed. A small position was bought and filled, then sold in
+full at the broker with no sale ever written to the desk's ledger — the exact
+shape of the original: the ledger believes it holds shares, the broker's book
+is empty, nothing explains the difference. The real reconciliation code from
+current main was then run against the real broker, twice.
+
+With the fill inside the lookback window, the desk fixed itself and said so:
+
+```
+WARNING src.pipeline: EXIT RECORDED (SELL): BTC/USD 0.000199 sh @ $83983.5000 (order 00000000-0000-4000-8000-000000000000 [redacted broker order id], type=market, realized_pnl=unknown) — broker-initiated exit written back to the ledger by the reconciler
+```
+
+Note the label: `SELL`, not `STOP_OUT`. The broker said the order type was a
+plain market sale, so the desk declined to attribute it to a protective stop
+— which is precisely the unevidenced-cause trap this item was filed to avoid,
+now demonstrably shut on live data. It also refused to invent a profit figure
+it could not derive, flagging `stop_out_pnl_unmatched` instead. Afterwards
+the ledger's belief for that symbol dropped from 0.0002 to 0.0000005 shares,
+below the threshold that makes it look open at all.
+
+With the same fill outside the lookback window — the state the original
+holding would have entered around 2026-09-28 had nothing resolved it — the
+feared behaviour reproduces exactly and in full:
+
+```
+ERROR src.pipeline: stop-out reconcile: BTC/USD stop_out_gap_unexplained — ledger believes 0.0002 sh open, broker shows 0.0000, but no untracked filled SELL order was found in the last 0 day(s) — recording nothing rather than guessing
+CRITICAL src.notifier: OWNER ALERT
+RECORDS DISAGREE — the desk's records and the broker's do not match, and the desk cannot tell which is right
+```
+
+So both halves of the item's own reasoning are now measured rather than
+argued: inside the window the desk repairs itself on broker evidence and
+never guesses a cause; outside it, it pages CRITICAL with no dedup and no
+throttle and will keep doing so. The item closes because its own condition —
+resolved on its own evidence before the window expired — is what actually
+happened. **The unbounded repeat page is real and is NOT closed by this
+entry**; it is a property of `send_owner_alert` having no dedup at all, which
+is a general alerting gap rather than anything about one holding, and the
+next occurrence of any unexplainable gap will page daily until someone acts.
+
+**Two things seen in passing, neither fixed here.** The two recovered exits
+for the 2026-09-21 holding are labelled `STOP_OUT` with category
+`broker_stop_fill`, but they were written back before the 2026-09-24 change
+that labels a recovered exit by the broker's own order type — so their "this
+was a protective stop" attribution rests on the blanket label that change
+exists to stop, not on evidence, and the same is true of another holding's
+recovered exit dated 2026-09-02 that carries no realized figure at all. Nothing owner-facing is wrong in quantity or money; the *cause* stamped
+on two exits is unverified. Separately, and only as a caution for anyone
+repeating this rehearsal: the practice run had to use a crypto instrument
+because the exercise ran on a Saturday, and a crypto position is reported by
+the broker under a different symbol spelling than its own orders are
+(`BTCUSD` versus `BTC/USD`), which would make the reconciler unable to find
+the explaining sale if the desk ever traded crypto. The desk trades equities
+only, so this is a note, not a defect.
+
+**Item 157 — the Google route's enforced answer format. NOT attempted, and
+the reason is structural.** The remaining criterion is a live call proving
+that Google's endpoint really enforces a sent answer schema. It was not
+attempted, deliberately. The practice account reaches providers through the
+same credential gateway the desk uses, and the gateway hands out credentials
+per identity: the practice identity is granted the broker, economics,
+messaging and general model credentials, and is **not** granted the Google
+one. The only identity that can make that call is the production one, so any
+live attempt would spend real money on the shared account rather than on the
+throwaway account this exercise is scoped to. That is a hard blocker, not a
+scheduling one: either the Google credential is granted to the rehearsal
+identity, or someone accepts a single production-billed call worth a fraction
+of a cent. Until one of those happens the criterion cannot be met from a
+rehearsal, and the item stays open with nothing else about it changed.
+
+**What was left on the practice account.** Nothing open. Two filled crypto
+orders sit in its history and the book is empty; equity finished at $9,999.90
+against $10,000.00 at the start — about ten cents, the spread and fee on a $17
+round trip. The monitored production account was never contacted: every
+call in this exercise asserted the account number and the equity band before
+placing anything, as a hard assertion that would have aborted the script.
 
 ### 2026-09-26 — the deletion-site check only ran for deletions somebody remembered to write down (item 99(d))
 
