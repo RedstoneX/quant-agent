@@ -136,6 +136,50 @@ settled preference, so it is left alone rather than guessed at. Separately, a
 position built in two purchases carries a target per purchase with the last
 one written winning — META holds $730.99 and $785.20 against one position.
 
+**Follow-up, 2026-09-30 — the stored numbers, and what could and could not be
+repaired.** The deliberate action the paragraph above called for was taken the
+same day. Every one of the eleven open positions was checked, not the three
+that were assumed: the target each one would have been given at entry was
+recomputed twice from the same five years of bars, once with the old code and
+once with the fixed code, and the two answers were compared. They differ for
+exactly three names — META, AMD and UPS — and agree for the other eight, which
+independently confirms the count the fix itself reported and rules the rest
+out rather than taking it on trust.
+
+Of those three, only UPS could be repaired. Its live target moved from $90.79
+to $92.82, the nearest wall under its entry, which the old code had stepped
+over because that wall stood inside a day's range. META and AMD were both
+refused, and a refusal here is the right answer rather than a failure: the
+corrected target is re-measured from the ORIGINAL entry over the ORIGINAL
+expected holding period — anything else would make the target a function of
+how far the price has since moved, which is the one thing it must never be —
+and on both names every level reachable from that entry now sits behind the
+price. Nothing was substituted in their place, so META continues to carry
+$785.20 and AMD $614.60, now flagged rather than quietly wrong. The number
+recorded at entry was not touched on any of them: that is the historical
+record of what the desk decided at the time, and it is also the denominator
+progress and pace are measured against.
+
+Each of the three carries a durable record saying which happened and why,
+under a code of its own that a reader cannot mistake for an ordinary
+evidence-driven revision. That distinction is the point: a code deploy is not
+a market event, and the record must not let one look like the other.
+
+**What now catches this class of thing.** `scripts/check_stored_targets.py`
+asks, for every held position, whether its stored target sits beyond a
+structural level that is still standing between that position's entry and the
+target. That is this defect's exact signature, it is a doctrine violation in
+its own right, and it is stable — a target with no wall in front of it does
+not acquire one because volatility moved. The script re-derives through the
+same shared body the live revision path uses, so it cannot drift away from
+what the desk actually computes. It separately reports, without treating it
+as an error, any target that merely differs from today's derivation: the
+derivation reads today's bars, so that differs constantly and by design, and
+a check that fires every session is a check nobody reads. On the day it was
+written it found three names aiming past a standing wall — META from this
+bug, and AAPL and NOK from levels that formed after those positions were
+opened, which is a real state the desk had no way to see before.
+
 ### 2026-09-26 — four of the desk's five specialists were sending "no strength" as the number zero, and the ranking added it up (item 65 retired)
 
 **In ordinary words.** When the desk decides which stock ideas get money, each
