@@ -181,17 +181,11 @@ DONE WHEN:
   - [ ] (c) the dead-weight recitation (~35% of the PM's sheet, ~26% of the risk manager's, ~24% of the reviewer's) is deleted, with load-bearing recitation kept — SHARED with item 99(c), which is the same prose; do not strip it twice
 detail: docs/BOARD_NOTES.md (item 109)
 
-**147. A success with no usage data — the filed premise was wrong, the cache-hit half is FIXED 2026-09-26, the no-telemetry half stays open.** Measured on the production DB read-only 2026-09-26: `agent_logs` holds 667 rows over 2026-08-14..2026-09-26 and exactly 7 have a NULL cost — six on 2026-08-31, one on 2026-09-17, every one of them a `smart_money_analyst` synthesis-cache HIT that issued no provider request at all (`provider_requests=0`, `latency_s=0.0`, `input_message='[cached evidence hash]'`). There is no "full reservation": item 14 deleted the reservation layer on 2026-09-02, and neither affected day was ever marked inexact (`unknown_cost_rows=0`, `costs_exact=1` on both). A cache hit now books its real, exact zero instead of a NULL, and the day seeder no longer counts a provably request-free success as unknown spend — which had left a latent operator-only `legacy_unknown_cost` hard latch reachable on any day whose budget row is seeded after such a row lands (a mid-day deploy, the case the seeder exists for). What is left is the case that has never once occurred: a call that really did reach a provider and came back with no usable token or cost telemetry. Also measured: zero rows have tokens > 0 with a NULL cost, so BOARD_NOTES' open case (b) — known tokens, model missing from the pricing table — has never fired either.
+**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
-  - [ ] a success whose provider request DID happen but returned no usage telemetry is charged at a measured rate instead of hard-latching the desk — still open and deliberately not guessed at: `complete_call` sees only `cost is None`, the missing thing is the per-token rate, and the pricing table is the same one that failed, so there is no defensible basis to multiply by. Unchanged until either a rate source or a real occurrence exists.
-  - [x] DONE 2026-09-26 — a cache hit is priced, not unknown: `smart_money_analyst.analyze` books `cost_usd=0.0` on the cache path, and `_unknown_cost_row_expr` in `src/cost_circuit.py` excludes a row proven free by its own record (`cost_usd IS NULL AND provider_requests = 0 AND status = 'success'`) from the seeded day's `unknown_cost_rows`. All three conditions are required; 194 legacy rows with a NULL `provider_requests` keep counting as unknown. Six tests in `tests/test_cost_circuit.py`.
-detail: docs/BOARD_NOTES.md (item 147)
-
-
-DONE WHEN:
-  - [ ] the news-seat parse-failure rate is understood and either brought down or shown to already recover cleanly on retry — UNDERSTOOD and the LOSS is closed (the seat is re-asked on an unreadable field and, only if the re-ask fails too, the field is dropped and reads ABSENT while the rest of the report survives; an unsalvageable answer files an `analysis_drop` row per affected stock), but the RATE itself is neither brought down nor shown to recover: the seat can still emit "mixed", the cure at source needs `strict: true`, and the news answer cannot have it while `stock_news` is a ticker-keyed free-form map. Needs either live evidence that the re-ask recovers, or a decision on reshaping the answer so the enum can be enforced.
-detail: docs/BOARD_NOTES.md (item 152)
+  - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
+detail: docs/BOARD_NOTES.md (item 203)
 
 **157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
 
@@ -261,7 +255,8 @@ detail: docs/BOARD_NOTES.md (item 187)
 
 DONE WHEN:
   - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [ ] the substitute is either measured at the three decision seats through `ops/model_policy/benchmark_models.py`, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
+  - [ ] every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and why it did not — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable)
+  - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
 
 detail: docs/BOARD_NOTES.md (item 188)
 
@@ -359,12 +354,13 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
 - retired queue: 119
-- retired queue: 77
-- retired queue: 183
+- retired queue: 147
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

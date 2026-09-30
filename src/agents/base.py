@@ -1817,6 +1817,33 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     )
 
 
+def seat_acceptance_kwargs(refusal_reason: str | None) -> dict:
+    """Did the SEAT accept its own model's answer? — the fact `status` never held.
+
+    `status` says the provider call returned. It says nothing about whether
+    the seat could use what came back, which is why 15/15 portfolio-manager
+    rows and 19/55 risk-manager rows sit at "success" holding bodies that are
+    not the seat's format at all, and why no usable-answer rate is computable
+    for any model today. Pass the refusal reason the call site ALREADY has on
+    its rejection path, or None when the answer was used.
+
+    Recording only. This decides nothing and changes nothing: a seat that
+    refuses an unusable answer behaves exactly as it did before.
+    """
+    from src.refusal_signature import (
+        SEAT_ACCEPTED, SEAT_REFUSED, SEAT_REFUSAL_REASONS,
+    )
+    if not refusal_reason:
+        return {"acceptance": SEAT_ACCEPTED, "acceptance_reason": None}
+    reason = str(refusal_reason)
+    if reason not in SEAT_REFUSAL_REASONS:
+        # An unregistered word must not silently enter the column: record the
+        # refusal (true, and the load-bearing half) and flag the reason rather
+        # than inventing vocabulary.
+        reason = "unregistered:" + reason
+    return {"acceptance": SEAT_REFUSED, "acceptance_reason": reason}
+
+
 def _build_llm_client(provider: str, api_key: str):
     """Construct the SDK client for `provider`, given its API key.
 
