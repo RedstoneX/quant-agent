@@ -17467,3 +17467,114 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** FRED overdue dates could land on a weekend and read OVERDUE before an agency business day passed. That weekend/holiday roll shipped (#585) and is retired. The separate, still-open half — the chronic `fetch_deadline_exceeded` failures and un-fetched series — is not closed; it is re-filed as item 187 so it stays a live item.
 
 **Verified on main.** `src/data/fred_publication_days.py` provides `roll_to_publication_day` and `federal_holidays`, applied at the overdue comparison in `src/data/macro.py`; the Sat-09-19 DFF firing no longer reproduces. Criterion 175/1 met; criterion 175/2 deferred onto item 187.
+
+## 2026-09-30 — ROOT CAUSE of the protective-stop failures: the desk cancels when it only needs to amend
+
+Owner ruling that produced this entry (Rex, 2026-09-30): "whatever the desk
+wants, there is substantial reason that we've spent a lot of time and resources
+making sure what the desk wants is the correct plan of action. Do not fight
+against it then. So there's two fundamental core issues here. Either the desk
+is wrong or there's a problem with placing the stops or there's a problem with
+the whole mechanism of stops. That's root cause. Your proposing a patch or a
+half-assed solution."
+
+He was right. The work to that point had been compensation for a broken
+mechanism. Two findings, both measured against the broker on the REHEARSAL
+account PA30V8QHEW1C — never production.
+
+### Finding 1 — the desk does not confirm a cancel before acting on it
+
+It DOES pace placement: `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` with
+`_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`src/execution/broker.py:1358-1359`),
+and entry submits poll `get_order_by_id` on an interval. That part is correct
+and is NOT the defect.
+
+It does NOT confirm a CANCEL. There is no wait-for-cancel-confirmed step
+anywhere in the codebase. In the live incident earlier the same day the desk
+cancelled a position's protective stops and asked the broker 486ms later
+whether a stop already existed. Alpaca's cancel is asynchronous, the dead order
+was still listed, the check concluded the position was protected, skipped
+placing a stop and deleted its own write-ahead recovery row. The position held
+no stop for 13m22s.
+
+Measured, and this is what makes the stale read dangerous rather than merely
+untidy: immediately after a cancel Alpaca still lists the dead stop with status
+`new` — not `pending_cancel`, not `canceled` — and **accepts a second stop
+submitted in that window**. So the alternative failure is two live stops on one
+long, which nothing in this desk reconciles (`src/coverage_watchdog.py` never
+cancels or modifies).
+
+**Do NOT fix this by adding a sleep after the cancel.** See finding 2.
+
+### Finding 2 — the cancel is not needed at all
+
+`src/execution/broker.py::replace_stop_loss` (~line 6158) states: "Alpaca's OTO
+stop-loss leg cannot be edited in place, so we cancel + resubmit. Because that
+sequence is not atomic, this method snapshots existing stops and best-effort
+restores them if the replacement submit fails."
+
+**That claim is false for the desk's protective stops.** Measured 2026-09-30:
+
+| Case | Result |
+|---|---|
+| Amend a resting stop's PRICE | Works. Old order -> `REPLACED`, new id issued, **exactly one open stop on the symbol at every instant**. |
+| Amend REFUSED (invalid price) | Original stop stays resting, unchanged, still `new`, one open stop. **Safe failure.** |
+| Amend QUANTITY (3 -> 2 shares) | Works. One open stop throughout. |
+| Amend PRICE on a FRACTIONAL (3.5-share, DAY) stop | Works. Fractional qty preserved, one open stop. |
+| Amend QUANTITY on a FRACTIONAL stop | **REFUSED BY THE BROKER.** `{"code":42210000,"message":"cannot replace qty in fractional stop order"}`. Original stop stayed resting, unchanged, one open stop — safe failure again. |
+
+The capability was never in doubt: the codebase already calls
+`replace_order_by_id` for entry limits at `src/execution/broker.py:4942`. Only
+the comment was wrong.
+
+So the split is PRICE versus QUANTITY, not whole-share versus fractional:
+
+- **PRICE amends work on everything** — whole-share and fractional alike. The
+  trailing stop, which only ever moves a price, is therefore fully covered and
+  never needs to cancel anything again.
+- **QUANTITY amends work on whole-share stops only.** On a fractional stop the
+  broker itself refuses with code 42210000, "cannot replace qty in fractional
+  stop order". This is a BROKER limit, not the SDK's int-typed `qty` noted at
+  `src/execution/broker.py:4913` — that typing refuses a fractional NEW qty
+  client-side, and the broker then refuses an integer one as well.
+
+What that means for a partial sell, which is the path that produced the live
+incident: the desk's hybrid protective shape is a whole-share GTC leg plus a
+fractional DAY sliver. **The whole-share leg can be qty-amended in place. The
+fractional sliver cannot** and still needs cancel-then-resubmit, so the naked
+window survives for that leg alone and must be handled deliberately — place the
+replacement sliver BEFORE cancelling the old one where the shares allow it, and
+never leave the whole-share leg resting as the only protection while the sliver
+is absent.
+
+In both refusal cases measured, the original stop stayed resting untouched, so
+the failure mode is safe.
+
+### Why amending is the correct mechanism, not merely the tidier one
+
+- There is no window in which the position is unprotected, because nothing is
+  ever removed. The 13-minute exposure is not shortened, it is impossible.
+- A duplicate stop cannot arise, because no second order is ever submitted.
+- **Failure is safe by default.** A refused amend leaves the existing stop
+  resting. Cancel-then-resubmit fails the other way round: it destroys
+  protection first and discovers the refusal afterwards.
+- The snapshot / rollback machinery in `replace_stop_loss`, and the
+  cancelled-order-id bookkeeping in the reprotect path in `src/pipeline.py`,
+  exist ONLY to survive a non-atomic sequence that does not need to happen.
+
+### Still unmeasured
+
+One case only: an OTO / bracket stop LEG. The false comment may have been true
+for legs specifically and then over-generalised to all stops. Until it is
+measured, cancel-then-resubmit stays as the fallback for that case and for any
+symbol carrying more than one resting protective stop.
+
+### Order of work
+
+1. Move protective-stop PRICE changes onto `replace_order_by_id`; keep
+   cancel+resubmit as the fallback for the unmeasured cases.
+2. On a refused amend, do NOT fall back to cancel+resubmit — the original is
+   still resting and protection is intact. Falling back re-opens the window.
+3. Measure the bracket-leg case.
+4. Only then delete the compensating machinery, rather than continuing to
+   harden it.
