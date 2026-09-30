@@ -577,3 +577,194 @@ def test_journal_never_raises_into_the_caller(monkeypatch):
     monkeypatch.setattr(llm_route_journal, "_connect", boom)
     assert llm_route_journal.record("route_switch") is False
     assert llm_route_journal.read_events() == []
+
+
+# ===========================================================================
+# 3b. Route 3's SECOND ROAD — surviving a whole-provider outage.
+#
+# Measured defect, production log /home/qamc/quant-agent/quant_agent.log
+# 2026-09-29 19:46:45-19:47:46: portfolio_manager's route 1
+# (openrouter, openai/gpt-5.5) got HTTP 402 Payment Required, route 2 was
+# skipped on the demoted same account, route 3 (openrouter,
+# anthropic/claude-haiku-4.5) got HTTP 402 again, and the agent logged
+# "Every route is down." At 19:46:08 the same process had completed
+# tech_analyst on Google AI Studio direct at HTTP 200 for $0.00. Three
+# rungs, one account, one balance, nothing survived.
+# ===========================================================================
+
+_ALT = ("google", "gemini-3.5-flash-lite")
+_TERT = ("openrouter", "anthropic/claude-haiku-4.5")
+_FB = ("openrouter", "google/gemini-3.5-flash-lite")
+
+
+def test_a_single_road_ladder_is_moved_onto_the_second_road():
+    """The measured case: every rung on OpenRouter becomes two roads."""
+    from src.agents.base import select_tertiary_route
+    chosen = select_tertiary_route(
+        primary=("openrouter", "openai/gpt-5.5"),
+        fallback=_FB, tertiary=_TERT, alt=_ALT,
+    )
+    assert chosen == _ALT
+    assert chosen[0] != "openrouter"
+
+
+def test_a_two_road_ladder_keeps_its_different_model_tertiary():
+    """The eight Google-primary specialist seats must NOT be touched: their
+    route 1 is already Google, so a Google route 3 would retry the road that
+    just failed twice. Model diversity is the right answer there."""
+    from src.agents.base import select_tertiary_route
+    chosen = select_tertiary_route(
+        primary=("google", "gemini-3.5-flash-lite"),
+        fallback=_FB, tertiary=_TERT, alt=_ALT,
+    )
+    assert chosen == _TERT
+
+
+def test_the_substitute_is_refused_when_it_would_not_change_the_road():
+    from src.agents.base import select_tertiary_route
+    assert select_tertiary_route(
+        primary=("openrouter", "openai/gpt-5.5"), fallback=_FB,
+        tertiary=_TERT, alt=("openrouter", "mistralai/mistral-medium"),
+    ) == _TERT
+
+
+def test_the_substitute_is_off_when_unconfigured_or_uncredentialed():
+    from src.agents.base import select_tertiary_route
+    assert select_tertiary_route(
+        primary=("openrouter", "openai/gpt-5.5"), fallback=_FB,
+        tertiary=_TERT, alt=None,
+    ) == _TERT
+
+
+def test_an_unreachable_route_2_does_not_count_as_a_second_road():
+    """`fallback=None` means route 2 cannot fire for this seat, so the ladder
+    is route 1 + route 3 only and must not be credited with route 2's road."""
+    from src.agents.base import select_tertiary_route
+    assert select_tertiary_route(
+        primary=("openrouter", "openai/gpt-5.5"), fallback=None,
+        tertiary=_TERT, alt=_ALT,
+    ) == _ALT
+
+
+def test_the_substitute_model_is_priceable_offline():
+    """Same latch risk as the tertiary's own pricing test above."""
+    from src.agents.base import _DEFAULT_TERTIARY_ALT_MODEL
+    from src.cost_table import PRICING
+    row = PRICING.get(_DEFAULT_TERTIARY_ALT_MODEL)
+    assert row and row.get("input") is not None and row.get("output") is not None
+
+
+def test_the_substitute_default_is_not_on_the_default_tertiary_road():
+    from src.agents.base import (
+        _DEFAULT_FALLBACK_PROVIDER, _DEFAULT_TERTIARY_ALT_MODEL,
+        _DEFAULT_TERTIARY_ALT_PROVIDER, _DEFAULT_TERTIARY_PROVIDER,
+    )
+    assert _DEFAULT_TERTIARY_ALT_PROVIDER not in {
+        _DEFAULT_TERTIARY_PROVIDER, _DEFAULT_FALLBACK_PROVIDER,
+    }
+    # Only a road this deployment has actually completed a call on. See
+    # docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md.
+    assert _DEFAULT_TERTIARY_ALT_PROVIDER in {"openrouter", "google"}
+    assert _DEFAULT_TERTIARY_ALT_MODEL
+
+
+def test_an_openrouter_primary_seat_ends_up_on_two_roads_end_to_end():
+    """The agent-level assertion, not just the helper's: a PM-shaped seat
+    built through BaseAgent carries a non-OpenRouter route 3, with the
+    matching credential and the matching breaker."""
+    _reset_route_breakers_for_tests()
+    with patch("openai.OpenAI"):
+        pm = _Agent(api_key="k", model="openai/gpt-5.5", provider="openrouter",
+                    fallback_api_key="fk", tertiary_api_key="tk",
+                    tertiary_provider="openrouter",
+                    tertiary_model="anthropic/claude-haiku-4.5",
+                    tertiary_alt_api_key="gk",
+                    tertiary_alt_provider="google",
+                    tertiary_alt_model="gemini-3.5-flash-lite")
+        assert pm._tertiary_provider == "google"
+        assert pm._tertiary_model == "gemini-3.5-flash-lite"
+        assert pm._tertiary_api_key == "gk"
+        assert pm._tertiary_reachable is True
+        assert pm._tertiary_on_alt_road is True
+        assert pm._tertiary_breaker is not pm._fallback_breaker, (
+            "route 3 sharing route 2's breaker means one account, one "
+            "failure domain — the whole point is that it is now two"
+        )
+        assert {pm._provider, pm._fallback_provider, pm._tertiary_provider} == {
+            "openrouter", "google"
+        }
+
+        specialist = _Agent(api_key="k", model="gemini-3.5-flash-lite",
+                            provider="google", fallback_api_key="fk",
+                            tertiary_api_key="tk",
+                            tertiary_alt_api_key="gk")
+        assert specialist._tertiary_provider == "openrouter"
+        assert specialist._tertiary_on_alt_road is False
+
+
+def test_the_substitution_adds_no_rung_to_the_attempt_budget():
+    """It swaps route 3's destination; it must never make a fourth attempt."""
+    _reset_route_breakers_for_tests()
+    with patch("openai.OpenAI"):
+        swapped = _Agent(api_key="k", model="openai/gpt-5.5",
+                         provider="openrouter", fallback_api_key="fk",
+                         tertiary_api_key="tk", tertiary_alt_api_key="gk")
+        plain = _Agent(api_key="k", model="openai/gpt-5.5",
+                       provider="openrouter", fallback_api_key="fk",
+                       tertiary_api_key="tk", tertiary_alt_api_key="")
+    assert provider_attempt_budget(
+        failover_available=swapped._failover_reachable,
+        tertiary_available=swapped._tertiary_reachable,
+    ) == provider_attempt_budget(
+        failover_available=plain._failover_reachable,
+        tertiary_available=plain._tertiary_reachable,
+    )
+
+
+def test_the_shipped_config_leaves_no_seat_on_a_single_road():
+    """The end-to-end claim, read off config/settings.yaml itself rather
+    than off the defaults: after this change EVERY seat's reachable routes
+    span at least two providers. This is the test that would have caught
+    2026-09-29."""
+    import os
+    from pathlib import Path
+
+    from src.agents.base import resolve_provider, select_tertiary_route
+    from src.config import AGENT_NAMES, load_config
+
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+                "OPENROUTER_API_KEY", "GOOGLE_API_KEY", "FRED_API_KEY",
+                "ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+        os.environ.setdefault(key, "placeholder-for-config-load")
+    settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
+    cfg = load_config(str(settings))
+    llm = cfg.llm
+    fallback = (llm.fallback_provider, llm.fallback_model)
+    tertiary = (llm.tertiary_provider, llm.tertiary_model)
+    alt = (llm.tertiary_alt_provider, llm.tertiary_alt_model)
+
+    primaries = {
+        resolve_provider(getattr(llm, f"{a}_model"), llm.get_provider(a))
+        for a in AGENT_NAMES
+    }
+    assert llm.tertiary_alt_provider in primaries, (
+        "the substitute must sit on a provider some seat already uses as its "
+        "PRIMARY, so its credential is already mandatory at config load — "
+        "otherwise a silently-missing key turns route 3 into a guaranteed 401"
+    )
+
+    for agent_name in AGENT_NAMES:
+        model = getattr(llm, f"{agent_name}_model")
+        primary = (resolve_provider(model, llm.get_provider(agent_name)), model)
+        reachable_fallback = None if fallback == primary else fallback
+        route3 = select_tertiary_route(
+            primary=primary, fallback=reachable_fallback,
+            tertiary=tertiary, alt=alt,
+        )
+        roads = {primary[0], route3[0]}
+        if reachable_fallback is not None:
+            roads.add(reachable_fallback[0])
+        assert len(roads) >= 2, (
+            f"{agent_name} has every route on {roads} — one provider outage "
+            f"takes the whole seat, which is the 2026-09-29 defect"
+        )
