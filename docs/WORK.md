@@ -17,7 +17,7 @@
 **RESOLVED 2026-09-25 — the mandate is SWING (days to weeks), not a quarterly-horizon value book.** Decided by the orchestrator after an adversary run, per the 2026-09-18 ruling that this question does not wait on the owner. Reason: `docs/OUTCOME.md:75` already rules the desk's horizon "swing — days to weeks"; `config/prompts/tech_analyst.md:3` already treats its own 5-15d window as signal-validity, not holding period, with PM/position_reviewer owning the hold; holding period is an OUTPUT of thesis health, not a setting. `config/prompts/evening_analyst.md` and `config/prompts/meta_reflector.md` carried un-migrated rot from the original upstream value mandate (medium-long-term/quarterly-horizon framing) and have been rewritten to match. Detail and the exact prose diff: `docs/BOARD_NOTES.md` ("item 99").
 
 - [ ] DECIDE BY 2026-10-31 — Which model should run the desk's actual trade-decision seat?
-  **Owner ruling 2026-09-13:** no model comparison until the job board is clean. The date exists only because this format needs one; it moves rather than forcing a decision. **Nobody proposes the run or its spend to him — he raises it or it does not happen.** Incumbent `openai/gpt-5.5` stays until a first run exists. Owner decision 2026-09-15 goes further: no test-environment work at all unless he asks. The seat is ~93% of the LLM bill. Verified detail 2026-09-14: `docs/INCIDENT_HISTORY.md` and `docs/BOARD_NOTES.md`.
+  **Owner ruling 2026-09-13:** no model comparison until the job board is clean. The date exists only because this format needs one; it moves rather than forcing a decision. **Nobody proposes the run or its spend to him — he raises it or it does not happen.** Incumbent `openai/gpt-5.5` stays until a first run exists. Owner decision 2026-09-15 goes further: no test-environment work at all unless he asks. The seat is ~93% of the LLM bill. Verified detail 2026-09-14: `docs/INCIDENT_HISTORY.md` and `docs/BOARD_NOTES.md`. Absorbs retired board item 77 (a bare pointer at this line; routing detail in `docs/architecture/MODEL_ROUTING_POLICY.md`; it closes with this line and is not answered twice).
 
 **RECONFIRM AFTER A FEW DAYS LIVE — `max_calls_per_session: 40` (owner instruction 2026-09-03).** The cost circuit's runaway-loop defence, set from real data (worst complete session: 14 calls). A first number, not final. Once live sessions exist, re-pull `llm_budget_sessions.logical_calls`; raise it if a legitimate session gets close, never lower it on a hunch. History: `docs/INCIDENT_HISTORY.md`, "item 14".
 
@@ -130,16 +130,9 @@ detail: docs/BOARD_NOTES.md (item 75)
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
 
 DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as items 77 and 18(a); one authorisation would release all three.
+  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as the model-seat decision line at the top of this file and 18(a); one authorisation would release all three.
   - [ ] it is not reopened as a prompt-size problem
 detail: docs/BOARD_NOTES.md (item 76)
-
-**77. Model selection: the PM seat is the next open question. Pointer, 2026-09-14.** Detail: `docs/architecture/MODEL_ROUTING_POLICY.md`.
-
-DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — the PM seat's model question IS the `DECIDE BY 2026-10-31` line at the top of this file, and the owner's 2026-09-13 ruling is that nobody proposes that run or its spend to him; he raises it or it does not happen. Same blocker as items 76 and 18(a).
-  - [ ] it closes with that pending-decision line and is not answered twice
-detail: docs/BOARD_NOTES.md (item 77)
 
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
 
@@ -381,6 +374,7 @@ DONE WHEN:
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
