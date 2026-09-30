@@ -6269,6 +6269,12 @@ class AlpacaBroker:
         # about and the measurement did NOT cover — leave it to the fallback.
         order_class = getattr(order, "order_class", None)
         order_class = str(getattr(order_class, "value", order_class) or "").lower()
+        # This allowlist is belt-and-braces, not the real guard: the classes
+        # named here are simply the ones with no parent and no legs, and
+        # `parent_id` below is what actually establishes that. Alpaca's own
+        # order_class values are not cited here because nothing load-bearing
+        # rests on the set being complete — an unrecognised class falls to the
+        # measured-safe fallback, which is the correct outcome either way.
         if order_class not in ("", "simple") or getattr(order, "legs", None):
             return _AMEND_NOT_ATTEMPTED
         # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
@@ -6289,7 +6295,22 @@ class AlpacaBroker:
         # A price-only amend cannot fix a coverage gap: if the resting stop
         # does not already cover exactly the position, the fallback (which
         # resubmits at the position's qty) is the path that repairs it.
-        if spec["qty"] != position_qty:
+        # Exact float equality on a fractional quantity drops to the fallback
+        # on a representation difference alone, silently and often. Compare at
+        # the broker's own fractional resolution (1e-9 of a share is far below
+        # any tradeable size) and SAY why when it does not match, so a
+        # persistently-skipped atomic path is visible instead of invisible.
+        try:
+            spec_qty = abs(float(spec["qty"]))
+        except (TypeError, ValueError):
+            return _AMEND_NOT_ATTEMPTED
+        if abs(spec_qty - position_qty) > 1e-9:
+            logger.info(
+                "replace_stop_loss: %s's resting stop covers %s of %s held "
+                "shares, so the in-place amend is skipped and the "
+                "cancel+resubmit path runs to repair coverage.",
+                symbol, spec_qty, position_qty,
+            )
             return _AMEND_NOT_ATTEMPTED
         price = _quantize_price(new_stop_price)
         if price is None or price <= 0:
@@ -6419,11 +6440,17 @@ class AlpacaBroker:
         # — UP for a long, DOWN for a short — never the other way. If the
         # LLM hallucinates a stop on the wrong side (or the caller passes the
         # wrong value), accepting it would weaken existing protection. Ex-
-        # dividend adjustments intentionally lower a LONG's stop to absorb
-        # tomorrow's mechanical dividend gap, so that caller opts in via
-        # allow_lowering=True — ex-div's own position loop never reaches a
-        # short (see pipeline.py's `_handle_ex_dividends`), so this flag is
-        # not something a short's trail can accidentally trip.
+        # dividend adjustments would intentionally lower a LONG's stop to
+        # absorb tomorrow's mechanical dividend gap, and that is what the
+        # allow_lowering=True opt-in is for.
+        #
+        # VERIFIED 2026-09-30: NO caller anywhere in src/ passes
+        # allow_lowering=True — grep finds the name only in this file's own
+        # signature and comments. The ex-dividend caller this comment
+        # described does not exist, so every call today takes the
+        # never-loosen branch below. Stated rather than removed because the
+        # parameter is still reachable from tests and from a future caller,
+        # but do not cite the ex-div caller as if it were live.
         if stop_specs and not allow_lowering:
             if side == "buy":
                 tightest_existing = min(spec["stop_price"] for spec in stop_specs)
@@ -6468,12 +6495,33 @@ class AlpacaBroker:
         # means "not attempted / outcome unknown" and drops through to the
         # legacy cancel+resubmit below; None means the broker REFUSED and the
         # original stop is still resting, so we must NOT cancel anything.
-        amended = self._amend_resting_stop_price(
-            symbol=symbol,
-            live_orders=live_orders,
-            stop_specs=stop_specs,
-            new_stop_price=new_stop_price,
-            position_qty=abs(positions[0].qty),
+        # Re-read the position IMMEDIATELY before the amend. The fallback
+        # already does this right before it submits, with a comment naming the
+        # sub-second window; the amend path was comparing against a qty read
+        # further up, so a fill landing in between could leave the stop
+        # covering more than is held. A read failure is not a reason to amend
+        # on stale data -- drop to the fallback, which repairs coverage.
+        try:
+            fresh = [
+                p for p in self.get_positions()
+                if getattr(p, "symbol", None) == symbol
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "replace_stop_loss: could not re-read %s's position before "
+                "the in-place amend (%s) — using the cancel+resubmit path, "
+                "which re-reads and repairs coverage itself.", symbol, exc,
+            )
+            fresh = []
+        amended = (
+            _AMEND_NOT_ATTEMPTED if not fresh
+            else self._amend_resting_stop_price(
+                symbol=symbol,
+                live_orders=live_orders,
+                stop_specs=stop_specs,
+                new_stop_price=new_stop_price,
+                position_qty=abs(float(fresh[0].qty)),
+            )
         )
         if amended is not _AMEND_NOT_ATTEMPTED:
             return amended
