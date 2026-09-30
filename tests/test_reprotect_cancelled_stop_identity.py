@@ -22,11 +22,16 @@ from src.execution.broker import AlpacaBroker
 from src.pipeline import TradingPipeline
 
 
-def _order(order_id, stop_price, status="new"):
+def _order(order_id, stop_price, status="new", qty=2.43):
+    # `qty` MATTERS: the idempotency check requires an open stop to cover
+    # the WHOLE residual before it counts as this position's protection (a
+    # leftover sliver stop is not coverage). The residual in these tests is
+    # 2.43 shares, so a stop that is genuinely protection carries that qty.
     o = MagicMock()
     o.id = order_id
     o.stop_price = stop_price
     o.status = status
+    o.qty = qty
     return o
 
 
