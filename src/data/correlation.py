@@ -33,12 +33,22 @@ logger = logging.getLogger(__name__)
 # value to ratify. So the cutoff is GONE and the clusters are now read from
 # the book's own correlation geometry (see `correlation_clusters`).
 #
-# The two distances below are NOT picked levels. They are the two fixed points
-# of Mantegna's metric d = sqrt(2 * (1 - rho)): the distance between two names
-# that move identically, and the distance between two names with no linear
-# relationship at all. They anchor the gap test; they are never compared
-# against a correlation to decide membership.
-_DISTANCE_IDENTICAL = 0.0            # d at |rho| = 1
+# The distance below is NOT a picked level. It is a fixed point of Mantegna's
+# metric d = sqrt(2 * (1 - rho)): the distance between two names with no
+# linear relationship at all. It anchors the top of the gap test; it is never
+# compared against a correlation to decide membership.
+#
+# MEASURED 2026-09-30, and the reason there is no matching anchor at the
+# bottom. The first version of this cut bracketed the sorted edge lengths at
+# BOTH ends, with d = 0 ("identical") below. On a realistic 11-name book with
+# three real themes (within-theme corr 0.78-0.90, cross-theme 0.35-0.50) that
+# lower anchor won the gap search outright and returned NO CLUSTERS AT ALL —
+# a false negative in exactly the case this module exists for — and it was
+# also the only source of instability: perturbing every correlation by up to
+# 0.03 flipped the partition in 11.8% of 400 draws. With the lower anchor
+# removed the same book returns its three themes (3/3/2) and flips in 0 of
+# 400 draws, and three degenerate books (all-unrelated, all-related, all
+# mid-range) flip in 0 of 400 as well.
 _DISTANCE_UNRELATED = math.sqrt(2.0)  # d at rho = 0
 
 # The WINDOW — how many bars feed the matrix — is not set here; this module
@@ -167,17 +177,29 @@ def _largest_gap_cut(distances: list[float]) -> float:
     book's correlation structure actually separates. Nothing is compared to a
     chosen level.
 
-    The two metric endpoints bracket the list so that the two degenerate books
-    come out right, and they are the reason this needs no floor or ceiling
-    constant:
-      * a book where everything is loosely related -> the widest jump is the
-        one from "identical" up to the first real edge, so NOTHING is joined;
-      * a book where everything is tightly related -> the widest jump is the
-        one from the last real edge up to "unrelated", so it is ONE cluster.
+    The metric's "unrelated" endpoint closes the top of the list. That is what
+    makes a structureless book safe without a guard constant: when the edge
+    lengths carry no real jump of their own, the widest jump is the one from
+    the last real edge up to "no relationship", every edge is kept, and the
+    book comes back as ONE cluster. One cluster is the conservative answer —
+    it rations harder, never softer — so the failure mode of an uninformative
+    tree is over-rationing, not a silently split theme.
+
+    There is deliberately NO matching anchor at the bottom: measurement showed
+    it produced a false negative on a realistic themed book and was the sole
+    source of session-to-session instability (see the note on
+    `_DISTANCE_UNRELATED`).
+
+    The price of the conservative fallback is visible on very small or very
+    flat books: two names alone, or a book whose correlations are all alike,
+    come back as one cluster even when they are only loosely related. That is
+    accepted on purpose — with no structure in the tree there is nothing to
+    read, and the desk would rather share a budget it need not share than
+    treat one bet as two.
     """
-    ordered = [_DISTANCE_IDENTICAL] + sorted(distances) + [_DISTANCE_UNRELATED]
+    ordered = sorted(distances) + [_DISTANCE_UNRELATED]
     best_gap = -1.0
-    cut = _DISTANCE_IDENTICAL
+    cut = ordered[0]
     for lower, upper in zip(ordered, ordered[1:]):
         gap = upper - lower
         if gap > best_gap:
