@@ -207,24 +207,6 @@ def collect_switches(config_module: Path | None = None) -> list[FlagSite]:
     return sorted(sites, key=lambda s: s.flag_id)
 
 
-def collect_tristate_switches(config_module: Path | None = None) -> list[str]:
-    """Every `bool | None` field on a `*Config` class — the shape this
-    module's plain-bool scan cannot see. Used only by the sentinel test."""
-    path = config_module or CONFIG_MODULE
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    out: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        if not node.name.endswith("Config") or node.name == "AppConfig":
-            continue
-        for body_node in node.body:
-            if isinstance(body_node, ast.AnnAssign) and isinstance(body_node.target, ast.Name):
-                if _is_tristate_bool_annotation(body_node.annotation):
-                    out.append(f"src.config.{node.name}.{body_node.target.id}")
-    return sorted(out)
-
-
 def _appconfig_sections(root: Path | None = None) -> dict[str, str]:
     """`{ConfigClassName: settings.yaml section}`, read from `AppConfig`.
 

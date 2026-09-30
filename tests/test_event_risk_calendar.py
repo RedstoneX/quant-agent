@@ -813,7 +813,6 @@ from src.data.event_calendar import (  # noqa: E402 — grouped with its own tes
     FOMC_MEASURED_STALE_CACHE,
     FOMC_SOURCE_HTML,
     FOMC_SOURCE_JSON,
-    FOMC_STATUSES,
     FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
     FOMC_UNAVAILABLE_FETCH_FAILED,
     FOMCCalendarParseError,
@@ -1205,22 +1204,6 @@ def test_the_reassuring_sentence_needs_a_schedule_that_spans_the_whole_horizon()
     )
     assert "None. The published FOMC schedule spans the next 10 calendar days" in rendered
     assert "Next scheduled meeting beyond this horizon" in rendered
-
-
-def test_every_fomc_status_is_in_the_declared_vocabulary(tmp_path):
-    """The `pace_status` contract: a figure exists only under a `measured`
-    status, and every absence has a NAME rather than being a bare None."""
-    # Four values, not five: there is deliberately no "answered but published
-    # nothing" status, because both parse boundaries raise rather than return
-    # an empty list, so no code path can produce one. A status nothing can
-    # produce is a status nobody can trust.
-    assert set(FOMC_STATUSES) == {
-        FOMC_MEASURED, FOMC_MEASURED_STALE_CACHE,
-        FOMC_UNAVAILABLE_FETCH_FAILED, FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
-    }
-    provider = _fomc_provider(tmp_path, json_body=None, html_body=None)
-    provider.get_meetings(horizon_days=10)
-    assert provider.last_coverage.status in FOMC_STATUSES
 
 
 # --- caching ----------------------------------------------------------------

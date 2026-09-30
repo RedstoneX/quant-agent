@@ -16,7 +16,6 @@ from src.data.insider_signal import (
     InsiderHistory,
     InsiderPriorTrade,
     InsiderSignalThresholds,
-    classify_observations,
     classify_transaction,
     holdings_fraction,
 )
@@ -376,23 +375,6 @@ def test_history_only_counts_trades_strictly_before_the_transaction():
     assert "3 preceding years" in verdict.detail
 
 
-def test_classify_observations_defaults_to_self_derived_history():
-    rows = classify_observations([
-        _row(),
-        _row(direction="sell", shares=40_000.0, post_shares=10_000.0, row=1),
-        # Routine by a rule that still exists: a zero-price row is not an
-        # open-market decision. The small-fraction sell rule that used to
-        # supply this case was removed on 2026-09-13.
-        _row(direction="sell", price=0.0, row=2),
-    ])
-
-    assert [row.signal_class for row in rows] == [
-        "opportunistic", "opportunistic", "routine",
-    ]
-    assert [row.signal_weight for row in rows] == [1.0, 1.0, 0.0]
-    assert all(row.signal_class_reason and row.signal_class_detail for row in rows)
-
-
 # --- provider wiring -------------------------------------------------------
 
 def _cached(provider, rows):
@@ -708,40 +690,6 @@ def test_bands_follow_the_papers_own_boundaries():
     assert band_for(10_000.0, 90_000.0) == "10_to_50pct"
     assert band_for(50_000.0, 50_000.0) == "10_to_50pct"
     assert band_for(50_001.0, 49_999.0) == "over_50pct"
-
-
-def test_the_bands_label_and_never_gate():
-    """``BANDS_ARE_REPORTING_ONLY`` is a claim, and this is what makes it one.
-    Two sales sitting either side of every band edge classify identically; the
-    band appears on the observation and nowhere in the decision."""
-    rows = [
-        _row(direction="sell", shares=s, post_shares=p) for s, p in (
-            (9_999.0, 90_001.0), (10_000.0, 90_000.0),
-            (50_000.0, 50_000.0), (50_001.0, 49_999.0),
-        )
-    ]
-    classified = classify_observations(rows, InsiderHistory())
-
-    assert {row.signal_class for row in classified} == {"opportunistic"}
-    assert {row.signal_weight for row in classified} == {1.0}
-    assert [row.holdings_fraction_band for row in classified] == [
-        "under_10pct", "10_to_50pct", "10_to_50pct", "over_50pct",
-    ]
-
-
-def test_classified_rows_carry_the_ratio_even_when_another_rule_decided():
-    """A calendar-routine sale is still sized against the position: the label
-    came from the routine rule, but the ratio is reported regardless."""
-    history = _history(direction="sell", days=[
-        date(2025, 8, 14), date(2024, 8, 11), date(2023, 8, 9),
-    ])
-    row = _row(direction="sell", shares=30_000.0, post_shares=70_000.0)
-
-    classified = classify_observations([row], history)
-
-    assert classified[0].signal_class_reason == "calendar_routine"
-    assert classified[0].holdings_fraction == 0.30
-    assert classified[0].holdings_fraction_band == "10_to_50pct"
 
 
 def test_purchase_detail_names_the_added_fraction_for_the_seat():

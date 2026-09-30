@@ -11406,10 +11406,59 @@ class TradingPipeline:
 
             # Only bars SINCE ENTRY matter: a swing low from before the
             # position existed is not a level this trade ever defended.
+            #
+            # "Since entry" means since the POSITION opened, not since the
+            # most recent add. `get_symbol_last_buy` returns the LATEST
+            # opening row, so slicing from it made a scale-in erase the
+            # trade's whole bar history — while the entry PRICE handed to
+            # the trail below is `position.avg_entry`, blended across every
+            # add. The window and the price disagreed by construction.
+            #
+            # Measured 2026-09-30 against the live DB: the structural pivot
+            # has produced ZERO of the 9 deterministic stops ever placed
+            # (all 9 came from the chandelier or the breakeven ratchet),
+            # and in all 11 recorded `no_structure_and_no_usable_chandelier`
+            # refusals the window held 0-6 bars against the 7 that
+            # `src/risk/trailing.py::_swing_lows` needs before it can
+            # confirm a single pivot. MRVL on 2026-09-23 is the clearest
+            # case: a position opened 2026-09-17 was evaluated with zero
+            # bars because it had been added to that morning.
+            #
+            # This is NOT a risk-free change, and an earlier version of
+            # this comment claimed it was. A longer window can only RAISE
+            # `highest`, which raises `chandelier = highest - 3*ATR`; a
+            # higher candidate can rise THROUGH the noise floor, and
+            # `evaluate_trailing_stop` then refuses OUTRIGHT
+            # (`inside_noise_band`) rather than falling back to a lower
+            # candidate the shorter window would have accepted. Worked
+            # case: price 100, ATR 4, live stop 90. A window whose high is
+            # 106 proposes 94 and the stop tightens 90 -> 94; a longer
+            # window that sees a pre-add high of 108 proposes 96, which is
+            # above the 95 noise floor, so nothing is placed and the stop
+            # stays at 90. The wider window LOSES a tighten the narrower
+            # one took.
+            #
+            # The justification is therefore consistency, not safety: the
+            # old window disagreed BY CONSTRUCTION with the entry price the
+            # same call uses (`position.avg_entry`, blended across every
+            # add). Measured 2026-09-30 against all 21 recorded refusals,
+            # the exposure is currently zero — see `_swing_lows` in
+            # `src/risk/trailing.py` for that measurement. No new constant.
             bars = []
             try:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
-                entry_ts = (buy or {}).get("timestamp") or ""
+                try:
+                    opened_ts = self.db.get_position_open_timestamp(buy)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "trail: position-open lookup failed for %s (%s) — "
+                        "falling back to the last opening row's date",
+                        symbol, e,
+                    )
+                    opened_ts = None
+                if not isinstance(opened_ts, str):
+                    opened_ts = None
+                entry_ts = opened_ts or (buy or {}).get("timestamp") or ""
                 entry_day = entry_ts[:10]
                 bars = [
                     b for b in all_bars

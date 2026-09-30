@@ -417,9 +417,9 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Moved from WORK.md (2026-09-24) —** Settles with a before/after benchmark of whether the PM uses `reasoning_chain.macro_audit`, which needs the owner's go. Do NOT reopen as a size problem.
 
-## item 77
+## item 77 — RETIRED 2026-09-30, bare pointer at the model-seat decision line
 
-**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15.
+**Moved from WORK.md (2026-09-24) —** Blocked by owner decision 2026-09-15. **Retired 2026-09-30:** the board item was a bare pointer with no criteria of its own; its only criterion was closing with the `DECIDE BY 2026-10-31` model-seat line, which now names it as absorbed and keeps the owner ruling that nobody proposes the run. Items 17, 76 and 78 were checked the same day and stay open: 17 is a deferred owner decision with no backup channel built, 76 is blocked on a paid benchmark with its own criteria, 78 still has the live temporary isolate in the pipeline.
 
 ## item 81 — RETIRED 2026-09-24
 
@@ -826,4 +826,19 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 ## item 197 — detail moved from the board 2026-09-30
 
 `_repeg_entry_order` in `src/pipeline_stages.py` computes one bound, `reference * (1 + slippage_bps / 10_000)`, calls it `ceiling`, and returns early when `limit_price >= ceiling`. It never reads the spec's side. For a BUY that is right: the ceiling is above the reference and there is room to chase only when the limit sits below it. For a `sell_short` the fillable bound is a FLOOR at `reference * (1 - slippage_bps / 10_000)`, below the reference, and both the arithmetic and the comparison are inverted — a short limit would be judged to have room and walked UP, away from a fill, and the early return that is supposed to mean "already at the bound" would instead fire on exactly the short limits that are furthest from it. NOT INTRODUCED by item 183 and NOT LIVE: `repeg_enabled` is `false` in `config/settings.yaml` and defaults to `False` in `src/config.py`, so this path does not run today, and item 183 deliberately did not touch it. This is filed rather than fixed because the fix is a behaviour change on a money path that nothing currently exercises, and because turning the flag on without it is the real hazard. MEASURED: nothing — there are no re-peg outcomes in the record to measure, which is itself the reason the defect survived review.
+## item 183 — RETIRED 2026-09-30, all five order-placement gates resolved: the constructor $500 floor and the 0.5% weight-delta floor deleted, the 2% ask-skip deleted with its SHORT mirror, the 40bp entry-slippage belt ratified as owner appetite inside a measured indifference band, and the 1% cash-reserve band carried to item 190
+2026-09-30. RATIFIED as owner appetite, not sourced and not changed: the 40bp belt
+        (`ExecutionConfig.max_entry_slippage_bps`) is the last of this item's five gates and it is a dial. The
+        2026-09-26 measurement leaves an indifference band of roughly 32bp to 390bp — the belt censors its own
+        tail, every recorded slippage refusal sat 391-1466bp out, and no published reference for an acceptable
+        entry-slippage bound on retail marketable limits exists — so every value in that band would have
+        decided every observed case identically and the data cannot pick one. No replacement number was
+        invented, because choosing again inside a measured indifference band is the same arbitrary act with a
+        newer date. The ledger row now records the ratification and its reason. The two successor routes are
+        NOT closed by this and are deliberately left as named routes rather than as an open criterion here:
+        (a) reformulate the ceiling onto each name's own Corwin & Schultz half-spread, blocked until the
+        reference-to-submission drift term the belt also absorbs has its own instrument-read basis (it was
+        raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
+        possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
+        item 90's half-two re-derivation, not to a gate inventory.
 **CLOSED 2026-09-30.** The way in is built, and it needed no owner appetite value because it introduces no number: the admission test is `walls_between`, which the guard script already runs, imported rather than copied. `_adjudicate_target_revision_flags` now builds a candidate list of the seat flags PLUS every held position; an unflagged candidate is admitted only if a structural level survives `levels_still_in_the_way` and stands between the ENTRY and the stored target, and is dropped silently otherwise. The "writes to live records without a human" worry is answered by what was already true of the seat path and is unchanged here: the stage runs AFTER every exit this session has executed, and progress/pace are measured against the PINNED `initial_take_profit`, so a revision cannot move a guarded metric or reach an exit decision. Rows from this path are stamped `stored_target_guard` so an operator can tell a machine-admitted revision from a seat-raised one. NOT changed and deliberately so: the desk still does not sell at a target — a revision corrects a quoted number, and the exit remains the alignment test. AAPL and NOK are the named positions this closes over.
