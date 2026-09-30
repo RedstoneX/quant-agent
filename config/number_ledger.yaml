@@ -2583,6 +2583,33 @@ numbers:
       And the gross multiple at the floor rung.
     cost_while_unanswered: >-
       As above.
+  - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
+    value: -20
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The drawdown at which the OWNER IS TOLD (resolve_gross_ceiling sets
+      alert_owner). A round percentage, not read off the account or off a
+      cited source. It happens to equal the de-levering ladder's deepest
+      rung, but it answers a different question from the ladder -- the same
+      function also sets alert_owner=True on the unmeasurable-drawdown
+      branch, where no rung fires at all. A 2026-09-30 change (board item
+      182) deleted this row and set the constant to min(GROSS_LADDER
+      thresholds); it was REVERTED the same day because the trigger
+      (drawdown <= this) is monotone, so freezing the value can never
+      produce silence at a deeper drawdown, while tying it to the deepest
+      rung WOULD go silent across any band between -20% and a newly added
+      deeper rung. Setting one arbitrary number equal to another arbitrary
+      number is deduplication, not sourcing, so the question below stays
+      open either way. The stale-prose defect that change was really
+      chasing is fixed in the reason string instead, which now names the
+      rung the ladder is actually on.
+    open_question: >-
+      At what drawdown must the owner be told, independently of what the
+      ladder does to exposure?
+    cost_while_unanswered: >-
+      The owner either hears about ordinary volatility or first hears at the
+      floor rung.
   - id: src.risk.rules.SEAT_WEIGHT
     value: 1
     status: sourced
@@ -4529,7 +4556,24 @@ numbers:
       2026-09-30 (board item 182): the 1.02 sweep-sizing cushion that used to
       precede it in this function was reformulated away, so this literal is
       now the first factor-band literal in source order. Positional id only --
-      the number, its derivation and its behaviour are unchanged.
+      the number and its derivation are unchanged. Its APPLICATION was
+      narrowed in the same commit: it now covers WHOLE-position sells only.
+      A partial sweep slice is credited at the live SELL limit it was sized
+      off, because crediting the whole park's market_value for a slice
+      overstated proceeds by everything left parked -- the figure this
+      loop's break-early guard and its owner-facing incompleteness alert
+      both read. Under a full fill that overstatement changed no decision,
+      since the slice is sized to cover the deficit by construction; it
+      corrupted the REPORTED figure, and it stops being harmless the moment
+      proceeds are booked from an actual filled quantity.
+      SCOPE LIMIT, unfixed and pre-existing: proceeds are still booked at
+      broker ACCEPTANCE, not at fill. _submit_protected_sell returns an
+      accepted order and nothing reads filled_qty, so a PARTIAL FILL still
+      leaves a residual deficit this loop cannot see. Alpaca documents
+      partially_filled as an order status and the limit rests at the live
+      bid, whose displayed size is finite, so this is a reachable state, not
+      a theoretical one. Booking from the filled quantity and continuing to
+      sell while the deficit stands would delete this haircut entirely.
   - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary

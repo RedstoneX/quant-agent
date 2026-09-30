@@ -12780,23 +12780,24 @@ class TradingPipeline:
             exec_ref = quote_ref if quote_ref is not None else p.current_price
             # The price floor each share of a partial sweep sale is
             # guaranteed to raise. A SELL limit fills AT OR ABOVE its limit
-            # or it does not fill, so the live limit IS that floor. With no
-            # live quote the order is a MARKET order, which has no floor at
-            # all, so the loop falls back to the SAME conservative must-fill
-            # haircut it already applies when counting proceeds a few lines
-            # below: the mark less `STOP_LIMIT_BUFFER_PCT`, the slippage the
-            # desk budgets for a gapping exit. That is an existing derived
-            # number, not a new one.
-            from src.execution.broker import AlpacaBroker as _AlpacaBroker
-            if sell_limit is not None and sell_limit > 0:
-                sizing_price: float | None = sell_limit
-            elif p.current_price and p.current_price > 0:
-                sizing_price = float(p.current_price) * (
-                    1 - _AlpacaBroker.STOP_LIMIT_BUFFER_PCT
-                )
-            else:
-                sizing_price = None
-            if is_sweep and sizing_price is not None and sizing_price > 0:
+            # or it does not fill, so the live limit IS that floor, and a
+            # partial sale can be sized off it with no cushion at all.
+            #
+            # WITH NO LIVE QUOTE THERE IS NO FLOOR, so there is no partial
+            # size to justify and the loop sells the whole position, exactly
+            # as every non-sweep de-lever target already does. An earlier
+            # draft of this change sized that branch off the mark less
+            # `AlpacaBroker.STOP_LIMIT_BUFFER_PCT` and called it "an existing
+            # number, not a new one". It was neither safe nor a no-op:
+            # dividing by 0.97 is a 3.09% pad on the same possibly-stale
+            # mark, i.e. LARGER than the flat 2% pad the change claimed to be
+            # removing, and 3% is a stop-limit through-buffer picked
+            # (`status: arbitrary`) for a different job. Borrowing a constant
+            # at the wrong tightness for a new job is not sourcing it.
+            sizing_price = sell_limit if (
+                sell_limit is not None and sell_limit > 0
+            ) else None
+            if is_sweep and sizing_price is not None:
                 # audit round 2: only unpark what the deficit needs —
                 # full-liquidating an $80k T-bill balance for a $200 deficit
                 # forced a full re-park at the session bookend, a pointless
@@ -12808,19 +12809,23 @@ class TradingPipeline:
                 # the possibly-stale `current_price` and then multiply by a
                 # flat 1.02 — a 2% guess at how far the fill would land under
                 # the mark, chosen by nobody and read off nothing. The guess
-                # is unnecessary, because the order this loop is about to
-                # place already carries its own worst case. `sizing_price`
-                # above IS that worst case: the live limit the order rests
-                # at, or — with no quote, where the order becomes a MARKET
-                # order with no floor — the mark less the must-fill slippage
-                # the desk already budgets elsewhere in this same function.
-                # Dividing the remaining deficit by that worst case gives the
-                # smallest share count that clears it, and `ceil` supplies
-                # the whole-share rounding the 2% was partly standing in for.
-                # No cushion is chosen because none is needed: this extends
-                # to the QUANTITY exactly what `_live_delever_price` already
-                # states for the PRICE — "no new % constant is introduced on
-                # either branch".
+                # is unnecessary on THIS branch, because the order this loop
+                # is about to place already carries its own worst case: the
+                # live SELL limit it will rest at. Dividing the remaining
+                # deficit by that floor gives the smallest share count that
+                # clears it, and `ceil` supplies the whole-share rounding.
+                # This extends to the QUANTITY exactly what
+                # `_live_delever_price` already states for the PRICE.
+                #
+                # WHAT THIS DOES NOT COVER: the limit bounds the PRICE of the
+                # shares that fill, not HOW MANY fill. The limit is placed at
+                # the live bid, whose displayed size is finite, and Alpaca
+                # documents `partially_filled` as an order status, so a short
+                # fill is a real state on this path. Nothing below reads a
+                # filled quantity — `_submit_protected_sell` returns on
+                # broker ACCEPTANCE — so a partial fill still leaves a
+                # residual deficit this loop will not see. That gap predates
+                # this change and is reported, not fixed, here.
                 import math as _math
                 remaining = deficit - projected_proceeds
                 qty = min(
@@ -12867,7 +12872,26 @@ class TradingPipeline:
                 # STOP_LIMIT_BUFFER_PCT budgets for a gapping exit). Under-
                 # counting proceeds is the safe error here — it never stops the
                 # sweep one position too early and leaves a residual deficit.
-                projected_proceeds += p.market_value * 0.97
+                #
+                # ON THE SHARES ACTUALLY SOLD (2026-09-30). `market_value`
+                # is the position's FULL value, and every branch here sells
+                # the whole position EXCEPT the sweep slice above — which
+                # credited the whole park anyway. The sweep vehicle sorts
+                # FIRST and the loop breaks at `projected_proceeds >=
+                # deficit`, and the completeness alert at the bottom reads
+                # the same figure, so an $80k park sold down by $500
+                # credited ~$78k and a short sale produced neither a second
+                # sale NOR an owner alert.
+                #
+                # The slice is credited at the limit it was SIZED off, which
+                # is the same arithmetic floor and keeps the two consistent:
+                # counting a correctly-sized slice at a lower figure than it
+                # was sized to raise would make the loop believe it fell
+                # short and sell the next position on top of it.
+                if qty < p.qty:
+                    projected_proceeds += float(qty) * float(sizing_price)
+                else:
+                    projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
                     "FORCE DE-LEVER SELL %s qty=%s @ limit=%s "

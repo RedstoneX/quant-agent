@@ -157,7 +157,7 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 137, (
+    assert MAX_ARBITRARY_ENTRIES == 138, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
@@ -332,21 +332,21 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
         "desk instead of to a constant. No replacement percentage was "
         "substituted. A row left the ledger, so the count is lowered in the "
         "same commit. "
-        "139 -> 137 on 2026-09-30, board item 182: two rows left, both "
-        "REFORMULATED AWAY rather than sourced, measured or routed to the "
-        "owner. `src.risk.rules.GROSS_LADDER_ALERT_PCT` (-20) is no longer a "
-        "literal at all -- it is computed as the deepest rung of "
-        "`GROSS_LADDER`, so it inherits that table's 2026-09-25 owner "
-        "ratification instead of being a seventh independent pick that "
-        "happened to agree with the sixth. "
+        "139 -> 138 on 2026-09-30, board item 182 (PARTIAL, the item stays "
+        "open): ONE row left, REFORMULATED AWAY rather than sourced. "
         "`src.pipeline.TradingPipeline._force_delever:factor[0]` (1.02), the "
         "sweep-vehicle sizing cushion, is gone because the partial sale now "
         "divides the remaining deficit by the price floor the order itself "
-        "carries -- the live SELL limit, or with no quote the mark less the "
-        "must-fill slippage this same function already budgets -- so the "
-        "smallest provably-sufficient share count is computed rather than "
-        "padded by a guess. Two rows left the ledger, so the count is "
-        "lowered by exactly two in the same commit."
+        "carries -- the live SELL limit -- so the smallest provably-"
+        "sufficient share count is computed rather than padded by a guess, "
+        "and with no quote there is no floor so the whole position is sold. "
+        "`src.risk.rules.GROSS_LADDER_ALERT_PCT` was removed in the first "
+        "draft of the same commit and PUT BACK: the alert trigger is "
+        "monotone, so freezing it at the owner-ratified -20 cannot cause "
+        "silence at any deeper drawdown, while tying it to the ladder's "
+        "deepest rung would have silenced the band between -20% and any new "
+        "deeper rung. Its open question is still unanswered and its row is "
+        "still counted."
     )
 
 
