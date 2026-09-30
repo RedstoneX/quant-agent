@@ -84,22 +84,30 @@ def test_tolerance_tracks_the_cluster_constant_not_a_copy_of_it():
 def test_tolerance_covers_every_pivot_the_clusterer_would_have_merged():
     """The bound is provable, not asserted — check it against `_cluster`.
 
-    `_cluster` chains a pivot in when it is within `CLUSTER_TOLERANCE_PCT`
-    of the group's ANCHOR (its lowest member, since pivots are sorted
-    ascending), so a cluster spans at most `anchor * pct/100`. `Level.price`
-    is the cluster MEAN, which is >= anchor. Therefore the furthest real
-    pivot in a zone is never more than `price * pct/100` from the reported
-    level. This test builds the worst case the clusterer can actually
-    produce and confirms the tolerance reaches every member of it.
-
     RESTATED 2026-09-30 (item 55): `_cluster` no longer uses a percentage at
-    all. Pivots are one level when their BARS' traded ranges overlap, and the
-    zone is those bars' own span. The property under test is unchanged and is
-    the one that matters — the reported tolerance still reaches every pivot
-    the clusterer merged — but it is now checked against the measured span.
+    all. Pivots are one level when their BARS' traded ranges overlap — and
+    under COMPLETE linkage, when every pair of them overlaps — and the zone
+    is those bars' own combined span. The property under test is unchanged
+    and is the one that matters: the reported tolerance still reaches every
+    pivot the clusterer merged. It is now checked against the measured span.
+
+    The previous fixture here (bars 99.0-100.5, 100.2-101.2, 100.9-102.0) is
+    kept below as the NEGATIVE case: its first and last bars never traded a
+    common price, so single linkage welded them and complete linkage must
+    not. Its replacement is a genuinely mutually-overlapping run.
     """
-    pivots = [
+    chain = [
         (0, 100.0, "S", 99.0, 100.5),
+        (1, 100.4, "S", 100.2, 101.2),
+        (2, 101.0, "S", 100.9, 102.0),
+    ]
+    assert len(_cluster(chain)) == 2, (
+        "99.0-100.5 and 100.9-102.0 share no traded price; chaining them "
+        "through the middle bar is the single-linkage defect"
+    )
+
+    pivots = [
+        (0, 100.0, "S", 99.0, 101.5),
         (1, 100.4, "S", 100.2, 101.2),
         (2, 101.0, "S", 100.9, 102.0),
     ]

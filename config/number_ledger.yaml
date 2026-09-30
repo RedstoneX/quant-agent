@@ -1446,7 +1446,7 @@ numbers:
       nothing previously checked.
   - id: src.data.levels.CLUSTER_TOLERANCE_PCT_FALLBACK
     value: 1
-    status: derived
+    status: arbitrary
     site: src/data/levels.py
     note: >-
       SUPERSEDED 2026-09-30, docs/WORK.md item 55. This used to BE the level
@@ -1459,15 +1459,30 @@ numbers:
       nothing left to sweep. The open question this entry used to carry ("at
       what price separation do two pivots stop being one level") no longer
       has to be answered, because nothing asks it any more.
-      The 1.0 survives ONLY as a fail-closed fallback for a caller holding a
-      bare level PRICE with no zone attached (an older stored analysis, a
-      fixture). Such a caller gets exactly the old behaviour rather than a
-      zero-width zone, which would silently strip the level out of stop
-      placement. It governs no live level built from bars.
+      The 1.0 is NOT deleted and this entry stays `arbitrary`, because the
+      number is still reachable and still unsourced wherever it is reached.
+      It remains reachable in four places, named rather than glossed:
+      (1) `level_zone_halfwidth` uses it whenever `zone_low`/`zone_high` are
+      absent, non-finite, inverted, or describe a zero-width bar;
+      (2) `_cluster` falls back to it to group a pivot whose bar range is not
+      a finite number;
+      (3) `risk.level_cluster_tolerance_pct` is a live configured parameter
+      carrying this value into `src/risk/exit_guard.py` and
+      `src/risk/target_revision.py`, where a level with no zone is still
+      matched as `price * pct / 100`;
+      (4) the alias `CLUSTER_TOLERANCE_PCT` is still exported and is still
+      the default argument of the public helpers.
+      What DID change is that the number no longer defines a level: every
+      level `find_structural_levels` builds from bars now carries its own
+      measured zone and never consults this value.
+    open_question: >-
+      What bound should a zone-less level get, when no bar range is available
+      to read one off? Unanswered; 1% is a guess standing in for a
+      measurement, exactly as before.
     cost_while_unanswered: >-
-      None on the live path: every level built by `find_structural_levels`
-      carries its measured zone. Only a zone-less legacy payload reaches
-      this value, and then it reproduces the previous behaviour exactly.
+      A level reaching the risk seats without a zone is matched on a guessed
+      1% band, so a stop can be reported as backed by structure on the
+      strength of an unsourced width. docs/WORK.md item 55.
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary

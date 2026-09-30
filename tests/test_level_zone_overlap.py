@@ -39,6 +39,55 @@ def test_non_overlapping_bars_are_separate_levels_even_when_close():
     assert len(groups) == 2, "bars that never traded the same prices are two levels"
 
 
+def _pairwise_overlap(a, b):
+    return a[3] <= b[4] and b[3] <= a[4]
+
+
+def _assert_complete_linkage(groups):
+    """THE property: every pair inside a level shares traded prices."""
+    for g in groups:
+        measurable = [p for p in g if math.isfinite(p[3]) and math.isfinite(p[4])]
+        for i, a in enumerate(measurable):
+            for b in measurable[i + 1:]:
+                assert _pairwise_overlap(a, b), (
+                    f"{a} and {b} are in one level but never traded the same price"
+                )
+
+
+def test_one_tall_bar_cannot_weld_two_shelves_together():
+    """The single-linkage failure, pinned. A bar spanning 95-104 overlaps BOTH
+    a 100-101 shelf and a 102-103 shelf, which do not overlap each other.
+    Complete linkage must not put all three in one level."""
+    a = pivot(0, 100.0, "S", 100.0, 101.0)
+    b = pivot(10, 102.0, "R", 102.0, 103.0)
+    c = pivot(20, 104.0, "R", 95.0, 104.0)
+    groups = _cluster([a, b, c])
+    assert len(groups) == 2, "the tall bar joins one shelf, it does not merge them"
+    _assert_complete_linkage(groups)
+
+
+def test_complete_linkage_holds_whatever_order_the_pivots_arrive_in():
+    """Pinned as a property over permutations, not as one expected partition:
+    the previous test passed only because of the sweep's sort order."""
+    import itertools
+
+    pivots = [
+        pivot(0, 100.0, "S", 100.0, 101.0),
+        pivot(10, 102.0, "R", 102.0, 103.0),
+        pivot(20, 104.0, "R", 95.0, 104.0),
+        pivot(30, 110.0, "R", 109.5, 110.5),
+        pivot(40, 110.2, "R", 110.0, 111.0),
+    ]
+    for perm in itertools.permutations(pivots):
+        groups = _cluster(list(perm))
+        _assert_complete_linkage(groups)
+        assert sum(len(g) for g in groups) == len(pivots), "no pivot is lost"
+        # Deterministic: input order must not change the partition.
+        assert sorted(sorted(p[0] for p in g) for g in groups) == sorted(
+            sorted(p[0] for p in g) for g in _cluster(list(pivots))
+        )
+
+
 def test_zone_halfwidth_is_read_off_the_span_not_a_percentage():
     hw = level_zone_halfwidth(100.0, zone_low=96.0, zone_high=103.0)
     assert hw == pytest.approx(4.0), "the furthest edge of the level's own band"

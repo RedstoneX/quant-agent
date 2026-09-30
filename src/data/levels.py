@@ -170,11 +170,12 @@ def level_zone_halfwidth(
     Derivation, read straight off `_cluster` and `find_structural_levels`
     above — not chosen here:
 
-      * `_cluster` chains a pivot into the current group when it sits within
-        `tolerance_pct` of that group's ANCHOR, and the anchor is the group's
-        LOWEST member (the pivots are sorted ascending). So every member of a
-        cluster lies in ``[anchor, anchor * (1 + tolerance_pct/100)]`` and the
-        cluster's full span is at most ``anchor * tolerance_pct/100``.
+      * On the fallback path `_cluster` admits a pivot only when it sits
+        within `tolerance_pct` of EVERY member, and in particular of the
+        group's anchor — its LOWEST member, since the pivots are swept in
+        ascending price. So every member of such a cluster lies in
+        ``[anchor, anchor * (1 + tolerance_pct/100)]`` and the cluster's
+        full span is at most ``anchor * tolerance_pct/100``.
       * `Level.price` is the MEAN of the cluster, so it lies inside that span
         and ``anchor <= price``.
       * Therefore the distance from `Level.price` to the furthest real pivot
@@ -526,11 +527,29 @@ def _cluster(
 
     **The rule (item 55, 2026-09-30), and there is no number in it.** Two
     pivots belong to the same level when the price RANGES their bars actually
-    traded overlap. Grouping is transitive: pivots are swept in ascending
-    price and chained while the next bar's range still reaches the running
-    band, so a level is a connected run of overlapping bar ranges. The
-    level's width is then that run's own combined span — ``min(low)`` to
-    ``max(high)`` — measured, not assigned.
+    traded overlap.
+
+    **COMPLETE LINKAGE, and that is the load-bearing word.** A pivot joins a
+    level only if its bar range overlaps the range of EVERY member already
+    in it — never merely the nearest one. Equivalently, the members' ranges
+    must share at least one common price: the running intersection
+    ``[max(low), min(high))]`` stays non-empty. So every level names a price
+    band that every one of its bars actually traded.
+
+    Single linkage (chaining a pivot in when it reaches any one member) was
+    tried first and is WRONG here for the reason this desk already wrote
+    down in `src/data/news_dedup.py`: "single-linkage chaining is the classic
+    way two distinct events get welded together through an intermediate
+    article that resembles both." One tall bar spanning two unrelated shelves
+    welds them into a level whose band covers neither. The assignment loop
+    below is deliberately the same shape as `cluster_news`: try each existing
+    level in order, require the candidate to pass against every member, and
+    open a new level only when none accepts it.
+
+    The level's width is then the members' own combined span — ``min(low)``
+    to ``max(high)`` — measured, not assigned. That span can exceed the
+    common intersection, and it is reported as it falls; nothing is capped,
+    because a cap would be exactly the invented number this rule deletes.
 
     What this replaces, and why. Until today a pivot joined a group when its
     PRICE sat within `CLUSTER_TOLERANCE_PCT` (1%) of the group's anchor. That
@@ -547,39 +566,48 @@ def _cluster(
     """
     if not pivots:
         return []
-    ordered = sorted(pivots, key=lambda p: p[1])
+    ordered = sorted(pivots, key=lambda p: (p[1], p[0]))
     clusters: list[list[tuple[int, float, str, float, float]]] = []
-    current = [ordered[0]]
-    band_high = ordered[0][4]
-    for pivot in ordered[1:]:
+    # Running common intersection of each cluster's bar ranges, parallel to
+    # `clusters`. Non-empty by construction, which IS the complete-linkage
+    # invariant.
+    shared: list[tuple[float, float]] = []
+
+    for pivot in ordered:
         p_low, p_high = pivot[3], pivot[4]
-        # Overlap against the running band's top. Because pivots are swept in
-        # ascending PRICE, a bar whose low is at or below the highest high
-        # seen so far shares traded prices with at least one member.
-        overlaps = (
-            math.isfinite(p_low)
-            and math.isfinite(band_high)
-            and p_low <= band_high
-        )
-        if not overlaps and (not math.isfinite(p_low) or not math.isfinite(p_high)):
-            # Unusable range: cannot evaluate the overlap test. Fail closed to
-            # the OLD percentage rule for this pivot rather than split a level
-            # (which would drop it below MIN_TOUCHES and delete it outright).
-            anchor = current[0][1]
-            overlaps = (
-                anchor > 0
-                and abs(pivot[1] - anchor) / anchor * 100.0
-                <= CLUSTER_TOLERANCE_PCT_FALLBACK
-            )
-        if overlaps:
-            current.append(pivot)
-            if math.isfinite(p_high):
-                band_high = max(band_high, p_high)
-        else:
-            clusters.append(current)
-            current = [pivot]
-            band_high = p_high
-    clusters.append(current)
+        measurable = math.isfinite(p_low) and math.isfinite(p_high) and p_low <= p_high
+        placed = False
+        for idx, members in enumerate(clusters):
+            lo, hi = shared[idx]
+            if measurable:
+                # Overlaps EVERY member iff it overlaps their common band.
+                if p_low > hi or p_high < lo:
+                    continue
+                shared[idx] = (max(lo, p_low), min(hi, p_high))
+            else:
+                # Unusable range: the overlap test cannot be evaluated. Fail
+                # closed to the OLD percentage rule against this cluster's
+                # anchor rather than split a level (which would drop it below
+                # MIN_TOUCHES and delete it outright). Same complete-linkage
+                # spirit: it must sit within the fallback band of every
+                # member, and the cluster's shared band is unchanged because
+                # this pivot contributes no measured range.
+                anchor = members[0][1]
+                if anchor <= 0:
+                    continue
+                tol = CLUSTER_TOLERANCE_PCT_FALLBACK
+                if any(
+                    m[1] <= 0
+                    or abs(pivot[1] - m[1]) / m[1] * 100.0 > tol
+                    for m in members
+                ):
+                    continue
+            members.append(pivot)
+            placed = True
+            break
+        if not placed:
+            clusters.append([pivot])
+            shared.append((p_low, p_high) if measurable else (pivot[1], pivot[1]))
     return clusters
 
 
