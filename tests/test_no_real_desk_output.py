@@ -148,7 +148,12 @@ KNOWN_OFFENDERS = [
     ("tests/fixtures/pm_response_11_targets_20260817.txt", "desk-prose"),
     ("tests/fixtures/pm_response_17_targets_20260820.txt", "desk-prose"),
     ("tests/test_stop_out_reconciliation.py", "broker-order-id"),
-    ("docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md", "broker-account-id"),
+    # No real broker-account-id specimen is kept on disk on purpose — both
+    # real account numbers that ever appeared here (rehearsal and main) are
+    # now redacted rather than preserved as allow-listed proof. The
+    # broker-account-id detector's regression coverage instead comes from
+    # test_detector_fires_on_a_freshly_invented_offender below, which fires
+    # it on an invented value shaped exactly like a real one.
 ]
 
 

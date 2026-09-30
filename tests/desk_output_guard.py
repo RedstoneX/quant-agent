@@ -137,21 +137,13 @@ ALLOWED: dict[str, tuple[str, int]] = {
 
     # --- docs that record what the desk actually did ---
     "docs/INCIDENT_HISTORY.md":
-        ("the incident record; naming the real trade is the point of an incident record", 2),
+        ("the incident record; naming the real trade is the point of an incident record", 1),
     "docs/AGENT_ROLE_AUDIT.md":
         ("audit findings quoted from real runs, kept as the evidence trail for those findings", 1),
 
     # --- prompt templates whose worked examples came from real sessions ---
     "config/prompts/news_analyst.md":
         ("its worked example is a real news-analyst briefing, cited to the model as doctrine", 1),
-
-    # --- the production Alpaca account number, named where the architecture
-    # actually depends on knowing it is one specific account (not the
-    # rehearsal one, which is redacted rather than allow-listed here) ---
-    "docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md":
-        ("names the production account twice to prove two distinct accounts share one gateway", 2),
-    "scripts/restore_daily_pnl_history.py":
-        ("docstring names the production account to identify which real backfill this repairs", 1),
 }
 
 # The model-benchmark results. Every one of these replays a real desk input
