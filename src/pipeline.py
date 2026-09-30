@@ -5976,6 +5976,28 @@ class TradingPipeline:
             # decides how loudly we report what is already resting.
             if existing_sp <= 0:
                 continue
+            # QUANTITY, not just existence. The coverage sweep compares
+            # covered_qty against held_qty and never reads stop_price
+            # (grep: zero references), so a leftover 1-share sliver stop
+            # from the fractional stop-repair path would otherwise satisfy
+            # this check for a whole position and be reported as covered
+            # forever. An order that does not cover the residual is not
+            # this position's protection.
+            try:
+                existing_qty = abs(float(getattr(o, "qty", 0) or 0))
+            except (TypeError, ValueError):
+                existing_qty = 0.0
+            if existing_qty + 1e-9 < float(residual_qty):
+                logger.warning(
+                    "Reprotect for %s: an open stop (order %s) at $%.2f "
+                    "covers only %s of the %s residual shares, so it is "
+                    "not this position's protection and does not make "
+                    "this run idempotent.",
+                    symbol, _real_order_id(getattr(o, "id", None)),
+                    existing_sp, self._format_qty(existing_qty),
+                    self._format_qty(residual_qty),
+                )
+                continue
             price_matches = abs(existing_sp - best_stop) < 0.005
             order_id = _real_order_id(getattr(o, "id", None))
             status_attr = getattr(o, "status", None)
@@ -6026,8 +6048,11 @@ class TradingPipeline:
                     "at $%.2f, while this run wanted $%.2f. Submitting "
                     "would leave TWO live stops on the same shares, which "
                     "the broker accepts and nothing here reconciles. The "
-                    "resting stop is left in place; the coverage sweep "
-                    "owns any correction.",
+                    "resting stop is left in place. NOTE: the coverage "
+                    "sweep will NOT correct the price -- it compares "
+                    "quantity only and never reads stop_price -- so a "
+                    "wider-than-wanted stop persists until the trail "
+                    "moves it.",
                     symbol, order_id, status or "unknown",
                     existing_sp, best_stop,
                 )
