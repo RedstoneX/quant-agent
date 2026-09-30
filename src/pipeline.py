@@ -20,7 +20,9 @@ from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
-from src.agents.base import AgentResult, BaseAgent, agent_log_kwargs
+from src.agents.base import (
+    AgentResult, BaseAgent, agent_log_kwargs, seat_acceptance_kwargs,
+)
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -2467,8 +2469,8 @@ class TradingPipeline:
             )
             projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - invested_target_pct
-            # The band is the desk's own sourced cash reserve
-            # (`cash_sweep.reserve_pct`), not an invented number — see
+            # The band is the owner-set advisory band
+            # (`deployment_gap.band_pct`), not an invented number — see
             # `deployment_gap_band_pct`. An UNDER-deployed book beyond that
             # reserve is the drag this advisory exists to surface. The OVER
             # branch that told RM to "consider scale_all_buys" was deleted
@@ -9938,6 +9940,7 @@ class TradingPipeline:
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
                 agent_name=f"news_analyst_{session}", run_id=run_id,
                 input_summary=(
                     f"{len(news_items)} news items "
@@ -10896,6 +10899,7 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if not reasked else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -11337,6 +11341,30 @@ class TradingPipeline:
             if not buy:
                 _note(symbol, "no_opening_buy_row")
                 continue
+
+            # Every field read off `buy` below is pinned AT ENTRY — the
+            # reference target (`take_profit`), the denominator of R
+            # (`initial_stop_loss`, via `recorded_initial_stop`), the
+            # setup label and the measured breakout verdict — and a
+            # scale-in writes a SECOND opening row. Reading them off the
+            # newest add let the reference target sit above current price
+            # and measured R from a stop this trade never opened with.
+            # Item 195 fixed only the bar window; these read the same
+            # wrong row. `get_position_open_row` resolves the chain by
+            # `position_id` and returns None when it cannot, so an
+            # unchainable or legacy row keeps exactly today's behaviour.
+            try:
+                _open_row = self.db.get_position_open_row(buy)
+                # Same `isinstance` discipline the bar-window lookup above
+                # uses: anything that is not a real row leaves `buy` alone.
+                if isinstance(_open_row, dict):
+                    buy = _open_row
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "trail: position-open row lookup failed for %s (%s) — "
+                    "falling back to the last opening row",
+                    symbol, e,
+                )
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
@@ -16045,6 +16073,7 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("position_review_parse_error" if review is None else None),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
@@ -16390,6 +16419,7 @@ class TradingPipeline:
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment", "?")
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if not analysis else None),
                     agent_name="earnings_analyst_preprocess",
                     run_id=run_id,
                     input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
@@ -18813,6 +18843,7 @@ class TradingPipeline:
         if ta_result:
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
@@ -19355,6 +19386,7 @@ class TradingPipeline:
         elif analysis is None:
             _ev_log_kwargs["status"] = "evening_parse_error"
         self.db.insert_agent_log(
+            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
             input_message=ev_result.user_message,

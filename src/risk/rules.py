@@ -1334,24 +1334,20 @@ DESK_INVESTED_TARGET_PCT = 100.0
 def deployment_gap_band_pct(config) -> float:
     """The tolerance band for the `deployment_gap` advisory.
 
-    Previously a flat 15pp with no source (owner rule: no arbitrary
-    numbers). The only cash slice the desk has actually sourced and the
-    owner accepted is the sweep reserve (`cash_sweep.reserve_pct` —
-    deliberately-parked cash for fees/slippage, see `CashSweepConfig`).
-    Reusing it means a book short of 100% by no more than the reserve is
-    exactly at the fully-invested mandate, not "under" it; a book short by
-    more than the reserve has real idle cash and the advisory should say
-    so. No new constant — this tracks whatever the owner sets there.
+    Reads `deployment_gap.band_pct` (value 1.0, carried over
+    unchanged from the retiring `cash_sweep.reserve_pct`, board item 190
+    step 1). A book short of 100% by no more than the band is at the
+    fully-invested mandate; short by more has real idle cash and the
+    advisory says so.
 
     `config` is the pipeline's top-level config (or None — several ~58
     tests build `TradingPipeline` via `__new__` without one); a missing
-    `cash_sweep` block falls back to `CashSweepConfig`'s own declared
-    default rather than a number invented here.
+    value falls back to the field's own declared default.
     """
-    from src.config import CashSweepConfig
-    pct = getattr(getattr(config, "cash_sweep", None), "reserve_pct", None)
+    from src.config import DeploymentGapConfig
+    pct = getattr(getattr(config, "deployment_gap", None), "band_pct", None)
     if pct is None:
-        pct = CashSweepConfig.model_fields["reserve_pct"].get_default()
+        pct = DeploymentGapConfig.model_fields["band_pct"].get_default()
     return float(pct)
 
 
