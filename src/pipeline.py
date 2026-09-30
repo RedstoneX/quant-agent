@@ -329,25 +329,46 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
 # canonical `ExitTrigger` values are appended here, derived from the enum, so
 # the two vocabularies cannot diverge again without the enum itself changing.
 #
-# THIS DOES NOT LOWER THE BAR THE COMMENT ABOVE SETS. Every name added here
-# is a trigger this module already accepted under another wording, and each
-# names something the desk RECORDS:
-#   thesis_invalid        - the holding's `thesis_invalid_if` level, judged by
-#                           `check_structural_protection`.
-#   bearish_state_change  - a same-day `state_change` row naming the symbol
-#                           with a recorded direction, which
-#                           `exit_guard.holding_discipline_claim_check` already
-#                           reads and can CONTRADICT (branch (c)).
-#   adverse_news          - a news row.
-#   sector_shock          - a news row at sector scope.
-#   regime_shift          - the day's macro regime read.
-#   stop_fired            - a broker fill.
-# `earnings` is deliberately NOT added: its canonical spelling is a bare
-# common word that occurs in prose naming no event, and admitting it would be
-# the widening this comment block forbids. `cannot_substantiate` is not a
-# trigger and is never accepted. Both exclusions are the named constant
+# WHAT THIS DOES AND DOES NOT CLAIM ABOUT THE BAR ABOVE. Every name added
+# here is a trigger this tuple already accepted under another wording, with
+# ONE exception, and the bar the comment above sets — "names something the
+# desk records" — is met by THREE of the six, not by all of them. Measured
+# member by member 2026-09-30, and kept true mechanically by
+# `exit_trigger.EVENT_TRIGGERS` / `exit_trigger.NO_VERIFIER_EXISTS`, which
+# `tests/test_exit_trigger_canonical_names.py` requires every enum member to
+# appear in exactly one of:
+#
+#   VERIFIER EXISTS — some branch of `holding_discipline_claim_check` is
+#   reached for the claim and can CONTRADICT it:
+#     bearish_state_change - the same-day `state_change` rows for the symbol.
+#     adverse_news         - routed into that same branch deliberately.
+#     regime_shift         - the day's macro regime read, when trusted.
+#
+#   NO VERIFIER — accepted on its wording alone. Recorded, not excused:
+#     thesis_invalid - `check_structural_protection` is CONSULTED, with
+#                      `advisory_only=True, persist=False`, and its own
+#                      comment says it cannot change which exits execute.
+#                      Consulted is not judged.
+#     sector_shock   - the desk records no sector-scope row;
+#                      `holding_discipline_claim_check` says so where it
+#                      declines to route it.
+#     stop_fired     - nothing asks the broker whether a stop filled. This is
+#                      also the one genuinely NEW spelling here rather than a
+#                      re-spelling of a phrase already accepted above.
+#
+# `earnings` is deliberately NOT added to the prose vocabulary: its canonical
+# spelling is a bare common word that occurs in prose naming no event, and
+# admitting it would be the widening this comment block forbids. It has no
+# verifier either, and it stays reachable through the structured field.
+# `cannot_substantiate` is not a trigger and is never accepted. Both prose
+# exclusions are the named constant
 # `exit_trigger.CANONICAL_NAME_NOT_MATCHED_IN_PROSE`, pinned by
 # `tests/test_exit_trigger_canonical_names.py`.
+#
+# An earlier draft of this comment asserted a verifier for all six. That was
+# untrue of four of them, in the one comment block whose entire job is to
+# record that bar. Overstating a finding is the same failure as understating
+# one, so the claim now lives in a constant a test checks.
 _HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
     name for name in _CANONICAL_TRIGGER_NAMES
     if name not in _HARD_TRIGGER_KEYWORDS
@@ -10968,13 +10989,22 @@ class TradingPipeline:
         # (a) thesis invalidation. Until 2026-09-14 this fell through the
         # short-circuit above and the structural check was NEVER consulted
         # on it — on the one exit class where "did the level backing this
-        # stop actually break?" is the whole question, and the only exit
-        # class for which the ATR noise band is not already redundant (21
-        # of the 26 hard-trigger keywords also match
-        # `EXTERNAL_INFORMATION_PATTERNS` and skip the band outright, so
-        # these five are its entire non-redundant domain). The desk already
-        # computes the answer; it simply was not asked here.
-        # docs/WORK.md item 60.
+        # stop actually break?" is the whole question, and the exit class
+        # for which the ATR noise band is least redundant: most
+        # hard-trigger keywords ALSO match `EXTERNAL_INFORMATION_PATTERNS`
+        # and so skip the band outright, while the thesis-invalidation
+        # wordings never have. The desk already computes the answer; it
+        # simply was not asked here. docs/WORK.md item 60.
+        #
+        # NO COUNT IS WRITTEN HERE ON PURPOSE (2026-09-30). This comment
+        # used to read "21 of the 26 hard-trigger keywords", and the 26 was
+        # already wrong before this change — the tuple held 23 — so the
+        # sentence reasoned from a number that had outlived its derivation.
+        # The figures are now RECOMPUTED FROM THE CODE, every run, by
+        # `tests/test_exit_trigger_canonical_names.py::
+        # test_clamp_bypass_divergence_is_pinned_per_trigger`, which also
+        # pins WHICH keywords diverge. A digit in prose here can only go
+        # stale again.
         #
         # This branch is STRICTLY ADDITIVE and is designed so that it
         # cannot change which exits execute:
@@ -11513,6 +11543,7 @@ class TradingPipeline:
             judgment = classify_trigger_reason(
                 action.reason, cites=_reason_cites_hard_trigger,
                 trigger=getattr(action, "exit_trigger", None),
+                trigger_evidence=getattr(action, "trigger_evidence", None),
             )
             if judgment == "unnamed":
                 logger.info(
@@ -12045,6 +12076,7 @@ class TradingPipeline:
                 trigger_judgment = classify_trigger_reason(
                     reason_text, cites=_reason_cites_hard_trigger,
                     trigger=action_item.get("exit_trigger"),
+                    trigger_evidence=action_item.get("trigger_evidence"),
                 )
                 if trigger_judgment == "unnamed":
                     logger.warning(

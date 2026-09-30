@@ -91,26 +91,53 @@ def classify_trigger_reason(
     *,
     cites: Callable[[str], bool],
     trigger: object = None,
+    trigger_evidence: object = None,
 ) -> TriggerJudgment:
     """Classify an exit against the named-trigger recogniser.
 
-    `trigger` is the STRUCTURED field (`PositionAction.exit_trigger`) when
-    the caller has it. A recognised `ExitTrigger` in that field IS the seat
-    naming a sanctioned trigger — it is the typed, unambiguous form of the
-    same claim the prose gate hunts for in words — so it settles the
-    judgment as ``named`` without consulting the prose (2026-09-30; the
-    prose gate and `ExitTrigger` had drifted apart and refused a REDUCE
-    that named a sanctioned trigger by its own canonical name).
+    `trigger` is the STRUCTURED field (`PositionAction.exit_trigger`) and
+    `trigger_evidence` is the field that says what it rests on, when the
+    caller has them. A recognised `ExitTrigger` in the field is the typed,
+    unambiguous form of the same claim the prose gate hunts for in words —
+    but ONLY WITH EVIDENCE BEHIND IT. The field alone does not settle the
+    judgment (2026-09-30, adversary pass on this change).
 
-    This does NOT weaken substantiation. Naming a trigger and SUPPORTING
-    it are two different gates: `exit_trigger.check_exit_trigger` still
-    demands `trigger_evidence` that says something beyond the trigger's own
-    phrases, still re-asks when it does not, and
-    `exit_guard.holding_discipline_claim_check` still blocks a trigger the
-    desk's records affirmatively contradict. `cannot_substantiate` is not a
-    trigger and never settles the judgment here.
+    WHY THE EVIDENCE IS REQUIRED HERE AND NOT LEFT TO THE NEXT GATE. This
+    judgment is the only step on the exit path that DROPS an exit for
+    paperwork. `exit_trigger.check_exit_trigger` refuses nothing — its own
+    docstring says so — and the pipeline files its post-re-ask finding with
+    `dropped=False`. So "naming and substantiating are separate gates" is
+    true of the code and false of the consequence: the second gate never
+    refuses, and an enum value typed into a field with nothing behind it
+    would have been the whole of the requirement. Measured on the first cut
+    of this change, the reason "Concentration drift; valuation stretched;
+    taking profits at target." — the verbatim shape the comment block above
+    `pipeline._HARD_TRIGGER_KEYWORDS` records as DELIBERATELY REJECTED
+    (2026-05-04 AMZN double-trim), plus a target rationale the owner has
+    ruled is never a trigger — classified ``unnamed`` without the field and
+    ``named`` with `exit_trigger="adverse_news"` and no evidence at all.
 
-    * ``named`` — a sanctioned `ExitTrigger` is in the structured field, or
+    The evidence test is `exit_trigger._evidence_is_substantiation`, reused
+    rather than reinvented: it is not a length test and not a quality
+    judgement and carries no threshold — it strips the trigger's own
+    phrases from the evidence and asks whether anything is left. Requiring
+    the PROSE to agree with the field was the alternative and was rejected:
+    it would make the typed field worthless, since the seat would still
+    have to recite a sanctioned phrase in the sentence, which is the defect
+    this whole change exists to remove.
+
+    A field with no usable evidence does not fail the exit here — it simply
+    does not settle the judgment, and the PROSE gate is consulted exactly as
+    before. The live META reason still passes, because it names
+    `bearish_state_change` in the prose.
+
+    Substantiation downstream is untouched: `check_exit_trigger` still
+    re-asks, and `exit_guard.holding_discipline_claim_check` still blocks a
+    trigger the desk's records affirmatively contradict.
+    `cannot_substantiate` is not a trigger and never settles the judgment.
+
+    * ``named`` — a sanctioned `ExitTrigger` is in the structured field AND
+      `trigger_evidence` says something beyond the trigger's own phrases, or
       the matcher ran and found a recognised trigger in the prose.
     * ``unnamed`` — the matcher ran, or the reason is missing/not a
       string, and no recognised trigger was found. A missing reason is a
@@ -123,9 +150,15 @@ def classify_trigger_reason(
     """
     try:
         if trigger is not None:
-            from src.risk.exit_trigger import ExitTrigger, normalize_trigger
+            from src.risk.exit_trigger import (
+                ExitTrigger, _evidence_is_substantiation, normalize_trigger,
+            )
             named = normalize_trigger(trigger)
-            if named is not None and named is not ExitTrigger.CANNOT_SUBSTANTIATE:
+            if (
+                named is not None
+                and named is not ExitTrigger.CANNOT_SUBSTANTIATE
+                and _evidence_is_substantiation(trigger_evidence, reason, named)
+            ):
                 return "named"
         if not isinstance(reason, str) or not reason:
             return "unnamed"

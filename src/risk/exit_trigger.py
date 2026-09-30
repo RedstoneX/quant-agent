@@ -65,6 +65,7 @@ __all__ = [
     "CANONICAL_NAME_NOT_MATCHED_IN_PROSE",
     "canonical_prose_names",
     "EVENT_TRIGGERS",
+    "NO_VERIFIER_EXISTS",
     "derive_trigger_from_reason",
     "normalize_trigger",
     "ExitTriggerCheck",
@@ -200,18 +201,82 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     if (phrases := _phrases_for(trigger))
 }
 
-#: Triggers that assert something happened OUTSIDE the price series and
-#: name a symbol-level or market-level event the desk records. These are
-#: the ones whose truth `exit_guard.holding_discipline_claim_check` can be
-#: pointed at. `THESIS_INVALID` is deliberately absent: it is judged
-#: upstream by `check_structural_protection` and that function's owner
-#: decision leaves it unjudged here (see its docstring).
+#: Triggers a verifier in this codebase can actually CONTRADICT today.
+#:
+#: Membership is not an aspiration and not a category: a member belongs here
+#: only if some branch of `exit_guard.holding_discipline_claim_check` is
+#: reached for it and can append a contradiction. Verified by grep, member by
+#: member, 2026-09-30:
+#:
+#:   BEARISH_STATE_CHANGE - `_claims_bearish`; contradicted by the same-day
+#:                          `state_change` rows for the symbol.
+#:   ADVERSE_NEWS         - routed into that SAME `_claims_bearish` branch
+#:                          deliberately (see its comment there), so the same
+#:                          record can contradict it.
+#:   REGIME_SHIFT         - `_claims_regime`; contradicted by the day's macro
+#:                          regime read when the macro status is trusted.
+#:
+#: `SECTOR_SHOCK` was REMOVED from this set 2026-09-30. It had never been
+#: verifiable: `holding_discipline_claim_check`'s own comment states it is
+#: deliberately NOT routed to the state-change check because the desk records
+#: no sector-shock row. The set asserted a verifier that the code next to it
+#: said did not exist. Removing it changes no behaviour — see
+#: `NO_VERIFIER_EXISTS` for why this set had drifted unnoticed.
 EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset({
     ExitTrigger.BEARISH_STATE_CHANGE,
     ExitTrigger.ADVERSE_NEWS,
-    ExitTrigger.SECTOR_SHOCK,
     ExitTrigger.REGIME_SHIFT,
 })
+
+#: The other side of the ledger: every `ExitTrigger` for which NO verifier
+#: exists, with the reason, one line each.
+#:
+#: WHY THIS CONSTANT EXISTS (2026-09-30). The comment block above
+#: `pipeline._HARD_TRIGGER_KEYWORDS` sets a bar — an accepted trigger must
+#: name "something the desk records" and must not be re-added "without a
+#: verifier that can answer 'did that happen today?'". That bar was prose,
+#: and prose slips: `EVENT_TRIGGERS` was declared and exported here and read
+#: by NOTHING (grep of `src/` and `tests/` returned only its own definition
+#: and `__all__`), so the set that was supposed to encode which claims are
+#: checkable did nothing at all and had gone wrong on `SECTOR_SHOCK` without
+#: anything noticing.
+#:
+#: `tests/test_exit_trigger_canonical_names.py` now FAILS when an
+#: `ExitTrigger` member is in neither set, so declaring a new trigger forces
+#: whoever declares it to say, in code, whether anything can check it. The
+#: bar is now a test instead of a paragraph. This does NOT make the four
+#: members below verifiable — it records that they are not, which is the
+#: true state, and four of eight is the measured answer, not a target.
+#:
+#: Being here does not make a trigger illegitimate. It makes the gap visible.
+NO_VERIFIER_EXISTS: dict[ExitTrigger, str] = {
+    ExitTrigger.THESIS_INVALID: (
+        "consulted, never judged: `check_structural_protection` is read with "
+        "`advisory_only=True, persist=False` and its own comment states the "
+        "branch cannot change which exits execute."
+    ),
+    ExitTrigger.SECTOR_SHOCK: (
+        "the desk records no sector-scope row of any kind, so there is "
+        "nothing a sector-level assertion could be checked against; "
+        "`holding_discipline_claim_check` says so where it declines to route "
+        "it."
+    ),
+    ExitTrigger.EARNINGS: (
+        "no branch reads an earnings row on the exit path; the claim is "
+        "accepted on its wording alone (and, since 2026-09-30, reachable "
+        "through the structured field even though the bare word is excluded "
+        "from prose)."
+    ),
+    ExitTrigger.STOP_FIRED: (
+        "no branch asks the broker whether a stop actually filled; this is "
+        "also the one member whose canonical spelling is a genuinely NEW "
+        "wording rather than a re-spelling of an accepted phrase."
+    ),
+    ExitTrigger.CANNOT_SUBSTANTIATE: (
+        "not a trigger at all — the seat's honest decline. There is nothing "
+        "to verify, and it is never accepted as naming a trigger."
+    ),
+}
 
 #: Refusal codes for `src.risk.exit_refusal.record_exit_refusal`.
 CODE_UNSUBSTANTIATED_TRIGGER = "unsubstantiated_trigger"
