@@ -917,7 +917,7 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
 
 
 def test_paid_suspension_marks_morning_for_the_evening_dead_man_probe():
-    """Item 189: `paid_analysis_suspended` is a third legit PM-less
+    """Item 191: `paid_analysis_suspended` is a third legit PM-less
     completion alongside `no_data` and `evidence_gate_skip` (see
     `test_evidence_gate.py`'s `write_status.assert_called_once_with(
     "morning", "evidence_gate_skip")`), so it must tell the evening
