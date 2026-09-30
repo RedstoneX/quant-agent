@@ -1602,3 +1602,117 @@ def test_a_shorter_fetched_schedule_does_not_overwrite_a_longer_cached_one(tmp_p
     # ...and the longer cached tail survives on disk for the run that needs it.
     on_disk = json.loads(cache_file.read_text())
     assert on_disk["meetings"][0]["end_date"] == far.isoformat()
+
+
+# --- board item 187: the release-schedule cache ----------------------------
+#
+# The fair-share split alone did not stop the calendar failing at the open
+# (production log, 2026-09-30: 1/7 at 13:33 and 0/7 at 14:04 with the split
+# deployed). These pin the actual fix: the schedules are prefetched off the
+# trading path, served from disk at the open, and what is still missing is
+# reported missing.
+
+import json as _json
+from datetime import date as _date, timedelta as _timedelta
+
+from src.data.event_calendar import (  # noqa: E402
+    MacroEventCalendarProvider as _Provider,
+    MacroRelease as _Release,
+    RELEASE_SCHEDULE_CACHE_SCHEMA as _SCHEMA,
+)
+
+_ONE = (_Release(10, "CPI", "inflation print"),)
+
+
+def _provider(tmp_path, **kw):
+    return _Provider(
+        api_key="k", releases=_ONE,
+        schedule_cache_path=str(tmp_path / "rs.json"), **kw,
+    )
+
+
+def _write_cache(tmp_path, dates, fetched_on):
+    (tmp_path / "rs.json").write_text(_json.dumps({
+        "schema": _SCHEMA,
+        "releases": {"10": {
+            "label": "CPI",
+            "fetched_on": fetched_on.isoformat(),
+            "dates": [d.isoformat() for d in dates],
+        }},
+    }))
+
+
+def test_a_cached_schedule_answers_without_touching_the_wire(tmp_path):
+    p = _provider(tmp_path)
+    p._fetch_release_dates = lambda *a, **k: pytest.fail("went to the wire")
+    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    events = p.get_upcoming_events(horizon_days=10)
+    assert [e.label for e in events] == ["CPI"]
+    assert p.last_coverage.complete
+    assert p.last_coverage.from_cache == [("CPI", 0)]
+
+
+def test_a_cache_served_release_is_stated_as_cached_never_as_a_live_read(tmp_path):
+    p = _provider(tmp_path)
+    p._fetch_release_dates = lambda *a, **k: ([], "unreachable")
+    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    text = p.get_upcoming_events(horizon_days=10) and p.last_coverage.describe()
+    assert "SERVED FROM THE PRE-OPEN SCHEDULE CACHE" in text
+    assert "CPI" in text
+
+
+def test_a_schedule_too_old_or_too_short_is_a_miss_not_a_near_enough_hit(tmp_path):
+    for dates, fetched_on in (
+        ([_date.today() + _timedelta(days=3)], _date.today() - _timedelta(days=99)),
+        ([_date.today() - _timedelta(days=1)], _date.today()),
+    ):
+        p = _provider(tmp_path)
+        calls = []
+        p._fetch_release_dates = lambda *a, **k: (calls.append(1), ([], "boom"))[1]
+        _write_cache(tmp_path, dates, fetched_on)
+        p.get_upcoming_events(horizon_days=10)
+        assert calls, "a stale or short cache must go to the wire"
+        assert p.last_coverage.status == "failed"
+        assert p.last_coverage.from_cache == []
+
+
+def test_a_release_in_neither_cache_nor_wire_is_reported_missing_never_defaulted(tmp_path):
+    p = _provider(tmp_path)
+    p._fetch_release_dates = lambda *a, **k: ([], "fetch_deadline_exceeded")
+    assert p.get_upcoming_events(horizon_days=10) == []
+    assert p.last_coverage.status == "failed"
+    assert [f.reason for f in p.last_coverage.failed] == ["fetch_deadline_exceeded"]
+    assert "NOT FETCHED" in p.last_coverage.describe()
+
+
+def test_only_the_prefetch_writes_the_cache(tmp_path):
+    dates = [_date.today() + _timedelta(days=3)]
+    p = _provider(tmp_path)
+    p._fetch_release_dates = lambda *a, **k: (dates, None)
+    p.get_upcoming_events(horizon_days=10)
+    assert not (tmp_path / "rs.json").exists(), "a session must never write the cache"
+
+    p2 = _provider(tmp_path)
+    p2._fetch_release_dates = lambda *a, **k: (dates, None)
+    coverage = p2.prefetch_release_schedules()
+    assert coverage.complete
+    assert (tmp_path / "rs.json").exists()
+    assert p2.schedule_cache.load(10)[0] == dates
+
+
+def test_the_prefetch_never_reads_the_cache_so_it_cannot_become_a_no_op(tmp_path):
+    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    p = _provider(tmp_path)
+    calls = []
+    fresh = [_date.today() + _timedelta(days=4)]
+    p._fetch_release_dates = lambda *a, **k: (calls.append(1), (fresh, None))[1]
+    p.prefetch_release_schedules()
+    assert calls, "the prefetch must always go to the wire"
+    assert p.schedule_cache.load(10)[0] == fresh
+
+
+def test_the_prefetch_does_not_widen_the_deadline(tmp_path):
+    p = _provider(tmp_path, total_fetch_deadline_s=20.0)
+    assert p.total_fetch_deadline_s == 20.0
+    p.prefetch_release_schedules()
+    assert p.total_fetch_deadline_s == 20.0
