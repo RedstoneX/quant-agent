@@ -39,8 +39,8 @@ syntax tree with docstrings dropped, re-rendered to source by
 the function, or rewriting its docstring do not fire. What fires is a
 change to what the function computes — which is precisely when somebody
 should re-read the prose. It must also not fire on the INTERPRETER: see
-`_canonical_source` for the 3.11-versus-3.12 failure that rule is there to
-prevent.
+`_canonical_source` for the two separate 3.11-versus-3.12 failures that
+rule is there to prevent, and `_fstring_text` for the second of them.
 
 IT IS STILL A CONVENTION AT THE EDGES, SAID PLAINLY. It only covers pairs
 somebody registered. It cannot tell a prose fix from a prose regression; it
@@ -141,6 +141,64 @@ def _find_symbol(tree: ast.AST, symbol: str) -> ast.AST | None:
     return node
 
 
+def _fstring_text(node: ast.JoinedStr) -> str:
+    """One interpreter-independent rendering of an f-string's CONTENT.
+
+    `ast.unparse` has to pick quote characters when it prints an f-string,
+    and which ones it may pick CHANGED in 3.12. PEP 701 let an f-string
+    reuse its own quote character inside the braces, so 3.12 renders
+    `f"entry {d or 'unknown'}"` as `f'entry {d or 'unknown'}'` — a string
+    3.11 cannot even parse, and one 3.11's own `ast.unparse` therefore
+    never produces. Same tree, two texts, two digests.
+
+    So this does not let `ast.unparse` quote the f-string at all. It names
+    the pieces instead: each literal chunk by `repr`, each substitution by
+    the unparsed expression plus its conversion and format spec. Adjacent
+    literal chunks are merged first, because the tokenizer is free to split
+    literal text into a different number of `Constant` nodes between
+    releases and only the concatenation is meaningful.
+    """
+    parts: list[str] = []
+    literal = ""
+    for value in node.values:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            literal += value.value
+            continue
+        if literal:
+            parts.append(f"lit={literal!r}")
+            literal = ""
+        if isinstance(value, ast.FormattedValue):
+            spec = (
+                ast.unparse(value.format_spec)
+                if value.format_spec is not None
+                else ""
+            )
+            parts.append(
+                f"sub={ast.unparse(value.value)}"
+                f"!{value.conversion}:{spec}",
+            )
+        else:  # pragma: no cover - no other node type is legal here
+            parts.append(f"other={ast.unparse(value)}")
+    if literal:
+        parts.append(f"lit={literal!r}")
+    return "fstring(" + ", ".join(parts) + ")"
+
+
+class _QuoteFreeFStrings(ast.NodeTransformer):
+    """Replace every f-string with a name carrying its canonical text.
+
+    A `Name` is used because `ast.unparse` prints its `id` verbatim, so the
+    text `_fstring_text` produced survives into the digest unchanged and
+    without any further quoting decision. Children are visited first, so a
+    nested f-string — inside a substitution or a format spec — has already
+    been flattened by the time the outer one is rendered.
+    """
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.AST:
+        self.generic_visit(node)
+        return ast.Name(id=_fstring_text(node), ctx=ast.Load())
+
+
 def _canonical_source(node: ast.AST) -> str:
     """The one text this module digests. It MUST NOT vary by interpreter.
 
@@ -159,11 +217,24 @@ def _canonical_source(node: ast.AST) -> str:
     nothing here. It keeps the property the digest is for: positions,
     blank lines, comments and formatting are already gone by the time it
     runs, so reformatting does not fire and a changed computation does.
+
+    That fixed the field-enumeration half and left a SECOND interpreter
+    dependency inside `ast.unparse` itself, which cost this check a second
+    false accusation: on 2026-09-30 it reported that `position_drift_flag`
+    had changed its behaviour, on a branch where neither bound function had
+    been touched since the pin, purely because `PortfolioManagerAgent.
+    _fmt_position` contains `f"entry {entry_date or 'unknown'}"` and 3.12
+    reprints that f-string with different quotes than 3.11 does. See
+    `_fstring_text` for the mechanism. F-strings are therefore flattened to
+    a quote-free text before anything is unparsed.
+
     `tests/test_prompt_drift_item107.py` pins the digest of a fixed sample
-    so that if a future release does move this output, the build says so in
+    — one that now CONTAINS such an f-string, because the old sample had
+    none and so sailed through the very failure it existed to catch — so
+    that if a future release does move this output, the build says so in
     those words rather than blaming an innocent binding.
     """
-    return ast.unparse(node)
+    return ast.unparse(_QuoteFreeFStrings().visit(node))
 
 
 def code_digest(root: Path, anchors: tuple[CodeAnchor, ...]) -> str:

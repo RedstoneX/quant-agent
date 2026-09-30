@@ -44,7 +44,7 @@ bindings:
         contains:
           - "| 5 | Drift trim >"
           - "`positions_drift_flagged` — holdings with Weight >"
-    code_digest: "56f62680e3d044a9"
+    code_digest: "3d00e740d9b3d2f0"
     prose_digest: "dae1d24c36df9247"
 
   - name: constructor_stop_widening

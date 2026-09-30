@@ -57,8 +57,20 @@ def test_the_code_digest_does_not_depend_on_the_interpreter():
     `1ff80bdc562a7cee` with 3.11's, because 3.12 added `type_params` to
     that tuple and `ast.dump` prints every field it finds. CI runs 3.11; a
     developer on 3.12 pinned the registry from 3.12 and CI then reported
-    that two untouched mechanisms had changed their behaviour. Under
-    `_canonical_source` both field sets give `83ff4a113158a3dc`.
+    that two untouched mechanisms had changed their behaviour.
+
+    That fix was not enough, and the reason it was not is why this sample
+    now carries an f-string. `ast.unparse` picks quote characters, and
+    which ones it MAY pick changed in 3.12: PEP 701 lets an f-string reuse
+    its own quote inside the braces, so 3.12 reprints
+    `f"entry {d or 'unknown'}"` as `f'entry {d or 'unknown'}'` and 3.11
+    cannot. [measured 2026-09-30, `ast.unparse(ast.parse(...))` on
+    CPython 3.12.3, against the 3.11 digest CI printed] the binding
+    `position_drift_flag` digested to `56f62680e3d044a9` on 3.12 and
+    `481483fae6983cd9` on 3.11 with neither bound function touched since
+    the pin — because `PortfolioManagerAgent._fmt_position` contains
+    exactly that f-string. The old sample here had no f-string at all, so
+    it passed on both and certified a recipe that did not hold.
 
     If this assertion ever fails, the digest recipe moved. EVERY digest in
     `config/prompt_bindings.yaml` is then meaningless and must be re-pinned
@@ -69,6 +81,7 @@ def test_the_code_digest_does_not_depend_on_the_interpreter():
         '''
         def sample(a, b=2, *args, **kwargs):
             """A docstring the digest must drop."""
+            note = f"entry {a or 'unknown'} at {b:.2f}"
             if a > b:
                 return [x * 2 for x in args]
             return {k: v for k, v in kwargs.items()}
@@ -77,10 +90,20 @@ def test_the_code_digest_does_not_depend_on_the_interpreter():
     node = prompt_bindings._strip_docstring(ast.parse(sample).body[0])
     assert prompt_bindings._canonical_source(node) == (
         "def sample(a, b=2, *args, **kwargs):\n"
+        "    note = fstring(lit='entry ', sub=a or 'unknown'!-1:, "
+        "lit=' at ', sub=b!-1:fstring(lit='.2f'))\n"
         "    if a > b:\n"
         "        return [x * 2 for x in args]\n"
         "    return {k: v for k, v in kwargs.items()}"
     )
+    # The assertion above pins one sample; this one pins the PROPERTY that
+    # makes any sample safe. No `JoinedStr` may survive into `ast.unparse`,
+    # because choosing its quotes is the single thing 3.11 and 3.12 do
+    # differently, and a future sample that lost its f-string would quietly
+    # stop testing for that — which is how this got through the first time.
+    fresh = prompt_bindings._strip_docstring(ast.parse(sample).body[0])
+    flattened = prompt_bindings._QuoteFreeFStrings().visit(fresh)
+    assert not [n for n in ast.walk(flattened) if isinstance(n, ast.JoinedStr)]
 
 
 def test_the_registry_is_not_empty():
