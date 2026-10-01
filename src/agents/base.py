@@ -1781,6 +1781,26 @@ class AgentResult:
         return RowSalvage(rows=rows, malformed=malformed)
 
 
+def usage_telemetry_word(input_tokens, output_tokens, cost_usd,
+                         provider_requests) -> str | None:
+    """Did the provider's answer carry usage information? — recorded, never inferred.
+
+    A response with no token counts used to be stored as 0 tokens and a NULL
+    cost, which reads the same as a measured zero. This names the case:
+    "complete" (tokens and cost known), "no_cost" (tokens known, no price),
+    "no_usage" (no token counts at all). None when no provider request was made
+    or the values are not numbers (legacy/replay fixtures): unknown, not guessed.
+    Recording only; nothing reads it to decide anything.
+    """
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if provider_requests == 0 or not (num(input_tokens) and num(output_tokens)):
+        return None
+    if input_tokens == 0 and output_tokens == 0:
+        return "no_usage"
+    return "complete" if num(cost_usd) else "no_cost"
+
+
 def agent_log_kwargs(result: AgentResult) -> dict:
     """Common Stage 1 telemetry kwargs for Database.insert_agent_log(),
     derived from an AgentResult. Callers add agent_name/run_id/decision_id
@@ -1805,6 +1825,12 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     if not isinstance(truncated, bool):
         truncated = None
     return dict(
+        telemetry=usage_telemetry_word(
+            getattr(result, "input_tokens", None),
+            getattr(result, "output_tokens", None),
+            getattr(result, "cost_usd", None),
+            provider_requests,
+        ),
         requested_provider=text_or_none(getattr(result, "requested_provider", None)),
         requested_model=text_or_none(getattr(result, "requested_model", None)),
         actual_provider=text_or_none(getattr(result, "actual_provider", None)),
@@ -1815,6 +1841,33 @@ def agent_log_kwargs(result: AgentResult) -> dict:
         finish_reason=text_or_none(getattr(result, "finish_reason", None)),
         truncated=truncated,
     )
+
+
+def seat_acceptance_kwargs(refusal_reason: str | None) -> dict:
+    """Did the SEAT accept its own model's answer? — the fact `status` never held.
+
+    `status` says the provider call returned. It says nothing about whether
+    the seat could use what came back, which is why 15/15 portfolio-manager
+    rows and 19/55 risk-manager rows sit at "success" holding bodies that are
+    not the seat's format at all, and why no usable-answer rate is computable
+    for any model today. Pass the refusal reason the call site ALREADY has on
+    its rejection path, or None when the answer was used.
+
+    Recording only. This decides nothing and changes nothing: a seat that
+    refuses an unusable answer behaves exactly as it did before.
+    """
+    from src.refusal_signature import (
+        SEAT_ACCEPTED, SEAT_REFUSED, SEAT_REFUSAL_REASONS,
+    )
+    if not refusal_reason:
+        return {"acceptance": SEAT_ACCEPTED, "acceptance_reason": None}
+    reason = str(refusal_reason)
+    if reason not in SEAT_REFUSAL_REASONS:
+        # An unregistered word must not silently enter the column: record the
+        # refusal (true, and the load-bearing half) and flag the reason rather
+        # than inventing vocabulary.
+        reason = "unregistered:" + reason
+    return {"acceptance": SEAT_REFUSED, "acceptance_reason": reason}
 
 
 def _build_llm_client(provider: str, api_key: str):

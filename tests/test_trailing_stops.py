@@ -499,13 +499,35 @@ def test_a_stop_already_above_every_available_level_produces_nothing():
 
 
 def test_a_move_smaller_than_the_ratchet_threshold_is_not_worth_an_order():
-    """Otherwise every session nudges the stop a few cents."""
+    """Otherwise every session nudges the stop a few cents.
+
+    The gate is per CANDIDATE, not per evaluation. Until board item 196 this
+    test passed with `atr=2.0` because the structural pivot at 110 failed the
+    gate and the chandelier was never built — the rejected first candidate
+    ended the search. It is now built, and on these bars it clears both the
+    gate and the noise band, so it is rightly taken. Nothing in the
+    production record changes: the structural leg has never once produced a
+    candidate there, so the chandelier was already the candidate in every
+    recorded `below_min_ratchet` refusal.
+    """
+    stop = 110.0 / (1 + MIN_RATCHET_PCT / 100.0) + 0.01
+
+    # Structure alone (no ATR, so no chandelier leg): the gate still refuses.
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=125.0,
+        current_stop=stop, reference_target=None,
+        bars=_rising_with_higher_lows(), atr=None,
+    ) is None
+
+    # With an ATR the second leg exists and is worth an order on its own.
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="breakout", entry=100.0, current_price=125.0,
-        current_stop=110.0 / (1 + MIN_RATCHET_PCT / 100.0) + 0.01,
-        reference_target=None, bars=_rising_with_higher_lows(), atr=2.0,
+        current_stop=stop, reference_target=None,
+        bars=_rising_with_higher_lows(), atr=2.0,
     )
-    assert proposal is None
+    assert proposal is not None
+    assert proposal.source == "chandelier"
+    assert proposal.new_stop > stop * (1 + MIN_RATCHET_PCT / 100.0)
 
 
 def test_a_stop_is_never_placed_inside_the_atr_noise_band():
@@ -664,3 +686,48 @@ def test_item82_mislabelled_range_breakout_now_gets_type_b():
     # And it matches the correctly-labelled breakout exactly.
     breakout = _regime_fixture("breakout", None)
     assert (proposal.source, proposal.new_stop) == (breakout.source, breakout.new_stop)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-30: the TARGET is no longer the switch that enables Type A trailing
+# ---------------------------------------------------------------------------
+
+def test_range_past_second_ratchet_trails_structurally_below_its_target():
+    """Entry 100 with a 95 entry stop → 1R = 5, lock 105, trigger 110.
+
+    Price 118 is past +2R but nowhere near the 130 target, and the stop is
+    already sitting on the ratified +1R lock. Before this change the trade
+    ran naked from here to the target; now the ordinary structural trail
+    takes over and tightens to the confirmed higher low at 110.
+    """
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=105.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    )
+    assert proposal is not None
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 110.0
+    # Never below the ratified +1R lock, never below where the stop already was.
+    assert proposal.new_stop >= 105.0
+
+
+def test_range_past_second_ratchet_never_moves_the_stop_down():
+    """Same trade with the stop already ABOVE every candidate the trail could
+    offer: the answer must be "no move", never a retreat to a looser level."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=118.0,
+        current_stop=115.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    )
+    assert proposal is None or proposal.new_stop > 115.0
+
+
+def test_range_below_second_ratchet_still_does_not_trail_structurally():
+    """Below the ratified +2R trigger nothing changes: the two R-multiple
+    ratchets remain the whole of Type A protection."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=108.0,
+        current_stop=105.0, reference_target=130.0, initial_stop=95.0,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    ) is None

@@ -44,13 +44,20 @@ reversal. A SECOND ratchet now stacks on top of the breakeven step and stays
 below the target: once price reaches +2R (see `RANGE_SECOND_RATCHET_TRIGGER_R`)
 the stop moves up to +1R (see `RANGE_SECOND_RATCHET_LOCK_R`), locking one
 initial-risk-unit of gain. This REDUCES the give-back to a +1R floor once +2R
-is tagged; it does NOT close the give-back gap — between +1R (the lock) and the
-target the stop is pinned at +1R and no structural trail runs, so a run to +5R
-then a reversal still gives back to +1R. The residual give-back between +1R and
-target is unchanged. Both steps are Type A only, both fire only below the
-target, and both ratchet the stop UP only — never down. Breakouts are
+is tagged. Both steps are Type A only, and both ratchet the stop UP only —
+never down. Breakouts are
 untouched: they use the structural/chandelier trail from entry and never reach
 either R-multiple step.
+
+2026-09-30: the remaining give-back — a run to +5R reversing all the way back
+to the +1R lock — was caused by the TARGET being the switch that enabled Type
+A structural trailing at all. The target is an unsourced number and the desk
+bars a made-up number from governing an exit, so it is no longer that switch.
+Once a Type A position is past the ratified +2R trigger, the ordinary
+structural / chandelier trail runs for it exactly as it does for Type B, and
+it may never place a stop below the +1R lock or below wherever the stop
+already is. The two ratchets are untouched and still take precedence; the
+target survives as a signal for everything else it feeds.
 
 **Type B — `breakout`.** There is no overhead structure and the target is a
 measured-move reference, not a level. Progress and pace are meaningless here
@@ -145,6 +152,17 @@ __all__ = [
 #: the gate would have added seven such windows across nine evaluation runs
 #: on an eleven-name book. The money cost of a replace is zero (the ledger
 #: entry establishes this); the naked-window cost is not.
+#:
+#: That rejection is CONTINGENT, and the contingency is recorded so nobody
+#: re-derives it. Open PR 806 (`fix/atomic-stop-amend`) adds
+#: `_amend_resting_stop_price` to `src/execution/broker.py`, making a price
+#: amend atomic with no unprotected instant. It is NOT on main (verified
+#: 2026-09-30), which is why this constant is unchanged. If it lands, the
+#: only cost defending this gate is gone and the honest floor becomes one
+#: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
+#: split, already carried by `_quantize_price` and `_prices_match`) -- a
+#: reading off the instrument instead of a picked percentage. See the
+#: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
 #:
 #: What the same pass DID settle is the redundancy question the ledger left
 #: open. On THIS deterministic path there are two gates, not three: the
@@ -287,6 +305,7 @@ TRAIL_CODE_RANGE_ALREADY_BREAKEVEN = "range_below_target_stop_already_at_breakev
 TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE = "range_breakeven_not_between_stop_and_price"
 TRAIL_CODE_RANGE_BELOW_2R = "range_below_target_not_yet_2r"
 TRAIL_CODE_RANGE_SECOND_OFF_SIDE = "range_second_ratchet_lock_not_between_stop_and_price"
+TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK = "range_structural_trail_would_sit_below_second_ratchet_lock"
 TRAIL_CODE_NO_CANDIDATE = "no_structure_and_no_usable_chandelier"
 TRAIL_CODE_BELOW_MIN_RATCHET = "move_smaller_than_min_ratchet"
 TRAIL_CODE_INSIDE_NOISE_BAND = "inside_noise_band"
@@ -332,6 +351,18 @@ def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
     tighten. The justification is that the old window disagreed by
     construction with the blended `avg_entry` price used in the same call —
     not that the change cannot cost protection.
+
+    **Since then the candidate search was widened, which narrows that
+    exposure without moving any number.** `evaluate_trailing_stop` used to
+    build the chandelier only when structure produced nothing, so it fixed on
+    one candidate BEFORE testing it; it now builds both legs and carries each
+    through the same invariants, taking the first that survives. A structural
+    pivot inside the noise band therefore no longer suppresses a chandelier
+    level that clears it. This does NOT rescue the case above, where the
+    chandelier is itself the offending candidate — there is no lower
+    already-derived level to fall back to, and synthesising one at the band's
+    own edge would trail under today's price, which is the very thing
+    `_swing_lows` refuses on principle.
 
     **The exposure was then MEASURED, not assumed.** Re-running all 21
     recorded refusals through both windows (live DB, 2026-09-30): only 5 have
@@ -497,6 +528,36 @@ def _range_breakeven_ratchet(
     ), TRAIL_CODE_TRAILED)
 
 
+def _range_second_ratchet_state(
+    *, ent: float, cur: float, initial_stop: float | None, is_short: bool,
+) -> tuple[bool, float | None]:
+    """`(price is past the +2R second-ratchet trigger, the +1R lock price)`.
+
+    The SAME arithmetic `_range_second_ratchet` runs, exposed so the Type A
+    branch of `evaluate_trailing_stop` can ask the two questions it needs
+    without re-deriving anything: has the owner-ratified +2R trigger been
+    reached, and where is the owner-ratified +1R lock. No new number is
+    introduced — both multiples are the existing ratified constants.
+
+    Fails closed exactly as the ratchet does: without a usable `initial_stop`
+    R cannot be measured, so this reports `(False, None)` and the caller
+    leaves Type A behaviour untouched.
+    """
+    init_stop = _finite(initial_stop) if initial_stop is not None else None
+    if init_stop is None or init_stop <= 0:
+        return (False, None)
+    risk = abs(ent - init_stop)
+    if risk <= 0:
+        return (False, None)
+    if is_short:
+        trigger = ent - RANGE_SECOND_RATCHET_TRIGGER_R * risk
+        lock = ent - RANGE_SECOND_RATCHET_LOCK_R * risk
+        return (cur <= trigger, lock)
+    trigger = ent + RANGE_SECOND_RATCHET_TRIGGER_R * risk
+    lock = ent + RANGE_SECOND_RATCHET_LOCK_R * risk
+    return (cur >= trigger, lock)
+
+
 def _range_second_ratchet(
     *, symbol: str, ent: float, cur: float, stop: float,
     initial_stop: float | None, is_short: bool, setup_type: str | None,
@@ -659,7 +720,11 @@ def evaluate_trailing_stop(
     # identical to the pre-item-82 `!= "breakout"` compare this replaces.
     from src.risk.constants import is_trend_trade
 
-    # --- Type A: no STRUCTURAL trailing until the target is exceeded -------
+    # Set only on the Type A past-+2R path below: the +1R lock the ratified
+    # second ratchet installed, which a structural trail may never undercut.
+    range_trail_floor: float | None = None
+
+    # --- Type A: structural trailing once the position is past +2R ---------
     if not is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
         target = _finite(reference_target) if reference_target is not None else None
         exceeded = False
@@ -683,44 +748,83 @@ def evaluate_trailing_stop(
             )
             if second.proposal is not None:
                 return second
-            return _range_breakeven_ratchet(
+            breakeven = _range_breakeven_ratchet(
                 symbol=symbol, ent=ent, cur=cur, stop=stop,
                 initial_stop=initial_stop, is_short=is_short,
                 setup_type=setup_type,
             )
+            if breakeven.proposal is not None:
+                return breakeven
+            # The take-profit target is NOT a measured level, and the desk's
+            # doctrine bars a made-up number from governing an exit. It used
+            # to be the switch that enabled Type A structural trailing at
+            # all, so a range trade that ran to +5R and reversed still gave
+            # back to the +1R lock. It stops being that switch here: once the
+            # position is past the OWNER-RATIFIED +2R second-ratchet trigger
+            # — a level measured off this trade's own initial risk, not off a
+            # guessed price — the ordinary structural / chandelier trail runs
+            # for Type A too. The target survives untouched as a signal
+            # elsewhere; it simply no longer gates protection.
+            #
+            # Nothing loosens: the structural path below only ever proposes a
+            # candidate strictly BETWEEN the live stop and price (mirrored
+            # for a short), so the stop can never retreat, and
+            # `range_trail_floor` additionally refuses any candidate that
+            # would sit below the +1R lock the ratified ratchet installed.
+            # Both ratchets above are untouched and still take precedence.
+            past_2r, lock_price = _range_second_ratchet_state(
+                ent=ent, cur=cur, initial_stop=initial_stop,
+                is_short=is_short,
+            )
+            if not (past_2r and lock_price is not None):
+                # Below +2R (or R unmeasurable): unchanged — the two
+                # ratchets are the whole of Type A protection here.
+                return breakeven
+            range_trail_floor = lock_price
         # Target exceeded: fall through to the structural/chandelier trail
         # below exactly as before fix #3 — unchanged.
 
-    # --- Candidate: structure first ---------------------------------------
-    candidate: float | None = None
-    source = ""
+    # --- Candidate SET: structure first, chandelier second -----------------
+    # BOTH legs are now always built. Before this change the chandelier was
+    # computed only `if candidate is None`, so the module committed to the
+    # structural pivot BEFORE testing it — and a pivot that the invariants
+    # below then rejected (most sharply the noise band) silently suppressed a
+    # chandelier level that would have passed every one of them. Committing
+    # to the first candidate before testing it is a defect in how the
+    # candidate is FOUND, not a reason to drop a leg.
+    #
+    # Nothing about the preference order or the arithmetic changes: structure
+    # is still tried first, the chandelier is still second, no new multiple or
+    # threshold is introduced, and each candidate is carried through exactly
+    # the SAME invariants as before. The first candidate that survives all of
+    # them is used. There is deliberately NO synthesised third candidate at
+    # the noise band's own edge: a level read off today's price is a pure
+    # price-follower, which is a different exit rule from the ratified one and
+    # needs an argued decision, not a quiet patch here.
+    candidates: list[tuple[float, str]] = []
     if is_short:
         pivot = _structural_pivot(_swing_highs(bars or []), is_short=True)
         # The pivot is only usable if it is BELOW the current stop and ABOVE
         # current price: above the stop is not a ratchet, below the price is
         # not a stop.
         if pivot is not None and cur < pivot < stop:
-            candidate = pivot
-            source = "structure"
+            candidates.append((pivot, "structure"))
     else:
         pivot = _structural_pivot(_swing_lows(bars or []), is_short=False)
         # Mirror: only a pivot ABOVE the current stop and BELOW current price
         # is usable — below the stop is not a ratchet, above the price is not
         # a stop.
         if pivot is not None and stop < pivot < cur:
-            candidate = pivot
-            source = "structure"
+            candidates.append((pivot, "structure"))
 
-    # --- Fallback: chandelier, where structure is unclear ------------------
-    if candidate is None and atr_f is not None and atr_f > 0:
+    if atr_f is not None and atr_f > 0:
         if is_short:
             lows = [_finite(getattr(b, "low", None)) for b in (bars or [])]
             lows = [l for l in lows if l is not None]
             lowest = min(lows) if lows else cur
             chandelier = lowest + CHANDELIER_ATR_MULTIPLE * atr_f
             if cur < chandelier < stop:
-                candidate = chandelier
-                source = "chandelier"
+                candidates.append((chandelier, "chandelier"))
         else:
             highs = [
                 _finite(getattr(b, "high", None)) for b in (bars or [])
@@ -729,31 +833,46 @@ def evaluate_trailing_stop(
             highest = max(highs) if highs else cur
             chandelier = highest - CHANDELIER_ATR_MULTIPLE * atr_f
             if stop < chandelier < cur:
-                candidate = chandelier
-                source = "chandelier"
+                candidates.append((chandelier, "chandelier"))
 
-    if candidate is None:
+    if not candidates:
         return TrailEvaluation(None, TRAIL_CODE_NO_CANDIDATE)
 
     # --- Invariants --------------------------------------------------------
-    # Ratchet toward less risk only, and only when the move is worth an order.
-    if is_short:
-        if candidate >= stop * (1 - min_ratchet_pct / 100.0):
-            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
-    else:
-        if candidate <= stop * (1 + min_ratchet_pct / 100.0):
-            return TrailEvaluation(None, TRAIL_CODE_BELOW_MIN_RATCHET)
-
-    # Never inside one ordinary day's range of current price.
-    if atr_f is not None and atr_f > 0:
+    # Ratchet toward less risk only, and only when the move is worth an order,
+    # and never inside one ordinary day's range of current price. Applied per
+    # candidate. The refusal reported when every candidate fails is the FIRST
+    # candidate's, which keeps the recorded reason identical to what this
+    # module produced before whenever only one leg offered anything at all —
+    # which is every refusal in the production record to date.
+    candidate: float | None = None
+    source = ""
+    first_refusal: str | None = None
+    for _cand, _source in candidates:
+        _refusal: str | None = None
         if is_short:
-            noise_ceiling = cur + NOISE_BAND_ATR_MULTIPLE * atr_f
-            if candidate < noise_ceiling:
-                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
+            if _cand >= stop * (1 - min_ratchet_pct / 100.0):
+                _refusal = TRAIL_CODE_BELOW_MIN_RATCHET
         else:
-            noise_floor = cur - NOISE_BAND_ATR_MULTIPLE * atr_f
-            if candidate > noise_floor:
-                return TrailEvaluation(None, TRAIL_CODE_INSIDE_NOISE_BAND)
+            if _cand <= stop * (1 + min_ratchet_pct / 100.0):
+                _refusal = TRAIL_CODE_BELOW_MIN_RATCHET
+        if _refusal is None and atr_f is not None and atr_f > 0:
+            if is_short:
+                noise_ceiling = cur + NOISE_BAND_ATR_MULTIPLE * atr_f
+                if _cand < noise_ceiling:
+                    _refusal = TRAIL_CODE_INSIDE_NOISE_BAND
+            else:
+                noise_floor = cur - NOISE_BAND_ATR_MULTIPLE * atr_f
+                if _cand > noise_floor:
+                    _refusal = TRAIL_CODE_INSIDE_NOISE_BAND
+        if _refusal is None:
+            candidate, source = _cand, _source
+            break
+        if first_refusal is None:
+            first_refusal = _refusal
+
+    if candidate is None:
+        return TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE)
 
     candidate = round(candidate, 2)
     if is_short:
@@ -762,6 +881,18 @@ def evaluate_trailing_stop(
     else:
         if candidate <= stop or candidate >= cur:
             return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
+
+    # Type A past +2R only: never place a stop below (above, for a short)
+    # the owner-ratified +1R lock. In practice the ratchet has already put
+    # the live stop at or beyond the lock and the guards above require the
+    # candidate to beat that stop, so this is a belt-and-braces refusal.
+    if range_trail_floor is not None:
+        if is_short:
+            if candidate > range_trail_floor:
+                return TrailEvaluation(None, TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK)
+        else:
+            if candidate < range_trail_floor:
+                return TrailEvaluation(None, TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK)
 
     locked = ""
     if is_short:

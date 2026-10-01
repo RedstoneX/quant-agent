@@ -44,7 +44,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
-from src.agents.base import agent_log_kwargs
+from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
@@ -4101,6 +4101,7 @@ def _account_for_pm_candidates(
 
     try:
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("no_valid_grounded_decision" if not reasked else None),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=(
                 f"candidate-accounting re-ask | {', '.join(pending)}"
@@ -5397,6 +5398,7 @@ class MorningResearchStage:
                 if analysis_error:
                     sm_log_kwargs["status"] = "agent_failure"
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if analysis_error else None),
                     agent_name="smart_money_analyst", run_id=ctx.run_id,
                     input_summary=f"{len(findings)} material findings",
                     input_message=sm_result.user_message,
@@ -5881,6 +5883,7 @@ class MorningResearchStage:
                 )
             if ta_result:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Batch: {len(analyses)}/{len(analyses_map)} symbols "
@@ -6290,6 +6293,7 @@ class MorningResearchStage:
 
         if ta_result:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("failed" if not resolved else None),
                 agent_name="tech_analyst", run_id=ctx.run_id,
                 input_summary=(
                     f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"
@@ -6698,6 +6702,7 @@ class DecisionStage:
                 pm_result.semantic_error or "no valid PM decision"
             )
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("no_valid_grounded_decision" if not portfolio_decision else None),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
@@ -7918,6 +7923,7 @@ class RiskStage:
         if verdict is None:
             rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("risk_manager_unparseable_output" if verdict is None else None),
             agent_name="risk_manager", run_id=run_id,
             # "violations" was wrong AND owner-facing: this string is what
             # `CandidateDetailModal` shows on the dashboard, and by this point
@@ -10018,7 +10024,17 @@ class ExecutionStage:
                     # multiplier — doctrine bars fitting a number to this
                     # desk's history. See the `entry_atr` migration note in
                     # src/storage/db.py.
-                    entry_atr=getattr(decision, "atr_14", None),
+                    # Read off the ENTRY ANALYSIS, not off `decision`:
+                    # `TradeDecision` has no `atr_14` field at all (ATR(14)
+                    # lives on `TechnicalIndicators`/the analysis object), so
+                    # the original `getattr(decision, "atr_14", None)` was a
+                    # silent typo that resolved to its default on every
+                    # single trade and left the column empty for the whole
+                    # life of the feature. Same accessor the fat-finger
+                    # refusal below already uses. None on the resume/sweep
+                    # lanes that carry no analysis — the row then records no
+                    # ATR rather than a reconstructed one.
+                    entry_atr=getattr(entry_analysis, "atr_14", None),
                     stop_basis=getattr(decision, "stop_rule", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_

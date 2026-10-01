@@ -272,6 +272,7 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "RiskConfig",
     "ExecutionConfig",
     "CashSweepConfig",
+    "DeploymentGapConfig",
     "IntradayScanConfig",
     "SmartMoneyConfig",
     "NominationConfig",
