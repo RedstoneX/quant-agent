@@ -11656,16 +11656,23 @@ class TradingPipeline:
             recorded_initial_stop, replace_stop_and_record,
         )
         from src.execution.exit_path_records import (
-            last_trail_states, record_trail_state_if_changed,
+            last_trail_states, record_trail_code_census,
+            record_trail_state_if_changed,
         )
         from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
 
         orders: list[dict] = []
+        # Item 196: the per-stock record above is deduplicated by code, so
+        # it cannot answer how OFTEN an outcome occurs. This counts every
+        # evaluation this run, written once at the end of the pass.
+        from collections import Counter as _Counter
+        code_census: _Counter = _Counter()
         last_codes = last_trail_states(
             self.db, [getattr(p, "symbol", "") for p in positions],
         )
 
         def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
+            code_census[str(code)] += 1
             record_trail_state_if_changed(
                 self.db, last_codes, run_id=run_id, symbol=symbol,
                 code=code, detail=detail, **facts,
@@ -11834,6 +11841,7 @@ class TradingPipeline:
                     setup_type=(buy or {}).get("setup_type"),
                 )
                 continue
+            code_census[TRAIL_CODE_TRAILED] += 1
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
                 from src.execution.stop_records import accepted_stop_order
@@ -11875,6 +11883,10 @@ class TradingPipeline:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: trade row write failed for %s: %s", symbol, e)
+
+        record_trail_code_census(
+            self.db, run_id=run_id, counts=dict(code_census),
+        )
         return orders
 
     def _exit_event_risk_block(self, symbols: list[str]) -> str:

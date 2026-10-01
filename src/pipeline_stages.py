@@ -5538,6 +5538,14 @@ class MorningResearchStage:
                 macro_events = []
             ctx.macro_events = list(macro_events or [])
             ctx.macro_event_coverage = event_coverage
+            # Board item 187: durable per-open coverage record, so the item
+            # closes on observed rows rather than on someone reading logs.
+            try:
+                from src.data.fetch_coverage_record import build_row
+                self.db.insert_fred_fetch_coverage_run(
+                    build_row(ctx.run_id, macro_coverage, event_coverage))
+            except Exception as e:  # noqa: BLE001 — telemetry never costs the run
+                logger.warning("Could not record FRED fetch coverage: %s", e)
             # Same test-double guard, same reason: anything that is not the
             # real dataclass reads as NOT FETCHED, which the renderer states
             # outright rather than showing as an empty FOMC schedule.
