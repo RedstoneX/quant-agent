@@ -217,6 +217,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-10-01: the sector cluster moved out of src/execution/broker.py
+    # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
+    "src/sector_reference.py",
     # 2026-09-19, board item 124: the research-defined insider purchase
     # cluster now lifts the smart-money seat's conviction, so its definition
     # is on the path from a verdict to an order.

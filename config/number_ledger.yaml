@@ -5411,10 +5411,10 @@ numbers:
       decides how long the desk waits or how much it fetches, never whether
       or how much to trade. A wrong value degrades data availability, which
       is a separate failure the seats already see as missing evidence.
-  - id: src.execution.broker._SECTOR_LOOKUP_TIMEOUT_S
+  - id: src.sector_reference._SECTOR_LOOKUP_TIMEOUT_S
     value: 10
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/sector_reference.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
