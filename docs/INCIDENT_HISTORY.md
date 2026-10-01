@@ -52,7 +52,7 @@ Re-cutting the work to fit the wallet would make the analysis depend on the
 balance, which is the opposite of what the desk is for.
 
 
-## 2026-10-01 — "still protected by a level" now means what the code means, and always says how wide the level is
+### 2026-10-01 — "still protected by a level" now means what the code means, and always says how wide the level is
 
 **In one line:** the desk could tell the owner a position was still protected
 by a structural level whose measured zone was a fifth of the price wide, so
