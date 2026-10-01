@@ -585,9 +585,11 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 "not PM inconsistency; both are computed by the same Python "
                 "function. **There is no reward:risk floor.** Nothing has been "
                 "refused for failing one, a breakout has no ratio at all, and a "
-                "thin ratio on a range trade has already been paid for in size "
-                "by the constructor before you see it. A low number is not, on "
-                "its own, grounds to refuse anything.\n"
+                "thin ratio on a range trade is NOT resized by anything: the "
+                "constructor computes the ratio for ranking and logging only, "
+                "so no size has been adjusted for it before you see it. It is "
+                "information; the sizing judgement is yours. A low number is "
+                "not, on its own, grounds to refuse anything.\n"
                 + "\n".join(tech_lines)
             )
         else:
