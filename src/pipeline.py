@@ -97,6 +97,7 @@ from src.pipeline_research_continuity import (  # noqa: F401
 )
 from src.pipeline_intraday import IntradayMixin
 from src.pipeline_prompt_facts import (  # noqa: F401
+    PromptFacts,
     PromptFactsMixin,
     _PM_PROFILE_SYMBOL_CAP,
     _missed_ops_quality_metrics,
@@ -862,6 +863,11 @@ class TradingPipeline(
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
+        # Step 10 (item 210): the prompt-facts builders are a constructed object.
+        # The mixin's delegators rebuild it per call from the live attributes so a
+        # collaborator swapped later is still seen; this instance is the
+        # composition-root proof that every port it needs exists by here.
+        self.prompt_facts: PromptFacts = self._prompt_facts_service()
         self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in

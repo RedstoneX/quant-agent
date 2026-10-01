@@ -12,6 +12,7 @@ move live stops, so it is NOT here — it goes to the protection module in step 
 Nothing here may import `src.pipeline`: this module is one of its bases.
 """
 
+import functools
 import json as _json
 import logging
 import re
@@ -136,8 +137,72 @@ def _missed_ops_quality_metrics(
     return avg_dvol_m, vol_conf_ratio, single_day_conc
 
 
-class PromptFactsMixin:
-    """Read-only prompt-context builders mixed into `TradingPipeline`."""
+#: Marks a collaborator the owning pipeline does not have. `PromptFactsMixin`
+#: passes it for any attribute missing on a `TradingPipeline` built via
+#: `__new__()` (the ~58 such tests), and `PromptFacts.__init__` then leaves that
+#: name UNSET — so `getattr(self, "config", None)` guards and the AttributeError
+#: a body raises on a missing collaborator behave exactly as under the mixin.
+_ABSENT = object()
+
+
+class PromptFacts:
+    """Read-only prompt-context builders as a standalone object.
+
+    Step 10 (first half) of `docs/ARCHITECTURE.md` §4, board item 210: the
+    former `PromptFactsMixin` behind a constructor. Every collaborator a method
+    body reads is a constructor parameter; the method bodies below are the
+    mixin's, byte for byte — only where `self.<name>` comes FROM changed. The
+    second half (splitting along fact families) is deliberately not done here.
+
+    Ports, measured from the bodies (grep `self\.`): eight data collaborators
+    (`db`, `broker`, `market`, `news_store`, `macro_store`, `earnings_provider`,
+    `config`, `tech_store`), two optional ones read through `getattr(self, ..,
+    None)` (`portfolio_constructor`, `risk_engine`), three foreign pipeline
+    methods injected as callables (`sweeper`, `parse_logged_agent_response`,
+    `atr_for_symbol`), the `_EXIT_AUDIT_ACTIONS` tuple, and the one cache this
+    object writes (`_last_symbol_sectors`, set by `_build_projected_portfolio`
+    and read back by the decision stage through the mixin's write-through).
+    """
+
+    def __init__(
+        self,
+        *,
+        db=_ABSENT,
+        broker=_ABSENT,
+        market=_ABSENT,
+        news_store=_ABSENT,
+        macro_store=_ABSENT,
+        earnings_provider=_ABSENT,
+        config=_ABSENT,
+        tech_store=_ABSENT,
+        sweeper=_ABSENT,
+        parse_logged_agent_response=_ABSENT,
+        atr_for_symbol=_ABSENT,
+        exit_audit_actions=_ABSENT,
+        portfolio_constructor=None,
+        risk_engine=None,
+        last_symbol_sectors=_ABSENT,
+    ) -> None:
+        provided = {
+            "db": db,
+            "broker": broker,
+            "market": market,
+            "news_store": news_store,
+            "macro_store": macro_store,
+            "earnings_provider": earnings_provider,
+            "config": config,
+            "tech_store": tech_store,
+            "_sweeper": sweeper,
+            "_parse_logged_agent_response": parse_logged_agent_response,
+            "_atr_for_symbol": atr_for_symbol,
+            "_EXIT_AUDIT_ACTIONS": exit_audit_actions,
+            "_last_symbol_sectors": last_symbol_sectors,
+        }
+        for name, value in provided.items():
+            if value is not _ABSENT:
+                setattr(self, name, value)
+        self.portfolio_constructor = portfolio_constructor
+        self.risk_engine = risk_engine
 
     def _build_position_history(self, positions) -> dict[str, dict]:
         """L2 memory: for each held symbol, entry context + Tech rating trajectory.
@@ -3612,3 +3677,270 @@ class PromptFactsMixin:
             if action_bits:
                 lines.append(f"- {ts}: {', '.join(action_bits[:8])}")
         return "\n".join(lines)
+
+
+#: Every builder `PromptFactsMixin` forwards to `PromptFacts`, in source order.
+PROMPT_FACTS_METHODS: tuple[str, ...] = (
+    "_build_position_history",
+    "_build_weekly_narrative",
+    "_build_macro_trajectory",
+    "_build_active_state_changes",
+    "_build_rm_recent_verdicts",
+    "_build_pm_recent_decisions",
+    "_build_projected_portfolio",
+    "_build_recent_sells_for_grading",
+    "_build_recent_buys_for_grading",
+    "_build_recent_outlook_calibration",
+    "_build_trade_grade_summary",
+    "_build_post_exit_reality",
+    "_build_recent_missed_lessons",
+    "_persist_evening_replay_inputs",
+    "_build_thesis_health_context",
+    "_thesis_tech_trajectory_map",
+    "_thesis_news_events_map",
+    "_build_watchlist_candidates",
+    "_build_recent_loss_pits",
+    "_build_blocked_proposals",
+    "_build_missed_opportunities_digest",
+    "_missed_ops_held_set",
+    "_missed_ops_tech_signal",
+    "_missed_ops_news_signal",
+    "_missed_ops_theme_tags",
+    "_missed_ops_earnings_signal",
+    "_missed_ops_macro_sector_map",
+    "_actualize_trade_row",
+    "_build_macro_tech_alignment",
+    "_ensure_correlation_matrix",
+    "_build_stop_map",
+    "_build_portfolio_heat",
+    "_build_pm_facts",
+    "_log_conviction_outcome_for_operator",
+    "_build_calibration_note",
+    "_compute_recent_performance",
+    "_build_position_facts",
+    "_build_review_metric_deltas",
+    "_build_own_recent_decisions",
+)
+
+#: The ports `PromptFactsMixin` reads off the pipeline: pipeline attribute ->
+#: constructor keyword. Absent attributes are passed as `_ABSENT` (see above).
+_PIPELINE_PORTS: tuple[tuple[str, str], ...] = (
+    ("db", "db"),
+    ("broker", "broker"),
+    ("market", "market"),
+    ("news_store", "news_store"),
+    ("macro_store", "macro_store"),
+    ("earnings_provider", "earnings_provider"),
+    ("config", "config"),
+    ("tech_store", "tech_store"),
+    ("_sweeper", "sweeper"),
+    ("_parse_logged_agent_response", "parse_logged_agent_response"),
+    ("_atr_for_symbol", "atr_for_symbol"),
+    ("_EXIT_AUDIT_ACTIONS", "exit_audit_actions"),
+    ("_last_symbol_sectors", "last_symbol_sectors"),
+)
+
+
+def prompt_facts_for(owner) -> PromptFacts:
+    """Build a `PromptFacts` from whatever `owner` currently holds.
+
+    `owner` is normally the `TradingPipeline`, but the unbound-call tests pass a
+    stub or a MagicMock as `self`, exactly as they did to the mixin's methods;
+    reading the ports with `getattr` keeps those working unchanged. On a real
+    pipeline any builder name overridden on it (a `patch.object(TradingPipeline,
+    '_build_stop_map')`, or an instance attribute) is bound onto the service
+    too, so a patch of the OLD name still intercepts the internal call it used to.
+    """
+    kwargs = {kw: getattr(owner, attr, _ABSENT) for attr, kw in _PIPELINE_PORTS}
+    kwargs["portfolio_constructor"] = getattr(owner, "portfolio_constructor", None)
+    kwargs["risk_engine"] = getattr(owner, "risk_engine", None)
+    service = PromptFacts(**kwargs)
+    if isinstance(owner, PromptFactsMixin):
+        for name in PROMPT_FACTS_METHODS:
+            if name in owner.__dict__ or (
+                getattr(type(owner), name) is not getattr(PromptFactsMixin, name)
+            ):
+                setattr(service, name, getattr(owner, name))
+    return service
+
+
+class PromptFactsMixin:
+    """Thin delegating mixin: keeps every builder reachable as a `TradingPipeline`
+    attribute (46 call sites in six modules call `self._build_...` on the pipeline,
+    and tests patch these names on the class) while the bodies live on `PromptFacts`.
+
+    The service is built per call from the pipeline's CURRENT attributes rather
+    than cached, so a collaborator swapped after construction (every test that
+    sets `pipeline.db = ...`) is seen, exactly as `self.db` was under the mixin.
+    Each delegator is `functools.wraps`-ed onto the `PromptFacts` method so
+    `inspect.getsource(TradingPipeline._build_x)` still reads the moved body.
+    """
+
+    def _prompt_facts_service(self) -> PromptFacts:
+        return prompt_facts_for(self)
+
+    @functools.wraps(PromptFacts._build_position_history)
+    def _build_position_history(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_position_history(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_weekly_narrative)
+    def _build_weekly_narrative(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_weekly_narrative(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_macro_trajectory)
+    def _build_macro_trajectory(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_macro_trajectory(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_active_state_changes)
+    def _build_active_state_changes(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_active_state_changes(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_rm_recent_verdicts)
+    def _build_rm_recent_verdicts(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_rm_recent_verdicts(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_pm_recent_decisions)
+    def _build_pm_recent_decisions(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_pm_recent_decisions(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_projected_portfolio)
+    def _build_projected_portfolio(self, *args, **kwargs):
+        service = prompt_facts_for(self)
+        try:
+            return service._build_projected_portfolio(*args, **kwargs)
+        finally:
+            # The one cache a builder writes; the decision stage reads it off
+            # the pipeline, so the service's rebinding is written through.
+            if "_last_symbol_sectors" in service.__dict__:
+                self._last_symbol_sectors = service._last_symbol_sectors
+
+    @functools.wraps(PromptFacts._build_recent_sells_for_grading)
+    def _build_recent_sells_for_grading(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_recent_sells_for_grading(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_recent_buys_for_grading)
+    def _build_recent_buys_for_grading(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_recent_buys_for_grading(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_recent_outlook_calibration)
+    def _build_recent_outlook_calibration(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_recent_outlook_calibration(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_trade_grade_summary)
+    def _build_trade_grade_summary(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_trade_grade_summary(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_post_exit_reality)
+    def _build_post_exit_reality(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_post_exit_reality(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_recent_missed_lessons)
+    def _build_recent_missed_lessons(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_recent_missed_lessons(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._persist_evening_replay_inputs)
+    def _persist_evening_replay_inputs(self, *args, **kwargs):
+        return prompt_facts_for(self)._persist_evening_replay_inputs(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_thesis_health_context)
+    def _build_thesis_health_context(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_thesis_health_context(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._thesis_tech_trajectory_map)
+    def _thesis_tech_trajectory_map(self, *args, **kwargs):
+        return prompt_facts_for(self)._thesis_tech_trajectory_map(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._thesis_news_events_map)
+    def _thesis_news_events_map(self, *args, **kwargs):
+        return prompt_facts_for(self)._thesis_news_events_map(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_watchlist_candidates)
+    def _build_watchlist_candidates(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_watchlist_candidates(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_recent_loss_pits)
+    def _build_recent_loss_pits(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_recent_loss_pits(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_blocked_proposals)
+    def _build_blocked_proposals(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_blocked_proposals(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_missed_opportunities_digest)
+    def _build_missed_opportunities_digest(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_missed_opportunities_digest(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_held_set)
+    def _missed_ops_held_set(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_held_set(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_tech_signal)
+    def _missed_ops_tech_signal(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_tech_signal(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_news_signal)
+    def _missed_ops_news_signal(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_news_signal(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_theme_tags)
+    def _missed_ops_theme_tags(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_theme_tags(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_earnings_signal)
+    def _missed_ops_earnings_signal(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_earnings_signal(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._missed_ops_macro_sector_map)
+    def _missed_ops_macro_sector_map(self, *args, **kwargs):
+        return prompt_facts_for(self)._missed_ops_macro_sector_map(*args, **kwargs)
+
+    @staticmethod
+    @functools.wraps(PromptFacts._actualize_trade_row)
+    def _actualize_trade_row(*args, **kwargs):
+        return PromptFacts._actualize_trade_row(*args, **kwargs)
+
+    @staticmethod
+    @functools.wraps(PromptFacts._build_macro_tech_alignment)
+    def _build_macro_tech_alignment(*args, **kwargs):
+        return PromptFacts._build_macro_tech_alignment(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._ensure_correlation_matrix)
+    def _ensure_correlation_matrix(self, *args, **kwargs):
+        return prompt_facts_for(self)._ensure_correlation_matrix(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_stop_map)
+    def _build_stop_map(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_stop_map(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_portfolio_heat)
+    def _build_portfolio_heat(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_portfolio_heat(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_pm_facts)
+    def _build_pm_facts(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_pm_facts(*args, **kwargs)
+
+    @staticmethod
+    @functools.wraps(PromptFacts._log_conviction_outcome_for_operator)
+    def _log_conviction_outcome_for_operator(*args, **kwargs):
+        return PromptFacts._log_conviction_outcome_for_operator(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_calibration_note)
+    def _build_calibration_note(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_calibration_note(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._compute_recent_performance)
+    def _compute_recent_performance(self, *args, **kwargs):
+        return prompt_facts_for(self)._compute_recent_performance(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_position_facts)
+    def _build_position_facts(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_position_facts(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_review_metric_deltas)
+    def _build_review_metric_deltas(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_review_metric_deltas(*args, **kwargs)
+
+    @functools.wraps(PromptFacts._build_own_recent_decisions)
+    def _build_own_recent_decisions(self, *args, **kwargs):
+        return prompt_facts_for(self)._build_own_recent_decisions(*args, **kwargs)
