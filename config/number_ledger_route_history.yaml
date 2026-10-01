@@ -214,3 +214,36 @@ changes:
       claimed as a recording. Filing a route that does not exist would be
       the same defect as the label it is replacing.
 
+  - delta: -12
+    date: "2026-10-01"
+    why: |
+      Item 90, sixth routing tranche: the execution-plumbing rows and the
+      level scan. Twelve `arbitrary` rows gain settlement routes -- the four
+      cash-sweep constants (both limit pads, the funding buffer fraction and
+      its dollar floor), the four broker stop-placement constants (the
+      stop-limit buffer, the retry ceiling and both backoff delays), the
+      three level-scan constants (the pivot window, the cluster tolerance and
+      the strength distance divisor) and the technical seat's per-symbol bar
+      cap. No VALUE changed, no row changed status, so the arbitrary count is
+      unmoved at 136; the routeless residue falls from 57 to 45. Every route
+      that could have been written as a study of this desk's own trading
+      record was instead pointed at the instrument over the universe the desk
+      could trade -- gap distances for the stop-limit buffer, bounce
+      behaviour by window and by pivot separation for the level scan, quoted
+      spread for the sweep pads -- because fitting to the desk's own record
+      is barred by docs/OUTCOME.md. The two funding-buffer rows are the one
+      exception and are explicitly cash arithmetic (assumed cost versus
+      consumed cost, fees, drift), not a study of returns. Every route states
+      the DELETE outcome beside the set-it outcome, so a constant the
+      measurement cannot distinguish from doing nothing is removed rather
+      than re-picked: the bar cap if the feature set never changes with
+      lookback, the sweep pads if the spread never approaches them, the
+      backoff rungs if success is independent of the delay waited, the
+      stop-limit buffer if the fallback leg is never taken now that primary
+      protective stops are stop-MARKET, the clustering tolerance if bounce
+      rate is flat in separation, and the whole distance term in the level
+      strength formula if bounce rate does not fall with distance once touch
+      count is held fixed. The pivot-window route deliberately covers both
+      answers the desk holds today, 5 in the level scan and 3 in the trailing
+      stop, so one measurement retires the disagreement rather than
+      documenting it again.
