@@ -277,13 +277,6 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 212)
 
 
-**217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
-
-DONE WHEN:
-  - [ ] (a) each constructor claim above is confirmed against the live code or corrected, with a test pinning the wording
-  - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
-detail: docs/BOARD_NOTES.md (item 217)
-
 **216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
 
 Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
@@ -327,6 +320,12 @@ DONE WHEN:
 - [ ] the record tells the three causes apart from the FIELDS alone — asked and unreadable, asked and nothing usable came back, never asked about this name — because they share one consequence but have three different fixes
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
 
+
+**222. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/BOARD_NOTES.md` item 222.
+
+DONE WHEN:
+  - [ ] the owner (or the risk route) rules whether a sub-floor target is refused deterministically or left to the seat
+  - [ ] whichever way it is ruled, the behaviour and the portfolio-manager prompt sentence say the same thing
 
 **221. The sector preview sizes every candidate at a flat 5% while the constructor would size each one off its own stop distance, so the portfolio manager self-corrects against a mix no candidate is ever given — filed 2026-10-01.** Found during item 90's second routing tranche and deliberately not fixed there. The preview the portfolio manager reads to judge sector crowding assumes one identical position size for every candidate; the constructor that actually places the orders sizes each name from its own stop distance, so a wide-stopped name gets far less than the preview showed and a tight-stopped name far more. The manager therefore trims, drops or reorders names against a portfolio that will never exist. It governs how much money goes into each name, so it is a sizing defect, not a display one. Detail in `docs/BOARD_NOTES.md` item 221.
 
@@ -391,6 +390,7 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 199
 - retired queue: 20
 - retired queue: 212
+- retired queue: 217
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
