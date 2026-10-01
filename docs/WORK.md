@@ -197,18 +197,6 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender: **$13.93 of $22.18 all-time, 62.8%**, over 211 sessions of which 106 were paid, against morning's $7.66 over 31. 13 paid ticks a day since the timer moved, 14 before. A tick carrying the held book costs **1.54x** a movers-only tick ($0.167 vs $0.108 mean). **80% of paid ticks (85 of 106) produced no order**, and the whole record attributes 21 new positions to intraday discovery — **$0.66 of model spend per position opened**. The mover cap binds on 21.5% of runs and drops the excess with no record. Figures and method in `docs/BOARD_NOTES.md`.
 detail: docs/BOARD_NOTES.md (item 177)
 
-**185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
-
-DONE WHEN:
-  - [x] `CHANDELIER_ATR_MULTIPLE` sourced (published Chandelier default) and `MIN_RATCHET_PCT` owner-ratified as churn appetite with its false cost premise corrected
-  - [x] the 50%-of-price literal is removed from the code and from the ledger, and the guard/screen circularity is broken — both ends now compute from `widest_reachable_stop_atr_multiple` (2026-09-30)
-  - [x] the screen-divisor mismatch (base 2.5 vs reachable 3.00, the 16.67-20% band the screen admitted and the guard would have argued with) is FIXED, not accepted
-  - [x] no refusal on this path can leave a position unprotected — the midday guard clamps and places instead of skipping, per board item 80 (2026-09-30)
-  - [ ] the ELIGIBILITY question is BLOCKED, not declined — 2026-10-01 names the blocker and the recording that lifts it, and no further derivation attempt is permitted. Blocked because: no primary methodology document stating an ABSOLUTE ATR/price bound exists to cite (searched 2026-09-30); the published form is cross-sectional and the screen has NEVER executed, so there is no cross-section to take a quantile of; and routing the quantile to the owner as appetite is barred by his 2026-09-30 ruling that risk is per name and never a global dial. CLOSES WHEN: the screen runs and persists each run's full ATR(14)/price cross-section with names and date, giving the quantile form a measured distribution. Until then 33.3% is an arithmetic non-degeneracy floor ONLY and must not be described as a volatility appetite — re-measured 2026-10-01 off the desk's own stored daily bars (101 symbols, 276 sessions to 2026-09-30): median 2.53%, p90 5.50%, max 8.33%, not one name above 10%, so it has never bound and would not
-  - [x] the two rows the 3.00 depends on are explicitly INHERITED by this item rather than left orphaned (2026-10-01), and the 1.20 risk-off scaler's open question was found to be the barred maximum-adverse-excursion study item 90 had already deleted from `min_stop_atr_multiple` — it is replaced by a lag-correction reading off the instrument (ATR(14) already re-measures volatility every session, so the scaler may be double-counting and deleting it is a legitimate outcome), the recording that would settle it is named, and `tests/test_no_fitted_open_questions.py` now fails the build on any ledger open question promising a fitted resolution
-
-detail: docs/BOARD_NOTES.md (item 185)
-
 **186. Portfolio and cluster risk ceilings are made-up money numbers with no board item — filed 2026-09-25.**
 
 DONE WHEN:
@@ -367,6 +355,7 @@ DONE WHEN:
   - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
 detail: docs/BOARD_NOTES.md (item 214)
 
+
 **220. A technical row the model returned malformed was dropped and the name carried on with the timing veto unrecorded — filed 2026-10-01.** The technical seat is the desk's timing veto and the standing rule is that every seat must be right to ENTER and to STAY, but a row that failed schema parsing was dropped individually, logged, and the run continued; the name then reached the decision with no technical answer and nothing in the durable record said the seat had been asked and lost. MEASURED: over 2026-09-29 17:16 to 2026-10-01 04:00 the technical seat made 8 calls, all on the free Google route, all recorded success and none truncated, and ONE returned syntactically invalid JSON inside the strict schema (an unquoted property name) on a complete answer [production database, read-only, plus the retained box log]. Eight calls cannot support a rate and none is stated or assumed here. What was ALREADY right and is not changed: `risk.rules.own_bar_block_reason` already refuses ENTRY on "no technical read this review", and rotation's `ineligible_hold` tier already drops a held name that fails that same bar out of the ranked survivors, so absence was already blocking at both decisions. What was WRONG is the record: the per-name coverage record (item 20) never saw held names at all, never saw a name whose only appearance was the lost row, and could not tell a seat that was never asked from a seat that answered unreadably. CLOSING CONDITION: a name whose technical row came back unreadable appears in the per-name coverage record with the technical seat listed as uncovered AND as unreadable, held names are inside that record's universe, and `evidence_gate.names_missing_blocking_seat` names it; no retry, no JSON repair and no new refusal are added. RULED 2026-10-01, no longer open: a lost technical row does NOT cull a held name. The stay test is opposition-only by the owner's 2026-09-25 ruling, and an answer nobody could read is not opposition; selling on an absence would be inventing a verdict, the same failure as inventing a number. Dropping the name out of the ranked survivors is the right strength — it loses its claim to be KEPT on conviction without being forced out on silence. The reasoning is written beside the test that pins it so the next reader does not "fix" it. DELIBERATE NON-CHOICE, also 2026-10-01: no retry of an unreadable row. NOT a cost decision — the route is free today. A retry that silently succeeded would hide the very signal this record exists to capture, and a retry inside a session that has a time ceiling is a change to the session's shape rather than a one-line fix. On file as a decision, not as an omission; revisit only with the session-shape question answered.
 
 DONE WHEN:
@@ -406,12 +395,13 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 157
-- retired queue: 119
 - retired queue: 193
+- retired queue: 119
 - retired queue: 211
+- retired queue: 185
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
